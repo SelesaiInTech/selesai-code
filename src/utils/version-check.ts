@@ -67,14 +67,8 @@ export async function getLatestPiVersion(
 	return (await getLatestPiRelease(currentVersion, options))?.version;
 }
 
-export async function checkForNewPiVersion(currentVersion: string): Promise<LatestPiRelease | undefined> {
-	try {
-		const latestRelease = await getLatestPiRelease(currentVersion);
-		if (latestRelease && isNewerPackageVersion(latestRelease.version, currentVersion)) {
-			return latestRelease;
-		}
-		return undefined;
-	} catch {
-		return undefined;
-	}
+// ponytail: selesai has no pi.dev equivalent yet. Disable update nag until selesai infra exists.
+// getLatestPiRelease is left intact for `selesai update --self`; only the interactive nag is killed.
+export async function checkForNewPiVersion(_currentVersion: string): Promise<LatestPiRelease | undefined> {
+	return undefined; // no update available — no network call to pi.dev/api/latest-version
 }
