@@ -1,4 +1,16 @@
-import { accessSync, constants, existsSync, readFileSync, realpathSync } from "fs";
+import {
+	accessSync,
+	chmodSync,
+	constants,
+	copyFileSync,
+	cpSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	readdirSync,
+	realpathSync,
+	writeFileSync,
+} from "fs";
 import { homedir } from "os";
 import { basename, dirname, join, resolve, sep, win32 } from "path";
 import { fileURLToPath } from "url";
@@ -458,6 +470,38 @@ export function getInteractiveAssetsDir(): string {
 	return join(packageDir, srcOrDist, "modes", "interactive", "assets");
 }
 
+/**
+ * Get path to bundled default config directory (shipped with package).
+ * Holds seed settings.json and models.json copied to ~/.selesai/agent on first run.
+ * - For Bun binary: defaults/ next to executable
+ * - For Node.js (dist/): dist/defaults/
+ * - For tsx (src/): src/defaults/
+ */
+export function getBundledDefaultsDir(): string {
+	if (isBunBinary) {
+		return join(getPackageDir(), "defaults");
+	}
+	const packageDir = getPackageDir();
+	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
+	return join(packageDir, srcOrDist, "defaults");
+}
+
+/**
+ * Get path to bundled built-in extensions directory (shipped with package).
+ * Extensions here are seeded into ~/.selesai/agent/extensions on first run.
+ * - For Bun binary: extensions/ next to executable
+ * - For Node.js (dist/): dist/extensions/
+ * - For tsx (src/): src/extensions/
+ */
+export function getBundledExtensionsDir(): string {
+	if (isBunBinary) {
+		return join(getPackageDir(), "extensions");
+	}
+	const packageDir = getPackageDir();
+	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
+	return join(packageDir, srcOrDist, "extensions");
+}
+
 /** Get path to a bundled interactive asset */
 export function getBundledInteractiveAssetPath(name: string): string {
 	return join(getInteractiveAssetsDir(), name);
@@ -563,4 +607,111 @@ export function getSessionsDir(): string {
 /** Get path to debug log file */
 export function getDebugLogPath(): string {
 	return join(getAgentDir(), `${APP_NAME}-debug.log`);
+}
+
+/**
+ * Marker file written once first-time onboarding completes. Decouples the
+ * first-run dialog gate from settings.json existence so that bootstrapping a
+ * bundled default settings.json does not suppress the dialog.
+ */
+export function getFirstRunMarkerPath(agentDir: string = getAgentDir()): string {
+	return join(agentDir, ".firstRunComplete");
+}
+
+/**
+ * Mark first-run onboarding as complete. Safe to call repeatedly.
+ */
+export function markFirstRunComplete(agentDir: string = getAgentDir()): void {
+	mkdirSync(agentDir, { recursive: true, mode: 0o700 });
+	writeFileSync(getFirstRunMarkerPath(agentDir), "1", { mode: 0o600 });
+}
+
+// =============================================================================
+// Agent Dir Bootstrap (first-run seeding)
+// =============================================================================
+
+/** Subdirectories created under the agent dir on first run. */
+const AGENT_SUBDIRS = [
+	"themes",
+	"tools",
+	"bin",
+	"prompts",
+	"sessions",
+	"extensions",
+	"skills",
+] as const;
+
+/**
+ * Ensure the agent dir and standard subdirs exist (mode 0o700 for privacy).
+ * Safe to call on every startup; no-op when dirs already exist.
+ */
+export function ensureAgentDir(agentDir: string = getAgentDir()): void {
+	mkdirSync(agentDir, { recursive: true, mode: 0o700 });
+	for (const sub of AGENT_SUBDIRS) {
+		mkdirSync(join(agentDir, sub), { recursive: true, mode: 0o700 });
+	}
+}
+
+/**
+ * Seed a default config file from the bundled defaults dir if it does not yet
+ * exist. Never overwrites an existing user file. Returns the destination path
+ * when a seed was written, undefined when the file already existed or the
+ * bundled source is missing.
+ */
+export function seedDefaultConfigFile(
+	destPath: string,
+	bundledName: string,
+	bundledDefaultsDir: string = getBundledDefaultsDir(),
+): string | undefined {
+	if (existsSync(destPath)) return undefined;
+	const source = join(bundledDefaultsDir, bundledName);
+	if (!existsSync(source)) return undefined;
+	mkdirSync(dirname(destPath), { recursive: true, mode: 0o700 });
+	copyFileSync(source, destPath);
+	try {
+		chmodSync(destPath, 0o600);
+	} catch {
+		// chmod is best-effort (no-op on platforms that don't support it).
+	}
+	return destPath;
+}
+
+/**
+ * Seed built-in extensions from the bundled extensions dir into the user's
+ * agent extensions dir. Only copies entries that do not already exist, so user
+ * edits and installs are preserved. Returns the list of seeded paths.
+ */
+export function seedBundledExtensions(
+	agentDir: string = getAgentDir(),
+	bundledExtensionsDir: string = getBundledExtensionsDir(),
+): string[] {
+	const destDir = join(agentDir, "extensions");
+	mkdirSync(destDir, { recursive: true, mode: 0o700 });
+	if (!existsSync(bundledExtensionsDir)) return [];
+	const seeded: string[] = [];
+	for (const entry of readdirSync(bundledExtensionsDir)) {
+		const src = join(bundledExtensionsDir, entry);
+		const dest = join(destDir, entry);
+		if (existsSync(dest)) continue;
+		cpSync(src, dest, { recursive: true });
+		seeded.push(dest);
+	}
+	return seeded;
+}
+
+/**
+ * Run full first-run bootstrap for the agent dir: ensure directories, seed
+ * settings.json + models.json from bundled defaults, and seed built-in
+ * extensions. Idempotent — safe on every startup. Returns what was seeded.
+ */
+export function bootstrapAgentDir(agentDir: string = getAgentDir()): {
+	settingsSeeded: string | undefined;
+	modelsSeeded: string | undefined;
+	extensionsSeeded: string[];
+} {
+	ensureAgentDir(agentDir);
+	const settingsSeeded = seedDefaultConfigFile(join(agentDir, "settings.json"), "settings.json");
+	const modelsSeeded = seedDefaultConfigFile(join(agentDir, "models.json"), "models.json");
+	const extensionsSeeded = seedBundledExtensions(agentDir);
+	return { settingsSeeded, modelsSeeded, extensionsSeeded };
 }

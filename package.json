@@ -3,16 +3,31 @@
 	"version": "0.1.0",
 	"description": "Selesai coding agent",
 	"type": "module",
-	"piConfig": { "name": "selesai", "configDir": ".selesai" },
-	"bin": { "selesai": "dist/cli.js" },
+	"piConfig": {
+		"name": "selesai",
+		"configDir": ".selesai"
+	},
+	"bin": {
+		"selesai": "dist/cli.js"
+	},
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
-	"exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-	"files": ["dist", "docs", "examples", "CHANGELOG.md"],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"docs",
+		"examples",
+		"CHANGELOG.md"
+	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js && npm run copy-assets",
-		"copy-assets": "shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/ && shx mkdir -p dist/modes/interactive/assets && shx cp src/modes/interactive/assets/*.png dist/modes/interactive/assets/ && shx mkdir -p dist/core/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html/ && shx cp src/core/export-html/vendor/*.js dist/core/export-html/vendor/"
+		"copy-assets": "shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/ && shx mkdir -p dist/modes/interactive/assets && shx cp src/modes/interactive/assets/*.png dist/modes/interactive/assets/ && shx mkdir -p dist/core/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html/ && shx cp src/core/export-html/vendor/*.js dist/core/export-html/vendor/ && shx mkdir -p dist/defaults && shx cp src/defaults/* dist/defaults/ && shx mkdir -p dist/extensions && shx cp -r src/extensions/. dist/extensions/ 2>/dev/null || true"
 	},
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "0.80.2",
@@ -42,7 +57,7 @@
 		"@types/node": "24.12.4",
 		"@types/proper-lockfile": "4.1.4",
 		"@types/semver": "7.7.1",
-		"@typescript/native-preview": "7.0.0-dev.20260120.1",
+		"@typescript/native-preview": "^7.0.0-dev.20260120.1",
 		"shx": "0.4.0",
 		"typescript": "5.9.3",
 		"vitest": "4.1.9"
