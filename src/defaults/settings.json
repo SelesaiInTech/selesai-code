@@ -18,16 +18,13 @@
   },
   "lastChangelogVersion": "0.80.2",
   "packages": [
-    "npm:pi-subagents",
-    "npm:pi-tool-display",
-    "npm:pi-markdown-preview",
-    "npm:pi-side-chat",
-    "npm:@plannotator/pi-extension",
-    "npm:@ollama/pi-web-search",
-    "npm:pi-json-tools",
-    "npm:@aliou/pi-guardrails",
+    "git:github.com/MasuRii/pi-tool-display",
+    "git:github.com/omaclaren/pi-markdown-preview",
+    "git:github.com/aliou/pi-guardrails",
     "git:github.com/DietrichGebert/ponytail",
-    "git:https://github.com/nicobailon/pi-intercom"
+    "git:github.com/nicobailon/pi-intercom",
+    "git:github.com/nicobailon/pi-subagents",
+    "git:github.com/nicobailon/pi-rewind-hook"
   ],
   "powerline": {
     "preset": "custom",
@@ -56,7 +53,7 @@
     "clearOnShrink": false,
     "showImages": true
   },
-  "theme": "everforest-dark",
+  "theme": "dark",
   "transport": "websocket",
   "treeFilterMode": "no-tools",
   "webSearch": {
@@ -67,9 +64,6 @@
       "TAVILY_API_KEY": ""
     }
   },
-  "enabledModels": [
-    "ollama/*",
-    "proxy/*"
-  ],
+  "enabledModels": ["ollama/*", "proxy/*"],
   "workingVibeModel": "proxy/gpt-5.4-mini:low"
 }

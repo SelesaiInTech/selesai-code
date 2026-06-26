@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,7 +7,6 @@ import {
 	ensureAgentDir,
 	getFirstRunMarkerPath,
 	markFirstRunComplete,
-	seedBundledExtensions,
 	seedDefaultConfigFile,
 } from "../config.js";
 
@@ -42,17 +41,6 @@ describe("agent dir bootstrap", () => {
 		writeFileSync(dest, '{"theme":"user"}');
 		expect(seedDefaultConfigFile(dest, "settings.json", bundled)).toBeUndefined();
 		expect(JSON.parse(readFileSync(dest, "utf-8")).theme).toBe("user");
-	});
-
-	it("seeds bundled extensions without clobbering existing ones", () => {
-		const extDir = join(bundled, "ext-a");
-		mkdirSync(extDir, { recursive: true });
-		writeFileSync(join(extDir, "index.ts"), "bundled");
-		const seeded = seedBundledExtensions(dir, bundled);
-		expect(seeded).toHaveLength(1);
-		expect(readFileSync(join(dir, "extensions", "ext-a", "index.ts"), "utf-8")).toBe("bundled");
-		// second run: nothing re-seeded
-		expect(seedBundledExtensions(dir, bundled)).toHaveLength(0);
 	});
 
 	it("bootstrapAgentDir is a safe no-op when bundled dirs are empty", () => {

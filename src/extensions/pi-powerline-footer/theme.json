@@ -1,0 +1,12 @@
+{
+  "colors": {
+    "context": "#00c853",
+    "contextWarn": "#ff9800",
+    "contextError": "#f44336"
+  },
+  "icons": {
+    "folder": "",
+    "context": "",
+    "auto": ""
+  }
+}

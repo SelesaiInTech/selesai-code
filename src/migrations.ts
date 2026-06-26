@@ -297,25 +297,6 @@ export async function showDeprecationWarnings(warnings: string[]): Promise<void>
 	console.log();
 }
 
-// ponytail: defaults shipped as data, not a new settings field. User edits via `selesai install/remove`.
-// Populate with real npm/git sources when ready; empty array = no-op seed, boot auto-install still works.
-const DEFAULT_PACKAGES: string[] = [
-	// "npm:@selesai/some-tool-pack",
-	// "git:github.com:SelesaiInTech/selesai-defaults",
-];
-
-/**
- * Write a default settings.json on first run so boot auto-installs DEFAULT_PACKAGES.
- * Never clobbers an existing file (existsSync guard). Idempotent across runs.
- */
-export function seedDefaultSettings(): void {
-	const agentDir = getAgentDir();
-	const settingsPath = join(agentDir, "settings.json");
-	if (existsSync(settingsPath)) return;
-	if (!existsSync(agentDir)) mkdirSync(agentDir, { recursive: true });
-	writeFileSync(settingsPath, JSON.stringify({ packages: DEFAULT_PACKAGES }, null, 2), "utf-8");
-}
-
 /**
  * Run all migrations. Called once on startup.
  *
@@ -325,7 +306,6 @@ export function runMigrations(cwd: string): {
 	migratedAuthProviders: string[];
 	deprecationWarnings: string[];
 } {
-	seedDefaultSettings();
 	const migratedAuthProviders = migrateAuthToAuthJson();
 	migrateSessionsFromAgentRoot();
 	migrateToolsToBin();

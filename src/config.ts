@@ -3,11 +3,9 @@ import {
 	chmodSync,
 	constants,
 	copyFileSync,
-	cpSync,
 	existsSync,
 	mkdirSync,
 	readFileSync,
-	readdirSync,
 	realpathSync,
 	writeFileSync,
 } from "fs";
@@ -471,35 +469,46 @@ export function getInteractiveAssetsDir(): string {
 }
 
 /**
- * Get path to bundled default config directory (shipped with package).
- * Holds seed settings.json and models.json copied to ~/.selesai/agent on first run.
- * - For Bun binary: defaults/ next to executable
- * - For Node.js (dist/): dist/defaults/
- * - For tsx (src/): src/defaults/
+ * Resolve a bundled subdirectory shipped with the package (defaults/extensions/themes).
+ * - For Bun binary: <dir>/ next to executable
+ * - For Node.js (dist/): dist/<dir>/
+ * - For tsx (src/): src/<dir>/
  */
-export function getBundledDefaultsDir(): string {
+function getBundledSubdir(name: string): string {
 	if (isBunBinary) {
-		return join(getPackageDir(), "defaults");
+		return join(getPackageDir(), name);
 	}
 	const packageDir = getPackageDir();
 	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "defaults");
+	return join(packageDir, srcOrDist, name);
+}
+
+/**
+ * Get path to bundled default config directory (shipped with package).
+ * Holds seed settings.json and models.json copied to ~/.selesai/agent on first run.
+ */
+export function getBundledDefaultsDir(): string {
+	return getBundledSubdir("defaults");
 }
 
 /**
  * Get path to bundled built-in extensions directory (shipped with package).
- * Extensions here are seeded into ~/.selesai/agent/extensions on first run.
+ * Loaded directly via additionalExtensionPaths at boot (not copied into the
+ * user agent dir) — same hook as CLI --extension. .ts ships as-is (jiti loads it).
  * - For Bun binary: extensions/ next to executable
  * - For Node.js (dist/): dist/extensions/
  * - For tsx (src/): src/extensions/
  */
 export function getBundledExtensionsDir(): string {
-	if (isBunBinary) {
-		return join(getPackageDir(), "extensions");
-	}
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "extensions");
+	return getBundledSubdir("extensions");
+}
+
+/**
+ * Get path to bundled built-in themes directory (shipped with package).
+ * Loaded directly via additionalThemePaths at boot.
+ */
+export function getBundledThemesDir(): string {
+	return getBundledSubdir("themes");
 }
 
 /** Get path to a bundled interactive asset */
@@ -677,41 +686,13 @@ export function seedDefaultConfigFile(
 }
 
 /**
- * Seed built-in extensions from the bundled extensions dir into the user's
- * agent extensions dir. Only copies entries that do not already exist, so user
- * edits and installs are preserved. Returns the list of seeded paths.
+ * Run full first-run bootstrap for the agent dir: ensure directories and seed
+ * settings.json + models.json from bundled defaults. Idempotent — safe on every
+ * startup. Bundled own extensions/themes are loaded directly at boot via
+ * additionalExtensionPaths/additionalThemePaths (see main.ts), not copied here.
  */
-export function seedBundledExtensions(
-	agentDir: string = getAgentDir(),
-	bundledExtensionsDir: string = getBundledExtensionsDir(),
-): string[] {
-	const destDir = join(agentDir, "extensions");
-	mkdirSync(destDir, { recursive: true, mode: 0o700 });
-	if (!existsSync(bundledExtensionsDir)) return [];
-	const seeded: string[] = [];
-	for (const entry of readdirSync(bundledExtensionsDir)) {
-		const src = join(bundledExtensionsDir, entry);
-		const dest = join(destDir, entry);
-		if (existsSync(dest)) continue;
-		cpSync(src, dest, { recursive: true });
-		seeded.push(dest);
-	}
-	return seeded;
-}
-
-/**
- * Run full first-run bootstrap for the agent dir: ensure directories, seed
- * settings.json + models.json from bundled defaults, and seed built-in
- * extensions. Idempotent — safe on every startup. Returns what was seeded.
- */
-export function bootstrapAgentDir(agentDir: string = getAgentDir()): {
-	settingsSeeded: string | undefined;
-	modelsSeeded: string | undefined;
-	extensionsSeeded: string[];
-} {
+export function bootstrapAgentDir(agentDir: string = getAgentDir()): void {
 	ensureAgentDir(agentDir);
-	const settingsSeeded = seedDefaultConfigFile(join(agentDir, "settings.json"), "settings.json");
-	const modelsSeeded = seedDefaultConfigFile(join(agentDir, "models.json"), "models.json");
-	const extensionsSeeded = seedBundledExtensions(agentDir);
-	return { settingsSeeded, modelsSeeded, extensionsSeeded };
+	seedDefaultConfigFile(join(agentDir, "settings.json"), "settings.json");
+	seedDefaultConfigFile(join(agentDir, "models.json"), "models.json");
 }

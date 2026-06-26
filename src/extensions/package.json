@@ -1,0 +1,17 @@
+{
+	"name": "@selesai/bundled-extensions",
+	"version": "0.0.0",
+	"private": true,
+	"description": "Built-in extensions shipped with @selesai/code, loaded via additionalExtensionPaths at boot.",
+	"pi": {
+		"extensions": [
+			"./copy-turn.ts",
+			"./gitignore-guard.ts",
+			"./question.ts",
+			"./rtk.ts",
+			"./tps-tracker.ts",
+			"./undo.ts",
+			"./pi-powerline-footer"
+		]
+	}
+}
