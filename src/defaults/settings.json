@@ -21,7 +21,6 @@
     "git:github.com/MasuRii/pi-tool-display",
     "git:github.com/omaclaren/pi-markdown-preview",
     "git:github.com/aliou/pi-guardrails",
-    "git:github.com/DietrichGebert/ponytail",
     "git:github.com/nicobailon/pi-intercom",
     "git:github.com/nicobailon/pi-subagents",
     "git:github.com/nicobailon/pi-rewind-hook"

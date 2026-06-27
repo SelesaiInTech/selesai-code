@@ -11,7 +11,9 @@
 			"./rtk.ts",
 			"./tps-tracker.ts",
 			"./undo.ts",
-			"./pi-powerline-footer"
+			"./prototype.ts",
+			"./pi-powerline-footer",
+			"./pi-extension"
 		]
 	}
 }

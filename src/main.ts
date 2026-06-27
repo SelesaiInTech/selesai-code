@@ -15,7 +15,7 @@ import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
-import { bootstrapAgentDir, ENV_SESSION_DIR, expandTildePath, getAgentDir, getBundledExtensionsDir, getBundledThemesDir, getPackageDir, VERSION } from "./config.ts";
+import { bootstrapAgentDir, ENV_SESSION_DIR, expandTildePath, getAgentDir, getBundledExtensionsDir, getBundledSkillsDir, getBundledThemesDir, getPackageDir, VERSION } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -602,11 +602,12 @@ export async function main(args: string[], options?: MainOptions) {
 	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
 	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
-	// ponytail: bundled own extensions/themes ship in dist and load via the same
-	// additionalExtensionPaths/additionalThemePaths hook as CLI --extension.
-	// No fork of tools/index.ts — extensions register tools via pi.registerTool().
+	// ponytail: bundled own extensions/themes/skills ship in dist and load via
+	// the same additional*Paths hooks as CLI --extension/--skill. No fork of
+	// tools/index.ts — extensions register tools via pi.registerTool().
 	const bundledExtensionPaths = [getBundledExtensionsDir()];
 	const bundledThemePaths = [getBundledThemesDir()];
+	const bundledSkillPaths = [getBundledSkillsDir()];
 	const authStorage = AuthStorage.create();
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
@@ -659,7 +660,7 @@ export async function main(args: string[], options?: MainOptions) {
 				: undefined,
 			resourceLoaderOptions: {
 				additionalExtensionPaths: [...bundledExtensionPaths, ...(resolvedExtensionPaths ?? [])],
-				additionalSkillPaths: resolvedSkillPaths,
+				additionalSkillPaths: [...bundledSkillPaths, ...(resolvedSkillPaths ?? [])],
 				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
 				additionalThemePaths: [...bundledThemePaths, ...(resolvedThemePaths ?? [])],
 				noExtensions: parsed.noExtensions,

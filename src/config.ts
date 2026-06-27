@@ -511,6 +511,14 @@ export function getBundledThemesDir(): string {
 	return getBundledSubdir("themes");
 }
 
+/**
+ * Get path to bundled built-in skills directory (shipped with package).
+ * Loaded directly via additionalSkillPaths at boot.
+ */
+export function getBundledSkillsDir(): string {
+	return getBundledSubdir("skills");
+}
+
 /** Get path to a bundled interactive asset */
 export function getBundledInteractiveAssetPath(name: string): string {
 	return join(getInteractiveAssetsDir(), name);
