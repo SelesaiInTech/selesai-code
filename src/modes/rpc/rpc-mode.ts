@@ -35,6 +35,7 @@ import type {
 	RpcResponse,
 	RpcSessionState,
 	RpcSlashCommand,
+	PrototypePhase,
 } from "./rpc-types.ts";
 
 // Re-export types for consumers
@@ -44,6 +45,8 @@ export type {
 	RpcExtensionUIResponse,
 	RpcResponse,
 	RpcSessionState,
+	PrototypePhase,
+	WorkflowState,
 } from "./rpc-types.ts";
 
 /**
@@ -454,6 +457,28 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					messageCount: session.messages.length,
 					pendingMessageCount: session.pendingMessageCount,
 				};
+
+				// Attach workflow state from latest prototype-phase entry, if active.
+				// ponytail: linear scan of entries; workflow is short-lived so O(n) per get_state is fine.
+				try {
+					const entries = session.sessionManager.getEntries();
+					for (let i = entries.length - 1; i >= 0; i--) {
+						const e = entries[i] as { type: string; customType?: string; data?: unknown };
+						if (e.type === "custom" && e.customType === "prototype-phase" && e.data) {
+							const d = e.data as { phase?: string; step?: number; done?: boolean };
+							if (d && typeof d.phase === "string" && typeof d.step === "number" && !d.done) {
+								state.workflow = {
+									mode: "prototype",
+									phase: d.phase as PrototypePhase,
+									step: d.step,
+									done: false,
+								};
+							}
+							break;
+						}
+					}
+				} catch { /* corrupt entry must not crash get_state */ }
+
 				return success(id, "get_state", state);
 			}
 

@@ -3,6 +3,7 @@
  */
 
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
+import { formatAgentsForPrompt, type AgentPersona } from "./agents.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
 export interface BuildSystemPromptOptions {
@@ -22,6 +23,8 @@ export interface BuildSystemPromptOptions {
 	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
 	skills?: Skill[];
+	/** Pre-loaded subagent personas. */
+	agents?: AgentPersona[];
 }
 
 /** Build the system prompt with tools, guidelines, and context */
@@ -49,6 +52,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	const contextFiles = providedContextFiles ?? [];
 	const skills = providedSkills ?? [];
+	const agents = options.agents ?? [];
 
 	if (customPrompt) {
 		let prompt = customPrompt;
@@ -71,6 +75,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		const customPromptHasRead = !selectedTools || selectedTools.includes("read");
 		if (customPromptHasRead && skills.length > 0) {
 			prompt += formatSkillsForPrompt(skills);
+		}
+		if (customPromptHasRead && agents.length > 0) {
+			prompt += formatAgentsForPrompt(agents);
 		}
 
 		// Add date and working directory last
@@ -163,6 +170,9 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 	// Append skills section (only if read tool is available)
 	if (hasRead && skills.length > 0) {
 		prompt += formatSkillsForPrompt(skills);
+	}
+	if (hasRead && agents.length > 0) {
+		prompt += formatAgentsForPrompt(agents);
 	}
 
 	// Add date and working directory last

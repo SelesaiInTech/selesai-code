@@ -1,5 +1,5 @@
 export interface ResourceCollision {
-	resourceType: "extension" | "skill" | "prompt" | "theme";
+	resourceType: "extension" | "skill" | "agent" | "prompt" | "theme";
 	name: string; // skill name, command/tool/flag name, prompt name, theme name
 	winnerPath: string;
 	loserPath: string;

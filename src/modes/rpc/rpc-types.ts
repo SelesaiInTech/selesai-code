@@ -101,6 +101,19 @@ export interface RpcSessionState {
 	autoCompactionEnabled: boolean;
 	messageCount: number;
 	pendingMessageCount: number;
+	workflow?: WorkflowState;
+}
+
+// ponytail: one additive field for Electron/headless mode signaling. Add a 2nd when a 2nd workflow ships.
+export type PrototypePhase =
+	| "grilling" | "research" | "plan"
+	| "reuse" | "handoff" | "loop" | "audit" | "complete";
+
+export interface WorkflowState {
+	mode: "prototype";
+	phase: PrototypePhase;
+	step: number; // 1..8
+	done: boolean;
 }
 
 // ============================================================================

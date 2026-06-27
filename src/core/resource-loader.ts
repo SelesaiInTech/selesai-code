@@ -20,6 +20,8 @@ import { DefaultPackageManager, type PathMetadata, type ResolvedResource } from 
 import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
 import { SettingsManager } from "./settings-manager.ts";
+import type { AgentPersona } from "./agents.ts";
+import { loadAgents } from "./agents.ts";
 import type { Skill } from "./skills.ts";
 import { loadSkills } from "./skills.ts";
 import { createSourceInfo, type SourceInfo } from "./source-info.ts";
@@ -39,6 +41,7 @@ export interface ResourceLoader {
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
+	getAgents(): { agents: AgentPersona[]; diagnostics: ResourceDiagnostic[] };
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
 	getSystemPrompt(): string | undefined;
 	getAppendSystemPrompt(): string[];
@@ -128,11 +131,13 @@ export interface DefaultResourceLoaderOptions {
 	eventBus?: EventBus;
 	additionalExtensionPaths?: string[];
 	additionalSkillPaths?: string[];
+	additionalAgentPaths?: string[];
 	additionalPromptTemplatePaths?: string[];
 	additionalThemePaths?: string[];
 	extensionFactories?: ExtensionFactory[];
 	noExtensions?: boolean;
 	noSkills?: boolean;
+	noAgents?: boolean;
 	noPromptTemplates?: boolean;
 	noThemes?: boolean;
 	noContextFiles?: boolean;
@@ -151,6 +156,10 @@ export interface DefaultResourceLoaderOptions {
 		themes: Theme[];
 		diagnostics: ResourceDiagnostic[];
 	};
+	agentsOverride?: (base: { agents: AgentPersona[]; diagnostics: ResourceDiagnostic[] }) => {
+		agents: AgentPersona[];
+		diagnostics: ResourceDiagnostic[];
+	};
 	agentsFilesOverride?: (base: { agentsFiles: Array<{ path: string; content: string }> }) => {
 		agentsFiles: Array<{ path: string; content: string }>;
 	};
@@ -166,11 +175,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private packageManager: DefaultPackageManager;
 	private additionalExtensionPaths: string[];
 	private additionalSkillPaths: string[];
+	private additionalAgentPaths: string[];
 	private additionalPromptTemplatePaths: string[];
 	private additionalThemePaths: string[];
 	private extensionFactories: ExtensionFactory[];
 	private noExtensions: boolean;
 	private noSkills: boolean;
+	private noAgents: boolean;
 	private noPromptTemplates: boolean;
 	private noThemes: boolean;
 	private noContextFiles: boolean;
@@ -179,6 +190,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	private skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
+		diagnostics: ResourceDiagnostic[];
+	};
+	private agentsOverride?: (base: { agents: AgentPersona[]; diagnostics: ResourceDiagnostic[] }) => {
+		agents: AgentPersona[];
 		diagnostics: ResourceDiagnostic[];
 	};
 	private promptsOverride?: (base: { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] }) => {
@@ -198,6 +213,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private extensionsResult: LoadExtensionsResult;
 	private skills: Skill[];
 	private skillDiagnostics: ResourceDiagnostic[];
+	private agents: AgentPersona[];
+	private agentDiagnostics: ResourceDiagnostic[];
 	private prompts: PromptTemplate[];
 	private promptDiagnostics: ResourceDiagnostic[];
 	private themes: Theme[];
@@ -225,11 +242,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 		});
 		this.additionalExtensionPaths = options.additionalExtensionPaths ?? [];
 		this.additionalSkillPaths = options.additionalSkillPaths ?? [];
+		this.additionalAgentPaths = options.additionalAgentPaths ?? [];
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
 		this.extensionFactories = options.extensionFactories ?? [];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
+		this.noAgents = options.noAgents ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
 		this.noThemes = options.noThemes ?? false;
 		this.noContextFiles = options.noContextFiles ?? false;
@@ -237,6 +256,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.appendSystemPromptSource = options.appendSystemPrompt;
 		this.extensionsOverride = options.extensionsOverride;
 		this.skillsOverride = options.skillsOverride;
+		this.agentsOverride = options.agentsOverride;
 		this.promptsOverride = options.promptsOverride;
 		this.themesOverride = options.themesOverride;
 		this.agentsFilesOverride = options.agentsFilesOverride;
@@ -246,6 +266,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.extensionsResult = { extensions: [], errors: [], runtime: createExtensionRuntime() };
 		this.skills = [];
 		this.skillDiagnostics = [];
+		this.agents = [];
+		this.agentDiagnostics = [];
 		this.prompts = [];
 		this.promptDiagnostics = [];
 		this.themes = [];
@@ -275,6 +297,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] } {
 		return { themes: this.themes, diagnostics: this.themeDiagnostics };
+	}
+
+	getAgents(): { agents: AgentPersona[]; diagnostics: ResourceDiagnostic[] } {
+		return { agents: this.agents, diagnostics: this.agentDiagnostics };
 	}
 
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> } {
@@ -457,6 +483,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const resolved = this.resolveResourcePath(p);
 			if (!existsSync(resolved) && !this.themeDiagnostics.some((d) => d.path === resolved)) {
 				this.themeDiagnostics.push({ type: "error", message: "Theme path does not exist", path: resolved });
+			}
+		}
+
+		const agentPaths = this.mergePaths([], this.additionalAgentPaths);
+
+		this.updateAgentsFromPaths(agentPaths, metadataByPath);
+		for (const p of this.additionalAgentPaths) {
+			if (isLocalPath(p)) {
+				const resolved = this.resolveResourcePath(p);
+				if (!existsSync(resolved) && !this.agentDiagnostics.some((d) => d.path === resolved)) {
+					this.agentDiagnostics.push({ type: "error", message: "Agent path does not exist", path: resolved });
+				}
 			}
 		}
 
@@ -679,6 +717,29 @@ export class DefaultResourceLoader implements ResourceLoader {
 			return theme;
 		});
 		this.themeDiagnostics = resolvedThemes.diagnostics;
+	}
+
+	private updateAgentsFromPaths(agentPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
+		let agentsResult: { agents: AgentPersona[]; diagnostics: ResourceDiagnostic[] };
+		if (this.noAgents && agentPaths.length === 0) {
+			agentsResult = { agents: [], diagnostics: [] };
+		} else {
+			agentsResult = loadAgents({
+				cwd: this.cwd,
+				agentDir: this.agentDir,
+				agentPaths,
+				includeDefaults: false,
+			});
+		}
+		const resolvedAgents = this.agentsOverride ? this.agentsOverride(agentsResult) : agentsResult;
+		this.agents = resolvedAgents.agents.map((agent) => ({
+			...agent,
+			sourceInfo:
+				this.findSourceInfoForPath(agent.filePath, undefined, metadataByPath) ??
+				agent.sourceInfo ??
+				this.getDefaultSourceInfoForPath(agent.filePath),
+		}));
+		this.agentDiagnostics = resolvedAgents.diagnostics;
 	}
 
 	private applyExtensionSourceInfo(extensions: Extension[], metadataByPath: Map<string, PathMetadata>): void {

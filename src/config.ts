@@ -519,6 +519,14 @@ export function getBundledSkillsDir(): string {
 	return getBundledSubdir("skills");
 }
 
+/**
+ * Get path to bundled built-in agent personas directory (shipped with package).
+ * Loaded directly via additionalAgentPaths at boot.
+ */
+export function getBundledAgentsDir(): string {
+	return getBundledSubdir("agents");
+}
+
 /** Get path to a bundled interactive asset */
 export function getBundledInteractiveAssetPath(name: string): string {
 	return join(getInteractiveAssetsDir(), name);

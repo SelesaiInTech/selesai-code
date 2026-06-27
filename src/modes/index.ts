@@ -12,4 +12,6 @@ export type {
 	RpcExtensionUIResponse,
 	RpcResponse,
 	RpcSessionState,
+	PrototypePhase,
+	WorkflowState,
 } from "./rpc/rpc-types.ts";

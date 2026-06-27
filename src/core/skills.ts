@@ -89,7 +89,7 @@ export interface LoadSkillsResult {
  * Validate skill name per Agent Skills spec.
  * Returns array of validation error messages (empty if valid).
  */
-function validateName(name: string): string[] {
+export function validateName(name: string): string[] {
 	const errors: string[] = [];
 
 	if (name.length > MAX_NAME_LENGTH) {
@@ -114,7 +114,7 @@ function validateName(name: string): string[] {
 /**
  * Validate description per Agent Skills spec.
  */
-function validateDescription(description: string | undefined): string[] {
+export function validateDescription(description: string | undefined): string[] {
 	const errors: string[] = [];
 
 	if (!description || description.trim() === "") {
