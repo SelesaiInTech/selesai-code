@@ -54,6 +54,19 @@ let phase: Phase = "grilling";
 let userPrompt = "";
 // ponytail: 1 workflow = 1 folder. All workflow-generated docs go here for later review.
 let artifactDir = "";
+// ponytail: auto-advance arm. Re-armed on every phase change so the tool_result
+// hook can fire once per phase when the expected artifact lands.
+let autoArmed = false;
+// ponytail: reentrancy guard. tool_result can fire while an advance is still
+// resolving across async boundaries; a second write in the same turn must not
+// start a second advancePhase that double-moves the phase forward.
+let advancing = false;
+
+const DEBUG = false;
+function dbg(tag: string, data: Record<string, unknown>): void {
+  if (!DEBUG) return;
+  console.log(`[workflow] ${tag}`, data);
+}
 
 function slugify(s: string): string {
   const slug = s
@@ -76,6 +89,7 @@ function artifactPathFor(goal: string): string {
 
 function setPhase(pi: ExtensionAPI, p: Phase): void {
   phase = p;
+  autoArmed = true;
   // ponytail: persist userPrompt+artifactDir in every entry so session_start resume restores them.
   pi.appendEntry(ENTRY_TYPE, {
     mode: "prototype",
@@ -107,6 +121,7 @@ const PHASE_ARTIFACT: Partial<Record<Phase, string>> = {
 	plan: "plan.md",
 	reuse: "reuse.md",
 	handoff: "handoff.md",
+	loop: "loop-complete.md",
 	audit: "review.md",
 };
 
@@ -127,24 +142,130 @@ function nextPhase(p: Phase): Phase | null {
   return PHASE_ORDER[i + 1];
 }
 
+type AdvanceOutcome =
+  | { status: "advanced"; phase: Phase; prompt: string; skipped?: Phase }
+  | { status: "blocked"; phase: Phase; missing: string }
+  | { status: "terminal"; phase: "audit"; missing?: string }
+  | { status: "idle"; phase: Phase };
+
+// ponytail: shared phase-transition logic. Used by next_step (manual) and the
+// tool_result auto-advance hook (so the workflow self-drives once an artifact
+// lands instead of stalling for the model to remember to call next_step).
+async function advancePhase(pi: ExtensionAPI, ctx: ExtensionContext): Promise<AdvanceOutcome> {
+  if (!active) return { status: "idle", phase };
+  const expected = PHASE_ARTIFACT[phase];
+  if (expected && !(await phaseArtifactExists(pi, phase))) {
+    return { status: "blocked", phase, missing: expected };
+  }
+  const next = nextPhase(phase);
+  if (!next) {
+    // audit terminal: need review.md + audit.md before closing.
+    const reviewExists = await phaseArtifactExists(pi, "audit");
+    let auditExists = true;
+    try {
+      auditExists = (await pi.exec("test", ["-f", `${artifactDir}/audit.md`])).code === 0;
+    } catch {
+      auditExists = false;
+    }
+    if (!reviewExists || !auditExists) {
+      return { status: "terminal", phase: "audit", missing: !reviewExists ? "review.md" : "audit.md" };
+    }
+    return { status: "terminal", phase: "audit" };
+  }
+  // ponytail: empty-project cutoff — skip reuse if no git commits.
+  if (next === "reuse" && (await isEmptyProject(pi))) {
+    setPhase(pi, "handoff");
+    updateFooter(pi, ctx);
+    return { status: "advanced", phase: "handoff", prompt: phasePrompt("handoff"), skipped: "reuse" };
+  }
+  setPhase(pi, next);
+  updateFooter(pi, ctx);
+  return { status: "advanced", phase: next, prompt: phasePrompt(next) };
+}
+
+// ponytail: close the workflow. Returns a result tuple for both the
+// end_workflow tool and the auto-advance terminal path.
+async function endWorkflow(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+): Promise<{ ok: boolean; text: string; closed?: boolean; artifactDir?: string; phase?: Phase }> {
+  if (!active) {
+    return { ok: false, text: "No active prototype workflow to end." };
+  }
+  if (phase !== "audit") {
+    return {
+      ok: false,
+      text: `Cannot end workflow from phase ${phase}. end_workflow is only allowed from audit.`,
+      phase,
+    };
+  }
+  const reviewExists = await phaseArtifactExists(pi, "audit");
+  let auditExists = true;
+  try {
+    auditExists = (await pi.exec("test", ["-f", `${artifactDir}/audit.md`])).code === 0;
+  } catch {
+    auditExists = false;
+  }
+  if (!reviewExists || !auditExists) {
+    return {
+      ok: false,
+      text: `Audit step is not complete. Write ${artifactDir}/review.md and ${artifactDir}/audit.md first.`,
+      phase,
+    };
+  }
+  active = false;
+  pi.appendEntry(ENTRY_TYPE, {
+    mode: "prototype",
+    phase,
+    step: PHASE_STEP[phase],
+    done: true,
+    userPrompt,
+    artifactDir,
+  });
+  updateFooter(pi, ctx);
+  ctx.ui.notify(`Prototype workflow complete. Artifacts: ${artifactDir}`, "info");
+  return {
+    ok: true,
+    closed: true,
+    phase,
+    artifactDir,
+    text: `Workflow ended and closed. It can no longer be used. Artifacts saved at ${artifactDir}.`,
+  };
+}
+
 function phasePrompt(p: Phase): string {
   switch (p) {
     case "grilling":
-      return `Interview the user about this request: ${userPrompt}\n\nAsk clarifying questions one at a time until all requirements are clear. Record a summary of the agreed requirements at ${artifactDir}/requirements.md. When grilling is complete, call the next_step tool to advance to research.`;
+      return `Interview the user about this request: ${userPrompt}\n\nAsk clarifying questions one at a time until all requirements are clear. Record a summary of the agreed requirements at ${artifactDir}/requirements.md. The workflow advances automatically once requirements.md exists.`;
     case "research":
-      return `Research the requirements gathered during grilling. Explore the codebase and any relevant resources. Write your findings to ${artifactDir}/research.md. When research is complete, call the next_step tool.`;
+      return `Research the requirements gathered during grilling. Explore the codebase and any relevant resources. Write your findings to ${artifactDir}/research.md. The workflow advances automatically once research.md exists.`;
     case "plan":
-      return `Create a plan.md file for the prototype based on the research. Write it to ${artifactDir}/plan.md. Use the planger skill if available (it is listed in the system prompt). When plan.md is written, call the next_step tool.`;
+      return `Create a plan.md file for the prototype based on the research. Write it to ${artifactDir}/plan.md. Use the planger skill.`;
     case "reuse":
-      return `Ask the user: "Are there existing files or repositories relevant to this request? List paths or say none." Wait for their response, then explore the codebase for reusable components and knowledge. Write a summary of reusable assets to ${artifactDir}/reuse.md. When done, call the next_step tool.`;
+      return `Ask the user: "Are there existing files or repositories relevant to this request? List paths or say none." Wait for their response, then explore the codebase for reusable components and knowledge. Write a summary of reusable assets to ${artifactDir}/reuse.md. The workflow advances automatically once reuse.md exists.`;
     case "handoff":
-      return `Generate a handoff.md file for a subagent to pick up. Write it to ${artifactDir}/handoff.md. Use the handoff skill if available (it is listed in the system prompt). When handoff.md is written, call the next_step tool.`;
+      return `Generate a handoff.md file for a subagent to pick up. Write it to ${artifactDir}/handoff.md. Use the handoff skill if available (it is listed in the system prompt). The workflow advances automatically once handoff.md exists.`;
     case "loop":
-      return `You are the orchestrator. Read ${artifactDir}/plan.md and ${artifactDir}/handoff.md. For each task in plan.md, run a agent loop using subagent chain: builder -> commentator. Use the subagent tool in chain mode with agents: builder, commentator. If commentator has feedback, use worker to fix, then retry the loop until commentator result has no issue. Honor the order in plan.md. Actual code changes go in the workspace, not the artifacts folder. When the loop is complete, call the next_step tool.`;
+      return `Read ${artifactDir}/plan.md and ${artifactDir}/handoff.md. Delegate the whole plan via subagents — don't do the work yourself.\n\n1. Dispatch ONE builder subagent (task tool, subagent_type "general") with the full plan + handoff as context: "Implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}. Return a summary."\n2. Dispatch ONE commentator subagent (same tool) to review the builder's diff against plan.md: "List blocking issues or say 'no issues'."\n3. If blocking issues, dispatch ONE builder subagent with the issues to fix, then re-run the commentator. Repeat until no issues.\n4. Write ${artifactDir}/loop-complete.md with a one-line summary of the finished plan.\n\nThe workflow advances to audit automatically once loop-complete.md exists. Code changes in workspace only, never in ${artifactDir}.`;
     case "audit":
-      return `Review all changes from this workflow using ponytail-review (write to ${artifactDir}/review.md), then run a whole-repo over-engineering audit using ponytail-audit (write to ${artifactDir}/audit.md). When both are complete, call the end_workflow tool to close the workflow.`;
+      return `Review all changes from this workflow using ponytail-review (write to ${artifactDir}/review.md), then run a whole-repo over-engineering audit using ponytail-audit (write to ${artifactDir}/audit.md). The workflow closes automatically once both review.md and audit.md exist.`;
     default:
       return "";
+  }
+}
+
+// ponytail: continuation abstraction. The agent is mid-turn (streaming) when
+// the tool_result hook fires, so a bare sendUserMessage() throws
+// "Agent is already processing. Specify streamingBehavior...". deliverAs:"followUp"
+// is the framework-native continuation: it queues the next-phase prompt as a
+// follow-up turn that fires automatically once the current turn ends. In idle
+// state (e.g. session resume) it sends a direct turn.
+function continueWorkflow(pi: ExtensionAPI, ctx: ExtensionContext, prompt: string): void {
+  dbg("continuing agent", { phase, prompt: prompt.slice(0, 60) });
+  if (ctx.isIdle()) {
+    pi.sendUserMessage(prompt);
+  } else {
+    pi.sendUserMessage(prompt, { deliverAs: "followUp" });
   }
 }
 
@@ -243,62 +364,55 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
           details: { active: false },
         };
       }
-      // ponytail: gate — don't advance until the current step's artifact exists.
-      const expected = PHASE_ARTIFACT[phase];
-      if (expected && !(await phaseArtifactExists(pi, phase))) {
+      const out = await advancePhase(pi, ctx);
+      if (out.status === "idle") {
+        return {
+          content: [{ type: "text", text: "No active prototype workflow. Call start_workflow first." }],
+          details: { active: false },
+        };
+      }
+      if (out.status === "blocked") {
         return {
           content: [
             {
               type: "text",
-              text: `Current step (${phase}) is not complete. Write ${artifactDir}/${expected} first, then call next_step again.`,
+              text: `Current step (${out.phase}) is not complete. Write ${artifactDir}/${out.missing} first, then call next_step again.`,
             },
           ],
-          details: { phase, blocked: expected },
+          details: { phase: out.phase, blocked: out.missing },
         };
       }
-      const next = nextPhase(phase);
-      if (!next) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Already at the final phase (${phase}). Call end_workflow to close the workflow.`,
-            },
-          ],
-          details: { phase },
-        };
-      }
-      // ponytail: empty-project cutoff — skip reuse if no git commits.
-      if (next === "reuse") {
-        if (await isEmptyProject(pi)) {
-          setPhase(pi, "handoff");
-          updateFooter(pi, ctx);
+      if (out.status === "terminal") {
+        if (out.missing) {
           return {
             content: [
               {
                 type: "text",
-                text: `Empty repo — reuse phase skipped. ${phasePrompt("handoff")}`,
+                text: `Audit step is not complete. Write ${artifactDir}/${out.missing} first, then call end_workflow.`,
               },
             ],
-            details: { phase: "handoff", skipped: "reuse" },
+            details: { phase: "audit", blocked: out.missing },
           };
         }
+        return {
+          content: [
+            { type: "text", text: `Already at the final phase (audit). Call end_workflow to close the workflow.` },
+          ],
+          details: { phase: "audit" },
+        };
       }
-      setPhase(pi, next);
-      updateFooter(pi, ctx);
+      // advanced
+      const label = out.skipped
+        ? `Phase advanced to ${out.phase} (skipped ${out.skipped}). ${out.prompt}`
+        : `Phase advanced to ${out.phase}. ${out.prompt}`;
       return {
-        content: [
-          {
-            type: "text",
-            text: `Phase advanced to ${next}. ${phasePrompt(next)}`,
-          },
-        ],
-        details: { phase: next },
+        content: [{ type: "text", text: label }],
+        details: { phase: out.phase, skipped: out.skipped },
       };
     },
     renderResult(result, _options, theme) {
       const d = result.details as { phase?: string; skipped?: string; active?: boolean; blocked?: string };
-      if (!d.active) {
+      if (d.active === false) {
         return new Text(theme.fg("dim", "○ no active workflow"), 0, 0);
       }
       if (d.blocked) {
@@ -324,67 +438,16 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
     ],
     parameters: Type.Object({}),
     async execute(_id, _params, _signal, _onUpdate, ctx) {
-      if (!active) {
+      const r = await endWorkflow(pi, ctx);
+      if (!r.ok) {
         return {
-          content: [
-            { type: "text", text: "No active prototype workflow to end." },
-          ],
-          details: { active: false },
+          content: [{ type: "text", text: r.text }],
+          details: r.phase ? { phase: r.phase, blocked: "audit artifacts" } : { active: false },
         };
       }
-      // ponytail: gate — only allow ending from audit phase with review.md + audit.md present.
-      // Prevents the model from prematurely closing the workflow and leaving next_step orphaned.
-      if (phase !== "audit") {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Cannot end workflow from phase ${phase}. end_workflow is only allowed from audit. Call next_step to advance instead.`,
-            },
-          ],
-          details: { phase, blocked: "not audit" },
-        };
-      }
-      const reviewOk = await phaseArtifactExists(pi, "audit");
-      let auditOk = true;
-      try {
-        auditOk = (await pi.exec("test", ["-f", `${artifactDir}/audit.md`])).code === 0;
-      } catch {
-        auditOk = false;
-      }
-      if (!reviewOk || !auditOk) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Audit step is not complete. Write ${artifactDir}/review.md and ${artifactDir}/audit.md first, then call end_workflow.`,
-            },
-          ],
-          details: { phase, blocked: "audit artifacts" },
-        };
-      }
-      active = false;
-      pi.appendEntry(ENTRY_TYPE, {
-        mode: "prototype",
-        phase,
-        step: PHASE_STEP[phase],
-        done: true,
-        userPrompt,
-        artifactDir,
-      });
-      updateFooter(pi, ctx);
-      ctx.ui.notify(
-        `Prototype workflow complete. Artifacts: ${artifactDir}`,
-        "info",
-      );
       return {
-        content: [
-          {
-            type: "text",
-            text: `Workflow ended and closed. It can no longer be used. Artifacts saved at ${artifactDir}.`,
-          },
-        ],
-        details: { closed: true, phase, artifactDir },
+        content: [{ type: "text", text: r.text }],
+        details: { closed: true, phase: r.phase, artifactDir: r.artifactDir },
         terminate: true,
       };
     },
@@ -402,7 +465,7 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
   } satisfies ToolDefinition);
 
   // session_start: restore state from persisted entries.
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (_event: any, ctx: ExtensionContext) => {
     const entries = ctx.sessionManager.getEntries();
     for (let i = entries.length - 1; i >= 0; i--) {
       const e = entries[i] as { type: string; customType?: string; data?: any };
@@ -412,12 +475,59 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
         } else {
           active = true;
           phase = e.data.phase as Phase;
+          autoArmed = true;
           userPrompt = e.data.userPrompt ?? "";
           artifactDir = e.data.artifactDir ?? "";
         }
         updateFooter(pi, ctx);
         break;
       }
+    }
+  });
+
+  // ponytail: auto-advance. When a write/edit/bash tool finishes, check whether
+  // the current phase's expected artifact has landed. If so, advance the phase
+  // and queue the next phase prompt as a follow-up turn so the workflow keeps
+  // moving instead of stalling for the model to remember to call next_step.
+  // The gate in advancePhase prevents skipping phases even if the model also
+  // calls next_step manually. A bare sendUserMessage() cannot be used here:
+  // the agent is mid-turn (streaming) while tool_result fires, so prompt()
+  // would throw "Agent is already processing" without deliverAs:"followUp".
+  pi.on("tool_result", async (event: any, ctx: ExtensionContext) => {
+    if (advancing) return;
+    if (!active || !autoArmed) return;
+    if (event.toolName !== "write" && event.toolName !== "edit" && event.toolName !== "bash") return;
+    const expected = PHASE_ARTIFACT[phase];
+    if (!expected) return;
+    // Acquire the lock synchronously before any await so a concurrent
+    // tool_result in the same turn sees `advancing` true and bails out.
+    // Without this, both would pass the guard then each await their own
+    // phaseArtifactExists and both advance the phase.
+    advancing = true;
+    try {
+      if (!(await phaseArtifactExists(pi, phase))) return;
+      autoArmed = false;
+      dbg("artifact detected", { phase, artifactDir, expected });
+      const from = phase;
+      const out = await advancePhase(pi, ctx);
+      if (out.status === "advanced") {
+        dbg("advancing", { from, to: out.phase });
+        continueWorkflow(pi, ctx, out.prompt);
+      } else if (out.status === "terminal") {
+        if (out.missing) {
+          continueWorkflow(
+            pi,
+            ctx,
+            `Audit phase still needs ${artifactDir}/${out.missing}. Write it, then the workflow closes automatically.`,
+          );
+        } else {
+          // Both audit artifacts present — close the workflow directly.
+          await endWorkflow(pi, ctx);
+        }
+      }
+      // blocked / idle: nothing to inject.
+    } finally {
+      advancing = false;
     }
   });
 
@@ -449,7 +559,7 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
           : undefined;
         if (choice === undefined) return; // cancelled or no UI
         if (choice.startsWith("Continue")) {
-          pi.sendUserMessage(phasePrompt(phase));
+          continueWorkflow(pi, ctx, phasePrompt(phase));
           return;
         }
         // Close + start new: require a goal before touching state.
