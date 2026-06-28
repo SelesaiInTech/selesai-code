@@ -116,24 +116,27 @@ function updateFooter(pi: ExtensionAPI, ctx: ExtensionContext): void {
 // ponytail: each step has an expected artifact file that must exist before advancing.
 // Without this gate the model can call next_step repeatedly without doing any work.
 const PHASE_ARTIFACT: Partial<Record<Phase, string>> = {
-	grilling: "requirements.md",
-	research: "research.md",
-	plan: "plan.md",
-	reuse: "reuse.md",
-	handoff: "handoff.md",
-	loop: "loop-complete.md",
-	audit: "review.md",
+  grilling: "requirements.md",
+  research: "research.md",
+  plan: "plan.md",
+  reuse: "reuse.md",
+  handoff: "handoff.md",
+  loop: "loop-complete.md",
+  audit: "review.md",
 };
 
-async function phaseArtifactExists(pi: ExtensionAPI, p: Phase): Promise<boolean> {
-	const file = PHASE_ARTIFACT[p];
-	if (!file) return true;
-	try {
-		const result = await pi.exec("test", ["-f", `${artifactDir}/${file}`]);
-		return result.code === 0;
-	} catch {
-		return false;
-	}
+async function phaseArtifactExists(
+  pi: ExtensionAPI,
+  p: Phase,
+): Promise<boolean> {
+  const file = PHASE_ARTIFACT[p];
+  if (!file) return true;
+  try {
+    const result = await pi.exec("test", ["-f", `${artifactDir}/${file}`]);
+    return result.code === 0;
+  } catch {
+    return false;
+  }
 }
 
 function nextPhase(p: Phase): Phase | null {
@@ -151,7 +154,10 @@ type AdvanceOutcome =
 // ponytail: shared phase-transition logic. Used by next_step (manual) and the
 // tool_result auto-advance hook (so the workflow self-drives once an artifact
 // lands instead of stalling for the model to remember to call next_step).
-async function advancePhase(pi: ExtensionAPI, ctx: ExtensionContext): Promise<AdvanceOutcome> {
+async function advancePhase(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+): Promise<AdvanceOutcome> {
   if (!active) return { status: "idle", phase };
   const expected = PHASE_ARTIFACT[phase];
   if (expected && !(await phaseArtifactExists(pi, phase))) {
@@ -163,12 +169,17 @@ async function advancePhase(pi: ExtensionAPI, ctx: ExtensionContext): Promise<Ad
     const reviewExists = await phaseArtifactExists(pi, "audit");
     let auditExists = true;
     try {
-      auditExists = (await pi.exec("test", ["-f", `${artifactDir}/audit.md`])).code === 0;
+      auditExists =
+        (await pi.exec("test", ["-f", `${artifactDir}/audit.md`])).code === 0;
     } catch {
       auditExists = false;
     }
     if (!reviewExists || !auditExists) {
-      return { status: "terminal", phase: "audit", missing: !reviewExists ? "review.md" : "audit.md" };
+      return {
+        status: "terminal",
+        phase: "audit",
+        missing: !reviewExists ? "review.md" : "audit.md",
+      };
     }
     return { status: "terminal", phase: "audit" };
   }
@@ -176,7 +187,12 @@ async function advancePhase(pi: ExtensionAPI, ctx: ExtensionContext): Promise<Ad
   if (next === "reuse" && (await isEmptyProject(pi))) {
     setPhase(pi, "handoff");
     updateFooter(pi, ctx);
-    return { status: "advanced", phase: "handoff", prompt: phasePrompt("handoff"), skipped: "reuse" };
+    return {
+      status: "advanced",
+      phase: "handoff",
+      prompt: phasePrompt("handoff"),
+      skipped: "reuse",
+    };
   }
   setPhase(pi, next);
   updateFooter(pi, ctx);
@@ -188,7 +204,13 @@ async function advancePhase(pi: ExtensionAPI, ctx: ExtensionContext): Promise<Ad
 async function endWorkflow(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
-): Promise<{ ok: boolean; text: string; closed?: boolean; artifactDir?: string; phase?: Phase }> {
+): Promise<{
+  ok: boolean;
+  text: string;
+  closed?: boolean;
+  artifactDir?: string;
+  phase?: Phase;
+}> {
   if (!active) {
     return { ok: false, text: "No active prototype workflow to end." };
   }
@@ -202,7 +224,8 @@ async function endWorkflow(
   const reviewExists = await phaseArtifactExists(pi, "audit");
   let auditExists = true;
   try {
-    auditExists = (await pi.exec("test", ["-f", `${artifactDir}/audit.md`])).code === 0;
+    auditExists =
+      (await pi.exec("test", ["-f", `${artifactDir}/audit.md`])).code === 0;
   } catch {
     auditExists = false;
   }
@@ -223,7 +246,10 @@ async function endWorkflow(
     artifactDir,
   });
   updateFooter(pi, ctx);
-  ctx.ui.notify(`Prototype workflow complete. Artifacts: ${artifactDir}`, "info");
+  ctx.ui.notify(
+    `Prototype workflow complete. Artifacts: ${artifactDir}`,
+    "info",
+  );
   return {
     ok: true,
     closed: true,
@@ -233,22 +259,84 @@ async function endWorkflow(
   };
 }
 
+// ponytail: phase prompts are purpose-driven, context-rich, and non-rigid.
+// Each one states the phase's true goal + the accumulated context available,
+// then leaves the AI free to craft its own approach (and its own sub-agent
+// prompts) instead of following a fixed template. Research is optional; the
+// agent decides whether to invoke it and signals a skip via research.md.
 function phasePrompt(p: Phase): string {
   switch (p) {
     case "grilling":
-      return `Interview the user about this request: ${userPrompt}\n\nAsk clarifying questions one at a time until all requirements are clear. Record a summary of the agreed requirements at ${artifactDir}/requirements.md. The workflow advances automatically once requirements.md exists.`;
+      return `You are entering the GRILLING phase of a prototype workflow.
+
+User's initial request:
+${userPrompt}
+
+The purpose of this phase is NOT to start solving — it is to INTERVIEW the user until the requirements are unambiguous. You are the interviewer: drive the conversation. Ask focused clarifying questions ONE at a time, and adapt each question to what the user reveals. Dig into scope, constraints, success criteria, edge cases, and anything ambiguous. Use your own judgement to decide what still needs clarifying — do not follow a fixed checklist. Provide rich context in your questions so the user understands why each matters.
+
+When you and the user have reached shared understanding, write a concise requirements summary to ${artifactDir}/requirements.md. The workflow advances automatically once requirements.md exists.`;
     case "research":
-      return `Research the requirements gathered during grilling. Explore the codebase and any relevant resources. Write your findings to ${artifactDir}/research.md. The workflow advances automatically once research.md exists.`;
+      return `You are entering the RESEARCH phase. This phase is OPTIONAL.
+
+Research is only needed when the task depends on external knowledge that changes fast: libraries, frameworks, languages/SDKs, APIs, or alternative approaches you are not already confident about. Do NOT research things you already know well enough, and do not waste tokens on unnecessary lookups.
+
+First decide: is research needed here?
+- If YES: use web search tools (webfetch / web_search_exa) to gather current, authoritative information on the relevant libraries/frameworks/approaches, then synthesize actionable findings (versions, APIs, pitfalls, recommended approaches).
+- If NO: skip real research.
+
+Either way, write ${artifactDir}/research.md. If you skipped, state briefly WHY research was unnecessary so downstream phases know. If you researched, record findings the plan can rely on.
+
+The workflow advances automatically once research.md exists.`;
     case "plan":
-      return `Create a plan.md file for the prototype based on the research. Write it to ${artifactDir}/plan.md. Use the planger skill.`;
+      return `You are entering the PLAN phase.
+
+This plan is for the ACTUAL prototype/output the user wants — not a plan for research. Based on ${artifactDir}/requirements.md (and ${artifactDir}/research.md if it contains real research), produce the concrete build plan: what to build, how, in what order, which components, and what the finished prototype looks like.
+
+If research was skipped, that is fine — proceed directly. You already understand the user's intent from grilling. Write the plan to ${artifactDir}/plan.md. Use the planger skill.
+
+The workflow advances automatically once plan.md exists.`;
     case "reuse":
-      return `Ask the user: "Are there existing files or repositories relevant to this request? List paths or say none." Wait for their response, then explore the codebase for reusable components and knowledge. Write a summary of reusable assets to ${artifactDir}/reuse.md. The workflow advances automatically once reuse.md exists.`;
+      return `You are entering the REUSE phase.
+
+Purpose: explore the existing codebase for reusable components, patterns, and knowledge this prototype should build on, so you do not reinvent what already exists.
+
+Spawn an EXPLORER SUB-AGENT to do the exploration. Use the task tool with subagent_type "explore". Do NOT send a generic exploration prompt — CRAFT a specific prompt tailored to THIS task: from ${artifactDir}/requirements.md and ${artifactDir}/plan.md, tell the explorer exactly which areas of the codebase, which patterns, and which dependencies are relevant. For example, if the user wants Tailwind, have the explorer determine how Tailwind is already set up and used here and what conventions to follow.
+
+When the explorer returns, synthesize its findings into ${artifactDir}/reuse.md: what is reusable, where, and how the prototype should leverage it.
+
+The workflow advances automatically once reuse.md exists.`;
     case "handoff":
-      return `Generate a handoff.md file for a subagent to pick up. Write it to ${artifactDir}/handoff.md. Use the handoff skill if available (it is listed in the system prompt). The workflow advances automatically once handoff.md exists.`;
+      return `You are entering the HANDOFF phase.
+
+Purpose: compile everything you have learned so far into a self-contained handoff document so the sub-agents in the loop phase can understand the full project context without re-grilling.
+
+Draw from ALL prior phases:
+- ${artifactDir}/requirements.md (grilling outcomes)
+- ${artifactDir}/research.md (research, or the skip note)
+- ${artifactDir}/plan.md (the build plan)
+- ${artifactDir}/reuse.md (codebase exploration findings)
+
+Write a coherent handoff to ${artifactDir}/handoff.md: the goal, the requirements, the relevant research, the plan, and the reusable assets discovered. Use the handoff skill.
+
+The workflow advances automatically once handoff.md exists.`;
     case "loop":
-      return `Read ${artifactDir}/plan.md and ${artifactDir}/handoff.md. Delegate the whole plan via subagents — don't do the work yourself.\n\n1. Dispatch ONE builder subagent (task tool, subagent_type "general") with the full plan + handoff as context: "Implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}. Return a summary."\n2. Dispatch ONE commentator subagent (same tool) to review the builder's diff against plan.md: "List blocking issues or say 'no issues'."\n3. If blocking issues, dispatch ONE builder subagent with the issues to fix, then re-run the commentator. Repeat until no issues.\n4. Write ${artifactDir}/loop-complete.md with a one-line summary of the finished plan.\n\nThe workflow advances to audit automatically once loop-complete.md exists. Code changes in workspace only, never in ${artifactDir}.`;
+      return `You are entering the LOOP (orchestration) phase. Your job is to DELEGATE the implementation to sub-agents — do not implement the code yourself.
+
+Read ${artifactDir}/plan.md, ${artifactDir}/handoff.md, ${artifactDir}/research.md, and ${artifactDir}/reuse.md. Using that full context, GENERATE YOUR OWN delegation prompts (do not use a static template):
+1. Dispatch ONE builder sub-agent (task tool, subagent_type "general") with a prompt YOU craft: give it the plan + handoff + any research/reuse context it needs, tailored to this specific task, and instruct it to implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}.
+2. Dispatch ONE commentator sub-agent (same tool) to review the builder's diff against plan.md. Generate the review prompt YOURSELF based on what matters for this task.
+3. If the commentator reports blocking issues, dispatch the builder again with the issues to fix, then re-run the commentator. Repeat until no issues.
+4. Write ${artifactDir}/loop-complete.md with a one-line summary of the finished plan.
+
+Generate the prompts with full awareness of the task — tailored, not generic. The workflow advances to audit automatically once loop-complete.md exists.`;
     case "audit":
-      return `Review all changes from this workflow using ponytail-review (write to ${artifactDir}/review.md), then run a whole-repo over-engineering audit using ponytail-audit (write to ${artifactDir}/audit.md). The workflow closes automatically once both review.md and audit.md exist.`;
+      return `You are entering the AUDIT phase.
+
+Purpose: review the changes made during the loop phase, then audit for over-engineering across the repo.
+
+Review the full diff from this workflow. Run a code review (write to ${artifactDir}/review.md) covering correctness and adherence to the plan, then run a whole-repo over-engineering audit (write to ${artifactDir}/audit.md). Generate your own review approach based on what was actually built — do not follow a fixed checklist.
+
+The workflow closes automatically once both review.md and audit.md exist.`;
     default:
       return "";
   }
@@ -260,7 +348,11 @@ function phasePrompt(p: Phase): string {
 // is the framework-native continuation: it queues the next-phase prompt as a
 // follow-up turn that fires automatically once the current turn ends. In idle
 // state (e.g. session resume) it sends a direct turn.
-function continueWorkflow(pi: ExtensionAPI, ctx: ExtensionContext, prompt: string): void {
+function continueWorkflow(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  prompt: string,
+): void {
   dbg("continuing agent", { phase, prompt: prompt.slice(0, 60) });
   if (ctx.isIdle()) {
     pi.sendUserMessage(prompt);
@@ -346,7 +438,8 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
     label: "Next Step",
     description:
       "Advance the prototype workflow one step after the current step is complete. Returns the next step's instructions. Do not call until the current step is fully complete.",
-    promptSnippet: "next_step() - advance the prototype workflow one step once the current step is done.",
+    promptSnippet:
+      "next_step() - advance the prototype workflow one step once the current step is done.",
     promptGuidelines: [
       "Call next_step only when the current workflow step is genuinely complete.",
       "From the final step (audit), call end_workflow instead.",
@@ -367,7 +460,12 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
       const out = await advancePhase(pi, ctx);
       if (out.status === "idle") {
         return {
-          content: [{ type: "text", text: "No active prototype workflow. Call start_workflow first." }],
+          content: [
+            {
+              type: "text",
+              text: "No active prototype workflow. Call start_workflow first.",
+            },
+          ],
           details: { active: false },
         };
       }
@@ -396,7 +494,10 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
         }
         return {
           content: [
-            { type: "text", text: `Already at the final phase (audit). Call end_workflow to close the workflow.` },
+            {
+              type: "text",
+              text: `Already at the final phase (audit). Call end_workflow to close the workflow.`,
+            },
           ],
           details: { phase: "audit" },
         };
@@ -411,12 +512,21 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
       };
     },
     renderResult(result, _options, theme) {
-      const d = result.details as { phase?: string; skipped?: string; active?: boolean; blocked?: string };
+      const d = result.details as {
+        phase?: string;
+        skipped?: string;
+        active?: boolean;
+        blocked?: string;
+      };
       if (d.active === false) {
         return new Text(theme.fg("dim", "○ no active workflow"), 0, 0);
       }
       if (d.blocked) {
-        return new Text(theme.fg("warning", `✋ ${d.phase} blocked · missing ${d.blocked}`), 0, 0);
+        return new Text(
+          theme.fg("warning", `✋ ${d.phase} blocked · missing ${d.blocked}`),
+          0,
+          0,
+        );
       }
       const label = d.skipped
         ? `${PHASE_STEP[d.phase as Phase]}/7 ${d.phase} (skipped ${d.skipped})`
@@ -442,7 +552,9 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
       if (!r.ok) {
         return {
           content: [{ type: "text", text: r.text }],
-          details: r.phase ? { phase: r.phase, blocked: "audit artifacts" } : { active: false },
+          details: r.phase
+            ? { phase: r.phase, blocked: "audit artifacts" }
+            : { active: false },
         };
       }
       return {
@@ -496,7 +608,12 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
   pi.on("tool_result", async (event: any, ctx: ExtensionContext) => {
     if (advancing) return;
     if (!active || !autoArmed) return;
-    if (event.toolName !== "write" && event.toolName !== "edit" && event.toolName !== "bash") return;
+    if (
+      event.toolName !== "write" &&
+      event.toolName !== "edit" &&
+      event.toolName !== "bash"
+    )
+      return;
     const expected = PHASE_ARTIFACT[phase];
     if (!expected) return;
     // Acquire the lock synchronously before any await so a concurrent
@@ -567,7 +684,10 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
           goal = (await ctx.ui.input("Goal for the new workflow:")) ?? "";
         }
         if (!goal.trim()) {
-          ctx.ui.notify("No goal provided. Keeping current workflow active.", "warning");
+          ctx.ui.notify(
+            "No goal provided. Keeping current workflow active.",
+            "warning",
+          );
           return;
         }
         // ponytail: record old workflow as done, then beginWorkflow overwrites all state.
@@ -590,5 +710,4 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
       pi.sendUserMessage(prompt);
     },
   });
-
-  }
+}
