@@ -13,5 +13,6 @@ export type {
 	RpcResponse,
 	RpcSessionState,
 	PrototypePhase,
+	QuickPhase,
 	WorkflowState,
 } from "./rpc/rpc-types.ts";

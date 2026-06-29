@@ -735,16 +735,93 @@ export function seedDefaultAgents(
 }
 
 /**
+ * Recursively copy a bundled directory tree into the user's agent dir, skipping
+ * any file that already exists (user edits survive). Never overwrites. Used to
+ * seed bundled extensions/skills/themes so the user can inspect and edit them.
+ * Returns the list of destination paths that were written.
+ */
+function seedBundledDir(
+	destDir: string,
+	bundledDir: string,
+): string[] {
+	if (!existsSync(bundledDir)) return [];
+	mkdirSync(destDir, { recursive: true, mode: 0o700 });
+	const written: string[] = [];
+	const stack: Array<{ src: string; dst: string }> = [{ src: bundledDir, dst: destDir }];
+	while (stack.length > 0) {
+		const { src, dst } = stack.pop()!;
+		mkdirSync(dst, { recursive: true, mode: 0o700 });
+		for (const entry of readdirSync(src, { withFileTypes: true })) {
+			if (entry.name === ".DS_Store" || entry.name === "node_modules") continue;
+			const srcPath = join(src, entry.name);
+			const dstPath = join(dst, entry.name);
+			if (entry.isDirectory()) {
+				if (!existsSync(dstPath)) mkdirSync(dstPath, { recursive: true, mode: 0o700 });
+				stack.push({ src: srcPath, dst: dstPath });
+			} else if (entry.isFile() || entry.isSymbolicLink()) {
+				if (existsSync(dstPath)) continue;
+				copyFileSync(srcPath, dstPath);
+				try {
+					chmodSync(dstPath, 0o600);
+				} catch {
+					// best-effort
+				}
+				written.push(dstPath);
+			}
+		}
+	}
+	return written;
+}
+
+/**
+ * Seed bundled built-in extensions into the user's agent dir/extensions.
+ * Skips existing files (user edits survive). Never overwrites.
+ * Returns the list of destination paths that were written.
+ */
+export function seedDefaultExtensions(
+	agentDir: string,
+	bundledExtensionsDir: string = getBundledExtensionsDir(),
+): string[] {
+	return seedBundledDir(join(agentDir, "extensions"), bundledExtensionsDir);
+}
+
+/**
+ * Seed bundled built-in skills into the user's agent dir/skills.
+ * Skips existing files (user edits survive). Never overwrites.
+ * Returns the list of destination paths that were written.
+ */
+export function seedDefaultSkills(
+	agentDir: string,
+	bundledSkillsDir: string = getBundledSkillsDir(),
+): string[] {
+	return seedBundledDir(join(agentDir, "skills"), bundledSkillsDir);
+}
+
+/**
+ * Seed bundled built-in themes into the user's agent dir/themes.
+ * Skips existing files (user edits survive). Never overwrites.
+ * Returns the list of destination paths that were written.
+ */
+export function seedDefaultThemes(
+	agentDir: string,
+	bundledThemesDir: string = getBundledThemesDir(),
+): string[] {
+	return seedBundledDir(join(agentDir, "themes"), bundledThemesDir);
+}
+
+/**
  * Run full first-run bootstrap for the agent dir: ensure directories and seed
  * settings.json + models.json from bundled defaults. Idempotent — safe on every
- * startup. Bunded own extensions/themes are loaded directly at boot via
- * additionalExtensionPaths/additionalThemePaths (see main.ts), not copied here.
- * Bundled agent personas are copied into \u003cagentDir\u003e/agents/ once; existing user
- * files are never overwritten.
+ * startup. Bundled extensions/skills/themes/agents are copied into
+ * <agentDir>/extensions, <agentDir>/skills, <agentDir>/themes, <agentDir>/agents
+ * once; existing user files are never overwritten.
  */
 export function bootstrapAgentDir(agentDir: string = getAgentDir()): void {
 	ensureAgentDir(agentDir);
 	seedDefaultConfigFile(join(agentDir, "settings.json"), "settings.json");
 	seedDefaultConfigFile(join(agentDir, "models.json"), "models.json");
 	seedDefaultAgents(agentDir);
+	seedDefaultExtensions(agentDir);
+	seedDefaultSkills(agentDir);
+	seedDefaultThemes(agentDir);
 }

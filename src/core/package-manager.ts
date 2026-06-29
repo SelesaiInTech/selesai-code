@@ -71,6 +71,7 @@ export interface ResolvedPaths {
 	skills: ResolvedResource[];
 	prompts: ResolvedResource[];
 	themes: ResolvedResource[];
+	agents: ResolvedResource[];
 }
 
 export type MissingSourceAction = "install" | "skip" | "error";
@@ -160,6 +161,7 @@ interface PiManifest {
 	skills?: string[];
 	prompts?: string[];
 	themes?: string[];
+	agents?: string[];
 }
 
 interface ResourceAccumulator {
@@ -167,6 +169,7 @@ interface ResourceAccumulator {
 	skills: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	prompts: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	themes: Map<string, { metadata: PathMetadata; enabled: boolean }>;
+	agents: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 }
 
 /**
@@ -192,17 +195,19 @@ interface PackageFilter {
 	skills?: string[];
 	prompts?: string[];
 	themes?: string[];
+	agents?: string[];
 }
 
-type ResourceType = "extensions" | "skills" | "prompts" | "themes";
+type ResourceType = "extensions" | "skills" | "prompts" | "themes" | "agents";
 
-const RESOURCE_TYPES: ResourceType[] = ["extensions", "skills", "prompts", "themes"];
+const RESOURCE_TYPES: ResourceType[] = ["extensions", "skills", "prompts", "themes", "agents"];
 
 const FILE_PATTERNS: Record<ResourceType, RegExp> = {
 	extensions: /\.(ts|js)$/,
 	skills: /\.md$/,
 	prompts: /\.md$/,
 	themes: /\.json$/,
+	agents: /\.md$/,
 };
 
 const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
@@ -2436,6 +2441,8 @@ export class DefaultPackageManager implements PackageManager {
 				return accumulator.prompts;
 			case "themes":
 				return accumulator.themes;
+			case "agents":
+				return accumulator.agents;
 			default:
 				throw new Error(`Unknown resource type: ${resourceType}`);
 		}
@@ -2459,6 +2466,7 @@ export class DefaultPackageManager implements PackageManager {
 			skills: new Map(),
 			prompts: new Map(),
 			themes: new Map(),
+			agents: new Map(),
 		};
 	}
 
@@ -2487,6 +2495,7 @@ export class DefaultPackageManager implements PackageManager {
 			skills: mapToResolved(accumulator.skills),
 			prompts: mapToResolved(accumulator.prompts),
 			themes: mapToResolved(accumulator.themes),
+			agents: mapToResolved(accumulator.agents),
 		};
 	}
 

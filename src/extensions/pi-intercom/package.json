@@ -1,0 +1,38 @@
+{
+  "name": "pi-intercom",
+  "version": "0.6.0",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.ts",
+  "files": [
+    "index.ts",
+    "types.ts",
+    "config.ts",
+    "reply-tracker.ts",
+    "broker/**/*.ts",
+    "ui/**/*.ts",
+    "skills/**/*"
+  ],
+  "scripts": {
+    "test": "tsx --test broker/paths.test.ts broker/spawn.test.ts reply-tracker.test.ts intercom.integration.test.ts test/inline-message.test.ts"
+  },
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "dependencies": {
+    "tsx": "^4.20.0",
+    "typebox": "^1.1.24"
+  }
+}

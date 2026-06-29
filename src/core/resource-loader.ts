@@ -403,6 +403,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const enabledSkillResources = getEnabledResources(resolvedPaths.skills);
 		const enabledPrompts = getEnabledPaths(resolvedPaths.prompts);
 		const enabledThemes = getEnabledPaths(resolvedPaths.themes);
+		const enabledAgentPaths = getEnabledPaths(resolvedPaths.agents);
 
 		const enabledSkills = enabledSkillResources.map((resource) => this.mapSkillPath(resource, metadataByPath));
 
@@ -486,7 +487,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		}
 
-		const agentPaths = this.mergePaths([], this.additionalAgentPaths);
+		const agentPaths = this.mergePaths(enabledAgentPaths, this.additionalAgentPaths);
 
 		this.updateAgentsFromPaths(agentPaths, metadataByPath);
 		for (const p of this.additionalAgentPaths) {
@@ -728,7 +729,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				cwd: this.cwd,
 				agentDir: this.agentDir,
 				agentPaths,
-				includeDefaults: false,
+				includeDefaults: true,
 			});
 		}
 		const resolvedAgents = this.agentsOverride ? this.agentsOverride(agentsResult) : agentsResult;
