@@ -6,6 +6,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { access, mkdir } from "node:fs/promises";
 
 // ponytail: tool result content carries the full phase prompt for the model;
 // renderResult shows only a short label so the user sees a clean progression
@@ -125,18 +126,19 @@ const PHASE_ARTIFACT: Partial<Record<Phase, string>> = {
   audit: "review.md",
 };
 
-async function phaseArtifactExists(
-  pi: ExtensionAPI,
-  p: Phase,
-): Promise<boolean> {
-  const file = PHASE_ARTIFACT[p];
-  if (!file) return true;
+async function fileExists(path: string): Promise<boolean> {
   try {
-    const result = await pi.exec("test", ["-f", `${artifactDir}/${file}`]);
-    return result.code === 0;
+    await access(path);
+    return true;
   } catch {
     return false;
   }
+}
+
+async function phaseArtifactExists(p: Phase): Promise<boolean> {
+  const file = PHASE_ARTIFACT[p];
+  if (!file) return true;
+  return fileExists(`${artifactDir}/${file}`);
 }
 
 function nextPhase(p: Phase): Phase | null {
@@ -160,20 +162,14 @@ async function advancePhase(
 ): Promise<AdvanceOutcome> {
   if (!active) return { status: "idle", phase };
   const expected = PHASE_ARTIFACT[phase];
-  if (expected && !(await phaseArtifactExists(pi, phase))) {
+  if (expected && !(await phaseArtifactExists(phase))) {
     return { status: "blocked", phase, missing: expected };
   }
   const next = nextPhase(phase);
   if (!next) {
     // audit terminal: need review.md + audit.md before closing.
-    const reviewExists = await phaseArtifactExists(pi, "audit");
-    let auditExists = true;
-    try {
-      auditExists =
-        (await pi.exec("test", ["-f", `${artifactDir}/audit.md`])).code === 0;
-    } catch {
-      auditExists = false;
-    }
+    const reviewExists = await phaseArtifactExists("audit");
+    const auditExists = await fileExists(`${artifactDir}/audit.md`);
     if (!reviewExists || !auditExists) {
       return {
         status: "terminal",
@@ -221,14 +217,8 @@ async function endWorkflow(
       phase,
     };
   }
-  const reviewExists = await phaseArtifactExists(pi, "audit");
-  let auditExists = true;
-  try {
-    auditExists =
-      (await pi.exec("test", ["-f", `${artifactDir}/audit.md`])).code === 0;
-  } catch {
-    auditExists = false;
-  }
+  const reviewExists = await phaseArtifactExists("audit");
+  const auditExists = await fileExists(`${artifactDir}/audit.md`);
   if (!reviewExists || !auditExists) {
     return {
       ok: false,
@@ -369,7 +359,7 @@ async function beginWorkflow(
   userPrompt = goal.trim();
   // ponytail: 1 workflow = 1 folder under ./.selesai/artifacts/. Timestamp prefix avoids collisions.
   artifactDir = artifactPathFor(userPrompt);
-  await pi.exec("mkdir", ["-p", artifactDir]);
+  await mkdir(artifactDir, { recursive: true });
   active = true;
   setPhase(pi, "grilling");
   updateFooter(pi, ctx);
@@ -622,7 +612,7 @@ export default function prototypeExtension(pi: ExtensionAPI): void {
     // phaseArtifactExists and both advance the phase.
     advancing = true;
     try {
-      if (!(await phaseArtifactExists(pi, phase))) return;
+      if (!(await phaseArtifactExists(phase))) return;
       autoArmed = false;
       dbg("artifact detected", { phase, artifactDir, expected });
       const from = phase;
