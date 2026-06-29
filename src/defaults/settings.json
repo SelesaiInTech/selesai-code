@@ -22,8 +22,7 @@
     "git:github.com/omaclaren/pi-markdown-preview",
     "git:github.com/aliou/pi-guardrails",
     "git:github.com/nicobailon/pi-intercom",
-    "git:github.com/nicobailon/pi-subagents",
-    "git:github.com/nicobailon/pi-rewind-hook"
+      "git:github.com/nicobailon/pi-rewind-hook"
   ],
   "powerline": {
     "preset": "custom",

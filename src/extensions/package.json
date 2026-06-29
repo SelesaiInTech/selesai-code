@@ -13,6 +13,8 @@
 			"./tokenin-onboarding.ts",
 			"./undo.ts",
 			"./prototype.ts",
+			"./quick.ts",
+			"./pi-subagents",
 			"./pi-powerline-footer",
 			"./pi-extension"
 		]

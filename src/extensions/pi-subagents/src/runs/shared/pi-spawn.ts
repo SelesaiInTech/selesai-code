@@ -63,6 +63,18 @@ export function resolveWindowsPiCliScript(deps: PiSpawnDeps = {}): string | unde
 
 	if (argv1) {
 		const argvPath = normalizePath(argv1);
+		// Resolve symlinks before checking the extension: a renamed fork like
+		// "selesai" is typically a symlink to dist/cli.js, so the raw argv1 has
+		// no .js extension and would otherwise fail the runnable-script check.
+		let resolved = argvPath;
+		try {
+			resolved = fs.realpathSync(argvPath);
+		} catch {
+			// realpath is best-effort; fall back to the raw path.
+		}
+		if (isRunnableNodeScript(resolved, existsSync)) {
+			return resolved;
+		}
 		if (isRunnableNodeScript(argvPath, existsSync)) {
 			return argvPath;
 		}
@@ -100,16 +112,18 @@ export function resolveWindowsPiCliScript(deps: PiSpawnDeps = {}): string | unde
 }
 
 export function getPiSpawnCommand(args: string[], deps: PiSpawnDeps = {}): PiSpawnCommand {
-	const platform = deps.platform ?? process.platform;
-	if (platform === "win32") {
-		const piCliPath = resolveWindowsPiCliScript(deps);
-		if (piCliPath) {
-			return {
-				command: deps.execPath ?? process.execPath,
-				args: [piCliPath, ...args],
-			};
-		}
+	// On all platforms, prefer the running CLI script (process.argv[1]) so a
+	// renamed fork like "selesai" spawns its own binary instead of the upstream
+	// "pi" from PATH (which has a different agent dir / providers / auth).
+	const piCliPath = resolveWindowsPiCliScript(deps);
+	if (piCliPath) {
+		return {
+			command: deps.execPath ?? process.execPath,
+			args: [piCliPath, ...args],
+		};
 	}
 
+	// Fall back to the upstream binary name only if the CLI script could not be
+	// resolved. "pi" remains the historical default for stock pi installs.
 	return { command: "pi", args };
 }

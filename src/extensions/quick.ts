@@ -239,7 +239,7 @@ When you have enough clarity OR when 4 questions have been asked, stop grilling.
 
 This is a QUICK workflow — no separate research phase. Based on ${artifactDir}/requirements.md, produce the concrete build plan: what to build, how, in order, components, and what the finished prototype looks like.
 
-Spawn the ARCHITECT SUB-AGENT to produce the plan. Use the task tool with subagent_type "architect". Craft a tailored prompt from ${artifactDir}/requirements.md so the architect knows exactly what to plan for THIS task. The architect writes to ${artifactDir}/plan.md.
+Spawn the ARCHITECT SUB-AGENT to produce the plan. Use the task tool with subagent_type "architect". Do NOT pass a model parameter — let the agent use its configured model. Craft a tailored prompt from ${artifactDir}/requirements.md so the architect knows exactly what to plan for THIS task. The architect writes to ${artifactDir}/plan.md.
 
 The workflow advances automatically once plan.md exists.`;
     case "reuse":
@@ -247,7 +247,7 @@ The workflow advances automatically once plan.md exists.`;
 
 Purpose: explore the existing codebase for reusable components, patterns, and knowledge this quick prototype should build on.
 
-Spawn an EXPLORER SUB-AGENT to do the exploration. Use the task tool with subagent_type "explorer". Craft a specific prompt tailored to THIS task from ${artifactDir}/requirements.md and ${artifactDir}/plan.md, telling the explorer which areas, patterns, and dependencies matter. Instruct the explorer to write findings to ${artifactDir}/reuse.md.
+Spawn an EXPLORER SUB-AGENT to do the exploration. Use the task tool with subagent_type "explorer". Do NOT pass a model parameter — let the agent use its configured model. Craft a specific prompt tailored to THIS task from ${artifactDir}/requirements.md and ${artifactDir}/plan.md, telling the explorer which areas, patterns, and dependencies matter. Instruct the explorer to write findings to ${artifactDir}/reuse.md.
 
 When the explorer returns, synthesize its findings into ${artifactDir}/reuse.md: what is reusable, where, and how the prototype should leverage it.
 
@@ -262,15 +262,15 @@ Draw from ALL prior phases:
 - ${artifactDir}/plan.md
 - ${artifactDir}/reuse.md
 
-Spawn the RECAPPER SUB-AGENT to compile the handoff. Use the task tool with subagent_type "recapper". Craft a tailored prompt that points the recapper at all three artifact files and tells it what the prototype is about, so it writes a coherent handoff tailored to this task. The recapper writes to ${artifactDir}/handoff.md.
+Spawn the RECAPPER SUB-AGENT to compile the handoff. Use the task tool with subagent_type "recapper". Do NOT pass a model parameter — let the agent use its configured model. Craft a tailored prompt that points the recapper at all three artifact files and tells it what the prototype is about, so it writes a coherent handoff tailored to this task. The recapper writes to ${artifactDir}/handoff.md.
 
 The workflow advances automatically once handoff.md exists.`;
     case "loop":
       return `You are entering the LOOP (orchestration) phase. Your job is to DELEGATE the implementation to sub-agents — do not implement the code yourself.
 
 Read ${artifactDir}/plan.md, ${artifactDir}/handoff.md, and ${artifactDir}/reuse.md. Using that full context, GENERATE YOUR OWN delegation prompts:
-1. Dispatch ONE builder sub-agent (task tool, subagent_type "builder") with a prompt YOU craft: give it the plan + handoff + reuse context, tailored to this specific task, and instruct it to implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}.
-2. Dispatch ONE commentator sub-agent (task tool, subagent_type "commentator") to review the builder's diff against plan.md. Generate the review prompt YOURSELF.
+1. Dispatch ONE builder sub-agent (task tool, subagent_type "builder"). Do NOT pass a model parameter — let the agent use its configured model. Give it the plan + handoff + reuse context, tailored to this specific task, and instruct it to implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}.
+2. Dispatch ONE commentator sub-agent (task tool, subagent_type "commentator"). Do NOT pass a model parameter. Review the builder's diff against plan.md. Generate the review prompt YOURSELF.
 3. If the commentator reports blocking issues, dispatch the builder again with the issues to fix, then re-run the commentator. Repeat until no issues.
 4. Write ${artifactDir}/loop-complete.md with a one-line summary of the finished plan.
 
@@ -282,9 +282,9 @@ Purpose: review loop-phase changes and audit for over-engineering across the rep
 
 Two sub-agent rounds:
 
-1. Spawn the COMMENTATOR SUB-AGENT (task tool, subagent_type "commentator"). Craft a tailored prompt from the full diff and plan.md so the commentator reviews correctness and plan-adherence (writing ${artifactDir}/review.md), then runs a whole-repo over-engineering audit (writing ${artifactDir}/audit.md).
+1. Spawn the COMMENTATOR SUB-AGENT (task tool, subagent_type "commentator"). Do NOT pass a model parameter. Craft a tailored prompt from the full diff and plan.md so the commentator reviews correctness and plan-adherence (writing ${artifactDir}/review.md), then runs a whole-repo over-engineering audit (writing ${artifactDir}/audit.md).
 
-2. If review.md or audit.md lists actionable issues, spawn the BUILDER SUB-AGENT (task tool, subagent_type "builder") with a tailored prompt containing the findings. Instruct the builder to FIX every issue. All fixes go in the workspace, never in ${artifactDir}.
+2. If review.md or audit.md lists actionable issues, spawn the BUILDER SUB-AGENT (task tool, subagent_type "builder"). Do NOT pass a model parameter. Craft a tailored prompt containing the findings. Instruct the builder to FIX every issue. All fixes go in the workspace, never in ${artifactDir}.
 
 3. After the builder returns, re-dispatch the commentator to confirm fixes resolved findings. Repeat until clean.
 
