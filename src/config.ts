@@ -9,6 +9,7 @@ import {
 	readFileSync,
 	realpathSync,
 	statSync,
+	unlinkSync,
 	writeFileSync,
 } from "fs";
 import { homedir } from "os";
@@ -737,7 +738,7 @@ export function seedDefaultAgents(
 /**
  * Recursively copy a bundled directory tree into the user's agent dir, skipping
  * any file that already exists (user edits survive). Never overwrites. Used to
- * seed bundled extensions/skills/themes so the user can inspect and edit them.
+ * seed bundled skills/themes so the user can inspect and edit them.
  * Returns the list of destination paths that were written.
  */
 function seedBundledDir(
@@ -773,16 +774,41 @@ function seedBundledDir(
 	return written;
 }
 
+function removeIdenticalBundledFiles(destDir: string, bundledDir: string): string[] {
+	if (!existsSync(destDir) || !existsSync(bundledDir)) return [];
+	const removed: string[] = [];
+	const stack: Array<{ src: string; dst: string }> = [{ src: bundledDir, dst: destDir }];
+	while (stack.length > 0) {
+		const { src, dst } = stack.pop()!;
+		if (!existsSync(dst)) continue;
+		for (const entry of readdirSync(src, { withFileTypes: true })) {
+			if (entry.name === ".DS_Store" || entry.name === "node_modules") continue;
+			const srcPath = join(src, entry.name);
+			const dstPath = join(dst, entry.name);
+			if (entry.isDirectory()) {
+				stack.push({ src: srcPath, dst: dstPath });
+			} else if (existsSync(dstPath) && readFileSync(srcPath).equals(readFileSync(dstPath))) {
+				unlinkSync(dstPath);
+				removed.push(dstPath);
+			}
+		}
+	}
+	return removed;
+}
+
 /**
- * Seed bundled built-in extensions into the user's agent dir/extensions.
- * Skips existing files (user edits survive). Never overwrites.
- * Returns the list of destination paths that were written.
+ * Bundled extensions load directly from the installed package. Do not copy them
+ * into the user's agent dir, otherwise startup discovers both copies and tool
+ * registration conflicts with itself.
+ * Remove files copied by older releases only when they are byte-identical to
+ * bundled files, so user-edited extensions survive.
  */
 export function seedDefaultExtensions(
 	agentDir: string,
 	bundledExtensionsDir: string = getBundledExtensionsDir(),
 ): string[] {
-	return seedBundledDir(join(agentDir, "extensions"), bundledExtensionsDir);
+	removeIdenticalBundledFiles(join(agentDir, "extensions"), bundledExtensionsDir);
+	return [];
 }
 
 /**
@@ -812,9 +838,9 @@ export function seedDefaultThemes(
 /**
  * Run full first-run bootstrap for the agent dir: ensure directories and seed
  * settings.json + models.json from bundled defaults. Idempotent — safe on every
- * startup. Bundled extensions/skills/themes/agents are copied into
- * <agentDir>/extensions, <agentDir>/skills, <agentDir>/themes, <agentDir>/agents
- * once; existing user files are never overwritten.
+ * startup. Bundled skills/themes/agents are copied into <agentDir>/skills,
+ * <agentDir>/themes, <agentDir>/agents once; existing user files are never overwritten.
+ * Bundled extensions stay package-local and are not copied into <agentDir>/extensions.
  */
 export function bootstrapAgentDir(agentDir: string = getAgentDir()): void {
 	ensureAgentDir(agentDir);

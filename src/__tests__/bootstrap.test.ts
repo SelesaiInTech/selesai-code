@@ -9,6 +9,7 @@ import {
 	markFirstRunComplete,
 	seedDefaultAgents,
 	seedDefaultConfigFile,
+	seedDefaultExtensions,
 } from "../config.js";
 
 describe("agent dir bootstrap", () => {
@@ -82,5 +83,35 @@ describe("agent dir bootstrap", () => {
 	it("seedDefaultAgents is a no-op when bundled dir is missing", () => {
 		expect(seedDefaultAgents(dir, join(bundled, "agents"))).toEqual([]);
 		expect(existsSync(join(dir, "agents"))).toBe(true);
+	});
+
+	it("does not seed bundled extensions into user extension dir", () => {
+		mkdirSync(join(bundled, "extensions"), { recursive: true });
+		writeFileSync(join(bundled, "extensions", "question.ts"), "export default {};");
+
+		expect(seedDefaultExtensions(dir, join(bundled, "extensions"))).toEqual([]);
+		expect(existsSync(join(dir, "extensions", "question.ts"))).toBe(false);
+	});
+
+	it("removes older seeded extensions only when identical to bundled files", () => {
+		mkdirSync(join(bundled, "extensions"), { recursive: true });
+		mkdirSync(join(dir, "extensions"), { recursive: true });
+		writeFileSync(join(bundled, "extensions", "question.ts"), "export default {};");
+		writeFileSync(join(dir, "extensions", "question.ts"), "export default {};");
+		writeFileSync(join(dir, "extensions", "custom.ts"), "export default 'custom';");
+
+		expect(seedDefaultExtensions(dir, join(bundled, "extensions"))).toEqual([]);
+		expect(existsSync(join(dir, "extensions", "question.ts"))).toBe(false);
+		expect(existsSync(join(dir, "extensions", "custom.ts"))).toBe(true);
+	});
+
+	it("keeps user-edited extensions that differ from bundled files", () => {
+		mkdirSync(join(bundled, "extensions"), { recursive: true });
+		mkdirSync(join(dir, "extensions"), { recursive: true });
+		writeFileSync(join(bundled, "extensions", "question.ts"), "export default {};");
+		writeFileSync(join(dir, "extensions", "question.ts"), "export default 'user';");
+
+		expect(seedDefaultExtensions(dir, join(bundled, "extensions"))).toEqual([]);
+		expect(readFileSync(join(dir, "extensions", "question.ts"), "utf-8")).toBe("export default 'user';");
 	});
 });
