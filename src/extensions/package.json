@@ -2,7 +2,6 @@
 	"name": "@selesai/bundled-extensions",
 	"version": "0.0.0",
 	"private": true,
-	"type": "module",
 	"description": "Built-in extensions shipped with @selesai/code, loaded via additionalExtensionPaths at boot.",
 	"pi": {
 		"extensions": [
