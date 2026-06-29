@@ -6,7 +6,7 @@
     "reserveTokens": 64000
   },
   "defaultModel": "glm-5.2",
-  "defaultProvider": "proxy",
+  "defaultProvider": "tokenin",
   "defaultThinkingLevel": "high",
   "doubleEscapeAction": "tree",
   "editorPaddingX": 1,
@@ -62,7 +62,5 @@
       "JINA_API_KEY": "",
       "TAVILY_API_KEY": ""
     }
-  },
-  "enabledModels": ["ollama/*", "proxy/*"],
-  "workingVibeModel": "proxy/gpt-5.4-mini:low"
+  }
 }
