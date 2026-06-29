@@ -2,6 +2,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Mock the self-package alias that the extension imports under at runtime.
+// jiti maps @earendil-works/pi-coding-agent -> the package's own index at runtime;
+// vitest has no such alias, so redirect to the real source modules here.
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+	getAgentDir: () => process.env.SELESAI_CODING_AGENT_DIR ?? join(homedir(), ".selesai", "agent"),
+	getModelsPath: () => join(process.env.SELESAI_CODING_AGENT_DIR ?? join(homedir(), ".selesai", "agent"), "models.json"),
+}));
+
+import { homedir } from "node:os";
 import {
 	getTokenInApiKey,
 	isPlaceholderToken,
