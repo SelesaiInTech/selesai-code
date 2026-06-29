@@ -5,8 +5,10 @@ import {
 	copyFileSync,
 	existsSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
 	realpathSync,
+	statSync,
 	writeFileSync,
 } from "fs";
 import { homedir } from "os";
@@ -664,6 +666,7 @@ const AGENT_SUBDIRS = [
 	"sessions",
 	"extensions",
 	"skills",
+	"agents",
 ] as const;
 
 /**
@@ -702,13 +705,46 @@ export function seedDefaultConfigFile(
 }
 
 /**
+ * Seed all bundled agent persona .md files into the user's agent dir. Skips
+ * any file that already exists (user edits survive). Never overwrites.
+ * Returns the list of destination paths that were written.
+ */
+export function seedDefaultAgents(
+	agentDir: string,
+	bundledAgentsDir: string = getBundledAgentsDir(),
+): string[] {
+	const destDir = join(agentDir, "agents");
+	mkdirSync(destDir, { recursive: true, mode: 0o700 });
+	if (!existsSync(bundledAgentsDir)) return [];
+	const written: string[] = [];
+	for (const entry of readdirSync(bundledAgentsDir)) {
+		if (!entry.endsWith(".md")) continue;
+		const source = join(bundledAgentsDir, entry);
+		if (!statSync(source).isFile()) continue;
+		const dest = join(destDir, entry);
+		if (existsSync(dest)) continue;
+		copyFileSync(source, dest);
+		try {
+			chmodSync(dest, 0o600);
+		} catch {
+			// best-effort
+		}
+		written.push(dest);
+	}
+	return written;
+}
+
+/**
  * Run full first-run bootstrap for the agent dir: ensure directories and seed
  * settings.json + models.json from bundled defaults. Idempotent — safe on every
- * startup. Bundled own extensions/themes are loaded directly at boot via
+ * startup. Bunded own extensions/themes are loaded directly at boot via
  * additionalExtensionPaths/additionalThemePaths (see main.ts), not copied here.
+ * Bundled agent personas are copied into \u003cagentDir\u003e/agents/ once; existing user
+ * files are never overwritten.
  */
 export function bootstrapAgentDir(agentDir: string = getAgentDir()): void {
 	ensureAgentDir(agentDir);
 	seedDefaultConfigFile(join(agentDir, "settings.json"), "settings.json");
 	seedDefaultConfigFile(join(agentDir, "models.json"), "models.json");
+	seedDefaultAgents(agentDir);
 }

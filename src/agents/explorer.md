@@ -1,6 +1,6 @@
 ---
 name: explorer
-model: proxy/deepseek-v4-flash:high
+model: tokenin/deepseek-v4-flash:high
 skill: ponytail
 description: Fast codebase recon that returns compressed context for handoff
 tools: read, grep, find, ls, bash, write, intercom

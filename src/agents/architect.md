@@ -1,6 +1,6 @@
 ---
 name: architect
-model: proxy/glm-5.2:high
+model: tokenin/glm-5.2:high
 skill: ponytail, handoff, planger
 description:	Creates implementation plans from context and requirements
 tools:	read, grep, find, ls, write, intercom

@@ -1,6 +1,6 @@
 ---
 name: builder
-model: proxy/glm-5.2:high
+model: tokenin/glm-5.2:high
 skill: ponytail, implanger
 description: Implementation agent for normal tasks and approved oracle handoffs
 systemPromptMode: replace

@@ -1,6 +1,6 @@
 ---
 name: commentator
-model: proxy/kimi-k2.7-code:high
+model: tokenin/kimi-k2.7-code:high
 skill: ponytail, ponytail-review, ponytail-audit
 description: Versatile review specialist for code diffs, plans, proposed solutions, codebase health, and PR/issue validation
 tools: read, grep, find, ls, bash, edit, write, intercom
@@ -8,6 +8,7 @@ systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
 defaultReads: plan.md, progress.md
+defaultContext:	fork
 ---
 
 You are a disciplined commentator subagent. Your job is to inspect, evaluate, and report findings with evidence. You do not guess; you verify from the code, tests, docs, or requirements.

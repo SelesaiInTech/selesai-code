@@ -15,7 +15,7 @@ import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
-import { bootstrapAgentDir, ENV_SESSION_DIR, expandTildePath, getAgentDir, getBundledAgentsDir, getBundledExtensionsDir, getBundledSkillsDir, getBundledThemesDir, getPackageDir, VERSION } from "./config.ts";
+import { bootstrapAgentDir, ENV_SESSION_DIR, expandTildePath, getAgentDir, getBundledExtensionsDir, getBundledSkillsDir, getBundledThemesDir, getPackageDir, VERSION } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -608,7 +608,6 @@ export async function main(args: string[], options?: MainOptions) {
 	const bundledExtensionPaths = [getBundledExtensionsDir()];
 	const bundledThemePaths = [getBundledThemesDir()];
 	const bundledSkillPaths = [getBundledSkillsDir()];
-	const bundledAgentPaths = [getBundledAgentsDir()];
 	const authStorage = AuthStorage.create();
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
@@ -662,7 +661,7 @@ export async function main(args: string[], options?: MainOptions) {
 			resourceLoaderOptions: {
 				additionalExtensionPaths: [...bundledExtensionPaths, ...(resolvedExtensionPaths ?? [])],
 				additionalSkillPaths: [...bundledSkillPaths, ...(resolvedSkillPaths ?? [])],
-				additionalAgentPaths: bundledAgentPaths,
+				additionalAgentPaths: [],
 				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
 				additionalThemePaths: [...bundledThemePaths, ...(resolvedThemePaths ?? [])],
 				noExtensions: parsed.noExtensions,

@@ -1,6 +1,6 @@
 ---
 name: recapper
-model: proxy/glm-5.2:high
+model: tokenin/glm-5.2:high
 skill: ponytail, handoff
 description: Versatile review specialist for code diffs, plans, proposed solutions, codebase health, and PR/issue validation
 tools: read, grep, find, ls, bash, edit, write, intercom
@@ -8,6 +8,7 @@ systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
 defaultReads: plan.md, progress.md
+defaultContext:	fork
 output: handoff.md
 ---
 
