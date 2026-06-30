@@ -812,15 +812,17 @@ export function seedDefaultExtensions(
 }
 
 /**
- * Seed bundled built-in skills into the user's agent dir/skills.
- * Skips existing files (user edits survive). Never overwrites.
- * Returns the list of destination paths that were written.
+ * Bundled skills load directly from the installed package. Do not copy them into
+ * the user's agent dir, otherwise startup discovers both copies and reports
+ * skill name collisions. Remove files copied by older releases only when they
+ * are byte-identical to bundled files, so user-edited skills survive.
  */
 export function seedDefaultSkills(
 	agentDir: string,
 	bundledSkillsDir: string = getBundledSkillsDir(),
 ): string[] {
-	return seedBundledDir(join(agentDir, "skills"), bundledSkillsDir);
+	removeIdenticalBundledFiles(join(agentDir, "skills"), bundledSkillsDir);
+	return [];
 }
 
 /**
@@ -838,9 +840,9 @@ export function seedDefaultThemes(
 /**
  * Run full first-run bootstrap for the agent dir: ensure directories and seed
  * settings.json + models.json from bundled defaults. Idempotent — safe on every
- * startup. Bundled skills/themes/agents are copied into <agentDir>/skills,
- * <agentDir>/themes, <agentDir>/agents once; existing user files are never overwritten.
- * Bundled extensions stay package-local and are not copied into <agentDir>/extensions.
+ * startup. Bundled themes/agents are copied into <agentDir>/themes and
+ * <agentDir>/agents once; existing user files are never overwritten. Bundled
+ * extensions and skills stay package-local and are not copied into the user dir.
  */
 export function bootstrapAgentDir(agentDir: string = getAgentDir()): void {
 	ensureAgentDir(agentDir);

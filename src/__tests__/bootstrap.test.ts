@@ -10,6 +10,7 @@ import {
 	seedDefaultAgents,
 	seedDefaultConfigFile,
 	seedDefaultExtensions,
+	seedDefaultSkills,
 } from "../config.js";
 
 describe("agent dir bootstrap", () => {
@@ -91,6 +92,39 @@ describe("agent dir bootstrap", () => {
 
 		expect(seedDefaultExtensions(dir, join(bundled, "extensions"))).toEqual([]);
 		expect(existsSync(join(dir, "extensions", "question.ts"))).toBe(false);
+	});
+
+	it("does not seed bundled skills into user skill dir", () => {
+		mkdirSync(join(bundled, "skills", "grill-me"), { recursive: true });
+		writeFileSync(join(bundled, "skills", "grill-me", "SKILL.md"), "---\ndescription: Grill\n---\n");
+
+		expect(seedDefaultSkills(dir, join(bundled, "skills"))).toEqual([]);
+		expect(existsSync(join(dir, "skills", "grill-me", "SKILL.md"))).toBe(false);
+	});
+
+	it("removes older seeded skills only when identical to bundled files", () => {
+		mkdirSync(join(bundled, "skills", "grill-me"), { recursive: true });
+		mkdirSync(join(dir, "skills", "grill-me"), { recursive: true });
+		writeFileSync(join(bundled, "skills", "grill-me", "SKILL.md"), "---\ndescription: Grill\n---\n");
+		writeFileSync(join(dir, "skills", "grill-me", "SKILL.md"), "---\ndescription: Grill\n---\n");
+		mkdirSync(join(dir, "skills", "custom"), { recursive: true });
+		writeFileSync(join(dir, "skills", "custom", "SKILL.md"), "---\ndescription: Custom\n---\n");
+
+		expect(seedDefaultSkills(dir, join(bundled, "skills"))).toEqual([]);
+		expect(existsSync(join(dir, "skills", "grill-me", "SKILL.md"))).toBe(false);
+		expect(existsSync(join(dir, "skills", "custom", "SKILL.md"))).toBe(true);
+	});
+
+	it("keeps user-edited skills that differ from bundled files", () => {
+		mkdirSync(join(bundled, "skills", "grill-me"), { recursive: true });
+		mkdirSync(join(dir, "skills", "grill-me"), { recursive: true });
+		writeFileSync(join(bundled, "skills", "grill-me", "SKILL.md"), "---\ndescription: Grill\n---\n");
+		writeFileSync(join(dir, "skills", "grill-me", "SKILL.md"), "---\ndescription: User Grill\n---\n");
+
+		expect(seedDefaultSkills(dir, join(bundled, "skills"))).toEqual([]);
+		expect(readFileSync(join(dir, "skills", "grill-me", "SKILL.md"), "utf-8")).toBe(
+			"---\ndescription: User Grill\n---\n",
+		);
 	});
 
 	it("removes older seeded extensions only when identical to bundled files", () => {
