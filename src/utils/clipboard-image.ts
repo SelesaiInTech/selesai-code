@@ -158,16 +158,18 @@ function isWSL(env: NodeJS.ProcessEnv = process.env): boolean {
  * Windows screenshots (Win+Shift+S). PowerShell can access the Windows clipboard
  * directly, so we use it as a fallback.
  */
-function readClipboardImageViaPowerShell(): ClipboardImage | null {
-	const tmpFile = join(tmpdir(), `pi-wsl-clip-${randomUUID()}.png`);
+function readClipboardImageViaPowerShell(options?: { wsl?: boolean }): ClipboardImage | null {
+	const tmpFile = join(tmpdir(), `pi-clip-${randomUUID()}.png`);
 
 	try {
-		const winPathResult = runCommand("wslpath", ["-w", tmpFile], { timeoutMs: DEFAULT_LIST_TIMEOUT_MS });
-		if (!winPathResult.ok) {
-			return null;
+		let winPath = tmpFile;
+		if (options?.wsl) {
+			const winPathResult = runCommand("wslpath", ["-w", tmpFile], { timeoutMs: DEFAULT_LIST_TIMEOUT_MS });
+			if (!winPathResult.ok) {
+				return null;
+			}
+			winPath = winPathResult.stdout.toString("utf-8").trim();
 		}
-
-		const winPath = winPathResult.stdout.toString("utf-8").trim();
 		if (!winPath) {
 			return null;
 		}
@@ -181,7 +183,7 @@ function readClipboardImageViaPowerShell(): ClipboardImage | null {
 			"if ($img) { $img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); Write-Output 'ok' } else { Write-Output 'empty' }",
 		].join("; ");
 
-		const result = runCommand("powershell.exe", ["-NoProfile", "-Command", psScript], {
+		const result = runCommand("powershell.exe", ["-NoProfile", "-STA", "-Command", psScript], {
 			timeoutMs: DEFAULT_POWERSHELL_TIMEOUT_MS,
 		});
 		if (!result.ok) {
@@ -273,12 +275,14 @@ export async function readClipboardImage(options?: {
 		}
 
 		if (!image && wsl) {
-			image = readClipboardImageViaPowerShell();
+			image = readClipboardImageViaPowerShell({ wsl: true });
 		}
 
 		if (!image && !wayland) {
 			image = await readClipboardImageViaNativeClipboard();
 		}
+	} else if (platform === "win32") {
+		image = await readClipboardImageViaNativeClipboard() ?? readClipboardImageViaPowerShell();
 	} else {
 		image = await readClipboardImageViaNativeClipboard();
 	}

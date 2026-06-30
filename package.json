@@ -1,6 +1,6 @@
 {
 	"name": "@selesai/code",
-	"version": "0.1.16",
+	"version": "0.1.17",
 	"description": "Selesai coding agent",
 	"type": "module",
 	"piConfig": {
@@ -33,6 +33,7 @@
 		"@earendil-works/pi-agent-core": "0.80.2",
 		"@earendil-works/pi-ai": "0.80.2",
 		"@earendil-works/pi-tui": "0.80.2",
+		"@mariozechner/clipboard": "^0.3.9",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "5.6.2",
 		"cross-spawn": "7.0.6",
