@@ -89,7 +89,7 @@ import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard } from "../../utils/clipboard.ts";
-import { readClipboardImage } from "../../utils/clipboard-image.ts";
+import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { formatDimensionNote, resizeImage } from "../../utils/image-resize.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
@@ -2511,24 +2511,36 @@ export class InteractiveMode {
 		try {
 			const image = await readClipboardImage();
 			if (!image) {
+				this.showWarning("No image found in clipboard");
 				return;
 			}
+
+			const tmpDir = os.tmpdir();
+			const ext = extensionForImageMimeType(image.mimeType) ?? "png";
+			const fileName = `pi-clipboard-${Date.now()}-${this.pendingInputImages.length + 1}.${ext}`;
+			const filePath = path.join(tmpDir, fileName);
+			fs.writeFileSync(filePath, Buffer.from(image.bytes));
 
 			let attachment: ImageContent;
 			let dimensionNote: string | undefined;
 			const autoResizeImages = this.settingsManager.getImageAutoResize();
 			if (autoResizeImages) {
-				const resized = await resizeImage(image.bytes, image.mimeType);
+				const resized = await resizeImage(image.bytes, image.mimeType).catch(() => null);
 				if (!resized) {
-					this.showWarning("Clipboard image could not be resized below the inline image size limit.");
-					return;
+					this.showWarning("Clipboard image attached without resize");
+					attachment = {
+						type: "image",
+						mimeType: image.mimeType,
+						data: Buffer.from(image.bytes).toString("base64"),
+					};
+				} else {
+					dimensionNote = formatDimensionNote(resized);
+					attachment = {
+						type: "image",
+						mimeType: resized.mimeType,
+						data: resized.data,
+					};
 				}
-				dimensionNote = formatDimensionNote(resized);
-				attachment = {
-					type: "image",
-					mimeType: resized.mimeType,
-					data: resized.data,
-				};
 			} else {
 				attachment = {
 					type: "image",
@@ -2538,13 +2550,11 @@ export class InteractiveMode {
 			}
 
 			this.pendingInputImages.push(attachment);
-			const label = dimensionNote
-				? `[clipboard image ${this.pendingInputImages.length}: ${dimensionNote}]`
-				: `[clipboard image ${this.pendingInputImages.length}]`;
+			const label = dimensionNote ? `${filePath} ${dimensionNote}` : filePath;
 			this.editor.insertTextAtCursor?.(label);
 			this.ui.requestRender();
-		} catch {
-			// Silently ignore clipboard errors (may not have permission, etc.)
+		} catch (error) {
+			this.showWarning(`Failed to paste image: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 
