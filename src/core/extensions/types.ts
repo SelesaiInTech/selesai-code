@@ -589,6 +589,13 @@ export interface SessionCompactEvent {
 	willRetry: boolean;
 }
 
+/** Fired when the session display name changes (e.g. via /name). */
+export interface SessionInfoChangedEvent {
+	type: "session_info_changed";
+	/** New session display name, or undefined when cleared. */
+	name: string | undefined;
+}
+
 /** Fired before an extension runtime is torn down due to quit, reload, or session replacement. */
 export interface SessionShutdownEvent {
 	type: "session_shutdown";
@@ -636,7 +643,8 @@ export type SessionEvent =
 	| SessionCompactEvent
 	| SessionShutdownEvent
 	| SessionBeforeTreeEvent
-	| SessionTreeEvent;
+	| SessionTreeEvent
+	| SessionInfoChangedEvent;
 
 // ============================================================================
 // Agent Events
@@ -1143,6 +1151,7 @@ export interface ExtensionAPI {
 		handler: ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>,
 	): void;
 	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): void;
+	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): void;
 	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): void;
 	on(event: "session_before_tree", handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>): void;
 	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): void;

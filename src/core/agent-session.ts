@@ -2705,7 +2705,9 @@ export class AgentSession {
 	 */
 	setSessionName(name: string): void {
 		this.sessionManager.appendSessionInfo(name);
-		this._emit({ type: "session_info_changed", name: this.sessionManager.getSessionName() });
+		const sessionName = this.sessionManager.getSessionName();
+		this._emit({ type: "session_info_changed", name: sessionName });
+		void this._extensionRunner.emit({ type: "session_info_changed", name: sessionName });
 	}
 
 	// =========================================================================

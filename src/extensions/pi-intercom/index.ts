@@ -1006,6 +1006,13 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
     syncPresenceIdentity(ctx.sessionManager.getSessionId());
     replyTracker.beginTurn();
   });
+  pi.on("session_info_changed", (_event, ctx) => {
+    if (!getLiveContext(ctx)) {
+      return;
+    }
+    currentSessionId = ctx.sessionManager.getSessionId();
+    syncPresenceIdentity(ctx.sessionManager.getSessionId());
+  });
   pi.on("model_select", (event, ctx) => {
     if (!getLiveContext(ctx)) {
       return;
