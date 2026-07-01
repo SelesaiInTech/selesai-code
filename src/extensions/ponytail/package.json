@@ -1,5 +1,5 @@
 {
-  "name": "ponytail-pi-extension-dev",
+  "name": "ponytail",
   "private": true,
   "type": "module",
   "scripts": {

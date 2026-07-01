@@ -9,8 +9,8 @@ const {
   normalizePersistedMode,
   isDeactivationCommand,
   writeDefaultMode,
-} = require("../hooks/ponytail-config.js");
-const { getPonytailInstructions, filterSkillBodyForMode } = require("../hooks/ponytail-instructions.js");
+} = require("./ponytail-config.cjs");
+const { getPonytailInstructions, filterSkillBodyForMode } = require("./ponytail-instructions.cjs");
 
 export { filterSkillBodyForMode };
 export const readDefaultMode = getDefaultMode;

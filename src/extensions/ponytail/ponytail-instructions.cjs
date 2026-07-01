@@ -3,10 +3,10 @@
 
 const fs = require('fs');
 const path = require('path');
-const { DEFAULT_MODE, normalizeMode, normalizePersistedMode } = require('./ponytail-config');
+const { DEFAULT_MODE, normalizeMode, normalizePersistedMode } = require('./ponytail-config.cjs');
 
 const INDEPENDENT_MODES = new Set(['review']);
-const SKILL_PATH = path.join(__dirname, '..', 'skills', 'ponytail', 'SKILL.md');
+const SKILL_PATH = path.join(__dirname, '..', '..', 'skills', 'ponytail', 'SKILL.md');
 
 function filterSkillBodyForMode(body, mode) {
   const effectiveMode = normalizeMode(mode) || DEFAULT_MODE;
