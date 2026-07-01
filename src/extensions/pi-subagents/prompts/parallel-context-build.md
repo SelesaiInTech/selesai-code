@@ -34,7 +34,7 @@ Choose two or three strong builders based on the request. Prefer three only when
 Adapt the angles when the request calls for it:
 - Issue or PR URL: include issue requirements, acceptance criteria, linked discussion, and likely affected files.
 - Plan file: include plan consistency, missing context, implementation sequence, and validation readiness.
-- External API/library work: include current docs or primary sources through `web_search` when needed.
+- External API/library work: include current docs or primary sources through `web_explore` when needed.
 - Large refactor: include module boundaries, dependency direction, migration/cutover risks, and testability.
 - UI/product work: include user flow, accessibility, copy, visual constraints, and implementation touchpoints.
 

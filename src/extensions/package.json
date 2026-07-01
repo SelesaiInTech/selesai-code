@@ -13,6 +13,8 @@
 			"./undo.ts",
 			"./workflow",
 			"./pi-subagents",
+			"./pi-web-agent",
+			"./web-agent-onboarding.ts",
 			"./pi-powerline-footer",
 			"./pi-extension"
 		]

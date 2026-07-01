@@ -8,6 +8,7 @@ export {
 	getAgentDir,
 	getDocsPath,
 	getModelsPath,
+	getSettingsPath,
 	getExamplesPath,
 	getPackageDir,
 	getReadmePath,

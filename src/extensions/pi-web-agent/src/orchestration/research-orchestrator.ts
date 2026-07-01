@@ -1,0 +1,376 @@
+import type { WebFetchHeadlessResponse, WebFetchResponse } from '../types.js';
+import { rankEvidence } from './evidence-ranker.js';
+import { planSearchQueries } from './query-planner.js';
+import { classifySourceProfile } from './source-profile.js';
+import { extractDirectUrls } from './direct-url.js';
+import type {
+  ResearchEvidence,
+  ResearchGap,
+  ResearchLowValueOutcome,
+  ResearchOrchestratorDecision,
+  ResearchWorkerResult
+} from './research-types.js';
+import { decideNextResearchStep } from './stop-decider.js';
+import { analyzeEvidenceQuality, type EvidenceCaveatReason } from './evidence-quality.js';
+
+const DEFAULT_MAX_PASSES = 3;
+const DEFAULT_MAX_FETCHES_PER_PASS = 4;
+const DEFAULT_MAX_HEADLESS_ATTEMPTS = 2;
+
+function classifyEvidenceUrl(url: string): ResearchEvidence['sourceKind'] {
+  return classifySourceProfile(url).sourceKind;
+}
+
+function summarizeText(text: string, maxLength = 180): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+function isBotCheckContent({ title = '', text }: { title?: string; text: string }) {
+  return /performing security verification|security service|verify you are not a bot|just a moment|checking your browser/i.test(
+    `${title}\n${text}`
+  );
+}
+
+function evidenceFromFetch(result: WebFetchResponse): ResearchEvidence | null {
+  if (result.status !== 'ok' || !result.content?.text.trim()) return null;
+  if (isBotCheckContent({ title: result.content.title, text: result.content.text })) return null;
+
+  return {
+    title: result.content.title ?? result.url,
+    url: result.url,
+    sourceKind: classifyEvidenceUrl(result.url),
+    method: result.metadata.method,
+    summary: summarizeText(result.content.text),
+    supports: [summarizeText(result.content.text, 120)]
+  };
+}
+
+function evidenceFromHeadless(result: WebFetchHeadlessResponse): ResearchEvidence | null {
+  if (result.status !== 'ok' || !result.content?.text.trim()) return null;
+  if (isBotCheckContent({ title: result.content.title, text: result.content.text })) return null;
+
+  return {
+    title: result.content.title ?? result.url,
+    url: result.url,
+    sourceKind: classifyEvidenceUrl(result.url),
+    method: 'headless',
+    summary: summarizeText(result.content.text),
+    supports: [summarizeText(result.content.text, 120)]
+  };
+}
+
+function combinedWorkerPass({
+  lastPass,
+  previousQueries,
+  allGaps,
+  allLowValueOutcomes,
+  exhaustedBudget
+}: {
+  lastPass?: ResearchWorkerResult;
+  previousQueries: string[];
+  allGaps: ResearchGap[];
+  allLowValueOutcomes: ResearchLowValueOutcome[];
+  exhaustedBudget: boolean;
+}): ResearchWorkerResult {
+  return {
+    searchQueries: lastPass?.searchQueries ?? previousQueries,
+    evidence: lastPass?.evidence ?? [],
+    gaps: allGaps,
+    lowValueOutcomes: allLowValueOutcomes,
+    suggestedHeadlessUrl: lastPass?.suggestedHeadlessUrl,
+    exhaustedBudget
+  };
+}
+
+function directUnreadableMessage(url: string) {
+  return classifySourceProfile(url).kind === 'forum-thread'
+    ? `Thread source could not be read reliably: ${url}`
+    : `Direct URL could not be read reliably: ${url}`;
+}
+
+function shouldRetryDirectWithHeadless(result: WebFetchResponse, evidence: ResearchEvidence | null) {
+  if (result.status === 'needs_headless') return true;
+  if (result.status !== 'ok' || evidence) return false;
+  return classifySourceProfile(result.url).shouldPreferHeadlessWhenWeak;
+}
+
+function buildMetadata({
+  previousQueries,
+  allEvidence,
+  allGaps,
+  allLowValueOutcomes,
+  headlessAttempts,
+  exhaustedBudget,
+  caveatReasons = []
+}: {
+  previousQueries: string[];
+  allEvidence: ResearchEvidence[];
+  allGaps: ResearchGap[];
+  allLowValueOutcomes: ResearchLowValueOutcome[];
+  headlessAttempts: number;
+  exhaustedBudget: boolean;
+  caveatReasons?: EvidenceCaveatReason[];
+}) {
+  return {
+    searchPasses: previousQueries.length,
+    fetchedPages: allEvidence.length + allGaps.length + allLowValueOutcomes.length,
+    headlessAttempts,
+    exhaustedBudget,
+    caveatReasons
+  };
+}
+
+function decisionForAnswer({
+  action,
+  query,
+  ranked,
+  exhaustedBudget
+}: {
+  action: 'answer' | 'answer-with-caveat';
+  query: string;
+  ranked: ResearchEvidence[];
+  exhaustedBudget: boolean;
+}): ResearchOrchestratorDecision {
+  if (action === 'answer') {
+    return {
+      action: 'answer',
+      rationale: 'Adaptive research gathered enough strong evidence.',
+      approvedEvidence: ranked
+    };
+  }
+
+  return {
+    action: 'research-again',
+    rationale: exhaustedBudget ? 'Research budget exhausted; answer with caveat.' : 'Evidence has quality caveats; answer with caveat.',
+    followupQuery: query
+  };
+}
+
+export function createResearchOrchestrator({
+  worker,
+  fetchDirect,
+  headlessFetch
+}: {
+  worker: {
+    run: (input: {
+      query: string;
+      maxSearchRounds: number;
+      maxFetches: number;
+    }) => Promise<ResearchWorkerResult>;
+  };
+  fetchDirect?: (input: { url: string }) => Promise<WebFetchResponse>;
+  headlessFetch: (input: { url: string }) => Promise<WebFetchHeadlessResponse>;
+}) {
+  return {
+    async run({ query }: { query: string }) {
+      const allEvidence: ResearchEvidence[] = [];
+      const allGaps: ResearchGap[] = [];
+      const allLowValueOutcomes: ResearchLowValueOutcome[] = [];
+      const previousQueries: string[] = [];
+      const suggestedHeadlessUrls: string[] = [];
+      let headlessAttempts = 0;
+      let lastPass: ResearchWorkerResult | undefined;
+
+      if (fetchDirect) {
+        for (const url of extractDirectUrls(query).slice(0, 3)) {
+          const directResult = await fetchDirect({ url });
+          const directEvidence = evidenceFromFetch(directResult);
+          if (directEvidence) {
+            allEvidence.push(directEvidence);
+            continue;
+          }
+
+          if (shouldRetryDirectWithHeadless(directResult, directEvidence)) {
+            if (headlessAttempts < DEFAULT_MAX_HEADLESS_ATTEMPTS) {
+              headlessAttempts++;
+              const headlessResult = await headlessFetch({ url: directResult.url });
+              const headlessEvidence = evidenceFromHeadless(headlessResult);
+              if (headlessEvidence) {
+                allEvidence.push(headlessEvidence);
+              } else {
+                allGaps.push({ kind: 'fetch-failed', message: directUnreadableMessage(directResult.url) });
+              }
+            } else {
+              allGaps.push({ kind: 'fetch-failed', message: directUnreadableMessage(directResult.url) });
+            }
+          } else if (directResult.status !== 'ok') {
+            allGaps.push({
+              kind: 'fetch-failed',
+              message: directResult.error?.message ?? `Direct URL fetch failed for ${directResult.url}`
+            });
+          } else {
+            allGaps.push({ kind: 'fetch-failed', message: directUnreadableMessage(directResult.url) });
+          }
+        }
+      }
+
+      for (let passIndex = 0; passIndex < DEFAULT_MAX_PASSES; passIndex++) {
+        const queries = planSearchQueries({
+          originalQuery: query,
+          passIndex,
+          previousQueries,
+          gaps: allGaps.map((gap) => gap.message)
+        });
+
+        for (const plannedQuery of queries) {
+          previousQueries.push(plannedQuery);
+          const pass = await worker.run({
+            query: plannedQuery,
+            maxSearchRounds: 1,
+            maxFetches: DEFAULT_MAX_FETCHES_PER_PASS
+          });
+
+          lastPass = pass;
+          allEvidence.push(...pass.evidence);
+          allGaps.push(...pass.gaps);
+          allLowValueOutcomes.push(...pass.lowValueOutcomes);
+          if (pass.suggestedHeadlessUrl) suggestedHeadlessUrls.push(pass.suggestedHeadlessUrl);
+
+          const ranked = rankEvidence(allEvidence.filter((item) => item.sourceKind !== 'package-page'));
+          const quality = analyzeEvidenceQuality({
+            evidence: ranked,
+            gaps: allGaps,
+            lowValueOutcomes: allLowValueOutcomes
+          });
+          const decision = decideNextResearchStep({
+            evidence: ranked,
+            suggestedHeadlessUrls,
+            passIndex,
+            maxPasses: DEFAULT_MAX_PASSES,
+            headlessAttempts,
+            maxHeadlessAttempts: DEFAULT_MAX_HEADLESS_ATTEMPTS,
+            quality
+          });
+
+          if (decision.action === 'headless') {
+            headlessAttempts++;
+            const headlessResult = await headlessFetch({ url: decision.url });
+            const headlessEvidence = evidenceFromHeadless(headlessResult);
+            if (headlessEvidence) {
+              allEvidence.push(headlessEvidence);
+              const updatedRanked = rankEvidence(allEvidence.filter((item) => item.sourceKind !== 'package-page'));
+              const updatedQuality = analyzeEvidenceQuality({
+                evidence: updatedRanked,
+                gaps: allGaps,
+                lowValueOutcomes: allLowValueOutcomes
+              });
+              const updatedDecision = decideNextResearchStep({
+                evidence: updatedRanked,
+                suggestedHeadlessUrls: [],
+                passIndex,
+                maxPasses: DEFAULT_MAX_PASSES,
+                headlessAttempts,
+                maxHeadlessAttempts: DEFAULT_MAX_HEADLESS_ATTEMPTS,
+                quality: updatedQuality
+              });
+
+              const exhaustedBudget = updatedDecision.action !== 'answer' && passIndex + 1 >= DEFAULT_MAX_PASSES;
+              return {
+                decision: decisionForAnswer({
+                  action: updatedDecision.action === 'answer' ? 'answer' : 'answer-with-caveat',
+                  query,
+                  ranked: updatedRanked,
+                  exhaustedBudget
+                }),
+                evidence: updatedRanked,
+                workerPass: combinedWorkerPass({
+                  lastPass,
+                  previousQueries,
+                  allGaps,
+                  allLowValueOutcomes,
+                  exhaustedBudget
+                }),
+                metadata: buildMetadata({
+                  previousQueries,
+                  allEvidence,
+                  allGaps,
+                  allLowValueOutcomes,
+                  headlessAttempts,
+                  exhaustedBudget,
+                  caveatReasons: updatedQuality.caveatReasons
+                })
+              };
+            }
+
+            return {
+              decision: {
+                action: 'escalate-headless',
+                rationale: 'One high-value page is worth a single orchestrator-approved headless retry.',
+                url: decision.url,
+                approvedEvidence: ranked
+              } satisfies ResearchOrchestratorDecision,
+              evidence: ranked,
+              workerPass: combinedWorkerPass({
+                lastPass,
+                previousQueries,
+                allGaps,
+                allLowValueOutcomes,
+                exhaustedBudget: false
+              }),
+              metadata: buildMetadata({
+                previousQueries,
+                allEvidence,
+                allGaps,
+                allLowValueOutcomes,
+                headlessAttempts,
+                exhaustedBudget: false,
+                caveatReasons: quality.caveatReasons
+              })
+            };
+          }
+
+          if (decision.action === 'answer' || decision.action === 'answer-with-caveat') {
+            const exhaustedBudget = decision.action === 'answer-with-caveat' && passIndex + 1 >= DEFAULT_MAX_PASSES;
+            return {
+              decision: decisionForAnswer({ action: decision.action, query, ranked, exhaustedBudget }),
+              evidence: ranked,
+              workerPass: combinedWorkerPass({
+                lastPass,
+                previousQueries,
+                allGaps,
+                allLowValueOutcomes,
+                exhaustedBudget
+              }),
+              metadata: buildMetadata({
+                previousQueries,
+                allEvidence,
+                allGaps,
+                allLowValueOutcomes,
+                headlessAttempts,
+                exhaustedBudget,
+                caveatReasons: quality.caveatReasons
+              })
+            };
+          }
+        }
+      }
+
+      const ranked = rankEvidence(allEvidence.filter((item) => item.sourceKind !== 'package-page'));
+      const quality = analyzeEvidenceQuality({
+        evidence: ranked,
+        gaps: allGaps,
+        lowValueOutcomes: allLowValueOutcomes
+      });
+      return {
+        decision: decisionForAnswer({ action: 'answer-with-caveat', query, ranked, exhaustedBudget: true }),
+        evidence: ranked,
+        workerPass: combinedWorkerPass({
+          lastPass,
+          previousQueries,
+          allGaps,
+          allLowValueOutcomes,
+          exhaustedBudget: true
+        }),
+        metadata: buildMetadata({
+          previousQueries,
+          allEvidence,
+          allGaps,
+          allLowValueOutcomes,
+          headlessAttempts,
+          exhaustedBudget: true,
+          caveatReasons: quality.caveatReasons
+        })
+      };
+    }
+  };
+}

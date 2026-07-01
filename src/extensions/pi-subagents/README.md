@@ -523,11 +523,7 @@ Project discovery also reads legacy `.agents/**/*.md` files. Nested subdirectori
 
 Builtin agents load at the lowest priority, so a user or project agent with the same name overrides them. They do not pin a provider model; they inherit your current Pi default model unless you set `subagents.agentOverrides.<name>.model`. `oracle` is an advisory reviewer that critiques direction and proposes an execution prompt without editing files. `worker` is the implementation agent for normal tasks and approved oracle handoffs.
 
-The `researcher` builtin uses `web_search`, `fetch_content`, and `get_search_content`; those require [pi-web-access](https://github.com/nicobailon/pi-web-access):
-
-```bash
-pi install npm:pi-web-access
-```
+The `researcher` and `context-builder` builtins use `web_explore`, provided by the bundled [`pi-web-agent`](https://github.com/demigodmode/pi-web-agent) extension (`src/extensions/pi-web-agent`) — no external install is required. Brave Search is optional: on first run you will be prompted for a Brave API key (get one at <https://api.dashboard.search.brave.com/app/keys>), or you can set `webAgent.braveApiKey` in `~/.selesai/agent/settings.json` directly. If you skip Brave, `web_explore` falls back to the default DuckDuckGo backend (no key needed).
 
 ### Builtin overrides
 
