@@ -21,7 +21,7 @@ import {
 
 import { BOX_BORDER_LEFT, BOX_BORDER_OVERHEAD, BOX_BORDER_RIGHT, OVERLAY_MAX_HEIGHT_RATIO, QUESTION_STATUS_KEY, QUESTION_VERSION } from "./constants.ts";
 import { DialogFallback } from "./dialog-adapter.ts";
-import { createFreeformResponse, createSelectionResponse, formatOptionsForMessage, formatResponseSummary, normalizeOptions, oneLine, safeMarkdownTheme } from "./helpers.ts";
+import { createFreeformResponse, createSelectionResponse, formatOptionsForMessage, formatResponseSummary, getOptionsFormatError, normalizeOptions, oneLine, safeMarkdownTheme } from "./helpers.ts";
 import { QuestionList } from "./question-list.ts";
 import { MultiSelect, SingleSelect } from "./selection-mode.ts";
 import { resolveShortcuts } from "./shortcuts.ts";
@@ -443,6 +443,15 @@ export default function questionExtension(pi: ExtensionAPI) {
 				params.commentToggleKey as string | null | undefined,
 				process.env.PI_QUESTION_COMMENT_TOGGLE_KEY,
 			);
+
+			const optionsFormatError = getOptionsFormatError(params.options as RawOption[] | undefined);
+			if (optionsFormatError) {
+				return {
+					content: [{ type: "text", text: optionsFormatError }],
+					isError: true,
+					details: { question: rawQuestion, context: rawContext, options: [], response: null, cancelled: true } satisfies QuestionDetails,
+				};
+			}
 
 			const options = normalizeOptions(params.options as RawOption[] | undefined);
 			const normalizedContext = rawContext || undefined;

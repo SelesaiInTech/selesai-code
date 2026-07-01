@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
 	normalizeOptions,
+	getOptionsFormatError,
 	createFreeformResponse,
 	createSelectionResponse,
 	formatResponseSummary,
@@ -40,6 +41,14 @@ test("normalizeOptions: empty/undefined", () => {
 
 test("normalizeOptions: whitespace-only labels filtered", () => {
 	assert.deepEqual(normalizeOptions(["  ", "a", ""]), [{ label: "a" }]);
+});
+
+test("getOptionsFormatError: rejects JSON-encoded option arrays", () => {
+	assert.match(getOptionsFormatError(['[{"label":"Yes","description":"desc"}]']) ?? "", /JSON-encoded string/);
+});
+
+test("getOptionsFormatError: allows normal string labels", () => {
+	assert.equal(getOptionsFormatError(["Yes", "No"]), null);
 });
 
 test("createFreeformResponse: null/undefined/empty → null", () => {

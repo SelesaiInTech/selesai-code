@@ -4,6 +4,22 @@ import type { MarkdownTheme } from "@earendil-works/pi-coding-agent";
 
 import type { QuestionOption, QuestionResponse, RawOption } from "./types.ts";
 
+export function getOptionsFormatError(options: RawOption[] | undefined): string | null {
+	for (const option of options ?? []) {
+		if (typeof option !== "string") continue;
+		const text = option.trim();
+		if (!text.startsWith("[") && !text.startsWith("{")) continue;
+		try {
+			const parsed = JSON.parse(text);
+			const jsonOption = (value: unknown) => !!value && typeof value === "object" && typeof (value as { label?: unknown }).label === "string";
+			if (jsonOption(parsed) || (Array.isArray(parsed) && parsed.some(jsonOption))) {
+				return 'Invalid question.options: pass an array of strings or {label, description} objects, not a JSON-encoded string. Example: {"options":[{"label":"Yes","description":"..."}]}, not {"options":["[{\\"label\\":\\"Yes\\"}]"]}.';
+			}
+		} catch {}
+	}
+	return null;
+}
+
 export function normalizeOptions(options: RawOption[] | undefined): QuestionOption[] {
 	return (options ?? [])
 		.map((option) =>
