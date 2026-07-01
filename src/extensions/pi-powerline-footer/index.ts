@@ -43,7 +43,7 @@ import {
   shortcutConflictKey,
   shortcutUsesSuper,
 } from "./shortcuts.ts";
-import { 
+import {
   initVibeManager, 
   onVibeBeforeAgentStart, 
   onVibeAgentStart, 
@@ -59,6 +59,7 @@ import {
   getVibeFileCount,
   generateVibesBatch,
 } from "./working-vibes.ts";
+import { setupTpsTracker } from "./tps.ts";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Configuration
@@ -1175,6 +1176,8 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   }
 
   // Track session start
+  setupTpsTracker(pi);
+
   pi.on("session_start", async (event, ctx) => {
     shellSession?.dispose();
     shellSession = null;

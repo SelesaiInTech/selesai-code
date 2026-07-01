@@ -1,13 +1,20 @@
 /**
- * TPS Tracker Extension
+ * TPS Tracker — tokens-per-second tracking merged into the powerline footer.
  *
- * Tracks tokens per second during model generation and reports
- * final TPS statistics at the end of each agent run.
+ * Writes live and final TPS stats to `ctx.ui.setStatus("tps", ...)`, which the
+ * powerline `extension_statuses` segment surfaces in the status bar (and the
+ * `setExtensionStatus` repaint hook turns into a re-render automatically).
+ *
+ * Tracks:
+ *  - Main model output tokens vs. streaming wall time (excludes first-token
+ *    latency and tool execution gaps).
+ *  - pi-subagents child output tokens via tool_execution_* events, aggregated
+ *    into a combined "main + subagents" TPS at agent_end.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-export default function (pi: ExtensionAPI) {
+export function setupTpsTracker(pi: ExtensionAPI): void {
 	/** Timestamp when the current assistant message event started. Used as a fallback. */
 	let messageStart: number | null = null;
 	/** Timestamp of the first streamed output delta for the current assistant message. */
@@ -118,9 +125,9 @@ export default function (pi: ExtensionAPI) {
 		messageStart = null;
 		streamStart = null;
 		estimatedStreamedTokens = 0;
-		const theme = ctx.ui.theme;
 		subagentStarts.clear();
 		subagentLiveTokens.clear();
+		const theme = ctx.ui.theme;
 		ctx.ui.setStatus("tps", theme.fg("success", "⏱ generating..."));
 	});
 
