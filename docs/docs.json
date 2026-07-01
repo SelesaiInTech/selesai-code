@@ -53,6 +53,10 @@
           "path": "extensions.md"
         },
         {
+          "title": "Workflows",
+          "path": "workflows.md"
+        },
+        {
           "title": "Skills",
           "path": "skills.md"
         },
