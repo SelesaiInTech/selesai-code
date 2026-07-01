@@ -1,0 +1,18 @@
+{
+	"name": "@selesai/question",
+	"version": "0.0.1",
+	"private": true,
+	"description": "Interactive question tool extension for the agent.",
+	"type": "module",
+	"pi": {
+		"extensions": ["./index.ts"]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*",
+		"typebox": "*"
+	},
+	"scripts": {
+		"test": "node --experimental-strip-types --test tests/**/*.test.ts"
+	}
+}
