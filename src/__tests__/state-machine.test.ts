@@ -158,6 +158,29 @@ describe("WorkflowStateMachine.onArtifactMaybe (auto-advance)", () => {
     const eff = await sm.onArtifactMaybe(makeDeps(new Set()));
     expect(eff.kind).toBe("noOp");
   });
+
+  it("auto-advance is the single transition driver: each artifact lands → next phase", async () => {
+    // ponytail: with the next tool removed, onArtifactMaybe is the only driver.
+    // Writing each phase's artifact advances to the next phase, one at a time.
+    const files = new Set<string>();
+    const sm = new WorkflowStateMachine(baseConfig);
+    await sm.start("build X", makeDeps(files));
+    const dir = sm.snapshot.artifactDir;
+    for (const [phase, file] of [
+      ["grilling", "requirements.md"],
+      ["research", "research.md"],
+      ["plan", "plan.md"],
+      ["reuse", "reuse.md"],
+      ["handoff", "handoff.md"],
+      ["loop", "loop-complete.md"],
+    ] as const) {
+      expect(sm.snapshot.phase).toBe(phase);
+      files.add(`${dir}/${file}`);
+      const eff = await sm.onArtifactMaybe(makeDeps(files));
+      expect(eff.kind).toBe("advanced");
+    }
+    expect(sm.snapshot.phase).toBe("audit");
+  });
 });
 
 describe("WorkflowStateMachine skip rules", () => {

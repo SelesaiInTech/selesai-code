@@ -174,6 +174,7 @@ export class WorkflowStateMachine {
     this.userPrompt = snapshot.userPrompt;
     this.artifactDir = snapshot.artifactDir;
     this.autoArmed = snapshot.autoArmed;
+    this.advancing = false;
   }
 
   private promptFor(p: Phase): string {
@@ -223,9 +224,9 @@ export class WorkflowStateMachine {
 
   // ponytail: the core transition. Shared by next() and onArtifactMaybe().
   // Pure given deps. Returns the Effect; does NOT mutate if blocked/idle.
-  private async advancePhase(deps: WorkflowDeps): Promise<WorkflowEffect> {
+  private async advancePhase(deps: WorkflowDeps, currentPhaseSatisfied = false): Promise<WorkflowEffect> {
     if (!this.active) return { kind: "idle", phase: this.phase };
-    if (!(await this.artifactExistsFor(this.phase, deps))) {
+    if (!currentPhaseSatisfied && !(await this.artifactExistsFor(this.phase, deps))) {
       const missing = this.config.phaseArtifacts[this.phase]!;
       return { kind: "blocked", phase: this.phase, missing };
     }
@@ -324,7 +325,7 @@ export class WorkflowStateMachine {
   // ponytail: the tool_result auto-advance hook. One call, one apply.
   // Reentrancy guard + autoArmed + artifact gate all live in here — the
   // adapter's hook is `const eff = await sm.onArtifactMaybe(deps); apply(...)`.
-  async onArtifactMaybe(deps: WorkflowDeps): Promise<WorkflowEffect> {
+  async onArtifactMaybe(deps: WorkflowDeps, writtenPath?: string): Promise<WorkflowEffect> {
     if (this.advancing) return { kind: "noOp" };
     if (!this.active || !this.autoArmed) return { kind: "noOp" };
     const expected = this.config.phaseArtifacts[this.phase];
@@ -332,9 +333,19 @@ export class WorkflowStateMachine {
     // Acquire synchronously before any await so a concurrent call sees advancing=true.
     this.advancing = true;
     try {
-      if (!(await this.artifactExistsFor(this.phase, deps))) return { kind: "noOp" };
+      // ponytail: accept the artifact at its expected artifactDir path OR, if the
+      // agent wrote it elsewhere (e.g. repo root — a common instruction-following
+      // slip), accept a just-written file whose basename matches the expected
+      // artifact filename. The workflow owns these filenames, so a basename match
+      // is sufficient evidence the phase's artifact landed.
+      const atExpectedPath = await this.artifactExistsFor(this.phase, deps);
+      const basenameMatch = !!writtenPath && writtenPath.replace(/\\/g, "/").split("/").pop() === expected;
+      if (!atExpectedPath && !basenameMatch) return { kind: "noOp" };
       this.autoArmed = false;
-      const out = await this.advancePhase(deps);
+      // ponytail: the gate above already proved the phase's artifact landed (at
+      // the expected path or via basename match), so tell advancePhase not to
+      // re-check artifactExistsFor — the agent may have written it elsewhere.
+      const out = await this.advancePhase(deps, true);
       if (out.kind === "terminalReady") {
         // ponytail: both close artifacts present — close directly.
         return this.end(deps);

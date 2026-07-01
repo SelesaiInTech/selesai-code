@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ponytail: adapter smoke test — one per call site. Verifies the adapter
@@ -92,10 +92,10 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		rmSync(tmp, { recursive: true, force: true });
 	});
 
-	it("registers start/next/end tools + /prototype command", async () => {
+	it("registers start/end tools + /prototype command (no next tool)", async () => {
 		const pi = await createHarness();
 		expect(pi.tools.has("start_workflow")).toBe(true);
-		expect(pi.tools.has("next_step")).toBe(true);
+		expect(pi.tools.has("next_step")).toBe(false);
 		expect(pi.tools.has("end_workflow")).toBe(true);
 		expect(pi.commands.has("prototype")).toBe(true);
 	});
@@ -113,13 +113,19 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(pi.status.get("prototype")).toContain("1/7");
 	});
 
-	it("next tool is blocked when requirements.md is missing", async () => {
+	it("auto-advance hook advances and queues a follow-up when streaming", async () => {
 		const pi = await createHarness();
-		const c = ctx(pi);
+		const c = ctx(pi, true); // streaming
 		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
-		const res = await pi.tools.get("next_step").execute("id-2", {}, undefined, undefined, c);
-		expect(res.details.blocked).toBe("requirements.md");
-		expect(res.content[0].text).toMatch(/requirements\.md/);
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		writeFileSync(join(dir, "requirements.md"), "# reqs");
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "write", toolCallId: "t1", input: {}, content: [], isError: false },
+			c,
+		);
+		expect(pi.entries.at(-1)?.data.phase).toBe("research");
+		expect(pi.sent.at(-1)?.options?.deliverAs).toBe("followUp");
+		expect(pi.sent.at(-1)?.text).toMatch(/research/i);
 	});
 
 	it("tool_result auto-advance advances and queues a follow-up when streaming", async () => {
@@ -178,5 +184,113 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(res.details.phase).toBe("grilling");
 		expect(entries.at(-1)?.customType).toBe("quick-phase");
 		expect(entries.at(-1)?.data.mode).toBe("quick");
+	});
+
+	it("tool_call forces subagent output to the workflow artifactDir during plan phase", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		writeFileSync(join(dir, "requirements.md"), "# reqs");
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "write", toolCallId: "t1", input: { path: join(dir, "requirements.md") }, content: [], isError: false },
+			c,
+		);
+		writeFileSync(join(dir, "research.md"), "# research");
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "write", toolCallId: "t2", input: { path: join(dir, "research.md") }, content: [], isError: false },
+			c,
+		);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+		const input: any = { agent: "architect", task: "plan the thing" };
+		await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "subagent", input },
+			c,
+		);
+		expect(input.output).toBe(resolve(dir, "plan.md"));
+	});
+
+	it("tool_call respects an explicit absolute caller output", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		writeFileSync(join(dir, "requirements.md"), "# reqs");
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "write", toolCallId: "t1", input: { path: join(dir, "requirements.md") }, content: [], isError: false },
+			c,
+		);
+		writeFileSync(join(dir, "research.md"), "# research");
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "write", toolCallId: "t2", input: { path: join(dir, "research.md") }, content: [], isError: false },
+			c,
+		);
+		const pinned = join(tmp, "elsewhere", "plan.md");
+		const input: any = { agent: "architect", task: "plan", output: pinned };
+		await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "subagent", input },
+			c,
+		);
+		expect(input.output).toBe(pinned);
+	});
+
+	it("tool_call does not force output during loop phase", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		for (const f of ["requirements.md", "research.md", "plan.md", "reuse.md", "handoff.md"]) {
+			writeFileSync(join(dir, f), "# " + f);
+			await pi.events.get("tool_result")(
+				{ type: "tool_result", toolName: "write", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false },
+				c,
+			);
+		}
+		expect(pi.entries.at(-1)?.data.phase).toBe("loop");
+		const input: any = { agent: "builder", task: "implement" };
+		await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "subagent", input },
+			c,
+		);
+		expect(input.output).toBeUndefined();
+	});
+
+	it("tool_call redirects a mangled write path (.selesai-requirements.md) to artifactDir", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		const input: any = { path: "./.selesai-requirements.md", content: "# reqs" };
+		await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "write", input },
+			c,
+		);
+		expect(input.path).toBe(resolve(dir, "requirements.md"));
+	});
+
+	it("tool_call leaves a write path that is already inside artifactDir untouched", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		const correct = join(dir, "requirements.md");
+		const input: any = { path: correct, content: "# reqs" };
+		await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "write", input },
+			c,
+		);
+		expect(input.path).toBe(correct);
+	});
+
+	it("tool_call leaves an unrelated write path untouched", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const input: any = { path: "src/main.ts", content: "code" };
+		await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "write", input },
+			c,
+		);
+		expect(input.path).toBe("src/main.ts");
 	});
 });

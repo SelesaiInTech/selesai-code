@@ -27,7 +27,14 @@ ${userPrompt}
 
 This phase is short: ask AT MOST 4 focused clarifying questions. Ask ONE question at a time, adapt to user answers, and dig into scope, constraints, success criteria, and edge cases.
 
-When you have enough clarity OR when 4 questions have been asked, stop grilling. Show the user a concise requirements summary and ask explicitly whether they approve it. Only once the user approves, write the approved summary to ${artifactDir}/requirements.md. The workflow advances automatically once requirements.md exists.`,
+When you have enough clarity OR when 4 questions have been asked, stop grilling. Show the user a concise requirements summary and ask explicitly whether they approve it.
+
+Artifact target for this phase: ${artifactDir}/requirements.md
+- In the approval question, name exactly that full path.
+- Do NOT shorten it to requirements.md, ./requirements.md, ./.requirements.md, or any other path.
+- Only once the user approves, call the write tool with path exactly ${artifactDir}/requirements.md.
+
+The workflow advances automatically once ${artifactDir}/requirements.md exists.`,
   plan: ({ artifactDir }) =>
     `You are entering the PLAN phase.
 
@@ -35,7 +42,7 @@ This is a QUICK workflow — no separate research phase. Based on ${artifactDir}
 
 Spawn the ARCHITECT SUB-AGENT to produce the plan. Use the task tool with subagent_type "architect". Do NOT pass a model parameter — let the agent use its configured model. Craft a tailored prompt from ${artifactDir}/requirements.md so the architect knows exactly what to plan for THIS task. The architect writes to ${artifactDir}/plan.md.
 
-The workflow advances automatically once plan.md exists.`,
+The workflow advances automatically once ${artifactDir}/plan.md exists.`,
   reuse: ({ artifactDir }) =>
     `You are entering the REUSE phase.
 
@@ -45,7 +52,7 @@ Spawn an EXPLORER SUB-AGENT to do the exploration. Use the task tool with subage
 
 When the explorer returns, synthesize its findings into ${artifactDir}/reuse.md: what is reusable, where, and how the prototype should leverage it.
 
-The workflow advances automatically once reuse.md exists.`,
+The workflow advances automatically once ${artifactDir}/reuse.md exists.`,
   handoff: ({ artifactDir }) =>
     `You are entering the HANDOFF phase.
 
@@ -58,7 +65,7 @@ Draw from ALL prior phases:
 
 Spawn the RECAPPER SUB-AGENT to compile the handoff. Use the task tool with subagent_type "recapper". Do NOT pass a model parameter — let the agent use its configured model. Craft a tailored prompt that points the recapper at all three artifact files and tells it what the prototype is about, so it writes a coherent handoff tailored to this task. The recapper writes to ${artifactDir}/handoff.md.
 
-The workflow advances automatically once handoff.md exists.`,
+The workflow advances automatically once ${artifactDir}/handoff.md exists.`,
   loop: ({ artifactDir }) =>
     `You are entering the LOOP (orchestration) phase. Your job is to DELEGATE the implementation to sub-agents — do not implement the code yourself.
 
@@ -68,7 +75,7 @@ Read ${artifactDir}/plan.md, ${artifactDir}/handoff.md, and ${artifactDir}/reuse
 3. If the commentator reports blocking issues, dispatch the builder again with the issues to fix, then re-run the commentator. Repeat until no issues.
 4. Write ${artifactDir}/loop-complete.md with a one-line summary of the finished plan.
 
-The workflow advances to audit automatically once loop-complete.md exists.`,
+The workflow advances to audit automatically once ${artifactDir}/loop-complete.md exists.`,
   audit: ({ artifactDir }) =>
     `You are entering the AUDIT phase.
 
@@ -76,15 +83,15 @@ Purpose: review loop-phase changes and audit for over-engineering across the rep
 
 Two sub-agent rounds:
 
-1. Spawn the COMMENTATOR SUB-AGENT (task tool, subagent_type "commentator"). Do NOT pass a model parameter. Craft a tailored prompt from the full diff and plan.md so the commentator reviews correctness and plan-adherence (writing ${artifactDir}/review.md), then runs a whole-repo over-engineering audit (writing ${artifactDir}/audit.md).
+1. Spawn the COMMENTATOR SUB-AGENT (task tool, subagent_type "commentator"). Do NOT pass a model parameter. Craft a tailored prompt from the full diff and ${artifactDir}/plan.md so the commentator reviews correctness and plan-adherence (writing ${artifactDir}/review.md), then runs a whole-repo over-engineering audit (writing ${artifactDir}/audit.md).
 
-2. If review.md or audit.md lists actionable issues, spawn the BUILDER SUB-AGENT (task tool, subagent_type "builder"). Do NOT pass a model parameter. Craft a tailored prompt containing the findings. Instruct the builder to FIX every issue. All fixes go in the workspace, never in ${artifactDir}.
+2. If ${artifactDir}/review.md or ${artifactDir}/audit.md lists actionable issues, spawn the BUILDER SUB-AGENT (task tool, subagent_type "builder"). Do NOT pass a model parameter. Craft a tailored prompt containing the findings. Instruct the builder to FIX every issue. All fixes go in the workspace, never in ${artifactDir}.
 
 3. After the builder returns, re-dispatch the commentator to confirm fixes resolved findings. Repeat until clean.
 
 4. Update ${artifactDir}/audit.md with the final resolved state (what was found, what the builder fixed, what remains — should be none).
 
-The workflow closes automatically once both review.md and audit.md exist and the commentator reports no outstanding issues.`,
+The workflow closes automatically once both ${artifactDir}/review.md and ${artifactDir}/audit.md exist and the commentator reports no outstanding issues.`,
 };
 
 const config: WorkflowConfig = {
