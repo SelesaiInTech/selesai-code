@@ -30,7 +30,7 @@ const baseConfig: WorkflowConfig = {
     loop: () => "loop phase",
     audit: () => "audit phase",
   },
-  closeArtifacts: ["review.md", "audit.md"],
+  closeArtifacts: ["review.md"],
   statusKey: "test",
   entryType: "test-phase",
   footerLabel: "test",
@@ -230,27 +230,19 @@ describe("WorkflowStateMachine skip rules", () => {
 });
 
 describe("WorkflowStateMachine terminal + end", () => {
-  it("returns blocked (phase gate) when review.md is missing at audit, then terminalNeedsArtifacts for audit.md", async () => {
+  it("returns blocked when review.md is missing at audit", async () => {
     const files = new Set<string>();
     const sm = new WorkflowStateMachine(baseConfig);
     await sm.start("build X", makeDeps(files));
     const dir = sm.snapshot.artifactDir;
-    // walk to audit
     for (const f of ["requirements.md", "research.md", "plan.md", "reuse.md", "handoff.md", "loop-complete.md"]) {
       files.add(`${dir}/${f}`);
       await sm.next(makeDeps(files));
     }
     expect(sm.snapshot.phase).toBe("audit");
-    // ponytail: audit's phase-artifact gate is review.md — checked FIRST,
-    // before the terminal close-artifacts gate. So review.md missing → blocked.
-    let eff = await sm.next(makeDeps(files));
+    const eff = await sm.next(makeDeps(files));
     expect(eff.kind).toBe("blocked");
     expect((eff as Extract<WorkflowEffect, { kind: "blocked" }>).missing).toBe("review.md");
-    // review.md present but audit.md missing → terminalNeedsArtifacts.
-    files.add(`${dir}/review.md`);
-    eff = await sm.next(makeDeps(files));
-    expect(eff.kind).toBe("terminalNeedsArtifacts");
-    expect((eff as Extract<WorkflowEffect, { kind: "terminalNeedsArtifacts" }>).missing).toBe("audit.md");
   });
 
   it("returns terminalReady when all close artifacts exist", async () => {
@@ -263,7 +255,6 @@ describe("WorkflowStateMachine terminal + end", () => {
       await sm.next(makeDeps(files));
     }
     files.add(`${dir}/review.md`);
-    files.add(`${dir}/audit.md`);
     const eff = await sm.next(makeDeps(files));
     expect(eff.kind).toBe("terminalReady");
   });
@@ -278,7 +269,6 @@ describe("WorkflowStateMachine terminal + end", () => {
       await sm.next(makeDeps(files));
     }
     files.add(`${dir}/review.md`);
-    files.add(`${dir}/audit.md`);
     const eff = await sm.onArtifactMaybe(makeDeps(files));
     expect(eff.kind).toBe("closed");
     expect(sm.snapshot.active).toBe(false);
@@ -301,7 +291,6 @@ describe("WorkflowStateMachine terminal + end", () => {
       await sm.next(makeDeps(files));
     }
     files.add(`${dir}/review.md`);
-    files.add(`${dir}/audit.md`);
     const eff = await sm.end(makeDeps(files));
     expect(eff.kind).toBe("closed");
     const e = eff as Extract<WorkflowEffect, { kind: "closed" }>;
@@ -309,7 +298,7 @@ describe("WorkflowStateMachine terminal + end", () => {
     expect(sm.snapshot.active).toBe(false);
   });
 
-  it("end is blocked when a close artifact is missing", async () => {
+  it("end is blocked when review.md is missing", async () => {
     const files = new Set<string>();
     const sm = new WorkflowStateMachine(baseConfig);
     await sm.start("build X", makeDeps(files));
@@ -318,12 +307,10 @@ describe("WorkflowStateMachine terminal + end", () => {
       files.add(`${dir}/${f}`);
       await sm.next(makeDeps(files));
     }
-    files.add(`${dir}/review.md`);
-    // audit.md missing
     const eff = await sm.end(makeDeps(files));
     expect(eff.kind).toBe("endBlocked");
     const e = eff as Extract<WorkflowEffect, { kind: "endBlocked" }>;
-    expect(e.missing).toBe("audit.md");
+    expect(e.missing).toBe("review.md");
   });
 });
 

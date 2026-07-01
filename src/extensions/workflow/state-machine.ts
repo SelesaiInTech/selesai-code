@@ -33,6 +33,14 @@ export interface SkipRule {
   shouldSkip: (ctx: PromptContext) => Promise<boolean>;
 }
 
+export interface WorkflowModeRegistration {
+  config: WorkflowConfig;
+  commandName: string;
+  commandDescription: string;
+  toolNames: { start: string; end: string };
+  toolLabels: { start: string; end: string };
+}
+
 export interface WorkflowConfig {
   mode: string;
   phases: Phase[];
@@ -239,7 +247,7 @@ export class WorkflowStateMachine {
             kind: "terminalNeedsArtifacts",
             phase: this.phase,
             missing: file,
-            promptToQueue: `Audit phase still needs ${this.artifactDir}/${file}. Write it, then the workflow closes automatically.`,
+            promptToQueue: `Terminal phase still needs ${this.artifactDir}/${file}. Write it, then the workflow closes automatically.`,
           };
         }
       }
@@ -325,7 +333,7 @@ export class WorkflowStateMachine {
   // ponytail: the tool_result auto-advance hook. One call, one apply.
   // Reentrancy guard + autoArmed + artifact gate all live in here — the
   // adapter's hook is `const eff = await sm.onArtifactMaybe(deps); apply(...)`.
-  async onArtifactMaybe(deps: WorkflowDeps, writtenPath?: string): Promise<WorkflowEffect> {
+  async onArtifactMaybe(deps: WorkflowDeps): Promise<WorkflowEffect> {
     if (this.advancing) return { kind: "noOp" };
     if (!this.active || !this.autoArmed) return { kind: "noOp" };
     const expected = this.config.phaseArtifacts[this.phase];
@@ -333,22 +341,17 @@ export class WorkflowStateMachine {
     // Acquire synchronously before any await so a concurrent call sees advancing=true.
     this.advancing = true;
     try {
-      // ponytail: accept the artifact at its expected artifactDir path OR, if the
-      // agent wrote it elsewhere (e.g. repo root — a common instruction-following
-      // slip), accept a just-written file whose basename matches the expected
-      // artifact filename. The workflow owns these filenames, so a basename match
-      // is sufficient evidence the phase's artifact landed.
-      const atExpectedPath = await this.artifactExistsFor(this.phase, deps);
-      const basenameMatch = !!writtenPath && writtenPath.replace(/\\/g, "/").split("/").pop() === expected;
-      if (!atExpectedPath && !basenameMatch) return { kind: "noOp" };
+      // Artifact must exist at the workflow-owned path. No rescue/redirect magic.
+      if (!(await this.artifactExistsFor(this.phase, deps))) return { kind: "noOp" };
       this.autoArmed = false;
-      // ponytail: the gate above already proved the phase's artifact landed (at
-      // the expected path or via basename match), so tell advancePhase not to
-      // re-check artifactExistsFor — the agent may have written it elsewhere.
       const out = await this.advancePhase(deps, true);
       if (out.kind === "terminalReady") {
         // ponytail: both close artifacts present — close directly.
         return this.end(deps);
+      }
+      if (out.kind === "terminalNeedsArtifacts") {
+        // Keep listening: audit/review may land in separate writes.
+        this.autoArmed = true;
       }
       return out;
     } finally {

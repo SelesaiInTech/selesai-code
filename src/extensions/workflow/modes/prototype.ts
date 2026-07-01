@@ -2,8 +2,8 @@ import type {
   Phase,
   PromptContext,
   WorkflowConfig,
+  WorkflowModeRegistration,
 } from "../state-machine.ts";
-import { createWorkflowExtension } from "../adapter.ts";
 
 // ponytail: prototype workflow — full 7-phase tool-driven loop:
 // grill → research → plan → reuse → handoff → loop → audit.
@@ -29,12 +29,12 @@ ${userPrompt}
 
 The purpose of this phase is NOT to start solving — it is to INTERVIEW the user until the requirements are unambiguous. You are the interviewer: drive the conversation. Ask focused clarifying questions ONE at a time, and adapt each question to what the user reveals. Dig into scope, constraints, success criteria, edge cases, and anything ambiguous. Use your own judgement to decide what still needs clarifying — do not follow a fixed checklist. Provide rich context in your questions so the user understands why each matters.
 
-When you and the user have reached shared understanding, DO NOT write the file yet. First show the user a concise draft of the requirements summary and ask explicitly whether they approve committing it, want to keep grilling, or just remembered something to add.
+When you and the user have reached shared understanding, DO NOT write the file yet. First show the user a concise draft of the requirements summary and ask exactly: "Approve writing this requirements summary to ${artifactDir}/requirements.md?" Also allow "keep grilling" or added details.
 
 Artifact target for this phase: ${artifactDir}/requirements.md
 - In the approval question, name exactly that full path.
-- Do NOT shorten it to requirements.md, ./requirements.md, ./.requirements.md, or any other path.
-- Only once the user explicitly approves, call the write tool with path exactly ${artifactDir}/requirements.md.
+- Do NOT shorten, translate, censor, sanitize, or invent a different path.
+- Only once the user explicitly approves, call write_workflow_artifact with content only. Do not call write for this artifact.
 
 The workflow advances automatically once ${artifactDir}/requirements.md exists.`,
   research: ({ artifactDir }) =>
@@ -46,7 +46,7 @@ First decide: is research needed here?
 - If YES: use web search tools (webfetch / web_search_exa) to gather current, authoritative information on the relevant libraries/frameworks/approaches, then synthesize actionable findings (versions, APIs, pitfalls, recommended approaches).
 - If NO: skip real research.
 
-Either way, write ${artifactDir}/research.md. If you skipped, state briefly WHY research was unnecessary so downstream phases know. If you researched, record findings the plan can rely on.
+Either way, call write_workflow_artifact with the research.md content. If you skipped, state briefly WHY research was unnecessary so downstream phases know. If you researched, record findings the plan can rely on.
 
 The workflow advances automatically once ${artifactDir}/research.md exists.`,
   plan: ({ artifactDir }) =>
@@ -56,7 +56,7 @@ This plan is for the ACTUAL prototype/output the user wants — not a plan for r
 
 If research was skipped, that is fine — proceed directly. You already understand the user's intent from grilling.
 
-Spawn the ARCHITECT SUB-AGENT to produce the plan. Use the task tool with subagent_type "architect". Do NOT pass a model parameter — let the agent use its configured model. Craft a tailored prompt from ${artifactDir}/requirements.md and ${artifactDir}/research.md so the architect knows exactly what to plan for THIS task. The architect writes to ${artifactDir}/plan.md.
+Spawn the ARCHITECT SUB-AGENT to produce the plan. Use the task tool with subagent_type "architect". Do NOT pass a model parameter — let the agent use its configured model. Craft a tailored prompt from ${artifactDir}/requirements.md and ${artifactDir}/research.md so the architect knows exactly what to plan for THIS task. The architect should return the plan content as its final answer; the workflow will save it to ${artifactDir}/plan.md.
 
 The workflow advances automatically once ${artifactDir}/plan.md exists.`,
   reuse: ({ artifactDir }) =>
@@ -64,7 +64,7 @@ The workflow advances automatically once ${artifactDir}/plan.md exists.`,
 
 Purpose: explore the existing codebase for reusable components, patterns, and knowledge this prototype should build on, so you do not reinvent what already exists.
 
-Spawn an EXPLORER SUB-AGENT to do the exploration. Use the task tool with subagent_type "explorer". Do NOT pass a model parameter — let the agent use its configured model. Do NOT send a generic exploration prompt — CRAFT a specific prompt tailored to THIS task: from ${artifactDir}/requirements.md and ${artifactDir}/plan.md, tell the explorer exactly which areas of the codebase, which patterns, and which dependencies are relevant. For example, if the user wants Tailwind, have the explorer determine how Tailwind is already set up and used here and what conventions to follow. Instruct the explorer to write its findings to ${artifactDir}/reuse.md.
+Spawn an EXPLORER SUB-AGENT to do the exploration. Use the task tool with subagent_type "explorer". Do NOT pass a model parameter — let the agent use its configured model. Do NOT send a generic exploration prompt — CRAFT a specific prompt tailored to THIS task: from ${artifactDir}/requirements.md and ${artifactDir}/plan.md, tell the explorer exactly which areas of the codebase, which patterns, and which dependencies are relevant. For example, if the user wants Tailwind, have the explorer determine how Tailwind is already set up and used here and what conventions to follow. The explorer should return its findings as its final answer; the workflow will save them to ${artifactDir}/reuse.md.
 
 When the explorer returns, synthesize its findings into ${artifactDir}/reuse.md: what is reusable, where, and how the prototype should leverage it.
 
@@ -80,7 +80,7 @@ Draw from ALL prior phases:
 - ${artifactDir}/plan.md (the build plan)
 - ${artifactDir}/reuse.md (codebase exploration findings)
 
-Spawn the RECAPPER SUB-AGENT to compile the handoff. Use the task tool with subagent_type "recapper". Do NOT pass a model parameter — let the agent use its configured model. Craft a tailored prompt that points the recapper at all four artifact files and tells it what the prototype is about, so it can write a coherent handoff tailored to this task. The recapper writes to ${artifactDir}/handoff.md.
+Spawn the RECAPPER SUB-AGENT to compile the handoff. Use the task tool with subagent_type "recapper". Do NOT pass a model parameter — let the agent use its configured model. Craft a tailored prompt that points the recapper at all four artifact files and tells it what the prototype is about, so it can write a coherent handoff tailored to this task. The recapper should return the handoff content as its final answer; the workflow will save it to ${artifactDir}/handoff.md.
 
 The workflow advances automatically once ${artifactDir}/handoff.md exists.`,
   loop: ({ artifactDir }) =>
@@ -90,25 +90,21 @@ Read ${artifactDir}/plan.md, ${artifactDir}/handoff.md, ${artifactDir}/research.
 1. Dispatch ONE builder sub-agent (task tool, subagent_type "builder"). Do NOT pass a model parameter — let the agent use its configured model. Craft a prompt: give it the plan + handoff + any research/reuse context it needs, tailored to this specific task, and instruct it to implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}.
 2. Dispatch ONE commentator sub-agent (task tool, subagent_type "commentator"). Do NOT pass a model parameter. Review the builder's diff against plan.md. Generate the review prompt YOURSELF based on what matters for this task.
 3. If the commentator reports blocking issues, dispatch the builder again with the issues to fix, then re-run the commentator. Repeat until no issues.
-4. Write ${artifactDir}/loop-complete.md with a one-line summary of the finished plan.
+4. Call write_workflow_artifact with a one-line summary of the finished plan.
 
 Generate the prompts with full awareness of the task — tailored, not generic. The workflow advances to audit automatically once ${artifactDir}/loop-complete.md exists.`,
   audit: ({ artifactDir }) =>
-    `You are entering the AUDIT phase.
+    `You are entering the REVIEW phase.
 
-Purpose: review the changes made during the loop phase, then audit for over-engineering across the repo — and ACT on findings so no tech debt ships.
+Purpose: review uncommitted changes for correctness, plan adherence, and over-engineering. Use ponytail-review style: cut bloat, unnecessary abstractions, dead flexibility, and reinvented stdlib/native behavior.
 
-Two sub-agent rounds:
+1. Spawn the COMMENTATOR SUB-AGENT (task tool, subagent_type "commentator"). Do NOT pass a model parameter. Craft a tailored prompt from the full uncommitted diff and ${artifactDir}/plan.md. The commentator should return its review as its final answer; the workflow will save it to ${artifactDir}/review.md.
 
-1. Spawn the COMMENTATOR SUB-AGENT (task tool, subagent_type "commentator"). Do NOT pass a model parameter — let the agent use its configured model. Craft a tailored prompt from the full diff and ${artifactDir}/plan.md so the commentator reviews correctness and plan-adherence (writing ${artifactDir}/review.md), then runs a whole-repo over-engineering audit (writing ${artifactDir}/audit.md). Give the commentator the diff context and tell it which files matter.
+2. If ${artifactDir}/review.md lists actionable issues, spawn the BUILDER SUB-AGENT (task tool, subagent_type "builder"). Do NOT pass a model parameter. Instruct it to fix every issue in the workspace, never in ${artifactDir}.
 
-2. If ${artifactDir}/review.md or ${artifactDir}/audit.md lists any actionable issues, spawn the BUILDER SUB-AGENT (task tool, subagent_type "builder"). Do NOT pass a model parameter. Craft a tailored prompt containing the commentator's findings. Instruct the builder to FIX every issue: trim over-engineering, delete dead code, remove unnecessary abstractions, correct plan deviations. All fixes go in the workspace, never in ${artifactDir}. Do not leave findings unresolved — no tech debt carries past this phase.
+3. Re-dispatch the commentator until ${artifactDir}/review.md says the review is clean and no issues remain.
 
-3. After the builder returns, re-dispatch the commentator to confirm the fixes resolved the findings and no new issues appeared. Repeat commentator→builder until the commentator reports a clean review.
-
-4. Update ${artifactDir}/audit.md with the final resolved state (what was found, what the builder fixed, what remains — should be none).
-
-The workflow closes automatically once both ${artifactDir}/review.md and ${artifactDir}/audit.md exist and the commentator reports no outstanding issues.`,
+The workflow closes automatically once ${artifactDir}/review.md exists and the commentator reports no outstanding issues.`,
 };
 
 const config: WorkflowConfig = {
@@ -124,20 +120,19 @@ const config: WorkflowConfig = {
     audit: "review.md",
   },
   prompts,
-  closeArtifacts: ["review.md", "audit.md"],
+  closeArtifacts: ["review.md"],
   statusKey: "prototype",
   entryType: "prototype-phase",
   footerLabel: "prototype",
 };
 
-export default createWorkflowExtension(config, {
+export const prototypeMode: WorkflowModeRegistration = {
+  config,
   commandName: "prototype",
   commandDescription:
     "Run the prototype workflow (grill → research → plan → reuse → handoff → loop → audit)",
-  toolNames: { start: "start_workflow", next: "next_step", end: "end_workflow" },
-  toolLabels: {
-    start: "Start Workflow",
-    next: "Next Step",
-    end: "End Workflow",
-  },
-});
+  toolNames: { start: "start_workflow", end: "end_workflow" },
+  toolLabels: { start: "Start Workflow", end: "End Workflow" },
+};
+
+export default prototypeMode;

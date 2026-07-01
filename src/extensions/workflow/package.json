@@ -6,8 +6,7 @@
 	"type": "module",
 	"pi": {
 		"extensions": [
-			"./modes/prototype.ts",
-			"./modes/quick.ts"
+			"./extension.ts"
 		]
 	},
 	"peerDependencies": {

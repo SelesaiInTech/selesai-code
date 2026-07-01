@@ -1,17 +1,16 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ponytail: with the next tool removed, the tool_result hook is the single
-// transition driver. It must fire on the agent's own writes (write/edit/bash)
-// AND on the subagent tool — subagent-driven phases (plan/reuse/handoff/audit)
-// delegate artifact writing to child agents whose writes don't bubble here,
-// so we re-check when the subagent tool returns to the parent.
+// ponytail: with the next tool removed, write_workflow_artifact advances
+// parent-written artifacts; subagent-driven phases advance when the subagent
+// tool returns and the forced output file exists.
 
 async function createQuickHarness() {
 	vi.resetModules();
-	const { default: quickExtension } = await import("../extensions/workflow/modes/quick.ts");
+	const { default: quickMode } = await import("../extensions/workflow/modes/quick.ts");
+	const { createWorkflowExtension } = await import("../extensions/workflow/adapter.ts");
 	const events = new Map<string, (...a: any[]) => any>();
 	const tools = new Map<string, any>();
 	const commands = new Map<string, any>();
@@ -34,7 +33,12 @@ async function createQuickHarness() {
 			theme: { fg: (_c: string, t: string) => t },
 		},
 	};
-	quickExtension(pi);
+	createWorkflowExtension(quickMode.config, {
+		toolNames: quickMode.toolNames,
+		toolLabels: quickMode.toolLabels,
+		commandName: quickMode.commandName,
+		commandDescription: quickMode.commandDescription,
+	})(pi);
 	return { events, tools, commands, entries, sent, status, ctxBase };
 }
 
@@ -59,6 +63,17 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		expect(h.tools.has("next_quick_step")).toBe(false);
 		expect(h.tools.has("start_quick_workflow")).toBe(true);
 		expect(h.tools.has("end_quick_workflow")).toBe(true);
+		expect(h.tools.has("write_workflow_artifact")).toBe(true);
+	});
+
+	it("/quick command sends the grilling prompt once", async () => {
+		const h = await createQuickHarness();
+		await h.commands.get("quick").handler("build X", {
+			...h.ctxBase,
+			isIdle: () => true,
+		});
+		expect(h.sent).toHaveLength(1);
+		expect(h.sent[0].text).toMatch(/GRILLING phase/i);
 	});
 
 	it("hook advances grilling→plan when requirements.md is written and queues the plan prompt", async () => {
@@ -66,37 +81,24 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		await h.tools.get("start_quick_workflow").execute(
 			"id-1", { goal: "build X" }, undefined, undefined, { ...h.ctxBase },
 		);
-		const dir = h.entries.at(-1)!.data.artifactDir;
-		writeFileSync(join(dir, "requirements.md"), "# reqs");
-		await h.events.get("tool_result")(
-			{ type: "tool_result", toolName: "write", toolCallId: "t1", input: {}, content: [], isError: false },
-			{ ...h.ctxBase },
-		);
+		await h.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, { ...h.ctxBase });
 		expect(h.entries.at(-1)?.data.phase).toBe("plan");
 		expect(h.sent.at(-1)?.options?.deliverAs).toBe("followUp");
 		expect(h.sent.at(-1)?.text).toMatch(/PLAN phase/i);
 	});
 
-	it("hook rescues an artifact written to the repo root and advances", async () => {
+	it("tool_call blocks write while workflow is active", async () => {
 		const h = await createQuickHarness();
 		const c = { ...h.ctxBase };
 		await h.tools.get("start_quick_workflow").execute(
 			"id-1", { goal: "build X" }, undefined, undefined, c,
 		);
-		const dir = h.entries.at(-1)!.data.artifactDir;
-		// ponytail: the agent ignores the artifactDir path and writes requirements.md
-		// to the project root (cwd) instead — a common instruction-following slip.
-		writeFileSync(join(process.cwd(), "requirements.md"), "# reqs");
-		await h.events.get("tool_result")(
-			{ type: "tool_result", toolName: "write", toolCallId: "t1", input: { path: "requirements.md" }, content: [], isError: false },
+		const res = await h.events.get("tool_call")(
+			{ type: "tool_call", toolName: "write", toolCallId: "tc1", input: { path: "./.[密钥].md", content: "# reqs" } },
 			c,
 		);
-		// the rescue copies it into the artifactDir; the phase advances.
-		expect(existsSync(join(dir, "requirements.md"))).toBe(true);
-		expect(h.entries.at(-1)?.data.phase).toBe("plan");
-		expect(h.sent.at(-1)?.text).toMatch(/PLAN phase/i);
-		// cleanup the stray root file
-		rmSync(join(process.cwd(), "requirements.md"), { force: true });
+		expect(res.block).toBe(true);
+		expect(res.reason).toContain("write_workflow_artifact");
 	});
 
 	it("hook fires on the subagent tool so a subagent-written plan.md advances plan→reuse", async () => {
@@ -106,11 +108,7 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 			"id-1", { goal: "build X" }, undefined, undefined, c,
 		);
 		const dir = h.entries.at(-1)!.data.artifactDir;
-		// walk to plan: write requirements.md, fire hook
-		writeFileSync(join(dir, "requirements.md"), "# reqs");
-		await h.events.get("tool_result")(
-			{ type: "tool_result", toolName: "write", toolCallId: "t1", input: {}, content: [], isError: false }, c,
-		);
+		await h.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
 		expect(h.entries.at(-1)?.data.phase).toBe("plan");
 		// subagent (architect) writes plan.md out-of-band; the parent's hook only
 		// re-checks when the subagent tool returns. Simulate that tool_result.
@@ -120,5 +118,21 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		);
 		expect(h.entries.at(-1)?.data.phase).toBe("reuse");
 		expect(h.sent.at(-1)?.text).toMatch(/REUSE phase/i);
+	});
+
+	it("terminal closes once review.md lands", async () => {
+		const h = await createQuickHarness();
+		const c = { ...h.ctxBase };
+		await h.tools.get("start_quick_workflow").execute(
+			"id-1", { goal: "build X" }, undefined, undefined, c,
+		);
+		const dir = h.entries.at(-1)!.data.artifactDir;
+		for (const f of ["requirements.md", "plan.md", "reuse.md", "handoff.md", "loop-complete.md", "review.md"]) {
+			writeFileSync(join(dir, f), `# ${f}`);
+			await h.events.get("tool_result")(
+				{ type: "tool_result", toolName: f === "requirements.md" || f === "loop-complete.md" ? "bash" : "subagent", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false }, c,
+			);
+		}
+		expect(h.entries.at(-1)?.data.done).toBe(true);
 	});
 });
