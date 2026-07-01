@@ -5,7 +5,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import * as piCodingAgent from "@earendil-works/pi-coding-agent";
+import * as piCodingAgent from "@selesai/code";
 import type { Message } from "@earendil-works/pi-ai";
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, SingleResult, ToolCallSummary } from "./types.ts";
@@ -14,7 +14,7 @@ import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, Singl
 // File System Utilities
 // ============================================================================
 
-const DEFAULT_CONFIG_DIR_NAME = ".pi";
+const DEFAULT_CONFIG_DIR_NAME = ".selesai";
 
 export function resolveConfigDirName(codingAgentModule: unknown = piCodingAgent): string {
 	const value = codingAgentModule && typeof codingAgentModule === "object"
@@ -32,7 +32,7 @@ export function getProjectConfigDir(projectRoot: string): string {
 }
 
 export function getAgentDir(): string {
-	const configured = process.env.PI_CODING_AGENT_DIR;
+	const configured = process.env.SELESAI_CODING_AGENT_DIR;
 	if (configured === "~") return os.homedir();
 	if (configured?.startsWith("~/")) return path.join(os.homedir(), configured.slice(2));
 	return configured || path.join(os.homedir(), getConfigDirName(), "agent");

@@ -4,8 +4,8 @@ import * as path from "node:path";
 import { Compile } from "typebox/compile";
 import type { JsonSchemaObject } from "../../shared/types.ts";
 
-export const STRUCTURED_OUTPUT_SCHEMA_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA";
-export const STRUCTURED_OUTPUT_CAPTURE_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE";
+export const STRUCTURED_OUTPUT_SCHEMA_ENV = "SELESAI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA";
+export const STRUCTURED_OUTPUT_CAPTURE_ENV = "SELESAI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE";
 
 export interface StructuredOutputRuntime {
 	schema: JsonSchemaObject;

@@ -1,13 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@selesai/code";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "./pi-args.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
 import type { JsonSchemaObject } from "../../shared/types.ts";
 
-const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
-const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
-export const SUBAGENT_INTERCOM_SESSION_NAME_ENV = "PI_SUBAGENT_INTERCOM_SESSION_NAME";
+const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "SELESAI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
+const SUBAGENT_INHERIT_SKILLS_ENV = "SELESAI_SUBAGENT_INHERIT_SKILLS";
+export const SUBAGENT_INTERCOM_SESSION_NAME_ENV = "SELESAI_SUBAGENT_INTERCOM_SESSION_NAME";
 
 const STRUCTURED_OUTPUT_INSTRUCTIONS = [
 	"This subagent step has a strict structured output contract.",

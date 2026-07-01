@@ -16,7 +16,8 @@
   "keywords": [
     "pi-package",
     "pi",
-    "pi-coding-agent",
+    "selesai",
+    "selesai-code",
     "subagents",
     "ai",
     "agents",
@@ -57,7 +58,7 @@
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*"
+    "@selesai/code": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-agent-core": {
@@ -66,7 +67,7 @@
     "@earendil-works/pi-ai": {
       "optional": true
     },
-    "@earendil-works/pi-coding-agent": {
+    "@selesai/code": {
       "optional": true
     }
   },
@@ -78,6 +79,6 @@
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.74.0",
     "@earendil-works/pi-ai": "0.74.0",
-    "@earendil-works/pi-coding-agent": "0.74.0"
+    "@selesai/code": "0.74.0"
   }
 }

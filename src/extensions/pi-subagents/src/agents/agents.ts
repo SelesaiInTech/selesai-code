@@ -1217,10 +1217,10 @@ function resolveNearestProjectChainDirs(cwd: string): { readDirs: string[]; pref
 }
 const BUILTIN_AGENTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "agents");
 
-export const EXTRA_AGENT_DIRS_ENV = "PI_SUBAGENT_EXTRA_AGENT_DIRS";
+export const EXTRA_AGENT_DIRS_ENV = "SELESAI_SUBAGENT_EXTRA_AGENT_DIRS";
 
 // Additional read-only directories to scan for agent definitions, supplied by the
-// launcher via PI_SUBAGENT_EXTRA_AGENT_DIRS (PATH-style, split on os/path delimiter).
+// launcher via SELESAI_SUBAGENT_EXTRA_AGENT_DIRS (PATH-style, split on os/path delimiter).
 // Lets a hermetic wrapper (e.g. a Nix-store install) expose bundled agents without
 // copying or symlinking them into the writable agent dir. Loaded as "user" source,
 // at lower precedence than agents the user placed in their own agent dir.
@@ -1373,7 +1373,7 @@ export function discoverAgentsAll(cwd: string): {
 		...projectChainDiagnostics,
 	];
 
-	const userDir = process.env.PI_CODING_AGENT_DIR ? userDirOld : fs.existsSync(userDirNew) ? userDirNew : userDirOld;
+	const userDir = process.env.SELESAI_CODING_AGENT_DIR ? userDirOld : fs.existsSync(userDirNew) ? userDirNew : userDirOld;
 
 	return { builtin, package: packageAgents, user, project, chains, chainDiagnostics, userDir, projectDir, userChainDir, projectChainDir, userSettingsPath, projectSettingsPath };
 }

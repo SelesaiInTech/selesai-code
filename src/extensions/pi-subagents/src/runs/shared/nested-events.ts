@@ -802,8 +802,8 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 
 export function nestedArtifactEnv(rootRunId: string, parentRunId: string): Record<string, string> {
 	return {
-		PI_SUBAGENT_NESTED_ROOT_RUN_ID: rootRunId,
-		PI_SUBAGENT_NESTED_PARENT_RUN_ID: parentRunId,
+		SELESAI_SUBAGENT_NESTED_ROOT_RUN_ID: rootRunId,
+		SELESAI_SUBAGENT_NESTED_PARENT_RUN_ID: parentRunId,
 	};
 }
 

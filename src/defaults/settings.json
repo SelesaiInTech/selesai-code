@@ -20,27 +20,8 @@
   "packages": [
     "git:github.com/MasuRii/pi-tool-display",
     "git:github.com/omaclaren/pi-markdown-preview",
-    "git:github.com/aliou/pi-guardrails",
-    "git:github.com/nicobailon/pi-intercom",
-      "git:github.com/nicobailon/pi-rewind-hook"
+    "git:github.com/aliou/pi-guardrails"
   ],
-  "powerline": {
-    "preset": "custom",
-    "fixedEditor": true,
-    "fixedEditorPromptGlyph": "",
-    "mouseScroll": true,
-    "customItems": [
-      {
-        "id": "tps",
-        "statusKey": "tps",
-        "position": "left",
-        "prefix": "",
-        "color": "success",
-        "hideWhenMissing": true,
-        "excludeFromExtensionStatuses": true
-      }
-    ]
-  },
   "quietStartup": true,
   "retry": {
     "enabled": true,
@@ -53,13 +34,5 @@
   },
   "theme": "dark",
   "transport": "websocket",
-  "treeFilterMode": "no-tools",
-  "webSearch": {
-    "apiKeys": {
-      "BRAVE_API_KEY": "",
-      "EXA_API_KEY": "",
-      "JINA_API_KEY": "",
-      "TAVILY_API_KEY": ""
-    }
-  }
+  "treeFilterMode": "no-tools"
 }
