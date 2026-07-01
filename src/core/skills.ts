@@ -409,17 +409,30 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 
 			const existing = skillMap.get(skill.name);
 			if (existing) {
-				collisionDiagnostics.push({
-					type: "collision",
-					message: `name "${skill.name}" collision`,
-					path: skill.filePath,
-					collision: {
-						resourceType: "skill",
-						name: skill.name,
-						winnerPath: existing.filePath,
-						loserPath: skill.filePath,
-					},
-				});
+				// ponytail: a bundled skill often exists byte-identically in the
+				// user dir (older releases copied it there). Treat that as the
+			// same skill, not a collision: skip silently. Only warn when the
+			// two files actually differ in content.
+				let identical = false;
+				try {
+					identical =
+						readFileSync(skill.filePath, "utf-8") === readFileSync(existing.filePath, "utf-8");
+				} catch {
+					identical = false;
+				}
+				if (!identical) {
+					collisionDiagnostics.push({
+						type: "collision",
+						message: `name "${skill.name}" collision`,
+						path: skill.filePath,
+						collision: {
+							resourceType: "skill",
+							name: skill.name,
+							winnerPath: existing.filePath,
+							loserPath: skill.filePath,
+						},
+					});
+				}
 			} else {
 				skillMap.set(skill.name, skill);
 				realPathSet.add(realPath);

@@ -128,7 +128,7 @@ export function setupTpsTracker(pi: ExtensionAPI): void {
 		subagentStarts.clear();
 		subagentLiveTokens.clear();
 		const theme = ctx.ui.theme;
-		ctx.ui.setStatus("tps", theme.fg("success", "⏱ generating..."));
+		ctx.ui.setStatus("tps", theme.fg("success", "generating..."));
 	});
 
 	pi.on("message_start", async (event) => {
@@ -165,7 +165,7 @@ export function setupTpsTracker(pi: ExtensionAPI): void {
 			const theme = ctx.ui.theme;
 			ctx.ui.setStatus(
 				"tps",
-				`${theme.fg("accent", `${tps} tok/s`)} ${theme.fg("success", `(${tokenLabel} / ${elapsed.toFixed(1)}s)`)}`,
+				`${theme.fg("accent", `${tps} tok/s`)}`,
 			);
 		}
 	});
@@ -246,8 +246,7 @@ export function setupTpsTracker(pi: ExtensionAPI): void {
 		const tps = Math.round(displayTokens / elapsedSeconds);
 		subagentSummaries.push({ tokens: displayTokens, ms: elapsedMs, tps });
 		const theme = ctx.ui.theme;
-		const detail = theme.fg("success", `${mode}: ${displayTokens} tokens in ${(elapsedMs / 1000).toFixed(1)}s${agentSummary ? ` (${agentSummary})` : ""}`);
-		ctx.ui.notify(`${theme.fg("success", "✓")} ${theme.fg("accent", `${tps} t/s`)} ${detail}`, "info");
+		ctx.ui.notify(`${theme.fg("success", "✓")} ${theme.fg("accent", `${tps} t/s`)}`, "info");
 		ctx.ui.setStatus(
 			"tps",
 			`${theme.fg("accent", `main+${mode} ${tps} t/s`)} ${theme.fg("success", `(${agentSummary || `${tps} t/s`})`)}`,

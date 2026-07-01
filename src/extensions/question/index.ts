@@ -466,14 +466,13 @@ export default function questionExtension(pi: ExtensionAPI) {
 
 			protocol.setStatus(
 				QUESTION_STATUS_KEY,
-				protocol.theme.fg("warning", `❓ waiting: ${oneLine((normalizedContext ? `${normalizedContext}: ` : "") + rawQuestion, 48)}`),
+				protocol.theme.fg("accent", `waiting: ${oneLine((normalizedContext ? `${normalizedContext}: ` : "") + rawQuestion, 48)}`),
 			);
-			protocol.notify(`❓ Question: ${oneLine(rawQuestion, 140)}`, "info");
 
 			// No options: pure freeform via dialog input.
 			if (options.length === 0) {
 				if (!allowFreeform) {
-					protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("warning", "❓ question failed"));
+					protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("error", "question failed"));
 					return {
 						content: [{ type: "text", text: "Question options are empty and allowFreeform is false." }],
 						isError: true,
@@ -485,20 +484,20 @@ export default function questionExtension(pi: ExtensionAPI) {
 					const answer = await protocol.input(prompt, "Type your answer...", timeout ? { timeout } : undefined);
 					const response = createFreeformResponse(answer);
 					if (!response) {
-						protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("warning", "❓ question cancelled"));
+						protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("warning", "question cancelled"));
 						return {
 							content: [{ type: "text", text: "User cancelled the question" }],
 							details: { ...detailsBase, response: null, cancelled: true } satisfies QuestionDetails,
 						};
 					}
 					pi.events.emit("question:answered", { question: rawQuestion, context: normalizedContext, response });
-					protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("success", "✓ question answered"));
+					protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("success", "question answered"));
 					return {
 						content: [{ type: "text", text: `User answered: ${formatResponseSummary(response)}` }],
 						details: { ...detailsBase, response, cancelled: false } satisfies QuestionDetails,
 					};
 				} catch (error) {
-					protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("warning", "❓ question failed"));
+					protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("error", "question failed"));
 					throw error;
 				}
 			}
@@ -575,7 +574,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 				}
 			} catch (error) {
 				const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
-				protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("warning", "❓ question failed"));
+				protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("error", "question failed"));
 				return {
 					content: [{ type: "text", text: `Question tool failed: ${message}` }],
 					isError: true,
@@ -586,7 +585,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 			}
 
 			if (result === null) {
-				protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("warning", "❓ question cancelled"));
+				protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("warning", "question cancelled"));
 				pi.events.emit("question:cancelled", { question: rawQuestion, context: normalizedContext, options });
 				return {
 					content: [{ type: "text", text: "User cancelled the question" }],
@@ -594,7 +593,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 				};
 			}
 
-			protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("success", "✓ question answered"));
+			protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("success", "question answered"));
 			pi.events.emit("question:answered", { question: rawQuestion, context: normalizedContext, response: result });
 			return {
 				content: [{ type: "text", text: `User answered: ${formatResponseSummary(result)}` }],
@@ -614,7 +613,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 				? theme.fg("dim", ` · ${optionCount} option${optionCount === 1 ? "" : "s"}${flags.length ? ` · ${flags.join("/")}` : ""}`)
 				: theme.fg("dim", ` · freeform${flags.length ? ` · ${flags.join("/")}` : ""}`);
 			return new Text(
-				`${theme.fg("warning", "❓ ")}${theme.fg("toolTitle", theme.bold("QUESTION"))} ${theme.fg("accent", oneLine(title + question, 120))}${suffix}`,
+				`${theme.fg("toolTitle", theme.bold("QUESTION"))} ${theme.fg("accent", theme.bold(oneLine(title + question, 120)))}${suffix}`,
 				0,
 				0,
 			);
@@ -623,7 +622,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 		renderResult(result, options, theme, _context) {
 			const details = result.details as (QuestionDetails & { error?: string }) | undefined;
 
-			if (details?.error) return new Text(theme.fg("error", `✗ ${details.error}`), 0, 0);
+			if (details?.error) return new Text(theme.fg("error", details.error), 0, 0);
 
 			if (options.isPartial) {
 				const waitingText =
@@ -640,9 +639,8 @@ export default function questionExtension(pi: ExtensionAPI) {
 			}
 
 			const response = details.response;
-			let text = theme.fg("success", "✓ ");
-			if (response.kind === "freeform") text += theme.fg("muted", "(wrote) ");
-			text += theme.fg("accent", oneLine(formatResponseSummary(response), 120));
+			let text = theme.fg("success", theme.bold("answered: "));
+			text += theme.fg("accent", theme.bold(oneLine(formatResponseSummary(response), 120)));
 
 			if (options.expanded && details.question) {
 				text += `\n${theme.fg("dim", `Q: ${oneLine(details.question, 200)}`)}`;
