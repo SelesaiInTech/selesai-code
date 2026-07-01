@@ -22,12 +22,13 @@ export interface LoadedCounts {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const PI_LOGO = [
-  "██████████    ",
-  "████  ████    ",
-  "████  ████    ",
-  "████████  ████",
-  "████      ████",
-  "████      ████",
+  " ██████   ████████  ██        ████████   ██████    ██████   ████",
+  "██    ██  ██        ██        ██        ██    ██  ██    ██   ██ ",
+  "██        ██        ██        ██        ██        ██    ██   ██ ",
+  " ██████   ██████    ██        ██████     ██████   ████████   ██ ",
+  "      ██  ██        ██        ██              ██  ██    ██   ██ ",
+  "██    ██  ██        ██        ██        ██    ██  ██    ██   ██ ",
+  " ██████   ████████  ████████  ████████   ██████   ██    ██  ████",
 ];
 
 const GRADIENT_COLORS = [
@@ -89,7 +90,7 @@ interface WelcomeData {
 
 function buildLeftColumn(data: WelcomeData, colWidth: number): string[] {
   const logoColored = PI_LOGO.map((line) => gradientLine(line));
-  
+
   return [
     "",
     centerText(bold("Welcome back!"), colWidth),
@@ -104,7 +105,7 @@ function buildLeftColumn(data: WelcomeData, colWidth: number): string[] {
 function buildRightColumn(data: WelcomeData, colWidth: number): string[] {
   const hChar = "─";
   const separator = ` ${dim(hChar.repeat(colWidth - 2))}`;
-  
+
   // Session lines
   const sessionLines: string[] = [];
   if (data.recentSessions.length === 0) {
@@ -116,12 +117,12 @@ function buildRightColumn(data: WelcomeData, colWidth: number): string[] {
       );
     }
   }
-  
+
   // Loaded counts lines
   const countLines: string[] = [];
   const { contextFiles, extensions, skills, promptTemplates } = data.loadedCounts;
   const itemPrefix = dim("- ");
-  
+
   if (contextFiles > 0 || extensions > 0 || skills > 0 || promptTemplates > 0) {
     if (contextFiles > 0) {
       countLines.push(` ${itemPrefix}${fgOnly("gitClean", `${contextFiles}`)} context file${contextFiles !== 1 ? "s" : ""}`);
@@ -138,7 +139,7 @@ function buildRightColumn(data: WelcomeData, colWidth: number): string[] {
   } else {
     countLines.push(` ${dim("No extensions loaded")}`);
   }
-  
+
   return [
     ` ${bold(fgOnly("accent", "Tips"))}`,
     ` ${dim("/")} for commands`,
@@ -155,37 +156,37 @@ function buildRightColumn(data: WelcomeData, colWidth: number): string[] {
 }
 
 function renderWelcomeBox(
-  data: WelcomeData, 
-  termWidth: number, 
+  data: WelcomeData,
+  termWidth: number,
   bottomLine: string,
 ): string[] {
   // Minimum width for two-column layout: leftCol(26) + separator(3) + minRightCol(15) = 44
   const minLayoutWidth = 44;
-  
+
   // If terminal is too narrow for the layout, return empty (skip welcome box)
   if (termWidth < minLayoutWidth) {
     return [];
   }
-  
+
   const minWidth = 76;
   const maxWidth = 96;
   // Clamp to termWidth to prevent crash on narrow terminals
   const boxWidth = Math.min(termWidth, Math.max(minWidth, Math.min(termWidth - 2, maxWidth)));
   const leftCol = 26;
   const rightCol = Math.max(1, boxWidth - leftCol - 3); // Ensure rightCol is at least 1
-  
+
   const hChar = "─";
   const v = dim("│");
   const tl = dim("╭");
   const tr = dim("╮");
   const bl = dim("╰");
   const br = dim("╯");
-  
+
   const leftLines = buildLeftColumn(data, leftCol);
   const rightLines = buildRightColumn(data, rightCol);
-  
+
   const lines: string[] = [];
-  
+
   // Top border with title
   const title = " pi agent ";
   const titlePrefix = dim(hChar.repeat(3));
@@ -194,7 +195,7 @@ function renderWelcomeBox(
   const afterTitle = boxWidth - 2 - titleVisLen;
   const afterTitleText = afterTitle > 0 ? dim(hChar.repeat(afterTitle)) : "";
   lines.push(tl + titleStyled + afterTitleText + tr);
-  
+
   // Content rows
   const maxRows = Math.max(leftLines.length, rightLines.length);
   for (let i = 0; i < maxRows; i++) {
@@ -202,10 +203,10 @@ function renderWelcomeBox(
     const right = fitToWidth(rightLines[i] ?? "", rightCol);
     lines.push(v + left + v + right + v);
   }
-  
+
   // Bottom border
   lines.push(bl + bottomLine + br);
-  
+
   return lines;
 }
 
@@ -242,12 +243,12 @@ export class WelcomeComponent implements Component {
     if (termWidth < minLayoutWidth) {
       return [];
     }
-    
+
     const minWidth = 76;
     const maxWidth = 96;
     // Clamp to termWidth to prevent crash on narrow terminals
     const boxWidth = Math.min(termWidth, Math.max(minWidth, Math.min(termWidth - 2, maxWidth)));
-    
+
     // Bottom line with countdown
     const countdownText = ` Press any key to continue (${this.countdown}s) `;
     const countdownStyled = dim(countdownText);
@@ -256,10 +257,10 @@ export class WelcomeComponent implements Component {
     const leftPad = Math.floor((bottomContentWidth - countdownVisLen) / 2);
     const rightPad = bottomContentWidth - countdownVisLen - leftPad;
     const hChar = "─";
-    const bottomLine = dim(hChar.repeat(Math.max(0, leftPad))) + 
-      countdownStyled + 
+    const bottomLine = dim(hChar.repeat(Math.max(0, leftPad))) +
+      countdownStyled +
       dim(hChar.repeat(Math.max(0, rightPad)));
-    
+
     return renderWelcomeBox(this.data, termWidth, bottomLine);
   }
 }
@@ -288,18 +289,18 @@ export class WelcomeHeader implements Component {
     if (termWidth < minLayoutWidth) {
       return [];
     }
-    
+
     const minWidth = 76;
     const maxWidth = 96;
     // Clamp to termWidth to prevent crash on narrow terminals
     const boxWidth = Math.min(termWidth, Math.max(minWidth, Math.min(termWidth - 2, maxWidth)));
     const hChar = "─";
-    
+
     // Bottom line with column separator (leftCol=26, rightCol=boxWidth-29)
     const leftCol = 26;
     const rightCol = Math.max(1, boxWidth - leftCol - 3);
     const bottomLine = dim(hChar.repeat(leftCol)) + dim("┴") + dim(hChar.repeat(rightCol));
-    
+
     const lines = renderWelcomeBox(this.data, termWidth, bottomLine);
     if (lines.length > 0) {
       lines.push(""); // Add empty line for spacing only if we rendered content
@@ -335,7 +336,7 @@ function logDiscoveryError(scope: string, error: unknown): void {
 export function discoverLoadedCounts(): LoadedCounts {
   const homeDir = process.env.HOME || process.env.USERPROFILE || osHomedir();
   const cwd = process.cwd();
-  
+
   let contextFiles = 0;
   let extensions = 0;
   let skills = 0;
@@ -348,7 +349,7 @@ export function discoverLoadedCounts(): LoadedCounts {
     join(cwd, ".pi", "AGENTS.md"),
     join(cwd, ".claude", "AGENTS.md"),
   ];
-  
+
   for (const path of agentsMdPaths) {
     if (existsSync(path)) contextFiles++;
   }
@@ -463,9 +464,9 @@ export function discoverLoadedCounts(): LoadedCounts {
     join(cwd, ".pi", "skills"),
     join(cwd, "skills"),
   ];
-  
+
   const countedSkills = new Set<string>();
-  
+
   for (const dir of skillDirs) {
     if (existsSync(dir)) {
       try {
@@ -497,9 +498,9 @@ export function discoverLoadedCounts(): LoadedCounts {
     join(cwd, ".pi", "commands"),
     join(cwd, ".claude", "commands"),
   ];
-  
+
   const countedTemplates = new Set<string>();
-  
+
   function countTemplatesInDir(dir: string) {
     if (!existsSync(dir)) return;
     try {
@@ -525,7 +526,7 @@ export function discoverLoadedCounts(): LoadedCounts {
       logDiscoveryError(`Failed to scan prompt template dir ${dir}`, error);
     }
   }
-  
+
   for (const dir of templateDirs) {
     countTemplatesInDir(dir);
   }
@@ -538,14 +539,14 @@ export function discoverLoadedCounts(): LoadedCounts {
  */
 export function getRecentSessions(maxCount: number = 3): RecentSession[] {
   const homeDir = process.env.HOME || process.env.USERPROFILE || osHomedir();
-  
+
   const sessionsDirs = [
     join(homeDir, ".pi", "agent", "sessions"),
     join(homeDir, ".pi", "sessions"),
   ];
-  
+
   const sessions: { name: string; mtime: number }[] = [];
-  
+
   function scanDir(dir: string) {
     if (!existsSync(dir)) return;
     try {
@@ -573,15 +574,15 @@ export function getRecentSessions(maxCount: number = 3): RecentSession[] {
       logDiscoveryError(`Failed to scan sessions dir ${dir}`, error);
     }
   }
-  
+
   for (const sessionsDir of sessionsDirs) {
     scanDir(sessionsDir);
   }
-  
+
   if (sessions.length === 0) return [];
-  
+
   sessions.sort((a, b) => b.mtime - a.mtime);
-  
+
   const seen = new Set<string>();
   const uniqueSessions: typeof sessions = [];
   for (const s of sessions) {
