@@ -7,6 +7,7 @@
 		"extensions": [
 			"./copy-turn.ts",
 			"./gitignore-guard.ts",
+			"./tool-error-autofix.ts",
 			"./question",
 			"./rtk.ts",
 			"./tokenin-onboarding.ts",
