@@ -81,6 +81,7 @@ import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts
 import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance, formatAcceptancePrompt, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests } from "./chain-append.ts";
+import { createSpawnTimingMarkers, emitSpawnTiming, type SpawnTimingMarkers } from "../shared/spawn-timing.ts";
 
 interface SubagentRunConfig {
 	id: string;
@@ -261,6 +262,7 @@ interface ChildEventContext {
 	runId: string;
 	stepIndex: number;
 	agent: string;
+	markers?: SpawnTimingMarkers;
 }
 
 interface ChildUsage {
@@ -313,10 +315,17 @@ function runPiStreaming(
 	return new Promise((resolve) => {
 		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
 		const spawnEnv = { ...process.env, ...(env ?? {}), ...getSubagentDepthEnv(maxSubagentDepth) };
+		const markers = childEventContext ? createSpawnTimingMarkers() : undefined;
+		if (markers) {
+			emitSpawnTiming({ eventsPath: childEventContext.eventsPath, marker: "spawn_start", markers, runId: childEventContext.runId, stepIndex: childEventContext.stepIndex, agent: childEventContext.agent });
+		}
 		const spawnSpec = getSelesaiSpawnCommand(args, {
 			...(piPackageRoot ? { piPackageRoot } : {}),
 			...(piArgv1 ? { argv1: piArgv1 } : {}),
 		});
+		if (markers) {
+			emitSpawnTiming({ eventsPath: childEventContext.eventsPath, marker: "spawn_command_resolved", markers, runId: childEventContext.runId, stepIndex: childEventContext.stepIndex, agent: childEventContext.agent });
+		}
 		const child = spawn(spawnSpec.command, spawnSpec.args, {
 			cwd,
 			stdio: ["ignore", "pipe", "pipe"],
@@ -333,7 +342,21 @@ function runPiStreaming(
 		let assistantError: string | undefined;
 		let interrupted = false;
 		let observedMutationAttempt = false;
+		let firstEventEmitted = false;
+		let firstJsonlEventEmitted = false;
 		const rawStdoutLines: string[] = [];
+
+		const emitChildTiming = (marker: import("../shared/spawn-timing.ts").SpawnTimingMarker) => {
+			if (!markers || !childEventContext) return;
+			emitSpawnTiming({
+				eventsPath: childEventContext.eventsPath,
+				marker,
+				markers,
+				runId: childEventContext.runId,
+				stepIndex: childEventContext.stepIndex,
+				agent: childEventContext.agent,
+			});
+		};
 
 		const writeOutputLine = (line: string) => {
 			if (!line.trim()) return;
@@ -368,6 +391,10 @@ function runPiStreaming(
 			let event: ChildEvent;
 			try {
 				event = JSON.parse(line) as ChildEvent;
+				if (!firstJsonlEventEmitted) {
+					firstJsonlEventEmitted = true;
+					emitChildTiming("child_first_jsonl_event");
+				}
 			} catch {
 				rawStdoutLines.push(line);
 				writeOutputLine(line);
@@ -438,6 +465,10 @@ function runPiStreaming(
 		let settled = false;
 		const clearStdioGuard = attachPostExitStdioGuard(child, { idleMs: 2000, hardMs: 8000 });
 		child.stdout.on("data", (chunk: Buffer) => {
+			if (!firstEventEmitted) {
+				firstEventEmitted = true;
+				emitChildTiming("child_first_event");
+			}
 			const text = chunk.toString();
 			stdoutBuf += text;
 			const lines = stdoutBuf.split("\n");
@@ -446,6 +477,10 @@ function runPiStreaming(
 		});
 
 		child.stderr.on("data", (chunk: Buffer) => {
+			if (!firstEventEmitted) {
+				firstEventEmitted = true;
+				emitChildTiming("child_first_event");
+			}
 			processStderrText(chunk.toString());
 		});
 		registerInterrupt?.(() => {
@@ -1056,7 +1091,7 @@ function ensureParallelProgressFile(cwd: string, group: Extract<RunnerStep, { pa
 	writeInitialProgressFile(cwd);
 }
 
-async function runSubagent(config: SubagentRunConfig): Promise<void> {
+export async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } =
 		config;
 	let previousOutput = "";
@@ -2419,40 +2454,49 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	}
 }
 
-const configArg = process.argv[2];
-if (configArg) {
+export async function runSubagentFromConfigFile(cfgPath: string): Promise<void> {
+	const configJson = fs.readFileSync(cfgPath, "utf-8");
+	const config = JSON.parse(configJson) as SubagentRunConfig;
 	try {
-		const configJson = fs.readFileSync(configArg, "utf-8");
-		const config = JSON.parse(configJson) as SubagentRunConfig;
-		try {
-			fs.unlinkSync(configArg);
-		} catch {
-			// Temp config cleanup is best effort.
-		}
-		runSubagent(config).catch((runErr) => {
-			console.error("Subagent runner error:", runErr);
-			process.exit(1);
-		});
-	} catch (err) {
-		console.error("Subagent runner error:", err);
-		process.exit(1);
+		fs.unlinkSync(cfgPath);
+	} catch {
+		// Temp config cleanup is best effort.
 	}
-} else {
-	let input = "";
-	process.stdin.setEncoding("utf-8");
-	process.stdin.on("data", (chunk) => {
-		input += chunk;
-	});
-	process.stdin.on("end", () => {
-		try {
-			const config = JSON.parse(input) as SubagentRunConfig;
-			runSubagent(config).catch((runErr) => {
-				console.error("Subagent runner error:", runErr);
-				process.exit(1);
-			});
-		} catch (err) {
+	await runSubagent(config);
+}
+
+function isRunnerMainModule(): boolean {
+	try {
+		return import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
+	} catch {
+		return false;
+	}
+}
+
+if (!runnerConfigPath && isRunnerMainModule()) {
+	const configArg = process.argv[2];
+	if (configArg) {
+		runSubagentFromConfigFile(configArg).catch((err) => {
 			console.error("Subagent runner error:", err);
 			process.exit(1);
-		}
-	});
+		});
+	} else {
+		let input = "";
+		process.stdin.setEncoding("utf-8");
+		process.stdin.on("data", (chunk) => {
+			input += chunk;
+		});
+		process.stdin.on("end", () => {
+			try {
+				const config = JSON.parse(input) as SubagentRunConfig;
+				runSubagent(config).catch((err) => {
+					console.error("Subagent runner error:", err);
+					process.exit(1);
+				});
+			} catch (err) {
+				console.error("Subagent runner error:", err);
+				process.exit(1);
+			}
+		});
+	}
 }

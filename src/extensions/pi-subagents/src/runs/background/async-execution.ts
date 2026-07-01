@@ -14,8 +14,9 @@ import { applyThinkingSuffix } from "../shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
-import { resolveSelesaiPackageRoot } from "../shared/pi-spawn.ts";
+import { getSelesaiSpawnCommand, resolveSelesaiPackageRoot } from "../shared/pi-spawn.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
+import { createSpawnTimingMarkers, emitSpawnTiming } from "../shared/spawn-timing.ts";
 import { resolveChildCwd } from "../../shared/utils.ts";
 import { buildModelCandidates, resolveModelCandidate, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -204,7 +205,7 @@ export function formatAsyncStartedMessage(headline: string): string {
  * Check if jiti is available for async execution
  */
 export function isAsyncAvailable(): boolean {
-	return jitiCliPath !== undefined;
+	return resolveRunnerScript() !== undefined || getSelesaiSpawnCommand(["--offline", "--mode", "json", "-p"], { ...(piPackageRoot ? { piPackageRoot } : {}) }).command !== "" || jitiCliPath !== undefined;
 }
 
 function resolveAsyncRunnerNodeCommand(): string {
@@ -215,14 +216,63 @@ function resolveAsyncRunnerNodeCommand(): string {
 	return process.platform === "win32" ? "node.exe" : "node";
 }
 
+function resolveRunnerScript(): string | undefined {
+	const localDir = path.dirname(fileURLToPath(import.meta.url));
+	const candidates = [
+		piPackageRoot ? path.join(piPackageRoot, "dist/runner/runs/background/subagent-runner.js") : undefined,
+		path.join(localDir, "../../../dist/runner/runs/background/subagent-runner.js"),
+		path.join(localDir, "subagent-runner.ts"),
+	].filter((candidate): candidate is string => Boolean(candidate));
+	for (const candidate of candidates) {
+		if (fs.existsSync(candidate)) return candidate;
+	}
+	return undefined;
+}
+
+type AsyncRunnerSpawnMode = "compiled" | "cli" | "jiti";
+
+function resolveAsyncRunnerSpawnMode(): AsyncRunnerSpawnMode {
+	if (process.env.SELESAI_SUBAGENT_RUNNER_USE_JITI === "1") return "jiti";
+	const runnerScript = resolveRunnerScript();
+	if (runnerScript?.endsWith(".js")) return "compiled";
+	return "cli";
+}
+
+interface SpawnCommandSpec {
+	command: string;
+	args: string[];
+	env?: Record<string, string | undefined>;
+}
+
+function buildAsyncRunnerSpawnSpec(cfgPath: string): SpawnCommandSpec | { error: string } {
+	const mode = resolveAsyncRunnerSpawnMode();
+	if (mode === "compiled") {
+		const runnerScript = resolveRunnerScript();
+		if (!runnerScript) return { error: "compiled async runner script could not be resolved" };
+		return { command: resolveAsyncRunnerNodeCommand(), args: [runnerScript, cfgPath] };
+	}
+	if (mode === "cli") {
+		const spawnSpec = getSelesaiSpawnCommand(["--offline", "--mode", "json", "-p"], {
+			...(piPackageRoot ? { piPackageRoot } : {}),
+		});
+		return {
+			command: spawnSpec.command,
+			args: spawnSpec.args,
+			env: { ...process.env, SELESAI_SUBAGENT_RUNNER_CONFIG: cfgPath },
+		};
+	}
+	if (!jitiCliPath) {
+		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
+	}
+	const runnerScript = resolveRunnerScript();
+	if (!runnerScript) return { error: "async runner script could not be resolved" };
+	return { command: resolveAsyncRunnerNodeCommand(), args: [jitiCliPath, runnerScript, cfgPath] };
+}
+
 /**
  * Spawn the async runner process
  */
 function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; error?: string } {
-	if (!jitiCliPath) {
-		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
-	}
-
 	try {
 		const cwdStats = fs.statSync(cwd);
 		if (!cwdStats.isDirectory()) {
@@ -235,14 +285,23 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 	fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
 	const cfgPath = getAsyncConfigPath(suffix);
 	fs.writeFileSync(cfgPath, JSON.stringify(cfg));
-	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
-	const nodeCommand = resolveAsyncRunnerNodeCommand();
+	const asyncDir = (cfg as { asyncDir?: string }).asyncDir;
+	const eventsPath = asyncDir ? path.join(asyncDir, "events.jsonl") : undefined;
+	const markers = createSpawnTimingMarkers();
+	emitSpawnTiming({ eventsPath, marker: "spawn_start", markers, runId: suffix });
 
-	const proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
+	const spec = buildAsyncRunnerSpawnSpec(cfgPath);
+	if ("error" in spec) {
+		return { error: spec.error };
+	}
+	emitSpawnTiming({ eventsPath, marker: "spawn_command_resolved", markers, runId: suffix });
+
+	const proc = spawn(spec.command, spec.args, {
 		cwd,
 		detached: true,
 		stdio: "ignore",
 		windowsHide: true,
+		...(spec.env ? { env: spec.env } : {}),
 	});
 	proc.on("error", (error) => {
 		console.error(`[pi-subagents] async spawn failed: ${error.message}`);

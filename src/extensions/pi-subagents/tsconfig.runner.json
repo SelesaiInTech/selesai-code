@@ -1,0 +1,17 @@
+{
+	"extends": "../../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "dist/runner",
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"target": "ES2022",
+		"sourceMap": true,
+		"noCheck": true,
+		"noEmitOnError": false,
+		"declaration": false,
+		"declarationMap": false,
+		"inlineSources": false
+	},
+	"include": ["src/**/*"],
+	"exclude": ["test", "**/*.test.ts"]
+}

@@ -15,6 +15,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@selesai/code";
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
@@ -58,6 +59,32 @@ import {
 } from "./control-notices.ts";
 
 export { loadConfig } from "./config.ts";
+
+function resolveRunnerScript(): string {
+	const srcDir = path.dirname(fileURLToPath(import.meta.url));
+	const candidates = [
+		path.join(srcDir, "..", "runs", "background", "subagent-runner.js"),
+		path.join(srcDir, "..", "..", "dist", "runner", "runs", "background", "subagent-runner.js"),
+		path.join(srcDir, "..", "runs", "background", "subagent-runner.ts"),
+	];
+	for (const candidate of candidates) {
+		if (fs.existsSync(candidate)) return candidate;
+	}
+	throw new Error("Could not resolve subagent-runner script");
+}
+
+const runnerConfigPath = process.env.SELESAI_SUBAGENT_RUNNER_CONFIG;
+if (runnerConfigPath) {
+	(async () => {
+		const runnerScript = resolveRunnerScript();
+		const runnerModule = await import(pathToFileURL(runnerScript).href);
+		await runnerModule.runSubagentFromConfigFile(runnerConfigPath);
+		process.exit(0);
+	})().catch((error) => {
+		console.error("Subagent runner hook failed:", error);
+		process.exit(1);
+	});
+}
 
 /**
  * Derive subagent session base directory from parent session file.

@@ -1231,6 +1231,16 @@ export PI_SUBAGENT_MAX_DEPTH=0
 
 `PI_SUBAGENT_DEPTH` is internal and propagated automatically. Do not set it manually.
 
+## Building the async runner
+
+The async runner can be pre-transpiled to JavaScript so background runs do not pay the jiti TypeScript JIT cost. To build it:
+
+```bash
+npm run build:runner
+```
+
+This writes `dist/runner/runs/background/subagent-runner.js` and its dependencies. The launch path automatically prefers the compiled runner when it exists and falls back to the previous `node jiti subagent-runner.ts` path otherwise. Set `SELESAI_SUBAGENT_RUNNER_USE_JITI=1` to force the old jiti path for troubleshooting.
+
 ## Events
 
 Async events:
@@ -1281,6 +1291,7 @@ The main runtime files are:
 | `src/runs/foreground/chain-execution.ts` / `src/agents/chain-serializer.ts` | Chain orchestration and `.chain.md` parsing. |
 | `src/shared/settings.ts` | Chain behavior, instructions, and config helpers. |
 | `src/runs/shared/worktree.ts` | Git worktree isolation. |
+| `src/runs/shared/spawn-timing.ts` | Spawn latency timing probes. |
 | `src/intercom/intercom-bridge.ts` | Runtime intercom bridge instructions and diagnostics. |
 | `src/extension/schemas.ts` / `src/shared/types.ts` | Tool schemas, shared types, and event constants. |
 | `test/unit/` / `test/integration/` | Unit and loader-based integration tests. |

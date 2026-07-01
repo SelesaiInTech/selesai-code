@@ -48,6 +48,7 @@ import { getSelesaiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
+import { createSpawnTimingMarkers, emitSpawnTiming } from "../shared/spawn-timing.ts";
 import { readStructuredOutput } from "../shared/structured-output.ts";
 import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
@@ -278,7 +279,24 @@ async function runSingleAttempt(
 	let observedMutationAttempt = false;
 
 	const exitCode = await new Promise<number>((resolve) => {
+		const markers = createSpawnTimingMarkers();
 		const spawnSpec = getSelesaiSpawnCommand(args);
+		emitSpawnTiming({
+			eventsPath: shared.jsonlPath,
+			marker: "spawn_start",
+			markers,
+			runId: options.runId,
+			stepIndex: options.index ?? 0,
+			agent: agent.name,
+		});
+		emitSpawnTiming({
+			eventsPath: shared.jsonlPath,
+			marker: "spawn_command_resolved",
+			markers,
+			runId: options.runId,
+			stepIndex: options.index ?? 0,
+			agent: agent.name,
+		});
 		const proc = spawn(spawnSpec.command, spawnSpec.args, {
 			cwd: options.cwd ?? runtimeCwd,
 			env: spawnEnv,
@@ -286,6 +304,8 @@ async function runSingleAttempt(
 			windowsHide: true,
 		});
 		const jsonlWriter = createJsonlWriter(shared.jsonlPath, proc.stdout);
+		let firstEventEmitted = false;
+		let firstJsonlEventEmitted = false;
 		let buf = "";
 		let processClosed = false;
 		let settled = false;
@@ -498,12 +518,27 @@ async function runSingleAttempt(
 			emitUpdateSnapshot(output || "(running...)");
 		};
 
+		const emitTiming = (marker: import("../shared/spawn-timing.ts").SpawnTimingMarker) => {
+			emitSpawnTiming({
+				eventsPath: shared.jsonlPath,
+				marker,
+				markers,
+				runId: options.runId,
+				stepIndex: options.index ?? 0,
+				agent: agent.name,
+			});
+		};
+
 		const processLine = (line: string) => {
 			if (!line.trim()) return;
 			jsonlWriter.writeLine(line);
 			let evt: { type?: string; message?: Message; toolName?: string; args?: unknown };
 			try {
 				evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown };
+				if (!firstJsonlEventEmitted) {
+					firstJsonlEventEmitted = true;
+					emitTiming("child_first_jsonl_event");
+				}
 			} catch {
 				// Non-JSON stdout lines are expected; only structured events are parsed.
 				return;
@@ -650,12 +685,20 @@ async function runSingleAttempt(
 
 		const clearStdioGuard = attachPostExitStdioGuard(proc, { idleMs: 2000, hardMs: 8000 });
 		proc.stdout.on("data", (d) => {
+			if (!firstEventEmitted) {
+				firstEventEmitted = true;
+				emitTiming("child_first_event");
+			}
 			buf += d.toString();
 			const lines = buf.split("\n");
 			buf = lines.pop() || "";
 			lines.forEach(processLine);
 		});
 		proc.stderr.on("data", (d) => {
+			if (!firstEventEmitted) {
+				firstEventEmitted = true;
+				emitTiming("child_first_event");
+			}
 			stderrBuf += d.toString();
 		});
 		proc.on("exit", () => {

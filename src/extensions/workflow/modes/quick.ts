@@ -20,74 +20,92 @@ const phases: Phase[] = [
 
 const prompts: Partial<Record<Phase, (ctx: PromptContext) => string>> = {
   grilling: ({ artifactDir, userPrompt }) =>
-    `You are entering the GRILLING phase of a QUICK workflow.
+    `You are in the GRILLING phase of a QUICK workflow.
 
-User's initial request:
+User request:
 ${userPrompt}
 
-This phase is short: ask AT MOST 4 focused clarifying questions. Ask ONE question at a time, adapt to user answers, and dig into scope, constraints, success criteria, and edge cases.
+Use the question tool to grill the user. Ask AT MOST 4 focused clarifying questions — ONE question tool call at a time. Adapt each follow-up to prior answers. Dig into scope, constraints, success criteria, and edge cases.
 
-When you have enough clarity OR when 4 questions have been asked, stop grilling. Show the user a concise requirements summary, then ask exactly: "Approve writing this requirements summary to ${artifactDir}/requirements.md?"
+For each question tool call:
+- Provide a concise question.
+- Pass a short context summary when it depends on prior findings.
+- Prefer options when choices are known. Give each option a clear label and a brief description.
+- Always set allowFreeform=true so the user can type a custom answer.
+- Keep allowMultiple=false unless multiple selections genuinely apply.
 
-Artifact target for this phase: ${artifactDir}/requirements.md
-- In the approval question, name exactly that full path.
+Example:
+  question({
+    question: "What should the output format be?",
+    context: "The user wants a report generator. We need to pick the default export format.",
+    options: [
+      { label: "Markdown", description: "Simple, version-control friendly" },
+      { label: "PDF", description: "Polished, shareable document" },
+    ],
+    allowFreeform: true,
+  })
+
+When you have enough clarity OR up to 10 questions max (less is better) have been asked, stop grilling. Show a concise requirements summary, then ask exactly: "Approve writing this requirements summary to ${artifactDir}/requirements.md?"
+
+Artifact target: ${artifactDir}/requirements.md
+- Name that exact full path in the approval question.
 - Do NOT shorten, translate, censor, sanitize, or invent a different path.
-- Only once the user approves, call write_workflow_artifact with content only. Do not call write for this artifact.
+- Only after explicit approval, call write_workflow_artifact with content only. Do not use write.
 
-The workflow advances automatically once ${artifactDir}/requirements.md exists.`,
+The workflow advances once ${artifactDir}/requirements.md exists.`,
   plan: ({ artifactDir }) =>
-    `You are entering the PLAN phase.
+    `You are in the PLAN phase.
 
-This is a QUICK workflow — no separate research phase. Based on ${artifactDir}/requirements.md, produce the concrete build plan: what to build, how, in order, components, and what the finished prototype looks like.
+This is a QUICK workflow — no separate research phase. Use ${artifactDir}/requirements.md to produce the concrete build plan: what to build, how, in order, components, and what the finished prototype looks like.
 
-Spawn the ARCHITECT SUB-AGENT to produce the plan. Use the task tool with subagent_type "architect". Do NOT pass a model parameter — let the agent use its configured model. Craft a tailored prompt from ${artifactDir}/requirements.md so the architect knows exactly what to plan for THIS task. The architect should return the plan content as its final answer; the workflow will save it to ${artifactDir}/plan.md.
+Spawn the ARCHITECT sub-agent via the subagent tool (subagent_type "architect"). Do NOT pass a model parameter. Craft a tailored prompt from ${artifactDir}/requirements.md so the architect plans for THIS task. The architect returns the plan; the workflow saves it to ${artifactDir}/plan.md.
 
-The workflow advances automatically once ${artifactDir}/plan.md exists.`,
+The workflow advances once ${artifactDir}/plan.md exists.`,
   reuse: ({ artifactDir }) =>
-    `You are entering the REUSE phase.
+    `You are in the REUSE phase (optional).
 
-Purpose: explore the existing codebase for reusable components, patterns, and knowledge this quick prototype should build on.
+Decide whether codebase exploration is useful. Skip if the project is empty, the task creates something wholly new, or there is clearly nothing to reuse.
 
-Spawn an EXPLORER SUB-AGENT to do the exploration. Use the task tool with subagent_type "explorer". Do NOT pass a model parameter — let the agent use its configured model. Craft a specific prompt tailored to THIS task from ${artifactDir}/requirements.md and ${artifactDir}/plan.md, telling the explorer which areas, patterns, and dependencies matter. The explorer should return its findings as its final answer; the workflow will save them to ${artifactDir}/reuse.md.
+If unsure, ask the user one focused question: "Should I explore the existing codebase for reusable patterns before implementing?" Then follow their answer.
 
-When the explorer returns, synthesize its findings into ${artifactDir}/reuse.md: what is reusable, where, and how the prototype should leverage it.
+If YES (or user confirms): spawn the EXPLORER sub-agent via the subagent tool (subagent_type "explorer"). Do NOT pass a model parameter. Craft a specific prompt from ${artifactDir}/requirements.md and ${artifactDir}/plan.md pointing it at relevant areas, patterns, and dependencies. Synthesize the findings into ${artifactDir}/reuse.md: what is reusable, where, and how to leverage it.
 
-The workflow advances automatically once ${artifactDir}/reuse.md exists.`,
+If NO: call write_workflow_artifact with a brief skip note explaining why.
+
+The workflow advances once ${artifactDir}/reuse.md exists.`,
   handoff: ({ artifactDir }) =>
-    `You are entering the HANDOFF phase.
+    `You are in the HANDOFF phase.
 
-Purpose: compile everything learned so far into a self-contained handoff document so loop-phase sub-agents can understand full project context without re-grilling.
+Compile a self-contained handoff document so loop-phase sub-agents understand full project context without re-grilling.
 
-Draw from ALL prior phases:
+Draw from all prior phases:
 - ${artifactDir}/requirements.md
 - ${artifactDir}/plan.md
 - ${artifactDir}/reuse.md
 
-Spawn the RECAPPER SUB-AGENT to compile the handoff. Use the task tool with subagent_type "recapper". Do NOT pass a model parameter — let the agent use its configured model. Craft a tailored prompt that points the recapper at all three artifact files and tells it what the prototype is about, so it writes a coherent handoff tailored to this task. The recapper should return the handoff content as its final answer; the workflow will save it to ${artifactDir}/handoff.md.
+Spawn the RECAPPER sub-agent via the subagent tool (subagent_type "recapper"). Do NOT pass a model parameter. Craft a tailored prompt pointing the recapper at all three artifact files and telling it what the prototype is about. The recapper returns the handoff; the workflow saves it to ${artifactDir}/handoff.md.
 
-The workflow advances automatically once ${artifactDir}/handoff.md exists.`,
+The workflow advances once ${artifactDir}/handoff.md exists.`,
   loop: ({ artifactDir }) =>
-    `You are entering the LOOP (orchestration) phase. Your job is to DELEGATE the implementation to sub-agents — do not implement the code yourself.
+    `You are in the LOOP (orchestration) phase. Delegate implementation to sub-agents — do not write code yourself.
 
-Read ${artifactDir}/plan.md, ${artifactDir}/handoff.md, and ${artifactDir}/reuse.md. Using that full context, GENERATE YOUR OWN delegation prompts:
-1. Dispatch ONE builder sub-agent (task tool, subagent_type "builder"). Do NOT pass a model parameter — let the agent use its configured model. Give it the plan + handoff + reuse context, tailored to this specific task, and instruct it to implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}.
-2. Dispatch ONE commentator sub-agent (task tool, subagent_type "commentator"). Do NOT pass a model parameter. Review the builder's diff against plan.md. Generate the review prompt YOURSELF.
+Use read to inspect ${artifactDir}/plan.md, ${artifactDir}/handoff.md, and ${artifactDir}/reuse.md. Using that context, GENERATE YOUR OWN delegation prompts:
+1. Dispatch ONE builder sub-agent via the subagent tool (subagent_type "builder"). Do NOT pass a model parameter. Give it plan + handoff + reuse context, tailored to this task. Instruct it to implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}.
+2. Dispatch ONE commentator sub-agent via the subagent tool (subagent_type "commentator"). Do NOT pass a model parameter. Review the builder's diff against plan.md. Generate the review prompt YOURSELF.
 3. If the commentator reports blocking issues, dispatch the builder again with the issues to fix, then re-run the commentator. Repeat until no issues.
 4. Call write_workflow_artifact with a one-line summary of the finished plan.
 
-The workflow advances to audit automatically once ${artifactDir}/loop-complete.md exists.`,
+The workflow advances to audit once ${artifactDir}/loop-complete.md exists.`,
   audit: ({ artifactDir }) =>
-    `You are entering the REVIEW phase.
+    `You are in the AUDIT (review) phase.
 
-Purpose: review uncommitted changes for correctness, plan adherence, and over-engineering. Use ponytail-review style: cut bloat, unnecessary abstractions, dead flexibility, and reinvented stdlib/native behavior.
+Review uncommitted changes for correctness, plan adherence, and over-engineering. Use ponytail-review style: cut bloat, unnecessary abstractions, dead flexibility, and reinvented stdlib/native behavior.
 
-1. Spawn the COMMENTATOR SUB-AGENT (task tool, subagent_type "commentator"). Do NOT pass a model parameter. Craft a tailored prompt from the full uncommitted diff and ${artifactDir}/plan.md. The commentator should return its review as its final answer; the workflow will save it to ${artifactDir}/review.md.
-
-2. If ${artifactDir}/review.md lists actionable issues, spawn the BUILDER SUB-AGENT (task tool, subagent_type "builder"). Do NOT pass a model parameter. Instruct it to fix every issue in the workspace, never in ${artifactDir}.
-
+1. Spawn the COMMENTATOR sub-agent via the subagent tool (subagent_type "commentator"). Do NOT pass a model parameter. Craft a tailored prompt from the full uncommitted diff and ${artifactDir}/plan.md. The commentator returns its review; the workflow saves it to ${artifactDir}/review.md.
+2. If ${artifactDir}/review.md lists actionable issues, spawn the BUILDER sub-agent via the subagent tool (subagent_type "builder"). Do NOT pass a model parameter. Instruct it to fix every issue in the workspace, never in ${artifactDir}.
 3. Re-dispatch the commentator until ${artifactDir}/review.md says the review is clean and no issues remain.
 
-The workflow closes automatically once ${artifactDir}/review.md exists and the commentator reports no outstanding issues.`,
+The workflow closes once ${artifactDir}/review.md exists and the commentator reports no outstanding issues.`,
 };
 
 const config: WorkflowConfig = {
