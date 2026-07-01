@@ -13,17 +13,23 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 
 import { homedir } from "node:os";
 import {
+	applyTokenInAccountToModels,
+	getActiveTokenInAccountId,
 	getTokenInApiKey,
+	getTokenInAuthPath,
 	isPlaceholderToken,
 	PLACEHOLDER_API_KEY,
 	readModelsJson,
+	readTokenInAuth,
+	saveTokenInAccount,
 	setTokenInApiKey,
 	validateTokenInToken,
+	writeTokenInAuth,
 } from "../extensions/tokenin-onboarding.ts";
 
 // Import the handler factory for session_start behavior tests.
 import tokenInOnboardingExtension from "../extensions/tokenin-onboarding.ts";
-import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionStartEvent } from "../core/extensions/types.ts";
 
 describe("tokenin-onboarding helpers", () => {
 	it("isPlaceholderToken returns true for missing/empty/placeholder values", () => {
@@ -78,21 +84,131 @@ describe("tokenin-onboarding helpers", () => {
 	});
 });
 
+describe("tokenin-auth.json helpers", () => {
+	it("getTokenInAuthPath returns agentDir/tokenin-auth.json", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-auth-path-"));
+		expect(getTokenInAuthPath(dir)).toBe(join(dir, "tokenin-auth.json"));
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("readTokenInAuth returns default shape when file is missing", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-auth-missing-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		expect(readTokenInAuth(authPath)).toEqual({ accounts: [], activeId: null });
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("readTokenInAuth returns default shape when file is corrupt", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-auth-corrupt-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		writeFileSync(authPath, "{not valid json", "utf-8");
+		expect(readTokenInAuth(authPath)).toEqual({ accounts: [], activeId: null });
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("writeTokenInAuth / readTokenInAuth roundtrip", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-auth-rw-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		const auth = {
+			accounts: [{ id: "sk-abc", label: "sk-…sk-abc", apiKey: "sk-abc", baseUrl: "https://token.in" }],
+			activeId: "sk-abc",
+		};
+		writeTokenInAuth(auth, authPath);
+		expect(readTokenInAuth(authPath)).toEqual(auth);
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("saveTokenInAccount upserts and optionally sets active", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-auth-save-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		// First save — new account, set active
+		let auth = saveTokenInAccount("sk-token1", { baseUrl: "https://token.in", setActive: true }, authPath);
+		expect(auth.accounts).toHaveLength(1);
+		expect(auth.accounts[0].apiKey).toBe("sk-token1");
+		expect(auth.activeId).toBe("sk-token1");
+
+		// Second save — different account, not active
+		auth = saveTokenInAccount("sk-token2", {}, authPath);
+		expect(auth.accounts).toHaveLength(2);
+		expect(auth.activeId).toBe("sk-token1"); // unchanged
+
+		// Re-save first token — update in place, not a duplicate
+		auth = saveTokenInAccount("sk-token1", { baseUrl: "https://updated.in" }, authPath);
+		expect(auth.accounts).toHaveLength(2);
+		const first = auth.accounts.find((a) => a.id === "sk-token1")!;
+		expect(first.baseUrl).toBe("https://updated.in");
+
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("applyTokenInAccountToModels updates models.json and sets activeId", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-apply-"));
+		const modelsPath = join(dir, "models.json");
+		const authPath = join(dir, "tokenin-auth.json");
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-old" } } }), "utf-8");
+
+		// Seed auth with two accounts
+		saveTokenInAccount("sk-old", {}, authPath);
+		saveTokenInAccount("sk-new", { baseUrl: "https://token.in" }, authPath);
+
+		const account = readTokenInAuth(authPath).accounts.find((a) => a.id === "sk-new")!;
+		applyTokenInAccountToModels(account, modelsPath, authPath);
+
+		const savedModels = JSON.parse(readFileSync(modelsPath, "utf-8"));
+		expect(savedModels.providers.tokenin.apiKey).toBe("sk-new");
+		expect(savedModels.providers.tokenin.baseUrl).toBe("https://token.in");
+
+		const savedAuth = readTokenInAuth(authPath);
+		expect(savedAuth.activeId).toBe("sk-new");
+
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("getActiveTokenInAccountId returns matching id or null", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-active-"));
+		const modelsPath = join(dir, "models.json");
+		const authPath = join(dir, "tokenin-auth.json");
+
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-active" } } }), "utf-8");
+		saveTokenInAccount("sk-active", {}, authPath);
+		saveTokenInAccount("sk-other", {}, authPath);
+
+		expect(getActiveTokenInAccountId(modelsPath, authPath)).toBe("sk-active");
+
+		// Change models.json to a key not in auth
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-unknown" } } }), "utf-8");
+		expect(getActiveTokenInAccountId(modelsPath, authPath)).toBeNull();
+
+		// No tokenin provider at all
+		writeFileSync(modelsPath, JSON.stringify({ providers: {} }), "utf-8");
+		expect(getActiveTokenInAccountId(modelsPath, authPath)).toBeNull();
+
+		rmSync(dir, { recursive: true, force: true });
+	});
+});
+
 describe("tokenin-onboarding extension", () => {
 	let dir: string;
 	let modelsPath: string;
+	let authPath: string;
 	let markerPath: string;
-	let fakeCtx: ExtensionContext;
+	let fakeCtx: ExtensionCommandContext;
 	let confirmValue = false;
 	let inputValue: string | undefined = undefined;
+	let selectValue: string | undefined = undefined;
 	const notifications: Array<{ message: string; type?: "info" | "warning" | "error" }> = [];
 
 	beforeEach(() => {
 		dir = mkdtempSync(join(tmpdir(), "tokenin-ext-"));
+		process.env.SELESAI_CODING_AGENT_DIR = dir;
+		process.env.PI_CODING_AGENT_DIR = dir;
 		modelsPath = join(dir, "models.json");
+		authPath = join(dir, "tokenin-auth.json");
+		writeTokenInAuth({ accounts: [], activeId: null }, authPath);
 		markerPath = join(dir, ".tokenInOnboardingComplete");
 		confirmValue = false;
 		inputValue = undefined;
+		selectValue = undefined;
 		notifications.length = 0;
 
 		fakeCtx = {
@@ -100,6 +216,7 @@ describe("tokenin-onboarding extension", () => {
 			ui: {
 				confirm: vi.fn(async () => confirmValue),
 				input: vi.fn(async () => inputValue),
+				select: vi.fn(async () => selectValue),
 				notify: vi.fn((message, type) => {
 					notifications.push({ message, type });
 				}),
@@ -107,25 +224,33 @@ describe("tokenin-onboarding extension", () => {
 			modelRegistry: {
 				refresh: vi.fn(),
 			} as unknown as ExtensionContext["modelRegistry"],
-		} as unknown as ExtensionContext;
+			waitForIdle: vi.fn(async () => {}),
+		} as unknown as ExtensionCommandContext;
 	});
 
 	afterEach(() => {
+		delete process.env.SELESAI_CODING_AGENT_DIR;
+		delete process.env.PI_CODING_AGENT_DIR;
 		rmSync(dir, { recursive: true, force: true });
 	});
 
 	function makeApi(execResult?: { code: number; stdout: string; stderr: string }): {
 		pi: ExtensionAPI;
 		handlers: Record<string, unknown>;
+		commands: Map<string, { description?: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>;
 	} {
 		const handlers: Record<string, unknown> = {};
+		const commands = new Map<string, { description?: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>();
 		const pi = {
 			on: vi.fn((event: string, h: unknown) => {
 				handlers[event] = h;
 			}),
 			exec: vi.fn(async () => execResult ?? { code: 0, stdout: "", stderr: "" }),
+			registerCommand: vi.fn((name: string, options: { description?: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => {
+				commands.set(name, options);
+			}),
 		} as unknown as ExtensionAPI;
-		return { pi, handlers };
+		return { pi, handlers, commands };
 	}
 
 	async function trigger(): Promise<void> {
@@ -138,27 +263,22 @@ describe("tokenin-onboarding extension", () => {
 
 	it("does nothing when apiKey is already configured", async () => {
 		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-configured" } } }), "utf-8");
-		process.env.SELESAI_CODING_AGENT_DIR = dir;
 		await trigger();
 		expect(existsSync(markerPath)).toBe(true);
 		expect(fakeCtx.ui.confirm).not.toHaveBeenCalled();
-		delete process.env.SELESAI_CODING_AGENT_DIR;
 	});
 
 	it("skips prompt when user declines and writes marker", async () => {
 		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: PLACEHOLDER_API_KEY } } }), "utf-8");
-		process.env.SELESAI_CODING_AGENT_DIR = dir;
 		confirmValue = false;
 		await trigger();
 		expect(fakeCtx.ui.confirm).toHaveBeenCalled();
 		expect(existsSync(markerPath)).toBe(true);
 		expect(JSON.parse(readFileSync(modelsPath, "utf-8")).providers.tokenin.apiKey).toBe(PLACEHOLDER_API_KEY);
-		delete process.env.SELESAI_CODING_AGENT_DIR;
 	});
 
 	it("writes token and refreshes registry when user accepts and pastes valid token", async () => {
 		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: PLACEHOLDER_API_KEY } } }), "utf-8");
-		process.env.SELESAI_CODING_AGENT_DIR = dir;
 		confirmValue = true;
 		inputValue = "  sk-live-token  ";
 		await trigger();
@@ -168,17 +288,225 @@ describe("tokenin-onboarding extension", () => {
 		const saved = JSON.parse(readFileSync(modelsPath, "utf-8"));
 		expect(saved.providers.tokenin.apiKey).toBe("sk-live-token");
 		expect(fakeCtx.modelRegistry.refresh).toHaveBeenCalled();
-		delete process.env.SELESAI_CODING_AGENT_DIR;
 	});
 
 	it("does not mark complete when pasted token is invalid", async () => {
 		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: PLACEHOLDER_API_KEY } } }), "utf-8");
-		process.env.SELESAI_CODING_AGENT_DIR = dir;
 		confirmValue = true;
 		inputValue = "not-starting-with-sk";
 		await trigger();
 		expect(existsSync(markerPath)).toBe(false);
 		expect(JSON.parse(readFileSync(modelsPath, "utf-8")).providers.tokenin.apiKey).toBe(PLACEHOLDER_API_KEY);
+	});
+
+	it("onboarding seeds tokenin-auth.json with active account", async () => {
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: PLACEHOLDER_API_KEY } } }), "utf-8");
+		confirmValue = true;
+		inputValue = "sk-onboard-token";
+		await trigger();
+		const auth = readTokenInAuth(authPath);
+		expect(auth.accounts).toHaveLength(1);
+		expect(auth.accounts[0].apiKey).toBe("sk-onboard-token");
+		expect(auth.activeId).toBe("sk-onboard-token");
+	});
+});
+
+describe("/tokenin command", () => {
+	let dir: string;
+	let modelsPath: string;
+	let authPath: string;
+	let fakeCtx: ExtensionCommandContext;
+	let confirmValue = false;
+	let inputValue: string | undefined = undefined;
+	let selectValue: string | undefined = undefined;
+	const notifications: Array<{ message: string; type?: "info" | "warning" | "error" }> = [];
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "tokenin-cmd-"));
+		modelsPath = join(dir, "models.json");
+		authPath = join(dir, "tokenin-auth.json");
+		writeTokenInAuth({ accounts: [], activeId: null }, authPath);
+		confirmValue = false;
+		inputValue = undefined;
+		selectValue = undefined;
+		notifications.length = 0;
+
+		fakeCtx = {
+			hasUI: true,
+			ui: {
+				confirm: vi.fn(async () => confirmValue),
+				input: vi.fn(async () => inputValue),
+				select: vi.fn(async () => selectValue),
+				notify: vi.fn((message, type) => {
+					notifications.push({ message, type });
+				}),
+			} as unknown as ExtensionContext["ui"],
+			modelRegistry: {
+				refresh: vi.fn(),
+			} as unknown as ExtensionContext["modelRegistry"],
+			waitForIdle: vi.fn(async () => {}),
+		} as unknown as ExtensionCommandContext;
+
+		process.env.SELESAI_CODING_AGENT_DIR = dir;
+		process.env.PI_CODING_AGENT_DIR = dir;
+	});
+
+	afterEach(() => {
 		delete process.env.SELESAI_CODING_AGENT_DIR;
+		delete process.env.PI_CODING_AGENT_DIR;
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	function makeApi(execResult?: { code: number; stdout: string; stderr: string }): {
+		pi: ExtensionAPI;
+		commands: Map<string, { description?: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>;
+	} {
+		const commands = new Map<string, { description?: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>();
+		const pi = {
+			on: vi.fn(),
+			exec: vi.fn(async () => execResult ?? { code: 0, stdout: "", stderr: "" }),
+			registerCommand: vi.fn((name: string, options: { description?: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => {
+				commands.set(name, options);
+			}),
+		} as unknown as ExtensionAPI;
+		return { pi, commands };
+	}
+
+	async function runCommand(args: string): Promise<void> {
+		const { pi, commands } = makeApi();
+		tokenInOnboardingExtension(pi);
+		const cmd = commands.get("tokenin");
+		expect(cmd).toBeDefined();
+		await cmd!.handler(args, fakeCtx);
+	}
+
+	it("registers a 'tokenin' command", () => {
+		const { pi, commands } = makeApi();
+		tokenInOnboardingExtension(pi);
+		expect(commands.has("tokenin")).toBe(true);
+	});
+
+	it("shows usage for empty or unknown subcommand", async () => {
+		await runCommand("");
+		expect(notifications.some((n) => n.message.includes("Usage: /tokenin"))).toBe(true);
+
+		notifications.length = 0;
+		await runCommand("bogus");
+		expect(notifications.some((n) => n.message.includes("Usage: /tokenin"))).toBe(true);
+	});
+
+	it("/tokenin add bootstraps models.json for first account", async () => {
+		inputValue = "sk-first-token";
+		await runCommand("add");
+		const savedModels = JSON.parse(readFileSync(modelsPath, "utf-8"));
+		expect(savedModels.providers.tokenin.apiKey).toBe("sk-first-token");
+		const auth = readTokenInAuth(authPath);
+		expect(auth.accounts).toHaveLength(1);
+		expect(auth.activeId).toBe("sk-first-token");
+		expect(fakeCtx.modelRegistry.refresh).toHaveBeenCalled();
+	});
+
+	it("/tokenin add does not change models.json for second account", async () => {
+		// Seed first account as active
+		saveTokenInAccount("sk-first", { setActive: true });
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-first" } } }), "utf-8");
+
+		inputValue = "sk-second-token";
+		await runCommand("add");
+
+		// models.json unchanged
+		const savedModels = JSON.parse(readFileSync(modelsPath, "utf-8"));
+		expect(savedModels.providers.tokenin.apiKey).toBe("sk-first");
+
+		// auth has two accounts, activeId unchanged
+		const auth = readTokenInAuth(authPath);
+		expect(auth.accounts).toHaveLength(2);
+		expect(auth.activeId).toBe("sk-first");
+		expect(notifications.some((n) => n.message.includes("Account added"))).toBe(true);
+	});
+
+	it("/tokenin switch updates models.json and activeId", async () => {
+		// Seed two accounts
+		saveTokenInAccount("sk-first", { setActive: true });
+		saveTokenInAccount("sk-second");
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-first" } } }), "utf-8");
+
+		const auth = readTokenInAuth(authPath);
+		const secondLabel = auth.accounts.find((a) => a.id === "sk-second")!.label;
+		selectValue = secondLabel;
+
+		await runCommand("switch");
+
+		const savedModels = JSON.parse(readFileSync(modelsPath, "utf-8"));
+		expect(savedModels.providers.tokenin.apiKey).toBe("sk-second");
+
+		const savedAuth = readTokenInAuth(authPath);
+		expect(savedAuth.activeId).toBe("sk-second");
+		expect(fakeCtx.modelRegistry.refresh).toHaveBeenCalled();
+		expect(notifications.some((n) => n.message.includes("Switched"))).toBe(true);
+	});
+
+	it("/tokenin switch notifies when no saved accounts", async () => {
+		await runCommand("switch");
+		expect(notifications.some((n) => n.message.includes("No saved accounts"))).toBe(true);
+	});
+
+	it("/tokenin remove blocks removal of active account", async () => {
+		saveTokenInAccount("sk-active", { setActive: true });
+		saveTokenInAccount("sk-inactive");
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-active" } } }), "utf-8");
+
+		const auth = readTokenInAuth(authPath);
+		const activeLabel = auth.accounts.find((a) => a.id === "sk-active")!.label;
+		selectValue = activeLabel;
+
+		await runCommand("remove");
+
+		expect(notifications.some((n) => n.message.includes("Cannot remove the active account"))).toBe(true);
+		// Account still present
+		expect(readTokenInAuth(authPath).accounts).toHaveLength(2);
+	});
+
+	it("/tokenin remove removes inactive account after confirm", async () => {
+		saveTokenInAccount("sk-active", { setActive: true });
+		saveTokenInAccount("sk-inactive");
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-active" } } }), "utf-8");
+
+		const auth = readTokenInAuth(authPath);
+		const inactiveLabel = auth.accounts.find((a) => a.id === "sk-inactive")!.label;
+		selectValue = inactiveLabel;
+		confirmValue = true;
+
+		await runCommand("remove");
+
+		const savedAuth = readTokenInAuth(authPath);
+		expect(savedAuth.accounts).toHaveLength(1);
+		expect(savedAuth.accounts.find((a) => a.id === "sk-inactive")).toBeUndefined();
+		expect(notifications.some((n) => n.message.includes("Account removed"))).toBe(true);
+		// models.json unchanged
+		const savedModels = JSON.parse(readFileSync(modelsPath, "utf-8"));
+		expect(savedModels.providers.tokenin.apiKey).toBe("sk-active");
+	});
+
+	it("/tokenin remove does not remove when confirm is declined", async () => {
+		saveTokenInAccount("sk-active", { setActive: true });
+		saveTokenInAccount("sk-inactive");
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-active" } } }), "utf-8");
+
+		const auth = readTokenInAuth(authPath);
+		const inactiveLabel = auth.accounts.find((a) => a.id === "sk-inactive")!.label;
+		selectValue = inactiveLabel;
+		confirmValue = false;
+
+		await runCommand("remove");
+
+		expect(readTokenInAuth(authPath).accounts).toHaveLength(2);
+	});
+
+	it("/tokenin add guards no-UI", async () => {
+		fakeCtx.hasUI = false;
+		inputValue = "sk-token";
+		await runCommand("add");
+		expect(notifications.some((n) => n.message.includes("interactive mode"))).toBe(true);
 	});
 });

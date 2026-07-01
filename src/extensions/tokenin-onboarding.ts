@@ -4,11 +4,15 @@
  * On the first interactive session, ask the user whether they want to connect a
  * Token-In token. If yes, open the Token-In dashboard, collect the pasted token,
  * and persist it in ~/.selesai/agent/models.json under providers.tokenin.apiKey.
+ *
+ * Slash command `/tokenin <add|switch|remove>` manages multiple TokenIN accounts
+ * stored in ~/.selesai/agent/tokenin-auth.json, mirroring the active account into
+ * models.json.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir, getModelsPath } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 
 export const TOKEN_IN_PROVIDER = "tokenin";
 export const TOKEN_IN_DASHBOARD_URL = "https://token-in.selesai.in/dashboard/tokens";
@@ -75,6 +79,127 @@ export function validateTokenInToken(raw: string | undefined): { token?: string;
 	return { token: trimmed };
 }
 
+// ---------------------------------------------------------------------------
+// tokenin-auth.json — multi-account storage
+// ---------------------------------------------------------------------------
+
+export interface TokenInAccount {
+	id: string;
+	label: string;
+	apiKey: string;
+	baseUrl?: string;
+}
+
+export interface TokenInAuth {
+	accounts: TokenInAccount[];
+	activeId: string | null;
+}
+
+const DEFAULT_AUTH: TokenInAuth = { accounts: [], activeId: null };
+
+export function getTokenInAuthPath(agentDir: string = getAgentDir()): string {
+	return join(agentDir, "tokenin-auth.json");
+}
+
+export function readTokenInAuth(authPath: string = getTokenInAuthPath()): TokenInAuth {
+	try {
+		const raw = readFileSync(authPath, "utf-8");
+		const parsed = JSON.parse(raw) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ...DEFAULT_AUTH };
+		const obj = parsed as Record<string, unknown>;
+		const accounts = Array.isArray(obj.accounts) ? (obj.accounts as unknown[]).filter(isTokenInAccount) : [];
+		const activeId = typeof obj.activeId === "string" ? obj.activeId : null;
+		return { accounts, activeId };
+	} catch {
+		return { ...DEFAULT_AUTH };
+	}
+}
+
+function isTokenInAccount(value: unknown): value is TokenInAccount {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const v = value as Record<string, unknown>;
+	return typeof v.id === "string" && typeof v.apiKey === "string";
+}
+
+export function writeTokenInAuth(auth: TokenInAuth, authPath: string = getTokenInAuthPath()): void {
+	mkdirSync(dirname(authPath), { recursive: true });
+	writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`, "utf-8");
+}
+
+function getTokenInBaseUrl(models: Record<string, unknown>): string | undefined {
+	const providers = models.providers;
+	if (!providers || typeof providers !== "object" || Array.isArray(providers)) return undefined;
+	const tokenin = (providers as Record<string, unknown>)[TOKEN_IN_PROVIDER];
+	if (!tokenin || typeof tokenin !== "object" || Array.isArray(tokenin)) return undefined;
+	const baseUrl = (tokenin as Record<string, unknown>).baseUrl;
+	return typeof baseUrl === "string" ? baseUrl : undefined;
+}
+
+function makeTokenInLabel(token: string): string {
+	const last8 = token.slice(-8);
+	return `sk-…${last8}`;
+}
+
+/** Upsert an account into tokenin-auth.json. Optionally set it as active. */
+export function saveTokenInAccount(
+	token: string,
+	options?: { baseUrl?: string; setActive?: boolean },
+	authPath: string = getTokenInAuthPath(),
+): TokenInAuth {
+	const auth = readTokenInAuth(authPath);
+	const existing = auth.accounts.find((a) => a.id === token);
+	const account: TokenInAccount = {
+		id: token,
+		label: existing?.label ?? makeTokenInLabel(token),
+		apiKey: token,
+		baseUrl: options?.baseUrl ?? existing?.baseUrl,
+	};
+	if (!account.baseUrl) delete account.baseUrl;
+
+	if (existing) {
+		Object.assign(existing, account);
+	} else {
+		auth.accounts.push(account);
+	}
+
+	if (options?.setActive) {
+		auth.activeId = token;
+	}
+
+	writeTokenInAuth(auth, authPath);
+	return auth;
+}
+
+/** Write the given account into models.json and update tokenin-auth activeId. */
+export function applyTokenInAccountToModels(
+	account: TokenInAccount,
+	modelsPath: string = getModelsPath(),
+	authPath: string = getTokenInAuthPath(),
+): void {
+	let updated = setTokenInApiKey(readModelsJson(modelsPath), account.apiKey);
+	if (account.baseUrl) {
+		const providers = updated.providers as Record<string, unknown>;
+		const tokenin = providers[TOKEN_IN_PROVIDER] as Record<string, unknown>;
+		tokenin.baseUrl = account.baseUrl;
+	}
+	writeModelsJson(updated, modelsPath);
+
+	const auth = readTokenInAuth(authPath);
+	auth.activeId = account.id;
+	writeTokenInAuth(auth, authPath);
+}
+
+/** Return the id of the account whose apiKey matches models.json, or null. */
+export function getActiveTokenInAccountId(
+	modelsPath: string = getModelsPath(),
+	authPath: string = getTokenInAuthPath(),
+): string | null {
+	const apiKey = getTokenInApiKey(readModelsJson(modelsPath));
+	if (typeof apiKey !== "string") return null;
+	const auth = readTokenInAuth(authPath);
+	return auth.accounts.find((a) => a.apiKey === apiKey)?.id ?? null;
+}
+
 function getOnboardingMarkerPath(agentDir: string = getAgentDir()): string {
 	return join(agentDir, ONBOARDING_MARKER_NAME);
 }
@@ -109,6 +234,123 @@ async function openDashboard(pi: ExtensionAPI): Promise<void> {
 
 async function promptForToken(ctx: ExtensionContext): Promise<string | undefined> {
 	return ctx.ui.input("Paste your Token-In token", "sk-...");
+}
+
+// ---------------------------------------------------------------------------
+// /tokenin subcommand handlers
+// ---------------------------------------------------------------------------
+
+async function handleTokenInAdd(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify("This command requires interactive mode.", "warning");
+		return;
+	}
+
+	try {
+		await openDashboard(pi);
+		ctx.ui.notify("Opened Token-In dashboard in your browser.", "info");
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		ctx.ui.notify(`Could not open browser: ${message}`, "warning");
+		ctx.ui.notify(`Open this URL manually: ${TOKEN_IN_DASHBOARD_URL}`, "info");
+	}
+
+	const rawToken = await promptForToken(ctx);
+	const validated = validateTokenInToken(rawToken);
+	if (validated.error) {
+		ctx.ui.notify(validated.error, "warning");
+		return;
+	}
+
+	const token = validated.token!;
+	const models = readModelsJson();
+	const baseUrl = getTokenInBaseUrl(models);
+	const auth = readTokenInAuth();
+	const wasEmpty = auth.accounts.length === 0;
+
+	saveTokenInAccount(token, { baseUrl });
+
+	if (wasEmpty) {
+		const saved = readTokenInAuth().accounts.find((a) => a.id === token)!;
+		applyTokenInAccountToModels(saved);
+		try {
+			ctx.modelRegistry.refresh();
+		} catch {
+			// best-effort
+		}
+		ctx.ui.notify(`Token-In token saved and activated (${saved.label}).`, "info");
+	} else {
+		ctx.ui.notify("Account added. Use /tokenin switch to activate it.", "info");
+	}
+}
+
+// ponytail: ctx.ui.select returns the label string, not an index. We match by
+// indexOf on the labels array — if two accounts share the same last-8 suffix
+// the first match wins. Acceptable for this use case; upgrade to indexed select
+// if multi-account collisions become common.
+async function pickAccount(
+	ctx: ExtensionCommandContext,
+	title: string,
+	auth: TokenInAuth,
+): Promise<TokenInAccount | undefined> {
+	const labels = auth.accounts.map((a) => a.label);
+	const selected = await ctx.ui.select(title, labels);
+	if (selected === undefined) return undefined;
+	const index = labels.indexOf(selected);
+	return auth.accounts[index];
+}
+
+async function handleTokenInSwitch(ctx: ExtensionCommandContext): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify("This command requires interactive mode.", "warning");
+		return;
+	}
+
+	const auth = readTokenInAuth();
+	if (auth.accounts.length === 0) {
+		ctx.ui.notify("No saved accounts. Use /tokenin add first.", "warning");
+		return;
+	}
+
+	const account = await pickAccount(ctx, "Select TokenIN account", auth);
+	if (!account) return;
+
+	applyTokenInAccountToModels(account);
+	try {
+		ctx.modelRegistry.refresh();
+	} catch {
+		// best-effort
+	}
+	ctx.ui.notify(`Switched to account ${account.label}.`, "info");
+}
+
+async function handleTokenInRemove(ctx: ExtensionCommandContext): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify("This command requires interactive mode.", "warning");
+		return;
+	}
+
+	const auth = readTokenInAuth();
+	if (auth.accounts.length === 0) {
+		ctx.ui.notify("No saved accounts. Use /tokenin add first.", "warning");
+		return;
+	}
+
+	const account = await pickAccount(ctx, "Select account to remove", auth);
+	if (!account) return;
+
+	const activeId = getActiveTokenInAccountId();
+	if (account.id === activeId) {
+		ctx.ui.notify("Cannot remove the active account. Use /tokenin switch first.", "warning");
+		return;
+	}
+
+	const confirmed = await ctx.ui.confirm("Remove account?", `Remove account ${account.label}?`);
+	if (!confirmed) return;
+
+	auth.accounts = auth.accounts.filter((a) => a.id !== account.id);
+	writeTokenInAuth(auth);
+	ctx.ui.notify("Account removed.", "info");
 }
 
 async function runOnboarding(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
@@ -156,9 +398,13 @@ async function runOnboarding(pi: ExtensionAPI, ctx: ExtensionContext): Promise<v
 		return;
 	}
 
-	const updated = setTokenInApiKey(models, validated.token!);
+	const token = validated.token!;
+	const updated = setTokenInApiKey(models, token);
 	writeModelsJson(updated, modelsPath);
 	markOnboardingComplete();
+
+	// Seed tokenin-auth.json so /tokenin switch and /tokenin remove work after onboarding.
+	saveTokenInAccount(token, { baseUrl: getTokenInBaseUrl(updated), setActive: true });
 
 	// Refresh the in-memory model registry so the key is active immediately.
 	try {
@@ -179,5 +425,22 @@ export default function tokenInOnboardingExtension(pi: ExtensionAPI): void {
 		if (process.env.SELESAI_SKIP_TOKENIN_ONBOARDING === "1") return;
 
 		await runOnboarding(pi, ctx);
+	});
+
+	pi.registerCommand("tokenin", {
+		description: "Manage TokenIN accounts: /tokenin add|switch|remove",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			await ctx.waitForIdle();
+			const sub = args.trim().split(/\s+/)[0];
+			if (sub === "add") {
+				await handleTokenInAdd(pi, ctx);
+			} else if (sub === "switch") {
+				await handleTokenInSwitch(ctx);
+			} else if (sub === "remove") {
+				await handleTokenInRemove(ctx);
+			} else {
+				ctx.ui.notify("Usage: /tokenin add|switch|remove", "info");
+			}
+		},
 	});
 }
