@@ -19,12 +19,35 @@ export function detectSupportedImageMimeType(buffer: Uint8Array): string | null 
 	return null;
 }
 
+const IMAGE_EXTENSION_MIME_TYPES: Record<string, string> = {
+	png: "image/png",
+	jpg: "image/jpeg",
+	jpeg: "image/jpeg",
+	gif: "image/gif",
+	webp: "image/webp",
+	bmp: "image/bmp",
+	tiff: "image/tiff",
+	tif: "image/tiff",
+	ico: "image/x-icon",
+	heic: "image/heic",
+	heif: "image/heif",
+	avif: "image/avif",
+};
+
 export async function detectSupportedImageMimeTypeFromFile(filePath: string): Promise<string | null> {
 	const fileHandle = await open(filePath, "r");
 	try {
 		const buffer = Buffer.alloc(IMAGE_TYPE_SNIFF_BYTES);
 		const { bytesRead } = await fileHandle.read(buffer, 0, IMAGE_TYPE_SNIFF_BYTES, 0);
-		return detectSupportedImageMimeType(buffer.subarray(0, bytesRead));
+		const detected = detectSupportedImageMimeType(buffer.subarray(0, bytesRead));
+		if (detected) return detected;
+		// ponytail: magic-byte sniffer rejects APNG/JPEG2000 and ignores BMP/TIFF/etc.
+		// Fall back to the file extension so image files are routed to the image path
+		// (resize will no-op to an "omitted" note) instead of being read as text and
+		// flooding the prompt with base64 garbage. SVG is intentionally excluded: it is
+		// text and is correctly handled by the text branch.
+		const ext = filePath.toLowerCase().split(".").pop();
+		return ext ? (IMAGE_EXTENSION_MIME_TYPES[ext] ?? null) : null;
 	} finally {
 		await fileHandle.close();
 	}
