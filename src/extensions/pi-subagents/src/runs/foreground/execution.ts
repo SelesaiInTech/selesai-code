@@ -182,7 +182,7 @@ async function runSingleAttempt(
 ): Promise<SingleResult> {
 	const modelArg = applyThinkingSuffix(model, agent.thinking);
 		const { args, env: sharedEnv, tempDir } = buildPiArgs({
-		baseArgs: ["--mode", "json", "-p"],
+		baseArgs: ["--offline", "--mode", "json", "-p"],
 		task,
 		sessionEnabled: shared.sessionEnabled,
 		sessionDir: options.sessionDir,
