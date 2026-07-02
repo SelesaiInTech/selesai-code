@@ -10,7 +10,7 @@ import {
   DynamicBorder,
   getSettingsListTheme,
   type ExtensionAPI
-} from '@earendil-works/pi-coding-agent';
+} from '@selesai/code';
 import { Container, SelectList, SettingsList, Text, type SelectItem, type SettingItem } from '@earendil-works/pi-tui';
 import {
   DEFAULT_PRESENTATION_CONFIG,

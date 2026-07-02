@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
-import { CustomEditor } from "@earendil-works/pi-coding-agent";
+import { CustomEditor } from "@selesai/code";
 import { isKeyRelease, matchesKey, visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
-import type { KeybindingsManager } from "@earendil-works/pi-coding-agent/dist/core/keybindings.js";
+import type { KeybindingsManager } from "@selesai/code/dist/core/keybindings.js";
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 import { matchesConfiguredShortcut } from "../shortcuts.ts";
 import { getOneOffBashCommandContext } from "./completion.ts";

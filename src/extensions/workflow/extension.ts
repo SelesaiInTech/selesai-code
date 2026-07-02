@@ -3,7 +3,7 @@
 // load conflict (multiple extension modules would each try to register the
 // shared writer).
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@selesai/code";
 import { __resetWorkflowRegistryForTests, createWorkflowExtension } from "./adapter.ts";
 import { prototypeMode } from "./modes/prototype.ts";
 import { quickMode } from "./modes/quick.ts";

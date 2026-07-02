@@ -8,7 +8,7 @@
 		"extensions": ["./index.ts"]
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": "*",
+		"@selesai/code": "*",
 		"@earendil-works/pi-tui": "*",
 		"typebox": "*"
 	},

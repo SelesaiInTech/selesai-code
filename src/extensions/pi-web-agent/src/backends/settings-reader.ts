@@ -4,7 +4,7 @@
 // minimal settings.json read. Ceiling: if selesai moves web search config elsewhere, this
 // helper needs updating; upgrade path = upstream pi-web-agent adopting a settings hook.
 import { existsSync, readFileSync } from 'node:fs';
-import { getSettingsPath } from '@earendil-works/pi-coding-agent';
+import { getSettingsPath } from '@selesai/code';
 
 /**
  * Read the Brave API key from selesai settings.json (webAgent.braveApiKey).

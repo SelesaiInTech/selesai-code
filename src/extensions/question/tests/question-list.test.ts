@@ -5,7 +5,7 @@ import { Key, matchesKey } from "@earendil-works/pi-tui";
 
 import { QuestionList } from "../question-list.ts";
 import { MultiSelect, SingleSelect } from "../selection-mode.ts";
-import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
+import type { KeybindingsManager, Theme } from "@selesai/code";
 import type { ResolvedShortcut } from "../types.ts";
 
 // ---------------------------------------------------------------------------

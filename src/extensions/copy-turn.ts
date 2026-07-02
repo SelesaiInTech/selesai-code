@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { copyToClipboard } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@selesai/code";
+import { copyToClipboard } from "@selesai/code";
 import { Text } from "@earendil-works/pi-tui";
 
 type AnyMessage = any;

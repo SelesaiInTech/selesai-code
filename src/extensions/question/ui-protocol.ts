@@ -1,6 +1,6 @@
 // UIProtocol port — abstracts TUI vs dialog/RPC transport.
 
-import type { KeybindingsManager } from "@earendil-works/pi-coding-agent";
+import type { KeybindingsManager } from "@selesai/code";
 import type { OverlayHandle, Theme, TUI } from "@earendil-works/pi-tui";
 
 import type { QuestionResponse, ResolvedQuestionParams } from "./types.ts";

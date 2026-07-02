@@ -12,11 +12,11 @@ function ensurePiModuleLinks(): { cleanup: () => void } {
   const links = [
     {
       link: join(nodeModulesDir, "pi-coding-agent"),
-      target: "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent",
+      target: "/opt/homebrew/lib/node_modules/@selesai/code",
     },
     {
       link: join(nodeModulesDir, "pi-ai"),
-      target: "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai",
+      target: "/opt/homebrew/lib/node_modules/@selesai/code/node_modules/@earendil-works/pi-ai",
     },
   ];
 

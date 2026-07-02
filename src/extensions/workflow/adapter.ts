@@ -8,7 +8,7 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
   ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+} from "@selesai/code";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { access, mkdir, writeFile } from "node:fs/promises";

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { KEYBINDINGS } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
+import { KEYBINDINGS } from "../node_modules/@selesai/code/dist/core/keybindings.js";
 import {
   isSupportedSuperShortcut,
   matchesConfiguredShortcut,

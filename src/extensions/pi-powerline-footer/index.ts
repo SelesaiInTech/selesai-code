@@ -3,7 +3,7 @@ import {
   type ExtensionAPI,
   type ReadonlyFooterDataProvider,
   type Theme,
-} from "@earendil-works/pi-coding-agent";
+} from "@selesai/code";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { isKeyRelease, matchesKey, type AutocompleteProvider, type SelectItem, SelectList, truncateToWidth, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
@@ -44,9 +44,9 @@ import {
   shortcutUsesSuper,
 } from "./shortcuts.ts";
 import {
-  initVibeManager, 
-  onVibeBeforeAgentStart, 
-  onVibeAgentStart, 
+  initVibeManager,
+  onVibeBeforeAgentStart,
+  onVibeAgentStart,
   onVibeAgentEnd,
   onVibeToolCall,
   getVibeTheme,
@@ -885,7 +885,7 @@ function computeResponsiveLayout(
 ): { topContent: string; secondaryContent: string } {
   const separatorDef = getSeparator(presetDef.separator);
   const sepWidth = visibleWidth(separatorDef.left); // separator, no surrounding spaces
-  
+
   const mergedSegments = mergeSegmentsWithCustomItems(presetDef, config.customItems);
   const renderIds = (ids: StatusLineSegmentId[]): string[] => {
     const parts: string[] = [];
@@ -956,7 +956,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   let bashTranscript = new BashTranscriptStore(bashModeSettings);
   let bashCompletionEngine = new BashCompletionEngine();
   let shellSession: ManagedShellSession | null = null;
-  
+
   // Cache for the top and secondary powerline widgets.
   let lastLayoutWidth = 0;
   let lastLayoutResult: { topContent: string; secondaryContent: string } | null = null;
@@ -1208,10 +1208,10 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     if (ctx.hasUI) {
       ctx.ui.setStatus("stash", undefined);
     }
-    
+
     // Initialize vibe manager (needs modelRegistry from ctx)
     initVibeManager(ctx);
-    
+
     if (enabled && ctx.hasUI) {
       setupCustomEditor(ctx);
       if (event.reason === "startup") {
@@ -1369,18 +1369,18 @@ export default function powerlineFooter(pi: ExtensionAPI) {
       onVibeToolCall(event.toolName, event.input, ctx.ui.setWorkingMessage, agentContext);
     }
   });
-  
+
   // Helper to extract recent agent response text (skipping thinking blocks)
   function getRecentAgentContext(ctx: any): string | undefined {
     const sessionEvents = ctx.sessionManager?.getBranch?.() ?? [];
-    
+
     // Find the most recent assistant message
     for (let i = sessionEvents.length - 1; i >= 0; i--) {
       const e = sessionEvents[i];
       if (e.type === "message" && e.message?.role === "assistant") {
         const content = e.message.content;
         if (!Array.isArray(content)) continue;
-        
+
         // Extract text content, skip thinking blocks
         for (const block of content) {
           if (block.type === "text" && block.text) {
@@ -1690,7 +1690,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       // Update context reference (command ctx may have more methods)
       currentCtx = ctx;
-      
+
       if (!args?.trim()) {
         // Toggle
         enabled = !enabled;
@@ -1910,7 +1910,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       const parts = args?.trim().split(/\s+/) || [];
       const subcommand = parts[0]?.toLowerCase();
-      
+
       // No args: show current status
       if (!args || !args.trim()) {
         const theme = getVibeTheme();
@@ -1924,7 +1924,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         ctx.ui.notify(status, "info");
         return;
       }
-      
+
       // /vibe model [spec] - show or set model
       if (subcommand === "model") {
         const modelSpec = parts.slice(1).join(" ");
@@ -1945,7 +1945,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         }
         return;
       }
-      
+
       // /vibe mode [generate|file] - show or set mode
       if (subcommand === "mode") {
         const newMode = parts[1]?.toLowerCase();
@@ -1971,7 +1971,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         }
         return;
       }
-      
+
       // /vibe generate <theme> [count] - generate vibes and save to file
       if (subcommand === "generate") {
         const theme = parts[1];
@@ -1988,7 +1988,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         ctx.ui.notify(`Generating ${count} vibes for "${theme}"...`, "info");
 
         const result = await generateVibesBatch(theme, count);
-        
+
         if (result.success) {
           ctx.ui.notify(`Generated ${result.count} vibes for "${theme}" → ${result.filePath}`, "info");
         } else {
@@ -1996,7 +1996,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         }
         return;
       }
-      
+
       // /vibe off - disable
       if (subcommand === "off") {
         const persisted = setVibeTheme(null);
@@ -2007,7 +2007,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         }
         return;
       }
-      
+
       // /vibe <theme> - set theme (preserve original casing)
       const theme = args.trim();
       const persisted = setVibeTheme(theme);
@@ -2046,7 +2046,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     let input = 0, output = 0, cacheRead = 0, cacheWrite = 0, cost = 0;
     let lastAssistant: AssistantMessage | undefined;
     let thinkingLevelFromSession: string | null = null;
-    
+
     const sessionEvents = ctx.sessionManager?.getBranch?.() ?? [];
     for (const e of sessionEvents) {
       if (!isRecord(e)) {
@@ -2145,17 +2145,17 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         return lastLayoutResult;
       }
     }
-    
+
     const presetDef = getPreset(config.preset);
     const segmentCtx = buildSegmentContext(currentCtx, theme);
-    
+
     lastLayoutWidth = width;
     lastLayoutResult = computeResponsiveLayout(segmentCtx, presetDef, width);
     lastLayoutSessionName = currentSessionName;
     lastLayoutTimestamp = now;
     layoutDirty = false;
     forceNextLayoutRecompute = false;
-    
+
     return lastLayoutResult;
   }
 
@@ -2717,10 +2717,10 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     const providerName = ctx.model?.provider || "Unknown";
     const loadedCounts = discoverLoadedCounts();
     const recentSessions = getRecentSessions(3);
-    
+
     const header = new WelcomeHeader(modelName, providerName, recentSessions, loadedCounts);
     welcomeHeaderActive = true;
-    
+
     ctx.ui.setHeader(() => {
       return {
         render(width: number): string[] {
@@ -2738,7 +2738,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     const providerName = ctx.model?.provider || "Unknown";
     const loadedCounts = discoverLoadedCounts();
     const recentSessions = getRecentSessions(3);
-    
+
     const overlaySessionGeneration = sessionGeneration;
 
     // Small delay to let pi-mono finish initialization
@@ -2747,7 +2747,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         welcomeOverlayShouldDismiss = false;
         return;
       }
-      
+
       const sessionEvents = ctx.sessionManager?.getBranch?.() ?? [];
       const hasActivity = sessionEvents.some((entry: unknown) => {
         if (!isRecord(entry)) return false;
@@ -2757,7 +2757,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
       if (hasActivity) {
         return;
       }
-      
+
       ctx.ui.custom(
         (tui: any, _theme: any, _keybindings: any, done: (result: void) => void) => {
           const welcome = new WelcomeComponent(
@@ -2766,11 +2766,11 @@ export default function powerlineFooter(pi: ExtensionAPI) {
             recentSessions,
             loadedCounts,
           );
-          
+
           let countdown = 30;
           let dismissed = false;
           let interval: ReturnType<typeof setInterval> | null = null;
-          
+
           const dismiss = () => {
             if (dismissed) return;
             dismissed = true;
@@ -2778,7 +2778,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
             dismissWelcomeOverlay = null;
             done();
           };
-          
+
           interval = setInterval(() => {
             if (dismissed) return;
             countdown--;

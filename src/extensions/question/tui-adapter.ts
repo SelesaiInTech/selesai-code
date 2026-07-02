@@ -1,6 +1,6 @@
 // TUI protocol adapter — wraps ctx.ui into UIProtocol.
 
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@selesai/code";
 import type { OverlayHandle } from "@earendil-works/pi-tui";
 
 import { OVERLAY_MIN_WIDTH, OVERLAY_OVERLAY_MAX_HEIGHT, OVERLAY_WIDTH } from "./constants.ts";

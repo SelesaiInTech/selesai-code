@@ -11,8 +11,8 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getAgentDir, getSettingsPath } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, getSettingsPath } from "@selesai/code";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionStartEvent } from "@selesai/code";
 
 export type OnboardingResult =
 	| { kind: "saved" }

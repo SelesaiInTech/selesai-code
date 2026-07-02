@@ -1,6 +1,6 @@
 // Vim-style navigation aliases (ctrl+j/k don't collide with fuzzy-search input).
 
-import type { KeybindingsManager } from "@earendil-works/pi-coding-agent";
+import type { KeybindingsManager } from "@selesai/code";
 import { matchesKey } from "@earendil-works/pi-tui";
 
 import { VIM_DOWN, VIM_UP } from "./constants.ts";

@@ -1,6 +1,6 @@
 // Pure helper functions for the question extension.
 
-import type { MarkdownTheme } from "@earendil-works/pi-coding-agent";
+import type { MarkdownTheme } from "@selesai/code";
 
 import type { QuestionOption, QuestionResponse, RawOption } from "./types.ts";
 
@@ -44,7 +44,7 @@ export function safeMarkdownTheme(): MarkdownTheme | undefined {
 		if (_getMarkdownTheme === undefined) {
 			// Dynamic require avoids breaking module load when package is absent.
 			_getMarkdownTheme = (globalThis as any).require
-				? (globalThis as any).require("@earendil-works/pi-coding-agent").getMarkdownTheme
+				? (globalThis as any).require("@selesai/code").getMarkdownTheme
 				: null;
 		}
 		if (!_getMarkdownTheme) return undefined;

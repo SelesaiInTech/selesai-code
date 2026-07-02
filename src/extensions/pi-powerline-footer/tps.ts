@@ -12,7 +12,7 @@
  *    into a combined "main + subagents" TPS at agent_end.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@selesai/code";
 
 export function setupTpsTracker(pi: ExtensionAPI): void {
 	/** Timestamp when the current assistant message event started. Used as a fallback. */

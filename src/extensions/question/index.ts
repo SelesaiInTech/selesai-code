@@ -2,7 +2,7 @@
 // Owns: QuestionComponent (mode-switching + editor lifecycle + box borders),
 // tool registration, execute() orchestration via UIProtocol.
 
-import type { ExtensionAPI, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, KeybindingsManager, Theme } from "@selesai/code";
 import {
 	Container,
 	type Component,

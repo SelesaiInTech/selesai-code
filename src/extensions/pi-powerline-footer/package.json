@@ -30,12 +30,12 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "^0.75.0",
-    "@earendil-works/pi-coding-agent": "^0.75.0",
+    "@selesai/code": "*",
     "@earendil-works/pi-tui": "^0.75.0"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.75.0",
-    "@earendil-works/pi-coding-agent": "^0.75.0",
+    "@selesai/code": "^0.1.0",
     "@earendil-works/pi-tui": "^0.75.0"
   },
   "pi": {

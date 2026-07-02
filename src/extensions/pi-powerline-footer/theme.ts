@@ -1,13 +1,13 @@
 /**
  * Theme system for powerline-footer
- * 
+ *
  * Colors are resolved in order:
  * 1. User overrides from theme.json (if exists)
  * 2. Preset colors
  * 3. Default colors
  */
 
-import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { Theme, ThemeColor } from "@selesai/code";
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,7 +40,7 @@ const DEFAULT_COLORS: Required<ColorScheme> = {
 
 // Rainbow colors for high thinking levels
 const RAINBOW_COLORS = [
-  "#b281d6", "#d787af", "#febc38", "#e4c00f", 
+  "#b281d6", "#d787af", "#febc38", "#e4c00f",
   "#89d281", "#00afaf", "#178fb9", "#b281d6",
 ];
 
@@ -137,10 +137,10 @@ export function resolveColor(
   presetColors?: ColorScheme
 ): ColorValue {
   const userTheme = loadUserTheme();
-  
+
   // Priority: user overrides > preset colors > defaults
-  return userTheme[semantic] 
-    ?? presetColors?.[semantic] 
+  return userTheme[semantic]
+    ?? presetColors?.[semantic]
     ?? DEFAULT_COLORS[semantic];
 }
 

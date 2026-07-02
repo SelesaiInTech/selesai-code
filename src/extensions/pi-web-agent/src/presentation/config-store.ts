@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { getAgentDir } from '@earendil-works/pi-coding-agent';
+import { getAgentDir } from '@selesai/code';
 import {
   DEFAULT_BACKEND_CONFIG,
   extractBackendConfigOverride,

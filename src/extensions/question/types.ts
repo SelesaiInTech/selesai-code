@@ -1,6 +1,6 @@
 // Shared type definitions for the question extension.
 
-import type { KeybindingsManager } from "@earendil-works/pi-coding-agent";
+import type { KeybindingsManager } from "@selesai/code";
 
 export type RawOption = string | { label: string; description?: string };
 
