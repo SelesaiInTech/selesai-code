@@ -17,6 +17,13 @@
             "output": 4,
             "cacheRead": 0.16,
             "cacheWrite": 0
+          },
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null
           }
         },
         {
@@ -31,6 +38,13 @@
             "output": 4.4,
             "cacheRead": 0.26,
             "cacheWrite": 0
+          },
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null
           }
         },
         {
@@ -49,6 +63,13 @@
           "compat": {
             "requiresReasoningContentOnAssistantMessages": true,
             "thinkingFormat": "deepseek"
+          },
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null
           }
         },
         {
@@ -67,6 +88,13 @@
           "compat": {
             "requiresReasoningContentOnAssistantMessages": true,
             "thinkingFormat": "deepseek"
+          },
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null
           }
         },
         {
@@ -81,6 +109,13 @@
             "output": 2.4,
             "cacheRead": 0.12,
             "cacheWrite": 0
+          },
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null
           }
         }
       ]
