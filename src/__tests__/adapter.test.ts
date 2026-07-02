@@ -330,4 +330,58 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(existsSync(join(dir, "review.md"))).toBe(true);
 		expect(pi.entries.at(-1)?.data.done).toBe(true);
 	});
+
+	// regression: subagent management actions (list/get/models/...) return
+	// text but must not be treated as the architect/recapper/... execution
+	// result. Before the fix, subagent {action:"list"} in the plan phase
+	// wrote the agent-listing text to plan.md and advanced the workflow.
+	it("subagent management action 'list' does not trigger text fallback in plan phase", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		const agentListing = "Executable agents:\n- architect (user): plans things\n- builder (user): builds things\n\nChains:\n- (none)";
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: { action: "list" }, content: [{ type: "text", text: agentListing }], isError: false },
+			c,
+		);
+		expect(existsSync(join(dir, "plan.md"))).toBe(false);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+	});
+
+	it("subagent management action 'get' does not trigger text fallback in plan phase", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: { action: "get", agent: "architect" }, content: [{ type: "text", text: "architect details..." }], isError: false },
+			c,
+		);
+		expect(existsSync(join(dir, "plan.md"))).toBe(false);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+	});
+
+	it("subagent execution call (with agent) still triggers text fallback in plan phase", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		// execution call: has agent, no action
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: { agent: "architect" }, content: [{ type: "text", text: "# Plan for X" }], isError: false },
+			c,
+		);
+		expect(existsSync(join(dir, "plan.md"))).toBe(true);
+		expect(readFileSync(join(dir, "plan.md"), "utf8")).toBe("# Plan for X");
+	});
 });

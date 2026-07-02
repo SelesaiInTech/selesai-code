@@ -504,12 +504,20 @@ export function createWorkflowExtension(
       if (event.toolName === "subagent" && sm.snapshot.active && SUBAGENT_FALLBACK_PHASES.has(sm.snapshot.phase)) {
         const file = config.phaseArtifacts[sm.snapshot.phase];
         if (file) {
-          const expectedPath = resolve(sm.snapshot.artifactDir, file);
-          if (!(await realFileExists(expectedPath))) {
-            const text = textFromToolResultContent(event.content);
-            if (text) {
-              await mkdir(sm.snapshot.artifactDir, { recursive: true });
-              await writeFile(expectedPath, text, "utf8");
+          // ponytail: management actions (list/get/models/doctor/status/...)
+          // return text but are NOT the architect/recapper/... execution
+          // result. Writing their text to plan.md would advance the workflow
+          // on agent-listing output (the `subagent list` result is plain
+          // text). Execution calls set `agent`/`chain`/`tasks`; management
+          // calls set `action`. Only fall back for execution calls.
+          if (typeof event.input?.action !== "string") {
+            const expectedPath = resolve(sm.snapshot.artifactDir, file);
+            if (!(await realFileExists(expectedPath))) {
+              const text = textFromToolResultContent(event.content);
+              if (text) {
+                await mkdir(sm.snapshot.artifactDir, { recursive: true });
+                await writeFile(expectedPath, text, "utf8");
+              }
             }
           }
         }
