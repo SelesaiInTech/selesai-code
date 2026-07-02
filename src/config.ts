@@ -8,7 +8,6 @@ import {
 	readdirSync,
 	readFileSync,
 	realpathSync,
-	statSync,
 	unlinkSync,
 	writeFileSync,
 } from "fs";
@@ -522,14 +521,6 @@ export function getBundledSkillsDir(): string {
 	return getBundledSubdir("skills");
 }
 
-/**
- * Get path to bundled built-in agent personas directory (shipped with package).
- * Loaded directly via additionalAgentPaths at boot.
- */
-export function getBundledAgentsDir(): string {
-	return getBundledSubdir("agents");
-}
-
 /** Get path to a bundled interactive asset */
 export function getBundledInteractiveAssetPath(name: string): string {
 	return join(getInteractiveAssetsDir(), name);
@@ -667,7 +658,6 @@ const AGENT_SUBDIRS = [
 	"sessions",
 	"extensions",
 	"skills",
-	"agents",
 ] as const;
 
 /**
@@ -703,36 +693,6 @@ export function seedDefaultConfigFile(
 		// chmod is best-effort (no-op on platforms that don't support it).
 	}
 	return destPath;
-}
-
-/**
- * Seed all bundled agent persona .md files into the user's agent dir. Skips
- * any file that already exists (user edits survive). Never overwrites.
- * Returns the list of destination paths that were written.
- */
-export function seedDefaultAgents(
-	agentDir: string,
-	bundledAgentsDir: string = getBundledAgentsDir(),
-): string[] {
-	const destDir = join(agentDir, "agents");
-	mkdirSync(destDir, { recursive: true, mode: 0o700 });
-	if (!existsSync(bundledAgentsDir)) return [];
-	const written: string[] = [];
-	for (const entry of readdirSync(bundledAgentsDir)) {
-		if (!entry.endsWith(".md")) continue;
-		const source = join(bundledAgentsDir, entry);
-		if (!statSync(source).isFile()) continue;
-		const dest = join(destDir, entry);
-		if (existsSync(dest)) continue;
-		copyFileSync(source, dest);
-		try {
-			chmodSync(dest, 0o600);
-		} catch {
-			// best-effort
-		}
-		written.push(dest);
-	}
-	return written;
 }
 
 /**
@@ -838,15 +798,14 @@ export function seedDefaultThemes(
 /**
  * Run full first-run bootstrap for the agent dir: ensure directories and seed
  * settings.json + models.json from bundled defaults. Idempotent — safe on every
- * startup. Bundled themes/agents/skills are copied into the user dir once;
- * existing user files are never overwritten. Bundled extensions stay
- * package-local and are not copied into the user dir.
+ * startup. Bundled themes/skills are copied into the user dir once; existing
+ * user files are never overwritten. Bundled extensions stay package-local and
+ * are not copied into the user dir.
  */
 export function bootstrapAgentDir(agentDir: string = getAgentDir()): void {
 	ensureAgentDir(agentDir);
 	seedDefaultConfigFile(join(agentDir, "settings.json"), "settings.json");
 	seedDefaultConfigFile(join(agentDir, "models.json"), "models.json");
-	seedDefaultAgents(agentDir);
 	seedDefaultExtensions(agentDir);
 	seedDefaultSkills(agentDir);
 	seedDefaultThemes(agentDir);

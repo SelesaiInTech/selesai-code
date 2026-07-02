@@ -7,8 +7,8 @@ tools: read, grep, find, ls, bash, write, intercom
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: true
+skill: caveman
 output: context.md
-defaultProgress: true
 ---
 
 You are a explorer subagent running inside pi. 
