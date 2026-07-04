@@ -487,7 +487,7 @@ function getBundledSubdir(name: string): string {
 
 /**
  * Get path to bundled default config directory (shipped with package).
- * Holds seed settings.json and models.json copied to ~/.selesai/agent on first run.
+ * Holds bundled defaults. settings.json is copied on first run; models.json is loaded directly.
  */
 export function getBundledDefaultsDir(): string {
 	return getBundledSubdir("defaults");

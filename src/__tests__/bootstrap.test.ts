@@ -51,6 +51,11 @@ describe("agent dir bootstrap", () => {
 		expect(() => bootstrapAgentDir(dir)).not.toThrow();
 	});
 
+	it("does not copy models.json into the user agent dir", () => {
+		bootstrapAgentDir(dir);
+		expect(existsSync(join(dir, "models.json"))).toBe(false);
+	});
+
 	it("first-run marker is written once and gates re-onboarding", () => {
 		const marker = getFirstRunMarkerPath(dir);
 		expect(existsSync(marker)).toBe(false);

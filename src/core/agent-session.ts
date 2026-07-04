@@ -37,6 +37,7 @@ import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
+import { normalizeAssistantThinkingTags } from "../utils/thinking-tags.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
@@ -609,6 +610,12 @@ export class AgentSession {
 		Object.assign(targetRecord, replacement);
 	}
 
+	private _normalizeAssistantMessageInPlace(message: AgentMessage): void {
+		if (message.role !== "assistant") return;
+		const normalized = normalizeAssistantThinkingTags(message as AssistantMessage);
+		this._replaceMessageInPlace(message, normalized as AgentMessage);
+	}
+
 	/** Emit extension events based on agent events */
 	private async _emitExtensionEvent(event: AgentEvent): Promise<void> {
 		if (event.type === "agent_start") {
@@ -646,6 +653,7 @@ export class AgentSession {
 			};
 			await this._extensionRunner.emit(extensionEvent);
 		} else if (event.type === "message_end") {
+			this._normalizeAssistantMessageInPlace(event.message);
 			const extensionEvent: MessageEndEvent = {
 				type: "message_end",
 				message: event.message,

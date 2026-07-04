@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as piCodingAgent from "@selesai/code";
 import type { Message } from "@earendil-works/pi-ai";
+import { stripThinkingTagsFromText } from "../../../../utils/thinking-tags.ts";
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, SingleResult, ToolCallSummary } from "./types.ts";
 
@@ -438,7 +439,7 @@ export function extractToolArgsPreview(args: Record<string, unknown>): string {
 export function extractTextFromContent(content: unknown): string {
 	if (!content) return "";
 	// Handle string content directly
-	if (typeof content === "string") return content;
+	if (typeof content === "string") return stripThinkingTagsFromText(content);
 	// Handle array content
 	if (!Array.isArray(content)) return "";
 	const texts: string[] = [];
@@ -446,7 +447,11 @@ export function extractTextFromContent(content: unknown): string {
 		if (part && typeof part === "object") {
 			// Handle { type: "text", text: "..." }
 			if ("type" in part && part.type === "text" && "text" in part) {
-				texts.push(String(part.text));
+				const text = stripThinkingTagsFromText(String(part.text));
+				if (text) texts.push(text);
+			}
+			else if ("type" in part && part.type === "thinking") {
+				continue;
 			}
 			// Handle { type: "tool_result", content: "..." }
 			else if ("type" in part && part.type === "tool_result" && "content" in part) {
@@ -455,7 +460,8 @@ export function extractTextFromContent(content: unknown): string {
 			}
 			// Handle { text: "..." } without type
 			else if ("text" in part) {
-				texts.push(String(part.text));
+				const text = stripThinkingTagsFromText(String(part.text));
+				if (text) texts.push(text);
 			}
 		}
 	}

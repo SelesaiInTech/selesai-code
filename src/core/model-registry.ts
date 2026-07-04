@@ -24,7 +24,7 @@ import { join } from "path";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
-import { getAgentDir } from "../config.ts";
+import { getAgentDir, getBundledDefaultsDir } from "../config.ts";
 import { stripJsonComments } from "../utils/json.ts";
 import { normalizePath } from "../utils/paths.ts";
 import type { AuthStatus, AuthStorage } from "./auth-storage.ts";
@@ -268,6 +268,11 @@ interface CustomModelsResult {
 	error: string | undefined;
 }
 
+interface ModelsConfigBundle {
+	result: CustomModelsResult;
+	configs: ModelsConfig[];
+}
+
 function emptyCustomModelsResult(error?: string): CustomModelsResult {
 	return { models: [], overrides: new Map(), modelOverrides: new Map(), error };
 }
@@ -399,13 +404,8 @@ export class ModelRegistry {
 	}
 
 	private loadModels(): void {
-		// Load custom models and overrides from models.json
-		const {
-			models: customModels,
-			overrides,
-			modelOverrides,
-			error,
-		} = this.modelsJsonPath ? this.loadCustomModels(this.modelsJsonPath) : emptyCustomModelsResult();
+		const { result, configs } = this.loadModelConfigs();
+		const { models: customModels, overrides, modelOverrides, error } = result;
 
 		if (error) {
 			this.loadError = error;
@@ -414,6 +414,7 @@ export class ModelRegistry {
 
 		const builtInModels = this.loadBuiltInModels(overrides, modelOverrides);
 		let combined = this.mergeCustomModels(builtInModels, customModels);
+		this.storeRequestConfigs(configs);
 
 		// Let OAuth providers modify their models (e.g., update baseUrl)
 		for (const oauthProvider of this.authStorage.getOAuthProviders()) {
@@ -424,6 +425,105 @@ export class ModelRegistry {
 		}
 
 		this.models = combined;
+	}
+
+	private loadModelConfigs(): ModelsConfigBundle {
+		const paths = [join(getBundledDefaultsDir(), "models.json")];
+		if (this.modelsJsonPath && !paths.includes(this.modelsJsonPath)) paths.push(this.modelsJsonPath);
+
+		const configs: ModelsConfig[] = [];
+		const errors: string[] = [];
+		for (const path of paths) {
+			const loaded = this.loadModelsConfig(path);
+			if (loaded.error) {
+				errors.push(loaded.error);
+				continue;
+			}
+			if (loaded.config) configs.push(loaded.config);
+		}
+
+		const result = this.buildCustomModelsResult(configs);
+		if (errors.length > 0 || result.error) {
+			return { result: { ...result, error: [...errors, result.error].filter(Boolean).join("\n\n") }, configs };
+		}
+
+		return { result, configs };
+	}
+
+	private loadModelsConfig(modelsJsonPath: string): { config?: ModelsConfig; error?: string } {
+		if (!existsSync(modelsJsonPath)) return {};
+
+		try {
+			const content = readFileSync(modelsJsonPath, "utf-8");
+			const parsed = JSON.parse(stripJsonComments(content)) as unknown;
+
+			if (!validateModelsConfig.Check(parsed)) {
+				const errors =
+					validateModelsConfig
+						.Errors(parsed)
+						.map((error) => `  - ${formatValidationPath(error)}: ${error.message}`)
+						.join("\n") || "Unknown schema error";
+				return { error: `Invalid models.json schema:\n${errors}\n\nFile: ${modelsJsonPath}` };
+			}
+
+			return { config: parsed as ModelsConfig };
+		} catch (error) {
+			if (error instanceof SyntaxError) {
+				return { error: `Failed to parse models.json: ${error.message}\n\nFile: ${modelsJsonPath}` };
+			}
+			return {
+				error: `Failed to load models.json: ${error instanceof Error ? error.message : error}\n\nFile: ${modelsJsonPath}`,
+			};
+		}
+	}
+
+	private buildCustomModelsResult(configs: ModelsConfig[]): CustomModelsResult {
+		try {
+			for (const config of configs) {
+				this.validateConfig(config);
+			}
+
+			const overrides = new Map<string, ProviderOverride>();
+			const modelOverrides = new Map<string, Map<string, ModelOverride>>();
+			const models = configs.flatMap((config) => this.parseModels(config));
+
+			for (const config of configs) {
+				for (const [providerName, providerConfig] of Object.entries(config.providers)) {
+					if (providerConfig.baseUrl || providerConfig.compat) {
+						overrides.set(providerName, {
+							baseUrl: providerConfig.baseUrl,
+							compat: providerConfig.compat,
+						});
+					}
+
+					if (providerConfig.modelOverrides) {
+						modelOverrides.set(providerName, new Map(Object.entries(providerConfig.modelOverrides)));
+					}
+				}
+			}
+
+			return { models, overrides, modelOverrides, error: undefined };
+		} catch (error) {
+			return emptyCustomModelsResult(
+				`Failed to load models.json: ${error instanceof Error ? error.message : error}`,
+			);
+		}
+	}
+
+	private storeRequestConfigs(configs: ModelsConfig[]): void {
+		for (const config of configs) {
+			for (const [providerName, providerConfig] of Object.entries(config.providers)) {
+				this.storeProviderRequestConfig(providerName, providerConfig);
+				for (const modelDef of providerConfig.models ?? []) {
+					this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
+				}
+				if (providerConfig.modelOverrides) {
+					for (const [modelId, modelOverride] of Object.entries(providerConfig.modelOverrides)) {
+						this.storeModelHeaders(providerName, modelId, modelOverride.headers);
+					}
+				}
+			}
+		}
 	}
 
 	/** Load built-in models and apply provider/model overrides */
@@ -473,61 +573,6 @@ export class ModelRegistry {
 		return merged;
 	}
 
-	private loadCustomModels(modelsJsonPath: string): CustomModelsResult {
-		if (!existsSync(modelsJsonPath)) {
-			return emptyCustomModelsResult();
-		}
-
-		try {
-			const content = readFileSync(modelsJsonPath, "utf-8");
-			const parsed = JSON.parse(stripJsonComments(content)) as unknown;
-
-			if (!validateModelsConfig.Check(parsed)) {
-				const errors =
-					validateModelsConfig
-						.Errors(parsed)
-						.map((error) => `  - ${formatValidationPath(error)}: ${error.message}`)
-						.join("\n") || "Unknown schema error";
-				return emptyCustomModelsResult(`Invalid models.json schema:\n${errors}\n\nFile: ${modelsJsonPath}`);
-			}
-
-			const config = parsed as ModelsConfig;
-
-			// Additional validation
-			this.validateConfig(config);
-
-			const overrides = new Map<string, ProviderOverride>();
-			const modelOverrides = new Map<string, Map<string, ModelOverride>>();
-
-			for (const [providerName, providerConfig] of Object.entries(config.providers)) {
-				if (providerConfig.baseUrl || providerConfig.compat) {
-					overrides.set(providerName, {
-						baseUrl: providerConfig.baseUrl,
-						compat: providerConfig.compat,
-					});
-				}
-
-				this.storeProviderRequestConfig(providerName, providerConfig);
-
-				if (providerConfig.modelOverrides) {
-					modelOverrides.set(providerName, new Map(Object.entries(providerConfig.modelOverrides)));
-					for (const [modelId, modelOverride] of Object.entries(providerConfig.modelOverrides)) {
-						this.storeModelHeaders(providerName, modelId, modelOverride.headers);
-					}
-				}
-			}
-
-			return { models: this.parseModels(config), overrides, modelOverrides, error: undefined };
-		} catch (error) {
-			if (error instanceof SyntaxError) {
-				return emptyCustomModelsResult(`Failed to parse models.json: ${error.message}\n\nFile: ${modelsJsonPath}`);
-			}
-			return emptyCustomModelsResult(
-				`Failed to load models.json: ${error instanceof Error ? error.message : error}\n\nFile: ${modelsJsonPath}`,
-			);
-		}
-	}
-
 	private validateConfig(config: ModelsConfig): void {
 		const builtInProviders = new Set<string>(getProviders());
 
@@ -540,9 +585,15 @@ export class ModelRegistry {
 
 			if (models.length === 0) {
 				// Override-only config: needs baseUrl, headers, compat, modelOverrides, or some combination.
-				if (!providerConfig.baseUrl && !providerConfig.headers && !providerConfig.compat && !hasModelOverrides) {
+				if (
+					!providerConfig.baseUrl &&
+					!providerConfig.headers &&
+					!providerConfig.compat &&
+					!providerConfig.apiKey &&
+					!hasModelOverrides
+				) {
 					throw new Error(
-						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "modelOverrides", or "models".`,
+						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "apiKey", "modelOverrides", or "models".`,
 					);
 				}
 			} else if (!isBuiltIn) {
@@ -679,10 +730,11 @@ export class ModelRegistry {
 			return;
 		}
 
+		const existing = this.providerRequestConfigs.get(providerName);
 		this.providerRequestConfigs.set(providerName, {
-			apiKey: config.apiKey,
-			headers: config.headers,
-			authHeader: config.authHeader,
+			apiKey: config.apiKey ?? existing?.apiKey,
+			headers: config.headers ?? existing?.headers,
+			authHeader: config.authHeader ?? existing?.authHeader,
 		});
 	}
 
