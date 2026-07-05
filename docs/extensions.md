@@ -135,6 +135,8 @@ Additional paths via `settings.json`:
 
 To share extensions via npm or git as pi packages, see [packages.md](packages.md).
 
+> **Fork users (selesai):** If you run selesai alongside pi, selesai also reads extensions from `~/.pi/agent/extensions/` as a fallback. When the same extension exists in both dirs, you pick the winner with `extensionHost` in settings. See [Shared Host Extensions](shared-host-extensions.md).
+
 ## Available Imports
 
 | Package | Purpose |

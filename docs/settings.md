@@ -259,6 +259,21 @@ Object form filters which resources to load:
 
 See [packages.md](packages.md) for package management details.
 
+### extensionHost
+
+When selesai reads extensions from both `~/.selesai/agent/extensions/` and `~/.pi/agent/extensions/`, name collisions are resolved per extension. Default winner: selesai. Override per name:
+
+```json
+{
+  "extensionHost": {
+    "pi-subagents": "pi",
+    "copy-turn.ts": "selesai"
+  }
+}
+```
+
+Keys are top-level entry names (dir name for packaged extensions, file name for loose `.ts`). Values are `"selesai"` or `"pi"`. See [Shared Host Extensions](shared-host-extensions.md) for the full flow.
+
 ## Example
 
 ```json
