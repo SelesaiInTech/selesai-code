@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getAgentDir } from '@selesai/code';
 
 export type ChangelogEntry = {
   version: string;
@@ -64,8 +65,10 @@ function defaultPackageRoot() {
 }
 
 function defaultStatePath() {
-  const homeDir = process.env.USERPROFILE ?? process.env.HOME ?? '';
-  return path.join(homeDir, '.pi', 'agent', 'extensions', 'pi-web-agent', 'state.json');
+  // ponytail: route through host getAgentDir() so the config dir respects the
+  // active CONFIG_DIR_NAME (e.g. .selesai). Ceiling: state layout assumed fixed;
+  // upgrade path = upstream pi-web-agent accepting a config-dir resolver.
+  return path.join(getAgentDir(), 'extensions', 'pi-web-agent', 'state.json');
 }
 
 async function readPackageVersion(packageRoot: string): Promise<string | undefined> {

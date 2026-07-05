@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { getAgentDir } from '@selesai/code';
+import { CONFIG_DIR_NAME, getAgentDir } from '@selesai/code';
 import {
   DEFAULT_BACKEND_CONFIG,
   extractBackendConfigOverride,
@@ -46,15 +46,17 @@ export function getPresentationConfigPaths(options: PresentationConfigStoreOptio
   // CONFIG_DIR_NAME (e.g. .selesai) instead of upstream's hardcoded .pi. Ceiling:
   // if selesai changes the extensions config layout, update here; upgrade path =
   // upstream pi-web-agent accepting a config-dir resolver.
-  const homeDir = options.homeDir ?? process.env.USERPROFILE ?? process.env.HOME ?? '';
   const projectDir = options.projectDir ?? process.cwd();
   const agentDir = getAgentDir();
-  // agentDir is already <homeDir>/<CONFIG_DIR_NAME>/agent; derive the home-relative config dir.
   const globalConfigRoot = path.join(agentDir, 'extensions', 'pi-web-agent', 'config.json');
 
   return {
     globalPath: globalConfigRoot,
-    projectPath: path.join(projectDir, '.pi', 'extensions', 'pi-web-agent', 'config.json')
+    // ponytail: project config dir is CONFIG_DIR_NAME (e.g. .selesai), not the
+    // upstream hardcoded .pi. Ceiling: assumes the project-local extension
+    // config layout matches the global one; upgrade path = upstream accepting a
+    // config-dir resolver for project paths too.
+    projectPath: path.join(projectDir, CONFIG_DIR_NAME, 'extensions', 'pi-web-agent', 'config.json')
   };
 }
 
