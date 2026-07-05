@@ -9,7 +9,7 @@
  * read-only memory block instead.
  *
  * Memory directories live under a dedicated `agent-memory/` namespace so they
- * never collide with the owner's `~/.pi/agent/memory/{project}/` system.
+ * never collide with the owner's `~/.selesai/agent/memory/{project}/` system.
  */
 
 import * as fs from "node:fs";

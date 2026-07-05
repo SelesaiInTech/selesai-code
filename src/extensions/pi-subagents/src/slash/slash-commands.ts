@@ -1129,7 +1129,7 @@ export function registerSlashCommands(
 		handler: async (_args, _ctx) => {
 			const profiles = listSubagentProfiles();
 			if (profiles.length === 0) {
-				sendSlashText(pi, "Subagent profiles\n\nNo subagent profiles found in ~/.pi/agent/profiles/pi-subagents/");
+				sendSlashText(pi, "Subagent profiles\n\nNo subagent profiles found in ~/.selesai/agent/profiles/pi-subagents/");
 				return;
 			}
 			sendSlashText(pi, `Subagent profiles\n\n${profiles.join("\n")}`);
@@ -1137,7 +1137,7 @@ export function registerSlashCommands(
 	});
 
 	pi.registerCommand("subagents-load-profile", {
-		description: "Load a subagent profile into ~/.pi/agent/settings.json",
+		description: "Load a subagent profile into ~/.selesai/agent/settings.json",
 		getArgumentCompletions: (prefix) => {
 			if (prefix.includes(" ")) return null;
 			return listSubagentProfiles()

@@ -8,7 +8,7 @@
  * Modes: single (agent + task), parallel (tasks[]), chain (chain[] with {previous})
  * Toggle: async parameter (default: false, configurable via config.json)
  *
- * Config file: ~/.pi/agent/extensions/subagent/config.json
+ * Config file: ~/.selesai/agent/extensions/subagent/config.json
  *   { "asyncByDefault": true, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
  */
 
@@ -67,8 +67,8 @@ export { loadConfig } from "./config.ts";
 
 /**
  * Derive subagent session base directory from parent session file.
- * If parent session is ~/.pi/agent/sessions/abc123.jsonl,
- * returns ~/.pi/agent/sessions/abc123/ as the base.
+ * If parent session is ~/.selesai/agent/sessions/abc123.jsonl,
+ * returns ~/.selesai/agent/sessions/abc123/ as the base.
  * Callers add runId to create the actual session root: abc123/{runId}/
  * Falls back to a unique temp directory if no parent session.
  */

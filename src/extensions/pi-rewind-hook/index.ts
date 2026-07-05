@@ -1,4 +1,4 @@
-import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@selesai/code";
 import { exec as execCb } from "child_process";
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { mkdtemp, readdir, readFile, rm, stat } from "fs/promises";

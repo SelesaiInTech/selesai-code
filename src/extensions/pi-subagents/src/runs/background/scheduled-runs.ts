@@ -285,7 +285,7 @@ export class ScheduledRunManager {
 		this.ctx = ctx;
 		try {
 			if (!scheduledRunsEnabled(this.deps.config)) {
-				return textResult("Scheduled subagent runs are disabled. Set { \"scheduledRuns\": { \"enabled\": true } } in ~/.pi/agent/extensions/subagent/config.json, then reload Pi. Schedule only explicit delayed runs the user asked for.", true);
+				return textResult("Scheduled subagent runs are disabled. Set { \"scheduledRuns\": { \"enabled\": true } } in ~/.selesai/agent/extensions/subagent/config.json, then reload Pi. Schedule only explicit delayed runs the user asked for.", true);
 			}
 			if (!this.store) this.bindSession(ctx);
 			if (!this.store) return textResult("Scheduled subagent store is unavailable for this session.", true);

@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import { stripThinkingTagsFromText } from "../../../../utils/thinking-tags.ts";
+import { stripThinkingTagsFromText } from "../../../../utils/thinking-tags.js"; // ponytail: .js not .ts — extension .ts is copied verbatim into dist/, only compiled .js exists there
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
 
