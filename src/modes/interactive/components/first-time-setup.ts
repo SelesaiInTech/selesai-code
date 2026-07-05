@@ -28,9 +28,9 @@ const ANALYTICS_OPTIONS: Array<{ value: boolean; label: string }> = [
 
 const SETUP_LOGO_LINES = ["██████", "██  ██", "████  ██", "██    ██"];
 
-/** First-time setup dialog: theme choice and analytics opt-in. */
+/** First-time setup dialog: welcome intro, theme choice, and analytics opt-in. */
 export class FirstTimeSetupComponent extends Container {
-	private step: "theme" | "analytics" = "theme";
+	private step: "welcome" | "theme" | "analytics" = "welcome";
 	private themeIndex: number;
 	private analyticsIndex = 0;
 	private readonly options: FirstTimeSetupOptions;
@@ -57,7 +57,31 @@ export class FirstTimeSetupComponent extends Container {
 		);
 		this.addChild(new Spacer(1));
 
-		if (this.step === "theme") {
+		if (this.step === "welcome") {
+			// ponytail: one Text with embedded newlines, no new component.
+			this.addChild(
+				new Text(
+					theme.fg("text", `${APP_NAME} is a fork of the Pi Coding Agent. Your Pi setup carries over:`),
+					1,
+					0,
+				),
+			);
+			this.addChild(new Spacer(1));
+			this.addChild(
+				new Text(
+					theme.fg(
+						"muted",
+						"  • Extensions in ~/.pi/agent/extensions load automatically.\n" +
+							"  • If the same extension exists in ~/.selesai/agent/extensions,\n" +
+							"    the selesai copy wins (set extensionHost in settings.json to change).\n\n" +
+							"  Selesai is tuned to use fewer tokens while keeping the same\n" +
+							"  results as Pi — less cost, same output quality.",
+					),
+					1,
+					0,
+				),
+			);
+		} else if (this.step === "theme") {
 			this.addChild(new Text(theme.fg("text", "Pick a theme."), 1, 0));
 			this.addChild(new Text(theme.fg("muted", `Detected system appearance: ${this.options.detectedTheme}`), 1, 0));
 			this.addChild(new Spacer(1));
@@ -89,7 +113,7 @@ export class FirstTimeSetupComponent extends Container {
 			new Text(
 				rawKeyHint("↑↓", "navigate") +
 					"  " +
-					keyHint("tui.select.confirm", this.step === "theme" ? "continue" : "finish") +
+					keyHint("tui.select.confirm", this.step === "analytics" ? "finish" : "continue") +
 					"  " +
 					keyHint("tui.select.cancel", "skip setup"),
 				1,
@@ -129,7 +153,10 @@ export class FirstTimeSetupComponent extends Container {
 		} else if (kb.matches(keyData, "tui.select.down") || keyData === "j") {
 			this.moveSelection(1);
 		} else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
-			if (this.step === "theme") {
+			if (this.step === "welcome") {
+				this.step = "theme";
+				this.update();
+			} else if (this.step === "theme") {
 				this.step = "analytics";
 				this.update();
 			} else {

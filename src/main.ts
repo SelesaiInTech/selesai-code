@@ -683,6 +683,10 @@ export async function main(args: string[], options?: MainOptions) {
 				type: "error" as const,
 				message: `Failed to load extension "${path}": ${error}`,
 			})),
+			...resourceLoader.getExtensionDiagnostics().map((d) => ({
+				type: (d.type === "error" ? "error" : "warning") as "error" | "warning",
+				message: d.message,
+			})),
 		];
 
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
