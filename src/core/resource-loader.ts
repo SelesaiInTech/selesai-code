@@ -38,6 +38,7 @@ export interface ResourceLoaderReloadOptions {
 
 export interface ResourceLoader {
 	getExtensions(): LoadExtensionsResult;
+	getExtensionDiagnostics(): ResourceDiagnostic[];
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
@@ -211,6 +212,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private appendSystemPromptOverride?: (base: string[]) => string[];
 
 	private extensionsResult: LoadExtensionsResult;
+	private extensionDiagnostics: ResourceDiagnostic[];
 	private skills: Skill[];
 	private skillDiagnostics: ResourceDiagnostic[];
 	private agents: AgentPersona[];
@@ -264,6 +266,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.appendSystemPromptOverride = options.appendSystemPromptOverride;
 
 		this.extensionsResult = { extensions: [], errors: [], runtime: createExtensionRuntime() };
+		this.extensionDiagnostics = [];
 		this.skills = [];
 		this.skillDiagnostics = [];
 		this.agents = [];
@@ -285,6 +288,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getExtensions(): LoadExtensionsResult {
 		return this.extensionsResult;
+	}
+
+	getExtensionDiagnostics(): ResourceDiagnostic[] {
+		return this.extensionDiagnostics;
 	}
 
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
@@ -382,6 +389,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 			temporary: true,
 		});
 		const metadataByPath = new Map<string, PathMetadata>();
+
+		this.extensionDiagnostics = resolvedPaths.extensionCollisions.map((c) => ({
+			type: "warning" as const,
+			message: `Extension "${c.name}" exists in both ${c.winnerSource} and ${c.loserSource}; loaded the ${c.winner} copy, skipped the other. Set "extensionHost": { "${c.name}": "pi" } or "selesai" in settings.json to change the winner.`,
+			path: c.loserPath,
+		}));
 
 		this.extensionSkillSourceInfos = new Map();
 		this.extensionPromptSourceInfos = new Map();
