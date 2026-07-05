@@ -22,13 +22,14 @@ function getEnv(): NodeJS.ProcessEnv {
 	}
 }
 
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import { globSync } from "glob";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
 import { maxSatisfying, rcompare, satisfies, valid, validRange } from "semver";
 import { CONFIG_DIR_NAME } from "../config.ts";
+import type { ResourceCollision } from "./diagnostics.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
@@ -72,6 +73,10 @@ export interface ResolvedPaths {
 	prompts: ResolvedResource[];
 	themes: ResolvedResource[];
 	agents: ResolvedResource[];
+	// Cross-host extension collisions: when ~/.pi/agent/extensions and
+	// ~/.selesai/agent/extensions both define the same extension, the selesai
+	// copy wins and the pi copy is dropped. Each entry records winner/loser.
+	extensionCollisions: ResourceCollision[];
 }
 
 export type MissingSourceAction = "install" | "skip" | "error";
@@ -577,6 +582,20 @@ function resolveExtensionEntries(dir: string): string[] | null {
 	return null;
 }
 
+/**
+ * Derive the top-level extension entry name for a resolved extension path,
+ * relative to its extensions root dir. Loose files map to their basename
+ * (e.g. "copy-turn.ts"); package/dir extensions map to their containing
+ * entry dir (e.g. "pi-subagents"). Returns undefined if the path is not
+ * under the given root (e.g. a settings-listed absolute path elsewhere).
+ */
+export function extensionEntryName(extPath: string, extensionsRoot: string): string | undefined {
+	const rel = relative(resolve(extensionsRoot), resolve(extPath));
+	if (rel.startsWith("..") || isAbsolute(rel)) return undefined;
+	const first = rel.split(sep)[0];
+	return first || undefined;
+}
+
 function collectAutoExtensionEntries(dir: string): string[] {
 	const entries: string[] = [];
 	if (!existsSync(dir)) return entries;
@@ -932,9 +951,9 @@ export class DefaultPackageManager implements PackageManager {
 			);
 		}
 
-		this.addAutoDiscoveredResources(accumulator, globalSettings, projectSettings, globalBaseDir, projectBaseDir);
+		const collisions = this.addAutoDiscoveredResources(accumulator, globalSettings, projectSettings, globalBaseDir, projectBaseDir);
 
-		return this.toResolvedPaths(accumulator);
+		return this.toResolvedPaths(accumulator, collisions);
 	}
 
 	async resolveExtensionSources(
@@ -945,7 +964,7 @@ export class DefaultPackageManager implements PackageManager {
 		const scope: SourceScope = options?.temporary ? "temporary" : options?.local ? "project" : "user";
 		const packageSources = sources.map((source) => ({ pkg: source as PackageSource, scope }));
 		await this.resolvePackageSources(packageSources, accumulator);
-		return this.toResolvedPaths(accumulator);
+		return this.toResolvedPaths(accumulator, []);
 	}
 
 	listConfiguredPackages(): ConfiguredPackage[] {
@@ -2250,7 +2269,8 @@ export class DefaultPackageManager implements PackageManager {
 		projectSettings: ReturnType<SettingsManager["getProjectSettings"]>,
 		globalBaseDir: string,
 		projectBaseDir: string,
-	): void {
+	): ResourceCollision[] {
+		const collisions: ResourceCollision[] = [];
 		const userMetadata: PathMetadata = {
 			source: "auto",
 			scope: "user",
@@ -2362,7 +2382,7 @@ export class DefaultPackageManager implements PackageManager {
 			);
 		}
 
-		// User extensions from ~/.pi/agent/
+		// User extensions from ~/.selesai/agent/
 		addResources(
 			"extensions",
 			collectAutoExtensionEntries(userDirs.extensions),
@@ -2371,7 +2391,61 @@ export class DefaultPackageManager implements PackageManager {
 			globalBaseDir,
 		);
 
-		// User skills from ~/.pi/agent/
+		// ponytail: also load user extensions from the host pi dir (~/.pi/agent/extensions)
+		// so selesai reuses pi-installed extensions without sharing auth/models/sessions.
+		// Coupling: hardcodes ".pi" — if pi renames its config dir this silently stops loading.
+		// Upgrade path: read from a resolver if selesai ever needs to locate the host dynamically.
+		const piHostExtDir = join(getHomeDir(), ".pi", "agent", "extensions");
+		const piHostBaseDir = join(getHomeDir(), ".pi", "agent");
+		const selesaiExtSource = "~/.selesai/agent/extensions";
+		const piExtSource = "~/.pi/agent/extensions";
+
+		// On name collisions between ~/.selesai/agent/extensions and ~/.pi/agent/extensions,
+		// drop the loser entirely (avoids double-load split-brain in stateful extensions
+		// like pi-subagents) and record a collision so the user is told. Winner is settable
+		// per extension via `extensionHost` in settings.json; default is selesai.
+		const extensionHost = globalSettings.extensionHost ?? {};
+		const selesaiPathsByName = new Map<string, string>();
+		for (const extPath of accumulator.extensions.keys()) {
+			const name = extensionEntryName(extPath, userDirs.extensions);
+			if (name) selesaiPathsByName.set(name, extPath);
+		}
+		const piHostEntries = collectAutoExtensionEntries(piHostExtDir);
+		const piHostKept: string[] = [];
+		for (const extPath of piHostEntries) {
+			const name = extensionEntryName(extPath, piHostExtDir);
+			if (!name || !selesaiPathsByName.has(name)) {
+				piHostKept.push(extPath);
+				continue;
+			}
+			// Collision: pick winner per settings; default selesai.
+			const winner = (extensionHost[name] ?? "selesai") as "selesai" | "pi";
+			const selesaiWins = winner === "selesai";
+			const selesaiPath = selesaiPathsByName.get(name)!;
+			if (!selesaiWins) {
+				// Drop the selesai copy so pi's wins; register pi's path.
+				accumulator.extensions.delete(selesaiPath);
+				piHostKept.push(extPath);
+			}
+			collisions.push({
+				resourceType: "extension",
+				name,
+				winnerPath: selesaiWins ? selesaiPath : extPath,
+				loserPath: selesaiWins ? extPath : selesaiPath,
+				winnerSource: selesaiWins ? selesaiExtSource : piExtSource,
+				loserSource: selesaiWins ? piExtSource : selesaiExtSource,
+				winner,
+			});
+		}
+		addResources(
+			"extensions",
+			piHostKept,
+			{ ...userMetadata, baseDir: piHostBaseDir },
+			userOverrides.extensions,
+			piHostBaseDir,
+		);
+
+		// User skills from ~/.selesai/agent/
 		addResources(
 			"skills",
 			collectAutoSkillEntries(userDirs.skills, "pi"),
@@ -2408,6 +2482,8 @@ export class DefaultPackageManager implements PackageManager {
 			userOverrides.themes,
 			globalBaseDir,
 		);
+
+		return collisions;
 	}
 
 	private collectFilesFromPaths(paths: string[], resourceType: ResourceType): string[] {
@@ -2471,7 +2547,7 @@ export class DefaultPackageManager implements PackageManager {
 		};
 	}
 
-	private toResolvedPaths(accumulator: ResourceAccumulator): ResolvedPaths {
+	private toResolvedPaths(accumulator: ResourceAccumulator, collisions: ResourceCollision[]): ResolvedPaths {
 		const mapToResolved = (
 			entries: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		): ResolvedResource[] => {
@@ -2497,6 +2573,7 @@ export class DefaultPackageManager implements PackageManager {
 			prompts: mapToResolved(accumulator.prompts),
 			themes: mapToResolved(accumulator.themes),
 			agents: mapToResolved(accumulator.agents),
+			extensionCollisions: collisions,
 		};
 	}
 

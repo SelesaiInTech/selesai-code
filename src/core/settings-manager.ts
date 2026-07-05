@@ -118,6 +118,11 @@ export interface Settings {
 	markdown?: MarkdownSettings;
 	warnings?: WarningSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
+	// Per-extension collision winner between ~/.selesai/agent/extensions and
+	// ~/.pi/agent/extensions. Key = top-level entry name (e.g. "pi-subagents",
+	// "copy-turn.ts"). Value = "selesai" (default) or "pi". Unknown names fall
+	// back to selesai.
+	extensionHost?: Record<string, "selesai" | "pi">;
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it

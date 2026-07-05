@@ -5,6 +5,8 @@ export interface ResourceCollision {
 	loserPath: string;
 	winnerSource?: string; // e.g., "npm:foo", "git:...", "local"
 	loserSource?: string;
+	// ponytail: explicit winner label so consumers don't string-compare winnerSource.
+	winner?: "selesai" | "pi";
 }
 
 export interface ResourceDiagnostic {
