@@ -28,7 +28,7 @@ import { globSync } from "glob";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
 import { maxSatisfying, rcompare, satisfies, valid, validRange } from "semver";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { CONFIG_DIR_NAME, getBundledExtensionsDir } from "../config.ts";
 import type { ResourceCollision } from "./diagnostics.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
@@ -584,8 +584,8 @@ function resolveExtensionEntries(dir: string): string[] | null {
 
 /**
  * Derive the top-level extension entry name for a resolved extension path,
- * relative to its extensions root dir. Loose files map to their basename
- * (e.g. "copy-turn.ts"); package/dir extensions map to their containing
+ * relative to its extensions root dir. Loose files map to their extension id
+ * without script suffix (e.g. "copy-turn.ts" -> "copy-turn"); package/dir extensions map to their containing
  * entry dir (e.g. "pi-subagents"). Returns undefined if the path is not
  * under the given root (e.g. a settings-listed absolute path elsewhere).
  */
@@ -593,7 +593,8 @@ export function extensionEntryName(extPath: string, extensionsRoot: string): str
 	const rel = relative(resolve(extensionsRoot), resolve(extPath));
 	if (rel.startsWith("..") || isAbsolute(rel)) return undefined;
 	const first = rel.split(sep)[0];
-	return first || undefined;
+	if (!first) return undefined;
+	return first.endsWith(".ts") || first.endsWith(".js") ? first.slice(0, -3) : first;
 }
 
 function collectAutoExtensionEntries(dir: string): string[] {
@@ -2410,6 +2411,22 @@ export class DefaultPackageManager implements PackageManager {
 			const name = extensionEntryName(extPath, userDirs.extensions);
 			if (name) selesaiPathsByName.set(name, extPath);
 		}
+		// ponytail: bundled built-in extensions (src/extensions, shipped with selesai)
+		// are the selesai side too: a pi-host copy of the same name must be dropped here
+		// or detectExtensionConflicts() throws a fatal tool conflict at load time
+		// (e.g. selesai's bundled question vs ~/.pi/agent/extensions/question.ts).
+		// Bundled always wins — extensionHost can't override it (it loads via
+		// additionalExtensionPaths at boot, not the accumulator, so delete() is a no-op
+		// and a pi-winner override would leave both loaded = fatal conflict).
+		const bundledExtDir = getBundledExtensionsDir();
+		const bundledExtNames = new Set<string>();
+		for (const extPath of collectAutoExtensionEntries(bundledExtDir)) {
+			const name = extensionEntryName(extPath, bundledExtDir);
+			if (name) {
+				bundledExtNames.add(name);
+				if (!selesaiPathsByName.has(name)) selesaiPathsByName.set(name, extPath);
+			}
+		}
 		const piHostEntries = collectAutoExtensionEntries(piHostExtDir);
 		const piHostKept: string[] = [];
 		for (const extPath of piHostEntries) {
@@ -2419,7 +2436,9 @@ export class DefaultPackageManager implements PackageManager {
 				continue;
 			}
 			// Collision: pick winner per settings; default selesai.
-			const winner = (extensionHost[name] ?? "selesai") as "selesai" | "pi";
+			// Bundled always wins — ignore a "pi" override for bundled extensions.
+			const isBundled = bundledExtNames.has(name);
+			const winner = isBundled ? "selesai" : ((extensionHost[name] ?? "selesai") as "selesai" | "pi");
 			const selesaiWins = winner === "selesai";
 			const selesaiPath = selesaiPathsByName.get(name)!;
 			if (!selesaiWins) {
