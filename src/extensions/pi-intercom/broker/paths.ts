@@ -1,5 +1,5 @@
 import { join } from "path";
-import { homedir } from "os";
+import { getAgentDir } from "@selesai/code";
 
 function sanitizePipeSegment(value: string): string {
   return value
@@ -8,13 +8,18 @@ function sanitizePipeSegment(value: string): string {
     .toLowerCase() || "default";
 }
 
+/** selesai config dir (~/.selesai/agent on the selesai fork, ~/.pi/agent upstream). */
+export function getIntercomDir(): string {
+  return join(getAgentDir(), "intercom");
+}
+
 export function getBrokerSocketPath(
   platform: NodeJS.Platform = process.platform,
-  homeDir: string = homedir(),
+  intercomDir: string = getIntercomDir(),
 ): string {
   if (platform === "win32") {
-    return `\\\\.\\pipe\\pi-intercom-${sanitizePipeSegment(homeDir)}`;
+    return `\\\\.\\pipe\\pi-intercom-${sanitizePipeSegment(intercomDir)}`;
   }
 
-  return join(homeDir, ".pi/agent/intercom/broker.sock");
+  return join(intercomDir, "broker.sock");
 }

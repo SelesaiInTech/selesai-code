@@ -28,8 +28,8 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*"
+    "@selesai/code": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "dependencies": {
     "tsx": "^4.20.0",

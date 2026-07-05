@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
+import { getIntercomDir } from "./broker/paths.js";
 
 export interface IntercomConfig {
   /** Broker command used to spawn the broker process (e.g. "npx" or "bun") */
@@ -22,7 +22,7 @@ export interface IntercomConfig {
   replyHint: boolean;
 }
 
-const CONFIG_PATH = join(homedir(), ".pi/agent/intercom/config.json");
+const CONFIG_PATH = join(getIntercomDir(), "config.json");
 
 const defaults: IntercomConfig = {
   brokerCommand: "npx",
