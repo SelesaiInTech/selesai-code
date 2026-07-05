@@ -1,5 +1,8 @@
 import {
   copyToClipboard,
+  CONFIG_DIR_NAME,
+  getAgentDir,
+  getSettingsPath,
   type ExtensionAPI,
   type ReadonlyFooterDataProvider,
   type Theme,
@@ -8,7 +11,6 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { isKeyRelease, matchesKey, type AutocompleteProvider, type SelectItem, SelectList, truncateToWidth, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 
 import type { ColorScheme, SegmentContext, StatusLinePreset, StatusLineSegmentId } from "./types.ts";
 import type { PowerlineConfig } from "./powerline-config.ts";
@@ -324,23 +326,16 @@ function trackPromptHistory(editor: any): void {
   snapshotPromptHistory(editor);
 }
 
-function getSettingsPath(): string {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || homedir();
-  return join(homeDir, ".pi", "agent", "settings.json");
-}
-
 function getProjectSettingsPath(cwd: string): string {
-  return join(cwd, ".pi", "settings.json");
+  return join(cwd, CONFIG_DIR_NAME, "settings.json");
 }
 
 function getGlobalCompactionPolicyPath(): string {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || homedir();
-  return join(homeDir, ".pi", "agent", "compaction-policy.json");
+  return join(getAgentDir(), "compaction-policy.json");
 }
 
 function getCustomCompactionExtensionPath(): string {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || homedir();
-  return join(homeDir, ".pi", "agent", "extensions", "pi-custom-compaction");
+  return join(getAgentDir(), "extensions", "pi-custom-compaction");
 }
 
 function mergeSettings(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
@@ -413,7 +408,7 @@ function readCompactionPolicyEnabled(configPath: string): boolean | undefined {
 function detectCustomCompactionEnabled(cwd: string): boolean {
   if (!existsSync(getCustomCompactionExtensionPath())) return false;
 
-  const projectSetting = readCompactionPolicyEnabled(join(cwd, ".pi", "compaction-policy.json"));
+  const projectSetting = readCompactionPolicyEnabled(join(cwd, CONFIG_DIR_NAME, "compaction-policy.json"));
   if (projectSetting !== undefined) return projectSetting;
 
   return readCompactionPolicyEnabled(getGlobalCompactionPolicyPath()) ?? false;
@@ -424,13 +419,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getStashHistoryPath(): string {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || homedir();
-  return join(homeDir, ".pi", "agent", "powerline-footer", "stash-history.json");
+  return join(getAgentDir(), "powerline-footer", "stash-history.json");
 }
 
 function getSessionsPath(): string {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || homedir();
-  return join(homeDir, ".pi", "agent", "sessions");
+  return join(getAgentDir(), "sessions");
 }
 
 function getProjectSessionsPath(cwd: string): string {

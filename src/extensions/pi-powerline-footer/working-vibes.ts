@@ -3,10 +3,9 @@
 // Uses module-level state (matching powerline-footer pattern).
 
 import { complete, type Context } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@selesai/code";
+import { getAgentDir, getSettingsPath, type ExtensionContext } from "@selesai/code";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 
 type VibeMode = "generate" | "file";
 
@@ -75,11 +74,6 @@ let recentVibes: string[] = [];
 // ═══════════════════════════════════════════════════════════════════════════
 // Configuration Management
 // ═══════════════════════════════════════════════════════════════════════════
-
-function getSettingsPath(): string {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || homedir();
-  return join(homeDir, ".pi", "agent", "settings.json");
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -208,8 +202,7 @@ function saveModelConfig(): boolean {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function getVibesDir(): string {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || homedir();
-  return join(homeDir, ".pi", "agent", "vibes");
+  return join(getAgentDir(), "vibes");
 }
 
 function toVibeFileSlug(theme: string): string {
