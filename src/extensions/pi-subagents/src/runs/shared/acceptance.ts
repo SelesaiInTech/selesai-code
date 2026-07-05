@@ -710,13 +710,15 @@ export function aggregateAcceptanceReport(input: {
 	};
 }
 
-function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string): Promise<AcceptanceVerifyResult> {
+function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, options: { signal?: AbortSignal; abortMessage?: string } = {}): Promise<AcceptanceVerifyResult> {
 	return new Promise((resolve) => {
 		const startedAt = Date.now();
 		const cwd = command.cwd ? path.resolve(defaultCwd, command.cwd) : defaultCwd;
 		let stdout = "";
 		let stderr = "";
 		let timedOut = false;
+		let settled = false;
+		let hardKill: NodeJS.Timeout | undefined;
 		const child = spawn(command.command, {
 			cwd,
 			env: { ...process.env, ...(command.env ?? {}) },
@@ -724,12 +726,39 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string):
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
 		});
-		const timeout = setTimeout(() => {
+		const finish = (result: Omit<AcceptanceVerifyResult, "id" | "command" | "cwd" | "durationMs">) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timeout);
+			if (hardKill) clearTimeout(hardKill);
+			options.signal?.removeEventListener("abort", abortVerification);
+			resolve({
+				id: command.id,
+				command: command.command,
+				cwd,
+				durationMs: Date.now() - startedAt,
+				...result,
+			});
+		};
+		const abortVerification = () => {
+			if (settled || timedOut) return;
 			timedOut = true;
 			child.kill("SIGTERM");
-			setTimeout(() => child.kill("SIGKILL"), 1000).unref?.();
-		}, command.timeoutMs ?? 120_000);
+			hardKill = setTimeout(() => {
+				child.kill("SIGKILL");
+				finish({
+					exitCode: null,
+					status: "timed-out",
+					stdout: trimOutput(stdout),
+					stderr: trimOutput(stderr || options.abortMessage || "Acceptance verification timed out."),
+				});
+			}, 1000);
+			hardKill.unref?.();
+		};
+		const timeout = setTimeout(abortVerification, command.timeoutMs ?? 120_000);
 		timeout.unref?.();
+		if (options.signal?.aborted) abortVerification();
+		else options.signal?.addEventListener("abort", abortVerification, { once: true });
 		child.stdout.on("data", (chunk: Buffer) => {
 			stdout += chunk.toString();
 		});
@@ -737,30 +766,19 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string):
 			stderr += chunk.toString();
 		});
 		child.on("close", (exitCode) => {
-			clearTimeout(timeout);
-			const durationMs = Date.now() - startedAt;
 			const passed = exitCode === 0 && !timedOut;
-			resolve({
-				id: command.id,
-				command: command.command,
-				cwd,
+			finish({
 				exitCode,
 				status: timedOut ? "timed-out" : passed ? "passed" : command.allowFailure ? "allowed-failure" : "failed",
 				stdout: trimOutput(stdout),
-				stderr: trimOutput(stderr),
-				durationMs,
+				stderr: trimOutput(stderr || (timedOut ? options.abortMessage ?? "" : "")),
 			});
 		});
 		child.on("error", (error) => {
-			clearTimeout(timeout);
-			resolve({
-				id: command.id,
-				command: command.command,
-				cwd,
-				exitCode: 1,
-				status: command.allowFailure ? "allowed-failure" : "failed",
-				stderr: error instanceof Error ? error.message : String(error),
-				durationMs: Date.now() - startedAt,
+			finish({
+				exitCode: timedOut ? null : 1,
+				status: timedOut ? "timed-out" : command.allowFailure ? "allowed-failure" : "failed",
+				stderr: timedOut ? trimOutput(stderr || options.abortMessage || "Acceptance verification timed out.") : error instanceof Error ? error.message : String(error),
 			});
 		});
 	});
@@ -772,6 +790,8 @@ export async function evaluateAcceptance(input: {
 	cwd: string;
 	report?: AcceptanceReport;
 	reviewResult?: AcceptanceReviewResult;
+	signal?: AbortSignal;
+	abortMessage?: string;
 }): Promise<AcceptanceLedger> {
 	const acceptance = input.acceptance;
 	const ledger: AcceptanceLedger = {
@@ -815,7 +835,10 @@ export async function evaluateAcceptance(input: {
 			return ledger;
 		}
 		ledger.verifyRuns = [];
-		for (const command of acceptance.verify) ledger.verifyRuns.push(await runVerifyCommand(command, input.cwd));
+		for (const command of acceptance.verify) {
+			ledger.verifyRuns.push(await runVerifyCommand(command, input.cwd, { signal: input.signal, abortMessage: input.abortMessage }));
+			if (input.signal?.aborted) break;
+		}
 		if (ledger.verifyRuns.some((run) => run.status === "failed" || run.status === "timed-out")) {
 			ledger.status = "rejected";
 			return ledger;

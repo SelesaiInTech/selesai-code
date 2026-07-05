@@ -43,6 +43,7 @@ interface WorktreeSetupHookConfig {
 interface CreateWorktreesOptions {
 	agents?: string[];
 	setupHook?: WorktreeSetupHookConfig;
+	baseDir?: string;
 }
 
 interface ResolvedWorktreeSetupHook {
@@ -152,8 +153,26 @@ function buildWorktreeBranch(runId: string, index: number): string {
 	return `pi-parallel-${runId}-${index}`;
 }
 
-function buildWorktreePath(runId: string, index: number): string {
-	return path.join(os.tmpdir(), `pi-worktree-${runId}-${index}`);
+function resolveWorktreeBaseDir(configuredBaseDir: string | undefined, repoRoot: string): string {
+	const rawBaseDir = configuredBaseDir ?? process.env.SELESAI_SUBAGENTS_WORKTREE_DIR;
+	if (rawBaseDir === undefined) return os.tmpdir();
+
+	const trimmed = rawBaseDir.trim();
+	if (!trimmed) throw new Error("worktree base directory cannot be empty");
+
+	const expanded = trimmed.startsWith("~/") ? path.join(os.homedir(), trimmed.slice(2)) : trimmed;
+	const resolved = path.isAbsolute(expanded) ? expanded : path.resolve(repoRoot, expanded);
+	try {
+		fs.mkdirSync(resolved, { recursive: true });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`failed to create worktree base directory ${resolved}: ${message}`);
+	}
+	return resolved;
+}
+
+function buildWorktreePath(baseDir: string, runId: string, index: number): string {
+	return path.join(baseDir, `pi-worktree-${runId}-${index}`);
 }
 
 function resolveRepoCwdRelative(cwd: string): string {
@@ -168,9 +187,10 @@ function resolveRepoCwdRelative(cwd: string): string {
 	return normalizedPrefix === "." ? "" : normalizedPrefix;
 }
 
-export function resolveExpectedWorktreeAgentCwd(cwd: string, runId: string, index: number): string {
+export function resolveExpectedWorktreeAgentCwd(cwd: string, runId: string, index: number, baseDir?: string): string {
 	const cwdRelative = resolveRepoCwdRelative(cwd);
-	const worktreePath = buildWorktreePath(runId, index);
+	const repoRoot = runGitChecked(cwd, ["rev-parse", "--show-toplevel"]).trim();
+	const worktreePath = buildWorktreePath(resolveWorktreeBaseDir(baseDir, repoRoot), runId, index);
 	return cwdRelative ? path.join(worktreePath, cwdRelative) : worktreePath;
 }
 
@@ -320,9 +340,10 @@ function createSingleWorktree(
 	baseCommit: string,
 	setupHook: ResolvedWorktreeSetupHook | undefined,
 	agent: string | undefined,
+	baseDir: string,
 ): WorktreeInfo {
 	const branch = buildWorktreeBranch(runId, index);
-	const worktreePath = buildWorktreePath(runId, index);
+	const worktreePath = buildWorktreePath(baseDir, runId, index);
 	const add = runGit(toplevel, ["worktree", "add", worktreePath, "-b", branch, "HEAD"]);
 	if (add.status !== 0) {
 		const message = add.stderr.trim() || add.stdout.trim() || `failed to create worktree ${worktreePath}`;
@@ -492,6 +513,7 @@ function hasWorktreeChanges(diff: WorktreeDiff): boolean {
 export function createWorktrees(cwd: string, runId: string, count: number, options?: CreateWorktreesOptions): WorktreeSetup {
 	const repo = resolveRepoState(cwd);
 	const setupHook = resolveWorktreeSetupHook(repo.toplevel, options?.setupHook);
+	const baseDir = resolveWorktreeBaseDir(options?.baseDir, repo.toplevel);
 	const worktrees: WorktreeInfo[] = [];
 
 	try {
@@ -504,6 +526,7 @@ export function createWorktrees(cwd: string, runId: string, count: number, optio
 				repo.baseCommit,
 				setupHook,
 				options?.agents?.[index],
+				baseDir,
 			));
 		}
 	} catch (error) {

@@ -5,23 +5,61 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import * as piCodingAgent from "@selesai/code";
 import type { Message } from "@earendil-works/pi-ai";
 import { stripThinkingTagsFromText } from "../../../../utils/thinking-tags.ts";
 import { formatToolCall } from "./formatters.ts";
-import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, SingleResult, ToolCallSummary } from "./types.ts";
+import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
 
 // ============================================================================
 // File System Utilities
 // ============================================================================
 
 const DEFAULT_CONFIG_DIR_NAME = ".selesai";
+const SELESAI_CODING_AGENT_PACKAGE_NAME = "@selesai/code";
+export const SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV = "SELESAI_SUBAGENTS_SELESAI_PACKAGE_ROOT";
 
-export function resolveConfigDirName(codingAgentModule: unknown = piCodingAgent): string {
-	const value = codingAgentModule && typeof codingAgentModule === "object"
-		? (codingAgentModule as { CONFIG_DIR_NAME?: unknown }).CONFIG_DIR_NAME
+function validConfigDirName(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function readConfigDirNameFromPackageRoot(packageRoot: string | undefined): string | undefined {
+	if (!packageRoot) return undefined;
+	try {
+		const pkg = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf-8")) as {
+			name?: unknown;
+			piConfig?: { configDir?: unknown };
+		};
+		if (pkg.name !== SELESAI_CODING_AGENT_PACKAGE_NAME) return undefined;
+		return validConfigDirName(pkg.piConfig?.configDir);
+	} catch {
+		return undefined;
+	}
+}
+
+function resolveConfigDirNameFromPackageJson(entryPoint = process.argv[1], packageRoot = process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV]): string | undefined {
+	const packageRootValue = readConfigDirNameFromPackageRoot(packageRoot);
+	if (packageRootValue) return packageRootValue;
+	if (!entryPoint) return undefined;
+	try {
+		let dir = path.dirname(fs.realpathSync(entryPoint));
+		while (dir !== path.dirname(dir)) {
+			const value = readConfigDirNameFromPackageRoot(dir);
+			if (value) return value;
+			dir = path.dirname(dir);
+		}
+	} catch {
+		// Package metadata lookup is best-effort; detached runners must not fail here.
+	}
+	return undefined;
+}
+
+export function resolveConfigDirName(codingAgentModule?: unknown, entryPoint?: string, packageRoot?: string): string {
+	const moduleValue = codingAgentModule && typeof codingAgentModule === "object"
+		? validConfigDirName((codingAgentModule as { CONFIG_DIR_NAME?: unknown }).CONFIG_DIR_NAME)
 		: undefined;
-	return typeof value === "string" && value.trim() ? value : DEFAULT_CONFIG_DIR_NAME;
+	return moduleValue
+		?? resolveConfigDirNameFromPackageJson(entryPoint, packageRoot)
+		?? DEFAULT_CONFIG_DIR_NAME;
 }
 
 export function getConfigDirName(): string {
@@ -205,19 +243,28 @@ function writePrompt(agent: string, prompt: string): { dir: string; path: string
  * Get the final text output from a list of messages
  */
 export function getFinalOutput(messages: Message[]): string {
+	const validTextParts: string[] = [];
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (msg.role === "assistant") {
-			const hasAssistantError = ("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0)
-				|| ("stopReason" in msg && msg.stopReason === "error");
-			if (hasAssistantError) continue;
-			for (let j = msg.content.length - 1; j >= 0; j--) {
-				const part = msg.content[j];
-				if (part.type === "text" && part.text.trim().length > 0) return part.text;
+		if (msg.role !== "assistant") continue;
+		const hasAssistantError = ("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0)
+			|| ("stopReason" in msg && msg.stopReason === "error");
+		if (hasAssistantError) continue;
+		for (let j = msg.content.length - 1; j >= 0; j--) {
+			const part = msg.content[j];
+			if (part.type !== "text" || part.text.trim().length === 0) continue;
+			validTextParts.push(part.text);
+			if (/```acceptance-report\s*\n[\s\S]*?```/i.test(part.text)) return part.text;
+			for (const match of part.text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
+				const body = match[1] ?? "";
+				if (/"criteriaSatisfied"/.test(body) && /"(?:changedFiles|testsAddedOrUpdated|commandsRun|validationOutput|residualRisks|noStagedFiles|diffSummary|reviewFindings|manualNotes)"/.test(body)) {
+					return part.text;
+				}
 			}
+			if (/ACCEPTANCE_REPORT\s*:/i.test(part.text)) return part.text;
 		}
 	}
-	return "";
+	return validTextParts[0] ?? "";
 }
 
 export function getSingleResultOutput(result: Pick<SingleResult, "finalOutput" | "messages">): string {
@@ -277,6 +324,44 @@ function extractToolCallSummaries(messages: Message[] | undefined): ToolCallSumm
 		}
 	}
 	return summaries;
+}
+
+export function sumResultsUsage(results: SingleResult[]): Usage {
+	const usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+	for (const result of results) {
+		usage.input += result.usage.input;
+		usage.output += result.usage.output;
+		usage.cacheRead += result.usage.cacheRead;
+		usage.cacheWrite += result.usage.cacheWrite;
+		usage.cost += result.usage.cost;
+		usage.turns += result.usage.turns;
+	}
+	return usage;
+}
+
+function addNestedCost(total: NonNullable<Details["totalCost"]>, children: NestedRunSummary[] | undefined): void {
+	for (const child of children ?? []) {
+		if (child.totalCost) {
+			total.inputTokens += child.totalCost.inputTokens;
+			total.outputTokens += child.totalCost.outputTokens;
+			total.costUsd += child.totalCost.costUsd;
+			continue;
+		}
+		addNestedCost(total, child.children);
+		for (const step of child.steps ?? []) addNestedCost(total, step.children);
+	}
+}
+
+/** Sum input tokens, output tokens, and cost across a set of SingleResults. */
+export function sumResultsCost(results: SingleResult[]): NonNullable<Details["totalCost"]> {
+	const total = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+	for (const result of results) {
+		total.inputTokens += result.usage.input;
+		total.outputTokens += result.usage.output;
+		total.costUsd += result.usage.cost;
+		addNestedCost(total, result.children);
+	}
+	return total;
 }
 
 export function compactForegroundResult(result: SingleResult): SingleResult {

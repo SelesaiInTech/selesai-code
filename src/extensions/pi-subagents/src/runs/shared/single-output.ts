@@ -22,9 +22,11 @@ export function resolveSingleOutputPath(
 	output: string | boolean | undefined,
 	runtimeCwd: string,
 	requestedCwd?: string,
+	relativeBaseDir?: string,
 ): string | undefined {
 	if (typeof output !== "string" || !output || output === "false" || output === "true") return undefined;
 	if (path.isAbsolute(output)) return output;
+	if (relativeBaseDir) return path.resolve(relativeBaseDir, output);
 	const baseCwd = requestedCwd
 		? (path.isAbsolute(requestedCwd) ? requestedCwd : path.resolve(runtimeCwd, requestedCwd))
 		: runtimeCwd;

@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { encodeNestedPathEnv, parseNestedPathEnv, type NestedPathEntry } from "./nested-path.ts";
 import { resolveMcpDirectToolNames } from "./mcp-direct-tool-allowlist.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.ts";
-import type { JsonSchemaObject } from "../../shared/types.ts";
+import { TEMP_ROOT_DIR, type JsonSchemaObject, type ResolvedToolBudget } from "../../shared/types.ts";
+import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const TASK_ARG_LIMIT = 8000;
@@ -13,6 +14,8 @@ const PROMPT_RUNTIME_EXTENSION_PATH = path.join(path.dirname(fileURLToPath(impor
 const FANOUT_CHILD_EXTENSION_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "extension", "fanout-child.ts");
 export const SUBAGENT_CHILD_ENV = "SELESAI_SUBAGENT_CHILD";
 export const SUBAGENT_ORCHESTRATOR_TARGET_ENV = "SELESAI_SUBAGENT_ORCHESTRATOR_TARGET";
+export const SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV = "SELESAI_SUBAGENT_ORCHESTRATOR_SESSION_ID";
+export const SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV = "SELESAI_SUBAGENT_SUPERVISOR_CHANNEL_DIR";
 export const SUBAGENT_RUN_ID_ENV = "SELESAI_SUBAGENT_RUN_ID";
 export const SUBAGENT_CHILD_AGENT_ENV = "SELESAI_SUBAGENT_CHILD_AGENT";
 export const SUBAGENT_CHILD_INDEX_ENV = "SELESAI_SUBAGENT_CHILD_INDEX";
@@ -26,6 +29,7 @@ export const SUBAGENT_PARENT_DEPTH_ENV = "SELESAI_SUBAGENT_PARENT_DEPTH";
 export const SUBAGENT_PARENT_PATH_ENV = "SELESAI_SUBAGENT_PARENT_PATH";
 export const SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV = "SELESAI_SUBAGENT_PARENT_CAPABILITY_TOKEN";
 export const SUBAGENT_PARENT_SESSION_ENV = "SELESAI_SUBAGENT_PARENT_SESSION";
+export const SUBAGENT_STEER_INBOX_ENV = "SELESAI_SUBAGENT_STEER_INBOX";
 
 interface BuildPiArgsInput {
 	parentSessionId?: string;
@@ -60,11 +64,13 @@ interface BuildPiArgsInput {
 	parentDepth?: number;
 	parentPath?: NestedPathEntry[];
 	parentCapabilityToken?: string;
+	steerInboxDir?: string;
 	structuredOutput?: {
 		schema: JsonSchemaObject;
 		schemaPath: string;
 		outputPath: string;
 	};
+	toolBudget?: ResolvedToolBudget;
 }
 
 interface BuildPiArgsResult {
@@ -73,10 +79,20 @@ interface BuildPiArgsResult {
 	tempDir?: string;
 }
 
-export function applyThinkingSuffix(model: string | undefined, thinking: string | undefined): string | undefined {
-	if (!model || !thinking || thinking === "off") return model;
+function sanitizeSupervisorChannelSegment(value: string): string {
+	return value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
+}
+
+function supervisorChannelDir(runId: string, agent: string, childIndex: number): string {
+	return path.join(TEMP_ROOT_DIR, "supervisor-channels", `${sanitizeSupervisorChannelSegment(runId)}-${sanitizeSupervisorChannelSegment(agent)}-${childIndex}`);
+}
+
+export function applyThinkingSuffix(model: string | undefined, thinking: string | undefined, replaceExisting = false): string | undefined {
+	if (!model || !thinking) return model;
 	const colonIdx = model.lastIndexOf(":");
-	if (colonIdx !== -1 && THINKING_LEVELS.includes(model.substring(colonIdx + 1))) return model;
+	if (colonIdx !== -1 && THINKING_LEVELS.includes(model.substring(colonIdx + 1))) {
+		return replaceExisting ? `${model.slice(0, colonIdx)}:${thinking}` : model;
+	}
 	return `${model}:${thinking}`;
 }
 
@@ -204,6 +220,16 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	if (input.orchestratorIntercomTarget) {
 		env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = input.orchestratorIntercomTarget;
 	}
+	if (input.parentSessionId) {
+		env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = input.parentSessionId;
+	}
+	if (input.orchestratorIntercomTarget && input.parentSessionId && input.runId && input.childAgentName) {
+		const childIndex = input.childIndex ?? 0;
+		const channelDir = supervisorChannelDir(input.runId, input.childAgentName, childIndex);
+		fs.mkdirSync(path.join(channelDir, "requests"), { recursive: true });
+		fs.mkdirSync(path.join(channelDir, "replies"), { recursive: true });
+		env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
+	}
 	if (input.runId) {
 		env[SUBAGENT_RUN_ID_ENV] = input.runId;
 	}
@@ -222,6 +248,11 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
 		env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
 	}
+	if (input.steerInboxDir) {
+		env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
+	}
+	const encodedToolBudget = encodeToolBudgetEnv(input.toolBudget);
+	if (encodedToolBudget) env[TOOL_BUDGET_ENV] = encodedToolBudget;
 
 	env[SUBAGENT_PARENT_SESSION_ENV] = input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
 

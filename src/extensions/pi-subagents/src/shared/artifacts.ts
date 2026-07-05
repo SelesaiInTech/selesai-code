@@ -3,8 +3,22 @@ import * as path from "node:path";
 import { TEMP_ARTIFACTS_DIR, type ArtifactPaths } from "./types.ts";
 import { getAgentDir } from "./utils.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
+const PROJECT_ARTIFACT_ROOT = ".pi-subagents";
 
-export function getArtifactsDir(sessionFile: string | null): string {
+export function getProjectSubagentsDir(cwd: string): string {
+	return path.join(cwd, PROJECT_ARTIFACT_ROOT);
+}
+
+export function getProjectArtifactsDir(cwd: string): string {
+	return path.join(getProjectSubagentsDir(cwd), "artifacts");
+}
+
+export function getProjectChainRunsDir(cwd: string): string {
+	return path.join(getProjectSubagentsDir(cwd), "chain-runs");
+}
+
+export function getArtifactsDir(sessionFile: string | null, projectCwd?: string): string {
+	if (projectCwd) return getProjectArtifactsDir(projectCwd);
 	if (sessionFile) {
 		const sessionDir = path.dirname(sessionFile);
 		return path.join(sessionDir, "subagent-artifacts");
@@ -20,6 +34,7 @@ export function getArtifactPaths(artifactsDir: string, runId: string, agent: str
 		inputPath: path.join(artifactsDir, `${base}_input.md`),
 		outputPath: path.join(artifactsDir, `${base}_output.md`),
 		jsonlPath: path.join(artifactsDir, `${base}.jsonl`),
+		transcriptPath: path.join(artifactsDir, `${base}_transcript.jsonl`),
 		metadataPath: path.join(artifactsDir, `${base}_meta.json`),
 	};
 }

@@ -323,7 +323,7 @@ async function probeModel(
 	if (typeof pi.exec !== "function") {
 		return { status: "skipped", message: "pi.exec is unavailable in this runtime." };
 	}
-	const result = await pi.exec("selesai", ["-p", "--model", fullId, "--no-tools", 'Reply with exactly "OK".'], {
+	const result = await pi.exec("pi", ["-p", "--model", fullId, "--no-tools", 'Reply with exactly "OK".'], {
 		cwd: os.tmpdir(),
 		timeout: 45_000,
 	} as Record<string, unknown>);

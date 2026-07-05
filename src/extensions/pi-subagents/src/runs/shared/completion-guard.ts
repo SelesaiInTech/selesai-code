@@ -59,7 +59,9 @@ const READ_ONLY_BUILTIN_TOOLS = new Set([
 	"grep",
 	"find",
 	"ls",
-	"web_explore",
+	"web_search",
+	"fetch_content",
+	"get_search_content",
 	"intercom",
 	"contact_supervisor",
 ]);

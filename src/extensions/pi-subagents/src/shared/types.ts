@@ -7,6 +7,7 @@ import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import type { FSWatcher } from "node:fs";
 import type { ExtensionContext } from "@selesai/code";
+import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
 
 // ============================================================================
 // Basic Types
@@ -88,6 +89,47 @@ export interface Usage {
 	turns: number;
 }
 
+export interface TurnBudgetConfig {
+	maxTurns: number;
+	graceTurns?: number;
+}
+
+export interface ResolvedTurnBudget {
+	maxTurns: number;
+	graceTurns: number;
+}
+
+export interface ToolBudgetConfig {
+	soft?: number;
+	hard: number;
+	block?: string[] | "*";
+}
+
+export interface ResolvedToolBudget {
+	soft?: number;
+	hard: number;
+	block: string[] | "*";
+}
+
+export type ToolBudgetOutcome = "within-budget" | "soft-reached" | "hard-blocked";
+
+export interface ToolBudgetState extends ResolvedToolBudget {
+	outcome: ToolBudgetOutcome;
+	toolCount: number;
+	softReachedAt?: number;
+	hardReachedAt?: number;
+	blockedTool?: string;
+}
+
+export type TurnBudgetOutcome = "within-budget" | "wrap-up-requested" | "exceeded";
+
+export interface TurnBudgetState extends ResolvedTurnBudget {
+	outcome: TurnBudgetOutcome;
+	turnCount: number;
+	wrapUpRequestedAtTurn?: number;
+	exceededAtTurn?: number;
+}
+
 export interface TokenUsage {
 	input: number;
 	output: number;
@@ -120,6 +162,25 @@ export interface ResolvedControlConfig {
 	notifyChannels: ControlNotificationChannel[];
 }
 
+/**
+ * Smart completion batching for async-completion notifications. Successful
+ * sibling completions are held briefly so they arrive as one grouped message;
+ * failure and attention signals bypass grouping and always fire immediately.
+ */
+export interface CompletionBatchConfig {
+	enabled?: boolean;
+	/** Idle window after each arrival; resets on every new item. */
+	debounceMs?: number;
+	/** Hard cap measured from the first item in a group. */
+	maxWaitMs?: number;
+	/** Shorter idle window for straggler groups. */
+	stragglerDebounceMs?: number;
+	/** Shorter hard cap for straggler groups. */
+	stragglerMaxWaitMs?: number;
+	/** Arrivals within this window after an emit join a straggler group. */
+	stragglerWindowMs?: number;
+}
+
 export interface ControlEvent {
 	type: ControlEventType;
 	from?: ActivityState;
@@ -144,17 +205,25 @@ export interface ControlEvent {
 
 export type SubagentResultStatus = "completed" | "failed" | "paused" | "detached";
 export type SubagentRunMode = "single" | "parallel" | "chain";
+export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 1;
+export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
 
 export type PublicNestedStepSummary = Pick<
 	NestedStepSummary,
-	"agent" | "status" | "sessionFile" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "startedAt" | "endedAt" | "error"
+	"agent" | "status" | "sessionFile" | "transcriptPath" | "transcriptError" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "startedAt" | "endedAt" | "error" | "timedOut"
 > & {
 	children?: PublicNestedRunSummary[];
 };
 
+export type CostSummary = {
+	inputTokens: number;
+	outputTokens: number;
+	costUsd: number;
+};
+
 export type PublicNestedRunSummary = Pick<
 	NestedRunSummary,
-	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "agents" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "totalTokens" | "startedAt" | "endedAt" | "lastUpdate" | "error"
+	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "agents" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "totalTokens" | "totalCost" | "startedAt" | "endedAt" | "lastUpdate" | "error" | "timeoutMs" | "deadlineAt" | "timedOut" | "turnBudget" | "turnBudgetExceeded" | "wrapUpRequested"
 > & {
 	steps?: PublicNestedStepSummary[];
 	children?: PublicNestedRunSummary[];
@@ -392,6 +461,11 @@ export interface SingleResult {
 	detachedReason?: string;
 	interrupted?: boolean;
 	timedOut?: boolean;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
+	toolBudget?: ToolBudgetState;
+	toolBudgetBlocked?: boolean;
 	messages?: Message[];
 	usage: Usage;
 	model?: string;
@@ -416,6 +490,9 @@ export interface SingleResult {
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
+	transcriptPath?: string;
+	transcriptError?: string;
+	children?: NestedRunSummary[];
 }
 
 export interface Details {
@@ -426,6 +503,11 @@ export interface Details {
 	controlEvents?: ControlEvent[];
 	asyncId?: string;
 	asyncDir?: string;
+	timeoutMs?: number;
+	deadlineAt?: number;
+	timedOut?: boolean;
+	turnBudget?: ResolvedTurnBudget;
+	toolBudget?: ResolvedToolBudget;
 	progress?: AgentProgress[];
 	progressSummary?: ProgressSummary;
 	artifacts?: {
@@ -444,6 +526,10 @@ export interface Details {
 	currentStepIndex?: number;   // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
 	outputs?: ChainOutputMap;
+	// Aggregated child usage across all agents in the run
+	totalChildUsage?: Usage;
+	// Aggregated cost across all agents in the run
+	totalCost?: CostSummary;
 }
 
 // ============================================================================
@@ -454,6 +540,7 @@ export interface ArtifactPaths {
 	inputPath: string;
 	outputPath: string;
 	jsonlPath: string;
+	transcriptPath: string;
 	metadataPath: string;
 }
 
@@ -462,6 +549,7 @@ export interface ArtifactConfig {
 	includeInput: boolean;
 	includeOutput: boolean;
 	includeJsonl: boolean;
+	includeTranscript?: boolean;
 	includeMetadata: boolean;
 	cleanupDays: number;
 }
@@ -492,6 +580,8 @@ export interface NestedStepSummary {
 	agent: string;
 	status: "pending" | "running" | "complete" | "completed" | "failed" | "paused";
 	sessionFile?: string;
+	transcriptPath?: string;
+	transcriptError?: string;
 	activityState?: ActivityState;
 	lastActivityAt?: number;
 	currentTool?: string;
@@ -502,6 +592,12 @@ export interface NestedStepSummary {
 	startedAt?: number;
 	endedAt?: number;
 	error?: string;
+	timedOut?: boolean;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
+	toolBudget?: ToolBudgetState;
+	toolBudgetBlocked?: boolean;
 	children?: NestedRunSummary[];
 }
 
@@ -533,9 +629,18 @@ export interface NestedRunSummary extends NestedRunAddress {
 	turnCount?: number;
 	toolCount?: number;
 	totalTokens?: TokenUsage;
+	totalCost?: CostSummary;
 	startedAt?: number;
 	endedAt?: number;
 	lastUpdate?: number;
+	timeoutMs?: number;
+	deadlineAt?: number;
+	timedOut?: boolean;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
+	toolBudget?: ToolBudgetState;
+	toolBudgetBlocked?: boolean;
 	error?: string;
 }
 
@@ -547,6 +652,7 @@ export interface NestedRouteInfo {
 }
 
 export interface AsyncStartedEvent {
+	lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
 	id?: string;
 	asyncDir?: string;
 	pid?: number;
@@ -558,14 +664,19 @@ export interface AsyncStartedEvent {
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
+	timeoutMs?: number;
+	deadlineAt?: number;
+	turnBudget?: TurnBudgetState;
 	nestedRoute?: NestedRouteInfo;
 }
 
 export interface AsyncStatus {
+	lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
 	runId: string;
 	sessionId?: string;
 	mode: SubagentRunMode;
 	state: "queued" | "running" | "complete" | "failed" | "paused";
+	error?: string;
 	activityState?: ActivityState;
 	lastActivityAt?: number;
 	currentTool?: string;
@@ -573,9 +684,19 @@ export interface AsyncStatus {
 	currentPath?: string;
 	turnCount?: number;
 	toolCount?: number;
+	steerCount?: number;
+	lastSteerAt?: number;
 	startedAt: number;
 	endedAt?: number;
 	lastUpdate?: number;
+	timeoutMs?: number;
+	deadlineAt?: number;
+	timedOut?: boolean;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
+	toolBudget?: ToolBudgetState;
+	toolBudgetBlocked?: boolean;
 	pid?: number;
 	cwd?: string;
 	currentStep?: number;
@@ -592,6 +713,8 @@ export interface AsyncStatus {
 		status: "pending" | "running" | "complete" | "completed" | "failed" | "paused";
 		children?: NestedRunSummary[];
 		sessionFile?: string;
+		transcriptPath?: string;
+		transcriptError?: string;
 		activityState?: ActivityState;
 		lastActivityAt?: number;
 		currentTool?: string;
@@ -606,12 +729,21 @@ export interface AsyncStatus {
 		endedAt?: number;
 		durationMs?: number;
 		exitCode?: number | null;
+		timedOut?: boolean;
+		turnBudget?: TurnBudgetState;
+		turnBudgetExceeded?: boolean;
+		wrapUpRequested?: boolean;
+		toolBudget?: ToolBudgetState;
+		toolBudgetBlocked?: boolean;
 		tokens?: TokenUsage;
 		skills?: string[];
 		model?: string;
 		thinking?: string;
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
+		totalCost?: CostSummary;
+		steerCount?: number;
+		lastSteerAt?: number;
 		error?: string;
 		structuredOutput?: unknown;
 		structuredOutputPath?: string;
@@ -621,6 +753,7 @@ export interface AsyncStatus {
 	sessionDir?: string;
 	outputFile?: string;
 	totalTokens?: TokenUsage;
+	totalCost?: CostSummary;
 	sessionFile?: string;
 	outputs?: ChainOutputMap;
 }
@@ -642,6 +775,8 @@ export interface AsyncJobState {
 	currentPath?: string;
 	turnCount?: number;
 	toolCount?: number;
+	steerCount?: number;
+	lastSteerAt?: number;
 	mode?: SubagentRunMode;
 	agents?: string[];
 	currentStep?: number;
@@ -655,6 +790,14 @@ export interface AsyncJobState {
 	activeParallelGroup?: boolean;
 	startedAt?: number;
 	updatedAt?: number;
+	timeoutMs?: number;
+	deadlineAt?: number;
+	timedOut?: boolean;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
+	toolBudget?: ToolBudgetState;
+	toolBudgetBlocked?: boolean;
 	sessionDir?: string;
 	outputFile?: string;
 	totalTokens?: TokenUsage;
@@ -669,6 +812,13 @@ export interface ForegroundResumeChild {
 	index: number;
 	sessionFile?: string;
 	status: SubagentResultStatus;
+	exitCode?: number;
+	finalOutput?: string;
+	artifactPaths?: ArtifactPaths;
+	transcriptPath?: string;
+	transcriptError?: string;
+	detachedReason?: string;
+	updatedAt?: number;
 }
 
 export interface ForegroundResumeRun {
@@ -683,6 +833,7 @@ export interface SubagentState {
 	baseCwd: string;
 	currentSessionId: string | null;
 	subagentInProgress?: boolean;
+	subagentSpawns?: { sessionId: string | null; count: number };
 	asyncJobs: Map<string, AsyncJobState>;
 	foregroundRuns?: Map<string, ForegroundResumeRun>;
 	foregroundControls: Map<string, {
@@ -763,10 +914,13 @@ export interface RunSyncOptions {
 	interruptSignal?: AbortSignal;
 	timeoutMs?: number;
 	deadlineAt?: number;
+	turnBudget?: ResolvedTurnBudget;
+	toolBudget?: ResolvedToolBudget;
 	allowIntercomDetach?: boolean;
 	intercomEvents?: IntercomEventBus;
 	onUpdate?: (r: import("@earendil-works/pi-agent-core").AgentToolResult<Details>) => void;
 	onControlEvent?: (event: ControlEvent) => void;
+	onDetachedExit?: (result: SingleResult) => void;
 	controlConfig?: ResolvedControlConfig;
 	intercomSessionName?: string;
 	orchestratorIntercomTarget?: string;
@@ -784,10 +938,14 @@ export interface RunSyncOptions {
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
+	/** Override the agent's default thinking level for this run */
+	thinkingOverride?: AgentConfig["thinking"];
 	/** Registry models available for heuristic bare-model resolution */
 	availableModels?: Array<{ provider: string; id: string; fullId: string }>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */
 	preferredModelProvider?: string;
+	/** Optional subagent model-scope enforcement for fallback candidates */
+	modelScope?: ModelScopeConfig;
 	/** Skills to make available (overrides agent default if provided) */
 	skills?: string[];
 	structuredOutput?: {
@@ -829,18 +987,37 @@ export interface ProactiveSkillSubagentsConfig {
 	preferredAgent?: string;
 }
 
+export type ToolDescriptionMode = "full" | "compact" | "custom";
+
+export interface ScheduledRunsConfig {
+	enabled?: boolean;
+	maxLatenessMs?: number;
+	maxPending?: number;
+}
+
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
+	toolDescriptionMode?: ToolDescriptionMode;
 	forceTopLevelAsync?: boolean;
 	defaultSessionDir?: string;
+	singleRunOutputBaseDir?: string;
 	maxSubagentDepth?: number;
+	maxSubagentSpawnsPerSession?: number;
+	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
+	globalConcurrencyLimit?: number;
 	control?: ControlConfig;
+	completionBatch?: CompletionBatchConfig;
+	turnBudget?: TurnBudgetConfig;
+	toolBudget?: ToolBudgetConfig;
 	parallel?: TopLevelParallelConfig;
 	chain?: ExtensionChainConfig;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
+	worktreeBaseDir?: string;
 	intercomBridge?: IntercomBridgeConfig;
 	proactiveSkillSubagents?: ProactiveSkillSubagentsConfig | false;
+	scheduledRuns?: ScheduledRunsConfig;
 }
 
 // ============================================================================
@@ -857,6 +1034,7 @@ export const DEFAULT_ARTIFACT_CONFIG: ArtifactConfig = {
 	includeInput: true,
 	includeOutput: true,
 	includeJsonl: false,
+	includeTranscript: true,
 	includeMetadata: true,
 	cleanupDays: 7,
 };
@@ -932,7 +1110,8 @@ export const SLASH_SUBAGENT_CANCEL_EVENT = "subagent:slash:cancel";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "create", "update", "delete", "status", "interrupt", "resume", "append-step", "doctor"] as const;
+export const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION = 40;
+export const SUBAGENT_ACTIONS = ["list", "get", "models", "create", "update", "delete", "eject", "disable", "enable", "reset", "status", "interrupt", "resume", "steer", "append-step", "doctor", "schedule", "schedule-list", "schedule-status", "schedule-cancel"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +
@@ -975,10 +1154,14 @@ export function wrapForkTask(task: string, preamble?: string | false): string {
 // Recursion Depth Guard
 // ============================================================================
 
-export function normalizeMaxSubagentDepth(value: unknown): number | undefined {
+function normalizeNonNegativeInteger(value: unknown): number | undefined {
 	const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
 	if (!Number.isInteger(parsed) || parsed < 0) return undefined;
 	return parsed;
+}
+
+export function normalizeMaxSubagentDepth(value: unknown): number | undefined {
+	return normalizeNonNegativeInteger(value);
 }
 
 export function resolveCurrentMaxSubagentDepth(configMaxDepth?: number): number {
@@ -1007,6 +1190,16 @@ export function getSubagentDepthEnv(maxDepth?: number): Record<string, string> {
 		SELESAI_SUBAGENT_DEPTH: String(nextDepth),
 		SELESAI_SUBAGENT_MAX_DEPTH: String(normalizeMaxSubagentDepth(maxDepth) ?? resolveCurrentMaxSubagentDepth()),
 	};
+}
+
+export function normalizeMaxSubagentSpawnsPerSession(value: unknown): number | undefined {
+	return normalizeNonNegativeInteger(value);
+}
+
+export function resolveMaxSubagentSpawnsPerSession(configMaxSpawns?: number): number {
+	return normalizeMaxSubagentSpawnsPerSession(process.env.SELESAI_SUBAGENT_MAX_SPAWNS_PER_SESSION)
+		?? normalizeMaxSubagentSpawnsPerSession(configMaxSpawns)
+		?? DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION;
 }
 
 // ============================================================================

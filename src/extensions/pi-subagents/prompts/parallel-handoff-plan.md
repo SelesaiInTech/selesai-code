@@ -34,7 +34,7 @@ Role guidance:
 External reference researcher:
 - Study linked projects, docs, issues, examples, source code, or prompt guidance.
 - Identify the behavior, API, implementation files, constraints, and transferable ideas.
-- Conduct web research if needed. Use `web_explore` (it handles search, fetch, and source ranking internally; call again with a narrower query for follow-ups).
+- Conduct web research if needed. Use `web_search` if it is available; otherwise use whatever equivalent research capability is available.
 - Return source links, repo paths, key evidence, risks, and what matters for this implementation.
 
 Local context-builder:

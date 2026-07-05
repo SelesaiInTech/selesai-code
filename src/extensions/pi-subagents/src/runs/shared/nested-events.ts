@@ -8,6 +8,7 @@ import {
 	type AsyncJobState,
 	type AsyncStatus,
 	type NestedRouteInfo,
+	type TurnBudgetState,
 	type NestedRunSummary,
 	type NestedRunState,
 	type NestedStepSummary,
@@ -184,6 +185,35 @@ function sanitizeTokenUsage(value: unknown): NestedRunSummary["totalTokens"] | u
 		: undefined;
 }
 
+function sanitizeCost(value: unknown): NestedRunSummary["totalCost"] | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const raw = value as Record<string, unknown>;
+	const inputTokens = clampNumber(raw.inputTokens);
+	const outputTokens = clampNumber(raw.outputTokens);
+	const costUsd = clampNumber(raw.costUsd);
+	return inputTokens !== undefined && outputTokens !== undefined && costUsd !== undefined
+		? { inputTokens, outputTokens, costUsd }
+		: undefined;
+}
+
+function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const raw = value as Record<string, unknown>;
+	const maxTurns = clampNumber(raw.maxTurns);
+	const graceTurns = clampNumber(raw.graceTurns);
+	const turnCount = clampNumber(raw.turnCount);
+	const outcome = raw.outcome === "within-budget" || raw.outcome === "wrap-up-requested" || raw.outcome === "exceeded" ? raw.outcome : undefined;
+	if (maxTurns === undefined || graceTurns === undefined || turnCount === undefined || !outcome) return undefined;
+	return {
+		maxTurns,
+		graceTurns,
+		turnCount,
+		outcome,
+		...(clampNumber(raw.wrapUpRequestedAtTurn) !== undefined ? { wrapUpRequestedAtTurn: clampNumber(raw.wrapUpRequestedAtTurn) } : {}),
+		...(clampNumber(raw.exceededAtTurn) !== undefined ? { exceededAtTurn: clampNumber(raw.exceededAtTurn) } : {}),
+	};
+}
+
 function sanitizeState(value: unknown, fallback: NestedRunState): NestedRunState {
 	return value === "queued" || value === "running" || value === "complete" || value === "failed" || value === "paused"
 		? value
@@ -212,6 +242,10 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		...(clampNumber(raw.startedAt) !== undefined ? { startedAt: clampNumber(raw.startedAt) } : {}),
 		...(clampNumber(raw.endedAt) !== undefined ? { endedAt: clampNumber(raw.endedAt) } : {}),
 		...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
+		...(raw.timedOut === true ? { timedOut: true } : {}),
+		...(sanitizeTurnBudget(raw.turnBudget) ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) } : {}),
+		...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
+		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
 		...(depth < MAX_DEPTH && Array.isArray(raw.children) ? { children: raw.children.map((child) => sanitizeSummary(child, depth + 1)).filter((child): child is NestedRunSummary => Boolean(child)).slice(0, MAX_CHILDREN) } : {}),
 	};
 }
@@ -225,6 +259,7 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		? raw.steps.map((step) => sanitizeStep(step, depth + 1)).filter((step): step is NestedStepSummary => Boolean(step)).slice(0, MAX_STEPS)
 		: undefined;
 	const totalTokens = sanitizeTokenUsage(raw.totalTokens);
+	const totalCost = sanitizeCost(raw.totalCost);
 	return {
 		id: raw.id,
 		parentRunId: raw.parentRunId,
@@ -256,9 +291,16 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		...(clampNumber(raw.turnCount) !== undefined ? { turnCount: clampNumber(raw.turnCount) } : {}),
 		...(clampNumber(raw.toolCount) !== undefined ? { toolCount: clampNumber(raw.toolCount) } : {}),
 		...(totalTokens ? { totalTokens } : {}),
+		...(totalCost ? { totalCost } : {}),
 		...(clampNumber(raw.startedAt) !== undefined ? { startedAt: clampNumber(raw.startedAt) } : {}),
 		...(clampNumber(raw.endedAt) !== undefined ? { endedAt: clampNumber(raw.endedAt) } : {}),
 		...(clampNumber(raw.lastUpdate) !== undefined ? { lastUpdate: clampNumber(raw.lastUpdate) } : {}),
+		...(clampNumber(raw.timeoutMs) !== undefined ? { timeoutMs: clampNumber(raw.timeoutMs) } : {}),
+		...(clampNumber(raw.deadlineAt) !== undefined ? { deadlineAt: clampNumber(raw.deadlineAt) } : {}),
+		...(raw.timedOut === true ? { timedOut: true } : {}),
+		...(sanitizeTurnBudget(raw.turnBudget) ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) } : {}),
+		...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
+		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
 		...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
 		...(steps && steps.length > 0 ? { steps } : {}),
 		...(depth < MAX_DEPTH && Array.isArray(raw.children) ? { children: raw.children.map((child) => sanitizeSummary(child, depth + 1)).filter((child): child is NestedRunSummary => Boolean(child)).slice(0, MAX_CHILDREN) } : {}),
@@ -392,6 +434,42 @@ export function findNestedRouteForRootId(rootRunId: string): NestedRoute | undef
 		}
 	}
 	return undefined;
+}
+
+/**
+ * Scan the nested-events directory once and index every route by its root run
+ * id. Use this when resolving routes for many runs (e.g. listAsyncRuns) so the
+ * cost is O(routes) total instead of O(runs * routes) from calling
+ * findNestedRouteForRootId per run.
+ */
+export function buildNestedRouteIndex(): Map<string, NestedRoute> {
+	let entries: string[];
+	try {
+		entries = fs.readdirSync(NESTED_EVENTS_DIR);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Map();
+		throw error;
+	}
+	const index = new Map<string, NestedRoute>();
+	for (const entry of entries) {
+		const routeRoot = path.join(NESTED_EVENTS_DIR, entry);
+		try {
+			const metadata = JSON.parse(fs.readFileSync(path.join(routeRoot, ROUTE_FILE), "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
+			if (typeof metadata.rootRunId !== "string" || typeof metadata.capabilityToken !== "string") continue;
+			if (index.has(metadata.rootRunId)) continue;
+			const route: NestedRoute = {
+				rootRunId: metadata.rootRunId,
+				eventSink: path.join(routeRoot, "events"),
+				controlInbox: path.join(routeRoot, "controls"),
+				capabilityToken: metadata.capabilityToken,
+			};
+			validateRouteShape(route);
+			index.set(metadata.rootRunId, route);
+		} catch {
+			continue;
+		}
+	}
+	return index;
 }
 
 export function projectNestedRegistryForRoot(rootRunId: string): NestedRegistry | undefined {
@@ -778,6 +856,13 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.turnCount !== undefined ? { turnCount: status.turnCount } : {}),
 		...(status.toolCount !== undefined ? { toolCount: status.toolCount } : {}),
 		...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
+		...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
+		...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
+		...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
+		...(status.turnBudget ? { turnBudget: status.turnBudget } : {}),
+		...(status.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: status.turnBudgetExceeded } : {}),
+		...(status.wrapUpRequested !== undefined ? { wrapUpRequested: status.wrapUpRequested } : {}),
+		...(status.error ? { error: status.error } : {}),
 		...(status.startedAt !== undefined ? { startedAt: status.startedAt } : { startedAt: fallback.ts }),
 		...(status.endedAt !== undefined ? { endedAt: status.endedAt } : {}),
 		lastUpdate: status.lastUpdate ?? fallback.ts,
@@ -796,6 +881,10 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 			...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
 			...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
 			...(step.error ? { error: step.error } : {}),
+			...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
+			...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
+			...(step.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: step.turnBudgetExceeded } : {}),
+			...(step.wrapUpRequested !== undefined ? { wrapUpRequested: step.wrapUpRequested } : {}),
 		})).slice(0, MAX_STEPS) } : {}),
 	};
 }
