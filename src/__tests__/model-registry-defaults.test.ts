@@ -22,6 +22,7 @@ describe("model registry bundled defaults", () => {
 
 		expect(model?.name).toBe("GLM-5.2");
 		expect(model?.baseUrl).toBe("https://lite.andlet.me/v1");
+		expect(registry.hasConfiguredAuth(model!)).toBe(false);
 	});
 
 	it("keeps bundled model list when user models.json only stores apiKey", () => {

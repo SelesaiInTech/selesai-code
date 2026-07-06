@@ -4,31 +4,31 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the self-package alias that the extension imports under at runtime.
-// jiti maps @earendil-works/pi-coding-agent -> the package's own index at runtime;
-// vitest has no such alias, so redirect to the real source modules here.
-vi.mock("@earendil-works/pi-coding-agent", () => ({
+vi.mock("@selesai/code", () => ({
 	getAgentDir: () => process.env.SELESAI_CODING_AGENT_DIR ?? join(homedir(), ".selesai", "agent"),
 	getModelsPath: () => join(process.env.SELESAI_CODING_AGENT_DIR ?? join(homedir(), ".selesai", "agent"), "models.json"),
 }));
 
 import { homedir } from "node:os";
 import {
-	applyTokenInAccountToModels,
+	applyTokenInAccountToAuth,
 	getActiveTokenInAccountId,
+	getStoredTokenInApiKey,
 	getTokenInApiKey,
 	getTokenInAuthPath,
 	isPlaceholderToken,
 	PLACEHOLDER_API_KEY,
 	readModelsJson,
 	readTokenInAuth,
+	removeTokenInApiKey,
 	saveTokenInAccount,
-	setTokenInApiKey,
 	validateTokenInToken,
 	writeTokenInAuth,
 } from "../extensions/tokenin-onboarding.ts";
 
 // Import the handler factory for session_start behavior tests.
 import tokenInOnboardingExtension from "../extensions/tokenin-onboarding.ts";
+import { AuthStorage } from "../core/auth-storage.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionStartEvent } from "../core/extensions/types.ts";
 
 describe("tokenin-onboarding helpers", () => {
@@ -48,23 +48,25 @@ describe("tokenin-onboarding helpers", () => {
 		expect(getTokenInApiKey({ providers: { tokenin: { apiKey: "sk-abc" } } })).toBe("sk-abc");
 	});
 
-	it("setTokenInApiKey sets apiKey and preserves other providers", () => {
+	it("removeTokenInApiKey removes only the legacy tokenin apiKey", () => {
 		const models = {
 			providers: {
 				other: { apiKey: "other-key", baseUrl: "https://other.example" },
 				tokenin: { apiKey: PLACEHOLDER_API_KEY, baseUrl: "https://token.in" },
 			},
 		};
-		const updated = setTokenInApiKey(models, "sk-user");
+		const updated = removeTokenInApiKey(models);
 		const providers = updated.providers as Record<string, any>;
-		expect(providers.tokenin.apiKey).toBe("sk-user");
+		expect(providers.tokenin.apiKey).toBeUndefined();
 		expect(providers.tokenin.baseUrl).toBe("https://token.in");
 		expect(providers.other.apiKey).toBe("other-key");
 	});
 
-	it("setTokenInApiKey creates providers and tokenin objects if missing", () => {
-		const updated = setTokenInApiKey({}, "sk-new");
-		expect(updated).toEqual({ providers: { tokenin: { apiKey: "sk-new" } } });
+	it("stored Token-In apiKey uses auth storage", () => {
+		const authStorage = AuthStorage.inMemory();
+		expect(getStoredTokenInApiKey(authStorage)).toBeUndefined();
+		authStorage.set("tokenin", { type: "api_key", key: "sk-new" });
+		expect(getStoredTokenInApiKey(authStorage)).toBe("sk-new");
 	});
 
 	it("validateTokenInToken trims and enforces sk- prefix", () => {
@@ -141,47 +143,40 @@ describe("tokenin-auth.json helpers", () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	it("applyTokenInAccountToModels updates models.json and sets activeId", () => {
+	it("applyTokenInAccountToAuth updates auth.json and sets activeId", () => {
 		const dir = mkdtempSync(join(tmpdir(), "tokenin-apply-"));
-		const modelsPath = join(dir, "models.json");
 		const authPath = join(dir, "tokenin-auth.json");
-		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-old" } } }), "utf-8");
+		const authStorage = AuthStorage.create(join(dir, "auth.json"));
 
 		// Seed auth with two accounts
 		saveTokenInAccount("sk-old", {}, authPath);
 		saveTokenInAccount("sk-new", { baseUrl: "https://token.in" }, authPath);
 
 		const account = readTokenInAuth(authPath).accounts.find((a) => a.id === "sk-new")!;
-		applyTokenInAccountToModels(account, modelsPath, authPath);
+		applyTokenInAccountToAuth(account, authStorage, authPath);
 
-		const savedModels = JSON.parse(readFileSync(modelsPath, "utf-8"));
-		expect(savedModels.providers.tokenin.apiKey).toBe("sk-new");
-		expect(savedModels.providers.tokenin.baseUrl).toBe("https://token.in");
-
-		const savedAuth = readTokenInAuth(authPath);
-		expect(savedAuth.activeId).toBe("sk-new");
+		expect(getStoredTokenInApiKey(authStorage)).toBe("sk-new");
+		expect(readTokenInAuth(authPath).activeId).toBe("sk-new");
 
 		rmSync(dir, { recursive: true, force: true });
 	});
 
 	it("getActiveTokenInAccountId returns matching id or null", () => {
 		const dir = mkdtempSync(join(tmpdir(), "tokenin-active-"));
-		const modelsPath = join(dir, "models.json");
 		const authPath = join(dir, "tokenin-auth.json");
+		const authStorage = AuthStorage.create(join(dir, "auth.json"));
 
-		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-active" } } }), "utf-8");
 		saveTokenInAccount("sk-active", {}, authPath);
 		saveTokenInAccount("sk-other", {}, authPath);
+		authStorage.set("tokenin", { type: "api_key", key: "sk-active" });
 
-		expect(getActiveTokenInAccountId(modelsPath, authPath)).toBe("sk-active");
+		expect(getActiveTokenInAccountId(authStorage, authPath)).toBe("sk-active");
 
-		// Change models.json to a key not in auth
-		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-unknown" } } }), "utf-8");
-		expect(getActiveTokenInAccountId(modelsPath, authPath)).toBeNull();
+		authStorage.set("tokenin", { type: "api_key", key: "sk-unknown" });
+		expect(getActiveTokenInAccountId(authStorage, authPath)).toBeNull();
 
-		// No tokenin provider at all
-		writeFileSync(modelsPath, JSON.stringify({ providers: {} }), "utf-8");
-		expect(getActiveTokenInAccountId(modelsPath, authPath)).toBeNull();
+		authStorage.remove("tokenin");
+		expect(getActiveTokenInAccountId(authStorage, authPath)).toBeNull();
 
 		rmSync(dir, { recursive: true, force: true });
 	});
@@ -223,6 +218,7 @@ describe("tokenin-onboarding extension", () => {
 			} as unknown as ExtensionContext["ui"],
 			modelRegistry: {
 				refresh: vi.fn(),
+				authStorage: AuthStorage.create(join(dir, "auth.json")),
 			} as unknown as ExtensionContext["modelRegistry"],
 			waitForIdle: vi.fn(async () => {}),
 		} as unknown as ExtensionCommandContext;
@@ -261,11 +257,24 @@ describe("tokenin-onboarding extension", () => {
 		await handler!({ type: "session_start", reason: "startup" } as SessionStartEvent, fakeCtx);
 	}
 
-	it("does nothing when apiKey is already configured", async () => {
-		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-configured" } } }), "utf-8");
+	it("migrates only legacy tokenin apiKey from models.json into auth storage", async () => {
+		writeFileSync(modelsPath, JSON.stringify({ providers: { other: { apiKey: "sk-other" }, tokenin: { apiKey: "sk-configured" } } }), "utf-8");
 		await trigger();
 		expect(existsSync(markerPath)).toBe(true);
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-configured");
+		const saved = JSON.parse(readFileSync(modelsPath, "utf-8"));
+		expect(saved.providers.tokenin.apiKey).toBeUndefined();
+		expect(saved.providers.other.apiKey).toBe("sk-other");
 		expect(fakeCtx.ui.confirm).not.toHaveBeenCalled();
+	});
+
+	it("does not migrate models.json when it has no tokenin key", async () => {
+		writeFileSync(modelsPath, JSON.stringify({ providers: { other: { apiKey: "sk-other" } } }), "utf-8");
+		confirmValue = false;
+		await trigger();
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBeUndefined();
+		expect(JSON.parse(readFileSync(modelsPath, "utf-8")).providers.other.apiKey).toBe("sk-other");
+		expect(fakeCtx.ui.confirm).toHaveBeenCalled();
 	});
 
 	it("skips prompt when user declines and writes marker", async () => {
@@ -277,7 +286,7 @@ describe("tokenin-onboarding extension", () => {
 		expect(JSON.parse(readFileSync(modelsPath, "utf-8")).providers.tokenin.apiKey).toBe(PLACEHOLDER_API_KEY);
 	});
 
-	it("writes token and refreshes registry when user accepts and pastes valid token", async () => {
+	it("writes token to auth storage and refreshes registry when user accepts", async () => {
 		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: PLACEHOLDER_API_KEY } } }), "utf-8");
 		confirmValue = true;
 		inputValue = "  sk-live-token  ";
@@ -285,8 +294,8 @@ describe("tokenin-onboarding extension", () => {
 		expect(fakeCtx.ui.confirm).toHaveBeenCalled();
 		expect(fakeCtx.ui.input).toHaveBeenCalled();
 		expect(existsSync(markerPath)).toBe(true);
-		const saved = JSON.parse(readFileSync(modelsPath, "utf-8"));
-		expect(saved.providers.tokenin.apiKey).toBe("sk-live-token");
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-live-token");
+		expect(JSON.parse(readFileSync(modelsPath, "utf-8")).providers.tokenin.apiKey).toBe(PLACEHOLDER_API_KEY);
 		expect(fakeCtx.modelRegistry.refresh).toHaveBeenCalled();
 	});
 
@@ -343,6 +352,7 @@ describe("/tokenin command", () => {
 			} as unknown as ExtensionContext["ui"],
 			modelRegistry: {
 				refresh: vi.fn(),
+				authStorage: AuthStorage.create(join(dir, "auth.json")),
 			} as unknown as ExtensionContext["modelRegistry"],
 			waitForIdle: vi.fn(async () => {}),
 		} as unknown as ExtensionCommandContext;
@@ -395,41 +405,37 @@ describe("/tokenin command", () => {
 		expect(notifications.some((n) => n.message.includes("Usage: /tokenin"))).toBe(true);
 	});
 
-	it("/tokenin add bootstraps models.json for first account", async () => {
+	it("/tokenin add stores first account in auth storage", async () => {
 		inputValue = "sk-first-token";
 		await runCommand("add");
-		const savedModels = JSON.parse(readFileSync(modelsPath, "utf-8"));
-		expect(savedModels.providers.tokenin.apiKey).toBe("sk-first-token");
+		expect(existsSync(modelsPath)).toBe(false);
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-first-token");
 		const auth = readTokenInAuth(authPath);
 		expect(auth.accounts).toHaveLength(1);
 		expect(auth.activeId).toBe("sk-first-token");
 		expect(fakeCtx.modelRegistry.refresh).toHaveBeenCalled();
 	});
 
-	it("/tokenin add does not change models.json for second account", async () => {
+	it("/tokenin add does not activate a second account", async () => {
 		// Seed first account as active
 		saveTokenInAccount("sk-first", { setActive: true });
-		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-first" } } }), "utf-8");
+		fakeCtx.modelRegistry.authStorage.set("tokenin", { type: "api_key", key: "sk-first" });
 
 		inputValue = "sk-second-token";
 		await runCommand("add");
 
-		// models.json unchanged
-		const savedModels = JSON.parse(readFileSync(modelsPath, "utf-8"));
-		expect(savedModels.providers.tokenin.apiKey).toBe("sk-first");
-
-		// auth has two accounts, activeId unchanged
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-first");
 		const auth = readTokenInAuth(authPath);
 		expect(auth.accounts).toHaveLength(2);
 		expect(auth.activeId).toBe("sk-first");
 		expect(notifications.some((n) => n.message.includes("Account added"))).toBe(true);
 	});
 
-	it("/tokenin switch updates models.json and activeId", async () => {
+	it("/tokenin switch updates auth storage and activeId", async () => {
 		// Seed two accounts
 		saveTokenInAccount("sk-first", { setActive: true });
 		saveTokenInAccount("sk-second");
-		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-first" } } }), "utf-8");
+		fakeCtx.modelRegistry.authStorage.set("tokenin", { type: "api_key", key: "sk-first" });
 
 		const auth = readTokenInAuth(authPath);
 		const secondLabel = auth.accounts.find((a) => a.id === "sk-second")!.label;
@@ -437,9 +443,7 @@ describe("/tokenin command", () => {
 
 		await runCommand("switch");
 
-		const savedModels = JSON.parse(readFileSync(modelsPath, "utf-8"));
-		expect(savedModels.providers.tokenin.apiKey).toBe("sk-second");
-
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-second");
 		const savedAuth = readTokenInAuth(authPath);
 		expect(savedAuth.activeId).toBe("sk-second");
 		expect(fakeCtx.modelRegistry.refresh).toHaveBeenCalled();
@@ -454,7 +458,7 @@ describe("/tokenin command", () => {
 	it("/tokenin remove blocks removal of active account", async () => {
 		saveTokenInAccount("sk-active", { setActive: true });
 		saveTokenInAccount("sk-inactive");
-		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-active" } } }), "utf-8");
+		fakeCtx.modelRegistry.authStorage.set("tokenin", { type: "api_key", key: "sk-active" });
 
 		const auth = readTokenInAuth(authPath);
 		const activeLabel = auth.accounts.find((a) => a.id === "sk-active")!.label;
@@ -470,7 +474,7 @@ describe("/tokenin command", () => {
 	it("/tokenin remove removes inactive account after confirm", async () => {
 		saveTokenInAccount("sk-active", { setActive: true });
 		saveTokenInAccount("sk-inactive");
-		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-active" } } }), "utf-8");
+		fakeCtx.modelRegistry.authStorage.set("tokenin", { type: "api_key", key: "sk-active" });
 
 		const auth = readTokenInAuth(authPath);
 		const inactiveLabel = auth.accounts.find((a) => a.id === "sk-inactive")!.label;
@@ -483,15 +487,13 @@ describe("/tokenin command", () => {
 		expect(savedAuth.accounts).toHaveLength(1);
 		expect(savedAuth.accounts.find((a) => a.id === "sk-inactive")).toBeUndefined();
 		expect(notifications.some((n) => n.message.includes("Account removed"))).toBe(true);
-		// models.json unchanged
-		const savedModels = JSON.parse(readFileSync(modelsPath, "utf-8"));
-		expect(savedModels.providers.tokenin.apiKey).toBe("sk-active");
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-active");
 	});
 
 	it("/tokenin remove does not remove when confirm is declined", async () => {
 		saveTokenInAccount("sk-active", { setActive: true });
 		saveTokenInAccount("sk-inactive");
-		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-active" } } }), "utf-8");
+		fakeCtx.modelRegistry.authStorage.set("tokenin", { type: "api_key", key: "sk-active" });
 
 		const auth = readTokenInAuth(authPath);
 		const inactiveLabel = auth.accounts.find((a) => a.id === "sk-inactive")!.label;

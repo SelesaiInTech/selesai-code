@@ -797,15 +797,13 @@ export function seedDefaultThemes(
 
 /**
  * Run full first-run bootstrap for the agent dir: ensure directories and seed
- * settings.json + models.json from bundled defaults. Idempotent — safe on every
- * startup. Bundled themes/skills are copied into the user dir once; existing
- * user files are never overwritten. Bundled extensions stay package-local and
- * are not copied into the user dir.
+ * settings.json from bundled defaults. Idempotent — safe on every startup.
+ * Bundled models load package-locally; copying them would expose internal
+ * providers as user config. Bundled extensions also stay package-local.
  */
 export function bootstrapAgentDir(agentDir: string = getAgentDir()): void {
 	ensureAgentDir(agentDir);
 	seedDefaultConfigFile(join(agentDir, "settings.json"), "settings.json");
-	seedDefaultConfigFile(join(agentDir, "models.json"), "models.json");
 	seedDefaultExtensions(agentDir);
 	seedDefaultSkills(agentDir);
 	seedDefaultThemes(agentDir);

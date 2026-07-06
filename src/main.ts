@@ -471,7 +471,8 @@ export async function main(args: string[], options?: MainOptions) {
 	const cwd = process.cwd();
 	const agentDir = getAgentDir();
 	// ponytail: bootstrap on every startup — ensureAgentDir + seed bundled
-	// settings.json/models.json/extensions are idempotent (no-op if present).
+	// settings/skills/themes are idempotent (no-op if present). Models/extensions
+	// stay package-local.
 	// Seeding before SettingsManager.create so the first load reads the seeded
 	// defaults instead of starting from an empty {} and skipping first-run UX.
 	bootstrapAgentDir(agentDir);

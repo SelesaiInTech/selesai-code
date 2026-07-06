@@ -3,16 +3,16 @@
  *
  * On the first interactive session, ask the user whether they want to connect a
  * Token-In token. If yes, open the Token-In dashboard, collect the pasted token,
- * and persist it in ~/.selesai/agent/models.json under providers.tokenin.apiKey.
+ * and persist it in auth.json like other provider credentials.
  *
  * Slash command `/tokenin <add|switch|remove>` manages multiple TokenIN accounts
- * stored in ~/.selesai/agent/tokenin-auth.json, mirroring the active account into
- * models.json.
+ * stored in ~/.selesai/agent/tokenin-auth.json, writing the active credential to
+ * auth.json.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir, getModelsPath } from "@selesai/code";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionStartEvent } from "@selesai/code";
+import type { AuthStorage, ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionStartEvent } from "@selesai/code";
 
 export const TOKEN_IN_PROVIDER = "tokenin";
 export const TOKEN_IN_DASHBOARD_URL = "https://token-in.selesai.in/dashboard/tokens";
@@ -55,19 +55,24 @@ export function getTokenInApiKey(models: Record<string, unknown>): unknown {
 	return (tokenin as Record<string, unknown>).apiKey;
 }
 
-/** Return a new models object with providers.tokenin.apiKey set to token. */
-export function setTokenInApiKey(models: Record<string, unknown>, token: string): Record<string, unknown> {
+/** Return a new models object with the legacy providers.tokenin.apiKey removed. */
+export function removeTokenInApiKey(models: Record<string, unknown>): Record<string, unknown> {
 	const next = JSON.parse(JSON.stringify(models)) as Record<string, unknown>;
-	if (!next.providers || typeof next.providers !== "object" || Array.isArray(next.providers)) {
-		next.providers = {};
-	}
-	const providers = next.providers as Record<string, unknown>;
-	if (!providers[TOKEN_IN_PROVIDER] || typeof providers[TOKEN_IN_PROVIDER] !== "object" || Array.isArray(providers[TOKEN_IN_PROVIDER])) {
-		providers[TOKEN_IN_PROVIDER] = {};
-	}
-	const tokenin = providers[TOKEN_IN_PROVIDER] as Record<string, unknown>;
-	tokenin.apiKey = token;
+	const providers = next.providers;
+	if (!providers || typeof providers !== "object" || Array.isArray(providers)) return next;
+	const tokenin = (providers as Record<string, unknown>)[TOKEN_IN_PROVIDER];
+	if (!tokenin || typeof tokenin !== "object" || Array.isArray(tokenin)) return next;
+	delete (tokenin as Record<string, unknown>).apiKey;
 	return next;
+}
+
+export function getStoredTokenInApiKey(authStorage: AuthStorage): string | undefined {
+	const credential = authStorage.get(TOKEN_IN_PROVIDER);
+	return credential?.type === "api_key" ? credential.key : undefined;
+}
+
+export function setStoredTokenInApiKey(authStorage: AuthStorage, token: string): void {
+	authStorage.set(TOKEN_IN_PROVIDER, { type: "api_key", key: token });
 }
 
 /** Validate a pasted token. Returns normalized token or an error message. */
@@ -122,8 +127,13 @@ function isTokenInAccount(value: unknown): value is TokenInAccount {
 }
 
 export function writeTokenInAuth(auth: TokenInAuth, authPath: string = getTokenInAuthPath()): void {
-	mkdirSync(dirname(authPath), { recursive: true });
-	writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`, "utf-8");
+	mkdirSync(dirname(authPath), { recursive: true, mode: 0o700 });
+	writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
+	try {
+		chmodSync(authPath, 0o600);
+	} catch {
+		// best-effort
+	}
 }
 
 function getTokenInBaseUrl(models: Record<string, unknown>): string | undefined {
@@ -170,32 +180,25 @@ export function saveTokenInAccount(
 	return auth;
 }
 
-/** Write the given account into models.json and update tokenin-auth activeId. */
-export function applyTokenInAccountToModels(
+/** Write the given account into auth.json and update tokenin-auth activeId. */
+export function applyTokenInAccountToAuth(
 	account: TokenInAccount,
-	modelsPath: string = getModelsPath(),
+	authStorage: AuthStorage,
 	authPath: string = getTokenInAuthPath(),
 ): void {
-	let updated = setTokenInApiKey(readModelsJson(modelsPath), account.apiKey);
-	if (account.baseUrl) {
-		const providers = updated.providers as Record<string, unknown>;
-		const tokenin = providers[TOKEN_IN_PROVIDER] as Record<string, unknown>;
-		tokenin.baseUrl = account.baseUrl;
-	}
-	writeModelsJson(updated, modelsPath);
-
+	setStoredTokenInApiKey(authStorage, account.apiKey);
 	const auth = readTokenInAuth(authPath);
 	auth.activeId = account.id;
 	writeTokenInAuth(auth, authPath);
 }
 
-/** Return the id of the account whose apiKey matches models.json, or null. */
+/** Return the id of the account whose apiKey matches auth.json, or null. */
 export function getActiveTokenInAccountId(
-	modelsPath: string = getModelsPath(),
+	authStorage: AuthStorage,
 	authPath: string = getTokenInAuthPath(),
 ): string | null {
-	const apiKey = getTokenInApiKey(readModelsJson(modelsPath));
-	if (typeof apiKey !== "string") return null;
+	const apiKey = getStoredTokenInApiKey(authStorage);
+	if (!apiKey) return null;
 	const auth = readTokenInAuth(authPath);
 	return auth.accounts.find((a) => a.apiKey === apiKey)?.id ?? null;
 }
@@ -272,7 +275,7 @@ async function handleTokenInAdd(pi: ExtensionAPI, ctx: ExtensionCommandContext):
 
 	if (wasEmpty) {
 		const saved = readTokenInAuth().accounts.find((a) => a.id === token)!;
-		applyTokenInAccountToModels(saved);
+		applyTokenInAccountToAuth(saved, ctx.modelRegistry.authStorage);
 		try {
 			ctx.modelRegistry.refresh();
 		} catch {
@@ -315,7 +318,7 @@ async function handleTokenInSwitch(ctx: ExtensionCommandContext): Promise<void> 
 	const account = await pickAccount(ctx, "Select TokenIN account", auth);
 	if (!account) return;
 
-	applyTokenInAccountToModels(account);
+	applyTokenInAccountToAuth(account, ctx.modelRegistry.authStorage);
 	try {
 		ctx.modelRegistry.refresh();
 	} catch {
@@ -339,7 +342,7 @@ async function handleTokenInRemove(ctx: ExtensionCommandContext): Promise<void> 
 	const account = await pickAccount(ctx, "Select account to remove", auth);
 	if (!account) return;
 
-	const activeId = getActiveTokenInAccountId();
+	const activeId = getActiveTokenInAccountId(ctx.modelRegistry.authStorage);
 	if (account.id === activeId) {
 		ctx.ui.notify("Cannot remove the active account. Use /tokenin switch first.", "warning");
 		return;
@@ -356,10 +359,18 @@ async function handleTokenInRemove(ctx: ExtensionCommandContext): Promise<void> 
 async function runOnboarding(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	const modelsPath = getModelsPath();
 	const models = readModelsJson(modelsPath);
-	const currentKey = getTokenInApiKey(models);
+	const storedKey = getStoredTokenInApiKey(ctx.modelRegistry.authStorage);
+	const legacyModelsKey = getTokenInApiKey(models);
+	const currentKey = storedKey ?? legacyModelsKey;
 
-	// Already configured? Mark complete and skip.
+	// Already configured? Mark complete and skip. Migrate legacy models.json tokens
+	// into auth.json so Token-In models stay package-local.
 	if (!isPlaceholderToken(currentKey)) {
+		if (!storedKey && typeof legacyModelsKey === "string") {
+			setStoredTokenInApiKey(ctx.modelRegistry.authStorage, legacyModelsKey);
+			saveTokenInAccount(legacyModelsKey, { baseUrl: getTokenInBaseUrl(models), setActive: true });
+			if (existsSync(modelsPath)) writeModelsJson(removeTokenInApiKey(models), modelsPath);
+		}
 		markOnboardingComplete();
 		return;
 	}
@@ -376,7 +387,7 @@ async function runOnboarding(pi: ExtensionAPI, ctx: ExtensionContext): Promise<v
 
 	if (!wantsToken) {
 		markOnboardingComplete();
-		ctx.ui.notify("You can add your Token-In token later by editing ~/.selesai/agent/models.json.", "info");
+		ctx.ui.notify("You can add your Token-In token later with /tokenin add.", "info");
 		return;
 	}
 
@@ -399,12 +410,11 @@ async function runOnboarding(pi: ExtensionAPI, ctx: ExtensionContext): Promise<v
 	}
 
 	const token = validated.token!;
-	const updated = setTokenInApiKey(models, token);
-	writeModelsJson(updated, modelsPath);
+	setStoredTokenInApiKey(ctx.modelRegistry.authStorage, token);
 	markOnboardingComplete();
 
 	// Seed tokenin-auth.json so /tokenin switch and /tokenin remove work after onboarding.
-	saveTokenInAccount(token, { baseUrl: getTokenInBaseUrl(updated), setActive: true });
+	saveTokenInAccount(token, { baseUrl: getTokenInBaseUrl(models), setActive: true });
 
 	// Refresh the in-memory model registry so the key is active immediately.
 	try {
