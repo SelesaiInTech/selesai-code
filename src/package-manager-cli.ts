@@ -22,7 +22,7 @@ import { DefaultResourceLoader } from "./core/resource-loader.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { spawnProcess } from "./utils/child-process.ts";
-import { getLatestPiRelease, isNewerPackageVersion } from "./utils/version-check.ts";
+import { getLatestPackageRelease, getLatestPiRelease, isNewerPackageVersion } from "./utils/version-check.ts";
 import {
 	cleanupWindowsSelfUpdateQuarantine,
 	quarantineWindowsNativeDependencies,
@@ -364,7 +364,7 @@ function printSelfUpdateUnavailable(
 	const entrypoint = process.argv[1];
 	if (entrypoint) {
 		console.error("");
-		console.error(`Location of pi executable: ${entrypoint}`);
+		console.error(`Location of ${APP_NAME} executable: ${entrypoint}`);
 	}
 }
 
@@ -397,13 +397,25 @@ interface SelfUpdatePlan {
 	installSpec: string;
 	version: string;
 	shouldRun: boolean;
+	sourceCheckout?: boolean;
 	note?: string;
 }
 
-async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
+async function getSelfUpdatePlan(force: boolean, installMethod = detectInstallMethod()): Promise<SelfUpdatePlan> {
+	if (installMethod === "source") {
+		return {
+			packageName: PACKAGE_NAME,
+			installSpec: PACKAGE_NAME,
+			version: VERSION,
+			shouldRun: true,
+			sourceCheckout: true,
+		};
+	}
+
 	let latestRelease: Awaited<ReturnType<typeof getLatestPiRelease>>;
 	try {
-		latestRelease = await getLatestPiRelease(VERSION);
+		latestRelease =
+			APP_NAME === "pi" ? await getLatestPiRelease(VERSION) : await getLatestPackageRelease(PACKAGE_NAME, VERSION);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(`Could not determine latest ${APP_NAME} version: ${message}`);
@@ -719,12 +731,12 @@ export async function handlePackageCommand(
 					}
 				}
 				if (updateTargetIncludesSelf(target)) {
-					const selfUpdatePlan = await getSelfUpdatePlan(options.force);
+					const installMethod = detectInstallMethod();
+					const selfUpdatePlan = await getSelfUpdatePlan(options.force, installMethod);
 					if (!selfUpdatePlan.shouldRun) {
 						return true;
 					}
-					const installMethod = detectInstallMethod();
-					if (process.platform === "win32" && installMethod !== "npm" && installMethod !== "pnpm") {
+					if (process.platform === "win32" && installMethod !== "npm" && installMethod !== "pnpm" && installMethod !== "source") {
 						console.error(
 							chalk.red(`${APP_NAME} self-update on Windows is only supported for npm and pnpm installs.`),
 						);
@@ -754,10 +766,19 @@ export async function handlePackageCommand(
 						const message = error instanceof Error ? error.message : "Unknown package command error";
 						console.error(chalk.red(`Error: ${message}`));
 						printSelfUpdateFallback(selfUpdateCommand);
+						if (installMethod === "source") {
+							console.error(chalk.dim(`No repo access? Install the npm package instead: npm install -g ${PACKAGE_NAME}`));
+						}
 						process.exitCode = 1;
 						return true;
 					}
-					console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${selfUpdatePlan.version}`));
+					console.log(
+						chalk.green(
+							selfUpdatePlan.sourceCheckout
+								? `Updated ${APP_NAME} source checkout`
+								: `Updated ${APP_NAME} from ${VERSION} to ${selfUpdatePlan.version}`,
+						),
+					);
 				}
 				return true;
 			}

@@ -38,7 +38,7 @@ export const isBunRuntime = !!process.versions.bun;
 // Install Method Detection
 // =============================================================================
 
-export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
+export type InstallMethod = "bun-binary" | "source" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
 
 interface SelfUpdateCommandStep {
 	command: string;
@@ -85,6 +85,10 @@ function makeSelfUpdateCommandStep(command: string, args: string[]): SelfUpdateC
 export function detectInstallMethod(): InstallMethod {
 	if (isBunBinary) {
 		return "bun-binary";
+	}
+
+	if (existsSync(join(getPackageDir(), ".git"))) {
+		return "source";
 	}
 
 	const resolvedPath = `${__dirname}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
@@ -134,6 +138,16 @@ function getSelfUpdateCommandForMethod(
 	switch (method) {
 		case "bun-binary":
 			return undefined;
+		case "source": {
+			if (target.packageName !== installedPackageName) return undefined;
+			const packageDir = getPackageDir();
+			const steps = [
+				makeSelfUpdateCommandStep("git", ["-C", packageDir, "pull", "--ff-only"]),
+				makeSelfUpdateCommandStep("npm", ["--prefix", packageDir, "install"]),
+				makeSelfUpdateCommandStep("npm", ["--prefix", packageDir, "run", "build"]),
+			];
+			return { ...steps[0], display: steps.map((step) => step.display).join(" && "), steps };
+		}
 		case "pnpm": {
 			const match = readCommandOutput("pnpm", ["root", "-g"])
 				? undefined
@@ -255,6 +269,7 @@ function getGlobalPackageRoots(method: InstallMethod, _packageName: string, npmC
 			return roots;
 		}
 		case "bun-binary":
+		case "source":
 		case "unknown":
 			return [];
 	}
@@ -331,7 +346,10 @@ export function getSelfUpdateCommand(
 ): SelfUpdateCommand | undefined {
 	const method = detectInstallMethod();
 	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageTarget, npmCommand);
-	if (!command || !isManagedByGlobalPackageManager(method, packageName, npmCommand) || !isSelfUpdatePathWritable()) {
+	if (!command || !isSelfUpdatePathWritable()) {
+		return undefined;
+	}
+	if (method !== "source" && !isManagedByGlobalPackageManager(method, packageName, npmCommand)) {
 		return undefined;
 	}
 	return command;
@@ -349,6 +367,11 @@ export function getSelfUpdateUnavailableInstruction(
 	}
 	const command = getSelfUpdateCommandForMethod(method, packageName, target, npmCommand);
 	if (command) {
+		if (method === "source") {
+			return isSelfUpdatePathWritable()
+				? `Update the source checkout yourself with: ${command.display}`
+				: `This source checkout is not writable. Update it yourself with: ${command.display}`;
+		}
 		if (isManagedByGlobalPackageManager(method, packageName, npmCommand) && !isSelfUpdatePathWritable()) {
 			return `This installation is managed by a global ${method} install, but the install path is not writable. Update it yourself with: ${command.display}`;
 		}

@@ -2,6 +2,7 @@ import { compare, valid } from "semver";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
 const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
+const NPM_REGISTRY_URL = "https://registry.npmjs.org";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 
 export interface LatestPiRelease {
@@ -58,6 +59,28 @@ export async function getLatestPiRelease(
 		packageName,
 		...(note ? { note } : {}),
 	};
+}
+
+export async function getLatestPackageRelease(
+	packageName: string,
+	currentVersion: string,
+	options: { timeoutMs?: number } = {},
+): Promise<LatestPiRelease | undefined> {
+	if (process.env.PI_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
+
+	const response = await fetch(`${NPM_REGISTRY_URL}/${encodeURIComponent(packageName)}`, {
+		headers: {
+			"User-Agent": getPiUserAgent(currentVersion),
+			accept: "application/json",
+		},
+		signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS),
+	});
+	if (!response.ok) return undefined;
+
+	const data = (await response.json()) as { "dist-tags"?: { latest?: unknown } };
+	const version = data["dist-tags"]?.latest;
+	if (typeof version !== "string" || !version.trim()) return undefined;
+	return { version: version.trim(), packageName };
 }
 
 export async function getLatestPiVersion(

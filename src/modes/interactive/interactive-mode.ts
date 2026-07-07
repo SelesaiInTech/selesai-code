@@ -82,6 +82,7 @@ import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-nam
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionContext, SessionManager } from "../../core/session-manager.ts";
+import { buildGitCommandPrompt, GIT_COMMAND_MODES } from "../../core/git-command.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
@@ -525,6 +526,19 @@ export class InteractiveMode {
 					label: item.id,
 					description: item.provider,
 				}));
+			};
+		}
+
+		const gitCommand = slashCommands.find((command) => command.name === "git");
+		if (gitCommand) {
+			gitCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null => {
+				const lowerPrefix = prefix.toLowerCase();
+				const items = GIT_COMMAND_MODES.filter((mode) =>
+					[mode.name, ...mode.aliases].some((name) => name.toLowerCase().startsWith(lowerPrefix)),
+				);
+				return items.length > 0
+					? items.map((mode) => ({ value: mode.name, label: mode.name, description: mode.description }))
+					: null;
 			};
 		}
 
@@ -2567,6 +2581,26 @@ export class InteractiveMode {
 		return images;
 	}
 
+	private async handleGitCommand(text: string, images?: ImageContent[]): Promise<void> {
+		const prompt = buildGitCommandPrompt(text.slice(4).trim());
+		this.editor.addToHistory?.(text);
+		this.editor.setText("");
+
+		if (this.session.isCompacting) {
+			this.queueCompactionMessage(prompt, "steer", images);
+			return;
+		}
+
+		if (this.session.isStreaming) {
+			await this.session.prompt(prompt, { streamingBehavior: "steer", images });
+			this.updatePendingMessagesDisplay();
+			this.ui.requestRender();
+			return;
+		}
+
+		await this.session.prompt(prompt, { images });
+	}
+
 	private setupEditorSubmitHandler(): void {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
@@ -2628,6 +2662,10 @@ export class InteractiveMode {
 			if (text === "/hotkeys") {
 				this.handleHotkeysCommand();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/git" || text.startsWith("/git ")) {
+				await this.handleGitCommand(text, images);
 				return;
 			}
 			if (text === "/fork") {
