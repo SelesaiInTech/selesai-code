@@ -6,7 +6,6 @@
 	"pi": {
 		"extensions": [
 			"./copy-turn.ts",
-			"./gitignore-guard.ts",
 			"./tool-error-autofix.ts",
 			"./question",
 			"./handoff-new.ts",
