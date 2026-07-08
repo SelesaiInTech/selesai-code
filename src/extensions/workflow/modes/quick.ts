@@ -4,6 +4,12 @@ import type {
   WorkflowConfig,
   WorkflowModeRegistration,
 } from "../state-machine.ts";
+import {
+  handoffValidator,
+  loopCompleteValidator,
+  planValidator,
+  reviewValidator,
+} from "../validators.ts";
 
 // ponytail: quick workflow — same tool-driven loop as prototype, but shorter:
 // grill (max 4 questions) → plan → reuse → handoff → loop → audit.
@@ -58,9 +64,11 @@ The workflow advances once ${artifactDir}/requirements.md exists.`,
 
 This is a QUICK workflow — no separate research phase. Use ${artifactDir}/requirements.md to produce the concrete build plan: what to build, how, in order, components, and what the finished prototype looks like.
 
-Spawn the ARCHITECT sub-agent via the subagent tool (subagent_type "architect"). Do NOT pass a model parameter. Craft a tailored prompt from ${artifactDir}/requirements.md so the architect plans for THIS task. The architect returns the plan; the workflow saves it to ${artifactDir}/plan.md.
+Call the subagent tool with { agent: "architect", task: "..." } (do NOT pass a model parameter). Craft the task from ${artifactDir}/requirements.md so the architect plans for THIS task. The architect returns the plan; the workflow saves it to ${artifactDir}/plan.md.
 
-The workflow advances once ${artifactDir}/plan.md exists.`,
+The plan MUST end with exactly one machine-readable line on its own:
+  WORKFLOW_PLAN_STATUS: ready
+The workflow will NOT advance until ${artifactDir}/plan.md contains that marker.`,
   reuse: ({ artifactDir }) =>
     `You are in the REUSE phase (optional).
 
@@ -68,7 +76,7 @@ Decide whether codebase exploration is useful. Skip if the project is empty, the
 
 If unsure, ask the user one focused question: "Should I explore the existing codebase for reusable patterns before implementing?" Then follow their answer.
 
-If YES (or user confirms): spawn the EXPLORER sub-agent via the subagent tool (subagent_type "explorer"). Do NOT pass a model parameter. Craft a specific prompt from ${artifactDir}/requirements.md and ${artifactDir}/plan.md pointing it at relevant areas, patterns, and dependencies. Synthesize the findings into ${artifactDir}/reuse.md: what is reusable, where, and how to leverage it.
+If YES (or user confirms): call the subagent tool with { agent: "explorer", task: "..." } (do NOT pass a model parameter). Craft the task from ${artifactDir}/requirements.md and ${artifactDir}/plan.md pointing it at relevant areas, patterns, and dependencies. Synthesize the findings into ${artifactDir}/reuse.md: what is reusable, where, and how to leverage it.
 
 If NO: call write_workflow_artifact with a brief skip note explaining why.
 
@@ -83,29 +91,36 @@ Draw from all prior phases:
 - ${artifactDir}/plan.md
 - ${artifactDir}/reuse.md
 
-Spawn the RECAPPER sub-agent via the subagent tool (subagent_type "recapper"). Do NOT pass a model parameter. Craft a tailored prompt pointing the recapper at all three artifact files and telling it what the prototype is about. The recapper returns the handoff; the workflow saves it to ${artifactDir}/handoff.md.
+Call the subagent tool with { agent: "recapper", task: "..." } (do NOT pass a model parameter). Craft the task pointing the recapper at all three artifact files and telling it what the prototype is about. The recapper returns the handoff; the workflow saves it to ${artifactDir}/handoff.md.
 
-The workflow advances once ${artifactDir}/handoff.md exists.`,
-  loop: ({ artifactDir }) =>
-    `You are in the LOOP (orchestration) phase. Delegate implementation to sub-agents — do not write code yourself.
+The handoff MUST end with exactly one machine-readable line on its own:
+  WORKFLOW_HANDOFF_STATUS: ready
+The workflow will NOT advance until ${artifactDir}/handoff.md contains that marker.`,
+  loop: ({ artifactDir, loopMaxIterations }) =>
+    `You are in the LOOP (orchestration) phase. The workflow ENGINE owns the implement→review loop — you do NOT track iterations or decide when the loop is clean.
 
-Use read to inspect ${artifactDir}/plan.md, ${artifactDir}/handoff.md, and ${artifactDir}/reuse.md. Using that context, GENERATE YOUR OWN delegation prompts:
-1. Dispatch ONE builder sub-agent via the subagent tool (subagent_type "builder"). Do NOT pass a model parameter. Give it plan + handoff + reuse context, tailored to this task. Instruct it to implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}.
-2. Dispatch ONE commentator sub-agent via the subagent tool (subagent_type "commentator"). Do NOT pass a model parameter. Review the builder's diff against plan.md. Generate the review prompt YOURSELF.
-3. If the commentator reports blocking issues, dispatch the builder again with the issues to fix, then re-run the commentator. Repeat until no issues.
-4. Call write_workflow_artifact with a one-line summary of the finished plan.
+Use read to inspect ${artifactDir}/plan.md, ${artifactDir}/handoff.md, and ${artifactDir}/reuse.md. Using that context, GENERATE YOUR OWN delegation prompt:
 
-The workflow advances to audit once ${artifactDir}/loop-complete.md exists.`,
+Call the subagent tool with { agent: "builder", task: "..." } (do NOT pass a model parameter). Give it plan + handoff + reuse context, tailored to this task. Instruct it to implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}.
+
+After the builder returns, the workflow engine will automatically prompt you to call the commentator. Craft the review task YOURSELF. Each commentator review MUST end with exactly one machine-readable line:
+  WORKFLOW_REVIEW_STATUS: clean
+  OR
+  WORKFLOW_REVIEW_STATUS: blocking
+
+If a review is blocking, the engine prompts you to call the builder again with the issues. This repeats up to ${loopMaxIterations ?? 3} round(s). When a review is clean, the engine writes loop-complete.md and advances to audit. Do NOT write loop-complete.md yourself.`,
   audit: ({ artifactDir }) =>
     `You are in the AUDIT (review) phase.
 
 Review uncommitted changes for correctness, plan adherence, and over-engineering. Use ponytail-review style: cut bloat, unnecessary abstractions, dead flexibility, and reinvented stdlib/native behavior.
 
-1. Spawn the COMMENTATOR sub-agent via the subagent tool (subagent_type "commentator"). Do NOT pass a model parameter. Craft a tailored prompt from the full uncommitted diff and ${artifactDir}/plan.md. The commentator returns its review; the workflow saves it to ${artifactDir}/review.md.
-2. If ${artifactDir}/review.md lists actionable issues, spawn the BUILDER sub-agent via the subagent tool (subagent_type "builder"). Do NOT pass a model parameter. Instruct it to fix every issue in the workspace, never in ${artifactDir}.
-3. Re-dispatch the commentator until ${artifactDir}/review.md says the review is clean and no issues remain.
+1. Call the subagent tool with { agent: "commentator", task: "..." } (do NOT pass a model parameter). Craft the task from the full uncommitted diff and ${artifactDir}/plan.md. The commentator returns its review; the workflow saves it to ${artifactDir}/review.md. The review MUST end with exactly one machine-readable line on its own:
+  WORKFLOW_REVIEW_STATUS: clean
+  (use WORKFLOW_REVIEW_STATUS: blocking if actionable issues remain)
+2. If ${artifactDir}/review.md lists actionable issues, call the subagent tool with { agent: "builder", task: "..." } (do NOT pass a model parameter). Instruct it to fix every issue in the workspace, never in ${artifactDir}.
+3. Re-run the commentator until ${artifactDir}/review.md ends with WORKFLOW_REVIEW_STATUS: clean.
 
-The workflow closes once ${artifactDir}/review.md exists and the commentator reports no outstanding issues.`,
+The workflow closes only once ${artifactDir}/review.md exists AND ends with the WORKFLOW_REVIEW_STATUS: clean marker.`,
 };
 
 const config: WorkflowConfig = {
@@ -120,7 +135,15 @@ const config: WorkflowConfig = {
     audit: "review.md",
   },
   prompts,
+  // ponytail: Plan 4 — semantic gates for the critical phases.
+  artifactValidators: {
+    plan: planValidator,
+    handoff: handoffValidator,
+    loop: loopCompleteValidator,
+  },
+  closeValidators: { "review.md": reviewValidator },
   closeArtifacts: ["review.md"],
+  loopMaxIterations: 3,
   statusKey: "quick",
   entryType: "quick-phase",
   footerLabel: "quick",

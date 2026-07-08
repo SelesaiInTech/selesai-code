@@ -9,6 +9,7 @@
 			"./gitignore-guard.ts",
 			"./tool-error-autofix.ts",
 			"./question",
+			"./handoff-new.ts",
 			"./rtk.ts",
 			"./tokenin-onboarding.ts",
 			"./undo.ts",

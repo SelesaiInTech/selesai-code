@@ -5,3 +5,6 @@ dist/
 .env
 .upstream-cache/
 .selesai/artifacts/
+
+# pi-subagents runtime artifacts
+.pi-subagents/

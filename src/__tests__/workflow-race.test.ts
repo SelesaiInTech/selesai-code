@@ -112,7 +112,7 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		expect(h.entries.at(-1)?.data.phase).toBe("plan");
 		// subagent (architect) writes plan.md out-of-band; the parent's hook only
 		// re-checks when the subagent tool returns. Simulate that tool_result.
-		writeFileSync(join(dir, "plan.md"), "# plan");
+		writeFileSync(join(dir, "plan.md"), "# plan\nWORKFLOW_PLAN_STATUS: ready");
 		await h.events.get("tool_result")(
 			{ type: "tool_result", toolName: "subagent", toolCallId: "t2", input: {}, content: [], isError: false }, c,
 		);
@@ -127,8 +127,14 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 			"id-1", { goal: "build X" }, undefined, undefined, c,
 		);
 		const dir = h.entries.at(-1)!.data.artifactDir;
+		const OK: Record<string, string> = {
+			"plan.md": "WORKFLOW_PLAN_STATUS: ready",
+			"handoff.md": "WORKFLOW_HANDOFF_STATUS: ready",
+			"loop-complete.md": "WORKFLOW_LOOP_STATUS: clean",
+			"review.md": "WORKFLOW_REVIEW_STATUS: clean",
+		};
 		for (const f of ["requirements.md", "plan.md", "reuse.md", "handoff.md", "loop-complete.md", "review.md"]) {
-			writeFileSync(join(dir, f), `# ${f}`);
+			writeFileSync(join(dir, f), `# ${f}\n${OK[f] ?? ""}`);
 			await h.events.get("tool_result")(
 				{ type: "tool_result", toolName: f === "requirements.md" || f === "loop-complete.md" ? "bash" : "subagent", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false }, c,
 			);

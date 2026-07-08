@@ -6,17 +6,19 @@ Selesai ships a workflow engine under `src/extensions/workflow/`. It powers the 
 
 ```
 src/extensions/workflow/
-  package.json          pi package manifest; lists each mode as a pi extension
+  package.json          pi package manifest; loads ./extension.ts as the single entry
   state-machine.ts      pure phase state machine (no fs, no pi API)
   adapter.ts            pi wiring: tools, commands, events, fs, agent continuation
+  extension.ts          single pi extension that mounts every workflow mode
   modes/
-    prototype.ts        config → export default createWorkflowExtension(config, options)
-    quick.ts            config → export default createWorkflowExtension(config, options)
+    prototype.ts        mode config + registration object (exported as `prototypeMode`)
+    quick.ts            mode config + registration object (exported as `quickMode`)
 ```
 
 - **`state-machine.ts`** is the deep module. It owns the phase graph, artifact gating, skip rules, the terminal close gate, and the reentrancy guard. It imports nothing external — no `node:fs`, no pi API, no `pi-tui`, no `typebox`. Every method returns a `WorkflowEffect` (a discriminated union in domain vocabulary) that the adapter pattern-matches on.
-- **`adapter.ts`** is the thin glue. One state-machine method per call site (`start` tool, `next` tool, `end` tool, `tool_result` auto-advance, `/<command>`) plus one `applyEffect` switch. It owns all pi/fs wiring and the git-based `reuse` skip predicate.
-- **A mode file** is pure data: the phase list, the per-phase artifact filenames, the per-phase prompt generators, the terminal close artifacts, and identity strings (tool names, command name, status key, entry type). Prompts are functions that receive `{ artifactDir, userPrompt }` and return a string.
+- **`adapter.ts`** is the thin glue. One state-machine method per call site (`start` tool, `end` tool, `tool_result` auto-advance, `/<command>`) plus one `applyEffect` switch. It owns all pi/fs wiring and the git-based `reuse` skip predicate. There is no `next` tool — phase advance is automatic once the phase artifact lands, and terminal close is via the `end` tool.
+- **`extension.ts`** imports each mode's registration object and calls `createWorkflowExtension(config, options)(pi)` for each, so one extension load resolves a single shared writer tool + one start/end tool pair per mode.
+- **A mode file** is pure data: the phase list, the per-phase artifact filenames, the per-phase prompt generators, the terminal close artifacts, and identity strings (tool names, command name, status key, entry type). Prompts are functions that receive `{ artifactDir, userPrompt }` and return a string. Each mode exports a `WorkflowModeRegistration` object (e.g. `prototypeMode`, `quickMode`); it does not call `createWorkflowExtension` itself.
 
 ## To add a future mode
 
@@ -31,8 +33,8 @@ import type {
   Phase,
   PromptContext,
   WorkflowConfig,
+  WorkflowModeRegistration,
 } from "../state-machine.ts";
-import { createWorkflowExtension } from "../adapter.ts";
 
 const phases: Phase[] = [
   "grilling",
@@ -81,40 +83,35 @@ const config: WorkflowConfig = {
   footerLabel: "rigorous",
 };
 
-export default createWorkflowExtension(config, {
+export const rigorousMode: WorkflowModeRegistration = {
+  config,
   commandName: "rigorous",
   commandDescription:
     "Run the rigorous workflow (grill → spec → research → plan → reuse → handoff → loop → audit → sign-off)",
   toolNames: {
     start: "start_rigorous_workflow",
-    next: "next_rigorous_step",
     end: "end_rigorous_workflow",
   },
   toolLabels: {
     start: "Start Rigorous Workflow",
-    next: "Next Rigorous Step",
     end: "End Rigorous Workflow",
   },
-});
+};
+
+export default rigorousMode;
 ```
 
-### 2. Register it in the package manifest
+### 2. Register it in `extension.ts`
 
-Add the mode to `src/extensions/workflow/package.json` under `pi.extensions`:
+Add the mode to the `MODES` array in `src/extensions/workflow/extension.ts`:
 
-```json
-{
-  "pi": {
-    "extensions": [
-      "./modes/prototype.ts",
-      "./modes/quick.ts",
-      "./modes/rigorous.ts"
-    ]
-  }
-}
+```typescript
+import { rigorousMode } from "./modes/rigorous.ts";
+
+const MODES = [prototypeMode, quickMode, rigorousMode] as const;
 ```
 
-That's it. The loader picks it up at boot; the three tools (`start_rigorous_workflow`, `next_rigorous_step`, `end_rigorous_workflow`) and the `/rigorous` command are registered automatically.
+That's it. The loader picks it up at boot (`package.json` loads only `./extension.ts`); the two tools (`start_rigorous_workflow`, `end_rigorous_workflow`) and the `/rigorous` command are registered automatically. There is no `next` tool — phases auto-advance as artifacts land and the `end` tool closes the terminal phase.
 
 ## Config reference
 
@@ -136,7 +133,7 @@ The second argument to `createWorkflowExtension`:
 
 | Field | Description |
 |---|---|
-| `toolNames` | `{ start, next, end }` — the three registered tool names. |
+| `toolNames` | `{ start, end }` — the two registered tool names. There is no `next` tool; phases auto-advance as artifacts land. |
 | `toolLabels` | Human-readable labels for the tools. |
 | `commandName` | The `/<command>` name users type to kick off the workflow. |
 | `commandDescription` | Description shown in the command list. |

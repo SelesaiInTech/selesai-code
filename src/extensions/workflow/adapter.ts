@@ -11,7 +11,7 @@ import type {
 } from "@selesai/code";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
 import {
@@ -23,6 +23,7 @@ import {
   type FooterState,
   type Phase,
 } from "./state-machine.ts";
+import { MARKERS } from "./validators.ts";
 
 function slugify(s: string): string {
   const slug = s
@@ -59,6 +60,9 @@ async function realFileExists(path: string): Promise<boolean> {
 // ponytail: phases where one spawned subagent owns the phase artifact. Force
 // the child `output` path; child processes do not share the parent's workflow
 // state, so the parent-scoped write_workflow_artifact tool cannot help there.
+// Plan 5: these are also the single-owner phases — parallel/chain calls are
+// blocked here because one agent must own plan.md / reuse.md / handoff.md /
+// review.md. Loop is engine-owned (Plan 3) and may fan out.
 const FORCE_OUTPUT_PHASES = new Set<Phase>(["plan", "reuse", "handoff", "audit"]);
 
 // ponytail: phases where the parent can save subagent text as the artifact
@@ -143,6 +147,22 @@ interface WorkflowController {
   config: WorkflowConfig;
   sm: WorkflowStateMachine;
   deps: WorkflowDeps;
+  // ponytail: Plan 3 — engine-owned loop state. Lives on the controller, not
+  // the state machine: the SM only cares "does loop-complete.md exist →
+  // advance"; the adapter owns iteration counting + marker parsing + driving
+  // the next subagent call. Cleared when the phase leaves "loop".
+  // Ceiling: not persisted across session restart — a restart re-runs the
+  // loop from round 0. Acceptable for a prototype workflow.
+  loopState?: LoopState;
+}
+
+// ponytail: Plan 3 — loop orchestration state. The parent model does not
+// remember iterations; the adapter counts review rounds, parses the
+// commentator's WORKFLOW_REVIEW_STATUS marker, and drives the next step.
+interface LoopState {
+  reviewRound: number;
+  maxIterations: number;
+  stage: "building" | "reviewing" | "clean" | "maxed";
 }
 
 const WORKFLOW_ARTIFACT_TOOL = "write_workflow_artifact";
@@ -183,6 +203,25 @@ function makeDeps(pi: ExtensionAPI, config: WorkflowConfig): WorkflowDeps {
       await mkdir(path, { recursive: true });
     },
     artifactPathFor: defaultArtifactPathFor,
+    // ponytail: Plan 4 — read an artifact for semantic validation. Returns
+    // undefined on missing/unreadable so the SM treats it as "not written"
+    // rather than an empty-string that would always fail the validator.
+    async readArtifact(phase, dir) {
+      const file = config.phaseArtifacts[phase];
+      if (!file) return undefined;
+      try {
+        return await readFile(`${dir}/${file}`, "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+    async readFile(path) {
+      try {
+        return await readFile(path, "utf8");
+      } catch {
+        return undefined;
+      }
+    },
   };
 }
 
@@ -195,6 +234,18 @@ async function isEmptyProject(pi: ExtensionAPI): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ponytail: Plan 3 — parse the commentator's machine-readable status line.
+// First match wins; case-insensitive; trailing whitespace allowed. Returns
+// undefined when the marker is absent — the loop treats that as blocking so
+// a malformed review never silently advances the workflow.
+const LOOP_STATUS_RE = /WORKFLOW_REVIEW_STATUS\s*:\s*(clean|blocking)\b/i;
+function parseLoopReviewStatus(text: string | undefined): "clean" | "blocking" | undefined {
+  if (!text) return undefined;
+  const m = text.match(LOOP_STATUS_RE);
+  if (!m) return undefined;
+  return m[1]!.toLowerCase() as "clean" | "blocking";
 }
 
 function footerText(footer: FooterState, ctx: ExtensionContext): string | undefined {
@@ -250,6 +301,13 @@ function applyEffect(
       if (eff.promptToQueue) continueAgent(pi, ctx, eff.promptToQueue);
       return;
     case "blocked":
+      // ponytail: Plan 4 — surface the semantic reason so a subagent-driven
+      // phase (plan/handoff/audit) learns which marker is missing instead of
+      // the workflow appearing to stall after the artifact was written.
+      if (eff.reason) {
+        continueAgent(pi, ctx, `Phase ${eff.phase} artifact exists but is not approved: ${eff.reason}. Edit it via write_workflow_artifact to add the required marker, then the workflow will advance.`);
+      }
+      return;
     case "terminalReady":
     case "endBlocked":
     case "idle":
@@ -296,14 +354,20 @@ function registerSharedArtifactWriter(pi: ExtensionAPI): void {
       await writeFile(path, params.content, "utf8");
       const eff = await controller.sm.onArtifactMaybe(controller.deps);
       applyEffect(pi, ctx, controller.config, eff);
+      if (eff.kind === "blocked" && eff.reason) {
+        return {
+          content: [{ type: "text", text: `Wrote ${path}, but it is not approved: ${eff.reason}. Re-write it via write_workflow_artifact to add the required marker.` }],
+          details: { mode: controller.config.mode, phase: snap.phase, path, file, blocked: true, reason: eff.reason },
+        };
+      }
       return {
         content: [{ type: "text", text: `Wrote ${path}.` }],
         details: { mode: controller.config.mode, phase: snap.phase, path, file },
       };
     },
     renderResult(result, _options, theme) {
-      const d = result.details as { path?: string; blocked?: boolean };
-      if (d.blocked) return new Text(theme.fg("warning", "○ workflow artifact not written"), 0, 0);
+      const d = result.details as { path?: string; blocked?: boolean; reason?: string };
+      if (d.blocked) return new Text(theme.fg("warning", `○ workflow artifact not approved: ${d.reason ?? "missing marker"}`), 0, 0);
       return new Text(theme.fg(d.path ? "success" : "warning", d.path ? `✓ wrote ${d.path}` : "○ no active workflow"), 0, 0);
     },
   } satisfies ToolDefinition);
@@ -404,9 +468,16 @@ export function createWorkflowExtension(
               terminate: true,
             };
           case "endBlocked": {
-            // ponytail: missing is either a filename (closeArtifacts loop)
-            // or a phase description like "not at terminal (audit)". Only
-            // suggest writing when it's an actual artifact file.
+            // ponytail: missing is either a filename (existence failure),
+            // a phase description like "not at terminal (audit)", or — Plan 4 —
+            // a filename whose validator failed (reason set). Only suggest
+            // writing when it's an actual artifact file existence miss.
+            if (eff.reason) {
+              return {
+                content: [{ type: "text", text: `Cannot end: ${eff.missing} is incomplete: ${eff.reason}.` }],
+                details: { phase: eff.phase, blocked: eff.missing, reason: eff.reason },
+              };
+            }
             const isArtifactFile =
               !eff.missing.includes(" ") && eff.missing.includes(".");
             const hint = isArtifactFile
@@ -483,6 +554,7 @@ export function createWorkflowExtension(
       if (tool !== "subagent" && tool !== "write" && tool !== "edit") return;
       const snap = sm.snapshot;
       if (!snap.active) return;
+      if (tool === "subagent" && typeof event.input?.action === "string") return;
       const file = config.phaseArtifacts[snap.phase];
       if (tool === "write" || tool === "edit") {
         return {
@@ -491,6 +563,30 @@ export function createWorkflowExtension(
         };
       }
       if (!file || !event.input || !FORCE_OUTPUT_PHASES.has(snap.phase)) return;
+      // ponytail: Plan 5 — single-owner phases reject parallel/chain. One agent
+      // must own the artifact; tasks/chain split ownership and the output
+      // injector cannot pin one file per agent. Loop is exempt (engine-owned).
+      if (Array.isArray(event.input.tasks) || Array.isArray(event.input.chain)) {
+        return {
+          block: true,
+          reason: `Workflow phase ${snap.phase} expects one subagent owner for ${file}; use a single { agent, task } call, not tasks/chain.`,
+        };
+      }
+      // ponytail: Plan 5 — workflow-spawned subagents run fresh by default so
+      // no hidden parent context leaks into the phase owner. Only override
+      // when the caller explicitly pins a context.
+      if (typeof event.input.context !== "string") {
+        event.input.context = "fresh";
+      }
+      // ponytail: Plan 5 — ban model override on workflow-owned phases. The
+      // workflow, not the parent model, picks the agent; a model pin would
+      // silently change cost/quality without the workflow knowing.
+      if (typeof event.input.model === "string") {
+        return {
+          block: true,
+          reason: `Workflow phase ${snap.phase} does not allow a model override on subagent calls; remove the model parameter.`,
+        };
+      }
       const onlyAgents = snap.phase === "audit" ? new Set(["commentator", "reviewer"]) : undefined;
       forceSubagentOutputToArtifactDir(event.input, snap.artifactDir, file, onlyAgents);
     });
@@ -522,8 +618,68 @@ export function createWorkflowExtension(
           }
         }
       }
+      // ponytail: Plan 3 — engine-owned loop orchestration. The parent model
+      // does NOT track iterations; the adapter counts review rounds, parses the
+      // commentator's WORKFLOW_REVIEW_STATUS marker, and drives the next step
+      // via followUp. Ceiling: there is no pi.callTool() API, so the engine
+      // cannot invoke the subagent tool directly — it sends a followUp the
+      // model is expected to act on. If the model deviates, the loop stalls
+      // until the next tool_result nudges again. loopState is cleared when the
+      // phase leaves "loop" (below).
+      if (event.toolName === "subagent" && sm.snapshot.active && sm.snapshot.phase === "loop") {
+        const dir = sm.snapshot.artifactDir;
+        const maxIt = config.loopMaxIterations ?? 3;
+        if (!controller.loopState) {
+          controller.loopState = { reviewRound: 0, maxIterations: maxIt, stage: "building" };
+        }
+        const ls = controller.loopState;
+        const agent = event.input?.agent;
+
+        if (agent === "builder") {
+          // Build step done → drive the commentator review.
+          ls.stage = "reviewing";
+          continueAgent(pi, ctx, `Builder finished. Call the subagent tool now with { agent: "commentator", task: "..." } to review the builder's uncommitted diff against ${dir}/plan.md. Craft the review task yourself based on what matters for this task. End the review with exactly one line on its own:
+  WORKFLOW_REVIEW_STATUS: clean
+or
+  WORKFLOW_REVIEW_STATUS: blocking`);
+        } else if (agent === "commentator") {
+          ls.reviewRound += 1;
+          const status = parseLoopReviewStatus(textFromToolResultContent(event.content));
+          if (status === "clean") {
+            ls.stage = "clean";
+            await mkdir(dir, { recursive: true });
+            await writeFile(resolve(dir, config.phaseArtifacts["loop"]!), `Loop complete after ${ls.reviewRound} review round(s).\n${MARKERS.loopComplete}`, "utf8");
+            // onArtifactMaybe below sees loop-complete.md and advances to audit.
+          } else if (ls.reviewRound >= ls.maxIterations) {
+            // Cap reached without a clean review. Notify once, stop driving.
+            const wasMaxed = ls.stage === "maxed";
+            ls.stage = "maxed";
+            if (!wasMaxed) {
+              ctx.ui.notify(
+                `Workflow loop hit max iterations (${ls.maxIterations}) without a clean review. Last review status: ${status ?? "no marker"}. Resolve issues manually or re-run.`,
+                "warning",
+              );
+            }
+            // A genuine clean review on a later round still advances — the
+            // clean branch above runs first.
+          } else {
+            // Blocking (or no marker) → drive a builder fix round.
+            ls.stage = "building";
+            const reason = status === "blocking"
+              ? "the blocking issues listed in the review"
+              : "the review (no WORKFLOW_REVIEW_STATUS: clean|blocking marker was found)";
+            continueAgent(pi, ctx, `Review round ${ls.reviewRound} was blocking. Call the subagent tool now with { agent: "builder", task: "..." } to fix ${reason}. Give the builder the review feedback and the relevant artifact paths. After the builder returns, the workflow will drive the next review automatically.`);
+          }
+        }
+        // Non-builder/commentator subagent calls in loop fall through to
+        // onArtifactMaybe (a no-op unless loop-complete.md exists).
+      }
       const eff = await sm.onArtifactMaybe(deps);
       applyEffect(pi, ctx, config, eff);
+      // Clear loop state once we have left the loop phase (advanced to audit).
+      if (sm.snapshot.phase !== "loop") {
+        controller.loopState = undefined;
+      }
     });
 
     // ── /<command> ──

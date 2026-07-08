@@ -27,7 +27,7 @@ Your goal:
 
 ### 1. Explore the context
 
-Use the Agent tool with `subagent_type=Explore` when possible.
+Call the subagent tool with `{ agent: "explorer", task: "..." }` (do not pass a model) when possible.
 
 If the context is partial:
 - Infer surrounding architecture cautiously
@@ -99,7 +99,7 @@ After writing this, immediately proceed to Step 5: Design multiple interfaces.
 
 ### 5. Design multiple interfaces
 
-Spawn 3+ sub-agents in parallel using the Agent tool.
+Spawn 3+ sub-agents in parallel using the subagent tool (`tasks: [...]`).
 
 Each sub-agent gets:
 - A focused technical brief derived from the provided context

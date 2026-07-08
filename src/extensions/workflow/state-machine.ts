@@ -6,6 +6,13 @@
 // all pi/fs wiring; this module owns the phase graph + gating + reentrancy.
 
 export type Phase = string;
+// ponytail: Plan 4 — semantic gate predicate. The adapter reads the file and
+// hands the content here; the SM stays pure (no fs). ok:false carries a human-
+// readable reason the adapter surfaces to the model so a missing marker does
+// not look like a silent hang.
+export type WorkflowArtifactValidator = (
+  content: string,
+) => { ok: true } | { ok: false; reason: string };
 // ponytail: open union. KNOWN_PHASES gives autocomplete for the current set;
 // a mode may introduce new phases (deploy, spec, sign-off) without editing
 // this file. The closed union was already a lie — config.phases let modes
@@ -24,6 +31,9 @@ export type KnownPhase = (typeof KNOWN_PHASES)[number];
 export interface PromptContext {
   artifactDir: string;
   userPrompt: string;
+  // ponytail: loopMaxIterations is passed through to the loop-phase prompt so
+  // the prompt text can state the cap without hardcoding a duplicate number.
+  loopMaxIterations?: number;
 }
 
 export interface SkipRule {
@@ -59,6 +69,19 @@ export interface WorkflowConfig {
   // ponytail: base path for artifact dirs. Adapter injects a real one; tests
   // inject a fake. The state machine computes the path via deps.artifactPathFor.
   artifactsBase?: string;
+  // ponytail: Plan 4 — semantic gates. Per-phase artifact validators.
+  // Existence is still required (deps.artifactExists), but for a phase listed
+  // here the artifact content must also satisfy its validator. Phases absent
+  // from this map stay file-existence-only (grilling/research/reuse).
+  artifactValidators?: Partial<Record<Phase, WorkflowArtifactValidator>>;
+  // ponytail: Plan 4 — close-artifact validators. Map keyed by closeArtifact
+  // filename (e.g. "review.md"). Existence required + validator must pass before
+  // the terminal phase can close. closeArtifacts without an entry here stay
+  // existence-only.
+  closeValidators?: Partial<Record<string, WorkflowArtifactValidator>>;
+  // ponytail: Plan 3 — engine-owned loop. Max review rounds before the loop
+  // stops and asks the user instead of silently passing. Default 3.
+  loopMaxIterations?: number;
 }
 
 export interface WorkflowDeps {
@@ -70,6 +93,13 @@ export interface WorkflowDeps {
   mkdirArtifactDir: (path: string) => Promise<void>;
   // Compute the artifact dir path from a goal. Pure but injected for tests.
   artifactPathFor: (goal: string, base: string) => string;
+  // ponytail: Plan 4 — read an artifact for semantic validation. Returns the
+  // file content, or undefined if the file does not exist / is unreadable.
+  // The adapter wraps node:fs; tests stub it. Only read when a validator is
+  // configured for the phase so existence-only phases never pay a read.
+  readArtifact: (phase: Phase, artifactDir: string) => Promise<string | undefined>;
+  // ponytail: Plan 4 — read a close artifact by absolute path for validation.
+  readFile: (path: string) => Promise<string | undefined>;
 }
 
 // ── Persisted entry (data the adapter writes via pi.appendEntry) ──
@@ -96,11 +126,11 @@ export type WorkflowEffect =
   | { kind: "started"; phase: Phase; step: number; prompt: string; entry: WorkflowEntry; footer: FooterState }
   | { kind: "alreadyActive"; phase: Phase; step: number }
   | { kind: "advanced"; phase: Phase; step: number; prompt: string; skipped?: Phase; entry: WorkflowEntry; footer: FooterState }
-  | { kind: "blocked"; phase: Phase; missing: string }
-  | { kind: "terminalNeedsArtifacts"; phase: Phase; missing: string; promptToQueue: string }
+  | { kind: "blocked"; phase: Phase; missing: string; reason?: string }
+  | { kind: "terminalNeedsArtifacts"; phase: Phase; missing: string; promptToQueue: string; reason?: string }
   | { kind: "terminalReady"; phase: Phase }
   | { kind: "closed"; phase: Phase; artifactDir: string; entry: WorkflowEntry; footer: FooterState }
-  | { kind: "endBlocked"; phase: Phase; missing: string }
+  | { kind: "endBlocked"; phase: Phase; missing: string; reason?: string }
   | { kind: "idle"; phase: Phase }
   | { kind: "noOp" };
 
@@ -134,6 +164,21 @@ function validateConfig(config: WorkflowConfig): void {
     if (!seen.has(r.phase)) {
       throw new Error(`WorkflowConfig: skipRule references unknown phase "${r.phase}"`);
     }
+  }
+  // ponytail: Plan 4 — validator keys must reference real phases / real
+  // close artifacts, so a typo in a mode config fails fast at construction.
+  for (const p of Object.keys(config.artifactValidators ?? {})) {
+    if (!seen.has(p)) {
+      throw new Error(`WorkflowConfig: artifactValidators references unknown phase "${p}"`);
+    }
+  }
+  for (const file of Object.keys(config.closeValidators ?? {})) {
+    if (!config.closeArtifacts.includes(file)) {
+      throw new Error(`WorkflowConfig: closeValidators references unknown closeArtifact "${file}"`);
+    }
+  }
+  if (config.loopMaxIterations !== undefined && config.loopMaxIterations < 1) {
+    throw new Error("WorkflowConfig: loopMaxIterations must be >= 1");
   }
 }
 
@@ -187,7 +232,7 @@ export class WorkflowStateMachine {
 
   private promptFor(p: Phase): string {
     const fn = this.config.prompts[p];
-    return fn ? fn({ artifactDir: this.artifactDir, userPrompt: this.userPrompt }) : "";
+    return fn ? fn({ artifactDir: this.artifactDir, userPrompt: this.userPrompt, loopMaxIterations: this.config.loopMaxIterations }) : "";
   }
 
   private entryFor(p: Phase, done: boolean): WorkflowEntry {
@@ -219,10 +264,37 @@ export class WorkflowStateMachine {
     return this.config.phases[i + 1];
   }
 
-  private async artifactExistsFor(p: Phase, deps: WorkflowDeps): Promise<boolean> {
+  private async artifactSatisfiedFor(
+    p: Phase,
+    deps: WorkflowDeps,
+  ): Promise<{ exists: boolean; reason?: string }> {
     const file = this.config.phaseArtifacts[p];
-    if (!file) return true;
-    return deps.artifactExists(p, this.artifactDir);
+    if (!file) return { exists: true };
+    if (!(await deps.artifactExists(p, this.artifactDir))) return { exists: false };
+    const validator = this.config.artifactValidators?.[p];
+    if (!validator) return { exists: true };
+    const content = await deps.readArtifact(p, this.artifactDir);
+    if (content === undefined) return { exists: false };
+    const res = validator(content);
+    if (res.ok) return { exists: true };
+    return { exists: true, reason: res.reason };
+  }
+
+  // ponytail: Plan 4 — validate a close artifact (existence + optional
+  // semantic gate). Returns {exists, reason}. Used by terminal + end().
+  private async closeSatisfiedFor(
+    file: string,
+    deps: WorkflowDeps,
+  ): Promise<{ exists: boolean; reason?: string }> {
+    const path = `${this.artifactDir}/${file}`;
+    if (!(await deps.fileExists(path))) return { exists: false };
+    const validator = this.config.closeValidators?.[file];
+    if (!validator) return { exists: true };
+    const content = await deps.readFile(path);
+    if (content === undefined) return { exists: false };
+    const res = validator(content);
+    if (res.ok) return { exists: true };
+    return { exists: true, reason: res.reason };
   }
 
   private setPhase(p: Phase): void {
@@ -234,20 +306,38 @@ export class WorkflowStateMachine {
   // Pure given deps. Returns the Effect; does NOT mutate if blocked/idle.
   private async advancePhase(deps: WorkflowDeps, currentPhaseSatisfied = false): Promise<WorkflowEffect> {
     if (!this.active) return { kind: "idle", phase: this.phase };
-    if (!currentPhaseSatisfied && !(await this.artifactExistsFor(this.phase, deps))) {
-      const missing = this.config.phaseArtifacts[this.phase]!;
-      return { kind: "blocked", phase: this.phase, missing };
+    if (!currentPhaseSatisfied) {
+      const sat = await this.artifactSatisfiedFor(this.phase, deps);
+      if (!sat.exists) {
+        const missing = this.config.phaseArtifacts[this.phase]!;
+        return { kind: "blocked", phase: this.phase, missing };
+      }
+      if (sat.reason) {
+        const missing = this.config.phaseArtifacts[this.phase]!;
+        return { kind: "blocked", phase: this.phase, missing, reason: sat.reason };
+      }
     }
     const next = this.nextPhase(this.phase);
     if (!next) {
-      // ponytail: terminal. Need all closeArtifacts before end() can close.
+      // ponytail: terminal. Need all closeArtifacts satisfied (existence +
+      // optional semantic gate) before end() can close.
       for (const file of this.config.closeArtifacts) {
-        if (!(await deps.fileExists(`${this.artifactDir}/${file}`))) {
+        const sat = await this.closeSatisfiedFor(file, deps);
+        if (!sat.exists) {
           return {
             kind: "terminalNeedsArtifacts",
             phase: this.phase,
             missing: file,
             promptToQueue: `Terminal phase still needs ${this.artifactDir}/${file}. Write it, then the workflow closes automatically.`,
+          };
+        }
+        if (sat.reason) {
+          return {
+            kind: "terminalNeedsArtifacts",
+            phase: this.phase,
+            missing: file,
+            reason: sat.reason,
+            promptToQueue: `Terminal artifact ${this.artifactDir}/${file} is incomplete: ${sat.reason}. Fix it, then the workflow closes automatically.`,
           };
         }
       }
@@ -315,8 +405,12 @@ export class WorkflowStateMachine {
       return { kind: "endBlocked", phase: this.phase, missing: `not at terminal (${last})` };
     }
     for (const file of this.config.closeArtifacts) {
-      if (!(await deps.fileExists(`${this.artifactDir}/${file}`))) {
+      const sat = await this.closeSatisfiedFor(file, deps);
+      if (!sat.exists) {
         return { kind: "endBlocked", phase: this.phase, missing: file };
+      }
+      if (sat.reason) {
+        return { kind: "endBlocked", phase: this.phase, missing: file, reason: sat.reason };
       }
     }
     this.active = false;
@@ -341,8 +435,16 @@ export class WorkflowStateMachine {
     // Acquire synchronously before any await so a concurrent call sees advancing=true.
     this.advancing = true;
     try {
-      // Artifact must exist at the workflow-owned path. No rescue/redirect magic.
-      if (!(await this.artifactExistsFor(this.phase, deps))) return { kind: "noOp" };
+      // ponytail: Plan 4 — distinguish "not yet written" (keep waiting, noOp)
+      // from "written but semantically invalid" (block + surface reason so the
+      // model learns which marker is missing instead of stalling silently).
+      const sat = await this.artifactSatisfiedFor(this.phase, deps);
+      if (!sat.exists) return { kind: "noOp" };
+      if (sat.reason) {
+        this.autoArmed = false;
+        const missing = this.config.phaseArtifacts[this.phase]!;
+        return { kind: "blocked", phase: this.phase, missing, reason: sat.reason };
+      }
       this.autoArmed = false;
       const out = await this.advancePhase(deps, true);
       if (out.kind === "terminalReady") {

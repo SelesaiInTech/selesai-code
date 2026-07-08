@@ -3,6 +3,27 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// ponytail: Plan 4 — artifact content helpers. Critical-phase artifacts now
+// require a semantic marker; these give every fixture the minimal valid
+// content so existing tests stay focused on their own assertion.
+const PLAN_OK = "# Plan\nWORKFLOW_PLAN_STATUS: ready";
+const HANDOFF_OK = "# Handoff\nWORKFLOW_HANDOFF_STATUS: ready";
+const LOOP_COMPLETE_OK = "# Loop\nWORKFLOW_LOOP_STATUS: clean";
+const REVIEW_OK = "# Review\nWORKFLOW_REVIEW_STATUS: clean";
+// phase artifact filename -> valid content
+const VALID_CONTENT: Record<string, string> = {
+  "requirements.md": "# reqs",
+  "research.md": "# research",
+  "plan.md": PLAN_OK,
+  "reuse.md": "# reuse",
+  "handoff.md": HANDOFF_OK,
+  "loop-complete.md": LOOP_COMPLETE_OK,
+  "review.md": REVIEW_OK,
+};
+function validContent(file: string): string {
+  return VALID_CONTENT[file] ?? `# ${file}`;
+}
+
 // ponytail: adapter smoke test — one per call site. Verifies the adapter
 // translates WorkflowEffect into pi calls (appendEntry, sendUserMessage,
 // setStatus). The transition logic itself is tested in state-machine.test.ts
@@ -15,6 +36,7 @@ interface FakePi {
 	entries: { customType: string; data: any }[];
 	sent: { text: string; options?: any }[];
 	status: Map<string, string | undefined>;
+	notifies: { text: string; level: string }[];
 	[key: string]: any;
 }
 
@@ -27,6 +49,7 @@ async function createHarness(): Promise<FakePi> {
 	const entries: { customType: string; data: any }[] = [];
 	const sent: { text: string; options?: any }[] = [];
 	const status = new Map<string, string | undefined>();
+	const notifies: { text: string; level: string }[] = [];
 
 	const pi: any = {
 		on(name: string, h: any) {
@@ -54,7 +77,7 @@ async function createHarness(): Promise<FakePi> {
 	const ctxBase: any = {
 		isIdle: () => true,
 		ui: {
-			notify() {},
+			notify(text: string, level: string) { notifies.push({ text, level }); },
 			setStatus(key: string, text: string | undefined) {
 				status.set(key, text);
 			},
@@ -71,7 +94,7 @@ async function createHarness(): Promise<FakePi> {
 		commandName: prototypeMode.commandName,
 		commandDescription: prototypeMode.commandDescription,
 	})(pi);
-	const harness = { events, tools, commands, entries, sent, status, __ctxBase: ctxBase } as unknown as FakePi;
+	const harness = { events, tools, commands, entries, sent, status, notifies, __ctxBase: ctxBase } as unknown as FakePi;
 	return harness;
 }
 
@@ -223,7 +246,7 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
 		const dir = pi.entries.at(-1)!.data.artifactDir;
 		for (const f of ["requirements.md", "research.md", "plan.md", "reuse.md", "handoff.md"]) {
-			writeFileSync(join(dir, f), "# " + f);
+			writeFileSync(join(dir, f), validContent(f));
 			await pi.events.get("tool_result")(
 				{ type: "tool_result", toolName: f === "requirements.md" || f === "research.md" ? "bash" : "subagent", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false },
 				c,
@@ -251,6 +274,126 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(res.reason).toContain("write_workflow_artifact");
 	});
 
+	// ── Plan 5: subagent workflow contract tests ──
+
+	it("tool_call defaults context to fresh for workflow subagent calls", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		const input: any = { agent: "architect", task: "plan" };
+		await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "subagent", input },
+			c,
+		);
+		expect(input.context).toBe("fresh");
+		expect(input.output).toBe(resolve(dir, "plan.md"));
+	});
+
+	it("tool_call respects an explicit caller context and does not override it", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		const input: any = { agent: "architect", task: "plan", context: "fork" };
+		await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "subagent", input },
+			c,
+		);
+		expect(input.context).toBe("fork");
+	});
+
+	it("tool_call blocks model override on workflow-owned phases", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		const input: any = { agent: "architect", task: "plan", model: "anthropic/claude-opus" };
+		const res = await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "subagent", input },
+			c,
+		);
+		expect(res.block).toBe(true);
+		expect(res.reason).toContain("model override");
+	});
+
+	it("tool_call blocks parallel tasks in single-owner plan phase", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		const input: any = { tasks: [{ agent: "architect", task: "plan" }] };
+		const res = await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "subagent", input },
+			c,
+		);
+		expect(res.block).toBe(true);
+		expect(res.reason).toContain("single");
+	});
+
+	it("tool_call blocks chain in single-owner handoff phase", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		for (const f of ["requirements.md", "research.md", "plan.md", "reuse.md"]) {
+			writeFileSync(join(dir, f), validContent(f));
+			await pi.events.get("tool_result")(
+				{ type: "tool_result", toolName: f === "requirements.md" || f === "research.md" ? "bash" : "subagent", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false },
+				c,
+			);
+		}
+		expect(pi.entries.at(-1)?.data.phase).toBe("handoff");
+		const input: any = { chain: [{ agent: "recapper", task: "handoff" }] };
+		const res = await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "subagent", input },
+			c,
+		);
+		expect(res.block).toBe(true);
+		expect(res.reason).toContain("handoff.md");
+	});
+
+	it("tool_call allows parallel tasks in loop phase (engine-owned, not single-owner)", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		for (const f of ["requirements.md", "research.md", "plan.md", "reuse.md", "handoff.md"]) {
+			writeFileSync(join(dir, f), validContent(f));
+			await pi.events.get("tool_result")(
+				{ type: "tool_result", toolName: f === "requirements.md" || f === "research.md" ? "bash" : "subagent", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false },
+				c,
+			);
+		}
+		expect(pi.entries.at(-1)?.data.phase).toBe("loop");
+		const input: any = { tasks: [{ agent: "builder", task: "implement" }] };
+		const res = await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "subagent", input },
+			c,
+		);
+		// loop is not a FORCE_OUTPUT phase → no block, no fresh default, no model ban
+		expect(res).toBeUndefined();
+		expect(input.context).toBeUndefined();
+	});
+
+	it("tool_call ignores subagent management actions (list/get/doctor)", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const input: any = { action: "list" };
+		const res = await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "subagent", input },
+			c,
+		);
+		expect(res).toBeUndefined();
+		expect(input.context).toBeUndefined();
+	});
+
 	// ── subagent text fallback tests ──
 
 	it("subagent text fallback saves plan.md when subagent returns text but no file", async () => {
@@ -262,9 +405,9 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
 		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
 		const dir = pi.entries.at(-1)!.data.artifactDir;
-		// subagent returns text but does not write plan.md
+		// subagent returns text (with the plan marker) but does not write plan.md
 		await pi.events.get("tool_result")(
-			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: {}, content: [{ type: "text", text: "# Plan for X" }], isError: false },
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: {}, content: [{ type: "text", text: PLAN_OK }], isError: false },
 			c,
 		);
 		expect(existsSync(join(dir, "plan.md"))).toBe(true);
@@ -294,7 +437,7 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		const dir = pi.entries.at(-1)!.data.artifactDir;
 		// walk to loop
 		for (const f of ["requirements.md", "research.md", "plan.md", "reuse.md", "handoff.md"]) {
-			writeFileSync(join(dir, f), "# " + f);
+			writeFileSync(join(dir, f), validContent(f));
 			await pi.events.get("tool_result")(
 				{ type: "tool_result", toolName: f === "requirements.md" || f === "research.md" ? "bash" : "subagent", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false },
 				c,
@@ -315,16 +458,16 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		const dir = pi.entries.at(-1)!.data.artifactDir;
 		// walk to audit
 		for (const f of ["requirements.md", "research.md", "plan.md", "reuse.md", "handoff.md", "loop-complete.md"]) {
-			writeFileSync(join(dir, f), "# " + f);
+			writeFileSync(join(dir, f), validContent(f));
 			await pi.events.get("tool_result")(
 				{ type: "tool_result", toolName: f === "requirements.md" || f === "research.md" || f === "loop-complete.md" ? "bash" : "subagent", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false },
 				c,
 			);
 		}
 		expect(pi.entries.at(-1)?.data.phase).toBe("audit");
-		// subagent (commentator) returns review text but does not write review.md
+		// subagent (commentator) returns review text (with the clean marker) but does not write review.md
 		await pi.events.get("tool_result")(
-			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: {}, content: [{ type: "text", text: "# Review: all good" }], isError: false },
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: {}, content: [{ type: "text", text: REVIEW_OK }], isError: false },
 			c,
 		);
 		expect(existsSync(join(dir, "review.md"))).toBe(true);
@@ -383,5 +526,187 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		);
 		expect(existsSync(join(dir, "plan.md"))).toBe(true);
 		expect(readFileSync(join(dir, "plan.md"), "utf8")).toBe("# Plan for X");
+	});
+
+	// ── Plan 3: engine-owned loop orchestration ──
+
+	async function walkToLoop(pi: FakePi, c: any): Promise<string> {
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		for (const f of ["requirements.md", "research.md", "plan.md", "reuse.md", "handoff.md"]) {
+			writeFileSync(join(dir, f), validContent(f));
+			await pi.events.get("tool_result")(
+				{ type: "tool_result", toolName: f === "requirements.md" || f === "research.md" ? "bash" : "subagent", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false },
+				c,
+			);
+		}
+		expect(pi.entries.at(-1)?.data.phase).toBe("loop");
+		return dir;
+	}
+
+	it("loop: builder result drives the engine to prompt a commentator review", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await walkToLoop(pi, c);
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: { agent: "builder" }, content: [{ type: "text", text: "done" }], isError: false },
+			c,
+		);
+		expect(pi.sent.at(-1)?.text).toMatch(/commentator/i);
+		expect(pi.sent.at(-1)?.text).toMatch(/WORKFLOW_REVIEW_STATUS: clean/);
+	});
+
+	it("loop: clean commentator review writes loop-complete.md and advances to audit", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		const dir = await walkToLoop(pi, c);
+		// builder round 1
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: { agent: "builder" }, content: [{ type: "text", text: "built" }], isError: false },
+			c,
+		);
+		// commentator clean review
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc2", input: { agent: "commentator" }, content: [{ type: "text", text: "Review good.\nWORKFLOW_REVIEW_STATUS: clean" }], isError: false },
+			c,
+		);
+		expect(existsSync(join(dir, "loop-complete.md"))).toBe(true);
+		expect(pi.entries.at(-1)?.data.phase).toBe("audit");
+	});
+
+	it("loop: blocking commentator review prompts a builder fix round, does not advance", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		const dir = await walkToLoop(pi, c);
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: { agent: "builder" }, content: [{ type: "text", text: "built" }], isError: false },
+			c,
+		);
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc2", input: { agent: "commentator" }, content: [{ type: "text", text: "Issues found.\nWORKFLOW_REVIEW_STATUS: blocking" }], isError: false },
+			c,
+		);
+		expect(existsSync(join(dir, "loop-complete.md"))).toBe(false);
+		expect(pi.entries.at(-1)?.data.phase).toBe("loop");
+		expect(pi.sent.at(-1)?.text).toMatch(/builder/i);
+		expect(pi.sent.at(-1)?.text).toMatch(/fix/i);
+	});
+
+	it("loop: max iterations without a clean review notifies and does not advance", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		const dir = await walkToLoop(pi, c);
+		const maxIt = 3;
+		for (let i = 0; i < maxIt; i++) {
+			await pi.events.get("tool_result")(
+				{ type: "tool_result", toolName: "subagent", toolCallId: `b${i}`, input: { agent: "builder" }, content: [{ type: "text", text: "built" }], isError: false },
+				c,
+			);
+			await pi.events.get("tool_result")(
+				{ type: "tool_result", toolName: "subagent", toolCallId: `r${i}`, input: { agent: "commentator" }, content: [{ type: "text", text: "WORKFLOW_REVIEW_STATUS: blocking" }], isError: false },
+				c,
+			);
+		}
+		expect(existsSync(join(dir, "loop-complete.md"))).toBe(false);
+		expect(pi.entries.at(-1)?.data.phase).toBe("loop");
+		expect(pi.notifies.some((n) => /max iterations/i.test(n.text) && n.level === "warning")).toBe(true);
+	});
+
+	it("loop: a clean review on a later round still advances even after earlier blocking rounds", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		const dir = await walkToLoop(pi, c);
+		// round 1 blocking
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "b1", input: { agent: "builder" }, content: [{ type: "text", text: "built" }], isError: false },
+			c,
+		);
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "r1", input: { agent: "commentator" }, content: [{ type: "text", text: "WORKFLOW_REVIEW_STATUS: blocking" }], isError: false },
+			c,
+		);
+		// round 2 clean
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "b2", input: { agent: "builder" }, content: [{ type: "text", text: "fixed" }], isError: false },
+			c,
+		);
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "r2", input: { agent: "commentator" }, content: [{ type: "text", text: "WORKFLOW_REVIEW_STATUS: clean" }], isError: false },
+			c,
+		);
+		expect(existsSync(join(dir, "loop-complete.md"))).toBe(true);
+		expect(pi.entries.at(-1)?.data.phase).toBe("audit");
+	});
+
+	// ── Plan 4: semantic gates (adapter surface) ──
+
+	it("write_workflow_artifact surfaces blocked reason when plan.md lacks the marker", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		// advance to plan
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+		// write plan.md without the marker → blocked, not advanced
+		const res = await pi.tools.get("write_workflow_artifact").execute("w3", { content: "# a plan with no marker" }, undefined, undefined, c);
+		expect(res.details.blocked).toBe(true);
+		expect(res.details.reason).toMatch(/WORKFLOW_PLAN_STATUS: ready/);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+		// adapter queued a followUp telling the model which marker is missing
+		expect(pi.sent.at(-1)?.text).toMatch(/WORKFLOW_PLAN_STATUS: ready/);
+	});
+
+	it("write_workflow_artifact advances plan when the marker is present", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		const res = await pi.tools.get("write_workflow_artifact").execute("w3", { content: PLAN_OK }, undefined, undefined, c);
+		expect(res.details.blocked).toBeUndefined();
+		// ponytail: the harness's fake git returns code:1 (empty project), so the
+		// reuse skip rule fires and plan advances straight to handoff.
+		expect(pi.entries.at(-1)?.data.phase).toBe("handoff");
+	});
+
+	it("engine-written loop-complete.md carries the WORKFLOW_LOOP_STATUS: clean marker", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		const dir = await walkToLoop(pi, c);
+		// builder then commentator clean → engine writes loop-complete.md
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: { agent: "builder" }, content: [{ type: "text", text: "built" }], isError: false },
+			c,
+		);
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc2", input: { agent: "commentator" }, content: [{ type: "text", text: "Review good.\nWORKFLOW_REVIEW_STATUS: clean" }], isError: false },
+			c,
+		);
+		const text = readFileSync(join(dir, "loop-complete.md"), "utf8");
+		expect(text).toMatch(/WORKFLOW_LOOP_STATUS: clean/);
+		expect(pi.entries.at(-1)?.data.phase).toBe("audit");
+	});
+
+	it("end tool surfaces reason when review.md exists but lacks the clean marker", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		// walk to audit with valid markers
+		for (const f of ["requirements.md", "research.md", "plan.md", "reuse.md", "handoff.md", "loop-complete.md"]) {
+			writeFileSync(join(dir, f), validContent(f));
+			await pi.events.get("tool_result")(
+				{ type: "tool_result", toolName: f === "requirements.md" || f === "research.md" || f === "loop-complete.md" ? "bash" : "subagent", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false },
+				c,
+			);
+		}
+		expect(pi.entries.at(-1)?.data.phase).toBe("audit");
+		// write review.md without the clean marker
+		writeFileSync(join(dir, "review.md"), "# review with no marker");
+		const res = await pi.tools.get("end_workflow").execute("e1", {}, undefined, undefined, c);
+		expect(res.details.blocked).toBe("review.md");
+		expect(res.details.reason).toMatch(/WORKFLOW_REVIEW_STATUS: clean/);
+		expect(pi.entries.at(-1)?.data.done).toBe(false);
 	});
 });
