@@ -439,6 +439,18 @@ export default function tokenInOnboardingExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("tokenin", {
 		description: "Manage TokenIN accounts: /tokenin add|switch|remove",
+		getArgumentCompletions: (prefix: string) => {
+			const subcommands = [
+				{ name: "add", description: "Add a TokenIN account" },
+				{ name: "switch", description: "Switch active account" },
+				{ name: "remove", description: "Remove a saved account" },
+			];
+			const lowerPrefix = prefix.toLowerCase();
+			const items = subcommands.filter((s) => s.name.toLowerCase().startsWith(lowerPrefix));
+			return items.length > 0
+				? items.map((s) => ({ value: s.name, label: s.name, description: s.description }))
+				: null;
+		},
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			await ctx.waitForIdle();
 			const sub = args.trim().split(/\s+/)[0];

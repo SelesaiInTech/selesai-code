@@ -396,6 +396,19 @@ describe("/tokenin command", () => {
 		expect(commands.has("tokenin")).toBe(true);
 	});
 
+	it("/tokenin getArgumentCompletions returns subcommands and filters by prefix", () => {
+		const { pi, commands } = makeApi();
+		tokenInOnboardingExtension(pi);
+		const cmd = commands.get("tokenin") as any;
+		expect(cmd.getArgumentCompletions).toBeDefined();
+		const all = cmd.getArgumentCompletions("");
+		expect(all).toHaveLength(3);
+		expect(all.map((i: any) => i.value).sort()).toEqual(["add", "remove", "switch"]);
+		expect(cmd.getArgumentCompletions("sw")).toHaveLength(1);
+		expect(cmd.getArgumentCompletions("sw")[0].value).toBe("switch");
+		expect(cmd.getArgumentCompletions("xyz")).toBeNull();
+	});
+
 	it("shows usage for empty or unknown subcommand", async () => {
 		await runCommand("");
 		expect(notifications.some((n) => n.message.includes("Usage: /tokenin"))).toBe(true);
