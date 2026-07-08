@@ -441,7 +441,9 @@ export class WorkflowStateMachine {
       const sat = await this.artifactSatisfiedFor(this.phase, deps);
       if (!sat.exists) return { kind: "noOp" };
       if (sat.reason) {
-        this.autoArmed = false;
+        // Keep armed: the artifact exists but failed the semantic gate. The
+        // next corrected write/subagent result must be able to advance this
+        // same phase; disarming here leaves the workflow stuck forever.
         const missing = this.config.phaseArtifacts[this.phase]!;
         return { kind: "blocked", phase: this.phase, missing, reason: sat.reason };
       }
