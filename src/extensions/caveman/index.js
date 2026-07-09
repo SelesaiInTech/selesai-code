@@ -5,19 +5,7 @@ const { getCavemanInstructions } = require("./caveman-instructions.cjs");
 
 export { getCavemanInstructions };
 
-export function resolveSessionActive(entries, fallback = true) {
-  if (!Array.isArray(entries)) return fallback;
 
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "custom" || entry?.customType !== "caveman-mode") continue;
-
-    const active = entry?.data?.active;
-    if (typeof active === "boolean") return active;
-  }
-
-  return fallback;
-}
 
 export function parseCavemanCommand(text) {
   const normalizedText = String(text || "").trim().toLowerCase();
@@ -93,8 +81,7 @@ export default function cavemanExtension(pi) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    const entries = ctx?.sessionManager?.getBranch?.() || ctx?.sessionManager?.getEntries?.() || [];
-    active = resolveSessionActive(entries, true);
+    active = true; // ponytail: always ON at session start; OFF is current-session-only
     syncStatus(ctx);
     ctx?.ui?.notify?.(`Caveman loaded: ${active ? "ON" : "OFF"}`, "info");
   });

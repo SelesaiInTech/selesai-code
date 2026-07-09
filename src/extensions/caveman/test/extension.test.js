@@ -80,7 +80,7 @@ test("disabled caveman skips instruction injection", async () => {
   assert.equal(result, undefined);
 });
 
-test("session_start restores latest persisted active flag", async () => {
+test("session_start always ON even if persisted entry is OFF", async () => {
   const { events } = createPiHarness();
   const ctx = createCommandContext({
     sessionManager: {
@@ -93,7 +93,22 @@ test("session_start restores latest persisted active flag", async () => {
   await events.get("session_start")({ reason: "resume" }, ctx);
   const result = await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
 
-  assert.equal(result, undefined); // persisted false -> no injection
+  assert.ok(result.systemPrompt.includes("CAVEMAN MODE ACTIVE"));
+});
+
+test("off then new session_start resets to ON", async () => {
+  const { commands, events } = createPiHarness();
+  const ctx = createCommandContext();
+
+  await events.get("session_start")({ reason: "startup" }, ctx);
+  await commands.get("caveman").handler("off", ctx);
+
+  // Simulate a fresh session_start (new harness = fresh active state)
+  const { events: events2 } = createPiHarness();
+  await events2.get("session_start")({ reason: "new" }, ctx);
+  const result = await events2.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
+
+  assert.ok(result.systemPrompt.includes("CAVEMAN MODE ACTIVE"));
 });
 
 test("'stop caveman' as a whole message deactivates mid-session", async () => {

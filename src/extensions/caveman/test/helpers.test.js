@@ -7,7 +7,6 @@ import {
   getCavemanInstructions,
   isDeactivationCommand,
   parseCavemanCommand,
-  resolveSessionActive,
 } from "../index.js";
 
 test("parseCavemanCommand: bare toggles", () => {
@@ -27,20 +26,7 @@ test("parseCavemanCommand: unknown arg is invalid", () => {
   assert.deepEqual(parseCavemanCommand("banana"), { type: "invalid", reason: "unknown-subcommand", arg: "banana" });
 });
 
-test("resolveSessionActive: latest persisted entry wins", () => {
-  const entries = [
-    { type: "custom", customType: "caveman-mode", data: { active: false } },
-    { type: "custom", customType: "caveman-mode", data: { active: true } },
-  ];
-  assert.equal(resolveSessionActive(entries, true), true);
-});
 
-test("resolveSessionActive: non-array entries fall back", () => {
-  assert.equal(resolveSessionActive(null, true), true);
-  assert.equal(resolveSessionActive(undefined, false), false);
-  assert.equal(resolveSessionActive({}, true), true);
-  assert.equal(resolveSessionActive("nope"), true); // DEFAULT fallback
-});
 
 test("isDeactivationCommand: only the whole message, case-insensitive, trailing punct ok", () => {
   assert.equal(isDeactivationCommand("stop caveman"), true);
