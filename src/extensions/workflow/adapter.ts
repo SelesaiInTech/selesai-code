@@ -81,6 +81,27 @@ function textFromToolResultContent(content: unknown): string | undefined {
   return joined || undefined;
 }
 
+function validatorForPhaseArtifact(config: WorkflowConfig, phase: Phase) {
+  const phaseValidator = config.artifactValidators?.[phase];
+  if (phaseValidator) return phaseValidator;
+  const file = config.phaseArtifacts[phase];
+  if (!file) return undefined;
+  const isTerminal = config.phases[config.phases.length - 1] === phase;
+  if (!isTerminal || !config.closeArtifacts.includes(file)) return undefined;
+  return config.closeValidators?.[file];
+}
+
+function shouldReplaceInvalidArtifact(
+  config: WorkflowConfig,
+  phase: Phase,
+  currentContent: string,
+  fallbackContent: string,
+): boolean {
+  const validator = validatorForPhaseArtifact(config, phase);
+  if (!validator) return false;
+  return !validator(currentContent).ok && validator(fallbackContent).ok;
+}
+
 // ponytail: rewrite the subagent tool input so the child writes its output
 // directly to ${artifactDir}/${file} as an absolute path. Absolute paths pass
 // through resolveSingleOutputPath verbatim, so injectOutputPathSystemPrompt
@@ -594,11 +615,32 @@ export function createWorkflowExtension(
     // ── tool_result: auto-advance after subagent/bash artifacts. ──
     pi.on("tool_result", async (event: any, ctx: ExtensionContext) => {
       if (event.toolName !== "bash" && event.toolName !== "subagent") return;
+      // ponytail: a failed phase-owner tool used to leave the workflow quiet
+      // until the user manually typed /prototype or /quick continue. Re-check
+      // first (in case the tool wrote the artifact before failing), then if
+      // nothing advanced, re-queue the current phase prompt automatically.
+      if (event.isError && sm.snapshot.active) {
+        const eff = await sm.onArtifactMaybe(deps);
+        applyEffect(pi, ctx, config, eff);
+        if (eff.kind === "noOp") {
+          const retry = sm.continueCurrent();
+          continueAgent(
+            pi,
+            ctx,
+            `The previous ${event.toolName} call failed during the ${retry.phase} phase. Stay in this phase and try again.\n\n${retry.prompt}`,
+          );
+        }
+        if (sm.snapshot.phase !== "loop") {
+          controller.loopState = undefined;
+        }
+        return;
+      }
       // ponytail: if a subagent returned text but did not write the expected
       // artifact (common with dumb/local models), save the returned text as
       // the artifact so the workflow can still advance.
       if (event.toolName === "subagent" && sm.snapshot.active && SUBAGENT_FALLBACK_PHASES.has(sm.snapshot.phase)) {
-        const file = config.phaseArtifacts[sm.snapshot.phase];
+        const phase = sm.snapshot.phase;
+        const file = config.phaseArtifacts[phase];
         if (file) {
           // ponytail: management actions (list/get/models/doctor/status/...)
           // return text but are NOT the architect/recapper/... execution
@@ -608,9 +650,18 @@ export function createWorkflowExtension(
           // calls set `action`. Only fall back for execution calls.
           if (typeof event.input?.action !== "string") {
             const expectedPath = resolve(sm.snapshot.artifactDir, file);
-            if (!(await realFileExists(expectedPath))) {
-              const text = textFromToolResultContent(event.content);
-              if (text) {
+            const text = textFromToolResultContent(event.content);
+            if (text) {
+              let shouldWrite = !(await realFileExists(expectedPath));
+              if (!shouldWrite) {
+                try {
+                  const current = await readFile(expectedPath, "utf8");
+                  shouldWrite = shouldReplaceInvalidArtifact(config, phase, current, text);
+                } catch {
+                  shouldWrite = false;
+                }
+              }
+              if (shouldWrite) {
                 await mkdir(sm.snapshot.artifactDir, { recursive: true });
                 await writeFile(expectedPath, text, "utf8");
               }
