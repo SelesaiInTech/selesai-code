@@ -513,6 +513,25 @@ describe("WorkflowStateMachine semantic gates (Plan 4)", () => {
     expect(sm.snapshot.phase).toBe("plan");
   });
 
+  it("onArtifactMaybe stays armed after an invalid artifact, so a corrected rewrite advances", async () => {
+    const files = new Set<string>();
+    const contents = new Map<string, string>();
+    const sm = new WorkflowStateMachine(gatedConfig);
+    await sm.start("build X", makeDeps(files));
+    const dir = sm.snapshot.artifactDir;
+    files.add(`${dir}/requirements.md`);
+    await sm.onArtifactMaybe(makeDeps(files, async () => false, contents));
+    files.add(`${dir}/research.md`);
+    await sm.onArtifactMaybe(makeDeps(files, async () => false, contents));
+    files.add(`${dir}/plan.md`);
+    contents.set(`${dir}/plan.md`, "stub plan, no marker");
+    expect((await sm.onArtifactMaybe(makeDeps(files, async () => false, contents))).kind).toBe("blocked");
+    contents.set(`${dir}/plan.md`, "# plan\nWORKFLOW_PLAN_STATUS: ready");
+    const eff = await sm.onArtifactMaybe(makeDeps(files, async () => false, contents));
+    expect(eff.kind).toBe("advanced");
+    expect(sm.snapshot.phase).toBe("reuse");
+  });
+
   it("onArtifactMaybe advances when the gated artifact lands with the marker", async () => {
     const files = new Set<string>();
     const contents = new Map<string, string>();

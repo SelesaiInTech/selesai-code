@@ -657,6 +657,19 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(pi.sent.at(-1)?.text).toMatch(/WORKFLOW_PLAN_STATUS: ready/);
 	});
 
+	it("write_workflow_artifact can recover after a gated artifact was written without its marker", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+		expect((await pi.tools.get("write_workflow_artifact").execute("w3", { content: "# invalid" }, undefined, undefined, c)).details.blocked).toBe(true);
+		const res = await pi.tools.get("write_workflow_artifact").execute("w4", { content: PLAN_OK }, undefined, undefined, c);
+		expect(res.details.blocked).toBeUndefined();
+		expect(pi.entries.at(-1)?.data.phase).toBe("handoff");
+	});
+
 	it("write_workflow_artifact advances plan when the marker is present", async () => {
 		const pi = await createHarness();
 		const c = ctx(pi, true);
