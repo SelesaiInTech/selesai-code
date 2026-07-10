@@ -128,52 +128,115 @@ describe("prototype adapter (pi wiring smoke)", () => {
 	it("registers start/end tools + /prototype command (no next tool)", async () => {
 		const pi = await createHarness();
 		expect(pi.tools.has("start_workflow")).toBe(true);
+		expect(pi.tools.has("resume_workflow")).toBe(true);
 		expect(pi.tools.has("next_step")).toBe(false);
 		expect(pi.tools.has("end_workflow")).toBe(true);
 		expect(pi.tools.has("write_workflow_artifact")).toBe(true);
 		expect(pi.commands.has("prototype")).toBe(true);
 	});
 
-	it("start tool appends entry, sets footer, and returns the grilling prompt", async () => {
+	it("/prototype help and an empty command explain starts, resume, and explicit completion", async () => {
+		const pi = await createHarness();
+		for (const args of ["help", ""]) {
+			await pi.commands.get("prototype").handler(args, ctx(pi));
+			const help = pi.notifies.at(-1)!;
+			expect(help.level).toBe("info");
+			expect(help.text).toContain("/prototype resume");
+			expect(help.text).toContain("end_workflow");
+		}
+	});
+
+	it("start tool writes canonical workflow.json before prompting", async () => {
 		const pi = await createHarness();
 		const start = pi.tools.get("start_workflow");
 		const res = await start.execute("id-1", { goal: "build X" }, undefined, undefined, ctx(pi));
+		const entry = pi.entries.at(-1)!;
+		const statePath = join(entry.data.artifactDir, "workflow.json");
 		expect(res.details.phase).toBe("grilling");
-		expect(pi.entries.at(-1)?.customType).toBe("prototype-phase");
-		expect(pi.entries.at(-1)?.data.phase).toBe("grilling");
-		expect(pi.entries.at(-1)?.data.step).toBe(1);
-		expect(pi.entries.at(-1)?.data.mode).toBe("prototype");
+		expect(entry.customType).toBe("prototype-phase");
+		expect(entry.data.workflowStatePath).toBe(statePath);
+		expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ version: 1, mode: "prototype", status: "active", phase: "grilling", autoArmed: true });
 		expect(typeof res.content[0].text).toBe("string");
 		expect(pi.status.get("prototype")).toContain("1/7");
 	});
 
-	it("auto-advance hook advances and queues a follow-up when streaming", async () => {
-		const pi = await createHarness();
-		const c = ctx(pi, true); // streaming
-		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
-		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
-		expect(pi.entries.at(-1)?.data.phase).toBe("research");
-		expect(pi.sent.at(-1)?.options?.deliverAs).toBe("followUp");
-		expect(pi.sent.at(-1)?.text).toMatch(/research/i);
+	it("uses unique UUID artifact directories for rapid same-goal starts", async () => {
+		const first = await createHarness();
+		const second = await createHarness();
+		await first.tools.get("start_workflow").execute("one", { goal: "same goal" }, undefined, undefined, ctx(first));
+		await second.tools.get("start_workflow").execute("two", { goal: "same goal" }, undefined, undefined, ctx(second));
+		expect(first.entries.at(-1)?.data.artifactDir).not.toBe(second.entries.at(-1)?.data.artifactDir);
 	});
 
-	it("tool_result auto-advance advances and queues a follow-up when streaming", async () => {
+	it("persists each artifact-driven phase transition", async () => {
 		const pi = await createHarness();
-		const c = ctx(pi, true); // streaming
-		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
-		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
-		expect(pi.entries.at(-1)?.data.phase).toBe("research");
-		expect(pi.sent.at(-1)?.options?.deliverAs).toBe("followUp");
-		expect(pi.sent.at(-1)?.text).toMatch(/research/i);
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id", { goal: "build X" }, undefined, undefined, c);
+		const statePath = pi.entries.at(-1)!.data.workflowStatePath;
+		await pi.tools.get("write_workflow_artifact").execute("write", { content: "# reqs" }, undefined, undefined, c);
+		expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ phase: "research", autoArmed: true, status: "active" });
 	});
 
-	it("tool_result auto-advance sends a direct message when idle", async () => {
+	it("explicit resume reconciles an artifact written before its phase save", async () => {
 		const pi = await createHarness();
-		const c = ctx(pi, false); // idle
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id", { goal: "build X" }, undefined, undefined, c);
+		const entry = pi.entries.at(-1)!;
+		writeFileSync(join(entry.data.artifactDir, "requirements.md"), "# reqs");
+		const resumedPi = await createHarness();
+		const result = await resumedPi.tools.get("resume_workflow").execute("resume", { run: entry.data.runId }, undefined, undefined, ctx(resumedPi));
+		expect(result.details.phase).toBe("research");
+		expect(resumedPi.entries.at(-1)?.data.phase).toBe("research");
+	});
+
+	it("resume rejects paths outside the artifact base", async () => {
+		const pi = await createHarness();
+		const result = await pi.tools.get("resume_workflow").execute("resume", { run: "../../outside" }, undefined, undefined, ctx(pi));
+		expect(result.details.rejected).toBe(true);
+	});
+
+	it("resuming a terminal-ready run prompts explicit end without re-running audit", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id", { goal: "build X" }, undefined, undefined, c);
+		const entry = pi.entries.at(-1)!;
+		const dir = entry.data.artifactDir;
+		for (const f of ["requirements.md", "research.md", "plan.md", "reuse.md", "handoff.md", "loop-complete.md", "review.md"]) {
+			writeFileSync(join(dir, f), validContent(f));
+			await pi.events.get("tool_result")(
+				{ type: "tool_result", toolName: f === "requirements.md" || f === "research.md" || f === "loop-complete.md" ? "bash" : "subagent", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false },
+				c,
+			);
+		}
+		expect(JSON.parse(readFileSync(entry.data.workflowStatePath, "utf8"))).toMatchObject({ phase: "audit", autoArmed: false, status: "active" });
+		const resumed = await createHarness();
+		await resumed.tools.get("resume_workflow").execute("resume", { run: entry.data.runId }, undefined, undefined, ctx(resumed));
+		expect(resumed.sent.at(-1)?.text).toMatch(/terminal-ready.*end_workflow/i);
+		expect(resumed.sent.at(-1)?.text).not.toMatch(/You are in the AUDIT phase/);
+	});
+
+	it("artifact completion advances state but stops the parent turn at the phase boundary", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
 		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
-		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
-		expect(pi.sent.at(-1)?.options?.deliverAs).toBeUndefined();
-		expect(pi.sent.at(-1)?.text).toMatch(/research/i);
+		const result = await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		expect(pi.entries.at(-1)?.data.phase).toBe("research");
+		expect(pi.sent).toHaveLength(0);
+		expect(result.terminate).toBe(true);
+		expect(result.content[0].text).toMatch(/wait for the user/i);
+	});
+
+	it("tool-result artifact transitions do not inject the next phase prompt", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, false);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		writeFileSync(join(dir, "requirements.md"), "# reqs");
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "bash", toolCallId: "artifact", input: {}, content: [], isError: false }, c,
+		);
+		expect(pi.entries.at(-1)?.data.phase).toBe("research");
+		expect(pi.sent).toHaveLength(0);
 	});
 
 	it("tool_result failure re-queues the current workflow phase automatically", async () => {
@@ -217,6 +280,7 @@ describe("prototype adapter (pi wiring smoke)", () => {
 			commandDescription: quickMode.commandDescription,
 		})(pi);
 		expect(tools.has("start_quick_workflow")).toBe(true);
+		expect(tools.has("resume_quick_workflow")).toBe(true);
 		expect(tools.has("write_workflow_artifact")).toBe(true);
 		expect(commands.has("quick")).toBe(true);
 		const c: any = {
@@ -417,7 +481,7 @@ describe("prototype adapter (pi wiring smoke)", () => {
 
 	// ── tool_result dedupe / narrowing regressions ──
 
-	it("same invalid plan artifact only queues one repair prompt", async () => {
+	it("invalid artifacts do not queue repair turns automatically", async () => {
 		const pi = await createHarness();
 		const c = ctx(pi, true);
 		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
@@ -425,12 +489,12 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
 		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
 		await pi.tools.get("write_workflow_artifact").execute("w3", { content: "# draft plan" }, undefined, undefined, c);
-		expect(sentCount(pi, "WORKFLOW_PLAN_STATUS: ready")).toBe(2);
+		expect(sentCount(pi, "WORKFLOW_PLAN_STATUS: ready")).toBe(0);
 		await pi.events.get("tool_result")(
 			{ type: "tool_result", toolName: "bash", toolCallId: "tc-unrelated-bash", input: { command: "echo hi" }, content: [{ type: "text", text: "ok" }], isError: false },
 			c,
 		);
-		expect(sentCount(pi, "WORKFLOW_PLAN_STATUS: ready")).toBe(2);
+		expect(sentCount(pi, "WORKFLOW_PLAN_STATUS: ready")).toBe(0);
 	});
 
 	it("unrelated subagent error does not re-queue the current phase prompt", async () => {
@@ -440,12 +504,12 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
 		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
 		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
-		expect(sentCount(pi, "You are in the PLAN phase")).toBe(1);
+		expect(sentCount(pi, "You are in the PLAN phase")).toBe(0);
 		await pi.events.get("tool_result")(
 			{ type: "tool_result", toolName: "subagent", toolCallId: "tc-list", input: { action: "list" }, content: [{ type: "text", text: "list failed" }], isError: true },
 			c,
 		);
-		expect(sentCount(pi, "You are in the PLAN phase")).toBe(1);
+		expect(sentCount(pi, "You are in the PLAN phase")).toBe(0);
 	});
 
 	// ── subagent text fallback tests ──
@@ -499,7 +563,7 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		);
 		expect(existsSync(join(dir, "plan.md"))).toBe(false);
 		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
-		expect(sentCount(pi, "WORKFLOW_PLAN_STATUS: ready")).toBe(1);
+		expect(sentCount(pi, "WORKFLOW_PLAN_STATUS: ready")).toBe(0);
 	});
 
 	it("subagent text fallback replaces an invalid gated artifact when later subagent output is valid", async () => {
@@ -540,7 +604,7 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(existsSync(join(dir, "loop-complete.md"))).toBe(false);
 	});
 
-	it("subagent text fallback saves review.md in audit phase and closes", async () => {
+	it("subagent text fallback saves review.md in audit phase and becomes terminal-ready", async () => {
 		const pi = await createHarness();
 		const c = ctx(pi, true);
 		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
@@ -560,10 +624,11 @@ describe("prototype adapter (pi wiring smoke)", () => {
 			c,
 		);
 		expect(existsSync(join(dir, "review.md"))).toBe(true);
-		expect(pi.entries.at(-1)?.data.done).toBe(true);
+		expect(pi.entries.at(-1)?.data.done).toBe(false);
+		expect(pi.sent).toHaveLength(0);
 	});
 
-	it("subagent text fallback replaces an invalid terminal review artifact and auto-closes", async () => {
+	it("subagent text fallback replaces an invalid terminal review artifact without auto-closing", async () => {
 		const pi = await createHarness();
 		const c = ctx(pi, true);
 		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
@@ -582,7 +647,7 @@ describe("prototype adapter (pi wiring smoke)", () => {
 			c,
 		);
 		expect(readFileSync(join(dir, "review.md"), "utf8")).toBe(REVIEW_OK);
-		expect(pi.entries.at(-1)?.data.done).toBe(true);
+		expect(pi.entries.at(-1)?.data.done).toBe(false);
 	});
 
 	// regression: subagent management actions (list/get/models/...) return
@@ -680,6 +745,10 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		);
 		expect(pi.sent.at(-1)?.text).toMatch(/commentator/i);
 		expect(pi.sent.at(-1)?.text).toMatch(/WORKFLOW_REVIEW_STATUS: clean/);
+		const state = JSON.parse(readFileSync(join((pi.entries.at(-1)?.data.artifactDir)!, "workflow.json"), "utf8"));
+		const resumed = await createHarness();
+		await resumed.tools.get("resume_workflow").execute("resume", { run: state.id }, undefined, undefined, ctx(resumed));
+		expect(resumed.sent.at(-1)?.text).toMatch(/Resume the loop.*commentator/i);
 	});
 
 	it("loop: clean commentator review writes loop-complete.md and advances to audit", async () => {
@@ -714,8 +783,14 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		);
 		expect(existsSync(join(dir, "loop-complete.md"))).toBe(false);
 		expect(pi.entries.at(-1)?.data.phase).toBe("loop");
+		const state = JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"));
+		expect(state.loopState).toMatchObject({ reviewRound: 1, stage: "building", reviewPath: "loop-review-1.md" });
+		expect(readFileSync(join(dir, "loop-review-1.md"), "utf8")).toMatch(/blocking/);
 		expect(pi.sent.at(-1)?.text).toMatch(/builder/i);
 		expect(pi.sent.at(-1)?.text).toMatch(/fix/i);
+		const resumed = await createHarness();
+		await resumed.tools.get("resume_workflow").execute("resume", { run: state.id }, undefined, undefined, ctx(resumed));
+		expect(resumed.sent.at(-1)?.text).toMatch(/loop-review-1\.md/);
 	});
 
 	it("loop: max iterations without a clean review notifies and does not advance", async () => {
@@ -779,8 +854,8 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(res.details.blocked).toBe(true);
 		expect(res.details.reason).toMatch(/WORKFLOW_PLAN_STATUS: ready/);
 		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
-		// adapter queued a followUp telling the model which marker is missing
-		expect(pi.sent.at(-1)?.text).toMatch(/WORKFLOW_PLAN_STATUS: ready/);
+		// The tool result itself surfaces the marker; no autonomous repair turn is queued.
+		expect(pi.sent).toHaveLength(0);
 	});
 
 	it("write_workflow_artifact can recover after a gated artifact was written without its marker", async () => {

@@ -12,7 +12,8 @@ import type {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { basename, isAbsolute, resolve } from "node:path";
 
 import {
   WorkflowStateMachine,
@@ -22,30 +23,25 @@ import {
   type WorkflowEntry,
   type FooterState,
   type Phase,
+  type WorkflowSnapshot,
 } from "./state-machine.ts";
+import {
+  WORKFLOW_STATE_FILENAME,
+  type LoopState,
+  type PersistedWorkflowRun,
+  type WorkflowModes,
+  listResumableWorkflowRuns,
+  resolveWorkflowRun,
+  saveWorkflowRun,
+} from "./run-state.ts";
 import { MARKERS } from "./validators.ts";
 
-function slugify(s: string): string {
-  const slug = s
-    .toLowerCase()
-    // ponytail: u-flag so Unicode chars (Chinese, emoji, etc.) are also
-    // treated as non-alphanumeric and replaced with dashes — without /u,
-    // JS’s \W shorthand only matches ASCII, leaving Unicode in paths
-    // which confuses agents and tools.
-    .replace(/[^a-z0-9]+/ug, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-  return slug || "workflow";
+function defaultArtifactPathFor(_goal: string, base: string): string {
+  return resolve(base, randomUUID());
 }
 
-function timestamp(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-}
-
-function defaultArtifactPathFor(goal: string, base: string): string {
-  return `${base}/${timestamp()}-${slugify(goal)}`;
+function artifactsBaseFor(config: WorkflowConfig): string {
+  return resolve(config.artifactsBase ?? "./.selesai/artifacts");
 }
 
 async function realFileExists(path: string): Promise<boolean> {
@@ -157,8 +153,8 @@ function forceSubagentOutputToArtifactDir(
 }
 
 export interface WorkflowAdapterOptions {
-  toolNames: { start: string; end: string };
-  toolLabels: { start: string; end: string };
+  toolNames: { start: string; resume: string; end: string };
+  toolLabels: { start: string; resume: string; end: string };
   commandName: string;
   commandDescription: string;
 }
@@ -168,24 +164,12 @@ interface WorkflowController {
   config: WorkflowConfig;
   sm: WorkflowStateMachine;
   deps: WorkflowDeps;
-  // ponytail: Plan 3 — engine-owned loop state. Lives on the controller, not
-  // the state machine: the SM only cares "does loop-complete.md exist →
-  // advance"; the adapter owns iteration counting + marker parsing + driving
-  // the next subagent call. Cleared when the phase leaves "loop".
-  // Ceiling: not persisted across session restart — a restart re-runs the
-  // loop from round 0. Acceptable for a prototype workflow.
+  // The state machine stays pure; the adapter persists this orchestration
+  // detail alongside the state-machine snapshot.
   loopState?: LoopState;
+  run?: PersistedWorkflowRun;
   seenToolCallIds: Set<string>;
   lastBlockedKey?: string;
-}
-
-// ponytail: Plan 3 — loop orchestration state. The parent model does not
-// remember iterations; the adapter counts review rounds, parses the
-// commentator's WORKFLOW_REVIEW_STATUS marker, and drives the next step.
-interface LoopState {
-  reviewRound: number;
-  maxIterations: number;
-  stage: "building" | "reviewing" | "clean" | "maxed";
 }
 
 const WORKFLOW_ARTIFACT_TOOL = "write_workflow_artifact";
@@ -208,6 +192,125 @@ export function __resetWorkflowRegistryForTests(): void {
 
 function activeControllersFor(pi: ExtensionAPI): WorkflowController[] {
   return registry.controllers.filter((c) => c.pi === pi && c.sm.snapshot.active);
+}
+
+function modesFor(config: WorkflowConfig): WorkflowModes {
+  return { [config.mode]: config.phases };
+}
+
+function snapshotRun(controller: WorkflowController): PersistedWorkflowRun {
+  if (!controller.run) throw new Error("No workflow run is attached.");
+  const snapshot = controller.sm.snapshot;
+  return {
+    ...controller.run,
+    status: snapshot.active ? "active" : "completed",
+    goal: snapshot.userPrompt,
+    artifactDir: snapshot.artifactDir,
+    phase: snapshot.phase,
+    autoArmed: snapshot.autoArmed,
+    loopState: controller.loopState,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function persistRun(controller: WorkflowController): Promise<void> {
+  const run = snapshotRun(controller);
+  await saveWorkflowRun(run);
+  controller.run = run;
+}
+
+interface ControllerCheckpoint {
+  snapshot: WorkflowSnapshot;
+  loopState?: LoopState;
+  run?: PersistedWorkflowRun;
+}
+
+function checkpoint(controller: WorkflowController): ControllerCheckpoint {
+  return {
+    snapshot: controller.sm.snapshot,
+    loopState: controller.loopState && { ...controller.loopState },
+    run: controller.run && { ...controller.run, loopState: controller.run.loopState && { ...controller.run.loopState } },
+  };
+}
+
+function restoreCheckpoint(controller: WorkflowController, before: ControllerCheckpoint): void {
+  controller.sm.rehydrate(before.snapshot);
+  controller.loopState = before.loopState;
+  controller.run = before.run;
+}
+
+async function persistAfter(controller: WorkflowController, before: ControllerCheckpoint): Promise<void> {
+  try {
+    await persistRun(controller);
+  } catch (error) {
+    restoreCheckpoint(controller, before);
+    throw error;
+  }
+}
+
+async function resumeController(
+  controller: WorkflowController,
+  ctx: ExtensionContext,
+  selector: string,
+  endTool: string,
+): Promise<any> {
+  const { pi, config, sm } = controller;
+  if (activeControllersFor(pi).length) {
+    return { content: [{ type: "text", text: "A workflow is already active. End it before resuming another run." }], details: { alreadyActive: true } };
+  }
+  let selected;
+  try {
+    selected = await resolveWorkflowRun(selector, artifactsBaseFor(config), modesFor(config));
+    if (selected.run.status !== "active") throw new Error("Completed workflow runs cannot be resumed.");
+    if (selected.run.mode !== config.mode) throw new Error(`This is a ${selected.run.mode} run, not ${config.mode}.`);
+  } catch (error) {
+    return { content: [{ type: "text", text: `Cannot resume workflow: ${error instanceof Error ? error.message : String(error)}` }], details: { rejected: true } };
+  }
+  const before = checkpoint(controller);
+  sm.rehydrate({ active: true, phase: selected.run.phase, userPrompt: selected.run.goal, artifactDir: selected.run.artifactDir, autoArmed: selected.run.autoArmed });
+  controller.run = selected.run;
+  controller.loopState = selected.run.loopState;
+  controller.seenToolCallIds.clear();
+  controller.lastBlockedKey = undefined;
+  try {
+    await persistAfter(controller, before);
+    const reconcileBefore = checkpoint(controller);
+    const reconciled = await sm.onArtifactMaybe(controller.deps);
+    await persistAfter(controller, reconcileBefore);
+    const current = sm.continueCurrent();
+    const terminal = config.phases[config.phases.length - 1];
+    const terminalReady = reconciled.kind === "terminalReady" || (sm.snapshot.phase === terminal && !sm.snapshot.autoArmed);
+    if (terminalReady) {
+      if (current.kind === "advanced") {
+        applyFooter(ctx, current.footer);
+        applyEntry(pi, config, current.entry, controller.run);
+      }
+      continueAgent(pi, ctx, `Workflow is terminal-ready. Verify ${sm.snapshot.artifactDir} and call ${endTool} to complete it.`);
+    } else if (sm.snapshot.phase === "loop" && controller.loopState?.stage === "maxed") {
+      if (current.kind === "advanced") {
+        applyFooter(ctx, current.footer);
+        applyEntry(pi, config, current.entry, controller.run);
+      }
+      ctx.ui.notify(`Workflow loop is paused after ${controller.loopState.reviewRound}/${controller.loopState.maxIterations} blocking review rounds. Inspect ${sm.snapshot.artifactDir}/${controller.loopState.reviewPath ?? "loop-review-<round>.md"} before continuing.`, "warning");
+    } else if (sm.snapshot.phase === "loop" && controller.loopState) {
+      if (current.kind === "advanced") {
+        applyFooter(ctx, current.footer);
+        applyEntry(pi, config, current.entry, controller.run);
+      }
+      const ls = controller.loopState;
+      continueAgent(pi, ctx, ls.stage === "reviewing"
+        ? `Resume the loop at review round ${ls.reviewRound + 1}: call the subagent tool now with { agent: "commentator", task: "..." } to review the builder's uncommitted diff against ${sm.snapshot.artifactDir}/plan.md. End the review with WORKFLOW_REVIEW_STATUS: clean or WORKFLOW_REVIEW_STATUS: blocking.`
+        : `Resume the loop at review round ${ls.reviewRound}: call the subagent tool now with { agent: "builder", task: "..." } to address the feedback in ${sm.snapshot.artifactDir}/${ls.reviewPath ?? "loop-review-<round>.md"}.`);
+    } else {
+      applyControllerEffect(controller, ctx, current);
+    }
+  } catch (error) {
+    return { content: [{ type: "text", text: `Cannot resume workflow: state could not be persisted: ${error instanceof Error ? error.message : String(error)}` }], details: { persistenceError: true } };
+  }
+  return {
+    content: [{ type: "text", text: `Resumed ${config.mode} workflow ${controller.run!.id} at ${sm.snapshot.phase}. Artifacts: ${selected.statePath}` }],
+    details: { runId: controller.run!.id, statePath: selected.statePath, phase: sm.snapshot.phase },
+  };
 }
 
 // ponytail: builds the deps bundle the adapter injects into the state machine.
@@ -276,8 +379,11 @@ function footerText(footer: FooterState, ctx: ExtensionContext): string | undefi
   return ctx.ui.theme.fg("warning", footer.text);
 }
 
-function applyEntry(pi: ExtensionAPI, config: WorkflowConfig, entry: WorkflowEntry): void {
-  pi.appendEntry(config.entryType, entry);
+function applyEntry(pi: ExtensionAPI, config: WorkflowConfig, entry: WorkflowEntry, run?: PersistedWorkflowRun): void {
+  pi.appendEntry(config.entryType, {
+    ...entry,
+    ...(run ? { workflowStatePath: resolve(run.artifactDir, WORKFLOW_STATE_FILENAME), runId: run.id } : {}),
+  });
 }
 
 function applyFooter(ctx: ExtensionContext, footer: FooterState): void {
@@ -304,16 +410,18 @@ function applyEffect(
   ctx: ExtensionContext,
   config: WorkflowConfig,
   eff: WorkflowEffect,
+  run?: PersistedWorkflowRun,
+  queuePrompt = true,
 ): void {
   switch (eff.kind) {
     case "started":
     case "advanced":
-      if ("entry" in eff) applyEntry(pi, config, eff.entry);
+      if ("entry" in eff) applyEntry(pi, config, eff.entry, run);
       if ("footer" in eff) applyFooter(ctx, eff.footer);
-      if (eff.prompt) continueAgent(pi, ctx, eff.prompt);
+      if (queuePrompt && eff.prompt) continueAgent(pi, ctx, eff.prompt);
       return;
     case "closed":
-      if ("entry" in eff) applyEntry(pi, config, eff.entry);
+      if ("entry" in eff) applyEntry(pi, config, eff.entry, run);
       if ("footer" in eff) applyFooter(ctx, eff.footer);
       ctx.ui.notify(
         `${config.footerLabel} workflow complete. Artifacts: ${eff.artifactDir}`,
@@ -321,17 +429,16 @@ function applyEffect(
       );
       return;
     case "terminalNeedsArtifacts":
-      if (eff.promptToQueue) continueAgent(pi, ctx, eff.promptToQueue);
+      if (queuePrompt && eff.promptToQueue) continueAgent(pi, ctx, eff.promptToQueue);
       return;
     case "blocked":
-      // ponytail: Plan 4 — surface the semantic reason so a subagent-driven
-      // phase (plan/handoff/audit) learns which marker is missing instead of
-      // the workflow appearing to stall after the artifact was written.
-      if (eff.reason) {
+      if (queuePrompt && eff.reason) {
         continueAgent(pi, ctx, `Phase ${eff.phase} artifact exists but is not approved: ${eff.reason}. Edit it via write_workflow_artifact to add the required marker, then the workflow will advance.`);
       }
       return;
     case "terminalReady":
+      if (queuePrompt) continueAgent(pi, ctx, `Terminal artifacts are ready. Call the explicit end workflow tool to complete this run.`);
+      return;
     case "endBlocked":
     case "idle":
     case "noOp":
@@ -349,6 +456,7 @@ function applyControllerEffect(
   controller: WorkflowController,
   ctx: ExtensionContext,
   eff: WorkflowEffect,
+  options: { queuePrompt?: boolean } = {},
 ): void {
   const blockedKey = blockedKeyFor(eff);
   if (blockedKey) {
@@ -357,11 +465,23 @@ function applyControllerEffect(
   } else if (eff.kind !== "noOp") {
     controller.lastBlockedKey = undefined;
   }
-  applyEffect(controller.pi, ctx, controller.config, eff);
+  applyEffect(controller.pi, ctx, controller.config, eff, controller.run, options.queuePrompt);
 }
 
 function isSubagentManagementAction(input: Record<string, unknown> | undefined): boolean {
   return typeof input?.action === "string";
+}
+
+function commandHelp(config: WorkflowConfig, options: WorkflowAdapterOptions): string {
+  const command = `/${options.commandName}`;
+  return [
+    `${config.footerLabel} workflow`,
+    `${command} <goal> — start a new durable run.`,
+    `${command} resume — list resumable runs.`,
+    `${command} resume <run-id|artifact-dir|workflow.json> — explicitly resume one.`,
+    `Phases advance when their artifacts are written. Runs never auto-resume after reload.`,
+    `Only one run may be attached; ${options.toolNames.end} explicitly completes a terminal-ready run.`,
+  ].join("\n");
 }
 
 function registerSharedArtifactWriter(pi: ExtensionAPI): void {
@@ -399,17 +519,35 @@ function registerSharedArtifactWriter(pi: ExtensionAPI): void {
       const path = resolve(snap.artifactDir, file);
       await mkdir(snap.artifactDir, { recursive: true });
       await writeFile(path, params.content, "utf8");
-      const eff = await controller.sm.onArtifactMaybe(controller.deps);
-      applyControllerEffect(controller, ctx, eff);
+      const before = checkpoint(controller);
+      let eff: WorkflowEffect;
+      try {
+        eff = await controller.sm.onArtifactMaybe(controller.deps);
+        await persistAfter(controller, before);
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: `Wrote ${path}, but could not persist workflow state: ${error instanceof Error ? error.message : String(error)}` }],
+          details: { mode: controller.config.mode, phase: snap.phase, path, persistenceError: true },
+        };
+      }
+      // A phase boundary is user-controlled: persist and show the new phase,
+      // but do not inject a follow-up turn that immediately starts it.
+      applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
       if (eff.kind === "blocked" && eff.reason) {
         return {
           content: [{ type: "text", text: `Wrote ${path}, but it is not approved: ${eff.reason}. Re-write it via write_workflow_artifact to add the required marker.` }],
           details: { mode: controller.config.mode, phase: snap.phase, path, file, blocked: true, reason: eff.reason },
         };
       }
+      const advanced = eff.kind === "advanced";
       return {
-        content: [{ type: "text", text: `Wrote ${path}.` }],
-        details: { mode: controller.config.mode, phase: snap.phase, path, file },
+        content: [{ type: "text", text: advanced
+          ? `Wrote ${path}. Phase advanced to ${eff.phase}; wait for the user to continue the workflow.`
+          : `Wrote ${path}.` }],
+        details: { mode: controller.config.mode, phase: snap.phase, path, file, advanced },
+        // Stop the parent turn at a user-approved artifact boundary. Without
+        // this, the queued phase prompt can immediately launch the next agent.
+        terminate: advanced,
       };
     },
     renderResult(result, _options, theme) {
@@ -439,7 +577,7 @@ export function createWorkflowExtension(
     const controller: WorkflowController = { pi, config, sm, deps, seenToolCallIds: new Set() };
     registry.controllers.push(controller);
     registerSharedArtifactWriter(pi);
-    const { start, end } = options.toolNames;
+    const { start, resume, end } = options.toolNames;
     const { mode, footerLabel } = config;
 
     // ── start tool ──
@@ -465,12 +603,35 @@ export function createWorkflowExtension(
             details: { phase: other.sm.snapshot.phase, alreadyActive: true },
           };
         }
+        const before = checkpoint(controller);
         const eff = await sm.start(params.goal, deps);
         if (eff.kind === "started") {
+          controller.run = {
+            version: 1,
+            id: basename(sm.snapshot.artifactDir),
+            mode,
+            status: "active",
+            goal: sm.snapshot.userPrompt,
+            artifactDir: sm.snapshot.artifactDir,
+            phase: sm.snapshot.phase,
+            autoArmed: sm.snapshot.autoArmed,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          try {
+            await persistAfter(controller, before);
+          } catch (error) {
+            return {
+              content: [{ type: "text", text: `Could not start durable workflow: ${error instanceof Error ? error.message : String(error)}` }],
+              details: { persistenceError: true },
+            };
+          }
           controller.seenToolCallIds.clear();
           controller.lastBlockedKey = undefined;
         }
-        applyControllerEffect(controller, ctx, eff);
+        // The start tool result already contains the grilling prompt. Queueing
+        // it again creates a duplicate autonomous turn.
+        applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
         if (eff.kind === "alreadyActive") {
           return {
             content: [
@@ -498,6 +659,27 @@ export function createWorkflowExtension(
       },
     } satisfies ToolDefinition);
 
+    // ── explicit resume tool ──
+    pi.registerTool({
+      name: resume,
+      label: options.toolLabels.resume,
+      description: `Resume an explicitly selected ${mode} workflow run. Pass a run id, artifact directory, or workflow.json path.`,
+      promptSnippet: `${resume}(run) - resume an explicit ${mode} workflow run; run is its id, artifact directory, or workflow.json path.`,
+      promptGuidelines: [
+        `Call ${resume} only when the user explicitly selects a ${mode} workflow run.`,
+        "Workflow runs never resume automatically after reload.",
+      ],
+      parameters: Type.Object({ run: Type.String({ description: "Run id, artifact directory, or workflow.json path." }) }),
+      async execute(_id, params, _signal, _onUpdate, ctx) {
+        return resumeController(controller, ctx, params.run, end);
+      },
+      renderResult(result, _options, theme) {
+        const d = result.details as { rejected?: boolean; persistenceError?: boolean; phase?: string };
+        const failed = d.rejected || d.persistenceError;
+        return new Text(theme.fg(failed ? "warning" : "success", failed ? "○ workflow resume rejected" : `✓ workflow resumed · ${d.phase}`), 0, 0);
+      },
+    } satisfies ToolDefinition);
+
     // ── end tool ──
     pi.registerTool({
       name: end,
@@ -509,7 +691,18 @@ export function createWorkflowExtension(
       ],
       parameters: Type.Object({}),
       async execute(_id, _params, _signal, _onUpdate, ctx) {
+        const before = checkpoint(controller);
         const eff = await sm.end(deps);
+        if (eff.kind === "closed") {
+          try {
+            await persistAfter(controller, before);
+          } catch (error) {
+            return {
+              content: [{ type: "text", text: `Cannot end: workflow state could not be persisted: ${error instanceof Error ? error.message : String(error)}` }],
+              details: { persistenceError: true },
+            };
+          }
+        }
         applyControllerEffect(controller, ctx, eff);
         if (eff.kind === "closed") {
           controller.seenToolCallIds.clear();
@@ -563,43 +756,26 @@ export function createWorkflowExtension(
       },
     } satisfies ToolDefinition);
 
-    // ── session_start: restore state from persisted entries ──
+    // ── session_start: disk state is never auto-attached. A session entry is
+    // merely a convenience pointer for rendering a stale-but-useful footer. ──
     pi.on("session_start", async (_event: any, ctx: ExtensionContext) => {
       const entries = ctx.sessionManager.getEntries();
       for (let i = entries.length - 1; i >= 0; i--) {
-        const e = entries[i] as { type: string; customType?: string; data?: any };
-        if (e.type === "custom" && e.customType === config.entryType && e.data) {
-          if (e.data.done) {
-            sm.rehydrate({
-              active: false,
-              phase: e.data.phase as Phase,
-              userPrompt: e.data.userPrompt ?? "",
-              artifactDir: e.data.artifactDir ?? "",
-              autoArmed: false,
-            });
-          } else {
-            sm.rehydrate({
-              active: true,
-              phase: e.data.phase as Phase,
-              userPrompt: e.data.userPrompt ?? "",
-              artifactDir: e.data.artifactDir ?? "",
-              autoArmed: true,
-            });
+        const entry = entries[i] as { type: string; customType?: string; data?: any };
+        const data = entry.data;
+        if (entry.type !== "custom" || entry.customType !== config.entryType || !data || data.mode !== mode || typeof data.workflowStatePath !== "string") continue;
+        try {
+          const { run } = await resolveWorkflowRun(data.workflowStatePath, artifactsBaseFor(config), modesFor(config));
+          if (run.status === "active") {
+            ctx.ui.setStatus(config.statusKey, ctx.ui.theme.fg(
+              "warning",
+              `● ${config.footerLabel} · ${config.phases.indexOf(run.phase) + 1}/${config.phases.length} ${run.phase} (resume required)`,
+            ));
           }
-          // ponytail: re-render footer from snapshot without advancing.
-          if (sm.snapshot.active) {
-            ctx.ui.setStatus(
-              config.statusKey,
-              ctx.ui.theme.fg(
-                "warning",
-                `● ${config.footerLabel} · ${config.phases.indexOf(sm.snapshot.phase) + 1}/${config.phases.length} ${sm.snapshot.phase}`,
-              ),
-            );
-          } else {
-            ctx.ui.setStatus(config.statusKey, undefined);
-          }
-          break;
+        } catch {
+          // Old/custom entries are intentionally non-authoritative.
         }
+        break;
       }
     });
 
@@ -649,6 +825,7 @@ export function createWorkflowExtension(
     // ── tool_result: auto-advance after subagent/bash artifacts. ──
     pi.on("tool_result", async (event: any, ctx: ExtensionContext) => {
       if (event.toolName !== "bash" && event.toolName !== "subagent") return;
+      const eventBefore = checkpoint(controller);
       if (sm.snapshot.active && typeof event.toolCallId === "string") {
         if (controller.seenToolCallIds.has(event.toolCallId)) return;
         controller.seenToolCallIds.add(event.toolCallId);
@@ -660,7 +837,13 @@ export function createWorkflowExtension(
       if (event.isError && sm.snapshot.active) {
         if (event.toolName === "subagent" && isSubagentManagementAction(event.input)) return;
         const eff = await sm.onArtifactMaybe(deps);
-        applyControllerEffect(controller, ctx, eff);
+        try {
+          await persistAfter(controller, eventBefore);
+        } catch (error) {
+          ctx.ui.notify(`Workflow state was not saved: ${error instanceof Error ? error.message : String(error)}`, "warning");
+          return;
+        }
+        applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
         if (eff.kind === "noOp") {
           const retry = sm.continueCurrent();
           continueAgent(
@@ -719,6 +902,7 @@ export function createWorkflowExtension(
       // model is expected to act on. If the model deviates, the loop stalls
       // until the next tool_result nudges again. loopState is cleared when the
       // phase leaves "loop" (below).
+      let loopPrompt: string | undefined;
       if (event.toolName === "subagent" && sm.snapshot.active && sm.snapshot.phase === "loop") {
         const dir = sm.snapshot.artifactDir;
         const maxIt = config.loopMaxIterations ?? 3;
@@ -731,13 +915,21 @@ export function createWorkflowExtension(
         if (agent === "builder") {
           // Build step done → drive the commentator review.
           ls.stage = "reviewing";
-          continueAgent(pi, ctx, `Builder finished. Call the subagent tool now with { agent: "commentator", task: "..." } to review the builder's uncommitted diff against ${dir}/plan.md. Craft the review task yourself based on what matters for this task. End the review with exactly one line on its own:
+          loopPrompt = `Builder finished. Call the subagent tool now with { agent: "commentator", task: "..." } to review the builder's uncommitted diff against ${dir}/plan.md. Craft the review task yourself based on what matters for this task. End the review with exactly one line on its own:
   WORKFLOW_REVIEW_STATUS: clean
 or
-  WORKFLOW_REVIEW_STATUS: blocking`);
+  WORKFLOW_REVIEW_STATUS: blocking`; 
         } else if (agent === "commentator") {
-          ls.reviewRound += 1;
-          const status = parseLoopReviewStatus(textFromToolResultContent(event.content));
+          const reviewRound = ls.reviewRound + 1;
+          const reviewText = textFromToolResultContent(event.content);
+          if (reviewText) {
+            const reviewPath = `loop-review-${reviewRound}.md`;
+            await mkdir(dir, { recursive: true });
+            await writeFile(resolve(dir, reviewPath), reviewText, "utf8");
+            ls.reviewPath = reviewPath;
+          }
+          ls.reviewRound = reviewRound;
+          const status = parseLoopReviewStatus(reviewText);
           if (status === "clean") {
             ls.stage = "clean";
             await mkdir(dir, { recursive: true });
@@ -761,29 +953,73 @@ or
             const reason = status === "blocking"
               ? "the blocking issues listed in the review"
               : "the review (no WORKFLOW_REVIEW_STATUS: clean|blocking marker was found)";
-            continueAgent(pi, ctx, `Review round ${ls.reviewRound} was blocking. Call the subagent tool now with { agent: "builder", task: "..." } to fix ${reason}. Give the builder the review feedback and the relevant artifact paths. After the builder returns, the workflow will drive the next review automatically.`);
+            loopPrompt = `Review round ${ls.reviewRound} was blocking. Call the subagent tool now with { agent: "builder", task: "..." } to fix ${reason}. Give the builder the feedback in ${dir}/${ls.reviewPath ?? `loop-review-${ls.reviewRound}.md`} and the relevant artifact paths. After the builder returns, the workflow will drive the next review automatically.`;
           }
         }
         // Non-builder/commentator subagent calls in loop fall through to
         // onArtifactMaybe (a no-op unless loop-complete.md exists).
       }
       const eff = await sm.onArtifactMaybe(deps);
-      applyControllerEffect(controller, ctx, eff);
       // Clear loop state once we have left the loop phase (advanced to audit).
       if (sm.snapshot.phase !== "loop") {
         controller.loopState = undefined;
       }
+      try {
+        await persistAfter(controller, eventBefore);
+      } catch (error) {
+        ctx.ui.notify(`Workflow state was not saved: ${error instanceof Error ? error.message : String(error)}`, "warning");
+        return;
+      }
+      // Do not turn an artifact/subagent result into a new parent turn.
+      // The user resumes the next phase deliberately via the workflow command.
+      applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
+      if (loopPrompt && sm.snapshot.active) continueAgent(pi, ctx, loopPrompt);
     });
 
     // ── /<command> ──
     pi.registerCommand(options.commandName, {
       description: options.commandDescription,
       handler: async (args: string, ctx: ExtensionCommandContext) => {
+        const trimmed = args.trim();
+        if (trimmed === "help") {
+          ctx.ui.notify(commandHelp(config, options), "info");
+          return;
+        }
         if (!ctx.isIdle()) {
           ctx.ui.notify(
             `Agent is busy. Wait for it to finish before calling /${options.commandName}.`,
             "warning",
           );
+          return;
+        }
+
+        if (trimmed === "resume" || trimmed.startsWith("resume ")) {
+          if (sm.snapshot.active) {
+            ctx.ui.notify("A workflow is already active. End it before resuming another run.", "warning");
+            return;
+          }
+          const selector = trimmed.slice("resume".length).trim();
+          if (!selector) {
+            const runs = await listResumableWorkflowRuns(artifactsBaseFor(config), modesFor(config));
+            if (!runs.length) {
+              ctx.ui.notify(`No resumable ${mode} workflows found.`, "info");
+              return;
+            }
+            if (!ctx.hasUI) {
+              ctx.ui.notify(runs.map(({ run }) => `/${options.commandName} resume ${run.id}  # ${run.phase}, ${run.goal}, ${run.updatedAt}`).join("\n"), "info");
+              return;
+            }
+            const labels = runs.map(({ run }) => `${run.id} · ${run.phase} · ${run.goal} · ${run.updatedAt}`);
+            const choice = await ctx.ui.select(`Resume ${mode} workflow`, labels);
+            if (choice === undefined) return;
+            const index = labels.indexOf(choice);
+            if (index < 0) return;
+            const result = await resumeController(controller, ctx, runs[index]!.run.id, end);
+            ctx.ui.notify(result.content[0].text, result.details.rejected || result.details.persistenceError ? "warning" : "info");
+            return;
+          }
+          const result = await resumeController(controller, ctx, selector, end);
+          ctx.ui.notify(result.content[0].text, result.details.rejected || result.details.persistenceError ? "warning" : "info");
           return;
         }
 
@@ -801,7 +1037,8 @@ or
           if (choice === undefined) return;
           if (choice.startsWith("Continue")) {
             const eff = sm.continueCurrent();
-            applyControllerEffect(controller, ctx, eff);
+            // The explicit Continue action below sends exactly one prompt.
+            applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
             if (eff.kind === "advanced" && eff.prompt) {
               // continueCurrent already applied footer+entry; send the prompt.
               continueAgent(pi, ctx, eff.prompt);
@@ -820,12 +1057,14 @@ or
           }
           const closed = sm.closeCurrent();
           if (closed) {
-            applyEntry(pi, config, closed);
-            ctx.ui.notify(`Closed ${mode} workflow at ${closed.artifactDir}.`, "info");
+            // Detach only: the on-disk active record remains resumable. Only
+            // end_*_workflow writes status: completed.
+            applyEntry(pi, config, { ...closed, done: false }, controller.run);
+            ctx.ui.notify(`Detached ${mode} workflow at ${closed.artifactDir}; it remains resumable.`, "info");
           }
           args = goal;
         } else if (!args.trim()) {
-          ctx.ui.notify(`Usage: /${options.commandName} <what to build>`, "warning");
+          ctx.ui.notify(commandHelp(config, options), "info");
           return;
         }
 
@@ -837,8 +1076,27 @@ or
           );
           return;
         }
+        const before = checkpoint(controller);
         const eff = await sm.start(args, deps);
         if (eff.kind === "started") {
+          controller.run = {
+            version: 1,
+            id: basename(sm.snapshot.artifactDir),
+            mode,
+            status: "active",
+            goal: sm.snapshot.userPrompt,
+            artifactDir: sm.snapshot.artifactDir,
+            phase: sm.snapshot.phase,
+            autoArmed: sm.snapshot.autoArmed,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          try {
+            await persistAfter(controller, before);
+          } catch (error) {
+            ctx.ui.notify(`Could not start durable workflow: ${error instanceof Error ? error.message : String(error)}`, "warning");
+            return;
+          }
           controller.seenToolCallIds.clear();
           controller.lastBlockedKey = undefined;
         }

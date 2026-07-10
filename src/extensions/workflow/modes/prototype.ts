@@ -137,7 +137,7 @@ Review uncommitted changes for correctness, plan adherence, and over-engineering
 2. If ${artifactDir}/review.md lists actionable issues, call the subagent tool with { agent: "builder", task: "..." } (do NOT pass a model parameter). Instruct it to fix every issue in the workspace, never in ${artifactDir}.
 3. Re-dispatch the commentator until ${artifactDir}/review.md ends with WORKFLOW_REVIEW_STATUS: clean.
 
-The workflow closes only once ${artifactDir}/review.md exists AND ends with the WORKFLOW_REVIEW_STATUS: clean marker.`,
+Once ${artifactDir}/review.md exists and ends with the WORKFLOW_REVIEW_STATUS: clean marker, call end_workflow to complete the workflow.`,
 };
 
 const config: WorkflowConfig = {
@@ -174,8 +174,8 @@ export const prototypeMode: WorkflowModeRegistration = {
   commandName: "prototype",
   commandDescription:
     "Run the prototype workflow (grill → research → plan → reuse → handoff → loop → audit)",
-  toolNames: { start: "start_workflow", end: "end_workflow" },
-  toolLabels: { start: "Start Workflow", end: "End Workflow" },
+  toolNames: { start: "start_workflow", resume: "resume_workflow", end: "end_workflow" },
+  toolLabels: { start: "Start Workflow", resume: "Resume Workflow", end: "End Workflow" },
 };
 
 export default prototypeMode;

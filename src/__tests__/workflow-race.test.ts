@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -76,15 +76,15 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		expect(h.sent[0].text).toMatch(/GRILLING phase/i);
 	});
 
-	it("hook advances grilling→plan when requirements.md is written and queues the plan prompt", async () => {
+	it("artifact completion advances grilling→plan without queuing the plan agent", async () => {
 		const h = await createQuickHarness();
 		await h.tools.get("start_quick_workflow").execute(
 			"id-1", { goal: "build X" }, undefined, undefined, { ...h.ctxBase },
 		);
-		await h.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, { ...h.ctxBase });
+		const result = await h.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, { ...h.ctxBase });
 		expect(h.entries.at(-1)?.data.phase).toBe("plan");
-		expect(h.sent.at(-1)?.options?.deliverAs).toBe("followUp");
-		expect(h.sent.at(-1)?.text).toMatch(/PLAN phase/i);
+		expect(h.sent).toHaveLength(0);
+		expect(result.terminate).toBe(true);
 	});
 
 	it("tool_call blocks write while workflow is active", async () => {
@@ -117,10 +117,10 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 			{ type: "tool_result", toolName: "subagent", toolCallId: "t2", input: {}, content: [], isError: false }, c,
 		);
 		expect(h.entries.at(-1)?.data.phase).toBe("reuse");
-		expect(h.sent.at(-1)?.text).toMatch(/REUSE phase/i);
+		expect(h.sent).toHaveLength(0);
 	});
 
-	it("terminal closes once review.md lands", async () => {
+	it("terminal becomes ready once review.md lands and closes only on explicit end", async () => {
 		const h = await createQuickHarness();
 		const c = { ...h.ctxBase };
 		await h.tools.get("start_quick_workflow").execute(
@@ -139,6 +139,10 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 				{ type: "tool_result", toolName: f === "requirements.md" || f === "loop-complete.md" ? "bash" : "subagent", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false }, c,
 			);
 		}
+		expect(h.entries.at(-1)?.data.done).toBe(false);
+		const end = await h.tools.get("end_quick_workflow").execute("end", {}, undefined, undefined, c);
+		expect(end.terminate).toBe(true);
 		expect(h.entries.at(-1)?.data.done).toBe(true);
+		expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"))).toMatchObject({ status: "completed", phase: "audit" });
 	});
 });

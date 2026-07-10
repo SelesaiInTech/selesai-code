@@ -47,8 +47,8 @@ export interface WorkflowModeRegistration {
   config: WorkflowConfig;
   commandName: string;
   commandDescription: string;
-  toolNames: { start: string; end: string };
-  toolLabels: { start: string; end: string };
+  toolNames: { start: string; resume: string; end: string };
+  toolLabels: { start: string; resume: string; end: string };
 }
 
 export interface WorkflowConfig {
@@ -328,7 +328,7 @@ export class WorkflowStateMachine {
             kind: "terminalNeedsArtifacts",
             phase: this.phase,
             missing: file,
-            promptToQueue: `Terminal phase still needs ${this.artifactDir}/${file}. Write it, then the workflow closes automatically.`,
+            promptToQueue: `Terminal phase still needs ${this.artifactDir}/${file}. Write it, then call the explicit end workflow tool.`, 
           };
         }
         if (sat.reason) {
@@ -337,7 +337,7 @@ export class WorkflowStateMachine {
             phase: this.phase,
             missing: file,
             reason: sat.reason,
-            promptToQueue: `Terminal artifact ${this.artifactDir}/${file} is incomplete: ${sat.reason}. Fix it, then the workflow closes automatically.`,
+            promptToQueue: `Terminal artifact ${this.artifactDir}/${file} is incomplete: ${sat.reason}. Fix it, then call the explicit end workflow tool.`, 
           };
         }
       }
@@ -449,10 +449,6 @@ export class WorkflowStateMachine {
       }
       this.autoArmed = false;
       const out = await this.advancePhase(deps, true);
-      if (out.kind === "terminalReady") {
-        // ponytail: both close artifacts present — close directly.
-        return this.end(deps);
-      }
       if (out.kind === "terminalNeedsArtifacts") {
         // Keep listening: audit/review may land in separate writes.
         this.autoArmed = true;

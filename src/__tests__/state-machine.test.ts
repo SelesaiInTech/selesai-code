@@ -275,7 +275,7 @@ describe("WorkflowStateMachine terminal + end", () => {
     expect(eff.kind).toBe("terminalReady");
   });
 
-  it("auto-closes from onArtifactMaybe when both close artifacts are present", async () => {
+  it("becomes terminal-ready from onArtifactMaybe; only end closes it", async () => {
     const files = new Set<string>();
     const sm = new WorkflowStateMachine(baseConfig);
     await sm.start("build X", makeDeps(files));
@@ -286,8 +286,8 @@ describe("WorkflowStateMachine terminal + end", () => {
     }
     files.add(`${dir}/review.md`);
     const eff = await sm.onArtifactMaybe(makeDeps(files));
-    expect(eff.kind).toBe("closed");
-    expect(sm.snapshot.active).toBe(false);
+    expect(eff.kind).toBe("terminalReady");
+    expect(sm.snapshot.active).toBe(true);
   });
 
   it("end is blocked when not at terminal phase", async () => {
