@@ -1,15 +1,14 @@
 /**
  * /handoff-new — generate a handoff prompt and open a clean new session with
- * that content as the editable first prompt (editor text, not hidden system
+ * that content as the first unsent prompt (editor text, not hidden system
  * prompt). Sibling of examples/extensions/handoff.ts, adapted to this repo's
  * import conventions and reduced to the one thing that ships.
  *
  * Usage:
  *   /handoff-new continue implementing the workflow fix
- *   /handover-new ship plan 2
  *
- * If no goal argument is given, a default goal is used. The generated text is
- * shown in the editor for review before the user submits it.
+ * If no goal argument is given, a default goal is used. The new session opens
+ * with the generated text in its editor; the user can change it before submit.
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -17,14 +16,15 @@ import { complete, type Context } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@selesai/code";
 import { BorderedLoader, convertToLlm, serializeConversation } from "@selesai/code";
 
-const SYSTEM_PROMPT = `You are a context transfer assistant. Given a conversation history and the user's goal for a new thread, generate a focused prompt that:
+const SYSTEM_PROMPT = `Write a handoff document summarising the current conversation so a fresh agent can continue the work. Save to the temporary directory of the user's OS - not the current workspace.
 
-1. Summarizes relevant context from the conversation (decisions made, approaches taken, key findings)
-2. Lists any relevant files that were discussed or modified
-3. Clearly states the next task based on the user's goal
-4. Is self-contained - the new thread should be able to proceed without the old conversation
+Include a "suggested skills" section in the document, which suggests skills that the agent should invoke.
 
-Format your response as a prompt the user can send to start the new thread. Be concise but include all necessary context. Do not include any preamble like "Here's the prompt" - just output the prompt itself.`;
+Do not duplicate content already captured in other artifacts (PRDs, plans, ADRs, issues, commits, diffs). Reference them by path or URL instead.
+
+Redact any sensitive information, such as API keys, passwords, or personally identifiable information.
+
+If the user passed arguments, treat them as a description of what the next session will focus on and tailor the doc accordingly.`;
 
 export const DEFAULT_GOAL = "Continue the previous session from this handoff.";
 
@@ -85,13 +85,10 @@ export function buildAiContext(conversationText: string, goal: string): Context 
 }
 
 export default function (pi: ExtensionAPI) {
-	// ponytail: single handler behind two command names; no separate config.
-	for (const name of ["handoff-new", "handover-new"]) {
-		pi.registerCommand(name, {
-			description: "Generate a handoff prompt and open a clean new session with it as the first draft",
-			handler: handoffNew,
-		});
-	}
+	pi.registerCommand("handoff-new", {
+		description: "Generate a handoff prompt and open a clean new session with it as the first draft",
+		handler: handoffNew,
+	});
 }
 
 async function handoffNew(args: string, ctx: ExtensionCommandContext) {
@@ -151,17 +148,11 @@ async function handoffNew(args: string, ctx: ExtensionCommandContext) {
 		return;
 	}
 
-	const editedPrompt = await ctx.ui.editor("Edit handoff prompt", result);
-	if (editedPrompt === undefined) {
-		ctx.ui.notify("Cancelled", "info");
-		return;
-	}
-
-	// Editor text, NOT a hidden system prompt: the user reviews and submits.
+	// Editor text, NOT a hidden system prompt: the user can edit before submit.
 	const newSessionResult = await ctx.newSession({
 		parentSession: currentSessionFile,
 		withSession: async (replacementCtx) => {
-			replacementCtx.ui.setEditorText(editedPrompt);
+			replacementCtx.ui.setEditorText(result);
 			replacementCtx.ui.notify("Handoff ready. Submit when ready.", "info");
 		},
 	});

@@ -28,11 +28,10 @@ function createPiHarness() {
 	return { commands };
 }
 
-test("registers both handoff-new and handover-new commands", () => {
+test("registers handoff-new only", () => {
 	const { commands } = createPiHarness();
 	assert.ok(commands.has("handoff-new"));
-	assert.ok(commands.has("handover-new"));
-	assert.equal(commands.get("handoff-new")?.handler, commands.get("handover-new")?.handler);
+	assert.equal(commands.has("handover-new"), false);
 });
 
 // ---- pure helpers ----
@@ -106,7 +105,6 @@ test("buildAiContext: embeds conversation + goal into one user turn", () => {
 function createCtx(opts: {
 	branch?: SessionEntry[];
 	model?: any;
-	editorResult?: string;
 	customResult?: string | null;
 	mode?: string;
 } = {}) {
@@ -130,7 +128,6 @@ function createCtx(opts: {
 		ui: {
 			notify: (msg: string, kind: string) => calls.notify.push({ msg, kind }),
 			custom: async <T>(_factory: any): Promise<T> => (opts.customResult === undefined ? "HANDOFF PROMPT" : opts.customResult) as unknown as T,
-			editor: async (_title: string, prefill?: string) => ("editorResult" in opts ? opts.editorResult : prefill),
 			setEditorText: (text: string) => {
 				calls.editorText = text;
 			},
@@ -191,14 +188,6 @@ test("empty conversation fails cleanly", async () => {
 test("custom null (cancelled) does not open new session", async () => {
 	const { commands } = createPiHarness();
 	const { ctx, calls } = createCtx({ customResult: null });
-	await commands.get("handoff-new")!.handler("goal", ctx);
-	assert.equal(calls.newSession, null);
-	assert.ok(calls.notify.some((n) => /Cancelled/.test(n.msg)));
-});
-
-test("editor cancel does not open new session", async () => {
-	const { commands } = createPiHarness();
-	const { ctx, calls } = createCtx({ editorResult: undefined });
 	await commands.get("handoff-new")!.handler("goal", ctx);
 	assert.equal(calls.newSession, null);
 	assert.ok(calls.notify.some((n) => /Cancelled/.test(n.msg)));
