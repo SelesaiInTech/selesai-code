@@ -7,6 +7,8 @@ export default defineConfig({
 		// vi.resetModules(), which is slow on first cold load (~8s). Bump the
 		// per-test ceiling so the adapter smoke tests don't time out.
 		testTimeout: 20000,
+		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
+		silent: "passed-only",
 	},
 	resolve: {
 		alias: {
