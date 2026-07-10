@@ -80,12 +80,15 @@ test("disabled caveman skips instruction injection", async () => {
   assert.equal(result, undefined);
 });
 
-test("session_start always ON even if persisted entry is OFF", async () => {
+test("session_start restores persisted OFF state", async () => {
   const { events } = createPiHarness();
   const ctx = createCommandContext({
     sessionManager: {
-      getEntries: () => [
+      getBranch: () => [
         { type: "custom", customType: "caveman-mode", data: { active: false } },
+      ],
+      getEntries: () => [
+        { type: "custom", customType: "caveman-mode", data: { active: true } },
       ],
     },
   });
@@ -93,10 +96,10 @@ test("session_start always ON even if persisted entry is OFF", async () => {
   await events.get("session_start")({ reason: "resume" }, ctx);
   const result = await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
 
-  assert.ok(result.systemPrompt.includes("CAVEMAN MODE ACTIVE"));
+  assert.equal(result, undefined);
 });
 
-test("off then new session_start resets to ON", async () => {
+test("session_start defaults to ON when no persisted entry exists", async () => {
   const { commands, events } = createPiHarness();
   const ctx = createCommandContext();
 
