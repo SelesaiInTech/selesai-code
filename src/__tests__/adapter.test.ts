@@ -24,6 +24,10 @@ function validContent(file: string): string {
   return VALID_CONTENT[file] ?? `# ${file}`;
 }
 
+function sentCount(pi: FakePi, needle: string): number {
+	return pi.sent.filter((m) => m.text.includes(needle)).length;
+}
+
 // ponytail: adapter smoke test — one per call site. Verifies the adapter
 // translates WorkflowEffect into pi calls (appendEntry, sendUserMessage,
 // setStatus). The transition logic itself is tested in state-machine.test.ts
@@ -411,6 +415,39 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(input.context).toBeUndefined();
 	});
 
+	// ── tool_result dedupe / narrowing regressions ──
+
+	it("same invalid plan artifact only queues one repair prompt", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+		await pi.tools.get("write_workflow_artifact").execute("w3", { content: "# draft plan" }, undefined, undefined, c);
+		expect(sentCount(pi, "WORKFLOW_PLAN_STATUS: ready")).toBe(2);
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "bash", toolCallId: "tc-unrelated-bash", input: { command: "echo hi" }, content: [{ type: "text", text: "ok" }], isError: false },
+			c,
+		);
+		expect(sentCount(pi, "WORKFLOW_PLAN_STATUS: ready")).toBe(2);
+	});
+
+	it("unrelated subagent error does not re-queue the current phase prompt", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+		expect(sentCount(pi, "You are in the PLAN phase")).toBe(1);
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc-list", input: { action: "list" }, content: [{ type: "text", text: "list failed" }], isError: true },
+			c,
+		);
+		expect(sentCount(pi, "You are in the PLAN phase")).toBe(1);
+	});
+
 	// ── subagent text fallback tests ──
 
 	it("subagent text fallback saves plan.md when subagent returns text but no file", async () => {
@@ -446,6 +483,23 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		);
 		expect(readFileSync(join(dir, "plan.md"), "utf8")).toBe(PLAN_OK);
 		expect(pi.entries.at(-1)?.data.phase).toBe("handoff");
+	});
+
+	it("subagent text fallback with no marker keeps plan.md absent and stays blocked once", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+		const dir = pi.entries.at(-1)!.data.artifactDir;
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc-invalid-plan", input: { agent: "architect" }, content: [{ type: "text", text: "# draft plan" }], isError: false },
+			c,
+		);
+		expect(existsSync(join(dir, "plan.md"))).toBe(false);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+		expect(sentCount(pi, "WORKFLOW_PLAN_STATUS: ready")).toBe(1);
 	});
 
 	it("subagent text fallback replaces an invalid gated artifact when later subagent output is valid", async () => {
@@ -568,7 +622,7 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
 	});
 
-	it("subagent execution call (with agent) still triggers text fallback in plan phase", async () => {
+	it("subagent execution call (with agent) still triggers valid text fallback in plan phase", async () => {
 		const pi = await createHarness();
 		const c = ctx(pi, true);
 		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
@@ -578,11 +632,11 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		const dir = pi.entries.at(-1)!.data.artifactDir;
 		// execution call: has agent, no action
 		await pi.events.get("tool_result")(
-			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: { agent: "architect" }, content: [{ type: "text", text: "# Plan for X" }], isError: false },
+			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: { agent: "architect" }, content: [{ type: "text", text: PLAN_OK }], isError: false },
 			c,
 		);
 		expect(existsSync(join(dir, "plan.md"))).toBe(true);
-		expect(readFileSync(join(dir, "plan.md"), "utf8")).toBe("# Plan for X");
+		expect(readFileSync(join(dir, "plan.md"), "utf8")).toBe(PLAN_OK);
 	});
 
 	// ── Plan 3: engine-owned loop orchestration ──
@@ -600,6 +654,21 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(pi.entries.at(-1)?.data.phase).toBe("loop");
 		return dir;
 	}
+
+	it("duplicate toolCallId is processed once", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await walkToLoop(pi, c);
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "dup-builder", input: { agent: "builder" }, content: [{ type: "text", text: "done" }], isError: false },
+			c,
+		);
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "dup-builder", input: { agent: "builder" }, content: [{ type: "text", text: "done again" }], isError: false },
+			c,
+		);
+		expect(sentCount(pi, 'Call the subagent tool now with { agent: "commentator"')).toBe(1);
+	});
 
 	it("loop: builder result drives the engine to prompt a commentator review", async () => {
 		const pi = await createHarness();

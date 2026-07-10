@@ -175,6 +175,8 @@ interface WorkflowController {
   // Ceiling: not persisted across session restart — a restart re-runs the
   // loop from round 0. Acceptable for a prototype workflow.
   loopState?: LoopState;
+  seenToolCallIds: Set<string>;
+  lastBlockedKey?: string;
 }
 
 // ponytail: Plan 3 — loop orchestration state. The parent model does not
@@ -338,6 +340,30 @@ function applyEffect(
   }
 }
 
+function blockedKeyFor(eff: WorkflowEffect): string | undefined {
+  if (eff.kind !== "blocked") return undefined;
+  return `${eff.phase}:${eff.missing}:${eff.reason ?? ""}`;
+}
+
+function applyControllerEffect(
+  controller: WorkflowController,
+  ctx: ExtensionContext,
+  eff: WorkflowEffect,
+): void {
+  const blockedKey = blockedKeyFor(eff);
+  if (blockedKey) {
+    if (controller.lastBlockedKey === blockedKey) return;
+    controller.lastBlockedKey = blockedKey;
+  } else if (eff.kind !== "noOp") {
+    controller.lastBlockedKey = undefined;
+  }
+  applyEffect(controller.pi, ctx, controller.config, eff);
+}
+
+function isSubagentManagementAction(input: Record<string, unknown> | undefined): boolean {
+  return typeof input?.action === "string";
+}
+
 function registerSharedArtifactWriter(pi: ExtensionAPI): void {
   if (registry.writerRegisteredFor.has(pi)) return;
   registry.writerRegisteredFor.add(pi);
@@ -374,7 +400,7 @@ function registerSharedArtifactWriter(pi: ExtensionAPI): void {
       await mkdir(snap.artifactDir, { recursive: true });
       await writeFile(path, params.content, "utf8");
       const eff = await controller.sm.onArtifactMaybe(controller.deps);
-      applyEffect(pi, ctx, controller.config, eff);
+      applyControllerEffect(controller, ctx, eff);
       if (eff.kind === "blocked" && eff.reason) {
         return {
           content: [{ type: "text", text: `Wrote ${path}, but it is not approved: ${eff.reason}. Re-write it via write_workflow_artifact to add the required marker.` }],
@@ -410,7 +436,7 @@ export function createWorkflowExtension(
       },
     ];
     const sm = new WorkflowStateMachine({ ...config, skipRules });
-    const controller: WorkflowController = { pi, config, sm, deps };
+    const controller: WorkflowController = { pi, config, sm, deps, seenToolCallIds: new Set() };
     registry.controllers.push(controller);
     registerSharedArtifactWriter(pi);
     const { start, end } = options.toolNames;
@@ -440,7 +466,11 @@ export function createWorkflowExtension(
           };
         }
         const eff = await sm.start(params.goal, deps);
-        applyEffect(pi, ctx, config, eff);
+        if (eff.kind === "started") {
+          controller.seenToolCallIds.clear();
+          controller.lastBlockedKey = undefined;
+        }
+        applyControllerEffect(controller, ctx, eff);
         if (eff.kind === "alreadyActive") {
           return {
             content: [
@@ -480,7 +510,11 @@ export function createWorkflowExtension(
       parameters: Type.Object({}),
       async execute(_id, _params, _signal, _onUpdate, ctx) {
         const eff = await sm.end(deps);
-        applyEffect(pi, ctx, config, eff);
+        applyControllerEffect(controller, ctx, eff);
+        if (eff.kind === "closed") {
+          controller.seenToolCallIds.clear();
+          controller.lastBlockedKey = undefined;
+        }
         switch (eff.kind) {
           case "closed":
             return {
@@ -575,7 +609,7 @@ export function createWorkflowExtension(
       if (tool !== "subagent" && tool !== "write" && tool !== "edit") return;
       const snap = sm.snapshot;
       if (!snap.active) return;
-      if (tool === "subagent" && typeof event.input?.action === "string") return;
+      if (tool === "subagent" && isSubagentManagementAction(event.input)) return;
       const file = config.phaseArtifacts[snap.phase];
       if (tool === "write" || tool === "edit") {
         return {
@@ -615,13 +649,18 @@ export function createWorkflowExtension(
     // ── tool_result: auto-advance after subagent/bash artifacts. ──
     pi.on("tool_result", async (event: any, ctx: ExtensionContext) => {
       if (event.toolName !== "bash" && event.toolName !== "subagent") return;
+      if (sm.snapshot.active && typeof event.toolCallId === "string") {
+        if (controller.seenToolCallIds.has(event.toolCallId)) return;
+        controller.seenToolCallIds.add(event.toolCallId);
+      }
       // ponytail: a failed phase-owner tool used to leave the workflow quiet
       // until the user manually typed /prototype or /quick continue. Re-check
       // first (in case the tool wrote the artifact before failing), then if
       // nothing advanced, re-queue the current phase prompt automatically.
       if (event.isError && sm.snapshot.active) {
+        if (event.toolName === "subagent" && isSubagentManagementAction(event.input)) return;
         const eff = await sm.onArtifactMaybe(deps);
-        applyEffect(pi, ctx, config, eff);
+        applyControllerEffect(controller, ctx, eff);
         if (eff.kind === "noOp") {
           const retry = sm.continueCurrent();
           continueAgent(
@@ -648,12 +687,15 @@ export function createWorkflowExtension(
           // on agent-listing output (the `subagent list` result is plain
           // text). Execution calls set `agent`/`chain`/`tasks`; management
           // calls set `action`. Only fall back for execution calls.
-          if (typeof event.input?.action !== "string") {
+          if (!isSubagentManagementAction(event.input)) {
             const expectedPath = resolve(sm.snapshot.artifactDir, file);
             const text = textFromToolResultContent(event.content);
             if (text) {
-              let shouldWrite = !(await realFileExists(expectedPath));
-              if (!shouldWrite) {
+              const validator = validatorForPhaseArtifact(config, phase);
+              let shouldWrite = false;
+              if (!(await realFileExists(expectedPath))) {
+                shouldWrite = !validator || validator(text).ok;
+              } else {
                 try {
                   const current = await readFile(expectedPath, "utf8");
                   shouldWrite = shouldReplaceInvalidArtifact(config, phase, current, text);
@@ -726,7 +768,7 @@ or
         // onArtifactMaybe (a no-op unless loop-complete.md exists).
       }
       const eff = await sm.onArtifactMaybe(deps);
-      applyEffect(pi, ctx, config, eff);
+      applyControllerEffect(controller, ctx, eff);
       // Clear loop state once we have left the loop phase (advanced to audit).
       if (sm.snapshot.phase !== "loop") {
         controller.loopState = undefined;
@@ -759,7 +801,7 @@ or
           if (choice === undefined) return;
           if (choice.startsWith("Continue")) {
             const eff = sm.continueCurrent();
-            applyEffect(pi, ctx, config, eff);
+            applyControllerEffect(controller, ctx, eff);
             if (eff.kind === "advanced" && eff.prompt) {
               // continueCurrent already applied footer+entry; send the prompt.
               continueAgent(pi, ctx, eff.prompt);
@@ -796,7 +838,11 @@ or
           return;
         }
         const eff = await sm.start(args, deps);
-        applyEffect(pi, ctx, config, eff);
+        if (eff.kind === "started") {
+          controller.seenToolCallIds.clear();
+          controller.lastBlockedKey = undefined;
+        }
+        applyControllerEffect(controller, ctx, eff);
       },
     });
   };

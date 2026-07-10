@@ -1,6 +1,6 @@
 ---
 name: builder
-model: tokenin/qwen3.5-397b
+model: tokenin/qwen3.6-35b
 thinking: high
 description: Implementation agent for normal tasks handoffs
 systemPromptMode: replace
