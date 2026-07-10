@@ -21,8 +21,6 @@ export interface QuestionDetails {
 	cancelled: boolean;
 }
 
-export type DisplayMode = "overlay" | "inline";
-
 export interface QuestionParams {
 	question: string;
 	context?: string;
@@ -30,8 +28,6 @@ export interface QuestionParams {
 	allowMultiple?: boolean;
 	allowFreeform?: boolean;
 	allowComment?: boolean;
-	displayMode?: DisplayMode;
-	overlayToggleKey?: string | null;
 	commentToggleKey?: string | null;
 	timeout?: number;
 }
@@ -45,7 +41,6 @@ export type ResolvedShortcut =
 	| { disabled: true; spec: null; matches: (data: string) => false };
 
 export interface ResolvedShortcuts {
-	overlayToggle: ResolvedShortcut;
 	commentToggle: ResolvedShortcut;
 }
 
@@ -96,7 +91,6 @@ export interface ResolvedQuestionParams {
 	allowMultiple: boolean;
 	allowFreeform: boolean;
 	allowComment: boolean;
-	displayMode: DisplayMode;
 	shortcuts: ResolvedShortcuts;
 	timeout: number | undefined;
 }

@@ -23,8 +23,6 @@ function fakeProtocol(overrides: Partial<UIProtocol> = {}): UIProtocol {
 			calls.push({ method: "input", args: [prompt, placeholder, opts] });
 			return overrides.input?.(prompt, placeholder, opts);
 		},
-		setStatus: () => {},
-		notify: () => {},
 		...overrides,
 	} as UIProtocol;
 }
@@ -37,11 +35,7 @@ function makeParams(overrides: Partial<ResolvedQuestionParams> = {}): ResolvedQu
 		allowMultiple: false,
 		allowFreeform: false,
 		allowComment: false,
-		displayMode: "overlay",
-		shortcuts: {
-			overlayToggle: { disabled: true, spec: null, matches: () => false },
-			commentToggle: { disabled: true, spec: null, matches: () => false },
-		},
+		shortcuts: { commentToggle: { disabled: true, spec: null, matches: () => false } },
 		timeout: undefined,
 		...overrides,
 	};

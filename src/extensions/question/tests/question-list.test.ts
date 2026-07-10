@@ -86,6 +86,14 @@ test("SingleSelect: confirm on freeform row → onEnterFreeform", () => {
 	assert.equal(called, true);
 });
 
+test("SingleSelect: no options with freeform → opens custom response", () => {
+	const list = new QuestionList([], SingleSelect, true, false, fakeTheme, fakeKeybindings(["tui.select.confirm"]), disabledShortcut);
+	let called = false;
+	list.onEnterFreeform = () => (called = true);
+	list.handleInput(ENTER);
+	assert.equal(called, true);
+});
+
 test("SingleSelect: confirm on comment-toggle → toggles comment, no submit", () => {
 	const list = new QuestionList(opts(["a"]), SingleSelect, false, true, fakeTheme, fakeKeybindings(["tui.select.confirm"]), disabledShortcut);
 	let submitted = false;

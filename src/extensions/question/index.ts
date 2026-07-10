@@ -11,23 +11,21 @@ import {
 	Key,
 	Markdown,
 	matchesKey,
-	type OverlayHandle,
 	Spacer,
 	Text,
 	type TUI,
 	truncateToWidth,
-	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
-import { BOX_BORDER_LEFT, BOX_BORDER_OVERHEAD, BOX_BORDER_RIGHT, OVERLAY_MAX_HEIGHT_RATIO, QUESTION_STATUS_KEY, QUESTION_VERSION } from "./constants.ts";
+import { BOX_BORDER_LEFT, BOX_BORDER_OVERHEAD, BOX_BORDER_RIGHT, QUESTION_VERSION } from "./constants.ts";
 import { DialogFallback } from "./dialog-adapter.ts";
 import { createFreeformResponse, createSelectionResponse, formatOptionsForMessage, formatResponseSummary, getOptionsFormatError, normalizeOptions, oneLine, safeMarkdownTheme } from "./helpers.ts";
 import { QuestionList } from "./question-list.ts";
 import { MultiSelect, SingleSelect } from "./selection-mode.ts";
 import { resolveShortcuts } from "./shortcuts.ts";
 import { QuestionParamsSchema } from "./schemas.ts";
-import type { DisplayMode, QuestionDetails, QuestionMode, QuestionOption, QuestionResponse, RawOption, ResolvedShortcuts } from "./types.ts";
-import { buildCustomUIOptions, createTUIProtocol } from "./tui-adapter.ts";
+import type { QuestionDetails, QuestionMode, QuestionOption, QuestionResponse, RawOption, ResolvedShortcuts } from "./types.ts";
+import { createTUIProtocol } from "./tui-adapter.ts";
 import type { CustomFactory, UIProtocol } from "./ui-protocol.ts";
 
 // ---------------------------------------------------------------------------
@@ -113,7 +111,6 @@ class QuestionComponent extends Container implements Component {
 		private allowMultiple: boolean,
 		private allowFreeform: boolean,
 		private allowComment: boolean,
-		private displayMode: DisplayMode,
 		private tui: TUI,
 		private theme: Theme,
 		private keybindings: KeybindingsManager,
@@ -183,14 +180,6 @@ class QuestionComponent extends Container implements Component {
 
 	override render(width: number): string[] {
 		const innerWidth = Math.max(1, width - BOX_BORDER_OVERHEAD);
-
-		if (this.mode === "select" && !this.allowMultiple) {
-			const overlayMaxHeight = Math.max(12, Math.floor(this.tui.terminal.rows * OVERLAY_MAX_HEIGHT_RATIO));
-			const staticLines = this.countStaticLines(innerWidth);
-			const availableOptionRows = Math.max(4, overlayMaxHeight - staticLines);
-			this.ensureList().setMaxVisibleRows(availableOptionRows);
-		}
-
 		const rawLines = super.render(innerWidth);
 		const borderColor = (s: string) => this.theme.fg("accent", s);
 		const titleColor = (s: string) => this.theme.fg("dim", this.theme.bold(s));
@@ -201,20 +190,6 @@ class QuestionComponent extends Container implements Component {
 			const padded = truncateToWidth(line, innerWidth, "", true);
 			return `${borderColor(BOX_BORDER_LEFT)}${padded}${borderColor(BOX_BORDER_RIGHT)}`;
 		});
-	}
-
-	private countWrappedLines(text: string, width: number): number {
-		return Math.max(1, wrapTextWithAnsi(text, Math.max(10, width - 2)).length);
-	}
-
-	private countStaticLines(width: number): number {
-		const titleLines = 1;
-		const questionLines = this.countWrappedLines(this.question, width);
-		const contextLines = this.context ? 1 + this.countWrappedLines(this.context, width) : 0;
-		const helpLines = 1;
-		const borderLines = 2;
-		const spacerLines = this.context ? 6 : 5;
-		return borderLines + spacerLines + titleLines + questionLines + contextLines + helpLines;
 	}
 
 	private updateStaticText(): void {
@@ -235,10 +210,6 @@ class QuestionComponent extends Container implements Component {
 	private updateHelpText(): void {
 		const theme = this.theme;
 		const kb = this.keybindings;
-		const overlayHint =
-			this.displayMode === "overlay" && !this.shortcuts.overlayToggle.disabled
-				? `${theme.fg("dim", this.shortcuts.overlayToggle.spec)}${theme.fg("muted", " hide")}`
-				: null;
 		const commentHint =
 			this.allowComment && !this.shortcuts.commentToggle.disabled
 				? `${theme.fg("dim", this.shortcuts.commentToggle.spec)}${theme.fg("muted", " toggle context")}`
@@ -249,7 +220,6 @@ class QuestionComponent extends Container implements Component {
 				`${theme.fg("dim", kb.getKeys("tui.input.submit").join("/"))}${theme.fg("muted", this.mode === "comment" ? " submit/skip" : " submit")}`,
 				`${theme.fg("dim", kb.getKeys("tui.input.newLine").join("/"))}${theme.fg("muted", " newline")}`,
 				`${theme.fg("dim", "esc")}${theme.fg("muted", " back")}`,
-				overlayHint,
 			]
 				.filter((h): h is string => !!h)
 				.join(" • ");
@@ -262,7 +232,6 @@ class QuestionComponent extends Container implements Component {
 				`${theme.fg("dim", "↑↓")}${theme.fg("muted", " navigate")}`,
 				`${theme.fg("dim", "space")}${theme.fg("muted", " toggle")}`,
 				commentHint,
-				overlayHint,
 				`${theme.fg("dim", kb.getKeys("tui.select.confirm").join("/"))}${theme.fg("muted", " submit")}`,
 				`${theme.fg("dim", kb.getKeys("tui.select.cancel").join("/"))}${theme.fg("muted", " cancel")}`,
 			]
@@ -275,7 +244,6 @@ class QuestionComponent extends Container implements Component {
 				`${theme.fg("dim", kb.getKeys("tui.editor.deleteCharBackward").join("/"))}${theme.fg("muted", " erase")}`,
 				`${theme.fg("dim", "↑↓")}${theme.fg("muted", " navigate")}`,
 				commentHint,
-				overlayHint,
 				`${theme.fg("dim", kb.getKeys("tui.select.confirm").join("/"))}${theme.fg("muted", " select")}`,
 				`${theme.fg("dim", "esc")}${theme.fg("muted", " clear/cancel")}`,
 			]
@@ -433,13 +401,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 			const allowComment = params.allowComment ?? false;
 			const timeout = params.timeout as number | undefined;
 
-			const envMode = process.env.PI_QUESTION_DISPLAY_MODE;
-			const envDisplayMode: DisplayMode | undefined = envMode === "overlay" || envMode === "inline" ? envMode : undefined;
-			const effectiveDisplayMode: DisplayMode = (params.displayMode as DisplayMode | undefined) ?? envDisplayMode ?? "overlay";
-
 			const shortcuts: ResolvedShortcuts = resolveShortcuts(
-				params.overlayToggleKey as string | null | undefined,
-				process.env.PI_QUESTION_OVERLAY_TOGGLE_KEY,
 				params.commentToggleKey as string | null | undefined,
 				process.env.PI_QUESTION_COMMENT_TOGGLE_KEY,
 			);
@@ -473,42 +435,12 @@ export default function questionExtension(pi: ExtensionAPI) {
 				};
 			}
 
-			protocol.setStatus(
-				QUESTION_STATUS_KEY,
-				protocol.theme.fg("accent", `waiting: ${oneLine((normalizedContext ? `${normalizedContext}: ` : "") + rawQuestion, 48)}`),
-			);
-
-			// No options: pure freeform via dialog input.
-			if (options.length === 0) {
-				if (!allowFreeform) {
-					protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("error", "question failed"));
-					return {
-						content: [{ type: "text", text: "Question options are empty and allowFreeform is false." }],
-						isError: true,
-						details: { ...detailsBase, response: null, cancelled: true } satisfies QuestionDetails,
-					};
-				}
-				try {
-					const prompt = normalizedContext ? `${rawQuestion}\n\nContext:\n${normalizedContext}` : rawQuestion;
-					const answer = await protocol.input(prompt, "Type your answer...", timeout ? { timeout } : undefined);
-					const response = createFreeformResponse(answer);
-					if (!response) {
-						protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("warning", "question cancelled"));
-						return {
-							content: [{ type: "text", text: "User cancelled the question" }],
-							details: { ...detailsBase, response: null, cancelled: true } satisfies QuestionDetails,
-						};
-					}
-					pi.events.emit("question:answered", { question: rawQuestion, context: normalizedContext, response });
-					protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("success", "question answered"));
-					return {
-						content: [{ type: "text", text: `User answered: ${formatResponseSummary(response)}` }],
-						details: { ...detailsBase, response, cancelled: false } satisfies QuestionDetails,
-					};
-				} catch (error) {
-					protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("error", "question failed"));
-					throw error;
-				}
+			if (options.length === 0 && !allowFreeform) {
+				return {
+					content: [{ type: "text", text: "Question options are empty and allowFreeform is false." }],
+					isError: true,
+					details: { ...detailsBase, response: null, cancelled: true } satisfies QuestionDetails,
+				};
 			}
 
 			onUpdate?.({
@@ -517,9 +449,6 @@ export default function questionExtension(pi: ExtensionAPI) {
 			});
 
 			let result: QuestionResponse | null;
-			let overlayHandle: OverlayHandle | undefined;
-			let removeOverlayInputListener: (() => void) | undefined;
-			let hasAnnouncedHide = false;
 
 			try {
 				const customFactory: CustomFactory = (
@@ -541,7 +470,6 @@ export default function questionExtension(pi: ExtensionAPI) {
 						allowMultiple,
 						allowFreeform,
 						allowComment,
-						effectiveDisplayMode,
 						tui,
 						theme,
 						keybindings,
@@ -550,51 +478,27 @@ export default function questionExtension(pi: ExtensionAPI) {
 					);
 				};
 
-				const overlayToggle = shortcuts.overlayToggle;
-				if (
-					effectiveDisplayMode === "overlay" &&
-					!overlayToggle.disabled &&
-					typeof protocol.onTerminalInput === "function"
-				) {
-					removeOverlayInputListener = protocol.onTerminalInput((data) => {
-						if (!overlayToggle.matches(data) || !overlayHandle) return undefined;
-						const nextHidden = !overlayHandle.isHidden();
-						overlayHandle.setHidden(nextHidden);
-						if (nextHidden && !hasAnnouncedHide) {
-							hasAnnouncedHide = true;
-							protocol.notify?.(`question hidden — press ${overlayToggle.spec} to reopen`, "info");
-						}
-						return { consume: true };
-					});
-				}
-
-				const customResult = await protocol.custom(customFactory, buildCustomUIOptions(effectiveDisplayMode, (handle) => {
-					overlayHandle = handle;
-				}));
+				const customResult = await protocol.custom(customFactory);
 
 				if (customResult !== undefined) {
 					result = customResult;
 				} else {
 					// RPC/headless: custom() returns undefined — degrade to dialog protocol.
 					result = await DialogFallback.ask(
-						{ question: rawQuestion, context: normalizedContext, options, allowMultiple, allowFreeform, allowComment, displayMode: effectiveDisplayMode, shortcuts, timeout },
+						{ question: rawQuestion, context: normalizedContext, options, allowMultiple, allowFreeform, allowComment, shortcuts, timeout },
 						protocol,
 					);
 				}
 			} catch (error) {
 				const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
-				protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("error", "question failed"));
 				return {
 					content: [{ type: "text", text: `Question tool failed: ${message}` }],
 					isError: true,
 					details: { error: message } as unknown as QuestionDetails,
 				};
-			} finally {
-				removeOverlayInputListener?.();
 			}
 
 			if (result === null) {
-				protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("warning", "question cancelled"));
 				pi.events.emit("question:cancelled", { question: rawQuestion, context: normalizedContext, options });
 				return {
 					content: [{ type: "text", text: "User cancelled the question" }],
@@ -602,7 +506,6 @@ export default function questionExtension(pi: ExtensionAPI) {
 				};
 			}
 
-			protocol.setStatus(QUESTION_STATUS_KEY, protocol.theme.fg("success", "question answered"));
 			pi.events.emit("question:answered", { question: rawQuestion, context: normalizedContext, response: result });
 			return {
 				content: [{ type: "text", text: `User answered: ${formatResponseSummary(result)}` }],

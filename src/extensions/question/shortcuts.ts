@@ -1,10 +1,9 @@
-// Shortcut resolution for overlay-toggle and comment-toggle keys.
+// Shortcut resolution for the optional-comment toggle key.
 
 import { matchesKey } from "@earendil-works/pi-tui";
 
-import { DISABLED_SHORTCUT, SHORTCUT_DISABLE_VALUES } from "./constants.ts";
+import { DEFAULT_COMMENT_TOGGLE_KEY, DISABLED_SHORTCUT, SHORTCUT_DISABLE_VALUES } from "./constants.ts";
 import type { ResolvedShortcut, ResolvedShortcuts } from "./types.ts";
-import { DEFAULT_COMMENT_TOGGLE_KEY, DEFAULT_OVERLAY_TOGGLE_KEY } from "./constants.ts";
 
 export function normalizeShortcutSpec(value: string | null | undefined): string | null | undefined {
 	if (value === undefined) return undefined;
@@ -40,14 +39,6 @@ export function resolveShortcut(
 	return DISABLED_SHORTCUT;
 }
 
-export function resolveShortcuts(
-	overlayToggleKey: string | null | undefined,
-	overlayEnv: string | undefined,
-	commentToggleKey: string | null | undefined,
-	commentEnv: string | undefined,
-): ResolvedShortcuts {
-	return {
-		overlayToggle: resolveShortcut(overlayToggleKey, overlayEnv, DEFAULT_OVERLAY_TOGGLE_KEY),
-		commentToggle: resolveShortcut(commentToggleKey, commentEnv, DEFAULT_COMMENT_TOGGLE_KEY),
-	};
+export function resolveShortcuts(commentToggleKey: string | null | undefined, commentEnv: string | undefined): ResolvedShortcuts {
+	return { commentToggle: resolveShortcut(commentToggleKey, commentEnv, DEFAULT_COMMENT_TOGGLE_KEY) };
 }
