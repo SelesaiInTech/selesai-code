@@ -16,7 +16,6 @@
           "reasoning": true,
           "input": ["text"],
           "contextWindow": 1000000,
-          "maxTokens": 384000,
           "cost": {
             "input": 0.14,
             "output": 0.28,
@@ -113,7 +112,7 @@
           "name": "GLM-5.2",
           "reasoning": true,
           "input": ["text"],
-          "contextWindow": 1048560,
+          "contextWindow": 1000000,
           "cost": {
             "input": 1.45,
             "output": 4.5,
@@ -129,7 +128,7 @@
           "name": "GLM-5.2 Fast",
           "reasoning": false,
           "input": ["text"],
-          "contextWindow": 1048560,
+          "contextWindow": 1000000,
           "cost": {
             "input": 1.45,
             "output": 4.5,
