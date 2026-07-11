@@ -103,12 +103,12 @@ Use read to inspect ${artifactDir}/plan.md, ${artifactDir}/handoff.md, and ${art
 
 Call the subagent tool with { agent: "builder", task: "..." } (do NOT pass a model parameter). Give it plan + handoff + reuse context, tailored to this task. Instruct it to implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}.
 
-After the builder returns, the workflow engine will automatically prompt you to call the commentator. Craft the review task YOURSELF. Each commentator review MUST end with exactly one machine-readable line:
+After the builder returns, call the commentator. Craft the review task YOURSELF. Each commentator review MUST end with exactly one machine-readable line:
   WORKFLOW_REVIEW_STATUS: clean
   OR
   WORKFLOW_REVIEW_STATUS: blocking
 
-If a review is blocking, the engine prompts you to call the builder again with the issues. This repeats up to ${loopMaxIterations ?? 3} round(s). When a review is clean, the engine writes loop-complete.md and advances to audit. Do NOT write loop-complete.md yourself.`,
+If a review is blocking, call the builder again with the recorded issues. This repeats up to ${loopMaxIterations ?? 3} round(s). When a review is clean, the engine writes loop-complete.md and advances to audit. Do NOT write loop-complete.md yourself.`,
   audit: ({ artifactDir }) =>
     `You are in the AUDIT (review) phase.
 
@@ -151,7 +151,7 @@ const config: WorkflowConfig = {
 
 export const quickMode: WorkflowModeRegistration = {
   config,
-  commandName: "quick",
+  commandName: "workflow-quick",
   commandDescription:
     "Run the quick workflow (grill → plan → reuse → handoff → loop → audit)",
   toolNames: { start: "start_quick_workflow", resume: "resume_quick_workflow", end: "end_quick_workflow" },

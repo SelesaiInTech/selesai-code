@@ -125,23 +125,23 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		rmSync(tmp, { recursive: true, force: true });
 	});
 
-	it("registers start/end tools + /prototype command (no next tool)", async () => {
+	it("registers start/end tools + /workflow-prototype command (no next tool)", async () => {
 		const pi = await createHarness();
 		expect(pi.tools.has("start_workflow")).toBe(true);
 		expect(pi.tools.has("resume_workflow")).toBe(true);
 		expect(pi.tools.has("next_step")).toBe(false);
 		expect(pi.tools.has("end_workflow")).toBe(true);
 		expect(pi.tools.has("write_workflow_artifact")).toBe(true);
-		expect(pi.commands.has("prototype")).toBe(true);
+		expect(pi.commands.has("workflow-prototype")).toBe(true);
 	});
 
-	it("/prototype help and an empty command explain starts, resume, and explicit completion", async () => {
+	it("/workflow-prototype help and an empty command explain starts, resume, and explicit completion", async () => {
 		const pi = await createHarness();
 		for (const args of ["help", ""]) {
-			await pi.commands.get("prototype").handler(args, ctx(pi));
+			await pi.commands.get("workflow-prototype").handler(args, ctx(pi));
 			const help = pi.notifies.at(-1)!;
 			expect(help.level).toBe("info");
-			expect(help.text).toContain("/prototype resume");
+			expect(help.text).toContain("/workflow-prototype resume");
 			expect(help.text).toContain("end_workflow");
 		}
 	});
@@ -239,7 +239,16 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(pi.sent).toHaveLength(0);
 	});
 
-	it("tool_result failure re-queues the current workflow phase automatically", async () => {
+	it("ignores ordinary tool results while no workflow is active", async () => {
+		const pi = await createHarness();
+		await pi.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "ordinary", input: { agent: "explorer" }, content: [], isError: false },
+			ctx(pi),
+		);
+		expect(pi.notifies).toHaveLength(0);
+	});
+
+	it("tool_result failure relies on normal tool-result continuation, not a queued follow-up", async () => {
 		const pi = await createHarness();
 		const c = ctx(pi, true); // streaming
 		await pi.tools.get("start_workflow").execute("id-1", { goal: "build X" }, undefined, undefined, c);
@@ -251,9 +260,7 @@ describe("prototype adapter (pi wiring smoke)", () => {
 			c,
 		);
 		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
-		expect(pi.sent.at(-1)?.options?.deliverAs).toBe("followUp");
-		expect(pi.sent.at(-1)?.text).toMatch(/failed during the plan phase/i);
-		expect(pi.sent.at(-1)?.text).toMatch(/You are in the PLAN phase/i);
+		expect(pi.sent).toHaveLength(0);
 	});
 
 	it("quick mode registers under quick tool names and entry type", async () => {
@@ -282,7 +289,7 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(tools.has("start_quick_workflow")).toBe(true);
 		expect(tools.has("resume_quick_workflow")).toBe(true);
 		expect(tools.has("write_workflow_artifact")).toBe(true);
-		expect(commands.has("quick")).toBe(true);
+		expect(commands.has("workflow-quick")).toBe(true);
 		const c: any = {
 			isIdle: () => true,
 			ui: { notify() {}, setStatus() {}, theme: { fg: (_c: string, t: string) => t } },
@@ -732,10 +739,10 @@ describe("prototype adapter (pi wiring smoke)", () => {
 			{ type: "tool_result", toolName: "subagent", toolCallId: "dup-builder", input: { agent: "builder" }, content: [{ type: "text", text: "done again" }], isError: false },
 			c,
 		);
-		expect(sentCount(pi, 'Call the subagent tool now with { agent: "commentator"')).toBe(1);
+		expect(sentCount(pi, 'Call the subagent tool now with { agent: "commentator"')).toBe(0);
 	});
 
-	it("loop: builder result drives the engine to prompt a commentator review", async () => {
+	it("loop: builder result persists reviewing state without queuing a follow-up", async () => {
 		const pi = await createHarness();
 		const c = ctx(pi, true);
 		await walkToLoop(pi, c);
@@ -743,9 +750,9 @@ describe("prototype adapter (pi wiring smoke)", () => {
 			{ type: "tool_result", toolName: "subagent", toolCallId: "tc1", input: { agent: "builder" }, content: [{ type: "text", text: "done" }], isError: false },
 			c,
 		);
-		expect(pi.sent.at(-1)?.text).toMatch(/commentator/i);
-		expect(pi.sent.at(-1)?.text).toMatch(/WORKFLOW_REVIEW_STATUS: clean/);
+		expect(pi.sent).toHaveLength(0);
 		const state = JSON.parse(readFileSync(join((pi.entries.at(-1)?.data.artifactDir)!, "workflow.json"), "utf8"));
+		expect(state.loopState).toMatchObject({ reviewRound: 0, stage: "reviewing" });
 		const resumed = await createHarness();
 		await resumed.tools.get("resume_workflow").execute("resume", { run: state.id }, undefined, undefined, ctx(resumed));
 		expect(resumed.sent.at(-1)?.text).toMatch(/Resume the loop.*commentator/i);
@@ -786,8 +793,7 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		const state = JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"));
 		expect(state.loopState).toMatchObject({ reviewRound: 1, stage: "building", reviewPath: "loop-review-1.md" });
 		expect(readFileSync(join(dir, "loop-review-1.md"), "utf8")).toMatch(/blocking/);
-		expect(pi.sent.at(-1)?.text).toMatch(/builder/i);
-		expect(pi.sent.at(-1)?.text).toMatch(/fix/i);
+		expect(pi.sent).toHaveLength(0);
 		const resumed = await createHarness();
 		await resumed.tools.get("resume_workflow").execute("resume", { run: state.id }, undefined, undefined, ctx(resumed));
 		expect(resumed.sent.at(-1)?.text).toMatch(/loop-review-1\.md/);

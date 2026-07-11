@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -20,6 +20,7 @@ async function createHarness() {
   const { __resetWorkflowRegistryForTests, createWorkflowExtension } = await import("../extensions/workflow/adapter.ts");
   __resetWorkflowRegistryForTests();
   const events = new Map<string, (...args: any[]) => any>();
+  const eventHandlers = new Map<string, ((...args: any[]) => any)[]>();
   const tools = new Map<string, any>();
   const commands = new Map<string, any>();
   const entries: { customType: string; data: any }[] = [];
@@ -27,7 +28,12 @@ async function createHarness() {
   const notifies: { text: string; level: string }[] = [];
   const status = new Map<string, string | undefined>();
   const pi: any = {
-    on(name: string, handler: any) { events.set(name, handler); },
+    on(name: string, handler: any) {
+      events.set(name, handler);
+      const handlers = eventHandlers.get(name) ?? [];
+      handlers.push(handler);
+      eventHandlers.set(name, handlers);
+    },
     registerTool(tool: any) { tools.set(tool.name, tool); },
     registerCommand(name: string, command: any) { commands.set(name, command); },
     appendEntry(customType: string, data: any) { entries.push({ customType, data }); },
@@ -44,7 +50,7 @@ async function createHarness() {
     },
   };
   createWorkflowExtension(taskMode.config, taskMode)(pi);
-  return { events, tools, commands, entries, sent, notifies, status, ctx };
+  return { pi, events, eventHandlers, tools, commands, entries, sent, notifies, status, ctx };
 }
 
 describe("task workflow", () => {
@@ -96,7 +102,8 @@ describe("task workflow", () => {
     expect(h.tools.has("start_task_workflow")).toBe(true);
     expect(h.tools.has("resume_task_workflow")).toBe(true);
     expect(h.tools.has("end_task_workflow")).toBe(true);
-    expect(h.commands.has("task")).toBe(true);
+    expect(h.tools.get("start_task_workflow").description).toContain("plan as the first phase");
+    expect(h.commands.has("workflow-task")).toBe(true);
 
     await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
     const dir = h.entries.at(-1)!.data.artifactDir;
@@ -104,6 +111,27 @@ describe("task workflow", () => {
     await h.events.get("tool_call")({ toolName: "subagent", input }, h.ctx);
     expect(input.output).toBe(join(dir, "plan.md"));
     expect(h.status.get("task")).toContain("1/2 plan");
+  });
+
+  it("reload ignores its stale task handler; explicit task resume reconciles the durable plan", async () => {
+    const h = await createHarness();
+    await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
+    const dir = h.entries.at(-1)!.data.artifactDir;
+    const statePath = join(dir, "workflow.json");
+    writeFileSync(join(dir, "plan.md"), "# Plan\nWORKFLOW_PLAN_STATUS: ready");
+
+    const { createWorkflowExtension } = await import("../extensions/workflow/adapter.ts");
+    createWorkflowExtension(taskMode.config, taskMode)(h.pi); // same ExtensionAPI after reload
+
+    await h.eventHandlers.get("tool_result")![0]!({
+      toolName: "subagent", toolCallId: "stale", input: { agent: "architect" }, content: [], isError: false,
+    }, h.ctx);
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ phase: "plan", status: "active" });
+    expect(h.notifies).toHaveLength(0);
+
+    const resumed = await h.tools.get("resume_task_workflow").execute("resume", { run: JSON.parse(readFileSync(statePath, "utf8")).id }, undefined, undefined, h.ctx);
+    expect(resumed.details.phase).toBe("loop");
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ phase: "loop", status: "active" });
   });
 
   it("falls back to architect text, persists clean loop completion, and closes explicitly", async () => {
@@ -169,5 +197,12 @@ describe("task workflow", () => {
       loopState: { reviewRound: 3, maxIterations: 3, stage: "maxed" },
     });
     expect(h.notifies.at(-1)?.text).toContain("max iterations (3)");
+
+    const { createWorkflowExtension } = await import("../extensions/workflow/adapter.ts");
+    createWorkflowExtension(taskMode.config, taskMode)(h.pi);
+    const resumed = await h.tools.get("resume_task_workflow").execute("resume", { run: JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8")).id }, undefined, undefined, h.ctx);
+    expect(resumed.details.phase).toBe("loop");
+    expect(h.notifies.at(-1)?.text).toContain("paused after 3/3");
+    expect(h.notifies.at(-1)?.text).toContain("loop-review-3.md");
   });
 });

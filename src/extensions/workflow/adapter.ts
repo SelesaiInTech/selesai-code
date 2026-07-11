@@ -194,6 +194,22 @@ function activeControllersFor(pi: ExtensionAPI): WorkflowController[] {
   return registry.controllers.filter((c) => c.pi === pi && c.sm.snapshot.active);
 }
 
+function isRegisteredController(controller: WorkflowController): boolean {
+  return registry.controllers.includes(controller);
+}
+
+// Extension reload can reuse the same ExtensionAPI object while this module's
+// global registry survives. Replace a mode's old controller so its active,
+// pre-reload state cannot handle new tool results without a persisted run.
+function replaceControllerFor(pi: ExtensionAPI, mode: string): void {
+  for (let i = registry.controllers.length - 1; i >= 0; i--) {
+    const controller = registry.controllers[i]!;
+    if (controller.pi === pi && controller.config.mode === mode) {
+      registry.controllers.splice(i, 1);
+    }
+  }
+}
+
 function modesFor(config: WorkflowConfig): WorkflowModes {
   return { [config.mode]: config.phases };
 }
@@ -563,6 +579,7 @@ export function createWorkflowExtension(
   options: WorkflowAdapterOptions,
 ): (pi: ExtensionAPI) => void {
   return function workflowExtension(pi: ExtensionAPI): void {
+    replaceControllerFor(pi, config.mode);
     const deps = makeDeps(pi, config);
     // ponytail: default skip rule — reuse is skipped on empty projects (no git
     // commits). Shared by every mode today; a mode that wants a different rule
@@ -584,7 +601,7 @@ export function createWorkflowExtension(
     pi.registerTool({
       name: start,
       label: options.toolLabels.start,
-      description: `Start the ${mode} workflow for the given goal. Sets up grilling as the first phase and returns the grilling prompt. Do not call if a workflow is already active.`,
+      description: `Start the ${mode} workflow for the given goal. Sets up ${config.phases[0]} as the first phase and returns its prompt. Do not call if a workflow is already active.`,
       promptSnippet: `${start}(goal) - start the ${mode} workflow; goal is what the user wants to build.`,
       promptGuidelines: [
         `Call ${start} only when the user explicitly asks to start a ${mode} workflow and none is active.`,
@@ -759,6 +776,7 @@ export function createWorkflowExtension(
     // ── session_start: disk state is never auto-attached. A session entry is
     // merely a convenience pointer for rendering a stale-but-useful footer. ──
     pi.on("session_start", async (_event: any, ctx: ExtensionContext) => {
+      if (!isRegisteredController(controller)) return;
       const entries = ctx.sessionManager.getEntries();
       for (let i = entries.length - 1; i >= 0; i--) {
         const entry = entries[i] as { type: string; customType?: string; data?: any };
@@ -781,6 +799,7 @@ export function createWorkflowExtension(
 
     // ── tool_call: enforce workflow boundaries. ──
     pi.on("tool_call", (event: any, _ctx: ExtensionContext) => {
+      if (!isRegisteredController(controller)) return;
       const tool = event.toolName;
       if (tool !== "subagent" && tool !== "write" && tool !== "edit") return;
       const snap = sm.snapshot;
@@ -824,16 +843,19 @@ export function createWorkflowExtension(
 
     // ── tool_result: auto-advance after subagent/bash artifacts. ──
     pi.on("tool_result", async (event: any, ctx: ExtensionContext) => {
+      if (!isRegisteredController(controller)) return;
       if (event.toolName !== "bash" && event.toolName !== "subagent") return;
+      // Both modes receive every tool result. Inactive controllers have no
+      // attached run and must not try to persist ordinary agent activity.
+      if (!sm.snapshot.active) return;
       const eventBefore = checkpoint(controller);
       if (sm.snapshot.active && typeof event.toolCallId === "string") {
         if (controller.seenToolCallIds.has(event.toolCallId)) return;
         controller.seenToolCallIds.add(event.toolCallId);
       }
-      // ponytail: a failed phase-owner tool used to leave the workflow quiet
-      // until the user manually typed /prototype or /quick continue. Re-check
-      // first (in case the tool wrote the artifact before failing), then if
-      // nothing advanced, re-queue the current phase prompt automatically.
+      // Re-check after an error in case the tool wrote its artifact before
+      // failing. The normal tool-result continuation receives the error; do
+      // not inject another parent turn.
       if (event.isError && sm.snapshot.active) {
         if (event.toolName === "subagent" && isSubagentManagementAction(event.input)) return;
         const eff = await sm.onArtifactMaybe(deps);
@@ -844,14 +866,6 @@ export function createWorkflowExtension(
           return;
         }
         applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
-        if (eff.kind === "noOp") {
-          const retry = sm.continueCurrent();
-          continueAgent(
-            pi,
-            ctx,
-            `The previous ${event.toolName} call failed during the ${retry.phase} phase. Stay in this phase and try again.\n\n${retry.prompt}`,
-          );
-        }
         if (sm.snapshot.phase !== "loop") {
           controller.loopState = undefined;
         }
@@ -894,15 +908,10 @@ export function createWorkflowExtension(
           }
         }
       }
-      // ponytail: Plan 3 — engine-owned loop orchestration. The parent model
-      // does NOT track iterations; the adapter counts review rounds, parses the
-      // commentator's WORKFLOW_REVIEW_STATUS marker, and drives the next step
-      // via followUp. Ceiling: there is no pi.callTool() API, so the engine
-      // cannot invoke the subagent tool directly — it sends a followUp the
-      // model is expected to act on. If the model deviates, the loop stalls
-      // until the next tool_result nudges again. loopState is cleared when the
-      // phase leaves "loop" (below).
-      let loopPrompt: string | undefined;
+      // The adapter owns durable loop state; the normal subagent tool-result
+      // continuation lets the parent choose the next builder/commentator call.
+      // No synthetic follow-up chat is queued. loopState clears when the phase
+      // leaves "loop" (below).
       if (event.toolName === "subagent" && sm.snapshot.active && sm.snapshot.phase === "loop") {
         const dir = sm.snapshot.artifactDir;
         const maxIt = config.loopMaxIterations ?? 3;
@@ -913,12 +922,9 @@ export function createWorkflowExtension(
         const agent = event.input?.agent;
 
         if (agent === "builder") {
-          // Build step done → drive the commentator review.
+          // The normal subagent result resumes the parent turn; record the
+          // next loop stage but do not inject a duplicate follow-up message.
           ls.stage = "reviewing";
-          loopPrompt = `Builder finished. Call the subagent tool now with { agent: "commentator", task: "..." } to review the builder's uncommitted diff against ${dir}/plan.md. Craft the review task yourself based on what matters for this task. End the review with exactly one line on its own:
-  WORKFLOW_REVIEW_STATUS: clean
-or
-  WORKFLOW_REVIEW_STATUS: blocking`; 
         } else if (agent === "commentator") {
           const reviewRound = ls.reviewRound + 1;
           const reviewText = textFromToolResultContent(event.content);
@@ -948,12 +954,9 @@ or
             // A genuine clean review on a later round still advances — the
             // clean branch above runs first.
           } else {
-            // Blocking (or no marker) → drive a builder fix round.
+            // Blocking (or no marker) → the parent continues with a builder
+            // fix round from the normal subagent result, without a queued chat.
             ls.stage = "building";
-            const reason = status === "blocking"
-              ? "the blocking issues listed in the review"
-              : "the review (no WORKFLOW_REVIEW_STATUS: clean|blocking marker was found)";
-            loopPrompt = `Review round ${ls.reviewRound} was blocking. Call the subagent tool now with { agent: "builder", task: "..." } to fix ${reason}. Give the builder the feedback in ${dir}/${ls.reviewPath ?? `loop-review-${ls.reviewRound}.md`} and the relevant artifact paths. After the builder returns, the workflow will drive the next review automatically.`;
           }
         }
         // Non-builder/commentator subagent calls in loop fall through to
@@ -973,7 +976,6 @@ or
       // Do not turn an artifact/subagent result into a new parent turn.
       // The user resumes the next phase deliberately via the workflow command.
       applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
-      if (loopPrompt && sm.snapshot.active) continueAgent(pi, ctx, loopPrompt);
     });
 
     // ── /<command> ──

@@ -18,7 +18,7 @@ src/extensions/workflow/
 ```
 
 - **`state-machine.ts`** is the deep module. It owns the phase graph, artifact gating, skip rules, the terminal close gate, and the reentrancy guard. It imports nothing external — no `node:fs`, no pi API, no `pi-tui`, no `typebox`. Every method returns a `WorkflowEffect` (a discriminated union in domain vocabulary) that the adapter pattern-matches on.
-- **`adapter.ts`** is the thin glue. It owns Pi/fs wiring, durable state, explicit resume, loop review persistence, and the git-based `reuse` skip predicate. An artifact advances durable phase state, then stops at a user-controlled boundary; `/prototype`, `/quick`, or `/task` continues the attached run.
+- **`adapter.ts`** is the thin glue. It owns Pi/fs wiring, durable state, explicit resume, loop review persistence, and the git-based `reuse` skip predicate. An artifact advances durable phase state, then stops at a user-controlled boundary; `/workflow-prototype`, `/workflow-quick`, or `/workflow-task` continues the attached run.
 - **`workflow.json`** in each artifact directory is the canonical, versioned run record. It is atomically replaced after state changes; session custom entries are only pointers for UI/history and never reconstruct an active run.
 - **`extension.ts`** imports each mode's registration object and calls `createWorkflowExtension(config, options)(pi)` for each, so one extension load resolves a single shared writer tool + one start/end tool pair per mode.
 - **A mode file** is pure data: the phase list, the per-phase artifact filenames, the per-phase prompt generators, the terminal close artifacts, and identity strings (tool names, command name, status key, entry type). Prompts are functions that receive `{ artifactDir, userPrompt }` and return a string. Each mode exports a `WorkflowModeRegistration` object (e.g. `prototypeMode`, `quickMode`); it does not call `createWorkflowExtension` itself.
@@ -126,9 +126,9 @@ The simplest workflow: an architect subagent produces a validated `plan.md`, the
 
 Lifecycle: `plan → loop (build ↔ review) → terminal-ready → end_task_workflow`
 
-- `/task <goal>` — start a new run
-- `/task resume` — list and resume active runs
-- `/task help` — show the lifecycle
+- `/workflow-task <goal>` — start a new run
+- `/workflow-task resume` — list and resume active runs
+- `/workflow-task help` — show the lifecycle
 - Phases auto-advance as artifacts land
 - No grilling, research, reuse, or handoff phases
 
@@ -164,9 +164,9 @@ Each started workflow receives a UUID artifact directory under `.selesai/artifac
 Runs are **never** auto-resumed on session start. At most one run can be attached to a Pi instance, but older active runs remain resumable:
 
 - `resume_workflow({ run: "<id-or-path>" })` / `resume_quick_workflow(...)` / `resume_task_workflow(...)`
-- `/prototype resume <id-or-artifact-dir-or-workflow.json>` / `/quick resume ...` / `/task resume ...`
-- `/prototype resume`, `/quick resume`, or `/task resume` lists active runs (and offers a UI picker when available).
-- `/prototype help`, `/quick help`, or `/task help` shows the start, resume, continue, and explicit-completion lifecycle.
+- `/workflow-prototype resume <id-or-artifact-dir-or-workflow.json>` / `/workflow-quick resume ...` / `/workflow-task resume ...`
+- `/workflow-prototype resume`, `/workflow-quick resume`, or `/workflow-task resume` lists active runs (and offers a UI picker when available).
+- `/workflow-prototype help`, `/workflow-quick help`, or `/workflow-task help` shows the start, resume, continue, and explicit-completion lifecycle.
 
 Resume validates the selected file is under the artifacts base, belongs to that mode, is active, and matches its containing directory. It reconciles the current expected artifact once before emitting the current prompt, covering a crash after an artifact write but before the phase-state write. Artifact writes do not inject the next phase prompt or launch the next subagent; they terminate the parent turn and wait for the user to continue. Corrupt records are skipped during discovery.
 

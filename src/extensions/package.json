@@ -6,6 +6,7 @@
 	"pi": {
 		"extensions": [
 			"./copy-turn.ts",
+			"./context-compaction-reminder.ts",
 			"./tool-error-autofix.ts",
 			"./question",
 			"./handoff-new.ts",

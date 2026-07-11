@@ -66,9 +66,9 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		expect(h.tools.has("write_workflow_artifact")).toBe(true);
 	});
 
-	it("/quick command sends the grilling prompt once", async () => {
+	it("/workflow-quick command sends the grilling prompt once", async () => {
 		const h = await createQuickHarness();
-		await h.commands.get("quick").handler("build X", {
+		await h.commands.get("workflow-quick").handler("build X", {
 			...h.ctxBase,
 			isIdle: () => true,
 		});
