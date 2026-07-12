@@ -82,6 +82,9 @@ export interface WorkflowConfig {
   // ponytail: Plan 3 — engine-owned loop. Max review rounds before the loop
   // stops and asks the user instead of silently passing. Default 3.
   loopMaxIterations?: number;
+  // Most workflows pause at artifact boundaries. A mode can opt into queuing
+  // the next phase prompt after the parent writes a valid artifact.
+  continueAfterArtifact?: boolean;
 }
 
 export interface WorkflowDeps {

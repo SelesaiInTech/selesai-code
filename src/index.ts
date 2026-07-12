@@ -246,6 +246,7 @@ export {
 	type ThinkingLevelChangeEntry,
 } from "./core/session-manager.ts";
 export {
+	type AutoHandoffSettings,
 	type CompactionSettings,
 	type DefaultProjectTrust,
 	type ImageSettings,

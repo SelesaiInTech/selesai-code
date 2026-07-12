@@ -62,6 +62,7 @@ import {
   generateVibesBatch,
 } from "./working-vibes.ts";
 import { setupTpsTracker } from "./tps.ts";
+import { readAsyncSubagentUsage, readSubagentToolResultUsage } from "./session-usage.ts";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Configuration
@@ -928,6 +929,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   let getThinkingLevelFn: (() => string) | null = null;
   let currentThinkingLevel: string | null = null;
   let liveAssistantUsage: SessionAssistantUsage | null = null;
+  const completedAsyncSubagentUsage = new Map<string, { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number }>();
   let isStreaming = false;
   let tuiRef: any = null;
   let restoreFooterStatusRepaintHook: (() => void) | null = null;
@@ -1181,6 +1183,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     lastUserPrompt = "";
     isStreaming = false;
     liveAssistantUsage = null;
+    completedAsyncSubagentUsage.clear();
     stashedEditorText = null;
 
     const settings = readSettings(ctx.cwd);
@@ -1222,6 +1225,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async () => {
     sessionGeneration++;
+    completedAsyncSubagentUsage.clear();
     dismissWelcomeOverlay?.();
     dismissWelcomeOverlay = null;
     welcomeHeaderActive = false;
@@ -1246,6 +1250,16 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     resetLayoutCache();
   });
 
+  pi.events.on("subagent:async-complete", (event) => {
+    const completed = readAsyncSubagentUsage(event);
+    const sessionId = currentCtx?.sessionManager?.getSessionId?.();
+    if (!completed || !sessionId || completed.sessionId !== sessionId) return;
+
+    completedAsyncSubagentUsage.set(completed.runId, completed.usage);
+    layoutDirty = true;
+    requestImmediateStatusRender({ deferDuringTyping: false });
+  });
+
   // Check if a bash command might change git branch
   const mightChangeGitBranch = (cmd: string): boolean => {
     const gitBranchPatterns = [
@@ -1256,7 +1270,12 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   };
 
   // Invalidate git status on file changes, trigger re-render on potential branch changes
-  pi.on("tool_result", async (event) => {
+  pi.on("tool_result", async (event, ctx) => {
+    if (event.toolName === "subagent") {
+      currentCtx = ctx;
+      layoutDirty = true;
+      requestImmediateStatusRender({ deferDuringTyping: false });
+    }
     if (event.toolName === "write" || event.toolName === "edit") {
       invalidateGitStatus();
     }
@@ -2051,7 +2070,21 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         thinkingLevelFromSession = e.thinkingLevel;
       }
 
-      if (e.type !== "message" || !isSessionAssistantMessage(e.message)) {
+      if (e.type !== "message") {
+        continue;
+      }
+
+      const subagentUsage = readSubagentToolResultUsage(e.message);
+      if (subagentUsage) {
+        input += subagentUsage.input;
+        output += subagentUsage.output;
+        cacheRead += subagentUsage.cacheRead;
+        cacheWrite += subagentUsage.cacheWrite;
+        cost += subagentUsage.cost;
+        continue;
+      }
+
+      if (!isSessionAssistantMessage(e.message)) {
         continue;
       }
 
@@ -2067,6 +2100,14 @@ export default function powerlineFooter(pi: ExtensionAPI) {
       if (getUsageTokenTotal(m.usage) > 0) {
         lastAssistant = m;
       }
+    }
+
+    for (const subagentUsage of completedAsyncSubagentUsage.values()) {
+      input += subagentUsage.input;
+      output += subagentUsage.output;
+      cacheRead += subagentUsage.cacheRead;
+      cacheWrite += subagentUsage.cacheWrite;
+      cost += subagentUsage.cost;
     }
 
     // Calculate context percentage.

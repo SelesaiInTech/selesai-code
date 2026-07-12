@@ -5,6 +5,7 @@ import { createFileCoalescer } from "../../shared/file-coalescer.ts";
 import {
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	type IntercomEventBus,
+	type Usage,
 	type NestedRunSummary,
 	type SubagentResultIntercomChild,
 	type SubagentState,
@@ -61,6 +62,7 @@ type ResultFileData = {
 	sessionFile?: string;
 	asyncDir?: string;
 	intercomTarget?: string;
+	totalChildUsage?: Usage;
 };
 
 function sanitizeNestedResultChildren(value: unknown, resultPath: string, label: string): NestedRunSummary[] | undefined {

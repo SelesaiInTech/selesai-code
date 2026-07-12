@@ -5,7 +5,7 @@ thinking: high
 systemPromptMode: replace
 tools: read, grep, find, ls, bash, edit, write, contact_supervisor
 inheritSkills: false
-skill: ponytail, implanger
+skill: ponytail, caveman, implanger
 inheritProjectContext: true
 defaultContext: fresh
 ---

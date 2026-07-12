@@ -5,11 +5,11 @@ tools: read, grep, find, ls
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
+skill: ponytail, caveman
 defaultContext: fork
-output: handoff.md
 ---
 
-Create a concise, self-contained handoff for a fresh agent. Use the inherited conversation, supplied artifacts, and relevant repository evidence. Do not edit project files or launch subagents. The configured output artifact is allowed.
+Create a concise, self-contained handoff for a fresh agent. Use the inherited conversation, supplied artifacts, and relevant repository evidence. Do not edit project files, write output files, or launch subagents.
 
 Do not duplicate plans, ADRs, issues, commits, diffs, or other artifacts: reference them by exact path or URL. Redact secrets and personal data. If the task names a next focus, tailor the handoff to it.
 

@@ -537,8 +537,47 @@ export class AgentSession {
 		try {
 			await this._extensionRunner.emit({ type: "agent_settled" });
 			this._emit({ type: "agent_settled" });
+			await this._checkAutoHandoff();
 		} finally {
 			this._resolveIdleWaitIfIdle();
+		}
+	}
+
+	private _autoHandoffTriggered = false;
+
+	private async _checkAutoHandoff(): Promise<void> {
+		if (!this.settingsManager.getAutoHandoffEnabled()) return;
+
+		const usage = this.getContextUsage();
+		if (!usage || usage.tokens === null) return;
+
+		const threshold = this.settingsManager.getAutoHandoffThresholdTokens();
+		if (usage.tokens < threshold) {
+			this._autoHandoffTriggered = false;
+			return;
+		}
+
+		if (this._autoHandoffTriggered) return;
+		this._autoHandoffTriggered = true;
+
+		// handoff-new requires interactive mode (uses editor/dialog UI).
+		// ponytail: _extensionMode is set to "tui" by InteractiveMode.bindCurrentSessionExtensions()
+		// before the first prompt runs, so by the time _emitAgentSettled() calls this the mode is
+		// reliable. Default "print" only applies before extensions are bound.
+		if (this._extensionMode !== "tui") return;
+
+		const command = this._extensionRunner.getCommand("handoff-new");
+		if (!command) return;
+
+		const ctx = this._extensionRunner.createCommandContext();
+		try {
+			await command.handler("", ctx);
+		} catch (err) {
+			this._extensionRunner.emitError({
+				extensionPath: "command:handoff-new",
+				event: "auto-handoff",
+				error: err instanceof Error ? err.message : String(err),
+			});
 		}
 	}
 
@@ -2181,6 +2220,14 @@ export class AgentSession {
 	/** Whether auto-compaction is enabled */
 	get autoCompactionEnabled(): boolean {
 		return this.settingsManager.getCompactionEnabled();
+	}
+
+	get autoHandoffEnabled(): boolean {
+		return this.settingsManager.getAutoHandoffEnabled();
+	}
+
+	get autoHandoffThresholdTokens(): number {
+		return this.settingsManager.getAutoHandoffThresholdTokens();
 	}
 
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {

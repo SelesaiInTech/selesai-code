@@ -254,6 +254,19 @@ function emptyUsage(): Usage {
 	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
 }
 
+function usageFromAttempts(attempts: ModelAttempt[] | undefined): Usage {
+	const usage = emptyUsage();
+	for (const attempt of attempts ?? []) {
+		usage.input += attempt.usage?.input ?? 0;
+		usage.output += attempt.usage?.output ?? 0;
+		usage.cacheRead += attempt.usage?.cacheRead ?? 0;
+		usage.cacheWrite += attempt.usage?.cacheWrite ?? 0;
+		usage.cost += attempt.usage?.cost ?? 0;
+		usage.turns += attempt.usage?.turns ?? 0;
+	}
+	return usage;
+}
+
 function tokenUsageFromAttempts(attempts: ModelAttempt[] | undefined): TokenUsage | null {
 	if (!attempts || attempts.length === 0) return null;
 	let input = 0;
@@ -2959,6 +2972,16 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		costUsd: sum.costUsd + (result.totalCost?.costUsd ?? 0),
 	}), { inputTokens: 0, outputTokens: 0, costUsd: 0 });
 	const finalTotalCost = totalCost.inputTokens > 0 || totalCost.outputTokens > 0 || totalCost.costUsd > 0 ? totalCost : undefined;
+	const totalChildUsage = results.reduce<Usage>((sum, result) => {
+		const usage = usageFromAttempts(result.modelAttempts);
+		sum.input += usage.input;
+		sum.output += usage.output;
+		sum.cacheRead += usage.cacheRead;
+		sum.cacheWrite += usage.cacheWrite;
+		sum.cost += usage.cost;
+		sum.turns += usage.turns;
+		return sum;
+	}, emptyUsage());
 	const finalFlatAgents = statusPayload.steps.map((step) => step.agent);
 	const agentName = finalFlatAgents.length === 1
 		? finalFlatAgents[0]!
@@ -3113,6 +3136,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			timestamp: runEndedAt,
 			durationMs: runEndedAt - overallStartTime,
 			totalTokens: statusPayload.totalTokens,
+			totalChildUsage,
 			totalCost: finalTotalCost,
 			truncated,
 			artifactsDir,

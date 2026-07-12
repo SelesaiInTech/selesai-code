@@ -19,7 +19,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@selesai/code";
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
-import { discoverAgents } from "../agents/agents.ts";
+import { discoverAgents, ensureDefaultUserSubagentSettings } from "../agents/agents.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
@@ -584,6 +584,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 	};
 
 	const resetSessionState = (ctx: ExtensionContext) => {
+		ensureDefaultUserSubagentSettings(ctx.model);
 		state.baseCwd = ctx.cwd;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		state.subagentSpawns = { sessionId: state.currentSessionId, count: 0 };

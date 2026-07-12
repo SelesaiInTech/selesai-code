@@ -51,6 +51,8 @@ const DEFAULT_PROJECT_TRUST_BY_LABEL = new Map(
 
 export interface SettingsConfig {
 	autoCompact: boolean;
+	autoHandoffEnabled: boolean;
+	autoHandoffThresholdTokens: number;
 	showImages: boolean;
 	imageWidthCells: number;
 	autoResizeImages: boolean;
@@ -84,6 +86,8 @@ export interface SettingsConfig {
 
 export interface SettingsCallbacks {
 	onAutoCompactChange: (enabled: boolean) => void;
+	onAutoHandoffEnabledChange: (enabled: boolean) => void;
+	onAutoHandoffThresholdTokensChange: (tokens: number) => void;
 	onShowImagesChange: (enabled: boolean) => void;
 	onImageWidthCellsChange: (width: number) => void;
 	onAutoResizeImagesChange: (enabled: boolean) => void;
@@ -488,6 +492,20 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
+				id: "auto-handoff",
+				label: "Auto handoff",
+				description: "Generate a handoff prompt and open a new session when context reaches the threshold",
+				currentValue: config.autoHandoffEnabled ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "auto-handoff-threshold",
+				label: "Auto handoff threshold",
+				description: "Token count that triggers an automatic handoff",
+				currentValue: String(config.autoHandoffThresholdTokens),
+				values: ["64000", "96000", "128000", "160000", "192000", "256000", "512000"],
+			},
+			{
 				id: "steering-mode",
 				label: "Steering mode",
 				description:
@@ -739,6 +757,12 @@ export class SettingsSelectorComponent extends Container {
 				switch (id) {
 					case "autocompact":
 						callbacks.onAutoCompactChange(newValue === "true");
+						break;
+					case "auto-handoff":
+						callbacks.onAutoHandoffEnabledChange(newValue === "true");
+						break;
+					case "auto-handoff-threshold":
+						callbacks.onAutoHandoffThresholdTokensChange(parseInt(newValue, 10));
 						break;
 					case "show-images":
 						callbacks.onShowImagesChange(newValue === "true");

@@ -13,7 +13,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename, resolve } from "node:path";
 
 import {
   WorkflowStateMachine,
@@ -22,7 +22,6 @@ import {
   type WorkflowEffect,
   type WorkflowEntry,
   type FooterState,
-  type Phase,
   type WorkflowSnapshot,
 } from "./state-machine.ts";
 import {
@@ -53,18 +52,6 @@ async function realFileExists(path: string): Promise<boolean> {
   }
 }
 
-// ponytail: phases where one spawned subagent owns the phase artifact. Force
-// the child `output` path; child processes do not share the parent's workflow
-// state, so the parent-scoped write_workflow_artifact tool cannot help there.
-// Plan 5: these are also the single-owner phases — parallel/chain calls are
-// blocked here because one agent must own plan.md / reuse.md / handoff.md /
-// review.md. Loop is engine-owned (Plan 3) and may fan out.
-const FORCE_OUTPUT_PHASES = new Set<Phase>(["plan", "reuse", "handoff", "audit"]);
-
-// ponytail: phases where the parent can save subagent text as the artifact
-// when the child did not write the file itself (dumb/local models).
-const SUBAGENT_FALLBACK_PHASES = new Set<Phase>(["plan", "reuse", "handoff", "audit"]);
-
 function textFromToolResultContent(content: unknown): string | undefined {
   if (!Array.isArray(content)) return undefined;
   const parts: string[] = [];
@@ -77,75 +64,23 @@ function textFromToolResultContent(content: unknown): string | undefined {
   return joined || undefined;
 }
 
-function validatorForPhaseArtifact(config: WorkflowConfig, phase: Phase) {
-  const phaseValidator = config.artifactValidators?.[phase];
-  if (phaseValidator) return phaseValidator;
-  const file = config.phaseArtifacts[phase];
-  if (!file) return undefined;
-  const isTerminal = config.phases[config.phases.length - 1] === phase;
-  if (!isTerminal || !config.closeArtifacts.includes(file)) return undefined;
-  return config.closeValidators?.[file];
-}
-
-function shouldReplaceInvalidArtifact(
-  config: WorkflowConfig,
-  phase: Phase,
-  currentContent: string,
-  fallbackContent: string,
-): boolean {
-  const validator = validatorForPhaseArtifact(config, phase);
-  if (!validator) return false;
-  return !validator(currentContent).ok && validator(fallbackContent).ok;
-}
-
-// ponytail: rewrite the subagent tool input so the child writes its output
-// directly to ${artifactDir}/${file} as an absolute path. Absolute paths pass
-// through resolveSingleOutputPath verbatim, so injectOutputPathSystemPrompt
-// then forces the child to the correct location instead of repo root.
-// Mutates `input` in place (tool_call handlers can patch event.input).
-// No-op unless the workflow is active, in a force-output phase, and the call
-// targets the `subagent` tool. Respects an explicit absolute caller output.
-function forceSubagentOutputToArtifactDir(
-  input: Record<string, unknown>,
-  artifactDir: string,
-  file: string,
-  onlyAgents?: Set<string>,
-): void {
-  const dest = resolve(artifactDir, file);
-  const shouldForce = (agent: string) => !onlyAgents || onlyAgents.has(agent);
-  // Single-agent call: { agent, task, output?, ... }
-  if (typeof input.agent === "string") {
-    if (!shouldForce(input.agent)) return;
-    const existing = input.output;
-    if (typeof existing === "string" && isAbsolute(existing)) return; // caller pinned it
-    input.output = dest;
-    return;
-  }
-  // Top-level parallel: { tasks: [{ agent, output? }, ...] }
+// Mutates a workflow subagent invocation to suppress both its configured
+// default output and any caller-provided child output path. `output: false`
+// preserves the normal inline result, which the parent must write explicitly.
+function disableSubagentOutput(input: Record<string, unknown>): void {
+  if (typeof input.agent === "string") input.output = false;
   if (Array.isArray(input.tasks)) {
     for (const task of input.tasks) {
-      if (task && typeof task === "object" && typeof task.agent === "string" && shouldForce(task.agent)) {
-        const ex = task.output;
-        if (typeof ex === "string" && isAbsolute(ex)) continue;
-        task.output = dest;
-      }
+      if (task && typeof task === "object") task.output = false;
     }
-    return;
   }
-  // Chain: { chain: [{ agent, output?, parallel: [{ agent, output? }] }] }
   if (Array.isArray(input.chain)) {
     for (const step of input.chain) {
       if (!step || typeof step !== "object") continue;
-      if (typeof step.agent === "string" && shouldForce(step.agent)) {
-        const ex = step.output;
-        if (!(typeof ex === "string" && isAbsolute(ex))) step.output = dest;
-      }
+      step.output = false;
       if (Array.isArray(step.parallel)) {
         for (const task of step.parallel) {
-          if (task && typeof task === "object" && typeof task.agent === "string" && shouldForce(task.agent)) {
-            const ex = task.output;
-            if (!(typeof ex === "string" && isAbsolute(ex))) task.output = dest;
-          }
+          if (task && typeof task === "object") task.output = false;
         }
       }
     }
@@ -546,9 +481,10 @@ function registerSharedArtifactWriter(pi: ExtensionAPI): void {
           details: { mode: controller.config.mode, phase: snap.phase, path, persistenceError: true },
         };
       }
-      // A phase boundary is user-controlled: persist and show the new phase,
-      // but do not inject a follow-up turn that immediately starts it.
-      applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
+      // Most workflows pause at a user-controlled artifact boundary. Task's
+      // plan → loop transition queues the builder/review prompt immediately.
+      const queueNextPhase = controller.config.continueAfterArtifact === true && eff.kind === "advanced";
+      applyControllerEffect(controller, ctx, eff, { queuePrompt: queueNextPhase });
       if (eff.kind === "blocked" && eff.reason) {
         return {
           content: [{ type: "text", text: `Wrote ${path}, but it is not approved: ${eff.reason}. Re-write it via write_workflow_artifact to add the required marker.` }],
@@ -558,12 +494,14 @@ function registerSharedArtifactWriter(pi: ExtensionAPI): void {
       const advanced = eff.kind === "advanced";
       return {
         content: [{ type: "text", text: advanced
-          ? `Wrote ${path}. Phase advanced to ${eff.phase}; wait for the user to continue the workflow.`
+          ? queueNextPhase
+            ? `Wrote ${path}. Phase advanced to ${eff.phase}; the next workflow phase is queued.`
+            : `Wrote ${path}. Phase advanced to ${eff.phase}; wait for the user to continue the workflow.`
           : `Wrote ${path}.` }],
         details: { mode: controller.config.mode, phase: snap.phase, path, file, advanced },
-        // Stop the parent turn at a user-approved artifact boundary. Without
-        // this, the queued phase prompt can immediately launch the next agent.
-        terminate: advanced,
+        // Stop only at user-controlled boundaries. Task deliberately queues
+        // its loop prompt, so terminating here would discard that continuation.
+        terminate: advanced && !queueNextPhase,
       };
     },
     renderResult(result, _options, theme) {
@@ -797,116 +735,37 @@ export function createWorkflowExtension(
       }
     });
 
-    // ── tool_call: enforce workflow boundaries. ──
+    // ── tool_call: enforce parent-owned artifact boundaries. ──
     pi.on("tool_call", (event: any, _ctx: ExtensionContext) => {
       if (!isRegisteredController(controller)) return;
       const tool = event.toolName;
       if (tool !== "subagent" && tool !== "write" && tool !== "edit") return;
       const snap = sm.snapshot;
       if (!snap.active) return;
-      if (tool === "subagent" && isSubagentManagementAction(event.input)) return;
-      const file = config.phaseArtifacts[snap.phase];
       if (tool === "write" || tool === "edit") {
         return {
           block: true,
           reason: `Workflow is active (${mode}/${snap.phase}). Use ${WORKFLOW_ARTIFACT_TOOL} for workflow artifacts; workspace edits must be delegated to subagents.`,
         };
       }
-      if (!file || !event.input || !FORCE_OUTPUT_PHASES.has(snap.phase)) return;
-      // ponytail: Plan 5 — single-owner phases reject parallel/chain. One agent
-      // must own the artifact; tasks/chain split ownership and the output
-      // injector cannot pin one file per agent. Loop is exempt (engine-owned).
-      if (Array.isArray(event.input.tasks) || Array.isArray(event.input.chain)) {
-        return {
-          block: true,
-          reason: `Workflow phase ${snap.phase} expects one subagent owner for ${file}; use a single { agent, task } call, not tasks/chain.`,
-        };
+      if (!isSubagentManagementAction(event.input) && event.input) {
+        // All child results return inline. The parent persists normal phase
+        // artifacts; the loop engine persists its own review files/marker.
+        disableSubagentOutput(event.input);
       }
-      // ponytail: Plan 5 — workflow-spawned subagents run fresh by default so
-      // no hidden parent context leaks into the phase owner. Only override
-      // when the caller explicitly pins a context.
-      if (typeof event.input.context !== "string") {
-        event.input.context = "fresh";
-      }
-      // ponytail: Plan 5 — ban model override on workflow-owned phases. The
-      // workflow, not the parent model, picks the agent; a model pin would
-      // silently change cost/quality without the workflow knowing.
-      if (typeof event.input.model === "string") {
-        return {
-          block: true,
-          reason: `Workflow phase ${snap.phase} does not allow a model override on subagent calls; remove the model parameter.`,
-        };
-      }
-      const onlyAgents = snap.phase === "audit" ? new Set(["commentator", "reviewer"]) : undefined;
-      forceSubagentOutputToArtifactDir(event.input, snap.artifactDir, file, onlyAgents);
     });
 
-    // ── tool_result: auto-advance after subagent/bash artifacts. ──
+    // ── tool_result: only the engine-owned loop persists subagent output. ──
     pi.on("tool_result", async (event: any, ctx: ExtensionContext) => {
       if (!isRegisteredController(controller)) return;
-      if (event.toolName !== "bash" && event.toolName !== "subagent") return;
-      // Both modes receive every tool result. Inactive controllers have no
-      // attached run and must not try to persist ordinary agent activity.
-      if (!sm.snapshot.active) return;
+      if (event.toolName !== "subagent" || event.isError) return;
+      // Parent-owned phases intentionally do nothing here: the main agent must
+      // inspect the inline child result and call write_workflow_artifact.
+      if (!sm.snapshot.active || sm.snapshot.phase !== "loop" || isSubagentManagementAction(event.input)) return;
       const eventBefore = checkpoint(controller);
-      if (sm.snapshot.active && typeof event.toolCallId === "string") {
+      if (typeof event.toolCallId === "string") {
         if (controller.seenToolCallIds.has(event.toolCallId)) return;
         controller.seenToolCallIds.add(event.toolCallId);
-      }
-      // Re-check after an error in case the tool wrote its artifact before
-      // failing. The normal tool-result continuation receives the error; do
-      // not inject another parent turn.
-      if (event.isError && sm.snapshot.active) {
-        if (event.toolName === "subagent" && isSubagentManagementAction(event.input)) return;
-        const eff = await sm.onArtifactMaybe(deps);
-        try {
-          await persistAfter(controller, eventBefore);
-        } catch (error) {
-          ctx.ui.notify(`Workflow state was not saved: ${error instanceof Error ? error.message : String(error)}`, "warning");
-          return;
-        }
-        applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
-        if (sm.snapshot.phase !== "loop") {
-          controller.loopState = undefined;
-        }
-        return;
-      }
-      // ponytail: if a subagent returned text but did not write the expected
-      // artifact (common with dumb/local models), save the returned text as
-      // the artifact so the workflow can still advance.
-      if (event.toolName === "subagent" && sm.snapshot.active && SUBAGENT_FALLBACK_PHASES.has(sm.snapshot.phase)) {
-        const phase = sm.snapshot.phase;
-        const file = config.phaseArtifacts[phase];
-        if (file) {
-          // ponytail: management actions (list/get/models/doctor/status/...)
-          // return text but are NOT the architect/recapper/... execution
-          // result. Writing their text to plan.md would advance the workflow
-          // on agent-listing output (the `subagent list` result is plain
-          // text). Execution calls set `agent`/`chain`/`tasks`; management
-          // calls set `action`. Only fall back for execution calls.
-          if (!isSubagentManagementAction(event.input)) {
-            const expectedPath = resolve(sm.snapshot.artifactDir, file);
-            const text = textFromToolResultContent(event.content);
-            if (text) {
-              const validator = validatorForPhaseArtifact(config, phase);
-              let shouldWrite = false;
-              if (!(await realFileExists(expectedPath))) {
-                shouldWrite = !validator || validator(text).ok;
-              } else {
-                try {
-                  const current = await readFile(expectedPath, "utf8");
-                  shouldWrite = shouldReplaceInvalidArtifact(config, phase, current, text);
-                } catch {
-                  shouldWrite = false;
-                }
-              }
-              if (shouldWrite) {
-                await mkdir(sm.snapshot.artifactDir, { recursive: true });
-                await writeFile(expectedPath, text, "utf8");
-              }
-            }
-          }
-        }
       }
       // The adapter owns durable loop state; the normal subagent tool-result
       // continuation lets the parent choose the next builder/commentator call.
@@ -973,9 +832,10 @@ export function createWorkflowExtension(
         ctx.ui.notify(`Workflow state was not saved: ${error instanceof Error ? error.message : String(error)}`, "warning");
         return;
       }
-      // Do not turn an artifact/subagent result into a new parent turn.
-      // The user resumes the next phase deliberately via the workflow command.
-      applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
+      // The only artifact written in this handler is loop-complete.md, which
+      // is engine-owned. Parent-written phase artifacts advance inside
+      // write_workflow_artifact instead.
+      applyControllerEffect(controller, ctx, eff);
     });
 
     // ── /<command> ──

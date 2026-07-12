@@ -460,6 +460,8 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					sessionId: session.sessionId,
 					sessionName: session.sessionName,
 					autoCompactionEnabled: session.autoCompactionEnabled,
+					autoHandoffEnabled: session.autoHandoffEnabled,
+					autoHandoffThresholdTokens: session.autoHandoffThresholdTokens,
 					messageCount: session.messages.length,
 					pendingMessageCount: session.pendingMessageCount,
 				};
@@ -559,6 +561,20 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			case "set_auto_compaction": {
 				session.setAutoCompactionEnabled(command.enabled);
 				return success(id, "set_auto_compaction");
+			}
+
+			case "set_auto_handoff": {
+				session.settingsManager.setAutoHandoffEnabled(command.enabled);
+				return success(id, "set_auto_handoff");
+			}
+
+			case "set_auto_handoff_threshold": {
+				const tokens = command.tokens;
+				if (!Number.isFinite(tokens) || tokens < 1000) {
+					return error(id, "set_auto_handoff_threshold", "Threshold must be at least 1000 tokens");
+				}
+				session.settingsManager.setAutoHandoffThresholdTokens(tokens);
+				return success(id, "set_auto_handoff_threshold");
 			}
 
 			// =================================================================

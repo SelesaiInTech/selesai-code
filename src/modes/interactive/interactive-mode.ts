@@ -4202,6 +4202,8 @@ export class InteractiveMode {
 			const selector = new SettingsSelectorComponent(
 				{
 					autoCompact: this.session.autoCompactionEnabled,
+					autoHandoffEnabled: this.settingsManager.getAutoHandoffEnabled(),
+					autoHandoffThresholdTokens: this.settingsManager.getAutoHandoffThresholdTokens(),
 					showImages: this.settingsManager.getShowImages(),
 					imageWidthCells: this.settingsManager.getImageWidthCells(),
 					autoResizeImages: this.settingsManager.getImageAutoResize(),
@@ -4236,6 +4238,12 @@ export class InteractiveMode {
 					onAutoCompactChange: (enabled) => {
 						this.session.setAutoCompactionEnabled(enabled);
 						this.footer.setAutoCompactEnabled(enabled);
+					},
+					onAutoHandoffEnabledChange: (enabled) => {
+						this.settingsManager.setAutoHandoffEnabled(enabled);
+					},
+					onAutoHandoffThresholdTokensChange: (tokens) => {
+						this.settingsManager.setAutoHandoffThresholdTokens(tokens);
 					},
 					onShowImagesChange: (enabled) => {
 						this.settingsManager.setShowImages(enabled);

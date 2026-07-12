@@ -543,6 +543,52 @@ function getUserAgentSettingsPath(): string {
 	return path.join(getAgentDir(), "settings.json");
 }
 
+/**
+ * Seed the user-visible subagent configuration on first session startup.
+ *
+ * Builtin agents normally inherit the parent session model. Recording that
+ * model as `subagents.defaultModel` makes the default explicit. Each bundled
+ * role is also written to `agentOverrides`, so users can see and edit its
+ * effective model without changing unrelated user settings.
+ */
+export function ensureDefaultUserSubagentSettings(currentModel: { provider: string; id: string } | undefined): boolean {
+	if (!currentModel?.provider || !currentModel.id) return false;
+
+	const filePath = getUserAgentSettingsPath();
+	const settings = readSettingsFileStrict(filePath);
+	const existing = settings.subagents;
+	if (existing !== undefined && (!existing || typeof existing !== "object" || Array.isArray(existing))) return false;
+
+	const subagents = (existing ?? {}) as Record<string, unknown>;
+	const currentModelId = `${currentModel.provider}/${currentModel.id}`;
+	if ("defaultModel" in subagents && (typeof subagents.defaultModel !== "string" || !subagents.defaultModel.trim())) return false;
+
+	let changed = false;
+	if (!("defaultModel" in subagents)) {
+		subagents.defaultModel = currentModelId;
+		changed = true;
+	}
+
+	const defaultModel = subagents.defaultModel as string;
+	const overrides = subagents.agentOverrides;
+	const shouldSeedOverrides = overrides === undefined
+		|| (overrides !== null && typeof overrides === "object" && !Array.isArray(overrides) && Object.keys(overrides).length === 0);
+	if (shouldSeedOverrides) {
+		subagents.agentOverrides = Object.fromEntries(
+			loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin").map((agent) => [
+				agent.name,
+				{ model: agent.model ?? defaultModel },
+			]),
+		);
+		changed = true;
+	}
+	if (!changed) return false;
+
+	settings.subagents = subagents;
+	writeSettingsFile(filePath, settings);
+	return true;
+}
+
 function getProjectAgentSettingsPath(cwd: string): string | null {
 	const projectRoot = findNearestProjectRoot(cwd);
 	return projectRoot ? path.join(getProjectConfigDir(projectRoot), "settings.json") : null;

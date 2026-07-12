@@ -18,7 +18,7 @@ src/extensions/workflow/
 ```
 
 - **`state-machine.ts`** is the deep module. It owns the phase graph, artifact gating, skip rules, the terminal close gate, and the reentrancy guard. It imports nothing external — no `node:fs`, no pi API, no `pi-tui`, no `typebox`. Every method returns a `WorkflowEffect` (a discriminated union in domain vocabulary) that the adapter pattern-matches on.
-- **`adapter.ts`** is the thin glue. It owns Pi/fs wiring, durable state, explicit resume, loop review persistence, and the git-based `reuse` skip predicate. An artifact advances durable phase state, then stops at a user-controlled boundary; `/workflow-prototype`, `/workflow-quick`, or `/workflow-task` continues the attached run.
+- **`adapter.ts`** is the thin glue. It owns Pi/fs wiring, durable state, explicit resume, loop review persistence, and the git-based `reuse` skip predicate. Parent-written artifacts advance durable phase state. `prototype` and `quick` stop at user-controlled boundaries; `task` queues its build loop as soon as its plan is ready.
 - **`workflow.json`** in each artifact directory is the canonical, versioned run record. It is atomically replaced after state changes; session custom entries are only pointers for UI/history and never reconstruct an active run.
 - **`extension.ts`** imports each mode's registration object and calls `createWorkflowExtension(config, options)(pi)` for each, so one extension load resolves a single shared writer tool + one start/end tool pair per mode.
 - **A mode file** is pure data: the phase list, the per-phase artifact filenames, the per-phase prompt generators, the terminal close artifacts, and identity strings (tool names, command name, status key, entry type). Prompts are functions that receive `{ artifactDir, userPrompt }` and return a string. Each mode exports a `WorkflowModeRegistration` object (e.g. `prototypeMode`, `quickMode`); it does not call `createWorkflowExtension` itself.
@@ -129,7 +129,7 @@ Lifecycle: `plan → loop (build ↔ review) → terminal-ready → end_task_wor
 - `/workflow-task <goal>` — start a new run
 - `/workflow-task resume` — list and resume active runs
 - `/workflow-task help` — show the lifecycle
-- Phases auto-advance as artifacts land
+- Its ready plan automatically queues the builder↔review loop
 - No grilling, research, reuse, or handoff phases
 
 ## Config reference
@@ -145,6 +145,7 @@ Lifecycle: `plan → loop (build ↔ review) → terminal-ready → end_task_wor
 | `statusKey` | `string` | Footer status key. |
 | `entryType` | `string` | Session-history custom-type. It stores a pointer only; `workflow.json` is canonical. |
 | `footerLabel` | `string` | Label shown in the footer (`● label · step/total phase`). |
+| `continueAfterArtifact?` | `boolean` | Queue the next phase prompt after the parent writes a valid artifact. `task` enables this for plan → build. |
 
 ### Adapter options
 
@@ -168,11 +169,15 @@ Runs are **never** auto-resumed on session start. At most one run can be attache
 - `/workflow-prototype resume`, `/workflow-quick resume`, or `/workflow-task resume` lists active runs (and offers a UI picker when available).
 - `/workflow-prototype help`, `/workflow-quick help`, or `/workflow-task help` shows the start, resume, continue, and explicit-completion lifecycle.
 
-Resume validates the selected file is under the artifacts base, belongs to that mode, is active, and matches its containing directory. It reconciles the current expected artifact once before emitting the current prompt, covering a crash after an artifact write but before the phase-state write. Artifact writes do not inject the next phase prompt or launch the next subagent; they terminate the parent turn and wait for the user to continue. Corrupt records are skipped during discovery.
+Resume validates the selected file is under the artifacts base, belongs to that mode, is active, and matches its containing directory. It reconciles the current expected artifact once before emitting the current prompt, covering a crash after `write_workflow_artifact` writes the file but before the phase-state write. Artifact writes do not inject the next phase prompt or launch the next subagent; they terminate the parent turn and wait for the user to continue. A mode can opt out of that pause after a parent artifact write; `task` does so after `plan.md` so the build loop starts immediately. Corrupt records are skipped during discovery.
 
 A valid terminal artifact makes a workflow **terminal-ready**; it does not complete the run. Call the mode-specific `end_*_workflow` tool to write `status: "completed"`, append the done entry, and terminate. This is the only completion path.
 
-## How transitions work
+## Artifact ownership
+
+Workflow artifacts have one writer: the parent session's `write_workflow_artifact` tool. Every workflow child call uses `output: false` and returns inline. In artifact phases (`plan`, `reuse`, `handoff`, and `audit`), the parent inspects that result, validates any required marker, and immediately passes it to `write_workflow_artifact`. Child output paths and fallback persistence are deliberately disabled; a child result alone cannot create an artifact or advance a phase.
+
+The implement/review loop is the explicit exception to parent persistence, not inline return: the engine persists `loop-review-<round>.md` and `loop-complete.md` from commentator results so it can manage review rounds. Builders only change workspace code.
 
 Every state-machine method returns a `WorkflowEffect` — a discriminated union the adapter switches on:
 

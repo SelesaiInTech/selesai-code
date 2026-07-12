@@ -59,6 +59,11 @@ export interface WarningSettings {
 	anthropicExtraUsage?: boolean; // default: true
 }
 
+export interface AutoHandoffSettings {
+	enabled?: boolean; // default: false
+	thresholdTokens?: number; // default: 128_000
+}
+
 export type DefaultProjectTrust = "ask" | "always" | "never";
 
 export type TransportSetting = Transport;
@@ -123,6 +128,7 @@ export interface Settings {
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	warnings?: WarningSettings;
+	autoHandoff?: AutoHandoffSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	// Per-extension collision winner between ~/.selesai/agent/extensions and
 	// ~/.pi/agent/extensions. Key = top-level entry name (e.g. "pi-subagents",
@@ -1235,6 +1241,32 @@ export class SettingsManager {
 	setWarnings(warnings: WarningSettings): void {
 		this.globalSettings.warnings = { ...warnings };
 		this.markModified("warnings");
+		this.save();
+	}
+
+	getAutoHandoffEnabled(): boolean {
+		return this.settings.autoHandoff?.enabled ?? false;
+	}
+
+	setAutoHandoffEnabled(enabled: boolean): void {
+		if (!this.globalSettings.autoHandoff) {
+			this.globalSettings.autoHandoff = {};
+		}
+		this.globalSettings.autoHandoff.enabled = enabled;
+		this.markModified("autoHandoff", "enabled");
+		this.save();
+	}
+
+	getAutoHandoffThresholdTokens(): number {
+		return this.settings.autoHandoff?.thresholdTokens ?? 128_000;
+	}
+
+	setAutoHandoffThresholdTokens(tokens: number): void {
+		if (!this.globalSettings.autoHandoff) {
+			this.globalSettings.autoHandoff = {};
+		}
+		this.globalSettings.autoHandoff.thresholdTokens = Math.max(1000, Math.floor(tokens));
+		this.markModified("autoHandoff", "thresholdTokens");
 		this.save();
 	}
 }

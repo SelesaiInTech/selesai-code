@@ -45,6 +45,10 @@ export type RpcCommand =
 	| { id?: string; type: "compact"; customInstructions?: string }
 	| { id?: string; type: "set_auto_compaction"; enabled: boolean }
 
+	// Auto handoff
+	| { id?: string; type: "set_auto_handoff"; enabled: boolean }
+	| { id?: string; type: "set_auto_handoff_threshold"; tokens: number }
+
 	// Retry
 	| { id?: string; type: "set_auto_retry"; enabled: boolean }
 	| { id?: string; type: "abort_retry" }
@@ -102,6 +106,8 @@ export interface RpcSessionState {
 	sessionId: string;
 	sessionName?: string;
 	autoCompactionEnabled: boolean;
+	autoHandoffEnabled: boolean;
+	autoHandoffThresholdTokens: number;
 	messageCount: number;
 	pendingMessageCount: number;
 	workflow?: WorkflowState;
@@ -177,6 +183,10 @@ export type RpcResponse =
 	// Compaction
 	| { id?: string; type: "response"; command: "compact"; success: true; data: CompactionResult }
 	| { id?: string; type: "response"; command: "set_auto_compaction"; success: true }
+
+	// Auto handoff
+	| { id?: string; type: "response"; command: "set_auto_handoff"; success: true }
+	| { id?: string; type: "response"; command: "set_auto_handoff_threshold"; success: true }
 
 	// Retry
 	| { id?: string; type: "response"; command: "set_auto_retry"; success: true }

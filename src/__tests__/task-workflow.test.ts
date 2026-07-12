@@ -97,7 +97,7 @@ describe("task workflow", () => {
     expect(await sm.end(deps)).toMatchObject({ kind: "closed", phase: "loop" });
   });
 
-  it("registers task tools and forces architect output to its plan artifact", async () => {
+  it("registers task tools and suppresses plan/build child file output", async () => {
     const h = await createHarness();
     expect(h.tools.has("start_task_workflow")).toBe(true);
     expect(h.tools.has("resume_task_workflow")).toBe(true);
@@ -107,10 +107,21 @@ describe("task workflow", () => {
 
     await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
     const dir = h.entries.at(-1)!.data.artifactDir;
-    const input: Record<string, unknown> = { agent: "architect", task: "plan it" };
+    const input: Record<string, unknown> = { agent: "architect", task: "plan it", output: join(dir, "plan.md") };
     await h.events.get("tool_call")({ toolName: "subagent", input }, h.ctx);
-    expect(input.output).toBe(join(dir, "plan.md"));
+    expect(input.output).toBe(false);
     expect(h.status.get("task")).toContain("1/2 plan");
+
+    await h.tools.get("write_workflow_artifact").execute(
+      "write-plan",
+      { content: "# Plan\nWORKFLOW_PLAN_STATUS: ready" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+    const builderInput: Record<string, unknown> = { agent: "builder", task: "build it", output: join(dir, "builder.md") };
+    await h.events.get("tool_call")({ toolName: "subagent", input: builderInput }, h.ctx);
+    expect(builderInput.output).toBe(false);
   });
 
   it("reload ignores its stale task handler; explicit task resume reconciles the durable plan", async () => {
@@ -134,7 +145,25 @@ describe("task workflow", () => {
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ phase: "loop", status: "active" });
   });
 
-  it("falls back to architect text, persists clean loop completion, and closes explicitly", async () => {
+  it("queues the builder loop when write_workflow_artifact advances the plan", async () => {
+    const h = await createHarness();
+    await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
+
+    const result = await h.tools.get("write_workflow_artifact").execute(
+      "write-plan",
+      { content: "# Plan\nWORKFLOW_PLAN_STATUS: ready" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+
+    expect(result.terminate).toBe(false);
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0]).toMatchObject({ options: { deliverAs: "followUp" } });
+    expect(h.sent[0]?.text).toContain("LOOP (orchestration) phase");
+  });
+
+  it("requires the parent to persist architect output before entering the loop", async () => {
     const h = await createHarness();
     await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
     const dir = h.entries.at(-1)!.data.artifactDir;
@@ -142,12 +171,26 @@ describe("task workflow", () => {
     await h.events.get("tool_result")({
       toolName: "subagent",
       toolCallId: "architect",
-      input: { agent: "architect" },
+      input: { agent: "architect", output: false },
       content: [{ type: "text", text: "# Plan\nWORKFLOW_PLAN_STATUS: ready" }],
       isError: false,
     }, h.ctx);
+    expect(h.entries.at(-1)?.data.phase).toBe("plan");
+    expect(existsSync(join(dir, "plan.md"))).toBe(false);
+    expect(h.sent).toHaveLength(0);
+
+    await h.tools.get("write_workflow_artifact").execute(
+      "write-plan",
+      { content: "# Plan\nWORKFLOW_PLAN_STATUS: ready" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
     expect(h.entries.at(-1)?.data.phase).toBe("loop");
     expect(existsSync(join(dir, "plan.md"))).toBe(true);
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0]).toMatchObject({ options: { deliverAs: "followUp" } });
+    expect(h.sent[0]?.text).toContain("LOOP (orchestration) phase");
 
     await h.events.get("tool_result")({
       toolName: "subagent",
@@ -174,10 +217,13 @@ describe("task workflow", () => {
   it("pauses durably after three blocking reviews", async () => {
     const h = await createHarness();
     await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
-    await h.events.get("tool_result")({
-      toolName: "subagent", toolCallId: "architect", input: { agent: "architect" },
-      content: [{ type: "text", text: "WORKFLOW_PLAN_STATUS: ready" }], isError: false,
-    }, h.ctx);
+    await h.tools.get("write_workflow_artifact").execute(
+      "write-plan",
+      { content: "WORKFLOW_PLAN_STATUS: ready" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
     const dir = h.entries.at(-1)!.data.artifactDir;
 
     for (let round = 1; round <= 3; round++) {

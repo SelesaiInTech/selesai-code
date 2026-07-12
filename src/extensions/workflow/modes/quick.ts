@@ -64,11 +64,11 @@ The workflow advances once ${artifactDir}/requirements.md exists.`,
 
 This is a QUICK workflow — no separate research phase. Use ${artifactDir}/requirements.md to produce the concrete build plan: what to build, how, in order, components, and what the finished prototype looks like.
 
-Call the subagent tool with { agent: "architect", task: "..." } (do NOT pass a model parameter). Craft the task from ${artifactDir}/requirements.md so the architect plans for THIS task. The architect returns the plan; the workflow saves it to ${artifactDir}/plan.md.
+Call the subagent tool with { agent: "architect", task: "...", output: false } (do NOT pass a model parameter). Craft the task from ${artifactDir}/requirements.md so the architect plans for THIS task. It must return the complete plan inline; do not tell it to write any artifact.
 
-The plan MUST end with exactly one machine-readable line on its own:
+Inspect that result, verify it ends with exactly one machine-readable line on its own:
   WORKFLOW_PLAN_STATUS: ready
-The workflow will NOT advance until ${artifactDir}/plan.md contains that marker.`,
+Then immediately call write_workflow_artifact with the complete validated plan as content. Only that parent tool call writes ${artifactDir}/plan.md and advances the workflow.`,
   reuse: ({ artifactDir }) =>
     `You are in the REUSE phase (optional).
 
@@ -76,7 +76,7 @@ Decide whether codebase exploration is useful. Skip if the project is empty, the
 
 If unsure, ask the user one focused question: "Should I explore the existing codebase for reusable patterns before implementing?" Then follow their answer.
 
-If YES (or user confirms): call the subagent tool with { agent: "explorer", task: "..." } (do NOT pass a model parameter). Craft the task from ${artifactDir}/requirements.md and ${artifactDir}/plan.md pointing it at relevant areas, patterns, and dependencies. Synthesize the findings into ${artifactDir}/reuse.md: what is reusable, where, and how to leverage it.
+If YES (or user confirms): call the subagent tool with { agent: "explorer", task: "...", output: false } (do NOT pass a model parameter). Craft the task from ${artifactDir}/requirements.md and ${artifactDir}/plan.md pointing it at relevant areas, patterns, and dependencies. It must return the reuse findings inline; do not tell it to write any artifact. Immediately call write_workflow_artifact with those findings as content for ${artifactDir}/reuse.md.
 
 If NO: call write_workflow_artifact with a brief skip note explaining why.
 
@@ -91,19 +91,19 @@ Draw from all prior phases:
 - ${artifactDir}/plan.md
 - ${artifactDir}/reuse.md
 
-Call the subagent tool with { agent: "recapper", task: "..." } (do NOT pass a model parameter). Craft the task pointing the recapper at all three artifact files and telling it what the prototype is about. The recapper returns the handoff; the workflow saves it to ${artifactDir}/handoff.md.
+Call the subagent tool with { agent: "recapper", task: "...", output: false } (do NOT pass a model parameter). Craft the task pointing the recapper at all three artifact files and telling it what the prototype is about. It must return the complete handoff inline; do not tell it to write any artifact.
 
-The handoff MUST end with exactly one machine-readable line on its own:
+Inspect that result, verify it ends with exactly one machine-readable line on its own:
   WORKFLOW_HANDOFF_STATUS: ready
-The workflow will NOT advance until ${artifactDir}/handoff.md contains that marker.`,
+Then immediately call write_workflow_artifact with the complete validated handoff as content. Only that parent tool call writes ${artifactDir}/handoff.md and advances the workflow.`,
   loop: ({ artifactDir, loopMaxIterations }) =>
     `You are in the LOOP (orchestration) phase. The workflow ENGINE owns the implement→review loop — you do NOT track iterations or decide when the loop is clean.
 
 Use read to inspect ${artifactDir}/plan.md, ${artifactDir}/handoff.md, and ${artifactDir}/reuse.md. Using that context, GENERATE YOUR OWN delegation prompt:
 
-Call the subagent tool with { agent: "builder", task: "..." } (do NOT pass a model parameter). Give it plan + handoff + reuse context, tailored to this task. Instruct it to implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}.
+Call the subagent tool with { agent: "builder", task: "...", output: false } (do NOT pass a model parameter). Give it plan + handoff + reuse context, tailored to this task. Instruct it to implement every task in plan.md in order. All code changes go in the workspace, never in ${artifactDir}. The builder must return its completion summary inline.
 
-After the builder returns, call the commentator. Craft the review task YOURSELF. Each commentator review MUST end with exactly one machine-readable line:
+After the builder returns, call the subagent tool with { agent: "commentator", task: "...", output: false }. Craft the review task YOURSELF. The commentator must return its review inline. Each commentator review MUST end with exactly one machine-readable line:
   WORKFLOW_REVIEW_STATUS: clean
   OR
   WORKFLOW_REVIEW_STATUS: blocking
@@ -114,11 +114,9 @@ If a review is blocking, call the builder again with the recorded issues. This r
 
 Review uncommitted changes for correctness, plan adherence, and over-engineering. Use ponytail-review style: cut bloat, unnecessary abstractions, dead flexibility, and reinvented stdlib/native behavior.
 
-1. Call the subagent tool with { agent: "commentator", task: "..." } (do NOT pass a model parameter). Craft the task from the full uncommitted diff and ${artifactDir}/plan.md. The commentator returns its review; the workflow saves it to ${artifactDir}/review.md. The review MUST end with exactly one machine-readable line on its own:
-  WORKFLOW_REVIEW_STATUS: clean
-  (use WORKFLOW_REVIEW_STATUS: blocking if actionable issues remain)
-2. If ${artifactDir}/review.md lists actionable issues, call the subagent tool with { agent: "builder", task: "..." } (do NOT pass a model parameter). Instruct it to fix every issue in the workspace, never in ${artifactDir}.
-3. Re-run the commentator until ${artifactDir}/review.md ends with WORKFLOW_REVIEW_STATUS: clean.
+1. Call the subagent tool with { agent: "commentator", task: "...", output: false } (do NOT pass a model parameter). Craft the task from the full uncommitted diff and ${artifactDir}/plan.md. It must return the review inline; do not tell it to write any artifact. Verify the review ends with exactly one machine-readable line, WORKFLOW_REVIEW_STATUS: clean or WORKFLOW_REVIEW_STATUS: blocking, then immediately call write_workflow_artifact with that review as content for ${artifactDir}/review.md.
+2. If that review lists actionable issues, call the subagent tool with { agent: "builder", task: "...", output: false } (do NOT pass a model parameter). Instruct it to fix every issue in the workspace, never in ${artifactDir}, then return its completion summary inline.
+3. Re-run the commentator and overwrite the parent-owned review artifact through write_workflow_artifact until it ends with WORKFLOW_REVIEW_STATUS: clean.
 
 Once ${artifactDir}/review.md exists and ends with the WORKFLOW_REVIEW_STATUS: clean marker, call end_quick_workflow to complete the workflow.`,
 };

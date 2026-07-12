@@ -1,11 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ponytail: with the next tool removed, write_workflow_artifact advances
-// parent-written artifacts; subagent-driven phases advance when the subagent
-// tool returns and the forced output file exists.
+// ponytail: with the next tool removed, write_workflow_artifact is the only
+// parent-owned artifact transition. The loop is the sole engine-owned writer.
 
 async function createQuickHarness() {
 	vi.resetModules();
@@ -101,7 +100,7 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		expect(res.reason).toContain("write_workflow_artifact");
 	});
 
-	it("hook fires on the subagent tool so a subagent-written plan.md advances plan→reuse", async () => {
+	it("requires the parent writer to advance plan→reuse", async () => {
 		const h = await createQuickHarness();
 		const c = { ...h.ctxBase };
 		await h.tools.get("start_quick_workflow").execute(
@@ -110,12 +109,14 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		const dir = h.entries.at(-1)!.data.artifactDir;
 		await h.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
 		expect(h.entries.at(-1)?.data.phase).toBe("plan");
-		// subagent (architect) writes plan.md out-of-band; the parent's hook only
-		// re-checks when the subagent tool returns. Simulate that tool_result.
-		writeFileSync(join(dir, "plan.md"), "# plan\nWORKFLOW_PLAN_STATUS: ready");
+
 		await h.events.get("tool_result")(
-			{ type: "tool_result", toolName: "subagent", toolCallId: "t2", input: {}, content: [], isError: false }, c,
+			{ type: "tool_result", toolName: "subagent", toolCallId: "t2", input: { agent: "architect", output: false }, content: [{ type: "text", text: "# plan\nWORKFLOW_PLAN_STATUS: ready" }], isError: false }, c,
 		);
+		expect(h.entries.at(-1)?.data.phase).toBe("plan");
+		expect(() => readFileSync(join(dir, "plan.md"), "utf8")).toThrow();
+
+		await h.tools.get("write_workflow_artifact").execute("w2", { content: "# plan\nWORKFLOW_PLAN_STATUS: ready" }, undefined, undefined, c);
 		expect(h.entries.at(-1)?.data.phase).toBe("reuse");
 		expect(h.sent).toHaveLength(0);
 	});
@@ -127,18 +128,14 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 			"id-1", { goal: "build X" }, undefined, undefined, c,
 		);
 		const dir = h.entries.at(-1)!.data.artifactDir;
-		const OK: Record<string, string> = {
-			"plan.md": "WORKFLOW_PLAN_STATUS: ready",
-			"handoff.md": "WORKFLOW_HANDOFF_STATUS: ready",
-			"loop-complete.md": "WORKFLOW_LOOP_STATUS: clean",
-			"review.md": "WORKFLOW_REVIEW_STATUS: clean",
-		};
-		for (const f of ["requirements.md", "plan.md", "reuse.md", "handoff.md", "loop-complete.md", "review.md"]) {
-			writeFileSync(join(dir, f), `# ${f}\n${OK[f] ?? ""}`);
-			await h.events.get("tool_result")(
-				{ type: "tool_result", toolName: f === "requirements.md" || f === "loop-complete.md" ? "bash" : "subagent", toolCallId: f, input: { path: join(dir, f) }, content: [], isError: false }, c,
-			);
-		}
+		await h.tools.get("write_workflow_artifact").execute("requirements", { content: "# requirements" }, undefined, undefined, c);
+		await h.tools.get("write_workflow_artifact").execute("plan", { content: "# plan\nWORKFLOW_PLAN_STATUS: ready" }, undefined, undefined, c);
+		await h.tools.get("write_workflow_artifact").execute("reuse", { content: "# reuse" }, undefined, undefined, c);
+		await h.tools.get("write_workflow_artifact").execute("handoff", { content: "# handoff\nWORKFLOW_HANDOFF_STATUS: ready" }, undefined, undefined, c);
+		await h.events.get("tool_result")(
+			{ type: "tool_result", toolName: "subagent", toolCallId: "clean-loop", input: { agent: "commentator" }, content: [{ type: "text", text: "Clean\nWORKFLOW_REVIEW_STATUS: clean" }], isError: false }, c,
+		);
+		await h.tools.get("write_workflow_artifact").execute("review", { content: "# review\nWORKFLOW_REVIEW_STATUS: clean" }, undefined, undefined, c);
 		expect(h.entries.at(-1)?.data.done).toBe(false);
 		const end = await h.tools.get("end_quick_workflow").execute("end", {}, undefined, undefined, c);
 		expect(end.terminate).toBe(true);

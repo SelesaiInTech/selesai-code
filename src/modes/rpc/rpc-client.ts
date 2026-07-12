@@ -310,6 +310,20 @@ export class RpcClient {
 	}
 
 	/**
+	 * Set auto-handoff enabled/disabled.
+	 */
+	async setAutoHandoff(enabled: boolean): Promise<void> {
+		await this.send({ type: "set_auto_handoff", enabled });
+	}
+
+	/**
+	 * Set auto-handoff threshold in tokens.
+	 */
+	async setAutoHandoffThresholdTokens(tokens: number): Promise<void> {
+		await this.send({ type: "set_auto_handoff_threshold", tokens });
+	}
+
+	/**
 	 * Set auto-retry enabled/disabled.
 	 */
 	async setAutoRetry(enabled: boolean): Promise<void> {

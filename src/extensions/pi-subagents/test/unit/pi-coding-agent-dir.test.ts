@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { discoverAgentsAll } from "../../src/agents/agents.ts";
+import { discoverAgentsAll, ensureDefaultUserSubagentSettings } from "../../src/agents/agents.ts";
 import { handleCreate } from "../../src/agents/agent-management.ts";
 import { clearSkillCache, discoverAvailableSkills, resolveSkillPath } from "../../src/agents/skills.ts";
 import { loadConfig } from "../../src/extension/config.ts";
@@ -84,6 +84,30 @@ describe("SELESAI_CODING_AGENT_DIR runtime paths", () => {
 		const config = loadConfig();
 		assert.equal(config.asyncByDefault, true);
 		assert.equal(config.maxSubagentDepth, 3);
+	});
+
+	it("seeds an editable user subagent model default without replacing existing settings", () => {
+		const settingsPath = path.join(agentDir, "settings.json");
+		writeFile(settingsPath, JSON.stringify({ defaultModel: "openai/gpt-5", packages: ["npm:example"] }, null, 2));
+
+		assert.equal(ensureDefaultUserSubagentSettings({ provider: "anthropic", id: "claude-sonnet-4" }), true);
+		assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, "utf-8")), {
+			defaultModel: "openai/gpt-5",
+			packages: ["npm:example"],
+			subagents: {
+				defaultModel: "anthropic/claude-sonnet-4",
+				agentOverrides: {
+					architect: { model: "anthropic/claude-sonnet-4" },
+					builder: { model: "anthropic/claude-sonnet-4" },
+					commentator: { model: "anthropic/claude-sonnet-4" },
+					explorer: { model: "anthropic/claude-sonnet-4" },
+					recapper: { model: "anthropic/claude-sonnet-4" },
+					researcher: { model: "anthropic/claude-sonnet-4" },
+				},
+			},
+		});
+		assert.equal(ensureDefaultUserSubagentSettings({ provider: "openai", id: "gpt-5-mini" }), false);
+		assert.equal(ensureDefaultUserSubagentSettings(undefined), false);
 	});
 
 	it("discovers user agents, chains, and settings under the configured agent dir", () => {
