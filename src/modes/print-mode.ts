@@ -7,8 +7,10 @@
  */
 
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
+import { PACKAGE_NAME, VERSION, getUpdateInstruction } from "../config.ts";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, writeRawStdout } from "../core/output-guard.ts";
+import { checkForNewPiVersion } from "../utils/version-check.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
 
 /**
@@ -63,6 +65,15 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	};
 
 	registerSignalHandlers();
+
+	// Non-blocking update notice; print mode must never write to stdout/RPC streams.
+	void checkForNewPiVersion(VERSION, PACKAGE_NAME)
+		.then((release) => {
+			if (release) {
+				console.error(`Update available: ${release.version} is newer than ${VERSION}. ${getUpdateInstruction(PACKAGE_NAME)}`);
+			}
+		})
+		.catch(() => {});
 
 	runtimeHost.setRebindSession(async () => {
 		await rebindSession();

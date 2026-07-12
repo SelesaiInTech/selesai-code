@@ -4,6 +4,7 @@ import { getPiUserAgent } from "./pi-user-agent.ts";
 const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
 const NPM_REGISTRY_URL = "https://registry.npmjs.org";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
+const PACKAGE_NAME: string = "@selesai/code";
 
 export interface LatestPiRelease {
 	version: string;
@@ -90,8 +91,12 @@ export async function getLatestPiVersion(
 	return (await getLatestPiRelease(currentVersion, options))?.version;
 }
 
-// ponytail: selesai has no pi.dev equivalent yet. Disable update nag until selesai infra exists.
-// getLatestPiRelease is left intact for `selesai update --self`; only the interactive nag is killed.
-export async function checkForNewPiVersion(_currentVersion: string): Promise<LatestPiRelease | undefined> {
-	return undefined; // no update available — no network call to pi.dev/api/latest-version
+export async function checkForNewPiVersion(
+	currentVersion: string,
+	packageName: string = PACKAGE_NAME,
+	options: { timeoutMs?: number } = {},
+): Promise<LatestPiRelease | undefined> {
+	const release = await getLatestPackageRelease(packageName, currentVersion, options);
+	if (!release) return undefined;
+	return isNewerPackageVersion(release.version, currentVersion) ? release : undefined;
 }
