@@ -64,6 +64,11 @@ export interface AutoHandoffSettings {
 	thresholdTokens?: number; // default: 128_000
 }
 
+const DEFAULT_AUTO_HANDOFF_SETTINGS: Required<AutoHandoffSettings> = {
+	enabled: false,
+	thresholdTokens: 128_000,
+};
+
 export type DefaultProjectTrust = "ask" | "always" | "never";
 
 export type TransportSetting = Transport;
@@ -340,7 +345,7 @@ export class SettingsManager {
 			initialErrors.push({ scope: "project", error: projectLoad.error });
 		}
 
-		return new SettingsManager(
+		const manager = new SettingsManager(
 			storage,
 			globalLoad.settings,
 			projectLoad.settings,
@@ -349,6 +354,23 @@ export class SettingsManager {
 			initialErrors,
 			projectTrusted,
 		);
+		manager.ensureAutoHandoffDefaults();
+		return manager;
+	}
+
+	/** Seed new settings fields into the user's global settings file without overwriting configured values. */
+	private ensureAutoHandoffDefaults(): void {
+		if (this.globalSettingsLoadError) return;
+
+		const existing = this.globalSettings.autoHandoff;
+		const enabled = existing?.enabled ?? DEFAULT_AUTO_HANDOFF_SETTINGS.enabled;
+		const thresholdTokens = existing?.thresholdTokens ?? DEFAULT_AUTO_HANDOFF_SETTINGS.thresholdTokens;
+		if (existing?.enabled === enabled && existing?.thresholdTokens === thresholdTokens) return;
+
+		this.globalSettings.autoHandoff = { enabled, thresholdTokens };
+		this.markModified("autoHandoff", "enabled");
+		this.markModified("autoHandoff", "thresholdTokens");
+		this.save();
 	}
 
 	/** Create an in-memory SettingsManager (no file I/O) */
@@ -1245,7 +1267,7 @@ export class SettingsManager {
 	}
 
 	getAutoHandoffEnabled(): boolean {
-		return this.settings.autoHandoff?.enabled ?? false;
+		return this.settings.autoHandoff?.enabled ?? DEFAULT_AUTO_HANDOFF_SETTINGS.enabled;
 	}
 
 	setAutoHandoffEnabled(enabled: boolean): void {
@@ -1258,7 +1280,7 @@ export class SettingsManager {
 	}
 
 	getAutoHandoffThresholdTokens(): number {
-		return this.settings.autoHandoff?.thresholdTokens ?? 128_000;
+		return this.settings.autoHandoff?.thresholdTokens ?? DEFAULT_AUTO_HANDOFF_SETTINGS.thresholdTokens;
 	}
 
 	setAutoHandoffThresholdTokens(tokens: number): void {

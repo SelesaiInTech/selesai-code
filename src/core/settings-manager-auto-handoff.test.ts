@@ -2,10 +2,27 @@ import { describe, expect, it } from "vitest";
 import { SettingsManager } from "./settings-manager.ts";
 
 describe("auto handoff settings", () => {
-	it("defaults to disabled with 128k threshold", () => {
-		const manager = SettingsManager.inMemory();
+	it("seeds persisted defaults for existing user settings", async () => {
+		const manager = SettingsManager.inMemory({ theme: "dark" });
+		await manager.flush();
+		await manager.reload();
+
 		expect(manager.getAutoHandoffEnabled()).toBe(false);
 		expect(manager.getAutoHandoffThresholdTokens()).toBe(128_000);
+		expect(manager.getGlobalSettings().autoHandoff).toEqual({
+			enabled: false,
+			thresholdTokens: 128_000,
+		});
+	});
+
+	it("preserves configured auto handoff values while filling missing fields", async () => {
+		const manager = SettingsManager.inMemory({ autoHandoff: { enabled: true } });
+		await manager.flush();
+
+		expect(manager.getGlobalSettings().autoHandoff).toEqual({
+			enabled: true,
+			thresholdTokens: 128_000,
+		});
 	});
 
 	it("persists enabled state", async () => {

@@ -1,4 +1,8 @@
 {
+  "autoHandoff": {
+    "enabled": false,
+    "thresholdTokens": 128000
+  },
   "collapseChangelog": true,
   "compaction": {
     "enabled": true,
