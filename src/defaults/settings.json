@@ -13,7 +13,9 @@
   "defaultProvider": "tokenin",
   "defaultThinkingLevel": "high",
   "doubleEscapeAction": "tree",
-  "editorPaddingX": 1,
+  "editorPaddingX": 0,
+  "outputPad": 0,
+  "showCacheMissNotices": true,
   "enableSkillCommands": true,
   "followUpMode": "one-at-a-time",
   "hideThinkingBlock": false,
@@ -35,6 +37,29 @@
   "terminal": {
     "clearOnShrink": false,
     "showImages": true
+  },
+  "subagents": {
+    "defaultModel": "tokenin/glm-5.2",
+    "agentOverrides": {
+      "architect": {
+        "model": "tokenin/glm-5.2a"
+      },
+      "builder": {
+        "model": "tokenin/kimi-k2.7-code"
+      },
+      "commentator": {
+        "model": "tokenin/kimi-k2.7-code"
+      },
+      "explorer": {
+        "model": "tokenin/deepseek-v4-flash"
+      },
+      "recapper": {
+        "model": "tokenin/deepseek-v4-flash"
+      },
+      "researcher": {
+        "model": "tokenin/kimi-k2.7-codea"
+      }
+    }
   },
   "theme": "dark",
   "transport": "websocket",
