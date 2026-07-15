@@ -16,7 +16,7 @@ import { complete, type Context } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@selesai/code";
 import { BorderedLoader, convertToLlm, serializeConversation } from "@selesai/code";
 
-const SYSTEM_PROMPT = `Write a handoff document summarising the current conversation so a fresh agent can continue the work. Save to the temporary directory of the user's OS - not the current workspace.
+const SYSTEM_PROMPT = `Write a handoff document for a fresh agent to continue the current conversation. Return only the handoff document; do not save a file or describe saving one.
 
 Include a "suggested skills" section in the document, which suggests skills that the agent should invoke.
 
@@ -145,6 +145,10 @@ async function handoffNew(args: string, ctx: ExtensionCommandContext) {
 
 	if (result === null) {
 		ctx.ui.notify("Cancelled", "info");
+		return;
+	}
+	if (!result.trim()) {
+		ctx.ui.notify("Handoff generation returned no text", "error");
 		return;
 	}
 

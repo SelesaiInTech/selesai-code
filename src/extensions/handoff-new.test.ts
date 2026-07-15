@@ -193,6 +193,14 @@ test("custom null (cancelled) does not open new session", async () => {
 	assert.ok(calls.notify.some((n) => /Cancelled/.test(n.msg)));
 });
 
+test("empty generated handoff does not open a blank session", async () => {
+	const { commands } = createPiHarness();
+	const { ctx, calls } = createCtx({ customResult: "  " });
+	await commands.get("handoff-new")!.handler("goal", ctx);
+	assert.equal(calls.newSession, null);
+	assert.ok(calls.notify.some((n) => /returned no text/.test(n.msg)));
+});
+
 // sanity: DEFAULT_GOAL exported and non-empty (used by handler)
 test("DEFAULT_GOAL is non-empty", () => {
 	assert.ok(DEFAULT_GOAL.length > 0);
