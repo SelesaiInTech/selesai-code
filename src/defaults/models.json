@@ -23,6 +23,7 @@
             "cacheWrite": 0
           },
           "compat": {
+            "supportsDeveloperRole": false,
             "requiresReasoningContentOnAssistantMessages": true,
             "thinkingFormat": "deepseek"
           }
@@ -40,6 +41,7 @@
             "cacheWrite": 0
           },
           "compat": {
+            "supportsDeveloperRole": false,
             "supportsReasoningEffort": false
           }
         },
@@ -56,6 +58,7 @@
             "cacheWrite": 0
           },
           "compat": {
+            "supportsDeveloperRole": false,
             "supportsReasoningEffort": false
           }
         },
@@ -72,6 +75,7 @@
             "cacheWrite": 0
           },
           "compat": {
+            "supportsDeveloperRole": false,
             "supportsReasoningEffort": false
           }
         },
@@ -88,6 +92,7 @@
             "cacheWrite": 0
           },
           "compat": {
+            "supportsDeveloperRole": false,
             "supportsReasoningEffort": false
           }
         },
@@ -120,6 +125,7 @@
             "cacheWrite": 0
           },
           "compat": {
+            "supportsDeveloperRole": false,
             "supportsReasoningEffort": true
           }
         },
