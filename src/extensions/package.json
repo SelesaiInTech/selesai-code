@@ -9,6 +9,7 @@
 			"./context-compaction-reminder.ts",
 			"./tool-error-autofix.ts",
 			"./question",
+			"./grep-app",
 			"./handoff-new.ts",
 			"./rtk.ts",
 			"./tokenin-onboarding.ts",
