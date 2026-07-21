@@ -226,8 +226,38 @@ async function resumeController(
   try {
     await persistAfter(controller, before);
     const reconcileBefore = checkpoint(controller);
-    const reconciled = await sm.onArtifactMaybe(controller.deps);
-    await persistAfter(controller, reconcileBefore);
+    let reconciled: WorkflowEffect = { kind: "noOp" };
+    try {
+      reconciled = await sm.onArtifactMaybe(controller.deps);
+      await persistRun(controller);
+      // ponytail: when a resumed run has multiple already-written parent-owned
+      // artifacts, one onArtifactMaybe only advances one phase. Keep reconciling
+      // until we either catch up to the durable file state or hit a blocked/
+      // terminal effect, so resume lands on the furthest valid phase.
+      while (sm.snapshot.active && sm.snapshot.autoArmed) {
+        const further = await sm.onArtifactMaybe(controller.deps);
+        if (
+          further.kind === "noOp" ||
+          further.kind === "blocked" ||
+          further.kind === "terminalNeedsArtifacts"
+        ) break;
+        reconciled = further;
+        await persistRun(controller);
+        if (further.kind === "terminalReady") break;
+      }
+    } catch (error) {
+      // Atomic rollback: on any failure during reconciliation, restore both
+      // in-memory state and durable state to the checkpoint before the whole
+      // reconcile sequence. Do not leave the controller at an intermediate
+      // phase while the run file has already advanced further.
+      restoreCheckpoint(controller, reconcileBefore);
+      try {
+        await persistRun(controller);
+      } catch {
+        // Best-effort rollback failed; still report the original error.
+      }
+      throw error;
+    }
     const current = sm.continueCurrent();
     const terminal = config.phases[config.phases.length - 1];
     const terminalReady = reconciled.kind === "terminalReady" || (sm.snapshot.phase === terminal && !sm.snapshot.autoArmed);
@@ -304,7 +334,7 @@ function makeDeps(pi: ExtensionAPI, config: WorkflowConfig): WorkflowDeps {
 
 // ponytail: the git-based skip predicate shared by both modes today.
 // A mode that wants a different skip rule supplies its own SkipRule.
-async function isEmptyProject(pi: ExtensionAPI): Promise<boolean> {
+async function hasNoGitHistory(pi: ExtensionAPI): Promise<boolean> {
   try {
     const result = await pi.exec("git", ["log", "--oneline", "-1"]);
     return result.code !== 0 || !result.stdout.trim();
@@ -482,7 +512,8 @@ function registerSharedArtifactWriter(pi: ExtensionAPI): void {
         };
       }
       // Most workflows pause at a user-controlled artifact boundary. Task's
-      // plan → loop transition queues the builder/review prompt immediately.
+      // plan → reuse → handoff → loop transitions queue the next phase prompt
+      // immediately when continueAfterArtifact is true.
       const queueNextPhase = controller.config.continueAfterArtifact === true && eff.kind === "advanced";
       applyControllerEffect(controller, ctx, eff, { queuePrompt: queueNextPhase });
       if (eff.kind === "blocked" && eff.reason) {
@@ -519,13 +550,13 @@ export function createWorkflowExtension(
   return function workflowExtension(pi: ExtensionAPI): void {
     replaceControllerFor(pi, config.mode);
     const deps = makeDeps(pi, config);
-    // ponytail: default skip rule — reuse is skipped on empty projects (no git
-    // commits). Shared by every mode today; a mode that wants a different rule
-    // supplies its own skipRules in config and we respect them as-is.
+    // ponytail: default skip rule — reuse is skipped when the project has no
+    // git history. Shared by every mode today; a mode that wants a different
+    // rule supplies its own skipRules in config and we respect them as-is.
     const skipRules = config.skipRules ?? [
       {
         phase: "reuse",
-        shouldSkip: async () => isEmptyProject(pi),
+        shouldSkip: async () => hasNoGitHistory(pi),
       },
     ];
     const sm = new WorkflowStateMachine({ ...config, skipRules });

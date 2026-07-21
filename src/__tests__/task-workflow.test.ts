@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkflowStateMachine, type WorkflowDeps } from "../extensions/workflow/state-machine.ts";
 import { taskMode } from "../extensions/workflow/modes/task.ts";
 
@@ -70,7 +70,12 @@ describe("task workflow", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("requires a ready plan, then a clean loop completion before explicit end", async () => {
+  it("has four phases (plan, reuse, handoff, loop)", () => {
+    expect(taskMode.config.phases).toEqual(["plan", "reuse", "handoff", "loop"]);
+    expect(Object.keys(taskMode.config.phaseArtifacts)).toEqual(["plan", "reuse", "handoff", "loop"]);
+  });
+
+  it("requires a ready plan, then advances through reuse and handoff before looping", async () => {
     const files = new Set<string>();
     const content = new Map<string, string>();
     const deps = makeDeps(files, content);
@@ -88,7 +93,22 @@ describe("task workflow", () => {
     });
 
     content.set("/task-run/plan.md", "# Plan\nWORKFLOW_PLAN_STATUS: ready");
-    expect(await sm.next(deps)).toMatchObject({ kind: "advanced", phase: "loop", step: 2 });
+    expect(await sm.next(deps)).toMatchObject({ kind: "advanced", phase: "reuse", step: 2 });
+    expect(sm.snapshot.phase).toBe("reuse");
+
+    files.add("/task-run/reuse.md");
+    content.set("/task-run/reuse.md", "skip");
+    expect(await sm.next(deps)).toMatchObject({ kind: "advanced", phase: "handoff", step: 3 });
+
+    files.add("/task-run/handoff.md");
+    content.set("/task-run/handoff.md", "# Handoff");
+    await expect(sm.next(deps)).resolves.toMatchObject({
+      kind: "blocked",
+      reason: expect.stringContaining("WORKFLOW_HANDOFF_STATUS: ready"),
+    });
+
+    content.set("/task-run/handoff.md", "# Handoff\nWORKFLOW_HANDOFF_STATUS: ready");
+    expect(await sm.next(deps)).toMatchObject({ kind: "advanced", phase: "loop", step: 4 });
     expect(await sm.end(deps)).toMatchObject({ kind: "endBlocked" });
 
     files.add("/task-run/loop-complete.md");
@@ -97,7 +117,7 @@ describe("task workflow", () => {
     expect(await sm.end(deps)).toMatchObject({ kind: "closed", phase: "loop" });
   });
 
-  it("registers task tools and suppresses plan/build child file output", async () => {
+  it("registers task tools and suppresses plan/reuse/handoff/build child file output", async () => {
     const h = await createHarness();
     expect(h.tools.has("start_task_workflow")).toBe(true);
     expect(h.tools.has("resume_task_workflow")).toBe(true);
@@ -107,10 +127,11 @@ describe("task workflow", () => {
 
     await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
     const dir = h.entries.at(-1)!.data.artifactDir;
-    const input: Record<string, unknown> = { agent: "architect", task: "plan it", output: join(dir, "plan.md") };
-    await h.events.get("tool_call")({ toolName: "subagent", input }, h.ctx);
-    expect(input.output).toBe(false);
-    expect(h.status.get("task")).toContain("1/2 plan");
+
+    const planInput: Record<string, unknown> = { agent: "architect", task: "plan it", output: join(dir, "plan.md") };
+    await h.events.get("tool_call")({ toolName: "subagent", input: planInput }, h.ctx);
+    expect(planInput.output).toBe(false);
+    expect(h.status.get("task")).toContain("1/4 plan");
 
     await h.tools.get("write_workflow_artifact").execute(
       "write-plan",
@@ -119,20 +140,50 @@ describe("task workflow", () => {
       undefined,
       h.ctx,
     );
+
+    const reuseInput: Record<string, unknown> = { agent: "explorer", task: "explore", output: join(dir, "reuse.md") };
+    await h.events.get("tool_call")({ toolName: "subagent", input: reuseInput }, h.ctx);
+    expect(reuseInput.output).toBe(false);
+    expect(h.status.get("task")).toContain("2/4 reuse");
+
+    await h.tools.get("write_workflow_artifact").execute(
+      "write-reuse",
+      { content: "skip" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+
+    const handoffInput: Record<string, unknown> = { agent: "recapper", task: "recap", output: join(dir, "handoff.md") };
+    await h.events.get("tool_call")({ toolName: "subagent", input: handoffInput }, h.ctx);
+    expect(handoffInput.output).toBe(false);
+    expect(h.status.get("task")).toContain("3/4 handoff");
+
+    await h.tools.get("write_workflow_artifact").execute(
+      "write-handoff",
+      { content: "# Handoff\nWORKFLOW_HANDOFF_STATUS: ready" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+
     const builderInput: Record<string, unknown> = { agent: "builder", task: "build it", output: join(dir, "builder.md") };
     await h.events.get("tool_call")({ toolName: "subagent", input: builderInput }, h.ctx);
     expect(builderInput.output).toBe(false);
+    expect(h.status.get("task")).toContain("4/4 loop");
   });
 
-  it("reload ignores its stale task handler; explicit task resume reconciles the durable plan", async () => {
+  it("reload ignores its stale task handler; explicit task resume reconciles through handoff", async () => {
     const h = await createHarness();
     await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
     const dir = h.entries.at(-1)!.data.artifactDir;
     const statePath = join(dir, "workflow.json");
     writeFileSync(join(dir, "plan.md"), "# Plan\nWORKFLOW_PLAN_STATUS: ready");
+    writeFileSync(join(dir, "reuse.md"), "skip");
+    writeFileSync(join(dir, "handoff.md"), "# Handoff\nWORKFLOW_HANDOFF_STATUS: ready");
 
     const { createWorkflowExtension } = await import("../extensions/workflow/adapter.ts");
-    createWorkflowExtension(taskMode.config, taskMode)(h.pi); // same ExtensionAPI after reload
+    createWorkflowExtension(taskMode.config, taskMode)(h.pi);
 
     await h.eventHandlers.get("tool_result")![0]!({
       toolName: "subagent", toolCallId: "stale", input: { agent: "architect" }, content: [], isError: false,
@@ -143,31 +194,95 @@ describe("task workflow", () => {
     const resumed = await h.tools.get("resume_task_workflow").execute("resume", { run: JSON.parse(readFileSync(statePath, "utf8")).id }, undefined, undefined, h.ctx);
     expect(resumed.details.phase).toBe("loop");
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ phase: "loop", status: "active" });
+    expect(h.sent.at(-1)?.text).toContain("LOOP (orchestration) phase");
   });
 
-  it("queues the builder loop when write_workflow_artifact advances the plan", async () => {
+  it("queues each next phase automatically at parent-owned artifact boundaries", async () => {
     const h = await createHarness();
     await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
 
-    const result = await h.tools.get("write_workflow_artifact").execute(
+    let result = await h.tools.get("write_workflow_artifact").execute(
       "write-plan",
       { content: "# Plan\nWORKFLOW_PLAN_STATUS: ready" },
       undefined,
       undefined,
       h.ctx,
     );
-
     expect(result.terminate).toBe(false);
     expect(h.sent).toHaveLength(1);
     expect(h.sent[0]).toMatchObject({ options: { deliverAs: "followUp" } });
-    expect(h.sent[0]?.text).toContain("LOOP (orchestration) phase");
+    expect(h.sent[0]?.text).toContain("REUSE phase");
+
+    result = await h.tools.get("write_workflow_artifact").execute(
+      "write-reuse",
+      { content: "skip" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+    expect(result.terminate).toBe(false);
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[1]?.text).toContain("HANDOFF phase");
+
+    result = await h.tools.get("write_workflow_artifact").execute(
+      "write-handoff",
+      { content: "# Handoff\nWORKFLOW_HANDOFF_STATUS: ready" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+    expect(result.terminate).toBe(false);
+    expect(h.sent).toHaveLength(3);
+    expect(h.sent[2]?.text).toContain("LOOP (orchestration) phase");
   });
 
-  it("requires the parent to persist architect output before entering the loop", async () => {
+  it("requires a valid handoff marker before entering the loop", async () => {
     const h = await createHarness();
     await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
     const dir = h.entries.at(-1)!.data.artifactDir;
 
+    await h.tools.get("write_workflow_artifact").execute(
+      "write-plan",
+      { content: "# Plan\nWORKFLOW_PLAN_STATUS: ready" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+    await h.tools.get("write_workflow_artifact").execute(
+      "write-reuse",
+      { content: "skip" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+
+    const badHandoff = await h.tools.get("write_workflow_artifact").execute(
+      "write-handoff",
+      { content: "# Incomplete handoff" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+    expect(badHandoff.details.blocked).toBe(true);
+    expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8")).phase).toBe("handoff");
+
+    const goodHandoff = await h.tools.get("write_workflow_artifact").execute(
+      "write-handoff",
+      { content: "# Handoff\nWORKFLOW_HANDOFF_STATUS: ready" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+    expect(goodHandoff.details.blocked).toBeFalsy();
+    expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8")).phase).toBe("loop");
+  });
+
+  it("requires the parent to persist architect/explorer/recapper output before entering the loop", async () => {
+    const h = await createHarness();
+    await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
+    const dir = h.entries.at(-1)!.data.artifactDir;
+
+    // Architect result alone does not create plan.md or advance the workflow.
     await h.events.get("tool_result")({
       toolName: "subagent",
       toolCallId: "architect",
@@ -177,7 +292,6 @@ describe("task workflow", () => {
     }, h.ctx);
     expect(h.entries.at(-1)?.data.phase).toBe("plan");
     expect(existsSync(join(dir, "plan.md"))).toBe(false);
-    expect(h.sent).toHaveLength(0);
 
     await h.tools.get("write_workflow_artifact").execute(
       "write-plan",
@@ -186,11 +300,40 @@ describe("task workflow", () => {
       undefined,
       h.ctx,
     );
-    expect(h.entries.at(-1)?.data.phase).toBe("loop");
+    expect(h.entries.at(-1)?.data.phase).toBe("reuse");
     expect(existsSync(join(dir, "plan.md"))).toBe(true);
-    expect(h.sent).toHaveLength(1);
-    expect(h.sent[0]).toMatchObject({ options: { deliverAs: "followUp" } });
-    expect(h.sent[0]?.text).toContain("LOOP (orchestration) phase");
+
+    await h.tools.get("write_workflow_artifact").execute(
+      "write-reuse",
+      { content: "Explored\nno reusable code" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+    expect(h.entries.at(-1)?.data.phase).toBe("handoff");
+    expect(existsSync(join(dir, "reuse.md"))).toBe(true);
+
+    // Recapper result alone does not create handoff.md or advance the workflow.
+    await h.events.get("tool_result")({
+      toolName: "subagent",
+      toolCallId: "recapper",
+      input: { agent: "recapper", output: false },
+      content: [{ type: "text", text: "# Handoff\nWORKFLOW_HANDOFF_STATUS: ready" }],
+      isError: false,
+    }, h.ctx);
+    expect(h.entries.at(-1)?.data.phase).toBe("handoff");
+    expect(existsSync(join(dir, "handoff.md"))).toBe(false);
+
+    await h.tools.get("write_workflow_artifact").execute(
+      "write-handoff",
+      { content: "# Handoff\nWORKFLOW_HANDOFF_STATUS: ready" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+    expect(h.entries.at(-1)?.data.phase).toBe("loop");
+    expect(existsSync(join(dir, "handoff.md"))).toBe(true);
+    expect(h.sent.at(-1)?.text).toContain("LOOP (orchestration) phase");
 
     await h.events.get("tool_result")({
       toolName: "subagent",
@@ -224,6 +367,20 @@ describe("task workflow", () => {
       undefined,
       h.ctx,
     );
+    await h.tools.get("write_workflow_artifact").execute(
+      "write-reuse",
+      { content: "skip" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
+    await h.tools.get("write_workflow_artifact").execute(
+      "write-handoff",
+      { content: "WORKFLOW_HANDOFF_STATUS: ready" },
+      undefined,
+      undefined,
+      h.ctx,
+    );
     const dir = h.entries.at(-1)!.data.artifactDir;
 
     for (let round = 1; round <= 3; round++) {
@@ -250,5 +407,61 @@ describe("task workflow", () => {
     expect(resumed.details.phase).toBe("loop");
     expect(h.notifies.at(-1)?.text).toContain("paused after 3/3");
     expect(h.notifies.at(-1)?.text).toContain("loop-review-3.md");
+  });
+
+  it("rolls back durable state to the pre-reconcile checkpoint when a later reconcile step fails", async () => {
+    // Simulate a save failure on the third reconcile persist. Because the
+    // adapter re-imports run-state statically, mock it before re-evaluating
+    // the adapter module for this test.
+    let count = 0;
+    vi.doMock("../extensions/workflow/run-state.ts", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../extensions/workflow/run-state.ts")>();
+      return {
+        ...actual,
+        saveWorkflowRun: async (run: any) => {
+          count++;
+          if (count === 3) throw new Error("disk full");
+          return actual.saveWorkflowRun(run);
+        },
+      };
+    });
+    vi.resetModules();
+
+    const h = await createHarness();
+    await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
+    const dir = h.entries.at(-1)!.data.artifactDir;
+    const statePath = join(dir, "workflow.json");
+    const runId = JSON.parse(readFileSync(statePath, "utf8")).id as string;
+
+    writeFileSync(join(dir, "plan.md"), "# Plan\nWORKFLOW_PLAN_STATUS: ready");
+    writeFileSync(join(dir, "reuse.md"), "skip");
+    writeFileSync(join(dir, "handoff.md"), "# Handoff\nWORKFLOW_HANDOFF_STATUS: ready");
+
+    // Simulate a crash that left workflow.json at plan before the state caught up.
+    writeFileSync(
+      statePath,
+      JSON.stringify({ ...JSON.parse(readFileSync(statePath, "utf8")), phase: "plan", autoArmed: true }, null, 2),
+    );
+
+    // The previous start_task_workflow leaves an active controller attached.
+    // Detach it so resume can load the run fresh, matching real usage where
+    // start and resume are separate parent turns.
+    const { __resetWorkflowRegistryForTests } = await import("../extensions/workflow/adapter.ts");
+    __resetWorkflowRegistryForTests();
+
+    const resumed = await h.tools
+      .get("resume_task_workflow")
+      .execute("resume", { run: runId }, undefined, undefined, h.ctx);
+    expect(resumed.details.persistenceError).toBe(true);
+    expect(JSON.parse(readFileSync(statePath, "utf8")).phase).toBe("plan");
+
+    vi.doUnmock("../extensions/workflow/run-state.ts");
+    vi.resetModules();
+    const h2 = await createHarness();
+
+    const resumed2 = await h2.tools
+      .get("resume_task_workflow")
+      .execute("resume", { run: runId }, undefined, undefined, h2.ctx);
+    expect(resumed2.details.phase).toBe("loop");
   });
 });

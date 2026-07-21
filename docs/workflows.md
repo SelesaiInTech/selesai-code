@@ -120,17 +120,18 @@ That's it. The loader picks it up at boot (`package.json` loads only `./extensio
 
 ## Built-in modes
 
-### `task` — rapid plan + build/review loop
+### `task` — plan → codebase exploration → handoff → build/review loop
 
-The simplest workflow: an architect subagent produces a validated `plan.md`, then a builder↔commentator review loop runs (max 3 blocking rounds). A clean review makes the workflow terminal-ready; `end_task_workflow` completes it.
+Task now follows the same phase shape as the other modes, minus grilling/research/audit: an architect subagent produces a validated `plan.md`, an optional explorer subagent produces `reuse.md`, a recapper subagent produces a validated `handoff.md`, and then a builder↔commentator review loop runs (max 3 blocking rounds). A clean review makes the workflow terminal-ready; `end_task_workflow` completes it.
 
-Lifecycle: `plan → loop (build ↔ review) → terminal-ready → end_task_workflow`
+Lifecycle: `plan → reuse → handoff → loop (build ↔ review) → terminal-ready → end_task_workflow`
 
 - `/workflow-task <goal>` — start a new run
 - `/workflow-task resume` — list and resume active runs
 - `/workflow-task help` — show the lifecycle
-- Its ready plan automatically queues the builder↔review loop
-- No grilling, research, reuse, or handoff phases
+- Valid `plan.md`, `reuse.md`, and `handoff.md` each automatically queue the next phase prompt (the workflow does not pause at those boundaries)
+- No grilling, research, or audit phases
+- `reuse.md` is optional; it is skipped automatically when the project has no git history
 
 ## Config reference
 
@@ -141,11 +142,11 @@ Lifecycle: `plan → loop (build ↔ review) → terminal-ready → end_task_wor
 | `phaseArtifacts` | `Partial<Record<Phase, string>>` | The artifact file each phase must produce before advancing. Omit a phase to skip its gate. |
 | `prompts` | `Partial<Record<Phase, (ctx) => string>>` | Prompt generator per phase. `ctx = { artifactDir, userPrompt }`. |
 | `closeArtifacts` | `string[]` | Files that must exist before `end()` succeeds. Config-owned, no built-in default. |
-| `skipRules?` | `{ phase, shouldSkip }[]` | Optional per-phase skip rules. `shouldSkip` is a boolean predicate; when true the engine skips to the next phase. Omit to use the adapter's default (skip `reuse` on empty projects). |
+| `skipRules?` | `{ phase, shouldSkip }[]` | Optional per-phase skip rules. `shouldSkip` is a boolean predicate; when true the engine skips to the next phase. Omit to use the adapter's default (skip `reuse` when the project has no git history). |
 | `statusKey` | `string` | Footer status key. |
 | `entryType` | `string` | Session-history custom-type. It stores a pointer only; `workflow.json` is canonical. |
 | `footerLabel` | `string` | Label shown in the footer (`● label · step/total phase`). |
-| `continueAfterArtifact?` | `boolean` | Queue the next phase prompt after the parent writes a valid artifact. `task` enables this for plan → build. |
+| `continueAfterArtifact?` | `boolean` | Queue the next phase prompt after the parent writes a valid artifact. `task` enables this at every parent-owned artifact boundary (plan, reuse, handoff) so the workflow flows automatically into the loop. |
 
 ### Adapter options
 
@@ -169,7 +170,7 @@ Runs are **never** auto-resumed on session start. At most one run can be attache
 - `/workflow-prototype resume`, `/workflow-quick resume`, or `/workflow-task resume` lists active runs (and offers a UI picker when available).
 - `/workflow-prototype help`, `/workflow-quick help`, or `/workflow-task help` shows the start, resume, continue, and explicit-completion lifecycle.
 
-Resume validates the selected file is under the artifacts base, belongs to that mode, is active, and matches its containing directory. It reconciles the current expected artifact once before emitting the current prompt, covering a crash after `write_workflow_artifact` writes the file but before the phase-state write. Artifact writes do not inject the next phase prompt or launch the next subagent; they terminate the parent turn and wait for the user to continue. A mode can opt out of that pause after a parent artifact write; `task` does so after `plan.md` so the build loop starts immediately. Corrupt records are skipped during discovery.
+Resume validates the selected file is under the artifacts base, belongs to that mode, is active, and matches its containing directory. It reconciles the current expected artifact once before emitting the current prompt, covering a crash after `write_workflow_artifact` writes the file but before the phase-state write. Artifact writes do not inject the next phase prompt or launch the next subagent; they terminate the parent turn and wait for the user to continue. A mode can opt out of that pause after a parent artifact write; `task` does so at every parent-owned artifact boundary (`plan.md`, `reuse.md`, `handoff.md`) so the build loop starts immediately after a valid handoff. Corrupt records are skipped during discovery.
 
 A valid terminal artifact makes a workflow **terminal-ready**; it does not complete the run. Call the mode-specific `end_*_workflow` tool to write `status: "completed"`, append the done entry, and terminate. This is the only completion path.
 
