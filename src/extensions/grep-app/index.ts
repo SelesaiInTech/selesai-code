@@ -11,6 +11,7 @@ import {
 	type ExtensionAPI,
 	withFileMutationQueue,
 } from "@selesai/code";
+import { Text } from "@earendil-works/pi-tui";
 import { load } from "cheerio";
 import { Type } from "typebox";
 
@@ -165,6 +166,11 @@ export default function grepAppExtension(pi: ExtensionAPI): void {
 				details: { total: response.hits.total, page, resultCount: response.hits.hits.length, fullOutputPath: output.fullOutputPath },
 			};
 		},
+		renderResult(result, _options, theme, context) {
+			if (context.isError) return new Text(theme.fg("error", "✗ grep.app search failed"), 0, 0);
+			const details = result.details as { total?: number; page?: number; resultCount?: number } | undefined;
+			return new Text(theme.fg("success", `✓ grep.app: ${details?.resultCount ?? 0} results · page ${details?.page ?? 1} · ${details?.total ?? 0} total matches`), 0, 0);
+		},
 	});
 
 	pi.registerTool({
@@ -195,6 +201,11 @@ export default function grepAppExtension(pi: ExtensionAPI): void {
 				content: [{ type: "text", text: output.text || "(empty file or range)" }],
 				details: { repo: params.repo, path: params.path, ref: params.ref ?? "HEAD", startLine, endLine, totalLines: allLines.length, fullOutputPath: output.fullOutputPath },
 			};
+		},
+		renderResult(result, _options, theme, context) {
+			if (context.isError) return new Text(theme.fg("error", "✗ GitHub file fetch failed"), 0, 0);
+			const details = result.details as { repo?: string; path?: string; startLine?: number; endLine?: number } | undefined;
+			return new Text(theme.fg("success", `✓ GitHub: ${details?.repo ?? "?"}/${details?.path ?? "?"} · lines ${details?.startLine ?? 1}-${details?.endLine ?? "?"}`), 0, 0);
 		},
 	});
 }
