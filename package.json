@@ -1,6 +1,6 @@
 {
 	"name": "@selesai/code",
-	"version": "0.5.12",
+	"version": "0.5.13",
 	"description": "Selesai coding agent",
 	"type": "module",
 	"piConfig": {

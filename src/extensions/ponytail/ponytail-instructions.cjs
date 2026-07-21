@@ -7,6 +7,11 @@ const { DEFAULT_MODE, normalizeMode, normalizePersistedMode } = require('./ponyt
 
 const INDEPENDENT_MODES = new Set(['review']);
 const SKILL_PATH = path.join(__dirname, '..', '..', 'skills', 'ponytail', 'SKILL.md');
+const COMPACT_MODE_RULES = {
+  lite: 'Build the ask; name a lazier alternative.',
+  full: 'Enforce ladder; shortest diff.',
+  ultra: 'YAGNI first; delete; challenge the rest.',
+};
 
 function filterSkillBodyForMode(body, mode) {
   const effectiveMode = normalizeMode(mode) || DEFAULT_MODE;
@@ -70,7 +75,15 @@ function getFallbackInstructions(mode) {
     'Ponytail governs what you build, not how you talk. "stop ponytail" or "normal mode": revert. Level persists until changed or session end.';
 }
 
-function getPonytailInstructions(mode) {
+function getCompactInstructions(mode) {
+  return 'PONYTAIL ' + mode.toUpperCase() + ': persistent every response; off only "stop ponytail"/"normal mode". ' +
+    'Trace first. Ladder: YAGNI -> reuse -> stdlib/native -> installed deps -> minimum diff. ' +
+    'Fix root cause, not caller symptom. No unrequested abstractions/deps/boilerplate; delete first. ' +
+    'Preserve validation, data-loss handling, security, accessibility, explicit asks. ' +
+    'Non-trivial logic: one runnable check. Code first; <=3 lines. ' + COMPACT_MODE_RULES[mode];
+}
+
+function getPonytailInstructions(mode, options) {
   const configuredMode = normalizePersistedMode(mode) || DEFAULT_MODE;
 
   if (INDEPENDENT_MODES.has(configuredMode)) {
@@ -78,6 +91,7 @@ function getPonytailInstructions(mode) {
   }
 
   const effectiveMode = normalizeMode(configuredMode) || DEFAULT_MODE;
+  if (options?.compact === true) return getCompactInstructions(effectiveMode);
 
   try {
     return 'PONYTAIL MODE ACTIVE — level: ' + effectiveMode + '\n\n' +

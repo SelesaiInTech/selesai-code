@@ -472,11 +472,6 @@ function registerSharedArtifactWriter(pi: ExtensionAPI): void {
     name: WORKFLOW_ARTIFACT_TOOL,
     label: "Write Workflow Artifact",
     description: "Write the current workflow phase artifact. The workflow enforces the destination path; provide content only.",
-    promptSnippet: `${WORKFLOW_ARTIFACT_TOOL}(content) - write the active workflow artifact; path is chosen by the workflow, not the agent.`,
-    promptGuidelines: [
-      `During any workflow, use ${WORKFLOW_ARTIFACT_TOOL} instead of write/edit for workflow artifacts.`,
-      "Provide artifact content only; do not provide a path.",
-    ],
     parameters: Type.Object({
       content: Type.String({ description: "Artifact markdown/text content to save." }),
     }),
@@ -571,11 +566,6 @@ export function createWorkflowExtension(
       name: start,
       label: options.toolLabels.start,
       description: `Start the ${mode} workflow for the given goal. Sets up ${config.phases[0]} as the first phase and returns its prompt. Do not call if a workflow is already active.`,
-      promptSnippet: `${start}(goal) - start the ${mode} workflow; goal is what the user wants to build.`,
-      promptGuidelines: [
-        `Call ${start} only when the user explicitly asks to start a ${mode} workflow and none is active.`,
-        "Pass the user's full goal as the goal parameter.",
-      ],
       parameters: Type.Object({
         goal: Type.String({
           description: `What the user wants the ${mode} workflow to build or accomplish.`,
@@ -650,11 +640,6 @@ export function createWorkflowExtension(
       name: resume,
       label: options.toolLabels.resume,
       description: `Resume an explicitly selected ${mode} workflow run. Pass a run id, artifact directory, or workflow.json path.`,
-      promptSnippet: `${resume}(run) - resume an explicit ${mode} workflow run; run is its id, artifact directory, or workflow.json path.`,
-      promptGuidelines: [
-        `Call ${resume} only when the user explicitly selects a ${mode} workflow run.`,
-        "Workflow runs never resume automatically after reload.",
-      ],
       parameters: Type.Object({ run: Type.String({ description: "Run id, artifact directory, or workflow.json path." }) }),
       async execute(_id, params, _signal, _onUpdate, ctx) {
         return resumeController(controller, ctx, params.run, end);
@@ -671,10 +656,6 @@ export function createWorkflowExtension(
       name: end,
       label: options.toolLabels.end,
       description: `Close the ${mode} workflow. Must be called when the final phase is complete. Marks the workflow finished and stops the agent loop.`,
-      promptSnippet: `${end}() - close the finished ${mode} workflow; no further phase transitions allowed.`,
-      promptGuidelines: [
-        `Call ${end} exactly once, from the terminal phase, when all close artifacts are complete.`,
-      ],
       parameters: Type.Object({}),
       async execute(_id, _params, _signal, _onUpdate, ctx) {
         const before = checkpoint(controller);

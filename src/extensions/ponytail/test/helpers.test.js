@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import test from "node:test";
+
+const require = createRequire(import.meta.url);
+const { getPonytailInstructions } = require("../ponytail-instructions.cjs");
 
 import {
   filterSkillBodyForMode,
@@ -72,6 +76,34 @@ test("filterSkillBodyForMode keeps only requested intensity examples and rows", 
   assert.ok(!filtered.includes("Lite example"));
   assert.ok(filtered.includes("Ultra example"));
   assert.ok(filtered.includes("Other line"));
+});
+
+test("compact Ponytail instructions retain core rules and mode distinctions", () => {
+  const compact = Object.fromEntries(
+    ["lite", "full", "ultra"].map((mode) => [mode, getPonytailInstructions(mode, { compact: true })]),
+  );
+
+  for (const [mode, instructions] of Object.entries(compact)) {
+    assert.match(instructions, new RegExp(`^PONYTAIL ${mode.toUpperCase()}:`));
+    assert.ok(instructions.length >= 300 && instructions.length <= 450, `${mode}: ${instructions.length} characters`);
+    for (const phrase of ["stop ponytail", "Trace first", "root cause", "validation", "data-loss", "security", "accessibility", "runnable check"]) {
+      assert.ok(instructions.includes(phrase), `${mode} lacks ${phrase}`);
+    }
+  }
+
+  assert.match(compact.lite, /Build the ask; name a lazier alternative/);
+  assert.match(compact.full, /Enforce ladder; shortest diff/);
+  assert.match(compact.ultra, /YAGNI first; delete; challenge the rest/);
+
+  const fullSkill = getPonytailInstructions("full");
+  assert.match(fullSkill, /## The ladder/);
+  assert.ok(fullSkill.length > compact.full.length);
+});
+
+test("review instructions remain independent in compact mode", () => {
+  const expected = "PONYTAIL MODE ACTIVE — level: review. Behavior defined by /ponytail-review skill.";
+  assert.equal(getPonytailInstructions("review"), expected);
+  assert.equal(getPonytailInstructions("review", { compact: true }), expected);
 });
 
 test("filterSkillBodyForMode keeps rule bullets that contain a colon", () => {

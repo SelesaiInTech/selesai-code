@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
@@ -48,17 +46,13 @@ test("isDeactivationCommand: only the whole message, case-insensitive, trailing 
   assert.equal(isDeactivationCommand("how do I stop caveman re-rendering"), false);
 });
 
-test("getCavemanInstructions reads SKILL.md and strips frontmatter", () => {
+test("getCavemanInstructions returns the compact runtime prompt", () => {
   const instructions = getCavemanInstructions();
-  assert.ok(instructions.startsWith("CAVEMAN MODE ACTIVE"));
-  assert.ok(!instructions.includes("name: caveman")); // frontmatter gone
-  assert.ok(instructions.includes("Respond terse like smart caveman"));
-});
 
-test("getCavemanInstructions matches src/skills/caveman/SKILL.md body", () => {
-  const skillPath = fileURLToPath(new URL("../../../skills/caveman/SKILL.md", import.meta.url));
-  const raw = readFileSync(skillPath, "utf8");
-  const body = raw.replace(/^---[\s\S]*?---\s*/, "");
-
-  assert.ok(getCavemanInstructions().endsWith(body));
+  assert.equal(instructions,
+    "CAVEMAN MODE ACTIVE. Terse, technically complete: omit articles, filler, pleasantries, and hedging; fragments, short terms, standard abbreviations, and -> are OK. Preserve technical terms, code blocks, and quoted errors exactly. Use clear normal prose for security warnings, irreversible confirmations, risky multi-step instructions, or requested/repeated clarification; then resume terse mode.");
+  assert.ok(!instructions.includes("Persistence"));
+  assert.ok(!instructions.includes("stop caveman"));
+  assert.ok(!instructions.includes("normal mode"));
+  assert.ok(instructions.length < 400);
 });

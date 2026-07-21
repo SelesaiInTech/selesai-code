@@ -133,6 +133,10 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(pi.tools.has("end_workflow")).toBe(true);
 		expect(pi.tools.has("write_workflow_artifact")).toBe(true);
 		expect(pi.commands.has("workflow-prototype")).toBe(true);
+		for (const name of ["start_workflow", "resume_workflow", "end_workflow", "write_workflow_artifact"]) {
+			expect(pi.tools.get(name).promptSnippet).toBeUndefined();
+			expect(pi.tools.get(name).promptGuidelines).toBeUndefined();
+		}
 	});
 
 	it("/workflow-prototype help and an empty command explain starts, resume, and explicit completion", async () => {

@@ -73,8 +73,8 @@ test("/ponytail updates session mode and injects instructions", async () => with
   });
 
   const result = await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
-  assert.ok(result.systemPrompt.includes("PONYTAIL MODE ACTIVE"));
-  assert.ok(result.systemPrompt.includes("ultra"));
+  assert.match(result.systemPrompt, /^BASE\n\nPONYTAIL ULTRA:/);
+  assert.ok(result.systemPrompt.length - "BASE\n\n".length <= 450);
 }));
 
 test("session_start restores latest persisted mode", async () => withTempConfig(async () => {
@@ -90,7 +90,23 @@ test("session_start restores latest persisted mode", async () => withTempConfig(
   await events.get("session_start")({ reason: "resume" }, ctx);
   const result = await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
 
-  assert.ok(result.systemPrompt.includes("lite"));
+  assert.match(result.systemPrompt, /PONYTAIL LITE:/);
+}));
+
+test("review mode retains its independent skill prompt", async () => withTempConfig(async () => {
+  const { events } = createPiHarness();
+  const ctx = createCommandContext({
+    sessionManager: {
+      getEntries: () => [
+        { type: "custom", customType: "ponytail-mode", data: { mode: "review" } },
+      ],
+    },
+  });
+
+  await events.get("session_start")({ reason: "resume" }, ctx);
+  const result = await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
+
+  assert.equal(result.systemPrompt, "BASE\n\nPONYTAIL MODE ACTIVE — level: review. Behavior defined by /ponytail-review skill.");
 }));
 
 test("skill alias commands delegate to Pi skill commands", async () => {
@@ -133,7 +149,7 @@ test("a request mentioning normal mode stays active", async () => withTempConfig
   await events.get("input")({ text: "add a normal mode toggle next to dark mode", source: "interactive" }, ctx);
 
   const result = await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
-  assert.match(result.systemPrompt, /PONYTAIL MODE ACTIVE/);
+  assert.match(result.systemPrompt, /PONYTAIL ULTRA:/);
 }));
 
 test("status bar renders the mode and flips active on agent_start", async () => withTempConfig(async () => {
