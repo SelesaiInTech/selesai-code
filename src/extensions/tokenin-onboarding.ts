@@ -277,7 +277,7 @@ async function handleTokenInAdd(pi: ExtensionAPI, ctx: ExtensionCommandContext):
 		const saved = readTokenInAuth().accounts.find((a) => a.id === token)!;
 		applyTokenInAccountToAuth(saved, ctx.modelRegistry.authStorage);
 		try {
-			ctx.modelRegistry.refresh();
+			await ctx.modelRegistry.refresh();
 		} catch {
 			// best-effort
 		}
@@ -320,7 +320,7 @@ async function handleTokenInSwitch(ctx: ExtensionCommandContext): Promise<void> 
 
 	applyTokenInAccountToAuth(account, ctx.modelRegistry.authStorage);
 	try {
-		ctx.modelRegistry.refresh();
+		await ctx.modelRegistry.refresh();
 	} catch {
 		// best-effort
 	}
@@ -418,7 +418,7 @@ async function runOnboarding(pi: ExtensionAPI, ctx: ExtensionContext): Promise<v
 
 	// Refresh the in-memory model registry so the key is active immediately.
 	try {
-		ctx.modelRegistry.refresh();
+		await ctx.modelRegistry.refresh();
 	} catch {
 		// best-effort; registry will pick it up on next startup/reload
 	}

@@ -34,7 +34,7 @@ function createMockSession({
 	} as unknown as ExtensionRunner;
 
 	const resourceLoader = {
-		getExtensions: () => ({ extensions: [], errors: [], runtime: { flagValues: new Map(), pendingProviderRegistrations: [], assertActive: () => {} } }),
+		getExtensions: () => ({ extensions: [], errors: [], runtime: { flagValues: new Map(), pendingProviderRegistrations: [], pendingNativeProviderRegistrations: [], assertActive: () => {} } }),
 		getSkills: () => ({ skills: [], diagnostics: [] }),
 		getPrompts: () => ({ prompts: [], diagnostics: [] }),
 		getThemes: () => ({ themes: [], diagnostics: [] }),
@@ -66,7 +66,7 @@ function createMockSession({
 		settingsManager: settings,
 		cwd: "/tmp",
 		resourceLoader: resourceLoader as unknown as never,
-		modelRegistry: modelRegistry as unknown as never,
+		modelRuntime: modelRegistry as unknown as never,
 	});
 
 	(session as any)._extensionRunner = extensionRunner;
