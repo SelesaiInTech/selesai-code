@@ -12,6 +12,7 @@ description: >
   dependencies.
 argument-hint: "[lite|full|ultra]"
 license: MIT
+disable-model-invocation: true
 ---
 
 # Ponytail

@@ -3,8 +3,9 @@ import { join, basename } from "node:path";
 import { homedir as osHomedir } from "node:os";
 import { CONFIG_DIR_NAME, getAgentDir, getSettingsPath } from "@selesai/code";
 import type { Component } from "@earendil-works/pi-tui";
-import { truncateToWidth as tuiTruncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth as tuiTruncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { ansi, fgOnly, getFgAnsiCode } from "./colors.ts";
+import { GUIDE_COMPACT_LINES, GUIDE_DISMISS_HINT, getGuideFeatureLines, type GuideFeature, type GuideMode } from "./guide.ts";
 
 export interface RecentSession {
   name: string;
@@ -82,11 +83,20 @@ function fitToWidth(str: string, width: number): string {
   return str + " ".repeat(width - visLen);
 }
 
+function wrapLines(lines: string[], width: number): string[] {
+  const continuation = "  ";
+  const contentWidth = Math.max(1, width - continuation.length);
+  return lines.flatMap((line) => wrapTextWithAnsi(line, contentWidth)
+    .map((wrapped, index) => index === 0 ? wrapped : continuation + wrapped));
+}
+
 interface WelcomeData {
   modelName: string;
   providerName: string;
   recentSessions: RecentSession[];
   loadedCounts: LoadedCounts;
+  guideMode: GuideMode;
+  newFeatures: GuideFeature[];
 }
 
 function buildLeftColumn(data: WelcomeData, colWidth: number): string[] {
@@ -106,6 +116,27 @@ function buildLeftColumn(data: WelcomeData, colWidth: number): string[] {
 function buildRightColumn(data: WelcomeData, colWidth: number): string[] {
   const hChar = "─";
   const separator = ` ${dim(hChar.repeat(colWidth - 2))}`;
+
+  const guideLines = data.guideMode === "compact"
+    ? [
+      ` ${bold(fgOnly("accent", "Guide"))}`,
+      ...(data.newFeatures.length > 0
+        ? [` ${bold(fgOnly("model", `New: ${data.newFeatures.slice(0, 2).map((feature) => feature.title).join(" · ")}`))}`]
+        : []),
+      ...GUIDE_COMPACT_LINES.map((line) => ` ${dim(line)}`),
+    ]
+    : [
+      ` ${bold(fgOnly("accent", "Selesai guide"))}`,
+      ...(data.newFeatures.length > 0
+        ? [
+          ` ${bold(fgOnly("model", "New since your last guide"))}`,
+          ...data.newFeatures.slice(0, 3).map((feature) => ` ${dim("• ")}${feature.title}`),
+        ]
+        : []),
+      ...getGuideFeatureLines().map((line) => line.kind === "section"
+        ? ` ${bold(fgOnly("accent", line.text))}`
+        : ` ${dim("• ")}${line.feature.title}: ${dim(line.feature.example)}`),
+    ];
 
   // Session lines
   const sessionLines: string[] = [];
@@ -141,17 +172,23 @@ function buildRightColumn(data: WelcomeData, colWidth: number): string[] {
     countLines.push(` ${dim("No extensions loaded")}`);
   }
 
+  const dashboardLines = data.guideMode === "full"
+    ? []
+    : [
+      separator,
+      ` ${bold(fgOnly("accent", "Loaded"))}`,
+      ...countLines,
+      separator,
+      ` ${bold(fgOnly("accent", "Recent sessions"))}`,
+      ...sessionLines,
+    ];
+
   return [
-    ` ${bold(fgOnly("accent", "Tips"))}`,
-    ` ${dim("/")} for commands`,
-    ` ${dim("!")} to run bash`,
+    ` ${bold(fgOnly("accent", "Tips"))}: ${dim("/")} commands · ${dim("/settings")} configure`,
     ` ${dim("Shift+Tab")} cycle thinking`,
     separator,
-    ` ${bold(fgOnly("accent", "Loaded"))}`,
-    ...countLines,
-    separator,
-    ` ${bold(fgOnly("accent", "Recent sessions"))}`,
-    ...sessionLines,
+    ...guideLines,
+    ...dashboardLines,
     "",
   ];
 }
@@ -170,8 +207,8 @@ function renderWelcomeBox(
   }
 
   const minWidth = 76;
-  const maxWidth = 96;
-  // Clamp to termWidth to prevent crash on narrow terminals
+  const maxWidth = data.guideMode === "full" ? 132 : 96;
+  // Clamp to termWidth to prevent crash on narrow terminals.
   const boxWidth = Math.min(termWidth, Math.max(minWidth, Math.min(termWidth - 2, maxWidth)));
   const leftCol = 26;
   const rightCol = Math.max(1, boxWidth - leftCol - 3); // Ensure rightCol is at least 1
@@ -184,7 +221,7 @@ function renderWelcomeBox(
   const br = dim("╯");
 
   const leftLines = buildLeftColumn(data, leftCol);
-  const rightLines = buildRightColumn(data, rightCol);
+  const rightLines = wrapLines(buildRightColumn(data, rightCol), rightCol);
 
   const lines: string[] = [];
 
@@ -221,19 +258,16 @@ function renderWelcomeBox(
  */
 export class WelcomeComponent implements Component {
   private data: WelcomeData;
-  private countdown: number = 30;
 
   constructor(
     modelName: string,
     providerName: string,
     recentSessions: RecentSession[] = [],
     loadedCounts: LoadedCounts = { contextFiles: 0, extensions: 0, skills: 0, promptTemplates: 0 },
+    guideMode: GuideMode = "full",
+    newFeatures: GuideFeature[] = [],
   ) {
-    this.data = { modelName, providerName, recentSessions, loadedCounts };
-  }
-
-  setCountdown(seconds: number): void {
-    this.countdown = seconds;
+    this.data = { modelName, providerName, recentSessions, loadedCounts, guideMode, newFeatures };
   }
 
   invalidate(): void {}
@@ -246,20 +280,20 @@ export class WelcomeComponent implements Component {
     }
 
     const minWidth = 76;
-    const maxWidth = 96;
-    // Clamp to termWidth to prevent crash on narrow terminals
+    const maxWidth = 132;
+    // Clamp to termWidth to prevent crash on narrow terminals.
     const boxWidth = Math.min(termWidth, Math.max(minWidth, Math.min(termWidth - 2, maxWidth)));
 
-    // Bottom line with countdown
-    const countdownText = ` Press any key to continue (${this.countdown}s) `;
-    const countdownStyled = dim(countdownText);
+    // The guide is intentionally blocking: no timer or implicit dismissal.
+    const promptText = ` ${GUIDE_DISMISS_HINT} `;
+    const promptStyled = dim(promptText);
     const bottomContentWidth = boxWidth - 2;
-    const countdownVisLen = visibleWidth(countdownText);
-    const leftPad = Math.floor((bottomContentWidth - countdownVisLen) / 2);
-    const rightPad = bottomContentWidth - countdownVisLen - leftPad;
+    const promptVisLen = visibleWidth(promptText);
+    const leftPad = Math.floor((bottomContentWidth - promptVisLen) / 2);
+    const rightPad = bottomContentWidth - promptVisLen - leftPad;
     const hChar = "─";
     const bottomLine = dim(hChar.repeat(Math.max(0, leftPad))) +
-      countdownStyled +
+      promptStyled +
       dim(hChar.repeat(Math.max(0, rightPad)));
 
     return renderWelcomeBox(this.data, termWidth, bottomLine);
@@ -267,8 +301,7 @@ export class WelcomeComponent implements Component {
 }
 
 /**
- * Welcome header - same layout as overlay but persistent (no countdown).
- * Used when quietStartup: true.
+ * Compact guide header used when the user selects `/guide compact`.
  */
 export class WelcomeHeader implements Component {
   private data: WelcomeData;
@@ -278,8 +311,10 @@ export class WelcomeHeader implements Component {
     providerName: string,
     recentSessions: RecentSession[] = [],
     loadedCounts: LoadedCounts = { contextFiles: 0, extensions: 0, skills: 0, promptTemplates: 0 },
+    guideMode: GuideMode = "compact",
+    newFeatures: GuideFeature[] = [],
   ) {
-    this.data = { modelName, providerName, recentSessions, loadedCounts };
+    this.data = { modelName, providerName, recentSessions, loadedCounts, guideMode, newFeatures };
   }
 
   invalidate(): void {}

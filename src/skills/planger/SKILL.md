@@ -2,6 +2,7 @@
 name: planger
 description: Create decomposed planning for sub agent
 argument-hint: "How i provide a good plan for subagent"
+disable-model-invocation: true
 ---
 
 # Planning Skill

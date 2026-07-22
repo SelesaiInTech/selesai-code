@@ -5,9 +5,11 @@
 	"description": "Built-in extensions shipped with @selesai/code, loaded via additionalExtensionPaths at boot.",
 	"pi": {
 		"extensions": [
+			"./caveman/index.js",
 			"./copy-turn.ts",
 			"./context-compaction-reminder.ts",
-			"./tool-error-autofix.ts",
+			"./pi-intercom/index.ts",
+			"./ponytail/index.js",
 			"./question",
 			"./grep-app",
 			"./handoff-new.ts",
@@ -18,8 +20,7 @@
 			"./pi-subagents",
 			"./pi-web-agent",
 			"./web-agent-onboarding.ts",
-			"./pi-powerline-footer",
-			"./pi-extension"
+			"./pi-powerline-footer"
 		]
 	}
 }

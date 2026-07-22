@@ -14,7 +14,7 @@ Customizes the default [pi](https://github.com/badlogic/pi-mono) editor with a p
 
 **Working Vibes** — AI-generated themed loading messages. Set `/vibe star trek` and your "Working..." becomes "Running diagnostics..." or "Engaging warp drive...". Supports any theme: pirate, zen, noir, cowboy, etc.
 
-**Welcome overlay** — Branded splash screen shown as centered overlay on startup. Shows gradient logo, model info, keyboard tips, loaded AGENTS.md/extensions/skills/templates counts, and recent sessions. Auto-dismisses after 30 seconds or on any key press.
+**Welcome and guide** — A recurring Selesai guide appears on startup, new, resumed, and forked sessions. It maps workflow commands, delegation and research prompts, skills, handoff, recovery, and settings to concrete next steps. Use `/guide` to reopen it, `/guide compact` for a small header, `/guide off` to remember dismissal, or `/guide reset` to restore the full tour. New guide features are called out after upgrades; only the guide mode and version marker are persisted.
 
 **Rounded box design** — Status renders directly in the editor's top border, not as a separate footer.
 

@@ -2,6 +2,7 @@
 name: implanger
 description: Execute the Planger's style planning
 argument-hint: "For Subagent to be able to understand Planger and can execute it perfectly"
+disable-model-invocation: true
 ---
 
 ## Goal

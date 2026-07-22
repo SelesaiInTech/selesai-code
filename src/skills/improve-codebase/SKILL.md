@@ -1,6 +1,7 @@
 ---
 name: improve-codebase
 description: improve codebase quality
+disable-model-invocation: true
 ---
 
 # Improve Codebase Architecture

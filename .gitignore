@@ -5,6 +5,9 @@ dist/
 .env
 .upstream-cache/
 .selesai/artifacts/
+.selesai/extension/system-prompt.md
+.selesai/extension/provider-payloads.jsonl
+.selesai/extension/prompt-inspector.html
 
 # pi-subagents runtime artifacts
 .pi-subagents/

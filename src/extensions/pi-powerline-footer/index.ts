@@ -3,6 +3,7 @@ import {
   CONFIG_DIR_NAME,
   getAgentDir,
   getSettingsPath,
+  VERSION,
   type ExtensionAPI,
   type ReadonlyFooterDataProvider,
   type Theme,
@@ -33,7 +34,7 @@ import { renderSegment } from "./segments.ts";
 import { getGitStatus, invalidateGitStatus, invalidateGitBranch } from "./git-status.ts";
 import { ansi, getFgAnsiCode } from "./colors.ts";
 import { WelcomeComponent, WelcomeHeader, discoverLoadedCounts, getRecentSessions } from "./welcome.ts";
-import { createWelcomeDismissScheduler } from "./welcome-dismiss.ts";
+import { getGuidePreferences, getNewGuideFeatures, markGuideVersionSeen, resolveGuideDisplayMode, saveGuidePreferences, type GuideFeature } from "./guide.ts";
 import { createRenderScheduler } from "./render-scheduler.ts";
 import { readCoreContextUsage } from "./context-usage.ts";
 import { renderFixedEditorCluster } from "./fixed-editor/cluster.ts";
@@ -940,6 +941,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   let fixedWidgetContainerBelow: any = null;
   let stashShortcutInputUnsubscribe: (() => void) | null = null;
   let dismissWelcomeOverlay: (() => void) | null = null;
+  let guideOverlayBlocking = false;
   let welcomeHeaderActive = false;
   let welcomeOverlayShouldDismiss = false;
   let lastUserPrompt = "";
@@ -963,11 +965,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
 
   const getShellPath = () => process.env.SHELL || "/bin/sh";
   const getShellCwd = () => shellSession?.state.cwd ?? currentCtx?.cwd ?? process.cwd();
-  const welcomeDismissScheduler = createWelcomeDismissScheduler({
-    dismiss: (ctx: unknown) => dismissWelcome(ctx),
-    getGeneration: () => sessionGeneration,
-    isEnabled: () => enabled,
-  });
 
   const statusRenderScheduler = createRenderScheduler(() => {
     const msSinceInput = Date.now() - lastEditorInputAt;
@@ -1187,6 +1184,13 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     stashedEditorText = null;
 
     const settings = readSettings(ctx.cwd);
+    const guidePreferences = getGuidePreferences(settings);
+    const guideDisplayMode = resolveGuideDisplayMode({
+      reason: event.reason,
+      hasUI: ctx.hasUI,
+      guideMode: guidePreferences.mode,
+    });
+    const newGuideFeatures = getNewGuideFeatures(guidePreferences.lastSeenVersion, VERSION);
     bashModeSettings = parseBashModeSettings(settings);
     resolvedShortcuts = resolveShortcutConfig(settings);
     showLastPrompt = settings.showLastPrompt !== false;
@@ -1210,12 +1214,10 @@ export default function powerlineFooter(pi: ExtensionAPI) {
 
     if (enabled && ctx.hasUI) {
       setupCustomEditor(ctx);
-      if (event.reason === "startup") {
-        if (settings.quietStartup === true) {
-          setupWelcomeHeader(ctx);
-        } else {
-          setupWelcomeOverlay(ctx);
-        }
+      if (guideDisplayMode === "full") {
+        setupWelcomeOverlay(ctx, newGuideFeatures);
+      } else if (guideDisplayMode === "compact") {
+        setupWelcomeHeader(ctx, newGuideFeatures);
       } else {
         dismissWelcome(ctx);
       }
@@ -1228,9 +1230,9 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     completedAsyncSubagentUsage.clear();
     dismissWelcomeOverlay?.();
     dismissWelcomeOverlay = null;
+    guideOverlayBlocking = false;
     welcomeHeaderActive = false;
     welcomeOverlayShouldDismiss = false;
-    welcomeDismissScheduler.cancel();
     statusRenderScheduler.cancel();
     restoreFooterStatusRepaintHook?.();
     restoreFooterStatusRepaintHook = null;
@@ -1333,13 +1335,12 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     }
   });
 
-  // Track streaming state (footer only shows status during streaming)
-  // Also dismiss welcome when agent starts responding (handles `p "command"` case)
+  // Track streaming state (footer only shows status during streaming).
+  // A visible guide remains blocking until its own key handler dismisses it.
   pi.on("agent_start", async (_event, ctx) => {
     isStreaming = true;
     liveAssistantUsage = null;
     onVibeAgentStart();
-    dismissWelcome(ctx);
     currentCtx = ctx;
   });
 
@@ -1372,9 +1373,8 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     requestImmediateStatusRender({ deferDuringTyping: false });
   });
 
-  // Also dismiss on tool calls (agent is working) + refresh vibe if rate limit allows
+  // Refresh vibe if rate limit allows. The guide is dismissed only by its input handler.
   pi.on("tool_call", async (event, ctx) => {
-    dismissWelcome(ctx);
     if (ctx.hasUI) {
       // Extract recent agent context from session for richer vibe generation
       const agentContext = getRecentAgentContext(ctx);
@@ -1409,7 +1409,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   }
 
   function dismissWelcome(ctx: any) {
-    welcomeDismissScheduler.cancel();
+    if (guideOverlayBlocking) return;
 
     if (dismissWelcomeOverlay) {
       dismissWelcomeOverlay();
@@ -1424,9 +1424,20 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     }
   }
 
-  function scheduleDismissWelcome(ctx: any) {
-    if (!dismissWelcomeOverlay && welcomeOverlayShouldDismiss && !welcomeHeaderActive) return;
-    welcomeDismissScheduler.schedule(ctx);
+  function closeWelcome(ctx: any): void {
+    dismissWelcomeOverlay?.();
+    dismissWelcomeOverlay = null;
+    guideOverlayBlocking = false;
+    if (welcomeHeaderActive) {
+      welcomeHeaderActive = false;
+      ctx.ui.setHeader(undefined);
+    }
+    welcomeOverlayShouldDismiss = false;
+  }
+
+  function currentGuideFeatures(ctx: any): GuideFeature[] {
+    const preferences = getGuidePreferences(readSettings(ctx.cwd));
+    return getNewGuideFeatures(preferences.lastSeenVersion, VERSION);
   }
 
   function addStashHistoryEntry(text: string): void {
@@ -1696,6 +1707,50 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     requestStatusRender();
   });
 
+  pi.registerCommand("guide", {
+    description: "Open the recurring Selesai feature guide",
+    handler: async (args, ctx) => {
+      if (!ctx.hasUI) return;
+
+      const mode = args?.trim().toLowerCase() ?? "";
+      if (mode !== "" && !["full", "compact", "off", "reset"].includes(mode)) {
+        ctx.ui.notify("Usage: /guide [full|compact|off|reset]", "warning");
+        return;
+      }
+
+      if (!enabled) {
+        ctx.ui.notify("Powerline is disabled; use /powerline first", "info");
+        return;
+      }
+
+      if (mode === "off") {
+        const saved = saveGuidePreferences({ mode: "off" }, getSettingsPath());
+        closeWelcome(ctx);
+        ctx.ui.notify(saved ? "Guide hidden for future sessions" : "Guide hidden for this session; settings.json was not updated", saved ? "info" : "warning");
+        return;
+      }
+
+      if (mode === "compact") {
+        const saved = saveGuidePreferences({ mode: "compact" }, getSettingsPath());
+        closeWelcome(ctx);
+        setupWelcomeHeader(ctx, currentGuideFeatures(ctx));
+        if (!saved) ctx.ui.notify("Compact guide enabled for this session; settings.json was not updated", "warning");
+        return;
+      }
+
+      if (mode === "full" || mode === "reset") {
+        const saved = saveGuidePreferences({
+          mode: "full",
+          ...(mode === "reset" ? { lastSeenVersion: null } : {}),
+        }, getSettingsPath());
+        if (!saved) ctx.ui.notify("Guide opened, but settings.json was not updated", "warning");
+      }
+
+      closeWelcome(ctx);
+      setupWelcomeOverlay(ctx, currentGuideFeatures(ctx));
+    },
+  });
+
   // Command to toggle/configure
   pi.registerCommand("powerline", {
     description: "Configure powerline status (toggle, preset)",
@@ -1718,7 +1773,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
           dismissWelcomeOverlay = null;
           welcomeHeaderActive = false;
           welcomeOverlayShouldDismiss = false;
-          welcomeDismissScheduler.cancel();
           getPromptHistoryState().savedPromptHistory = [];
           stashedEditorText = null;
                 ctx.ui.setStatus("stash", undefined);
@@ -2520,7 +2574,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         }
         if (isStashShortcutInput(data)) {
           stashOrRestoreEditorText(ctx);
-          scheduleDismissWelcome(ctx);
           tuiRef?.requestRender();
           return { consume: true };
         }
@@ -2531,7 +2584,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         }
 
         runPowerlineShortcut(ctx, powerlineShortcutAction);
-        scheduleDismissWelcome(ctx);
         tuiRef?.requestRender();
         return { consume: true };
       })
@@ -2634,14 +2686,12 @@ export default function powerlineFooter(pi: ExtensionAPI) {
 
         if (isStashShortcutInput(data)) {
           stashOrRestoreEditorText(ctx);
-          scheduleDismissWelcome(ctx);
           return;
         }
 
         const powerlineShortcutAction = getPowerlineShortcutAction(data);
         if (powerlineShortcutAction) {
           runPowerlineShortcut(ctx, powerlineShortcutAction);
-          scheduleDismissWelcome(ctx);
           return;
         }
 
@@ -2658,7 +2708,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
 
         attachAutocompleteProvider();
         const followUpText = keybindings.matches(data, "app.message.followUp") ? getCurrentEditorText(ctx, editor) : "";
-        scheduleDismissWelcome(ctx);
         originalHandleInput(data);
         if (hasNonWhitespaceText(followUpText) && !hasNonWhitespaceText(getCurrentEditorText(ctx, editor))) {
           followSubmittedEditorToBottom();
@@ -2746,14 +2795,15 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     }
   }
 
-  function setupWelcomeHeader(ctx: any) {
+  function setupWelcomeHeader(ctx: any, newFeatures: GuideFeature[] = []) {
     const modelName = ctx.model?.name || ctx.model?.id || "No model";
     const providerName = ctx.model?.provider || "Unknown";
     const loadedCounts = discoverLoadedCounts();
     const recentSessions = getRecentSessions(3);
 
-    const header = new WelcomeHeader(modelName, providerName, recentSessions, loadedCounts);
+    const header = new WelcomeHeader(modelName, providerName, recentSessions, loadedCounts, "compact", newFeatures);
     welcomeHeaderActive = true;
+    markGuideVersionSeen(VERSION, getSettingsPath());
 
     ctx.ui.setHeader(() => {
       return {
@@ -2767,7 +2817,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     });
   }
 
-  function setupWelcomeOverlay(ctx: any) {
+  function setupWelcomeOverlay(ctx: any, newFeatures: GuideFeature[] = []) {
     const modelName = ctx.model?.name || ctx.model?.id || "No model";
     const providerName = ctx.model?.provider || "Unknown";
     const loadedCounts = discoverLoadedCounts();
@@ -2782,44 +2832,28 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         return;
       }
 
-      const sessionEvents = ctx.sessionManager?.getBranch?.() ?? [];
-      const hasActivity = sessionEvents.some((entry: unknown) => {
-        if (!isRecord(entry)) return false;
-        if (entry.type === "tool_call" || entry.type === "tool_result") return true;
-        return entry.type === "message" && isRecord(entry.message) && entry.message.role === "assistant";
-      });
-      if (hasActivity) {
-        return;
-      }
-
       ctx.ui.custom(
-        (tui: any, _theme: any, _keybindings: any, done: (result: void) => void) => {
+        (_tui: any, _theme: any, _keybindings: any, done: (result: void) => void) => {
           const welcome = new WelcomeComponent(
             modelName,
             providerName,
             recentSessions,
             loadedCounts,
+            "full",
+            newFeatures,
           );
+          markGuideVersionSeen(VERSION, getSettingsPath());
+          guideOverlayBlocking = true;
 
-          let countdown = 30;
           let dismissed = false;
-          let interval: ReturnType<typeof setInterval> | null = null;
 
           const dismiss = () => {
             if (dismissed) return;
             dismissed = true;
-            if (interval) clearInterval(interval);
             dismissWelcomeOverlay = null;
+            guideOverlayBlocking = false;
             done();
           };
-
-          interval = setInterval(() => {
-            if (dismissed) return;
-            countdown--;
-            welcome.setCountdown(countdown);
-            tui.requestRender();
-            if (countdown <= 0) dismiss();
-          }, 1000);
 
           dismissWelcomeOverlay = dismiss;
 
@@ -2829,13 +2863,12 @@ export default function powerlineFooter(pi: ExtensionAPI) {
           }
 
           return {
-            focused: false,
+            focused: true,
             invalidate: () => welcome.invalidate(),
             render: (width: number) => welcome.render(width),
             handleInput: () => dismiss(),
             dispose: () => {
               dismissed = true;
-              if (interval) clearInterval(interval);
             },
           };
         },

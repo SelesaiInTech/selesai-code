@@ -1,8 +1,28 @@
 {
 	"name": "@selesai/code",
-	"version": "0.5.13",
-	"description": "Selesai coding agent",
+	"version": "0.5.14",
+	"description": "Maintained, extension-first Pi coding agent with built-in workflows, subagents, web research, questions, skills, and an enhanced terminal UI.",
 	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/SelesaiInTech/selesai-code.git"
+	},
+	"homepage": "https://github.com/SelesaiInTech/selesai-code#readme",
+	"bugs": {
+		"url": "https://github.com/SelesaiInTech/selesai-code/issues"
+	},
+	"keywords": [
+		"pi-package",
+		"coding-agent",
+		"ai-agent",
+		"terminal",
+		"typescript",
+		"llm",
+		"subagents",
+		"workflow",
+		"web-research",
+		"tui"
+	],
 	"piConfig": {
 		"name": "selesai",
 		"configDir": ".selesai"
@@ -22,6 +42,7 @@
 		}
 	},
 	"files": [
+		"README.md",
 		"dist",
 		"docs",
 		"examples",

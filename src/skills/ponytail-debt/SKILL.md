@@ -6,6 +6,7 @@ description: >
   of rotting into "later means never". Use when the user says "ponytail debt",
   "/ponytail-debt", "what did ponytail defer", "list the shortcuts", "ponytail
   ledger", or "what did we mark to do later". One-shot report, changes nothing.
+disable-model-invocation: true
 ---
 
 Every deliberate ponytail shortcut is marked with a `ponytail:` comment naming

@@ -1,6 +1,7 @@
 ---
 name: workflow-creation
 description: Creates durable Selesai workflow modes. Use when a user asks to create or change a workflow mode, phased agent flow, or slash-command workflow.
+disable-model-invocation: true
 ---
 
 # Durable Workflows

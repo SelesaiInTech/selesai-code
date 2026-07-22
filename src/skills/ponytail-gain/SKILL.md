@@ -6,6 +6,7 @@ description: >
   persistent mode, and not a per-repo number. Trigger: /ponytail-gain,
   "ponytail gain", "what does ponytail save", "show ponytail impact",
   "ponytail scoreboard".
+disable-model-invocation: true
 ---
 
 # Ponytail Gain

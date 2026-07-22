@@ -7,6 +7,7 @@ description: >
   codebase", "audit for over-engineering", "what can I delete from this repo",
   "find bloat", "ponytail-audit", or "/ponytail-audit". One-shot report, does
   not apply fixes.
+disable-model-invocation: true
 ---
 
 ponytail-review, repo-wide. Scan the whole tree instead of a diff. Rank
