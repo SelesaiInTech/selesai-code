@@ -118,7 +118,7 @@ Review uncommitted changes for correctness, plan adherence, and over-engineering
 2. If that review lists actionable issues, call the subagent tool with { agent: "builder", task: "...", output: false } (do NOT pass a model parameter). Instruct it to fix every issue in the workspace, never in ${artifactDir}, then return its completion summary inline.
 3. Re-run the commentator and overwrite the parent-owned review artifact through write_workflow_artifact until it ends with WORKFLOW_REVIEW_STATUS: clean.
 
-Once ${artifactDir}/review.md exists and ends with the WORKFLOW_REVIEW_STATUS: clean marker, call end_quick_workflow to complete the workflow.`,
+Once ${artifactDir}/review.md exists and ends with the WORKFLOW_REVIEW_STATUS: clean marker, call end_workflow with { mode: "quick" } to complete the workflow.`,
 };
 
 const config: WorkflowConfig = {
@@ -152,8 +152,6 @@ export const quickMode: WorkflowModeRegistration = {
   commandName: "workflow-quick",
   commandDescription:
     "Run the quick workflow (grill → plan → reuse → handoff → loop → audit)",
-  toolNames: { start: "start_quick_workflow", resume: "resume_quick_workflow", end: "end_quick_workflow" },
-  toolLabels: { start: "Start Quick Workflow", resume: "Resume Quick Workflow", end: "End Quick Workflow" },
 };
 
 export default quickMode;

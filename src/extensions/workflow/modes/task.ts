@@ -68,7 +68,7 @@ After the builder returns, call the subagent tool with { agent: "commentator", t
   OR
   WORKFLOW_REVIEW_STATUS: blocking
 
-If a review is blocking, call the builder again with the recorded issues. This repeats up to ${loopMaxIterations ?? 3} round(s). When a review is clean, the engine writes loop-complete.md and the workflow becomes terminal-ready. Do NOT write loop-complete.md yourself. Call end_task_workflow to complete the workflow.`,
+If a review is blocking, call the builder again with the recorded issues. This repeats up to ${loopMaxIterations ?? 3} round(s). When a review is clean, the engine writes loop-complete.md and the workflow becomes terminal-ready. Do NOT write loop-complete.md yourself. Call end_workflow with { mode: "task" } to complete the workflow.`,
 };
 
 const config: WorkflowConfig = {
@@ -102,16 +102,6 @@ export const taskMode: WorkflowModeRegistration = {
   commandName: "workflow-task",
   commandDescription:
     "Run the task workflow (plan → reuse → handoff → build↔review loop)",
-  toolNames: {
-    start: "start_task_workflow",
-    resume: "resume_task_workflow",
-    end: "end_task_workflow",
-  },
-  toolLabels: {
-    start: "Start Task Workflow",
-    resume: "Resume Task Workflow",
-    end: "End Task Workflow",
-  },
 };
 
 export default taskMode;

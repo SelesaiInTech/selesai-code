@@ -47,8 +47,6 @@ export interface WorkflowModeRegistration {
   config: WorkflowConfig;
   commandName: string;
   commandDescription: string;
-  toolNames: { start: string; resume: string; end: string };
-  toolLabels: { start: string; resume: string; end: string };
 }
 
 export interface WorkflowConfig {

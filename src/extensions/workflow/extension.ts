@@ -16,8 +16,6 @@ const MODES = [prototypeMode, quickMode, taskMode] as const;
 export default function workflowModesExtension(pi: ExtensionAPI): void {
   for (const mode of MODES) {
     createWorkflowExtension(mode.config, {
-      toolNames: mode.toolNames,
-      toolLabels: mode.toolLabels,
       commandName: mode.commandName,
       commandDescription: mode.commandDescription,
     })(pi);

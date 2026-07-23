@@ -88,8 +88,6 @@ function disableSubagentOutput(input: Record<string, unknown>): void {
 }
 
 export interface WorkflowAdapterOptions {
-  toolNames: { start: string; resume: string; end: string };
-  toolLabels: { start: string; resume: string; end: string };
   commandName: string;
   commandDescription: string;
 }
@@ -112,10 +110,15 @@ const WORKFLOW_ARTIFACT_TOOL = "write_workflow_artifact";
 // can race. Module-level state alone is not enough when the loader runs each
 // extension in its own module record.
 const WORKFLOW_GLOBAL = Symbol.for("selesai.workflow.registry.v1");
-type WorkflowRegistry = { controllers: WorkflowController[]; writerRegisteredFor: WeakSet<object> };
+type WorkflowRegistry = {
+  controllers: WorkflowController[];
+  writerRegisteredFor: WeakSet<object>;
+  toolsRegisteredFor: WeakSet<object>;
+};
 const registry: WorkflowRegistry = ((globalThis as any)[WORKFLOW_GLOBAL] ??= {
   controllers: [],
   writerRegisteredFor: new WeakSet(),
+  toolsRegisteredFor: new WeakSet(),
 });
 
 // ponytail: tests call this between cases to drop pi references and reset
@@ -461,7 +464,7 @@ function commandHelp(config: WorkflowConfig, options: WorkflowAdapterOptions): s
     `${command} resume — list resumable runs.`,
     `${command} resume <run-id|artifact-dir|workflow.json> — explicitly resume one.`,
     `Phases advance when their artifacts are written. Runs never auto-resume after reload.`,
-    `Only one run may be attached; ${options.toolNames.end} explicitly completes a terminal-ready run.`,
+    "Only one run may be attached; end_workflow explicitly completes a terminal-ready run.",
   ].join("\n");
 }
 
@@ -538,6 +541,156 @@ function registerSharedArtifactWriter(pi: ExtensionAPI): void {
   } satisfies ToolDefinition);
 }
 
+function controllerForMode(pi: ExtensionAPI, mode: string): WorkflowController | undefined {
+  return registry.controllers.find((controller) =>
+    controller.pi === pi && controller.config.mode === mode && isRegisteredController(controller),
+  );
+}
+
+function unknownMode(mode: string) {
+  return {
+    content: [{ type: "text" as const, text: `Unknown workflow mode: ${mode}. Use an installed mode (prototype, quick, or task).` }],
+    details: { rejected: true, mode },
+  };
+}
+
+async function startController(controller: WorkflowController, goal: string, ctx: ExtensionContext) {
+  const { pi, config, sm, deps } = controller;
+  const other = activeControllersFor(pi).find((candidate) => candidate.sm !== sm);
+  if (other) {
+    return {
+      content: [{ type: "text" as const, text: `A ${other.config.mode} workflow is already active (phase: ${other.sm.snapshot.phase}). Close it before starting ${config.mode}.` }],
+      details: { phase: other.sm.snapshot.phase, alreadyActive: true },
+    };
+  }
+  const before = checkpoint(controller);
+  const eff = await sm.start(goal, deps);
+  if (eff.kind === "started") {
+    controller.run = {
+      version: 1,
+      id: basename(sm.snapshot.artifactDir),
+      mode: config.mode,
+      status: "active",
+      goal: sm.snapshot.userPrompt,
+      artifactDir: sm.snapshot.artifactDir,
+      phase: sm.snapshot.phase,
+      autoArmed: sm.snapshot.autoArmed,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      await persistAfter(controller, before);
+    } catch (error) {
+      return {
+        content: [{ type: "text" as const, text: `Could not start durable workflow: ${error instanceof Error ? error.message : String(error)}` }],
+        details: { persistenceError: true },
+      };
+    }
+    controller.seenToolCallIds.clear();
+    controller.lastBlockedKey = undefined;
+  }
+  applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
+  if (eff.kind === "alreadyActive") {
+    return {
+      content: [{ type: "text" as const, text: `A ${config.mode} workflow is already active (phase: ${eff.phase}). Do not call start_workflow again. Phases auto-advance as artifacts land; call end_workflow only from the final phase.` }],
+      details: { phase: eff.phase, alreadyActive: true },
+    };
+  }
+  return {
+    content: [{ type: "text" as const, text: `${config.footerLabel} workflow started. ${eff.prompt}` }],
+    details: { mode: config.mode, phase: eff.phase },
+  };
+}
+
+async function endController(controller: WorkflowController, ctx: ExtensionContext) {
+  const { config, sm, deps } = controller;
+  const before = checkpoint(controller);
+  const eff = await sm.end(deps);
+  if (eff.kind === "closed") {
+    try {
+      await persistAfter(controller, before);
+    } catch (error) {
+      return {
+        content: [{ type: "text" as const, text: `Cannot end: workflow state could not be persisted: ${error instanceof Error ? error.message : String(error)}` }],
+        details: { persistenceError: true },
+      };
+    }
+  }
+  applyControllerEffect(controller, ctx, eff);
+  if (eff.kind === "closed") {
+    controller.seenToolCallIds.clear();
+    controller.lastBlockedKey = undefined;
+    return {
+      content: [{ type: "text" as const, text: `Workflow ended and closed. It can no longer be used. Artifacts saved at ${eff.artifactDir}.` }],
+      details: { closed: true, mode: config.mode, phase: eff.phase, artifactDir: eff.artifactDir },
+      terminate: true,
+    };
+  }
+  if (eff.kind === "endBlocked") {
+    if (eff.reason) {
+      return {
+        content: [{ type: "text" as const, text: `Cannot end: ${eff.missing} is incomplete: ${eff.reason}.` }],
+        details: { mode: config.mode, phase: eff.phase, blocked: eff.missing, reason: eff.reason },
+      };
+    }
+    const isArtifactFile = !eff.missing.includes(" ") && eff.missing.includes(".");
+    const hint = isArtifactFile
+      ? ` Write ${sm.snapshot.artifactDir}/${eff.missing} first.`
+      : ` Continue through the phases to ${config.phases[config.phases.length - 1]}.`;
+    return {
+      content: [{ type: "text" as const, text: `Cannot end: ${eff.missing}.${hint}` }],
+      details: { mode: config.mode, phase: eff.phase, blocked: eff.missing },
+    };
+  }
+  return {
+    content: [{ type: "text" as const, text: `No active ${config.mode} workflow to end.` }],
+    details: { active: false, mode: config.mode },
+  };
+}
+
+function registerSharedWorkflowTools(pi: ExtensionAPI): void {
+  if (registry.toolsRegisteredFor.has(pi)) return;
+  registry.toolsRegisteredFor.add(pi);
+  pi.registerTool({
+    name: "start_workflow",
+    label: "Start Workflow",
+    description: "Start a durable workflow. Select prototype, quick, or task; do not call while another workflow is active.",
+    parameters: Type.Object({
+      mode: Type.String({ description: "Workflow mode: prototype, quick, task, or another installed mode." }),
+      goal: Type.String(),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const controller = controllerForMode(pi, params.mode);
+      return controller ? startController(controller, params.goal, ctx) : unknownMode(params.mode);
+    },
+  } satisfies ToolDefinition);
+  pi.registerTool({
+    name: "resume_workflow",
+    label: "Resume Workflow",
+    description: "Resume a durable workflow by mode and selected run id, artifact directory, or workflow.json path.",
+    parameters: Type.Object({
+      mode: Type.String({ description: "Workflow mode: prototype, quick, task, or another installed mode." }),
+      run: Type.String(),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const controller = controllerForMode(pi, params.mode);
+      return controller ? resumeController(controller, ctx, params.run, "end_workflow") : unknownMode(params.mode);
+    },
+  } satisfies ToolDefinition);
+  pi.registerTool({
+    name: "end_workflow",
+    label: "End Workflow",
+    description: "Close a terminal-ready durable workflow. Select its mode.",
+    parameters: Type.Object({
+      mode: Type.String({ description: "Workflow mode: prototype, quick, task, or another installed mode." }),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const controller = controllerForMode(pi, params.mode);
+      return controller ? endController(controller, ctx) : unknownMode(params.mode);
+    },
+  } satisfies ToolDefinition);
+}
+
 export function createWorkflowExtension(
   config: WorkflowConfig,
   options: WorkflowAdapterOptions,
@@ -558,171 +711,12 @@ export function createWorkflowExtension(
     const controller: WorkflowController = { pi, config, sm, deps, seenToolCallIds: new Set() };
     registry.controllers.push(controller);
     registerSharedArtifactWriter(pi);
-    const { start, resume, end } = options.toolNames;
+    registerSharedWorkflowTools(pi);
     const { mode, footerLabel } = config;
+    const end = "end_workflow";
 
-    // ── start tool ──
-    pi.registerTool({
-      name: start,
-      label: options.toolLabels.start,
-      description: `Start the ${mode} workflow for the given goal. Sets up ${config.phases[0]} as the first phase and returns its prompt. Do not call if a workflow is already active.`,
-      parameters: Type.Object({
-        goal: Type.String({
-          description: `What the user wants the ${mode} workflow to build or accomplish.`,
-        }),
-      }),
-      async execute(_id, params, _signal, _onUpdate, ctx) {
-        const other = activeControllersFor(pi).find((c) => c.sm !== sm);
-        if (other) {
-          return {
-            content: [{ type: "text", text: `A ${other.config.mode} workflow is already active (phase: ${other.sm.snapshot.phase}). Close it before starting ${mode}.` }],
-            details: { phase: other.sm.snapshot.phase, alreadyActive: true },
-          };
-        }
-        const before = checkpoint(controller);
-        const eff = await sm.start(params.goal, deps);
-        if (eff.kind === "started") {
-          controller.run = {
-            version: 1,
-            id: basename(sm.snapshot.artifactDir),
-            mode,
-            status: "active",
-            goal: sm.snapshot.userPrompt,
-            artifactDir: sm.snapshot.artifactDir,
-            phase: sm.snapshot.phase,
-            autoArmed: sm.snapshot.autoArmed,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-          try {
-            await persistAfter(controller, before);
-          } catch (error) {
-            return {
-              content: [{ type: "text", text: `Could not start durable workflow: ${error instanceof Error ? error.message : String(error)}` }],
-              details: { persistenceError: true },
-            };
-          }
-          controller.seenToolCallIds.clear();
-          controller.lastBlockedKey = undefined;
-        }
-        // The start tool result already contains the grilling prompt. Queueing
-        // it again creates a duplicate autonomous turn.
-        applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
-        if (eff.kind === "alreadyActive") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `A ${mode} workflow is already active (phase: ${eff.phase}). Do not call ${start} again. Phases auto-advance as artifacts land; call ${end} only from the final phase.`,
-              },
-            ],
-            details: { phase: eff.phase, alreadyActive: true },
-          };
-        }
-        return {
-          content: [
-            { type: "text", text: `${footerLabel} workflow started. ${eff.prompt}` },
-          ],
-          details: { phase: eff.phase },
-        };
-      },
-      renderResult(_result, _options, theme) {
-        return new Text(
-          theme.fg("warning", `● ${footerLabel} started · 1/${config.phases.length} ${config.phases[0]}`),
-          0,
-          0,
-        );
-      },
-    } satisfies ToolDefinition);
-
-    // ── explicit resume tool ──
-    pi.registerTool({
-      name: resume,
-      label: options.toolLabels.resume,
-      description: `Resume an explicitly selected ${mode} workflow run. Pass a run id, artifact directory, or workflow.json path.`,
-      parameters: Type.Object({ run: Type.String({ description: "Run id, artifact directory, or workflow.json path." }) }),
-      async execute(_id, params, _signal, _onUpdate, ctx) {
-        return resumeController(controller, ctx, params.run, end);
-      },
-      renderResult(result, _options, theme) {
-        const d = result.details as { rejected?: boolean; persistenceError?: boolean; phase?: string };
-        const failed = d.rejected || d.persistenceError;
-        return new Text(theme.fg(failed ? "warning" : "success", failed ? "○ workflow resume rejected" : `✓ workflow resumed · ${d.phase}`), 0, 0);
-      },
-    } satisfies ToolDefinition);
-
-    // ── end tool ──
-    pi.registerTool({
-      name: end,
-      label: options.toolLabels.end,
-      description: `Close the ${mode} workflow. Must be called when the final phase is complete. Marks the workflow finished and stops the agent loop.`,
-      parameters: Type.Object({}),
-      async execute(_id, _params, _signal, _onUpdate, ctx) {
-        const before = checkpoint(controller);
-        const eff = await sm.end(deps);
-        if (eff.kind === "closed") {
-          try {
-            await persistAfter(controller, before);
-          } catch (error) {
-            return {
-              content: [{ type: "text", text: `Cannot end: workflow state could not be persisted: ${error instanceof Error ? error.message : String(error)}` }],
-              details: { persistenceError: true },
-            };
-          }
-        }
-        applyControllerEffect(controller, ctx, eff);
-        if (eff.kind === "closed") {
-          controller.seenToolCallIds.clear();
-          controller.lastBlockedKey = undefined;
-        }
-        switch (eff.kind) {
-          case "closed":
-            return {
-              content: [{ type: "text", text: `Workflow ended and closed. It can no longer be used. Artifacts saved at ${eff.artifactDir}.` }],
-              details: { closed: true, phase: eff.phase, artifactDir: eff.artifactDir },
-              terminate: true,
-            };
-          case "endBlocked": {
-            // ponytail: missing is either a filename (existence failure),
-            // a phase description like "not at terminal (audit)", or — Plan 4 —
-            // a filename whose validator failed (reason set). Only suggest
-            // writing when it's an actual artifact file existence miss.
-            if (eff.reason) {
-              return {
-                content: [{ type: "text", text: `Cannot end: ${eff.missing} is incomplete: ${eff.reason}.` }],
-                details: { phase: eff.phase, blocked: eff.missing, reason: eff.reason },
-              };
-            }
-            const isArtifactFile =
-              !eff.missing.includes(" ") && eff.missing.includes(".");
-            const hint = isArtifactFile
-              ? ` Write ${sm.snapshot.artifactDir}/${eff.missing} first.`
-              : ` Continue through the phases to ${config.phases[config.phases.length - 1]}.`;
-            return {
-              content: [{ type: "text", text: `Cannot end: ${eff.missing}.${hint}` }],
-              details: { phase: eff.phase, blocked: eff.missing },
-            };
-          }
-          default:
-            return {
-              content: [{ type: "text", text: `No active ${mode} workflow to end.` }],
-              details: { active: false },
-            };
-        }
-      },
-      renderResult(result, _options, theme) {
-        const d = result.details as { closed?: boolean; artifactDir?: string };
-        if (!d.closed) {
-          return new Text(theme.fg("dim", "○ no workflow to end"), 0, 0);
-        }
-        return new Text(
-          theme.fg("success", `✓ ${footerLabel} closed · ${d.artifactDir}`),
-          0,
-          0,
-        );
-      },
-    } satisfies ToolDefinition);
-
+    // Workflow lifecycle tools are registered once per Pi instance below.
+    // They dispatch by `mode`; mode-specific tool aliases are intentionally absent.
     // ── session_start: disk state is never auto-attached. A session entry is
     // merely a convenience pointer for rendering a stale-but-useful footer. ──
     pi.on("session_start", async (_event: any, ctx: ExtensionContext) => {
@@ -932,7 +926,7 @@ export function createWorkflowExtension(
           const closed = sm.closeCurrent();
           if (closed) {
             // Detach only: the on-disk active record remains resumable. Only
-            // end_*_workflow writes status: completed.
+            // end_workflow({ mode }) writes status: completed.
             applyEntry(pi, config, { ...closed, done: false }, controller.run);
             ctx.ui.notify(`Detached ${mode} workflow at ${closed.artifactDir}; it remains resumable.`, "info");
           }

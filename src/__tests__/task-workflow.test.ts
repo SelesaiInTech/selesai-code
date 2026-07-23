@@ -119,13 +119,13 @@ describe("task workflow", () => {
 
   it("registers task tools and suppresses plan/reuse/handoff/build child file output", async () => {
     const h = await createHarness();
-    expect(h.tools.has("start_task_workflow")).toBe(true);
-    expect(h.tools.has("resume_task_workflow")).toBe(true);
-    expect(h.tools.has("end_task_workflow")).toBe(true);
-    expect(h.tools.get("start_task_workflow").description).toContain("plan as the first phase");
+    expect(h.tools.has("start_workflow")).toBe(true);
+    expect(h.tools.has("resume_workflow")).toBe(true);
+    expect(h.tools.has("end_workflow")).toBe(true);
+    expect(h.tools.get("start_workflow").description).toContain("prototype, quick, or task");
     expect(h.commands.has("workflow-task")).toBe(true);
 
-    await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
+    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
     const dir = h.entries.at(-1)!.data.artifactDir;
 
     const planInput: Record<string, unknown> = { agent: "architect", task: "plan it", output: join(dir, "plan.md") };
@@ -175,7 +175,7 @@ describe("task workflow", () => {
 
   it("reload ignores its stale task handler; explicit task resume reconciles through handoff", async () => {
     const h = await createHarness();
-    await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
+    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
     const dir = h.entries.at(-1)!.data.artifactDir;
     const statePath = join(dir, "workflow.json");
     writeFileSync(join(dir, "plan.md"), "# Plan\nWORKFLOW_PLAN_STATUS: ready");
@@ -191,7 +191,7 @@ describe("task workflow", () => {
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ phase: "plan", status: "active" });
     expect(h.notifies).toHaveLength(0);
 
-    const resumed = await h.tools.get("resume_task_workflow").execute("resume", { run: JSON.parse(readFileSync(statePath, "utf8")).id }, undefined, undefined, h.ctx);
+    const resumed = await h.tools.get("resume_workflow").execute("resume", { mode: "task", run: JSON.parse(readFileSync(statePath, "utf8")).id }, undefined, undefined, h.ctx);
     expect(resumed.details.phase).toBe("loop");
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ phase: "loop", status: "active" });
     expect(h.sent.at(-1)?.text).toContain("LOOP (orchestration) phase");
@@ -199,7 +199,7 @@ describe("task workflow", () => {
 
   it("queues each next phase automatically at parent-owned artifact boundaries", async () => {
     const h = await createHarness();
-    await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
+    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
 
     let result = await h.tools.get("write_workflow_artifact").execute(
       "write-plan",
@@ -238,7 +238,7 @@ describe("task workflow", () => {
 
   it("requires a valid handoff marker before entering the loop", async () => {
     const h = await createHarness();
-    await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
+    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
     const dir = h.entries.at(-1)!.data.artifactDir;
 
     await h.tools.get("write_workflow_artifact").execute(
@@ -279,7 +279,7 @@ describe("task workflow", () => {
 
   it("requires the parent to persist architect/explorer/recapper output before entering the loop", async () => {
     const h = await createHarness();
-    await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
+    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
     const dir = h.entries.at(-1)!.data.artifactDir;
 
     // Architect result alone does not create plan.md or advance the workflow.
@@ -352,14 +352,14 @@ describe("task workflow", () => {
 
     expect(readFileSync(join(dir, "loop-complete.md"), "utf8")).toContain("WORKFLOW_LOOP_STATUS: clean");
     expect(h.entries.at(-1)?.data).toMatchObject({ phase: "loop", done: false });
-    const end = await h.tools.get("end_task_workflow").execute("end", {}, undefined, undefined, h.ctx);
+    const end = await h.tools.get("end_workflow").execute("end", { mode: "task" }, undefined, undefined, h.ctx);
     expect(end.terminate).toBe(true);
     expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"))).toMatchObject({ status: "completed", phase: "loop" });
   });
 
   it("pauses durably after three blocking reviews", async () => {
     const h = await createHarness();
-    await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
+    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
     await h.tools.get("write_workflow_artifact").execute(
       "write-plan",
       { content: "WORKFLOW_PLAN_STATUS: ready" },
@@ -403,7 +403,7 @@ describe("task workflow", () => {
 
     const { createWorkflowExtension } = await import("../extensions/workflow/adapter.ts");
     createWorkflowExtension(taskMode.config, taskMode)(h.pi);
-    const resumed = await h.tools.get("resume_task_workflow").execute("resume", { run: JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8")).id }, undefined, undefined, h.ctx);
+    const resumed = await h.tools.get("resume_workflow").execute("resume", { mode: "task", run: JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8")).id }, undefined, undefined, h.ctx);
     expect(resumed.details.phase).toBe("loop");
     expect(h.notifies.at(-1)?.text).toContain("paused after 3/3");
     expect(h.notifies.at(-1)?.text).toContain("loop-review-3.md");
@@ -428,7 +428,7 @@ describe("task workflow", () => {
     vi.resetModules();
 
     const h = await createHarness();
-    await h.tools.get("start_task_workflow").execute("start", { goal: "build X" }, undefined, undefined, h.ctx);
+    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
     const dir = h.entries.at(-1)!.data.artifactDir;
     const statePath = join(dir, "workflow.json");
     const runId = JSON.parse(readFileSync(statePath, "utf8")).id as string;
@@ -443,15 +443,16 @@ describe("task workflow", () => {
       JSON.stringify({ ...JSON.parse(readFileSync(statePath, "utf8")), phase: "plan", autoArmed: true }, null, 2),
     );
 
-    // The previous start_task_workflow leaves an active controller attached.
+    // The previous start_workflow leaves an active controller attached.
     // Detach it so resume can load the run fresh, matching real usage where
     // start and resume are separate parent turns.
-    const { __resetWorkflowRegistryForTests } = await import("../extensions/workflow/adapter.ts");
+    const { __resetWorkflowRegistryForTests, createWorkflowExtension } = await import("../extensions/workflow/adapter.ts");
     __resetWorkflowRegistryForTests();
+    createWorkflowExtension(taskMode.config, taskMode)(h.pi);
 
     const resumed = await h.tools
-      .get("resume_task_workflow")
-      .execute("resume", { run: runId }, undefined, undefined, h.ctx);
+      .get("resume_workflow")
+      .execute("resume", { mode: "task", run: runId }, undefined, undefined, h.ctx);
     expect(resumed.details.persistenceError).toBe(true);
     expect(JSON.parse(readFileSync(statePath, "utf8")).phase).toBe("plan");
 
@@ -460,8 +461,8 @@ describe("task workflow", () => {
     const h2 = await createHarness();
 
     const resumed2 = await h2.tools
-      .get("resume_task_workflow")
-      .execute("resume", { run: runId }, undefined, undefined, h2.ctx);
+      .get("resume_workflow")
+      .execute("resume", { mode: "task", run: runId }, undefined, undefined, h2.ctx);
     expect(resumed2.details.phase).toBe("loop");
   });
 });

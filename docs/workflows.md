@@ -20,8 +20,8 @@ src/extensions/workflow/
 - **`state-machine.ts`** is the deep module. It owns the phase graph, artifact gating, skip rules, the terminal close gate, and the reentrancy guard. It imports nothing external — no `node:fs`, no pi API, no `pi-tui`, no `typebox`. Every method returns a `WorkflowEffect` (a discriminated union in domain vocabulary) that the adapter pattern-matches on.
 - **`adapter.ts`** is the thin glue. It owns Pi/fs wiring, durable state, explicit resume, loop review persistence, and the git-based `reuse` skip predicate. Parent-written artifacts advance durable phase state. `prototype` and `quick` stop at user-controlled boundaries; `task` queues its build loop as soon as its plan is ready.
 - **`workflow.json`** in each artifact directory is the canonical, versioned run record. It is atomically replaced after state changes; session custom entries are only pointers for UI/history and never reconstruct an active run.
-- **`extension.ts`** imports each mode's registration object and calls `createWorkflowExtension(config, options)(pi)` for each, so one extension load resolves a single shared writer tool + one start/end tool pair per mode.
-- **A mode file** is pure data: the phase list, the per-phase artifact filenames, the per-phase prompt generators, the terminal close artifacts, and identity strings (tool names, command name, status key, entry type). Prompts are functions that receive `{ artifactDir, userPrompt }` and return a string. Each mode exports a `WorkflowModeRegistration` object (e.g. `prototypeMode`, `quickMode`); it does not call `createWorkflowExtension` itself.
+- **`extension.ts`** imports each mode's registration object and calls `createWorkflowExtension(config, options)(pi)` for each. One extension load registers one shared writer plus `start_workflow`, `resume_workflow`, and `end_workflow`; each lifecycle call selects a mode.
+- **A mode file** is pure data: the phase list, per-phase artifact filenames, prompt generators, terminal close artifacts, and command/status/entry identities. Prompts receive `{ artifactDir, userPrompt }`. Each mode exports a `WorkflowModeRegistration` object (e.g. `prototypeMode`, `quickMode`); it does not call `createWorkflowExtension` itself.
 
 ## To add a future mode
 
@@ -91,16 +91,6 @@ export const rigorousMode: WorkflowModeRegistration = {
   commandName: "rigorous",
   commandDescription:
     "Run the rigorous workflow (grill → spec → research → plan → reuse → handoff → loop → audit → sign-off)",
-  toolNames: {
-    start: "start_rigorous_workflow",
-    resume: "resume_rigorous_workflow",
-    end: "end_rigorous_workflow",
-  },
-  toolLabels: {
-    start: "Start Rigorous Workflow",
-    resume: "Resume Rigorous Workflow",
-    end: "End Rigorous Workflow",
-  },
 };
 
 export default rigorousMode;
@@ -116,15 +106,15 @@ import { rigorousMode } from "./modes/rigorous.ts";
 const MODES = [prototypeMode, quickMode, rigorousMode] as const;
 ```
 
-That's it. The loader picks it up at boot (`package.json` loads only `./extension.ts`); start/resume/end tools and the `/rigorous` command are registered automatically. There is no `next` tool — phases auto-advance as artifacts land and only the `end` tool completes the terminal phase.
+That's it. The loader picks it up at boot (`package.json` loads only `./extension.ts`); the shared lifecycle tools accept `mode: "rigorous"`, and the `/rigorous` command is registered automatically. There is no `next` tool — phases auto-advance as artifacts land and only `end_workflow({ mode: "rigorous" })` completes the terminal phase.
 
 ## Built-in modes
 
 ### `task` — plan → codebase exploration → handoff → build/review loop
 
-Task now follows the same phase shape as the other modes, minus grilling/research/audit: an architect subagent produces a validated `plan.md`, an optional explorer subagent produces `reuse.md`, a recapper subagent produces a validated `handoff.md`, and then a builder↔commentator review loop runs (max 3 blocking rounds). A clean review makes the workflow terminal-ready; `end_task_workflow` completes it.
+Task now follows the same phase shape as the other modes, minus grilling/research/audit: an architect subagent produces a validated `plan.md`, an optional explorer subagent produces `reuse.md`, a recapper subagent produces a validated `handoff.md`, and then a builder↔commentator review loop runs (max 3 blocking rounds). A clean review makes the workflow terminal-ready; `end_workflow({ mode: "task" })` completes it.
 
-Lifecycle: `plan → reuse → handoff → loop (build ↔ review) → terminal-ready → end_task_workflow`
+Lifecycle: `plan → reuse → handoff → loop (build ↔ review) → terminal-ready → end_workflow({ mode: "task" })`
 
 - `/workflow-task <goal>` — start a new run
 - `/workflow-task resume` — list and resume active runs
@@ -154,8 +144,6 @@ The second argument to `createWorkflowExtension`:
 
 | Field | Description |
 |---|---|
-| `toolNames` | `{ start, resume, end }` — registered tool names. Artifacts advance phase state; the user explicitly continues the attached run. |
-| `toolLabels` | Human-readable labels for the tools. |
 | `commandName` | The `/<command>` name users type to kick off the workflow. |
 | `commandDescription` | Description shown in the command list. |
 
@@ -165,14 +153,14 @@ Each started workflow receives a UUID artifact directory under `.selesai/artifac
 
 Runs are **never** auto-resumed on session start. At most one run can be attached to a Pi instance, but older active runs remain resumable:
 
-- `resume_workflow({ run: "<id-or-path>" })` / `resume_quick_workflow(...)` / `resume_task_workflow(...)`
+- `start_workflow({ mode, goal })`, `resume_workflow({ mode, run: "<id-or-path>" })`, and `end_workflow({ mode })`, where `mode` is `prototype`, `quick`, or `task`
 - `/workflow-prototype resume <id-or-artifact-dir-or-workflow.json>` / `/workflow-quick resume ...` / `/workflow-task resume ...`
 - `/workflow-prototype resume`, `/workflow-quick resume`, or `/workflow-task resume` lists active runs (and offers a UI picker when available).
 - `/workflow-prototype help`, `/workflow-quick help`, or `/workflow-task help` shows the start, resume, continue, and explicit-completion lifecycle.
 
 Resume validates the selected file is under the artifacts base, belongs to that mode, is active, and matches its containing directory. It reconciles the current expected artifact once before emitting the current prompt, covering a crash after `write_workflow_artifact` writes the file but before the phase-state write. Artifact writes do not inject the next phase prompt or launch the next subagent; they terminate the parent turn and wait for the user to continue. A mode can opt out of that pause after a parent artifact write; `task` does so at every parent-owned artifact boundary (`plan.md`, `reuse.md`, `handoff.md`) so the build loop starts immediately after a valid handoff. Corrupt records are skipped during discovery.
 
-A valid terminal artifact makes a workflow **terminal-ready**; it does not complete the run. Call the mode-specific `end_*_workflow` tool to write `status: "completed"`, append the done entry, and terminate. This is the only completion path.
+A valid terminal artifact makes a workflow **terminal-ready**; it does not complete the run. Call `end_workflow({ mode })` to write `status: "completed"`, append the done entry, and terminate. This is the only completion path.
 
 ## Artifact ownership
 

@@ -33,8 +33,6 @@ async function createQuickHarness() {
 		},
 	};
 	createWorkflowExtension(quickMode.config, {
-		toolNames: quickMode.toolNames,
-		toolLabels: quickMode.toolLabels,
 		commandName: quickMode.commandName,
 		commandDescription: quickMode.commandDescription,
 	})(pi);
@@ -60,8 +58,8 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 	it("does not register a next tool", async () => {
 		const h = await createQuickHarness();
 		expect(h.tools.has("next_quick_step")).toBe(false);
-		expect(h.tools.has("start_quick_workflow")).toBe(true);
-		expect(h.tools.has("end_quick_workflow")).toBe(true);
+		expect(h.tools.has("start_workflow")).toBe(true);
+		expect(h.tools.has("end_workflow")).toBe(true);
 		expect(h.tools.has("write_workflow_artifact")).toBe(true);
 	});
 
@@ -77,8 +75,8 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 
 	it("artifact completion advances grilling→plan without queuing the plan agent", async () => {
 		const h = await createQuickHarness();
-		await h.tools.get("start_quick_workflow").execute(
-			"id-1", { goal: "build X" }, undefined, undefined, { ...h.ctxBase },
+		await h.tools.get("start_workflow").execute(
+			"id-1", { mode: "quick", goal: "build X" }, undefined, undefined, { ...h.ctxBase },
 		);
 		const result = await h.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, { ...h.ctxBase });
 		expect(h.entries.at(-1)?.data.phase).toBe("plan");
@@ -89,8 +87,8 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 	it("tool_call blocks write while workflow is active", async () => {
 		const h = await createQuickHarness();
 		const c = { ...h.ctxBase };
-		await h.tools.get("start_quick_workflow").execute(
-			"id-1", { goal: "build X" }, undefined, undefined, c,
+		await h.tools.get("start_workflow").execute(
+			"id-1", { mode: "quick", goal: "build X" }, undefined, undefined, c,
 		);
 		const res = await h.events.get("tool_call")(
 			{ type: "tool_call", toolName: "write", toolCallId: "tc1", input: { path: "./.[密钥].md", content: "# reqs" } },
@@ -103,8 +101,8 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 	it("requires the parent writer to advance plan→reuse", async () => {
 		const h = await createQuickHarness();
 		const c = { ...h.ctxBase };
-		await h.tools.get("start_quick_workflow").execute(
-			"id-1", { goal: "build X" }, undefined, undefined, c,
+		await h.tools.get("start_workflow").execute(
+			"id-1", { mode: "quick", goal: "build X" }, undefined, undefined, c,
 		);
 		const dir = h.entries.at(-1)!.data.artifactDir;
 		await h.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
@@ -124,8 +122,8 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 	it("terminal becomes ready once review.md lands and closes only on explicit end", async () => {
 		const h = await createQuickHarness();
 		const c = { ...h.ctxBase };
-		await h.tools.get("start_quick_workflow").execute(
-			"id-1", { goal: "build X" }, undefined, undefined, c,
+		await h.tools.get("start_workflow").execute(
+			"id-1", { mode: "quick", goal: "build X" }, undefined, undefined, c,
 		);
 		const dir = h.entries.at(-1)!.data.artifactDir;
 		await h.tools.get("write_workflow_artifact").execute("requirements", { content: "# requirements" }, undefined, undefined, c);
@@ -137,7 +135,7 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		);
 		await h.tools.get("write_workflow_artifact").execute("review", { content: "# review\nWORKFLOW_REVIEW_STATUS: clean" }, undefined, undefined, c);
 		expect(h.entries.at(-1)?.data.done).toBe(false);
-		const end = await h.tools.get("end_quick_workflow").execute("end", {}, undefined, undefined, c);
+		const end = await h.tools.get("end_workflow").execute("end", { mode: "quick" }, undefined, undefined, c);
 		expect(end.terminate).toBe(true);
 		expect(h.entries.at(-1)?.data.done).toBe(true);
 		expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"))).toMatchObject({ status: "completed", phase: "audit" });
