@@ -42,7 +42,7 @@
     "defaultModel": "tokenin/glm-5.2",
     "agentOverrides": {
       "architect": {
-        "model": "tokenin/glm-5.2a"
+        "model": "tokenin/glm-5.2"
       },
       "builder": {
         "model": "tokenin/kimi-k2.7-code"
@@ -57,7 +57,7 @@
         "model": "tokenin/deepseek-v4-flash"
       },
       "researcher": {
-        "model": "tokenin/kimi-k2.7-codea"
+        "model": "tokenin/kimi-k2.7-code"
       }
     }
   },
