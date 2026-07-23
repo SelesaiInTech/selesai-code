@@ -21,7 +21,7 @@ async function createQuickHarness() {
 		registerTool(d: any) { tools.set(d.name, d); },
 		registerCommand(n: string, o: any) { commands.set(n, o); },
 		appendEntry(ct: string, d: any) { entries.push({ customType: ct, data: d }); },
-		sendUserMessage(t: string, o?: any) { sent.push({ text: t, options: o }); },
+		sendMessage(message: any, o?: any) { sent.push({ text: message.content, options: o, message }); },
 		async exec() { return { code: 0, stdout: "abc123 initial commit\n", stderr: "" }; },
 	};
 	const ctxBase: any = {
@@ -71,6 +71,8 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		});
 		expect(h.sent).toHaveLength(1);
 		expect(h.sent[0].text).toMatch(/GRILLING phase/i);
+		expect(h.sent[0].options).toMatchObject({ triggerTurn: true, deliverAs: "steer" });
+		expect(h.sent[0].message).toMatchObject({ display: false });
 	});
 
 	it("artifact completion advances grilling→plan without queuing the plan agent", async () => {
@@ -80,7 +82,10 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		);
 		const result = await h.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, { ...h.ctxBase });
 		expect(h.entries.at(-1)?.data.phase).toBe("plan");
-		expect(h.sent).toHaveLength(0);
+		expect(h.sent).toHaveLength(1);
+		expect(h.sent[0].text).toMatch(/PLAN phase/i);
+		expect(h.sent[0].options).toMatchObject({ triggerTurn: true, deliverAs: "steer" });
+		expect(h.sent[0].message).toMatchObject({ display: false });
 		expect(result.terminate).toBe(true);
 	});
 
@@ -107,6 +112,7 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		const dir = h.entries.at(-1)!.data.artifactDir;
 		await h.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
 		expect(h.entries.at(-1)?.data.phase).toBe("plan");
+		expect(h.sent).toHaveLength(1);
 
 		await h.events.get("tool_result")(
 			{ type: "tool_result", toolName: "subagent", toolCallId: "t2", input: { agent: "architect", output: false }, content: [{ type: "text", text: "# plan\nWORKFLOW_PLAN_STATUS: ready" }], isError: false }, c,
@@ -116,7 +122,8 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 
 		await h.tools.get("write_workflow_artifact").execute("w2", { content: "# plan\nWORKFLOW_PLAN_STATUS: ready" }, undefined, undefined, c);
 		expect(h.entries.at(-1)?.data.phase).toBe("reuse");
-		expect(h.sent).toHaveLength(0);
+		expect(h.sent).toHaveLength(2);
+		expect(h.sent.at(-1)?.text).toMatch(/REUSE phase/i);
 	});
 
 	it("terminal becomes ready once review.md lands and closes only on explicit end", async () => {

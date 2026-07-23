@@ -1084,6 +1084,8 @@ export interface ToolResultEventResult {
 	details?: unknown;
 	isError?: boolean;
 	usage?: Usage;
+	/** Hint that the current assistant tool batch should not trigger another LLM call. */
+	terminate?: boolean;
 }
 
 export interface MessageEndEventResult {

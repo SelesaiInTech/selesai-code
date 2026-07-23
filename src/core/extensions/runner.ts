@@ -861,6 +861,7 @@ export class ExtensionRunner {
 		const ctx = this.createContext();
 		const currentEvent: ToolResultEvent = { ...event };
 		let modified = false;
+		let terminate: boolean | undefined;
 
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("tool_result");
@@ -887,6 +888,10 @@ export class ExtensionRunner {
 						currentEvent.usage = handlerResult.usage;
 						modified = true;
 					}
+					if (handlerResult.terminate !== undefined) {
+						terminate = handlerResult.terminate;
+						modified = true;
+					}
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
@@ -909,6 +914,7 @@ export class ExtensionRunner {
 			details: currentEvent.details,
 			isError: currentEvent.isError,
 			usage: currentEvent.usage,
+			terminate,
 		};
 	}
 

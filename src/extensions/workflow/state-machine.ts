@@ -1,7 +1,7 @@
 // ponytail: pure workflow state machine. No node:fs, no pi API, no pi-tui,
 // no typebox. Transitions are pure given two injected predicates
 // (artifactExists, shouldSkip). Side effects (appendEntry, setStatus,
-// sendUserMessage) are NOT called here — every method returns a domain
+// sendMessage) are NOT called here — every method returns a domain
 // Effect the adapter pattern-matches on and applies. The adapter owns
 // all pi/fs wiring; this module owns the phase graph + gating + reentrancy.
 
@@ -80,9 +80,6 @@ export interface WorkflowConfig {
   // ponytail: Plan 3 — engine-owned loop. Max review rounds before the loop
   // stops and asks the user instead of silently passing. Default 3.
   loopMaxIterations?: number;
-  // Most workflows pause at artifact boundaries. A mode can opt into queuing
-  // the next phase prompt after the parent writes a valid artifact.
-  continueAfterArtifact?: boolean;
 }
 
 export interface WorkflowDeps {

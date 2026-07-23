@@ -37,7 +37,7 @@ async function createHarness() {
     registerTool(tool: any) { tools.set(tool.name, tool); },
     registerCommand(name: string, command: any) { commands.set(name, command); },
     appendEntry(customType: string, data: any) { entries.push({ customType, data }); },
-    sendUserMessage(text: string, options?: any) { sent.push({ text, options }); },
+    sendMessage(message: any, options?: any) { sent.push({ text: message.content, options, message }); },
     exec: async () => ({ code: 0, stdout: "commit\n", stderr: "" }),
   };
   const ctx: any = {
@@ -173,6 +173,33 @@ describe("task workflow", () => {
     expect(h.status.get("task")).toContain("4/4 loop");
   });
 
+  it("fails closed when transition-capable calls are not proven exclusive", async () => {
+    const h = await createHarness();
+    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
+    const batch = (ids: string[]) => ({
+      getBranch: () => [{ type: "message", message: { role: "assistant", content: ids.map((id) => ({ type: "toolCall", id })) } }],
+    });
+    const mixed = { ...h.ctx, sessionManager: batch(["writer", "other"]) };
+    const blocked = await h.events.get("tool_call")({ toolName: "write_workflow_artifact", toolCallId: "writer", input: {} }, mixed);
+    expect(blocked).toMatchObject({ block: true });
+    expect(blocked.reason).toMatch(/called alone/i);
+
+    const unknown = await h.events.get("tool_call")({ toolName: "end_workflow", toolCallId: "end", input: { mode: "task" } }, h.ctx);
+    expect(unknown).toMatchObject({ block: true });
+
+    const sole = { ...h.ctx, sessionManager: batch(["writer"]) };
+    expect(await h.events.get("tool_call")({ toolName: "write_workflow_artifact", toolCallId: "writer", input: {} }, sole)).toBeUndefined();
+
+    await h.tools.get("write_workflow_artifact").execute("plan", { content: "WORKFLOW_PLAN_STATUS: ready" }, undefined, undefined, h.ctx);
+    await h.tools.get("write_workflow_artifact").execute("reuse", { content: "skip" }, undefined, undefined, h.ctx);
+    await h.tools.get("write_workflow_artifact").execute("handoff", { content: "WORKFLOW_HANDOFF_STATUS: ready" }, undefined, undefined, h.ctx);
+    const commentator = await h.events.get("tool_call")(
+      { toolName: "subagent", toolCallId: "commentator", input: { agent: "commentator" } },
+      { ...h.ctx, sessionManager: batch(["commentator", "other"]) },
+    );
+    expect(commentator).toMatchObject({ block: true });
+  });
+
   it("reload ignores its stale task handler; explicit task resume reconciles through handoff", async () => {
     const h = await createHarness();
     await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
@@ -197,7 +224,7 @@ describe("task workflow", () => {
     expect(h.sent.at(-1)?.text).toContain("LOOP (orchestration) phase");
   });
 
-  it("queues each next phase automatically at parent-owned artifact boundaries", async () => {
+  it("queues each next phase as a hidden steer and terminates at artifact boundaries", async () => {
     const h = await createHarness();
     await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
 
@@ -208,9 +235,9 @@ describe("task workflow", () => {
       undefined,
       h.ctx,
     );
-    expect(result.terminate).toBe(false);
+    expect(result.terminate).toBe(true);
     expect(h.sent).toHaveLength(1);
-    expect(h.sent[0]).toMatchObject({ options: { deliverAs: "followUp" } });
+    expect(h.sent[0]).toMatchObject({ options: { triggerTurn: true, deliverAs: "steer" }, message: { display: false } });
     expect(h.sent[0]?.text).toContain("REUSE phase");
 
     result = await h.tools.get("write_workflow_artifact").execute(
@@ -220,7 +247,7 @@ describe("task workflow", () => {
       undefined,
       h.ctx,
     );
-    expect(result.terminate).toBe(false);
+    expect(result.terminate).toBe(true);
     expect(h.sent).toHaveLength(2);
     expect(h.sent[1]?.text).toContain("HANDOFF phase");
 
@@ -231,7 +258,7 @@ describe("task workflow", () => {
       undefined,
       h.ctx,
     );
-    expect(result.terminate).toBe(false);
+    expect(result.terminate).toBe(true);
     expect(h.sent).toHaveLength(3);
     expect(h.sent[2]?.text).toContain("LOOP (orchestration) phase");
   });
@@ -264,6 +291,7 @@ describe("task workflow", () => {
       h.ctx,
     );
     expect(badHandoff.details.blocked).toBe(true);
+    expect(badHandoff.terminate).not.toBe(true);
     expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8")).phase).toBe("handoff");
 
     const goodHandoff = await h.tools.get("write_workflow_artifact").execute(
@@ -342,7 +370,7 @@ describe("task workflow", () => {
       content: [{ type: "text", text: "implemented" }],
       isError: false,
     }, h.ctx);
-    await h.events.get("tool_result")({
+    const reviewResult = await h.events.get("tool_result")({
       toolName: "subagent",
       toolCallId: "commentator",
       input: { agent: "commentator" },
@@ -350,6 +378,9 @@ describe("task workflow", () => {
       isError: false,
     }, h.ctx);
 
+    expect(reviewResult).toMatchObject({ terminate: true });
+    expect(h.sent.at(-1)?.options).toMatchObject({ triggerTurn: true, deliverAs: "steer" });
+    expect(h.sent.at(-1)?.message).toMatchObject({ display: false });
     expect(readFileSync(join(dir, "loop-complete.md"), "utf8")).toContain("WORKFLOW_LOOP_STATUS: clean");
     expect(h.entries.at(-1)?.data).toMatchObject({ phase: "loop", done: false });
     const end = await h.tools.get("end_workflow").execute("end", { mode: "task" }, undefined, undefined, h.ctx);

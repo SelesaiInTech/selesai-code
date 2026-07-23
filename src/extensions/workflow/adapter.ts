@@ -106,6 +106,7 @@ interface WorkflowController {
 }
 
 const WORKFLOW_ARTIFACT_TOOL = "write_workflow_artifact";
+const WORKFLOW_CONTROL_MESSAGE = "selesai-workflow-control";
 // ponytail: shared across all module copies so prototype + quick registration
 // can race. Module-level state alone is not enough when the loader runs each
 // extension in its own module record.
@@ -374,21 +375,43 @@ function applyFooter(ctx: ExtensionContext, footer: FooterState): void {
   ctx.ui.setStatus(footer.statusKey, footerText(footer, ctx));
 }
 
-function continueAgent(pi: ExtensionAPI, ctx: ExtensionContext, prompt: string): void {
-  // ponytail: agent is mid-turn (streaming) when tool_result fires, so a bare
-  // sendUserMessage() throws "Agent is already processing". deliverAs:"followUp"
-  // is the framework-native continuation. In idle state (e.g. session resume)
-  // it sends a direct turn.
-  if (ctx.isIdle()) {
-    pi.sendUserMessage(prompt);
-  } else {
-    pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+function continueAgent(pi: ExtensionAPI, _ctx: ExtensionContext, prompt: string): void {
+  // Engine prompts are hidden custom messages. steer delivers after the current
+  // tool batch; triggerTurn starts the continuation when the agent is idle.
+  pi.sendMessage(
+    { customType: WORKFLOW_CONTROL_MESSAGE, content: prompt, display: false },
+    { triggerTurn: true, deliverAs: "steer" },
+  );
+}
+
+function isSoleToolCall(ctx: ExtensionContext, toolCallId: unknown): boolean {
+  if (typeof toolCallId !== "string") return false;
+  try {
+    const manager = (ctx as any)?.sessionManager;
+    if (!manager || typeof manager.getBranch !== "function") return false;
+    const entries = manager.getBranch();
+    if (!Array.isArray(entries)) return false;
+    const assistant = [...entries].reverse().find((entry: any) =>
+      entry?.type === "message" && entry.message?.role === "assistant",
+    )?.message;
+    if (!assistant || !Array.isArray(assistant.content)) return false;
+    const calls = assistant.content.filter((part: any) => part?.type === "toolCall");
+    return calls.length === 1 && calls[0]?.id === toolCallId;
+  } catch {
+    return false;
   }
 }
 
-// ponytail: apply side effects for effects that carry entry/footer/prompt.
-// Terminal/blocked/idle/noOp/alreadyActive carry none — the adapter's call
-// site formats the tool result from the effect's domain fields + config.
+function transitionBatchBlock(ctx: ExtensionContext, toolCallId: unknown): { block: true; reason: string } | undefined {
+  if (isSoleToolCall(ctx, toolCallId)) return undefined;
+  return {
+    block: true,
+    reason: "Workflow transition tools must be called alone. Retry this call without any other tool calls in the same assistant turn.",
+  };
+}
+
+// Apply side effects for effects that carry entry/footer/prompt. Engine prompts
+// are hidden custom messages; tool results remain concise and user-facing.
 function applyEffect(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -509,11 +532,10 @@ function registerSharedArtifactWriter(pi: ExtensionAPI): void {
           details: { mode: controller.config.mode, phase: snap.phase, path, persistenceError: true },
         };
       }
-      // Most workflows pause at a user-controlled artifact boundary. Task's
-      // plan → reuse → handoff → loop transitions queue the next phase prompt
-      // immediately when continueAfterArtifact is true.
-      const queueNextPhase = controller.config.continueAfterArtifact === true && eff.kind === "advanced";
-      applyControllerEffect(controller, ctx, eff, { queuePrompt: queueNextPhase });
+      // Every valid artifact boundary is an engine transition. Queue exactly
+      // one hidden continuation and terminate this assistant turn.
+      const transition = eff.kind === "advanced" || eff.kind === "terminalReady" || eff.kind === "terminalNeedsArtifacts";
+      applyControllerEffect(controller, ctx, eff, { queuePrompt: transition });
       if (eff.kind === "blocked" && eff.reason) {
         return {
           content: [{ type: "text", text: `Wrote ${path}, but it is not approved: ${eff.reason}. Re-write it via write_workflow_artifact to add the required marker.` }],
@@ -523,14 +545,10 @@ function registerSharedArtifactWriter(pi: ExtensionAPI): void {
       const advanced = eff.kind === "advanced";
       return {
         content: [{ type: "text", text: advanced
-          ? queueNextPhase
-            ? `Wrote ${path}. Phase advanced to ${eff.phase}; the next workflow phase is queued.`
-            : `Wrote ${path}. Phase advanced to ${eff.phase}; wait for the user to continue the workflow.`
+          ? `Wrote ${path}. Phase advanced to ${eff.phase}; the next workflow phase is queued.`
           : `Wrote ${path}.` }],
         details: { mode: controller.config.mode, phase: snap.phase, path, file, advanced },
-        // Stop only at user-controlled boundaries. Task deliberately queues
-        // its loop prompt, so terminating here would discard that continuation.
-        terminate: advanced && !queueNextPhase,
+        terminate: transition,
       };
     },
     renderResult(result, _options, theme) {
@@ -741,13 +759,23 @@ export function createWorkflowExtension(
       }
     });
 
-    // ── tool_call: enforce parent-owned artifact boundaries. ──
-    pi.on("tool_call", (event: any, _ctx: ExtensionContext) => {
+    // ── tool_call: enforce parent-owned artifact boundaries and exclusive
+    // transition calls. The session manager exposes the current assistant
+    // message, so fail closed when its sole-call shape cannot be proven. ──
+    pi.on("tool_call", (event: any, ctx: ExtensionContext) => {
       if (!isRegisteredController(controller)) return;
       const tool = event.toolName;
-      if (tool !== "subagent" && tool !== "write" && tool !== "edit") return;
       const snap = sm.snapshot;
       if (!snap.active) return;
+      const commentatorTransition = tool === "subagent" &&
+        event.input?.agent === "commentator" && snap.phase === "loop" &&
+        !isSubagentManagementAction(event.input);
+      const endTransition = tool === "end_workflow" && event.input?.mode === mode;
+      if (tool === WORKFLOW_ARTIFACT_TOOL || endTransition || commentatorTransition) {
+        const blocked = transitionBatchBlock(ctx, event.toolCallId);
+        if (blocked) return blocked;
+      }
+      if (tool !== "subagent" && tool !== "write" && tool !== "edit") return;
       if (tool === "write" || tool === "edit") {
         return {
           block: true,
@@ -840,8 +868,11 @@ export function createWorkflowExtension(
       }
       // The only artifact written in this handler is loop-complete.md, which
       // is engine-owned. Parent-written phase artifacts advance inside
-      // write_workflow_artifact instead.
-      applyControllerEffect(controller, ctx, eff);
+      // write_workflow_artifact instead. A clean review is an exclusive
+      // transition boundary, so terminate and let the hidden steer continue.
+      const transition = eff.kind === "advanced" || eff.kind === "terminalReady" || eff.kind === "terminalNeedsArtifacts";
+      applyControllerEffect(controller, ctx, eff, { queuePrompt: transition });
+      return transition ? { terminate: true } : undefined;
     });
 
     // ── /<command> ──

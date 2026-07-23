@@ -90,8 +90,6 @@ const config: WorkflowConfig = {
   closeValidators: { "loop-complete.md": loopCompleteValidator },
   closeArtifacts: ["loop-complete.md"],
   loopMaxIterations: 3,
-  // Each parent-owned artifact automatically queues the next phase prompt.
-  continueAfterArtifact: true,
   statusKey: "task",
   entryType: "task-phase",
   footerLabel: "task",

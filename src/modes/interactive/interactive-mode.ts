@@ -3077,6 +3077,7 @@ export class InteractiveMode {
 			case "tool_execution_update": {
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
+					component.updateArgs(event.args);
 					component.updateResult({ ...event.partialResult, isError: false }, true);
 					this.ui.requestRender();
 				}
