@@ -11,8 +11,8 @@ import {
   reviewValidator,
 } from "../validators.ts";
 
-// ponytail: quick workflow — same tool-driven loop as prototype, but shorter:
-// grill (max 4 questions) → plan → reuse → handoff → loop → audit.
+// ponytail: quick workflow — same tool-driven loop as prototype, without research:
+// grill → plan → reuse → handoff → loop → audit.
 // No research phase. skipRules + closeArtifacts wired by the adapter.
 
 const phases: Phase[] = [
@@ -31,27 +31,20 @@ const prompts: Partial<Record<Phase, (ctx: PromptContext) => string>> = {
 User request:
 ${userPrompt}
 
-Use the question tool to grill the user. Ask AT MOST 4 focused clarifying questions — ONE question tool call at a time. Adapt each follow-up to prior answers. Dig into scope, constraints, success criteria, and edge cases.
+Map requirements as a design tree: every decision branches into dependent decisions. Work the tree in rounds. The frontier contains every decision whose prerequisites are settled; do not ask questions that depend on answers still open in the current round.
+
+For each round, use one question tool call to ask the ENTIRE frontier. Number every question, give a recommended answer, and wait for the user's answers before the next round. Recompute the frontier after every response. Cover scope, constraints, success criteria, and edge cases; leave no branch silently assumed.
+
+Facts are yours to find, never the user's. When a frontier question needs a fact from the workspace or available tools, dispatch a sub-agent to investigate rather than asking the user. Do not block on it: ask other frontier decisions now; defer only decisions that depend on the pending finding.
 
 For each question tool call:
-- Provide a concise question.
+- State all numbered frontier questions concisely, including a recommendation for each.
 - Pass a short context summary when it depends on prior findings.
-- Prefer options when choices are known. Give each option a clear label and a brief description.
-- Always set allowFreeform=true so the user can type a custom answer.
+- Prefer options when one shared option set fits the whole round. Give each option a clear label and brief description.
+- Always set allowFreeform=true so the user can answer each numbered decision or provide a custom answer.
 - Keep allowMultiple=false unless multiple selections genuinely apply.
 
-Example:
-  question({
-    question: "What should the output format be?",
-    context: "The user wants a report generator. We need to pick the default export format.",
-    options: [
-      { label: "Markdown", description: "Simple, version-control friendly" },
-      { label: "PDF", description: "Polished, shareable document" },
-    ],
-    allowFreeform: true,
-  })
-
-When you have enough clarity OR up to 10 questions max (less is better) have been asked, stop grilling. Show a concise requirements summary, then ask exactly: "Approve writing this requirements summary to ${artifactDir}/requirements.md?"
+Only when the frontier is empty, show a concise requirements summary draft and ask exactly: "Approve writing this requirements summary to ${artifactDir}/requirements.md?" This approval confirms shared understanding. Allow "keep grilling" or added details; do not write or otherwise act on the requirements before explicit approval.
 
 Artifact target: ${artifactDir}/requirements.md
 - Name that exact full path in the approval question.
