@@ -1,10 +1,12 @@
 import { spawn } from "child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { createRequire } from "module";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import net from "net";
 import { getBrokerSocketPath, getIntercomDir } from "./paths.js";
 
+const require = createRequire(import.meta.url);
 const INTERCOM_DIR = getIntercomDir();
 const EXTENSION_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BROKER_SOCKET = getBrokerSocketPath();
@@ -29,8 +31,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export function getTsxCliPath(extensionDir: string = EXTENSION_DIR): string {
-  return join(extensionDir, "node_modules", "tsx", "dist", "cli.mjs");
+export function getTsxCliPath(): string {
+  return require.resolve("tsx/cli");
 }
 
 function quoteWindowsArg(value: string): string {
@@ -56,7 +58,7 @@ export function getWindowsBrokerCommandLine(
   brokerArgs: string[] = ["--no-install", "tsx"],
 ): string {
   if (usesDefaultBrokerCommand(brokerCommand, brokerArgs)) {
-    return [quoteWindowsArg(nodePath), quoteWindowsArg(getTsxCliPath(extensionDir)), quoteWindowsArg(brokerPath)].join(" ");
+    return [quoteWindowsArg(nodePath), quoteWindowsArg(getTsxCliPath()), quoteWindowsArg(brokerPath)].join(" ");
   }
 
   return [quoteWindowsArg(brokerCommand), ...brokerArgs.map(quoteWindowsArg), quoteWindowsArg(brokerPath)].join(" ");
