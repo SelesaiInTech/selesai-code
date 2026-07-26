@@ -32,6 +32,43 @@ export interface QuestionParams {
 	timeout?: number;
 }
 
+export interface RawBatchQuestion {
+	id?: string;
+	label?: string;
+	question: string;
+	title?: string;
+	context?: string;
+	options?: RawOption[];
+	allowMultiple?: boolean;
+	allowFreeform?: boolean;
+	allowComment?: boolean;
+	commentToggleKey?: string | null;
+}
+
+export interface BatchedQuestion {
+	id: string;
+	label: string;
+	question: string;
+	context: string | undefined;
+	options: QuestionOption[];
+	allowMultiple: boolean;
+	allowFreeform: boolean;
+	allowComment: boolean;
+	shortcuts: ResolvedShortcuts;
+}
+
+export interface BatchAnswer {
+	id: string;
+	question: string;
+	response: QuestionResponse;
+}
+
+export interface BatchQuestionDetails {
+	questions: Array<Pick<BatchedQuestion, "id" | "label" | "question" | "context" | "options">>;
+	answers: BatchAnswer[];
+	cancelled: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Shortcut resolution
 // ---------------------------------------------------------------------------

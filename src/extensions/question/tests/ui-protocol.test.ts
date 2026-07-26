@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { DialogFallback } from "../dialog-adapter.ts";
-import type { QuestionResponse, ResolvedQuestionParams } from "../types.ts";
+import { askBatchViaDialogs, DialogFallback } from "../dialog-adapter.ts";
+import type { BatchedQuestion, QuestionResponse, ResolvedQuestionParams } from "../types.ts";
 import type { UIProtocol } from "../ui-protocol.ts";
 
 // ---------------------------------------------------------------------------
@@ -134,4 +134,24 @@ test("DialogFallback: freeform cancel (input returns undefined after selecting c
 	});
 	const result = await DialogFallback.ask(makeParams({ allowFreeform: true }), protocol);
 	assert.equal(result, null);
+});
+test("askBatchViaDialogs: returns identified answers and passes remaining timeout", async () => {
+	const timeouts: Array<number | undefined> = [];
+	const protocol = fakeProtocol({
+		select: async (_prompt, _options, opts) => {
+			timeouts.push(opts?.timeout);
+			return "Option A";
+		},
+	});
+	const questions: BatchedQuestion[] = [
+		{ ...makeParams(), id: "first", label: "First" },
+		{ ...makeParams({ question: "Pick again" }), id: "second", label: "Second" },
+	];
+	const result = await askBatchViaDialogs(questions, protocol, 1_000);
+	assert.deepEqual(result, [
+		{ id: "first", question: "Pick one", response: { kind: "selection", selections: ["Option A"] } },
+		{ id: "second", question: "Pick again", response: { kind: "selection", selections: ["Option A"] } },
+	]);
+	assert.equal(timeouts.length, 2);
+	assert.ok(timeouts.every((timeout) => timeout !== undefined && timeout > 0 && timeout <= 1_000));
 });

@@ -11,17 +11,17 @@ export interface CustomFactoryResult {
 	focused: boolean;
 }
 
-export type CustomFactory = (
+export type CustomFactory<T> = (
 	tui: TUI,
 	theme: Theme,
 	keybindings: KeybindingsManager,
-	done: (result: QuestionResponse | null) => void,
+	done: (result: T) => void,
 ) => CustomFactoryResult;
 
 export interface UIProtocol {
 	readonly hasUI: boolean;
 	readonly theme: Theme;
-	custom(factory: CustomFactory): Promise<QuestionResponse | null | undefined>;
+	custom<T>(factory: CustomFactory<T>): Promise<T | undefined>;
 	select(prompt: string, options: string[], opts?: { timeout?: number }): Promise<string | undefined>;
 	input(prompt: string, placeholder?: string, opts?: { timeout?: number }): Promise<string | undefined>;
 }

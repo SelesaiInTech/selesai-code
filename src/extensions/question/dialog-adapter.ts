@@ -8,7 +8,7 @@ import {
 	isCancelled,
 	parseDialogSelections,
 } from "./helpers.ts";
-import type { QuestionOption, QuestionResponse, ResolvedQuestionParams } from "./types.ts";
+import type { BatchAnswer, BatchedQuestion, QuestionOption, QuestionResponse, ResolvedQuestionParams } from "./types.ts";
 import type { FallbackProtocol, UIProtocol } from "./ui-protocol.ts";
 
 const FREEFORM_DIALOG_OPTION = "✏️ Type custom response...";
@@ -56,6 +56,28 @@ async function askViaDialogs(
 	if (!allowComment) return createSelectionResponse([selected]);
 	const comment = await ui.input(buildCommentPrompt(prompt, [selected]), "Optional comment (press Enter to skip)...", dialogOpts);
 	return createSelectionResponse([selected], comment);
+}
+
+export async function askBatchViaDialogs(questions: BatchedQuestion[], protocol: UIProtocol, timeout?: number): Promise<BatchAnswer[] | null> {
+	const deadline = timeout && timeout > 0 ? Date.now() + timeout : undefined;
+	const answers: BatchAnswer[] = [];
+	for (const question of questions) {
+		const remaining = deadline === undefined ? undefined : deadline - Date.now();
+		if (remaining !== undefined && remaining <= 0) return null;
+		const response = await askViaDialogs(
+			protocol,
+			question.question,
+			question.context,
+			question.options,
+			question.allowMultiple,
+			question.allowFreeform,
+			question.allowComment,
+			remaining,
+		);
+		if (response === null) return null;
+		answers.push({ id: question.id, question: question.question, response });
+	}
+	return answers;
 }
 
 export const DialogFallback: FallbackProtocol = {

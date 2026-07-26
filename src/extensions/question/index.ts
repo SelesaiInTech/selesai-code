@@ -17,14 +17,15 @@ import {
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
 
+import { prepareBatchQuestions } from "./batch.ts";
 import { BOX_BORDER_LEFT, BOX_BORDER_OVERHEAD, BOX_BORDER_RIGHT, QUESTION_VERSION } from "./constants.ts";
-import { DialogFallback } from "./dialog-adapter.ts";
+import { askBatchViaDialogs, DialogFallback } from "./dialog-adapter.ts";
 import { createFreeformResponse, createSelectionResponse, formatOptionsForMessage, formatResponseSummary, getOptionsFormatError, normalizeOptions, oneLine, safeMarkdownTheme } from "./helpers.ts";
 import { QuestionList } from "./question-list.ts";
 import { MultiSelect, SingleSelect } from "./selection-mode.ts";
 import { resolveShortcuts } from "./shortcuts.ts";
 import { QuestionParamsSchema } from "./schemas.ts";
-import type { QuestionDetails, QuestionMode, QuestionOption, QuestionResponse, RawOption, ResolvedShortcuts } from "./types.ts";
+import type { BatchAnswer, BatchQuestionDetails, BatchedQuestion, QuestionDetails, QuestionMode, QuestionOption, QuestionResponse, RawOption, ResolvedShortcuts } from "./types.ts";
 import { createTUIProtocol } from "./tui-adapter.ts";
 import type { CustomFactory, UIProtocol } from "./ui-protocol.ts";
 
@@ -164,6 +165,10 @@ class QuestionComponent extends Container implements Component {
 
 	get focused(): boolean {
 		return this._focused;
+	}
+
+	get isEditing(): boolean {
+		return this.mode === "freeform" || this.mode === "comment";
 	}
 	set focused(value: boolean) {
 		this._focused = value;
@@ -361,6 +366,171 @@ class QuestionComponent extends Container implements Component {
 }
 
 // ---------------------------------------------------------------------------
+// Batched-question component
+// ---------------------------------------------------------------------------
+
+class BatchQuestionComponent extends Container implements Component {
+	private currentPage = 0;
+	private readonly answers = new Map<string, QuestionResponse>();
+	private questionComponent?: QuestionComponent;
+	private focusedState = false;
+	private header = new Text("", 1, 0);
+	private content = new Container();
+	private legend = new Text("", 1, 0);
+
+	constructor(
+		private questions: BatchedQuestion[],
+		private tui: TUI,
+		private theme: Theme,
+		private keybindings: KeybindingsManager,
+		private onDone: (answers: BatchAnswer[] | null) => void,
+	) {
+		super();
+		this.addChild(this.header);
+		this.addChild(new Spacer(1));
+		this.addChild(this.content);
+		this.addChild(new Spacer(1));
+		this.addChild(this.legend);
+		this.showPage();
+	}
+
+	get focused(): boolean {
+		return this.focusedState;
+	}
+	set focused(value: boolean) {
+		this.focusedState = value;
+		if (this.questionComponent) this.questionComponent.focused = value;
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+		this.updateChrome();
+	}
+
+	private get isReviewPage(): boolean {
+		return this.currentPage === this.questions.length;
+	}
+
+	private allAnswered(): boolean {
+		return this.questions.every((question) => this.answers.has(question.id));
+	}
+
+	private updateChrome(): void {
+		const answered = this.answers.size;
+		if (this.isReviewPage) {
+			this.header.setText(this.theme.fg("accent", this.theme.bold(`Review answers · ${answered}/${this.questions.length} answered`)));
+			this.legend.setText(
+				this.theme.fg(
+					"dim",
+					this.allAnswered()
+						? "Shift+Tab/← previous • Enter submit all answers • Esc cancel"
+						: "Shift+Tab/← previous • Answer every question before submitting • Esc cancel",
+				),
+			);
+			return;
+		}
+		const question = this.questions[this.currentPage];
+		this.header.setText(
+			this.theme.fg(
+				"accent",
+				this.theme.bold(`${question.label} · ${this.currentPage + 1}/${this.questions.length}${this.answers.has(question.id) ? " · answered" : ""}`),
+			),
+		);
+		this.legend.setText(this.theme.fg("dim", "Tab next • Shift+Tab previous • ←→ navigate outside text entry • Answers save when selected"));
+	}
+
+	private showPage(): void {
+		this.content.clear();
+		this.questionComponent = undefined;
+		this.updateChrome();
+
+		if (this.isReviewPage) {
+			this.content.addChild(new Text(this.theme.fg("accent", this.theme.bold("Ready to submit")), 1, 0));
+			this.content.addChild(new Spacer(1));
+			for (const question of this.questions) {
+				const response = this.answers.get(question.id);
+				const marker = response ? this.theme.fg("success", "✓") : this.theme.fg("warning", "○");
+				const answer = response ? formatResponseSummary(response) : "Unanswered";
+				this.content.addChild(new Text(`${marker} ${this.theme.fg("accent", question.label)} ${this.theme.fg("dim", "—")} ${this.theme.fg(response ? "text" : "warning", answer)}`, 1, 0));
+			}
+		} else {
+			const question = this.questions[this.currentPage];
+			this.questionComponent = new QuestionComponent(
+				question.question,
+				question.context,
+				question.options,
+				question.allowMultiple,
+				question.allowFreeform,
+				question.allowComment,
+				this.tui,
+				this.theme,
+				this.keybindings,
+				question.shortcuts,
+				(response) => this.saveAnswer(question, response),
+			);
+			this.questionComponent.focused = this.focusedState;
+			this.content.addChild(this.questionComponent);
+		}
+		this.invalidate();
+		this.tui.requestRender();
+	}
+
+	private saveAnswer(question: BatchedQuestion, response: QuestionResponse | null): void {
+		if (response === null) {
+			this.onDone(null);
+			return;
+		}
+		this.answers.set(question.id, response);
+		this.goNext();
+	}
+
+	private goNext(): void {
+		if (this.currentPage < this.questions.length) this.currentPage++;
+		this.showPage();
+	}
+
+	private goPrevious(): void {
+		if (this.currentPage > 0) this.currentPage--;
+		this.showPage();
+	}
+
+	handleInput(data: string): void {
+		if (this.isReviewPage) {
+			if (matchesKey(data, Key.enter) && this.allAnswered()) {
+				this.onDone(this.questions.map((question) => ({ id: question.id, question: question.question, response: this.answers.get(question.id)! })));
+				return;
+			}
+			if (matchesKey(data, Key.escape) || this.keybindings.matches(data, "tui.select.cancel")) {
+				this.onDone(null);
+				return;
+			}
+			if (matchesKey(data, Key.shift("tab")) || matchesKey(data, Key.left)) this.goPrevious();
+			return;
+		}
+
+		if (matchesKey(data, Key.tab)) {
+			this.goNext();
+			return;
+		}
+		if (matchesKey(data, Key.shift("tab"))) {
+			this.goPrevious();
+			return;
+		}
+		if (!this.questionComponent?.isEditing) {
+			if (matchesKey(data, Key.right)) {
+				this.goNext();
+				return;
+			}
+			if (matchesKey(data, Key.left)) {
+				this.goPrevious();
+				return;
+			}
+		}
+		this.questionComponent?.handleInput(data);
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
 
@@ -369,7 +539,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 		name: "question",
 		label: "Question",
 		description:
-			"Ask the user a question in the Pi UI and return the answer. Supports multiple-choice options, multi-select, freeform answers, optional context, and an optional comment. Use when you need user input to proceed.",
+			"Ask the user one question or a paged batch through the Pi UI and return the answer(s). Supports multiple-choice options, multi-select, freeform answers, optional context, comments, and a final batch review/submit page. Use when you need user input to proceed.",
 		promptSnippet: "Ask the user a question when required information is missing.",
 		promptGuidelines: [
 			"Use question only when you cannot proceed safely or accurately without user input.",
@@ -379,6 +549,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 			"Pass a short summary via context when the question depends on prior findings.",
 			"After the user answers, continue the task immediately using that answer; do not stop and ask the user to type continue unless the task is complete.",
 			"Do not use question for information you can infer, inspect, or compute with other tools.",
+			"For independent related decisions, send one question call with a questions array. The user can use Tab/Shift+Tab or Left/Right to revisit pages, then presses Enter on the review page to submit all answers.",
 		],
 		// Block other tool calls in the same turn until the user answers, so the
 		// model can't batch question with side-effecting tools and run them first.
@@ -386,6 +557,53 @@ export default function questionExtension(pi: ExtensionAPI) {
 		parameters: QuestionParamsSchema,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			if (Array.isArray(params.questions)) {
+				const prepared = prepareBatchQuestions(params.questions);
+				if ("error" in prepared) {
+					return { content: [{ type: "text", text: prepared.error }], isError: true, details: { questions: [], answers: [], cancelled: true } satisfies BatchQuestionDetails };
+				}
+				const questions = prepared.questions;
+				const detailsBase = {
+					questions: questions.map(({ id, label, question, context, options }) => ({ id, label, question, context, options })),
+				};
+				if (signal?.aborted) {
+					return { content: [{ type: "text", text: "Question batch cancelled" }], details: { ...detailsBase, answers: [], cancelled: true } satisfies BatchQuestionDetails };
+				}
+
+				const protocol = createTUIProtocol(ctx);
+				if (!protocol.hasUI) {
+					return {
+						content: [{ type: "text", text: "Question batch requires interactive mode." }],
+						isError: true,
+						details: { ...detailsBase, answers: [], cancelled: true } satisfies BatchQuestionDetails,
+					};
+				}
+				onUpdate?.({ content: [{ type: "text", text: "Waiting for answers to question batch..." }], details: { ...detailsBase, answers: [], cancelled: false } satisfies BatchQuestionDetails });
+
+				let answers: BatchAnswer[] | null | undefined;
+				try {
+					const customFactory: CustomFactory<BatchAnswer[] | null> = (tui, theme, keybindings, done) => {
+						if (signal) signal.addEventListener("abort", () => done(null), { once: true });
+						const timeout = params.timeout as number | undefined;
+						if (timeout && timeout > 0) setTimeout(() => done(null), timeout);
+						return new BatchQuestionComponent(questions, tui, theme, keybindings, done);
+					};
+					answers = await protocol.custom(customFactory);
+					if (answers === undefined) answers = await askBatchViaDialogs(questions, protocol, params.timeout as number | undefined);
+				} catch (error) {
+					const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
+					return { content: [{ type: "text", text: `Question batch failed: ${message}` }], isError: true, details: { ...detailsBase, answers: [], cancelled: true } satisfies BatchQuestionDetails };
+				}
+
+				if (!answers) {
+					return { content: [{ type: "text", text: "User cancelled the question batch" }], details: { ...detailsBase, answers: [], cancelled: true } satisfies BatchQuestionDetails };
+				}
+				return {
+					content: [{ type: "text", text: answers.map((answer) => `${answer.id}: ${formatResponseSummary(answer.response)}`).join("\n") }],
+					details: { ...detailsBase, answers, cancelled: false } satisfies BatchQuestionDetails,
+				};
+			}
+
 			if (signal?.aborted) {
 				return {
 					content: [{ type: "text", text: "Question cancelled" }],
@@ -451,7 +669,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 			let result: QuestionResponse | null;
 
 			try {
-				const customFactory: CustomFactory = (
+				const customFactory: CustomFactory<QuestionResponse | null> = (
 					tui: TUI,
 					theme: Theme,
 					keybindings: KeybindingsManager,
@@ -514,6 +732,15 @@ export default function questionExtension(pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, _context) {
+			const batch = Array.isArray(args.questions) ? args.questions : undefined;
+			if (batch) {
+				const labels = batch.map((item: { label?: string; id?: string }, index: number) => item.label || item.id || `Q${index + 1}`).join(", ");
+				return new Text(
+					`${theme.fg("toolTitle", theme.bold("QUESTION"))} ${theme.fg("accent", theme.bold(`${batch.length} question${batch.length === 1 ? "" : "s"}`))}${labels ? theme.fg("dim", ` · ${oneLine(labels, 100)}`) : ""}`,
+					0,
+					0,
+				);
+			}
 			const question = (args.question as string) || "";
 			const rawOptions = Array.isArray(args.options) ? args.options : [];
 			const title = args.context ? `${args.context}: ` : args.title ? `${args.title}: ` : "";
@@ -532,7 +759,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 		},
 
 		renderResult(result, options, theme, _context) {
-			const details = result.details as (QuestionDetails & { error?: string }) | undefined;
+			const details = result.details as (QuestionDetails | BatchQuestionDetails) & { error?: string } | undefined;
 
 			if (details?.error) return new Text(theme.fg("error", details.error), 0, 0);
 
@@ -546,9 +773,12 @@ export default function questionExtension(pi: ExtensionAPI) {
 				return new Text(theme.fg("muted", waitingText), 0, 0);
 			}
 
-			if (!details || details.cancelled || !details.response) {
-				return new Text(theme.fg("warning", "question cancelled"), 0, 0);
+			if (!details || details.cancelled) return new Text(theme.fg("warning", "question cancelled"), 0, 0);
+
+			if ("answers" in details) {
+				return new Text(details.answers.map((answer) => `${theme.fg("success", "✓")} ${theme.fg("accent", answer.id)}: ${theme.fg("text", oneLine(formatResponseSummary(answer.response), 120))}`).join("\n"), 0, 0);
 			}
+			if (!details.response) return new Text(theme.fg("warning", "question cancelled"), 0, 0);
 
 			const response = details.response;
 			let text = theme.fg("success", theme.bold("answered: "));
