@@ -33,9 +33,11 @@ import {
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { INTERCOM_BRIDGE_MARKER } from "../../intercom/intercom-bridge.ts";
 import { runSync } from "./execution.ts";
+import { beginForegroundChild, finishForegroundChild, updateForegroundChild } from "./foreground-control.ts";
 import { buildChainSummary } from "../../shared/formatters.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
+import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup } from "../shared/parallel-handoff.ts";
 import { recordRun } from "../shared/run-history.ts";
 import {
 	cleanupWorktrees,
@@ -48,11 +50,13 @@ import {
 } from "../shared/worktree.ts";
 import {
 	type ActivityState,
+	type AgentContract,
 	type AgentProgress,
 	type ArtifactConfig,
 	type ArtifactPaths,
 	type ControlEvent,
 	type Details,
+	type ForegroundRunControl,
 	type IntercomEventBus,
 	type NestedRouteInfo,
 	type ResolvedControlConfig,
@@ -63,16 +67,19 @@ import {
 	MAX_CONCURRENCY,
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
-import { resolveSubagentModelOverride } from "../shared/model-fallback.ts";
+import { resolveEffectiveSubagentModel } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
-import { validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { injectSingleOutputInstruction, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, outputEntryFromResult, resolveOutputReferences, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection, type DynamicCollectedResult } from "../shared/dynamic-fanout.ts";
 import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
+import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import type { ChainOutputMap } from "../../shared/types.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
+import type { ContextMode } from "../shared/context-mode.ts";
+import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 
 interface ChainExecutionDetailsInput {
 	results: SingleResult[];
@@ -88,7 +95,8 @@ interface ChainExecutionDetailsInput {
 	outputs?: ChainOutputMap;
 	currentFlatIndex?: number;
 	dynamicChildren?: Record<number, Array<{ agent: string; label?: string; flatIndex: number; itemKey: string; outputName?: string; structured?: boolean; error?: string }>>;
-	dynamicGroupStatuses?: Record<number, { status: "pending" | "running" | "completed" | "failed" | "paused" | "detached"; error?: string; acceptance?: SingleResult["acceptance"] }>;
+	dynamicGroupStatuses?: Record<number, { status: "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "detached"; error?: string; acceptance?: SingleResult["acceptance"] }>;
+	parallelHandoff?: Details["parallelHandoff"];
 }
 
 interface ParallelChainRunInput {
@@ -109,8 +117,9 @@ interface ParallelChainRunInput {
 	globalTaskIndex: number;
 	sessionDirForIndex: (idx?: number) => string | undefined;
 	sessionFileForIndex?: (idx?: number) => string | undefined;
-	sessionFileForTask?: (agentName: string, idx?: number) => string | undefined;
-	thinkingOverrideForTask?: (agentName: string, idx?: number) => AgentConfig["thinking"] | undefined;
+	sessionFileForTask?: (agentName: string, idx?: number, modelOverride?: string) => string | undefined;
+	thinkingOverrideForTask?: (agentName: string, idx?: number, modelOverride?: string) => AgentConfig["thinking"] | undefined;
+	contextForAgent?: (agentName: string) => ContextMode;
 	shareEnabled: boolean;
 	artifactConfig: ArtifactConfig;
 	artifactsDir: string;
@@ -118,22 +127,10 @@ interface ParallelChainRunInput {
 	onUpdate?: (r: AgentToolResult<Details>) => void;
 	onControlEvent?: (event: ControlEvent) => void;
 	controlConfig: ResolvedControlConfig;
+	agentContract?: AgentContract;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	orchestratorIntercomTarget?: string;
-	foregroundControl?: {
-		updatedAt: number;
-		currentAgent?: string;
-		currentIndex?: number;
-		currentActivityState?: ActivityState;
-		lastActivityAt?: number;
-		currentTool?: string;
-		currentToolStartedAt?: number;
-		currentPath?: string;
-		turnCount?: number;
-		tokens?: number;
-		toolCount?: number;
-		interrupt?: () => boolean;
-	};
+	foregroundControl?: ForegroundRunControl;
 	results: SingleResult[];
 	allProgress: AgentProgress[];
 	outputs: ChainOutputMap;
@@ -152,6 +149,8 @@ interface ParallelChainRunInput {
 	toolBudget?: ResolvedToolBudget;
 	configToolBudget?: ToolBudgetConfig;
 	globalSemaphore?: Semaphore;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	dynamic?: boolean;
 }
 
 function buildChainExecutionDetails(input: ChainExecutionDetailsInput): Details {
@@ -166,6 +165,7 @@ function buildChainExecutionDetails(input: ChainExecutionDetailsInput): Details 
 		outputs: input.outputs,
 		totalChildUsage: sumResultsUsage(input.results),
 		totalCost: sumResultsCost(input.results),
+		...(input.parallelHandoff ? { parallelHandoff: input.parallelHandoff } : {}),
 		workflowGraph: buildWorkflowGraphSnapshot({
 			runId: input.runId,
 			mode: "chain",
@@ -199,17 +199,48 @@ function ensureParallelProgressFile(
 	return true;
 }
 
-function appendParallelWorktreeSummary(
-	output: string,
-	worktreeSetup: WorktreeSetup | undefined,
-	diffsDir: string,
-	agents: string[],
-): string {
-	if (!worktreeSetup) return output;
-	const diffs = diffWorktrees(worktreeSetup, agents, diffsDir);
+function finalizeParallelWorktreeHandoff(input: {
+	output: string;
+	worktreeSetup: WorktreeSetup;
+	artifactsDir: string;
+	runId: string;
+	cwd: string;
+	stepIndex: number;
+	flatStartIndex: number;
+	agents: string[];
+	results: SingleResult[];
+}): { output: string; reference?: NonNullable<Details["parallelHandoff"]> } {
+	const diffs = diffWorktrees(input.worktreeSetup, input.agents, path.join(input.artifactsDir, "worktree-diffs", input.runId, `step-${input.stepIndex}`));
+	const cleanup = cleanupWorktrees(input.worktreeSetup);
 	const diffSummary = formatWorktreeDiffSummary(diffs);
-	if (!diffSummary) return output;
-	return `${output}\n\n${diffSummary}`;
+	try {
+		const reference = writeParallelHandoffGroup({
+			manifestPath: parallelHandoffPath(input.artifactsDir, input.runId),
+			runId: input.runId,
+			mode: "chain",
+			source: "foreground",
+			cwd: input.cwd,
+			stepIndex: input.stepIndex,
+			flatStartIndex: input.flatStartIndex,
+			setup: input.worktreeSetup,
+			diffs,
+			cleanup,
+			results: input.results.map((result) => ({
+				agent: result.agent,
+				status: result.stopped ? "stopped" : result.detached ? "detached" : result.interrupted ? "paused" : result.exitCode === 0 ? "completed" : "failed",
+				summary: getSingleResultOutput(result) || result.error || "(no output)",
+				...(result.artifactPaths?.outputPath ? { outputPath: result.artifactPaths.outputPath } : {}),
+				...(result.structuredOutput !== undefined ? { structuredOutput: result.structuredOutput } : {}),
+				...(result.structuredOutputPath ? { structuredOutputPath: result.structuredOutputPath } : {}),
+				...(result.sessionFile ? { sessionPath: result.sessionFile } : {}),
+			})),
+		});
+		const suffix = [diffSummary, formatParallelHandoffReference(reference)].filter(Boolean).join("\n\n");
+		return { output: suffix ? `${input.output}\n\n${suffix}` : input.output, reference };
+	} catch (error) {
+		const suffix = [diffSummary, formatParallelHandoffError(error)].filter(Boolean).join("\n\n");
+		return { output: suffix ? `${input.output}\n\n${suffix}` : input.output };
+	}
 }
 
 function resolveChainToolBudget(input: { stepBudget?: ToolBudgetConfig; runBudget?: ResolvedToolBudget; agentBudget?: ToolBudgetConfig; configBudget?: ToolBudgetConfig }): { toolBudget?: ResolvedToolBudget; error?: string } {
@@ -230,6 +261,21 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 	const concurrency = input.step.concurrency ?? MAX_CONCURRENCY;
 	const failFast = input.step.failFast ?? false;
 	let aborted = false;
+	const effectiveModels = input.step.parallel.map((task) => {
+		const taskAgentConfig = input.agents.find((agent) => agent.name === task.agent);
+		return resolveEffectiveSubagentModel(
+			task.model,
+			taskAgentConfig?.model,
+			input.ctx.model,
+			input.availableModels,
+			input.ctx.model?.provider,
+			{ scope: input.modelScope },
+		);
+	});
+	for (let taskIndex = 0; taskIndex < input.step.parallel.length; taskIndex++) {
+		const task = input.step.parallel[taskIndex]!;
+		input.sessionFileForTask?.(task.agent, input.globalTaskIndex + taskIndex, effectiveModels[taskIndex]);
+	}
 
 	const parallelResults = await mapConcurrent(
 		input.step.parallel,
@@ -248,9 +294,10 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 
 			const taskTemplate = input.parallelTemplates[taskIndex] ?? "{previous}";
 			const behavior = suppressProgressForReadOnlyTask(input.parallelBehaviors[taskIndex]!, taskTemplate, input.originalTask);
+			const taskAgentConfig = input.agents.find((agent) => agent.name === task.agent);
 			const templateHasPrevious = taskTemplate.includes("{previous}");
 			const { prefix, suffix } = buildChainInstructions(
-				behavior,
+				{ ...behavior, output: false },
 				input.chainDir,
 				false,
 				templateHasPrevious ? undefined : input.prev,
@@ -263,14 +310,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			const cleanTask = taskStr;
 			taskStr = prefix + taskStr + suffix;
 
-			const taskAgentConfig = input.agents.find((agent) => agent.name === task.agent);
-			const effectiveModel = resolveSubagentModelOverride(
-				task.model ?? taskAgentConfig?.model,
-				input.ctx.model,
-				input.availableModels,
-				input.ctx.model?.provider,
-				{ scope: input.modelScope, source: task.model ? "explicit" : "inherited" },
-			);
+			const effectiveModel = effectiveModels[taskIndex];
 			const maxSubagentDepth = resolveChildMaxSubagentDepth(input.maxSubagentDepth, taskAgentConfig?.maxSubagentDepth);
 			const toolBudget = resolveChainToolBudget({ stepBudget: task.toolBudget, runBudget: input.toolBudget, agentBudget: taskAgentConfig?.toolBudget, configBudget: input.configToolBudget });
 			if (toolBudget.error) throw new Error(toolBudget.error);
@@ -282,37 +322,41 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			const outputPath = typeof behavior.output === "string"
 				? (path.isAbsolute(behavior.output) ? behavior.output : path.join(input.chainDir, behavior.output))
 				: undefined;
+			taskStr = injectSingleOutputInstruction(taskStr, outputPath, taskAgentConfig);
 			const interruptController = new AbortController();
+			const childIndex = input.globalTaskIndex + taskIndex;
 			if (input.foregroundControl) {
-				input.foregroundControl.currentAgent = task.agent;
-				input.foregroundControl.currentIndex = input.globalTaskIndex + taskIndex;
-				input.foregroundControl.currentActivityState = undefined;
-				input.foregroundControl.updatedAt = Date.now();
-				input.foregroundControl.interrupt = () => {
-					if (interruptController.signal.aborted) return false;
-					interruptController.abort();
-					input.foregroundControl!.currentActivityState = undefined;
-					input.foregroundControl!.updatedAt = Date.now();
-					return true;
-				};
+				beginForegroundChild(input.foregroundControl, {
+					index: childIndex,
+					agent: task.agent,
+					description: cleanTask.trim(),
+					interrupt: () => {
+						if (interruptController.signal.aborted) return false;
+						interruptController.abort();
+						return true;
+					},
+				});
 			}
 
 			const structuredRuntime = task.outputSchema
 				? createStructuredOutputRuntime(task.outputSchema, path.join(input.chainDir, "structured-output"))
 				: undefined;
+			const agentContract = task.agentContract ?? input.step.agentContract ?? input.agentContract;
 			const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskStr, {
 				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+				capabilityCeiling: input.capabilityCeiling,
+				context: input.contextForAgent?.(task.agent),
 				cwd: taskCwd,
 				signal: input.signal,
 				interruptSignal: interruptController.signal,
 				allowIntercomDetach: taskAgentConfig?.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
 				intercomEvents: input.intercomEvents,
 				runId: input.runId,
-				index: input.globalTaskIndex + taskIndex,
-				sessionDir: input.sessionDirForIndex(input.globalTaskIndex + taskIndex),
-				sessionFile: input.sessionFileForTask?.(task.agent, input.globalTaskIndex + taskIndex)
-					?? input.sessionFileForIndex?.(input.globalTaskIndex + taskIndex),
-				thinkingOverride: input.thinkingOverrideForTask?.(task.agent, input.globalTaskIndex + taskIndex),
+				index: childIndex,
+				sessionDir: input.sessionDirForIndex(childIndex),
+				sessionFile: input.sessionFileForTask?.(task.agent, childIndex, effectiveModel)
+					?? input.sessionFileForIndex?.(childIndex),
+				thinkingOverride: input.thinkingOverrideForTask?.(task.agent, childIndex, effectiveModel),
 				share: input.shareEnabled,
 				artifactsDir: input.artifactConfig.enabled ? input.artifactsDir : undefined,
 				artifactConfig: input.artifactConfig,
@@ -321,7 +365,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				maxSubagentDepth,
 				controlConfig: input.controlConfig,
 				onControlEvent: input.onControlEvent,
-				intercomSessionName: input.childIntercomTarget?.(task.agent, input.globalTaskIndex + taskIndex),
+				intercomSessionName: input.childIntercomTarget?.(task.agent, childIndex),
 				orchestratorIntercomTarget: input.orchestratorIntercomTarget,
 				nestedRoute: input.nestedRoute,
 				modelOverride: effectiveModel,
@@ -330,13 +374,14 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				modelScope: input.modelScope,
 				skills: behavior.skills === false ? [] : behavior.skills,
 				structuredOutput: structuredRuntime,
+				agentContract,
 				acceptance: task.acceptance,
-				acceptanceContext: { mode: "chain" },
+				acceptanceContext: { mode: "chain", dynamic: input.dynamic && task.acceptance === undefined },
 				timeoutMs: input.timeoutMs,
 				deadlineAt: input.deadlineAt,
 				turnBudget: input.turnBudget,
 				onDetachedExit: input.onDetachedExit
-					? (result) => input.onDetachedExit?.(input.globalTaskIndex + taskIndex, result)
+					? (result) => input.onDetachedExit?.(childIndex, result)
 					: undefined,
 				toolBudget: toolBudget.toolBudget,
 				onUpdate: input.onUpdate
@@ -344,18 +389,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 						const stepResults = progressUpdate.details?.results || [];
 						const stepProgress = progressUpdate.details?.progress || [];
 						if (input.foregroundControl && stepProgress.length > 0) {
-							const current = stepProgress[0];
-							input.foregroundControl.currentAgent = task.agent;
-							input.foregroundControl.currentIndex = input.globalTaskIndex + taskIndex;
-							input.foregroundControl.currentActivityState = current?.activityState;
-							input.foregroundControl.lastActivityAt = current?.lastActivityAt;
-							input.foregroundControl.currentTool = current?.currentTool;
-							input.foregroundControl.currentToolStartedAt = current?.currentToolStartedAt;
-							input.foregroundControl.currentPath = current?.currentPath;
-							input.foregroundControl.turnCount = current?.turnCount;
-							input.foregroundControl.tokens = current?.tokens;
-							input.foregroundControl.toolCount = current?.toolCount;
-							input.foregroundControl.updatedAt = Date.now();
+							updateForegroundChild(input.foregroundControl, childIndex, stepProgress[0]);
 						}
 						input.onUpdate?.({
 							...progressUpdate,
@@ -374,7 +408,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 									steps: input.chainSteps,
 									results: input.results.concat(stepResults),
 									currentStepIndex: input.stepIndex,
-									currentFlatIndex: input.globalTaskIndex + taskIndex,
+									currentFlatIndex: childIndex,
 									dynamicChildren: input.dynamicChildren,
 									dynamicGroupStatuses: input.dynamicGroupStatuses,
 								}),
@@ -383,10 +417,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 					}
 					: undefined,
 			});
-			if (input.foregroundControl?.currentIndex === input.globalTaskIndex + taskIndex) {
-				input.foregroundControl.interrupt = undefined;
-				input.foregroundControl.updatedAt = Date.now();
-			}
+			if (input.foregroundControl) finishForegroundChild(input.foregroundControl, childIndex);
 
 			if (result.exitCode !== 0 && failFast) {
 				aborted = true;
@@ -412,8 +443,10 @@ interface ChainExecutionParams {
 	shareEnabled: boolean;
 	sessionDirForIndex: (idx?: number) => string | undefined;
 	sessionFileForIndex?: (idx?: number) => string | undefined;
-	sessionFileForTask?: (agentName: string, idx?: number) => string | undefined;
-	thinkingOverrideForTask?: (agentName: string, idx?: number) => AgentConfig["thinking"] | undefined;
+	sessionFileForTask?: (agentName: string, idx?: number, modelOverride?: string) => string | undefined;
+	thinkingOverrideForTask?: (agentName: string, idx?: number, modelOverride?: string) => AgentConfig["thinking"] | undefined;
+	contextForAgent?: (agentName: string) => ContextMode;
+	modelScope?: ModelScopeConfig;
 	artifactsDir: string;
 	artifactConfig: ArtifactConfig;
 	includeProgress?: boolean;
@@ -421,22 +454,10 @@ interface ChainExecutionParams {
 	onUpdate?: (r: AgentToolResult<Details>) => void;
 	onControlEvent?: (event: ControlEvent) => void;
 	controlConfig: ResolvedControlConfig;
+	agentContract?: AgentContract;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	orchestratorIntercomTarget?: string;
-	foregroundControl?: {
-		updatedAt: number;
-		currentAgent?: string;
-		currentIndex?: number;
-		currentActivityState?: ActivityState;
-		lastActivityAt?: number;
-		currentTool?: string;
-		currentToolStartedAt?: number;
-		currentPath?: string;
-		turnCount?: number;
-		tokens?: number;
-		toolCount?: number;
-		interrupt?: () => boolean;
-	};
+	foregroundControl?: ForegroundRunControl;
 	chainSkills?: string[];
 	chainDir?: string;
 	dynamicFanoutMaxItems?: number;
@@ -453,6 +474,7 @@ interface ChainExecutionParams {
 	configToolBudget?: ToolBudgetConfig;
 	/** Global cap on simultaneously-running tasks within this chain. Defaults to DEFAULT_GLOBAL_CONCURRENCY_LIMIT. */
 	globalConcurrencyLimit?: number;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 }
 
 interface ChainExecutionResult {
@@ -506,6 +528,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	const dynamicGroupStatuses: ChainExecutionDetailsInput["dynamicGroupStatuses"] = {};
 	const allProgress: AgentProgress[] = [];
 	const allArtifactPaths: ArtifactPaths[] = [];
+	let parallelHandoff: Details["parallelHandoff"];
 
 	const chainAgents: string[] = chainSteps.map((step) =>
 		isParallelStep(step)
@@ -529,6 +552,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		outputs,
 		dynamicChildren,
 		dynamicGroupStatuses,
+		...(parallelHandoff ? { parallelHandoff } : {}),
 		...overrides,
 	});
 
@@ -627,7 +651,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				return {
 					...step,
 					task: result.templates[i]!,
-					...(override?.model ? { model: override.model } : {}),
+					...(override?.model !== undefined ? { model: override.model } : {}),
 					...(override?.output !== undefined ? { output: override.output } : {}),
 					...("outputMode" in step && step.outputMode !== undefined ? { outputMode: step.outputMode } : {}),
 					...(override?.reads !== undefined ? { reads: override.reads } : {}),
@@ -660,6 +684,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const parallelTemplates = stepTemplates as string[];
 			const parallelCwd = resolveChildCwd(cwd ?? ctx.cwd, step.cwd);
 			let worktreeSetup: WorktreeSetup | undefined;
+			let worktreeFinalized = false;
 			if (step.worktree) {
 				const worktreeTaskCwdConflict = findWorktreeTaskCwdConflict(step.parallel, parallelCwd);
 				if (worktreeTaskCwdConflict) {
@@ -717,6 +742,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					sessionFileForIndex,
 					sessionFileForTask,
 					thinkingOverrideForTask,
+					contextForAgent: params.contextForAgent,
 					shareEnabled,
 					artifactConfig,
 					artifactsDir,
@@ -731,6 +757,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					dynamicChildren,
 					dynamicGroupStatuses,
 					controlConfig,
+					agentContract: params.agentContract,
 					onControlEvent,
 					childIntercomTarget,
 					orchestratorIntercomTarget,
@@ -753,6 +780,23 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					if (result.progress) allProgress.push(result.progress);
 					if (result.artifactPaths) allArtifactPaths.push(result.artifactPaths);
 				}
+				let worktreeSuffix = "";
+				if (worktreeSetup) {
+					worktreeFinalized = true;
+					const finalized = finalizeParallelWorktreeHandoff({
+						output: "",
+						worktreeSetup,
+						artifactsDir,
+						runId,
+						cwd: parallelCwd,
+						stepIndex,
+						flatStartIndex: globalTaskIndex - step.parallel.length,
+						agents: agentNames,
+						results: parallelResults,
+					});
+					if (finalized.reference) parallelHandoff = finalized.reference;
+					worktreeSuffix = finalized.output.trim();
+				}
 				const interruptedIndexInStep = parallelResults.findIndex((result) => result.interrupted);
 				const interrupted = interruptedIndexInStep >= 0 ? parallelResults[interruptedIndexInStep] : undefined;
 				if (interrupted) {
@@ -768,7 +812,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				const detached = detachedIndexInStep >= 0 ? parallelResults[detachedIndexInStep] : undefined;
 				if (detached) {
 					return {
-						content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${detached.agent}). Reply to the supervisor request first. After the child exits, start a fresh follow-up if needed.` }],
+						content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${detached.agent}). Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.` }],
 						details: buildChainExecutionDetails(makeDetailsInput({
 							currentStepIndex: stepIndex,
 							currentFlatIndex: globalTaskIndex - step.parallel.length + detachedIndexInStep,
@@ -797,6 +841,24 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						})),
 					};
 				}
+				const acceptanceFailures = parallelResults
+					.map((result, originalIndex) => ({ result, originalIndex, task: step.parallel[originalIndex] }))
+					.filter(({ result, task }) => isAgentContractV1(task?.agentContract ?? step.agentContract ?? params.agentContract) && (task?.gateOn ?? step.gateOn) === "acceptance" && result.acceptance?.status === "rejected");
+				if (acceptanceFailures.length > 0) {
+					const acceptanceSummary = acceptanceFailures
+						.map(({ result, originalIndex }) => `- Task ${originalIndex + 1} (${result.agent}): ${acceptanceFailureMessage(result.acceptance) ?? "acceptance rejected"}`)
+						.join("\n");
+					const errorMsg = `Parallel step ${stepIndex + 1} acceptance gate failed:\n${acceptanceSummary}`;
+					const summary = buildChainSummary(chainSteps, results, chainDir, "failed", { index: stepIndex, error: errorMsg });
+					return {
+						content: [{ type: "text", text: summary }],
+						isError: true,
+						details: buildChainExecutionDetails(makeDetailsInput({
+							currentStepIndex: stepIndex,
+							currentFlatIndex: globalTaskIndex - step.parallel.length + acceptanceFailures[0]!.originalIndex,
+						})),
+					};
+				}
 
 				for (let taskIndex = 0; taskIndex < parallelResults.length; taskIndex++) {
 					const outputName = step.parallel[taskIndex]?.as;
@@ -820,14 +882,9 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					};
 				});
 				prev = aggregateParallelOutputs(taskResults);
-				prev = appendParallelWorktreeSummary(
-					prev,
-					worktreeSetup,
-					path.join(chainDir, "worktree-diffs", `step-${stepIndex}`),
-					agentNames,
-				);
+				if (worktreeSuffix) prev = `${prev}\n\n${worktreeSuffix}`;
 			} finally {
-				if (worktreeSetup) cleanupWorktrees(worktreeSetup);
+				if (worktreeSetup && !worktreeFinalized) cleanupWorktrees(worktreeSetup);
 			}
 		} else if (isDynamicParallelStep(step)) {
 			const dynamicStartIndex = globalTaskIndex;
@@ -852,7 +909,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			if (materialized.parallel.length === 0) {
 				const collection: DynamicCollectedResult[] = [];
 				try {
-					validateDynamicCollection(step.collect.outputSchema, collection);
+					await validateDynamicCollection(step.collect.outputSchema, collection);
 				} catch (error) {
 					const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
 					dynamicGroupStatuses[stepIndex] = { status: "failed", error: message };
@@ -869,9 +926,11 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					const effectiveGroupAcceptance = resolveEffectiveAcceptance({
 						explicit: step.acceptance,
 						agentName: step.parallel.agent,
-						task: step.parallel.task ?? originalTask,
+						acceptanceRole: agents.find((agent) => agent.name === step.parallel.agent)?.acceptanceRole,
+						task: (step.parallel.task ?? originalTask ?? "").replace(/\{task\}/g, originalTask ?? ""),
 						mode: "chain",
 						dynamicGroup: true,
+						agentContract: step.agentContract ?? params.agentContract,
 					});
 					const groupAcceptance = await evaluateAcceptance({
 						acceptance: effectiveGroupAcceptance,
@@ -881,9 +940,10 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 							notes: "Dynamic fanout produced 0 results.",
 						}),
 						cwd: cwd ?? ctx.cwd,
+						reportOptional: isAgentContractV1(step.agentContract ?? params.agentContract),
 					});
 					dynamicGroupStatuses[stepIndex].acceptance = groupAcceptance;
-					const groupAcceptanceFailure = acceptanceFailureMessage(groupAcceptance);
+					const groupAcceptanceFailure = !isAgentContractV1(step.agentContract ?? params.agentContract) || step.gateOn === "acceptance" ? acceptanceFailureMessage(groupAcceptance) : undefined;
 					if (groupAcceptanceFailure) {
 						dynamicGroupStatuses[stepIndex] = { status: "failed", error: groupAcceptanceFailure, acceptance: groupAcceptance };
 						return buildChainExecutionErrorResult(groupAcceptanceFailure, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex }));
@@ -898,6 +958,8 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				parallel: materialized.parallel,
 				concurrency: step.concurrency,
 				failFast: step.failFast,
+				agentContract: step.agentContract,
+				gateOn: step.gateOn,
 			};
 			const parallelTemplates = materialized.parallel.map((task) => task.task ?? "{previous}");
 			const parallelBehaviors = resolveParallelBehaviors(dynamicParallelStep.parallel, agents, stepIndex, chainSkills)
@@ -937,6 +999,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				sessionFileForIndex,
 				sessionFileForTask,
 				thinkingOverrideForTask,
+				contextForAgent: params.contextForAgent,
 				shareEnabled,
 				artifactConfig,
 				artifactsDir,
@@ -951,6 +1014,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				dynamicChildren,
 				dynamicGroupStatuses,
 				controlConfig,
+				agentContract: params.agentContract,
 				onControlEvent,
 				childIntercomTarget,
 				orchestratorIntercomTarget,
@@ -964,6 +1028,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				toolBudget: params.toolBudget,
 				configToolBudget: params.configToolBudget,
 				globalSemaphore,
+				dynamic: true,
 			});
 			globalTaskIndex = dynamicStartIndex + reservedDynamicItems;
 
@@ -988,7 +1053,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const detached = detachedIndexInStep >= 0 ? parallelResults[detachedIndexInStep] : undefined;
 			if (detached) {
 				return {
-					content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${detached.agent}). Reply to the supervisor request first. After the child exits, start a fresh follow-up if needed.` }],
+					content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${detached.agent}). Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.` }],
 					details: buildChainExecutionDetails(makeDetailsInput({
 						currentStepIndex: stepIndex,
 						currentFlatIndex: dynamicStartIndex + detachedIndexInStep,
@@ -1017,8 +1082,24 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					})),
 				};
 			}
+			const acceptanceFailures = parallelResults
+				.map((result, originalIndex) => ({ result, originalIndex, task: dynamicParallelStep.parallel[originalIndex] }))
+				.filter(({ result, task }) => isAgentContractV1(task?.agentContract ?? dynamicParallelStep.agentContract ?? params.agentContract) && (task?.gateOn ?? dynamicParallelStep.gateOn) === "acceptance" && result.acceptance?.status === "rejected");
+			if (acceptanceFailures.length > 0) {
+				const acceptanceSummary = acceptanceFailures
+					.map(({ result, originalIndex }) => `- Item ${originalIndex + 1} (${result.agent}, key ${materialized.items[originalIndex]?.key ?? originalIndex}): ${acceptanceFailureMessage(result.acceptance) ?? "acceptance rejected"}`)
+					.join("\n");
+				const errorMsg = `Dynamic step ${stepIndex + 1} acceptance gate failed:\n${acceptanceSummary}`;
+				dynamicGroupStatuses[stepIndex] = { status: "failed", error: errorMsg };
+				const summary = buildChainSummary(chainSteps, results, chainDir, "failed", { index: stepIndex, error: errorMsg });
+				return {
+					content: [{ type: "text", text: summary }],
+					isError: true,
+					details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: dynamicStartIndex + acceptanceFailures[0]!.originalIndex })),
+				};
+			}
 			try {
-				validateDynamicCollection(step.collect.outputSchema, collected);
+				await validateDynamicCollection(step.collect.outputSchema, collected);
 			} catch (error) {
 				const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
 				dynamicGroupStatuses[stepIndex] = { status: "failed", error: message };
@@ -1034,9 +1115,13 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const effectiveGroupAcceptance = resolveEffectiveAcceptance({
 				explicit: step.acceptance,
 				agentName: step.parallel.agent,
-				task: step.parallel.task ?? originalTask,
+				acceptanceRole: agents.find((agent) => agent.name === step.parallel.agent)?.acceptanceRole,
+				task: materialized.parallel
+					.map((task) => (task.task ?? originalTask ?? "").replace(/\{task\}/g, originalTask ?? ""))
+					.join("\n"),
 				mode: "chain",
 				dynamicGroup: true,
+				agentContract: step.agentContract ?? params.agentContract,
 			});
 			const groupAcceptance = await evaluateAcceptance({
 				acceptance: effectiveGroupAcceptance,
@@ -1046,9 +1131,10 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					notes: `Dynamic fanout collected ${collected.length} result(s) into ${step.collect.as}.`,
 				}),
 				cwd: cwd ?? ctx.cwd,
+				reportOptional: isAgentContractV1(step.agentContract ?? params.agentContract),
 			});
 			dynamicGroupStatuses[stepIndex].acceptance = groupAcceptance;
-			const groupAcceptanceFailure = acceptanceFailureMessage(groupAcceptance);
+			const groupAcceptanceFailure = effectiveGroupAcceptance.explicit && (!isAgentContractV1(step.agentContract ?? params.agentContract) || step.gateOn === "acceptance") ? acceptanceFailureMessage(groupAcceptance) : undefined;
 			if (groupAcceptanceFailure) {
 				dynamicGroupStatuses[stepIndex] = { status: "failed", error: groupAcceptanceFailure, acceptance: groupAcceptance };
 				return buildChainExecutionErrorResult(groupAcceptanceFailure, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex - dynamicParallelStep.parallel.length }));
@@ -1096,7 +1182,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 
 			const templateHasPrevious = stepTemplate.includes("{previous}");
 			const { prefix, suffix } = buildChainInstructions(
-				behavior,
+				{ ...behavior, output: false },
 				chainDir,
 				isFirstProgress,
 				templateHasPrevious ? undefined : prev,
@@ -1110,17 +1196,19 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			stepTask = prefix + stepTask + suffix;
 
 			const explicitStepModel = tuiOverride?.model ?? seqStep.model;
-			const effectiveModel = resolveSubagentModelOverride(
-				explicitStepModel ?? agentConfig.model,
+			const effectiveModel = resolveEffectiveSubagentModel(
+				explicitStepModel,
+				agentConfig.model,
 				ctx.model,
 				availableModels,
 				ctx.model?.provider,
-				{ scope: modelScope, source: explicitStepModel ? "explicit" : "inherited" },
+				{ scope: modelScope },
 			);
 
 			const outputPath = typeof behavior.output === "string"
 				? (path.isAbsolute(behavior.output) ? behavior.output : path.join(chainDir, behavior.output))
 				: undefined;
+			stepTask = injectSingleOutputInstruction(stepTask, outputPath, agentConfig);
 			const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Chain step ${stepIndex + 1} (${seqStep.agent})`);
 			if (validationError) {
 				return buildChainExecutionErrorResult(validationError, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex }));
@@ -1129,22 +1217,22 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const childIndex = globalTaskIndex;
 			const interruptController = new AbortController();
 			if (foregroundControl) {
-				foregroundControl.currentAgent = seqStep.agent;
-				foregroundControl.currentIndex = childIndex;
-				foregroundControl.currentActivityState = undefined;
-				foregroundControl.updatedAt = Date.now();
-				foregroundControl.interrupt = () => {
-					if (interruptController.signal.aborted) return false;
-					interruptController.abort();
-					foregroundControl.currentActivityState = undefined;
-					foregroundControl.updatedAt = Date.now();
-					return true;
-				};
+				beginForegroundChild(foregroundControl, {
+					index: childIndex,
+					agent: seqStep.agent,
+					description: cleanTask.trim(),
+					interrupt: () => {
+						if (interruptController.signal.aborted) return false;
+						interruptController.abort();
+						return true;
+					},
+				});
 			}
 
 			const structuredRuntime = seqStep.outputSchema
 				? createStructuredOutputRuntime(seqStep.outputSchema, path.join(chainDir, "structured-output"))
 				: undefined;
+			const agentContract = seqStep.agentContract ?? params.agentContract;
 			const toolBudget = resolveChainToolBudget({ stepBudget: seqStep.toolBudget, runBudget: params.toolBudget, agentBudget: agentConfig?.toolBudget, configBudget: params.configToolBudget });
 			if (toolBudget.error) return buildChainExecutionErrorResult(toolBudget.error, {
 				results,
@@ -1164,6 +1252,8 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			});
 			const r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+				capabilityCeiling: params.capabilityCeiling,
+				context: params.contextForAgent?.(seqStep.agent),
 				cwd: resolveChildCwd(cwd ?? ctx.cwd, seqStep.cwd),
 				signal,
 				interruptSignal: interruptController.signal,
@@ -1172,9 +1262,9 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				runId,
 				index: childIndex,
 				sessionDir: sessionDirForIndex(childIndex),
-				sessionFile: sessionFileForTask?.(seqStep.agent, childIndex)
+				sessionFile: sessionFileForTask?.(seqStep.agent, childIndex, effectiveModel)
 					?? sessionFileForIndex?.(childIndex),
-				thinkingOverride: thinkingOverrideForTask?.(seqStep.agent, childIndex),
+				thinkingOverride: thinkingOverrideForTask?.(seqStep.agent, childIndex, effectiveModel),
 				share: shareEnabled,
 				artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 				artifactConfig,
@@ -1192,6 +1282,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				modelScope,
 				skills: behavior.skills === false ? [] : behavior.skills,
 				structuredOutput: structuredRuntime,
+				agentContract,
 				acceptance: seqStep.acceptance,
 				acceptanceContext: { mode: "chain" },
 				timeoutMs: params.timeoutMs,
@@ -1206,18 +1297,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						const stepResults = p.details?.results || [];
 						const stepProgress = p.details?.progress || [];
 						if (foregroundControl && stepProgress.length > 0) {
-							const current = stepProgress[0];
-							foregroundControl.currentAgent = seqStep.agent;
-							foregroundControl.currentIndex = childIndex;
-							foregroundControl.currentActivityState = current?.activityState;
-							foregroundControl.lastActivityAt = current?.lastActivityAt;
-							foregroundControl.currentTool = current?.currentTool;
-							foregroundControl.currentToolStartedAt = current?.currentToolStartedAt;
-							foregroundControl.currentPath = current?.currentPath;
-							foregroundControl.turnCount = current?.turnCount;
-							foregroundControl.tokens = current?.tokens;
-							foregroundControl.toolCount = current?.toolCount;
-							foregroundControl.updatedAt = Date.now();
+							updateForegroundChild(foregroundControl, childIndex, stepProgress[0]);
 						}
 						onUpdate({
 							...p,
@@ -1245,10 +1325,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					}
 					: undefined,
 			});
-			if (foregroundControl?.currentIndex === childIndex) {
-				foregroundControl.interrupt = undefined;
-				foregroundControl.updatedAt = Date.now();
-			}
+			if (foregroundControl) finishForegroundChild(foregroundControl, childIndex);
 			recordRun(seqStep.agent, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
 
 			globalTaskIndex++;
@@ -1264,7 +1341,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			}
 			if (r.detached) {
 				return {
-					content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${r.agent}). Reply to the supervisor request first. After the child exits, start a fresh follow-up if needed.` }],
+					content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${r.agent}). Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.` }],
 					details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: childIndex })),
 				};
 			}
@@ -1273,6 +1350,17 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				const summary = buildChainSummary(chainSteps, results, chainDir, "failed", {
 					index: stepIndex,
 					error: r.error || "Chain failed",
+				});
+				return {
+					content: [{ type: "text", text: summary }],
+					details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: childIndex })),
+					isError: true,
+				};
+			}
+			if (isAgentContractV1(agentContract) && seqStep.gateOn === "acceptance" && r.acceptance?.status === "rejected") {
+				const summary = buildChainSummary(chainSteps, results, chainDir, "failed", {
+					index: stepIndex,
+					error: acceptanceFailureMessage(r.acceptance) ?? "Chain acceptance gate rejected the step.",
 				});
 				return {
 					content: [{ type: "text", text: summary }],

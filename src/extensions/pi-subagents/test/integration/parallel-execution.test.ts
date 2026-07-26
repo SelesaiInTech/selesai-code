@@ -10,7 +10,9 @@
 
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
 import {
@@ -112,17 +114,27 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		removeTempDir(tempDir);
 	});
 
-	function makeExecutor(agents = [makeAgent("echo")]) {
+	function makeExecutor(
+		agents = [makeAgent("echo")],
+		state = { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+		config: Record<string, unknown> = {},
+	) {
 		return createSubagentExecutor({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
-			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
-			config: {},
+			state,
+			config,
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (value: string) => value,
 			discoverAgents: () => ({ agents }),
 		});
+	}
+
+	function git(args: string[]): string {
+		const result = spawnSync("git", args, { cwd: tempDir, encoding: "utf-8" });
+		assert.equal(result.status, 0, result.stderr || result.stdout);
+		return result.stdout.trim();
 	}
 
 	function readLastCallArgs(): string[] {
@@ -171,6 +183,124 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(ok, 2);
 	});
 
+	it("tracks every concurrently running foreground child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		for (let index = 0; index < 3; index++) mockPi.onCall({ output: `Review ${index} complete`, delay: 250 });
+		const agents = [makeAgent("reviewer")];
+		const state = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const executor = makeExecutor(agents, state);
+		const executionPromise = executor.execute(
+			"parallel-foreground-fleet",
+			{
+				tasks: [
+					{ agent: "reviewer", task: "Review correctness" },
+					{ agent: "reviewer", task: "Review quality" },
+					{ agent: "reviewer", task: "Review tests" },
+				],
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		for (let attempt = 0; attempt < 40; attempt++) {
+			const active = [...state.foregroundControls.values()][0]?.activeChildren;
+			if (active?.size === 3) break;
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		const control = [...state.foregroundControls.values()][0];
+		assert.ok(control);
+		assert.deepEqual([...control.activeChildren.values()].map((child) => child.description), [
+			"Review correctness",
+			"Review quality",
+			"Review tests",
+		]);
+		assert.equal(control.activeChildren.size, 3);
+
+		const result = await executionPromise;
+		assert.equal(result.isError, undefined);
+		assert.equal(state.foregroundControls.size, 0);
+	});
+
+	it("publishes a durable handoff before cleaning foreground parallel worktrees", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
+		git(["init"]);
+		git(["config", "user.email", "test@example.com"]);
+		git(["config", "user.name", "Test User"]);
+		fs.writeFileSync(path.join(tempDir, "tracked.txt"), "base\n", "utf-8");
+		git(["add", "tracked.txt"]);
+		git(["commit", "-m", "initial"]);
+		mockPi.onCall({ output: "Worktree task complete" });
+		const executor = makeExecutor();
+		const result = await executor.execute(
+			"foreground-worktree-handoff",
+			{ tasks: [{ agent: "echo", task: "Work in isolation" }], worktree: true },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.parallelHandoff?.version, 1);
+		assert.equal(result.details?.parallelHandoff?.cleanupState, "complete");
+		assert.match(result.content[0]?.text ?? "", /Parallel handoff:/);
+		const handoffPath = result.details!.parallelHandoff!.path;
+		const handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as {
+			groups: Array<{ children: Array<{ agent: string; summary: string; patch: { path: string } }>; cleanup: { state: string; tasks: Array<{ path: string; worktreeRemoved: boolean; branchRemoved: boolean }> } }>;
+		};
+		assert.equal(handoff.groups[0]!.children[0]!.agent, "echo");
+		assert.equal(handoff.groups[0]!.children[0]!.summary, "Worktree task complete");
+		assert.equal(fs.existsSync(handoff.groups[0]!.children[0]!.patch.path), true);
+		assert.ok(result.details?.runId);
+		assert.ok(handoff.groups[0]!.children[0]!.patch.path.includes(`${path.sep}worktree-diffs${path.sep}${result.details.runId}${path.sep}`));
+		assert.equal(handoff.groups[0]!.cleanup.state, "complete");
+		assert.equal(handoff.groups[0]!.cleanup.tasks[0]!.worktreeRemoved, true);
+		assert.equal(handoff.groups[0]!.cleanup.tasks[0]!.branchRemoved, true);
+		assert.equal(fs.existsSync(handoff.groups[0]!.cleanup.tasks[0]!.path), false);
+	});
+
+	it("keeps worktree parallel runs successful when handoff manifest writing fails", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
+		git(["init"]);
+		git(["config", "user.email", "test@example.com"]);
+		git(["config", "user.name", "Test User"]);
+		fs.writeFileSync(path.join(tempDir, "tracked.txt"), "base\n", "utf-8");
+		git(["add", "tracked.txt"]);
+		git(["commit", "-m", "initial"]);
+		const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-session-"));
+		try {
+			const artifactsDir = path.join(sessionDir, "subagent-artifacts");
+			fs.mkdirSync(artifactsDir, { recursive: true });
+			fs.writeFileSync(path.join(artifactsDir, "handoffs"), "not a directory", "utf-8");
+			mockPi.onCall({ output: "Worktree task complete" });
+			const executor = makeExecutor([makeAgent("echo")], undefined, { artifactDir: "session" });
+			const ctx = {
+				...makeMinimalCtx(tempDir),
+				sessionManager: {
+					getSessionId: () => "session-123",
+					getSessionFile: () => path.join(sessionDir, "session.jsonl"),
+				},
+			};
+			const result = await executor.execute(
+				"foreground-worktree-handoff-collision",
+				{ tasks: [{ agent: "echo", task: "Work in isolation" }], worktree: true },
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+
+			assert.equal(result.isError, undefined);
+			assert.equal(result.details?.parallelHandoff, undefined);
+			assert.match(result.content[0]?.text ?? "", /Parallel handoff unavailable:/);
+			assert.doesNotMatch(git(["worktree", "list", "--porcelain"]), /pi-parallel-/);
+		} finally {
+			fs.rmSync(sessionDir, { recursive: true, force: true });
+		}
+	});
+
 	it("treats parallel action aliases with tasks as top-level parallel execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		for (const action of ["parallel", "PARALLEL", "tasks"]) {
 			mockPi.reset();
@@ -191,6 +321,42 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		}
 	});
 
+	it("does not apply agent acceptance defaults to top-level parallel tasks", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "parallel response without explicit acceptance" });
+		const executor = makeExecutor([
+			makeAgent("echo", { defaultAcceptance: { level: "none", reason: "single launches only" } }),
+		]);
+
+		const result = await executor.execute(
+			"parallel-agent-acceptance-default",
+			{ tasks: [{ agent: "echo", task: "Return a concise answer" }] },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.results?.[0]?.acceptance?.explicit, false);
+		assert.equal(result.details?.results?.[0]?.acceptance?.effectiveAcceptance.level, "attested");
+	});
+
+	it("applies agent acceptance roles to inferred parallel acceptance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "exploration complete" });
+		const executor = makeExecutor([
+			makeAgent("worker", { acceptanceRole: "read-only" }),
+		]);
+
+		const result = await executor.execute(
+			"parallel-agent-acceptance-role",
+			{ tasks: [{ agent: "worker", task: "Explore the authentication flow" }] },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.details?.results?.[0]?.acceptance?.effectiveAcceptance.level, "attested");
+	});
+
 	it("top-level parallel output saves use per-task output paths", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Saved report" });
 		const executor = makeExecutor();
@@ -209,6 +375,32 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(result.isError, undefined);
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "Saved report");
 		assert.equal(result.details?.results?.[0]?.savedOutputPath, outputPath);
+	});
+
+	it("top-level parallel tasks support outputSchema", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ matchArgIncludes: "First structured", output: "first", structuredOutput: { ok: true, item: "first" } });
+		mockPi.onCall({ matchArgIncludes: "Second structured", output: "second", structuredOutput: { ok: true, item: "second" } });
+		const executor = makeExecutor();
+
+		const result = await executor.execute(
+			"parallel-schema",
+			{
+				tasks: [
+					{ agent: "echo", task: "First structured", outputSchema: { type: "object", required: ["ok", "item"], properties: { ok: { type: "boolean" }, item: { type: "string" } } } },
+					{ agent: "echo", task: "Second structured", outputSchema: { type: "object", required: ["ok", "item"], properties: { ok: { type: "boolean" }, item: { type: "string" } } } },
+				],
+				acceptance: false,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.deepEqual(result.details?.results?.map((item: { structuredOutput?: unknown }) => item.structuredOutput), [
+			{ ok: true, item: "first" },
+			{ ok: true, item: "second" },
+		]);
 	});
 
 	it("top-level parallel preserves completed siblings and marks timed-out children", { skip: !createSubagentExecutor ? "executor not importable" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
@@ -305,6 +497,38 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.match(result.content[0]?.text ?? "", /same path/);
 		assert.equal(mockPi.callCount(), 0);
 	});
+
+	for (const outputOverride of [undefined, true] as const) {
+		it(`isolates foreground inherited output (${outputOverride === true ? "output:true" : "omitted output"})`, { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			mockPi.onCall({ matchArgIncludes: "Write A", output: "first foreground report" });
+			mockPi.onCall({ matchArgIncludes: "Write B", output: "second foreground report" });
+			const executor = makeExecutor([makeAgent("echo", { output: "context.md" })]);
+			const tasks = [
+				{ agent: "echo", task: "Write A", ...(outputOverride !== undefined ? { output: outputOverride } : {}) },
+				{ agent: "echo", task: "Write B", ...(outputOverride !== undefined ? { output: outputOverride } : {}) },
+			];
+
+			const result = await executor.execute(
+				`parallel-inherited-output-${outputOverride === true ? "true" : "omitted"}`,
+				{ tasks },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			const runId = result.details?.runId;
+			assert.ok(runId, "expected run id in details");
+			const outputDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", runId);
+			const firstOutputPath = path.join(outputDir, "parallel-0", "0-echo", "context.md");
+			const secondOutputPath = path.join(outputDir, "parallel-0", "1-echo", "context.md");
+			assert.equal(result.isError, undefined);
+			assert.equal(mockPi.callCount(), 2);
+			assert.equal(fs.readFileSync(firstOutputPath, "utf-8"), "first foreground report");
+			assert.equal(fs.readFileSync(secondOutputPath, "utf-8"), "second foreground report");
+			assert.equal(result.details?.results?.[0]?.savedOutputPath, firstOutputPath);
+			assert.equal(result.details?.results?.[1]?.savedOutputPath, secondOutputPath);
+		});
+	}
 
 	it("treats string false as disabled output in top-level parallel runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Review done" });

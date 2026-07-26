@@ -87,7 +87,7 @@ function parseSkill(value: string | undefined): string | string[] | false | unde
 
 function parseAgent(frontmatter: Record<string, string>): string {
 	const subagent = stringField(frontmatter, "subagent");
-	if (!subagent || subagent === "true") return "delegate";
+	if (!subagent || subagent === "true") return "builder";
 	return subagent;
 }
 
@@ -240,7 +240,7 @@ function workflowParams(workflow: PromptWorkflow, args: string[], runtime: Retur
 function workflowChainStep(workflow: PromptWorkflow, args: string[], runtime: ReturnType<typeof parseRuntimeOptions>): ChainStep {
 	const params = workflowParams(workflow, args, runtime);
 	return {
-		agent: params.agent ?? "delegate",
+		agent: params.agent ?? "builder",
 		task: params.task,
 		...(params.model ? { model: params.model } : {}),
 		...(params.skill !== undefined ? { skill: params.skill } : {}),

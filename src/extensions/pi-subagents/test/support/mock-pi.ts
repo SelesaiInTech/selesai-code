@@ -8,16 +8,26 @@ interface MockPiResponse {
 	stderr?: string;
 	exitCode?: number;
 	delay?: number;
+	waitForPath?: string;
 	keepAliveAfterFinalMessageMs?: number;
 	ignoreSigterm?: boolean;
 	jsonl?: unknown[];
+	stdoutRaw?: string;
+	stdoutBase64Chunks?: string[];
 	steps?: Array<{
 		delay?: number;
 		jsonl?: unknown[];
+		stdoutRaw?: string;
+		stdoutBase64Chunks?: string[];
 		stderr?: string;
 	}>;
 	echoEnv?: string[];
+	missingTools?: string[];
 	matchArgIncludes?: string | string[];
+	/** Files the mock child writes to disk before emitting output, standing in for its write-tool side effects. */
+	writeFiles?: Array<{ path: string; content: string }>;
+	/** Writes the structured-output capture file without emitting a structured_output tool event. */
+	structuredOutputCapture?: unknown;
 }
 
 export interface MockPi {
@@ -58,17 +68,27 @@ export function createMockPi(): MockPi {
 	const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-mock-cli-"));
 	const queueDir = path.join(rootDir, "queue");
 	const binDir = path.join(rootDir, "bin");
+	const piPackageDir = path.join(rootDir, "pi-package");
+	const cliScriptPath = path.join(piPackageDir, "dist", "cli.mjs");
 	ensureDir(queueDir);
 	ensureDir(binDir);
+	ensureDir(path.dirname(cliScriptPath));
+	fs.copyFileSync(SCRIPT_PATH, cliScriptPath);
+	fs.writeFileSync(
+		path.join(piPackageDir, "package.json"),
+		JSON.stringify({ name: "@selesai/code" }),
+		"utf-8",
+	);
 
 	const shellScriptPath = path.join(binDir, "pi");
 	const cmdScriptPath = path.join(binDir, "pi.cmd");
-	writeExecutable(shellScriptPath, `#!/bin/sh\nexec "${process.execPath}" "${SCRIPT_PATH}" "$@"\n`);
-	writeExecutable(cmdScriptPath, `@echo off\r\n"${process.execPath}" "${SCRIPT_PATH}" %*\r\n`);
+	writeExecutable(shellScriptPath, `#!/bin/sh\nexec "${process.execPath}" "${cliScriptPath}" "$@"\n`);
+	writeExecutable(cmdScriptPath, `@echo off\r\n"${process.execPath}" "${cliScriptPath}" %*\r\n`);
 
 	let installed = false;
 	let nextSequence = 0;
 	let originalPath: string | undefined;
+	let originalPiBinary: string | undefined;
 	let originalArgv1: string | undefined;
 	let originalQueueEnv: string | undefined;
 
@@ -80,25 +100,31 @@ export function createMockPi(): MockPi {
 			if (installed) return;
 			installed = true;
 			originalPath = process.env.PATH;
+			originalPiBinary = process.env.SELESAI_SUBAGENT_PI_BINARY;
 			originalQueueEnv = process.env.MOCK_PI_QUEUE_DIR;
 			process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
-			process.env.MOCK_PI_QUEUE_DIR = queueDir;
 			if (process.platform === "win32") {
+				delete process.env.SELESAI_SUBAGENT_PI_BINARY;
 				originalArgv1 = process.argv[1];
-				process.argv[1] = SCRIPT_PATH;
+				process.argv[1] = cliScriptPath;
+			} else {
+				process.env.SELESAI_SUBAGENT_PI_BINARY = shellScriptPath;
 			}
+			process.env.MOCK_PI_QUEUE_DIR = queueDir;
 		},
 		uninstall() {
 			if (!installed) return;
 			installed = false;
 			if (originalPath === undefined) delete process.env.PATH;
 			else process.env.PATH = originalPath;
-			if (originalQueueEnv === undefined) delete process.env.MOCK_PI_QUEUE_DIR;
-			else process.env.MOCK_PI_QUEUE_DIR = originalQueueEnv;
+			if (originalPiBinary === undefined) delete process.env.SELESAI_SUBAGENT_PI_BINARY;
+			else process.env.SELESAI_SUBAGENT_PI_BINARY = originalPiBinary;
 			if (process.platform === "win32") {
 				if (originalArgv1 === undefined) delete process.argv[1];
 				else process.argv[1] = originalArgv1;
 			}
+			if (originalQueueEnv === undefined) delete process.env.MOCK_PI_QUEUE_DIR;
+			else process.env.MOCK_PI_QUEUE_DIR = originalQueueEnv;
 			try {
 				fs.rmSync(rootDir, { recursive: true, force: true });
 			} catch {}

@@ -3,14 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import {
-	fauxAssistantMessage,
-	fauxText,
-	registerFauxProvider,
-} from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import {
 	createAgentSession,
 	DefaultResourceLoader,
+	ModelRuntime,
 	SessionManager,
 	SettingsManager,
 } from "@selesai/code";
@@ -85,19 +82,6 @@ function parseArgs(argv) {
 	return parsed;
 }
 
-function createModelRegistry(model) {
-	return {
-		find: (provider, id) => provider === model.provider && id === model.id ? model : undefined,
-		getAll: () => [model],
-		getAvailable: () => [model],
-		hasConfiguredAuth: () => true,
-		isUsingOAuth: () => false,
-		getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "faux", headers: {} }),
-		registerProvider: () => {},
-		unregisterProvider: () => {},
-	};
-}
-
 function createSessionManager(parsed, cwd) {
 	if (parsed.sessionFile) {
 		const sessionDir = parsed.sessionDir ?? path.dirname(parsed.sessionFile);
@@ -112,19 +96,36 @@ function createSessionManager(parsed, cwd) {
 async function main() {
 	const parsed = parseArgs(process.argv.slice(2));
 	const responseText = process.env.SELESAI_SUBAGENTS_E2E_CHILD_TEXT ?? "CHILD_REAL_SESSION_OK";
+	const reportChildTools = process.env.SELESAI_SUBAGENTS_E2E_REPORT_CHILD_TOOLS === "1";
 	const cwd = process.cwd();
 	const ownedAgentDir = process.env.SELESAI_CODING_AGENT_DIR
 		? undefined
 		: mkdtempSync(path.join(os.tmpdir(), "pi-e2e-agent-dir-"));
 	const agentDir = process.env.SELESAI_CODING_AGENT_DIR ?? ownedAgentDir;
 
-	const faux = registerFauxProvider({
+	const faux = fauxProvider({
 		provider: "faux-e2e-child",
 		models: [{ id: "child", contextWindow: 200_000 }],
 	});
-	const model = faux.getModel();
+	const modelRuntime = await ModelRuntime.create({
+		authPath: path.join(agentDir, "auth.json"),
+		modelsPath: null,
+		allowModelNetwork: false,
+	});
+	modelRuntime.registerProvider(faux.provider.id, {
+		name: faux.provider.name,
+		api: faux.api,
+		apiKey: "faux",
+		streamSimple: faux.provider.streamSimple,
+		models: [...faux.models],
+	});
+	const model = modelRuntime.getModel(faux.provider.id, "child");
+	if (!model) throw new Error("faux child model was not registered");
+	let session;
 	faux.setResponses([
-		() => fauxAssistantMessage(fauxText(responseText), { stopReason: "stop" }),
+		() => process.env.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE
+			? fauxAssistantMessage(fauxToolCall("structured_output", { value: { marker: "STRUCTURED_OUTPUT_OK" } }), { stopReason: "toolUse" })
+			: fauxAssistantMessage(fauxText(reportChildTools ? `ACTIVE_TOOLS:${session?.getActiveToolNames().sort().join(",") ?? ""}` : responseText), { stopReason: "stop" }),
 	]);
 
 	const settingsManager = SettingsManager.inMemory({
@@ -146,16 +147,17 @@ async function main() {
 
 	try {
 		await loader.reload();
-		const { session } = await createAgentSession({
+		const created = await createAgentSession({
 			cwd,
 			agentDir,
 			model,
-			modelRegistry: createModelRegistry(model),
+			modelRuntime,
 			resourceLoader: loader,
 			sessionManager: createSessionManager(parsed, cwd),
 			settingsManager,
 			tools: parsed.tools,
 		});
+		session = created.session;
 
 		session.subscribe((event) => {
 			if (
@@ -173,7 +175,6 @@ async function main() {
 		await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 		session.dispose();
 	} finally {
-		faux.unregister();
 		if (ownedAgentDir) rmSync(ownedAgentDir, { recursive: true, force: true });
 	}
 }

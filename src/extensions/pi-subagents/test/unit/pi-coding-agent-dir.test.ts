@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { discoverAgentsAll, ensureDefaultUserSubagentSettings } from "../../src/agents/agents.ts";
+import { discoverAgentsAll } from "../../src/agents/agents.ts";
 import { handleCreate } from "../../src/agents/agent-management.ts";
 import { clearSkillCache, discoverAvailableSkills, resolveSkillPath } from "../../src/agents/skills.ts";
-import { loadConfig } from "../../src/extension/config.ts";
+import { loadConfig, updateConfig } from "../../src/extension/config.ts";
 import { diagnoseIntercomBridge, resolveIntercomBridge } from "../../src/intercom/intercom-bridge.ts";
 import { loadRunsForAgent, recordRun } from "../../src/runs/shared/run-history.ts";
-import { cleanupAllArtifactDirs } from "../../src/shared/artifacts.ts";
+import { cleanupAllArtifactDirs, getArtifactsDir, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
+import { TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
 import { getAgentDir, getConfigDirName, getProjectConfigDir, resolveConfigDirName } from "../../src/shared/utils.ts";
 
 let tempDir = "";
@@ -31,6 +33,16 @@ function readText(result: { content: Array<{ type: string; text?: string }> }): 
 	assert.equal(first.type, "text");
 	assert.equal(typeof first.text, "string");
 	return first.text;
+}
+
+function taskHash(task: string): string {
+	return createHash("sha256").update(task).digest("hex");
+}
+
+function assertPrivateHistoryModes(historyPath: string): void {
+	if (process.platform === "win32") return;
+	assert.equal(fs.statSync(path.dirname(historyPath)).mode & 0o777, 0o700);
+	assert.equal(fs.statSync(historyPath).mode & 0o777, 0o600);
 }
 
 describe("SELESAI_CODING_AGENT_DIR runtime paths", () => {
@@ -79,35 +91,12 @@ describe("SELESAI_CODING_AGENT_DIR runtime paths", () => {
 
 		process.env.SELESAI_CODING_AGENT_DIR = agentDir;
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
-		writeFile(configPath, JSON.stringify({ asyncByDefault: true, maxSubagentDepth: 3 }));
+		writeFile(configPath, JSON.stringify({ asyncByDefault: true, maxSubagentDepth: 3, artifactDir: "session" }));
 
 		const config = loadConfig();
 		assert.equal(config.asyncByDefault, true);
 		assert.equal(config.maxSubagentDepth, 3);
-	});
-
-	it("seeds an editable user subagent model default without replacing existing settings", () => {
-		const settingsPath = path.join(agentDir, "settings.json");
-		writeFile(settingsPath, JSON.stringify({ defaultModel: "openai/gpt-5", packages: ["npm:example"] }, null, 2));
-
-		assert.equal(ensureDefaultUserSubagentSettings({ provider: "anthropic", id: "claude-sonnet-4" }), true);
-		assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, "utf-8")), {
-			defaultModel: "openai/gpt-5",
-			packages: ["npm:example"],
-			subagents: {
-				defaultModel: "anthropic/claude-sonnet-4",
-				agentOverrides: {
-					architect: { model: "anthropic/claude-sonnet-4" },
-					builder: { model: "anthropic/claude-sonnet-4" },
-					commentator: { model: "anthropic/claude-sonnet-4" },
-					explorer: { model: "anthropic/claude-sonnet-4" },
-					recapper: { model: "anthropic/claude-sonnet-4" },
-					researcher: { model: "anthropic/claude-sonnet-4" },
-				},
-			},
-		});
-		assert.equal(ensureDefaultUserSubagentSettings({ provider: "openai", id: "gpt-5-mini" }), false);
-		assert.equal(ensureDefaultUserSubagentSettings(undefined), false);
+		assert.equal(config.artifactDir, "session");
 	});
 
 	it("discovers user agents, chains, and settings under the configured agent dir", () => {
@@ -131,7 +120,7 @@ Inspect env.
 		writeFile(settingsPath, JSON.stringify({
 			subagents: {
 				agentOverrides: {
-					worker: { systemPrompt: "Use env-rooted settings." },
+					builder: { systemPrompt: "Use env-rooted settings." },
 				},
 			},
 		}, null, 2));
@@ -143,10 +132,10 @@ Inspect env.
 		assert.ok(discovered.user.find((agent) => agent.name === "env-agent" && agent.filePath === path.join(agentDir, "agents", "env-agent.md")));
 		assert.ok(discovered.chains.find((chain) => chain.name === "env-chain" && chain.filePath === path.join(agentDir, "chains", "env-chain.chain.md")));
 
-		const worker = discovered.builtin.find((agent) => agent.name === "worker");
-		assert.equal(worker?.systemPrompt, "Use env-rooted settings.");
-		assert.equal(worker?.override?.path, settingsPath);
-		assert.equal(worker?.override?.scope, "user");
+		const builder = discovered.builtin.find((agent) => agent.name === "builder");
+		assert.equal(builder?.systemPrompt, "Use env-rooted settings.");
+		assert.equal(builder?.override?.path, settingsPath);
+		assert.equal(builder?.override?.scope, "user");
 
 		const createdName = "created-env-agent";
 		const created = handleCreate(
@@ -191,13 +180,22 @@ Package skill content.
 		assert.ok(available.find((skill) => skill.name === "package-skill" && skill.source === "user-package"));
 	});
 
-	it("records run history and cleans session artifacts under the configured agent dir", () => {
-		recordRun("env-agent", "Inspect", 0, 42);
+	it("records private redacted run history and cleans session artifacts under the configured agent dir", () => {
+		const task = "Inspect customer ACME token=SECRET";
+		recordRun("env-agent", task, 0, 42);
 		const historyPath = path.join(agentDir, "run-history.jsonl");
 		assert.equal(fs.existsSync(historyPath), true);
+		assertPrivateHistoryModes(historyPath);
+
+		const rawHistory = fs.readFileSync(historyPath, "utf-8");
+		assert.doesNotMatch(rawHistory, /Inspect customer|ACME|SECRET/);
+		assert.match(rawHistory, /"task":"\[redacted\]"/);
+		assert.match(rawHistory, /"taskHash":"[a-f0-9]{64}"/);
+
 		const history = loadRunsForAgent("env-agent");
 		assert.equal(history.length, 1);
-		assert.equal(history[0]?.task, "Inspect");
+		assert.equal(history[0]?.task, "[redacted]");
+		assert.equal(history[0]?.taskHash, taskHash(task));
 		assert.equal(history[0]?.status, "ok");
 
 		const artifactPath = path.join(agentDir, "sessions", "session-1", "subagent-artifacts", "old_output.md");
@@ -207,6 +205,51 @@ Package skill content.
 
 		cleanupAllArtifactDirs(0);
 		assert.equal(fs.existsSync(artifactPath), false);
+	});
+
+	it("resolves configured artifact directory preferences", () => {
+		const sessionFile = path.join(agentDir, "sessions", "session-1", "session.jsonl");
+
+		assert.equal(getArtifactsDir(sessionFile, cwd), getProjectArtifactsDir(cwd));
+		assert.equal(getArtifactsDir(sessionFile, cwd, "project"), getProjectArtifactsDir(cwd));
+		assert.equal(getArtifactsDir(sessionFile, cwd, "session"), path.join(path.dirname(sessionFile), "subagent-artifacts"));
+		assert.equal(getArtifactsDir(sessionFile, cwd, "temp"), TEMP_ARTIFACTS_DIR);
+		assert.equal(getArtifactsDir(null, cwd, "session"), TEMP_ARTIFACTS_DIR);
+		assert.throws(() => getArtifactsDir(sessionFile, cwd, "workspace" as never), /Unsupported artifactDir/);
+	});
+
+	it("rejects invalid artifactDir config values", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ artifactDir: "workspace" }));
+
+		assert.throws(() => updateConfig((config) => config), /config\.artifactDir must be "project", "session", or "temp"/);
+	});
+
+	it("hardens and redacts existing run history while recording", () => {
+		const historyPath = path.join(agentDir, "run-history.jsonl");
+		fs.mkdirSync(agentDir, { recursive: true, mode: 0o755 });
+		fs.writeFileSync(historyPath, `${JSON.stringify({
+			agent: "env-agent",
+			task: "legacy customer secret",
+			ts: 1,
+			status: "ok",
+			duration: 2,
+		})}\nnot json with pasted secret\n`, { encoding: "utf-8", mode: 0o644 });
+
+		recordRun("env-agent", "new customer secret", 1, 9);
+
+		assertPrivateHistoryModes(historyPath);
+		const rawHistory = fs.readFileSync(historyPath, "utf-8");
+		assert.doesNotMatch(rawHistory, /legacy customer secret|new customer secret|not json with pasted secret/);
+
+		const history = loadRunsForAgent("env-agent");
+		assert.equal(history.length, 2);
+		assert.equal(history[0]?.task, "[redacted]");
+		assert.equal(history[0]?.taskHash, taskHash("new customer secret"));
+		assert.equal(history[0]?.status, "error");
+		assert.equal(history[0]?.exit, 1);
+		assert.equal(history[1]?.task, "[redacted]");
+		assert.equal(history[1]?.taskHash, taskHash("legacy customer secret"));
 	});
 
 	it("uses the configured agent dir for subagent bridge instruction files", () => {

@@ -97,7 +97,7 @@ describe("checkModelScope", () => {
 });
 
 describe("parseModelScopeConfig", () => {
-	const meta = { filePath: "~/.pi/agent/settings.json" };
+	const meta = { filePath: "~/.selesai/agent/settings.json" };
 
 	it("returns undefined when the field is absent", () => {
 		assert.equal(parseModelScopeConfig(undefined, meta), undefined);

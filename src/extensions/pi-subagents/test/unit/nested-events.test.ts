@@ -7,6 +7,7 @@ import {
 	buildNestedRouteIndex,
 	createNestedRoute,
 	hasLiveNestedDescendants,
+	nestedSummaryFromAsyncStatus,
 	parseNestedEventRecords,
 	projectNestedEvents,
 	resolveNestedParentAddressFromEnv,
@@ -325,5 +326,56 @@ describe("nested event parsing and projection", () => {
 		})}\n{"type":"subagent.nested.started"`, route);
 		assert.equal(records.length, 1);
 		assert.equal(records[0]?.child.id, "jsonl-good");
+	});
+
+
+	it("sanitizes malformed process-terminal proofs in nested status summaries", () => {
+		const summary = nestedSummaryFromAsyncStatus({
+			runId: "child-run",
+			mode: "single",
+			state: "complete",
+			startedAt: 1,
+			processTerminal: { version: 1, state: "bogus", runId: "child-run", runnerProcessInstanceId: "runner-1" } as never,
+			steps: [{
+				agent: "worker",
+				status: "complete",
+				processTerminal: { version: 1, state: "observed", runId: "wrong-run", runnerProcessInstanceId: "runner-1" } as never,
+			}],
+		}, "/tmp/child-run", { id: "child-run", parentRunId: "parent-run", depth: 1, mode: "single", ts: 2 });
+
+		assert.equal(summary.processTerminal?.state, "unknown");
+		assert.equal(summary.processTerminal?.reason, "proof-write-failed");
+		assert.equal(summary.steps?.[0]?.processTerminal?.state, "unknown");
+		assert.equal(summary.steps?.[0]?.processTerminal?.reason, "proof-write-failed");
+	});
+
+	it("removes evicted status files without replaying completed children", () => {
+		const route = trackRoute();
+		for (let index = 0; index < 1000; index++) {
+			writeNestedEvent(route, {
+				type: "subagent.nested.updated",
+				ts: index + 1,
+				parentRunId: "root-run",
+				parentStepIndex: 1,
+				child: child("nested-retained", "running", index + 1),
+			});
+		}
+		writeNestedEvent(route, {
+			type: "subagent.nested.completed",
+			ts: 1001,
+			parentRunId: "root-run",
+			parentStepIndex: 1,
+			child: child("nested-retained", "complete", 1001),
+		});
+
+		assert.equal(fs.readdirSync(route.eventSink).length, 1001);
+		const firstProjection = projectNestedEvents(route);
+		assert.equal(firstProjection.processedEvents.length, 1000);
+		assert.equal(fs.readdirSync(route.eventSink).length, 1000);
+		assert.equal(firstProjection.children[0]?.state, "complete");
+
+		const secondProjection = projectNestedEvents(route);
+		assert.deepEqual(secondProjection, firstProjection);
+		assert.equal(secondProjection.children[0]?.state, "complete");
 	});
 });

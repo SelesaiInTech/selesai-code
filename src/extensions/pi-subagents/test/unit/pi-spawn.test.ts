@@ -4,9 +4,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
-	getSelesaiSpawnCommand,
-	resolveWindowsSelesaiCliScript,
-	type SelesaiSpawnDeps,
+	getPiSpawnCommand,
+	resolvePiCliScript,
+	type PiSpawnDeps,
 } from "../../src/runs/shared/pi-spawn.ts";
 
 function makeDeps(input: {
@@ -18,7 +18,7 @@ function makeDeps(input: {
 	packageJsonContent?: string;
 	packageEntry?: string;
 	env?: NodeJS.ProcessEnv;
-}): SelesaiSpawnDeps {
+}): PiSpawnDeps {
 	const existing = new Set(input.existing ?? []);
 	const packageJsonPath = input.packageJsonPath;
 	const packageJsonContent = input.packageJsonContent;
@@ -41,10 +41,10 @@ function makeDeps(input: {
 	};
 }
 
-describe("getSelesaiSpawnCommand", () => {
+describe("getPiSpawnCommand", () => {
 	it("honors explicit SELESAI_SUBAGENT_PI_BINARY override on any platform", () => {
 		const args = ["--mode", "json", "Task: check output"];
-		const result = getSelesaiSpawnCommand(args, {
+		const result = getPiSpawnCommand(args, {
 			platform: "win32",
 			execPath: "/usr/local/bin/node",
 			argv1: "/tmp/pi-entry.mjs",
@@ -61,27 +61,56 @@ describe("getSelesaiSpawnCommand", () => {
 
 	it("ignores a blank SELESAI_SUBAGENT_PI_BINARY override", () => {
 		const args = ["--mode", "json", "Task: check output"];
-		const result = getSelesaiSpawnCommand(args, {
+		const result = getPiSpawnCommand(args, {
 			platform: "darwin",
+			argv1: "/missing/host.js",
+			existsSync: () => false,
+			resolvePackageJson: () => {
+				throw new Error("Pi package unavailable");
+			},
 			env: { SELESAI_SUBAGENT_PI_BINARY: "   " },
 		});
 		assert.deepEqual(result, { command: "selesai", args });
 	});
 
-	it("uses plain pi on non-Windows even when argv1 is a runnable JS file", () => {
-		const argv1 = "/tmp/pi-entry.mjs";
-		const deps = makeDeps({
-			platform: "darwin",
-			execPath: "/usr/local/bin/node",
-			argv1,
-			existing: [argv1],
-		});
+	it("accepts the legacy PI_SUBAGENT_PI_BINARY alias", () => {
 		const args = ["--mode", "json", "Task: check output"];
-		const result = getSelesaiSpawnCommand(args, deps);
-		assert.deepEqual(result, { command: "selesai", args });
+		assert.deepEqual(getPiSpawnCommand(args, {
+			env: { PI_SUBAGENT_PI_BINARY: "/usr/local/bin/legacy-wrapper" },
+		}), { command: "/usr/local/bin/legacy-wrapper", args });
 	});
 
-	it("uses plain pi on non-Windows even when the CLI script can be resolved from package bin", () => {
+	for (const platform of ["darwin", "linux", "win32"] as const) {
+		it(`uses node + argv1 on ${platform} when argv1 belongs to the Pi package`, () => {
+			const tempDir = fs.mkdtempSync(
+				path.join(os.tmpdir(), "pi-spawn-argv-entry-"),
+			);
+			try {
+				const argv1 = path.join(tempDir, "dist", "cli.js");
+				fs.mkdirSync(path.dirname(argv1), { recursive: true });
+				fs.writeFileSync(argv1, "#!/usr/bin/env node\n");
+				fs.writeFileSync(
+					path.join(tempDir, "package.json"),
+					JSON.stringify({ name: "@selesai/code" }),
+				);
+				const args = ["--mode", "json", 'Task: review "quotes" & pipes | too'];
+				const result = getPiSpawnCommand(args, {
+					platform,
+					execPath: "/usr/local/bin/node",
+					argv1,
+					env: {},
+				});
+				assert.deepEqual(result, {
+					command: "/usr/local/bin/node",
+					args: [fs.realpathSync(argv1), ...args],
+				});
+			} finally {
+				fs.rmSync(tempDir, { recursive: true, force: true });
+			}
+		});
+	}
+
+	it("uses node + package bin on POSIX when argv1 is not a verified Pi entry", () => {
 		const packageJsonPath = "/opt/pi/package.json";
 		const cliPath = path.resolve(
 			path.dirname(packageJsonPath),
@@ -92,37 +121,130 @@ describe("getSelesaiSpawnCommand", () => {
 			execPath: "/usr/local/bin/node",
 			argv1: "/opt/pi/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { selesai: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli/index.js" } }),
 			existing: [packageJsonPath, cliPath],
 		});
 		const args = ["-p", "Task: hello"];
-		const result = getSelesaiSpawnCommand(args, deps);
-		assert.deepEqual(result, { command: "selesai", args });
-	});
-
-	it("falls back to plain pi command on non-Windows when CLI script cannot be resolved", () => {
-		const args = ["--mode", "json", "Task: check output"];
-		const result = getSelesaiSpawnCommand(args, { platform: "darwin", env: {} });
-		assert.deepEqual(result, { command: "selesai", args });
-	});
-
-	it("uses node + argv1 script on Windows when argv1 is runnable JS", () => {
-		const argv1 = "/tmp/pi-entry.mjs";
-		const deps = makeDeps({
-			platform: "win32",
-			execPath: "/usr/local/bin/node",
-			argv1,
-			existing: [argv1],
+		const result = getPiSpawnCommand(args, deps);
+		assert.deepEqual(result, {
+			command: "/usr/local/bin/node",
+			args: [cliPath, ...args],
 		});
-		const args = [
-			"--mode",
-			"json",
-			'Task: Read C:/dev/file.md and review "quotes" & pipes | too',
-		];
-		const result = getSelesaiSpawnCommand(args, deps);
-		assert.equal(result.command, "/usr/local/bin/node");
-		assert.equal(result.args[0], argv1);
-		assert.equal(result.args[3], args[2]);
+	});
+
+	it("falls back to plain selesai command on POSIX when CLI script cannot be resolved", () => {
+		const args = ["--mode", "json", "Task: check output"];
+		const result = getPiSpawnCommand(args, {
+			platform: "darwin",
+			argv1: "/missing/host.js",
+			existsSync: () => false,
+			resolvePackageJson: () => {
+				throw new Error("Pi package unavailable");
+			},
+			env: {},
+		});
+		assert.deepEqual(result, { command: "selesai", args });
+	});
+
+	it("ignores embedded host entry points and resolves the Pi package bin on every platform", () => {
+		const tempDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "pi-spawn-embedded-host-"),
+		);
+		try {
+			const hostRoot = path.join(tempDir, "pi-web");
+			const hostEntry = path.join(hostRoot, "dist", "server.js");
+			const hostPackageJson = path.join(hostRoot, "package.json");
+			const piRoot = path.join(
+				tempDir,
+				"node_modules",
+				"@earendil-works",
+				"pi-coding-agent",
+			);
+			const piCli = path.join(piRoot, "dist", "cli.js");
+			fs.mkdirSync(path.dirname(hostEntry), { recursive: true });
+			fs.mkdirSync(path.dirname(piCli), { recursive: true });
+			fs.writeFileSync(hostEntry, "export {};\n");
+			fs.writeFileSync(
+				hostPackageJson,
+				JSON.stringify({ name: "@jmfederico/pi-web" }),
+			);
+			fs.writeFileSync(piCli, "#!/usr/bin/env node\n");
+			fs.writeFileSync(
+				path.join(piRoot, "package.json"),
+				JSON.stringify({
+					name: "@selesai/code",
+					bin: { pi: "dist/cli.js" },
+				}),
+			);
+
+			for (const platform of ["darwin", "linux", "win32"] as const) {
+				const result = getPiSpawnCommand(["-p", "Task: hello"], {
+					platform,
+					execPath: "/usr/local/bin/node",
+					argv1: hostEntry,
+					resolvePackageJson: () => path.join(piRoot, "package.json"),
+					env: {},
+				});
+				assert.deepEqual(result, {
+					command: "/usr/local/bin/node",
+					args: [piCli, "-p", "Task: hello"],
+				});
+			}
+
+			fs.writeFileSync(hostPackageJson, "{");
+			for (const platform of ["darwin", "linux", "win32"] as const) {
+				const malformedHostResult = getPiSpawnCommand(["-p", "Task: hello"], {
+					platform,
+					execPath: "/usr/local/bin/node",
+					argv1: hostEntry,
+					resolvePackageJson: () => path.join(piRoot, "package.json"),
+					env: {},
+				});
+				assert.deepEqual(malformedHostResult, {
+					command: "/usr/local/bin/node",
+					args: [piCli, "-p", "Task: hello"],
+				});
+			}
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("validates argv1 ownership against its canonical target", () => {
+		const tempDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "pi-spawn-canonical-entry-"),
+		);
+		try {
+			const hostRoot = path.join(tempDir, "embedded-host");
+			const hostEntry = path.join(hostRoot, "dist", "server.js");
+			const piRoot = path.join(tempDir, "node_modules", "@earendil-works", "pi-coding-agent");
+			const disguisedEntry = path.join(piRoot, "dist", "cli.js");
+			const piCli = path.join(piRoot, "dist", "real-cli.js");
+			fs.mkdirSync(path.dirname(hostEntry), { recursive: true });
+			fs.mkdirSync(path.dirname(piCli), { recursive: true });
+			fs.writeFileSync(hostEntry, "export {};\n");
+			fs.writeFileSync(path.join(hostRoot, "package.json"), JSON.stringify({ name: "embedded-host" }));
+			fs.writeFileSync(piCli, "#!/usr/bin/env node\n");
+			fs.writeFileSync(path.join(piRoot, "package.json"), JSON.stringify({
+				name: "@selesai/code",
+				bin: { pi: "dist/real-cli.js" },
+			}));
+
+			const result = getPiSpawnCommand(["-p", "Task: hello"], {
+				execPath: "/usr/local/bin/node",
+				argv1: disguisedEntry,
+				existsSync: (filePath) => filePath === disguisedEntry || fs.existsSync(filePath),
+				realpathSync: (filePath) => filePath === disguisedEntry ? hostEntry : fs.realpathSync(filePath),
+				resolvePackageJson: () => path.join(piRoot, "package.json"),
+				env: {},
+			});
+			assert.deepEqual(result, {
+				command: "/usr/local/bin/node",
+				args: [piCli, "-p", "Task: hello"],
+			});
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
 	});
 
 	it("resolves CLI script from package bin when argv1 is not runnable JS", () => {
@@ -139,22 +261,22 @@ describe("getSelesaiSpawnCommand", () => {
 			execPath: "/usr/local/bin/node",
 			argv1: "/opt/pi/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { selesai: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli/index.js" } }),
 			existing: [packageJsonPath, cliPath],
 		});
-		const result = getSelesaiSpawnCommand(["-p", "Task: hello"], deps);
+		const result = getPiSpawnCommand(["-p", "Task: hello"], deps);
 		assert.equal(result.command, "/usr/local/bin/node");
 		assert.equal(result.args[0], cliPath);
 	});
 
-	it("falls back to pi when Windows CLI script cannot be resolved", () => {
+	it("falls back to selesai when Windows CLI script cannot be resolved", () => {
 		const deps = makeDeps({
 			platform: "win32",
 			argv1: "/opt/pi/subagent-runner.ts",
 			existing: [],
 		});
 		const args = ["-p", "Task: hello"];
-		const result = getSelesaiSpawnCommand(args, deps);
+		const result = getPiSpawnCommand(args, deps);
 		assert.deepEqual(result, { command: "selesai", args });
 	});
 
@@ -163,12 +285,7 @@ describe("getSelesaiSpawnCommand", () => {
 			path.join(os.tmpdir(), "pi-spawn-package-root-"),
 		);
 		try {
-			const packageRoot = path.join(
-				tempDir,
-				"node_modules",
-				"@selesai",
-				"code",
-			);
+			const packageRoot = path.join(tempDir, "node_modules", "@selesai", "code");
 			const entry = path.join(packageRoot, "dist", "index.js");
 			const cliPath = path.join(packageRoot, "dist", "cli", "index.js");
 			fs.mkdirSync(path.dirname(entry), { recursive: true });
@@ -182,10 +299,11 @@ describe("getSelesaiSpawnCommand", () => {
 					bin: { selesai: "dist/cli/index.js" },
 				}),
 			);
-			const result = getSelesaiSpawnCommand(["-p", "Task: hello"], {
+			const result = getPiSpawnCommand(["-p", "Task: hello"], {
 				platform: "win32",
 				execPath: "/usr/local/bin/node",
 				argv1: "/opt/pi/subagent-runner.ts",
+				piPackageRoot: packageRoot,
 				resolvePackageEntry: () => entry,
 				env: {},
 			});
@@ -197,7 +315,7 @@ describe("getSelesaiSpawnCommand", () => {
 	});
 });
 
-describe("getSelesaiSpawnCommand with piPackageRoot", () => {
+describe("getPiSpawnCommand with piPackageRoot", () => {
 	it("resolves CLI script via piPackageRoot when argv1 is not runnable", () => {
 		const packageJsonPath = "/opt/pi/package.json";
 		const cliPath = path.resolve(
@@ -209,17 +327,17 @@ describe("getSelesaiSpawnCommand with piPackageRoot", () => {
 			execPath: "/usr/local/bin/node",
 			argv1: "/opt/pi/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { selesai: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli/index.js" } }),
 			existing: [packageJsonPath, cliPath],
 		});
 		deps.piPackageRoot = "/opt/pi";
-		const result = getSelesaiSpawnCommand(["-p", "Task: hello"], deps);
+		const result = getPiSpawnCommand(["-p", "Task: hello"], deps);
 		assert.equal(result.command, "/usr/local/bin/node");
 		assert.equal(result.args[0], cliPath);
 	});
 });
 
-describe("resolveWindowsSelesaiCliScript", () => {
+describe("resolvePiCliScript", () => {
 	it("supports package bin as string", () => {
 		const packageJsonPath = "/opt/pi/package.json";
 		const cliPath = path.resolve(
@@ -233,6 +351,6 @@ describe("resolveWindowsSelesaiCliScript", () => {
 			packageJsonContent: JSON.stringify({ bin: "dist/cli/index.mjs" }),
 			existing: [packageJsonPath, cliPath],
 		});
-		assert.equal(resolveWindowsSelesaiCliScript(deps), cliPath);
+		assert.equal(resolvePiCliScript(deps), cliPath);
 	});
 });

@@ -246,8 +246,12 @@ describe("worktree", () => {
 			setup = createWorktrees(repoDir, "cleanup", 2);
 			const worktreePaths = setup.worktrees.map((worktree) => worktree.path);
 			const branches = setup.worktrees.map((worktree) => worktree.branch);
-			cleanupWorktrees(setup);
+			const cleanup = cleanupWorktrees(setup);
 			setup = undefined;
+			assert.equal(cleanup.state, "complete");
+			assert.equal(cleanup.pruned, true);
+			assert.equal(cleanup.tasks.length, 2);
+			assert.ok(cleanup.tasks.every((task) => task.worktreeRemoved && task.branchRemoved));
 
 			for (const worktreePath of worktreePaths) {
 				assert.equal(fs.existsSync(worktreePath), false, `worktree path still exists: ${worktreePath}`);

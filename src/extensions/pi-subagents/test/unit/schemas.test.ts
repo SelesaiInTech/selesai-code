@@ -180,9 +180,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(actionSchema.type, "string");
 		assert.equal(actionSchema.enum, undefined);
 		const description = String(actionSchema.description ?? "");
-		assert.match(description, /Management\/control action only/);
-		assert.match(description, /Must be omitted for execution mode/);
-		assert.match(description, /single, parallel, or chain/);
+		assert.match(description, /Optional management\/control action/);
+		assert.match(description, /Omit this field entirely for execution\/delegation/);
+		assert.match(description, /\{agent, task\}, \{tasks\}, or \{chain\}/);
+		assert.match(description, /use it only for management\/control actions/);
 		assert.doesNotMatch(description, /orchestration\./);
 	});
 
@@ -239,6 +240,12 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(linesSchema.minimum, 1);
 		assert.equal(linesSchema.maximum, 500);
 		assert.match(String(linesSchema.description ?? ""), /transcript/i);
+
+		const additionalSchema = SubagentParams?.properties?.additional;
+		assert.ok(additionalSchema, "additional schema should exist");
+		assert.equal(additionalSchema.minimum, 1);
+		assert.match(String(additionalSchema.description ?? ""), /grant-spawn-budget/);
+		assert.match(String(additionalSchema.description ?? ""), /root interactive parent/i);
 
 		const controlSchema = SubagentParams?.properties?.control;
 		assert.ok(controlSchema, "control schema should exist");
@@ -416,6 +423,14 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(acceptanceSchema.type, undefined);
 		assert.equal(hasAnyOfType(acceptanceSchema, "string"), true);
 		assert.equal(hasAnyOfType(acceptanceSchema, "boolean"), true);
+		const acceptanceStringBranches = anyOfBranches(acceptanceSchema).filter((branch) => branch.type === "string");
+		const acceptanceLevelBranch = acceptanceStringBranches.find((branch) => Array.isArray(branch.enum) && branch.enum.includes("auto"));
+		assert.deepEqual(acceptanceLevelBranch?.enum, ["auto", "attested", "checked", "verified"], "evidence levels end at verified");
+		const reviewedRecoveryBranch = acceptanceStringBranches.find((branch) => Array.isArray(branch.enum) && branch.enum.includes("reviewed"));
+		assert.deepEqual(reviewedRecoveryBranch?.enum, ["reviewed"]);
+		assert.equal(reviewedRecoveryBranch?.deprecated, true);
+		assert.match(String(acceptanceSchema.description ?? ""), /reviewer\/read-only calls, omit acceptance/i);
+		assert.match(String(acceptanceSchema.description ?? ""), /acceptance\.review\.required/);
 		const acceptanceObjectBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "object");
 		assert.ok(acceptanceObjectBranch, "acceptance should support object config");
 		assert.equal(acceptanceObjectBranch.additionalProperties, true);
@@ -499,6 +514,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ tasks: [{ agent: "worker", task: "Fix" }], maxRuntimeMs: 1000 },
 			{ chain: [{ agent: "worker", task: "Fix" }], timeoutMs: 1000, maxRuntimeMs: 1000 },
 			{ agent: "worker", task: "Fix", acceptance: "checked" },
+			{ agent: "worker", task: "Fix", acceptance: "reviewed" },
+			{ agent: "worker", task: "Fix", acceptance: { level: "none", reason: "parent will verify manually" } },
 			{ agent: "worker", task: "Fix", acceptance: { level: "checked", review: false } },
 			{ tasks: [{ agent: "worker", task: "Fix", acceptance: false }] },
 			{ chain: [{ agent: "worker", acceptance: { level: "checked" } }] },
@@ -517,6 +534,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		];
 		const invalidValues = [
 			{ skill: 123 },
+			{ agent: "worker", task: "Fix", acceptance: "none" },
 			{ skill: [123] },
 			{ output: 123 },
 			{ timeoutMs: 0 },

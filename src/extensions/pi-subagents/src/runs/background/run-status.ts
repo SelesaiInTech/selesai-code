@@ -6,8 +6,9 @@ import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunT
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
-import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SubagentState } from "../../shared/types.ts";
+import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SteeringStatus, type SubagentState } from "../../shared/types.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
+import { readProcessTerminal, sanitizeProcessTerminal } from "./process-terminal.ts";
 import { resolveAsyncRunLocation } from "./async-resume.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
@@ -38,7 +39,8 @@ function hasExistingSessionFile(value: unknown): value is string {
 	return typeof value === "string" && fs.existsSync(value);
 }
 
-function formatResumeGuidance(runId: string | undefined, children: Array<{ agent?: unknown; sessionFile?: unknown }>, fallbackSessionFile?: unknown): string {
+function formatResumeGuidance(runId: string | undefined, children: Array<{ agent?: unknown; sessionFile?: unknown }>, fallbackSessionFile?: unknown, options: { stopped?: boolean } = {}): string {
+	if (options.stopped) return "Resume: unavailable; stopped runs are not resumable. Start a new run instead.";
 	const knownChildren = children
 		.map((child, index) => ({ child, index }))
 		.filter(({ child }) => typeof child.agent === "string");
@@ -73,15 +75,15 @@ function nestedRunDisplayName(run: NestedRunSummary): string {
 	return run.id;
 }
 
-function formatSteeringSummary(input: { steerCount?: number; lastSteerAt?: number }): string | undefined {
-	const parts: string[] = [];
-	if (input.steerCount !== undefined) parts.push(`${input.steerCount} steer${input.steerCount === 1 ? "" : "s"}`);
-	if (typeof input.lastSteerAt === "number" && Number.isFinite(input.lastSteerAt)) parts.push(`last ${new Date(input.lastSteerAt).toISOString()}`);
-	return parts.length ? parts.join(", ") : undefined;
+function formatSteeringSummary(input: { steering?: SteeringStatus }): string | undefined {
+	const steering = input.steering;
+	if (!steering || steering.requested === 0) return undefined;
+	const lateAcknowledgments = steering.recent.reduce((count, request) => count + request.targets.filter((target) => target.lateDeliveredAt !== undefined).length, 0);
+	return `${steering.requested} requested, ${steering.scheduled} scheduled, ${steering.pending} pending, ${steering.delivered} delivered, ${steering.failed} failed, ${steering.recovered} recovered${lateAcknowledgments ? `, ${lateAcknowledgments} late acknowledged` : ""}`;
 }
 
 function rememberedForegroundChildOutput(child: ForegroundResumeRun["children"][number]): string {
-	const outputPath = child.artifactPaths?.outputPath;
+	const outputPath = child.artifactPaths?.outputPath ?? child.savedOutputPath;
 	if (outputPath && fs.existsSync(outputPath)) {
 		try {
 			const artifactOutput = fs.readFileSync(outputPath, "utf-8").trim();
@@ -107,24 +109,29 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
 			`${child.index + 1}. ${child.agent} ${child.status}`,
 			child.exitCode !== undefined ? `exit ${child.exitCode}` : undefined,
 			child.detachedReason ? `detached: ${child.detachedReason}` : undefined,
+			child.acceptance ? `acceptance: ${child.acceptance.status}` : undefined,
+			child.error ? `error: ${child.error}` : undefined,
 			output ? `output: ${output.slice(0, 160)}` : undefined,
 		].filter(Boolean);
 		lines.push(parts.join(", "));
 		if (child.sessionFile) lines.push(`  Session: ${child.sessionFile}`);
 		if (child.transcriptPath) lines.push(`  Transcript: ${child.transcriptPath}`);
 		if (child.artifactPaths?.outputPath) lines.push(`  Output: ${child.artifactPaths.outputPath}`);
+		if (child.savedOutputPath && child.savedOutputPath !== child.artifactPaths?.outputPath) lines.push(`  Saved output: ${child.savedOutputPath}`);
+		if (child.outputSaveError) lines.push(`  Output warning: ${child.outputSaveError}`);
 		if (child.transcriptError) lines.push(`  Transcript warning: ${child.transcriptError}`);
 	}
 	lines.push("", `Status: subagent({ action: "status", id: "${run.runId}" })`);
 	if (run.children.length === 1) lines.push(`Transcript: subagent({ action: "status", id: "${run.runId}", view: "transcript" })`);
 	else lines.push(`Transcript: subagent({ action: "status", id: "${run.runId}", index: 0, view: "transcript" })`);
-	const resumable = run.children.find((child) => child.status !== "detached" && hasExistingSessionFile(child.sessionFile));
-	if (resumable) {
+	const detached = run.children.some((child) => child.status === "detached");
+	const resumable = run.children.find((child) => hasExistingSessionFile(child.sessionFile));
+	if (detached) {
+		lines.push(`Recovery: reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); do not resume or launch a replacement while any child remains detached.`);
+	} else if (resumable) {
 		lines.push(run.children.length === 1
 			? `Revive: subagent({ action: "resume", id: "${run.runId}", message: "..." })`
 			: `Revive child: subagent({ action: "resume", id: "${run.runId}", index: ${resumable.index}, message: "..." })`);
-	} else if (run.children.some((child) => child.status === "detached")) {
-		lines.push("Recovery: child detached for intercom coordination; status will show recovered output after the child exits when Pi can observe it.");
 	} else {
 		lines.push("Resume: unavailable; no child session file was persisted.");
 	}
@@ -147,6 +154,8 @@ function formatRememberedForegroundTranscript(run: ForegroundResumeRun, options:
 		child.sessionFile ? `Session: ${child.sessionFile}` : undefined,
 		child.transcriptPath ? `Transcript: ${child.transcriptPath}` : undefined,
 		child.artifactPaths?.outputPath ? `Output: ${child.artifactPaths.outputPath}` : undefined,
+		child.savedOutputPath && child.savedOutputPath !== child.artifactPaths?.outputPath ? `Saved output: ${child.savedOutputPath}` : undefined,
+		child.outputSaveError ? `Output warning: ${child.outputSaveError}` : undefined,
 	].filter((line): line is string => Boolean(line));
 	lines.push("Result transcript tail:");
 	if (outputLines.length === 0) lines.push("  (no recovered final output available yet)");
@@ -343,10 +352,15 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			const updated = status.lastUpdate ? new Date(status.lastUpdate).toISOString() : "n/a";
 			const statusActivityText = status.state === "running" ? formatActivityLabel(status.lastActivityAt, status.activityState) : undefined;
 			const steeringText = formatSteeringSummary(status);
+			const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
+				?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
 
 			const lines = [
 				`Run: ${status.runId}`,
 				`State: ${status.state}`,
+				processTerminal ? `Process terminal: ${processTerminal.state}${processTerminal.reason ? ` (${processTerminal.reason})` : ""}` : undefined,
+				status.capabilityCeiling ? `Capability ceiling: ${status.capabilityCeiling.allowedTools === undefined ? "names unrestricted" : status.capabilityCeiling.allowedTools.length === 0 ? "none" : status.capabilityCeiling.allowedTools.join(", ")}\nExtensions denied: ${status.capabilityCeiling.denyExtensions ? "yes" : "no"} (sources: ${status.capabilityCeiling.sources.join(", ")})` : undefined,
+				status.capabilityAudit ? `Capability audit: ${status.capabilityAudit.removedTools.length} tools removed, ${status.capabilityAudit.removedExtensionCount} extension entries removed` : undefined,
 				status.error ? `Error: ${status.error}` : undefined,
 				statusActivityText ? `Activity: ${statusActivityText}` : undefined,
 				steeringText ? `Steering: ${steeringText}` : undefined,
@@ -358,6 +372,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				status.turnBudget ? `Turn budget: ${status.turnBudget.turnCount}/${status.turnBudget.maxTurns}+${status.turnBudget.graceTurns} (${status.turnBudget.outcome})` : undefined,
 				`Dir: ${asyncDir}`,
 				outputPath ? `Output: ${outputPath}` : undefined,
+				status.parallelHandoff ? `Parallel handoff: ${status.parallelHandoff.path}` : undefined,
 				reconciliation.message ? `Diagnosis: ${reconciliation.message}` : undefined,
 				reconciliation.resultPath && fs.existsSync(reconciliation.resultPath) ? `Result: ${reconciliation.resultPath}` : undefined,
 			].filter((line): line is string => Boolean(line));
@@ -388,19 +403,19 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (status.sessionFile) lines.push(`Session: ${status.sessionFile}`);
 			if (status.state === "running") lines.push(`Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`);
 			if (status.state !== "running") {
-				lines.push(formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile));
+				lines.push(formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile, { stopped: status.state === "stopped" || status.stopped === true }));
 			}
 			if (fs.existsSync(logPath)) lines.push(`Log: ${logPath}`);
 			if (fs.existsSync(eventsPath)) lines.push(`Events: ${eventsPath}`);
 
-			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [] } };
+			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
 		}
 	}
 
 	if (resultPath) {
 		try {
 			const raw = fs.readFileSync(resultPath, "utf-8");
-			const data = JSON.parse(raw) as { id?: string; runId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; sessionFile?: string; results?: Array<{ agent?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null }> };
+			const data = JSON.parse(raw) as { id?: string; runId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; sessionFile?: string; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null }> };
 			if (params.view === "transcript") {
 				try {
 					return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }) }], details: { mode: "single", results: [] } };
@@ -409,11 +424,12 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 					return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };
 				}
 			}
-			const status = data.success ? "complete" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
+			const status = data.state === "stopped" ? "stopped" : data.success ? "complete" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
 			const runId = data.runId ?? data.id ?? resolvedId;
 			const lines = [`Run: ${runId}`, `State: ${status}`, `Result: ${resultPath}`];
+			if (data.parallelHandoff?.path) lines.push(`Parallel handoff: ${data.parallelHandoff.path}`);
 			const children = Array.isArray(data.results) ? data.results : data.agent ? [{ agent: data.agent, sessionFile: data.sessionFile }] : [];
-			lines.push(formatResumeGuidance(runId, children, data.sessionFile));
+			lines.push(formatResumeGuidance(runId, children, data.sessionFile, { stopped: status === "stopped" }));
 			if (data.summary) lines.push("", data.summary);
 			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [] } };
 		} catch (error) {

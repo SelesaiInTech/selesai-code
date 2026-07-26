@@ -211,6 +211,31 @@ export function resolveSubagentModelOverride(
 	return resolved;
 }
 
+export function resolveEffectiveSubagentModel(
+	explicitModel: string | boolean | undefined,
+	agentModel: string | boolean | undefined,
+	parentModel: ParentModel | undefined,
+	availableModels: AvailableModelInfo[] | undefined,
+	preferredProvider?: string,
+	options?: Omit<ResolveSubagentModelOverrideOptions, "source">,
+): string | undefined {
+	const resolved = resolveSubagentModelOverride(
+		explicitModel ?? agentModel,
+		parentModel,
+		availableModels,
+		preferredProvider,
+		{ ...options, source: explicitModel !== undefined ? "explicit" : "inherited" },
+	);
+	if (resolved || explicitModel === undefined) return resolved;
+	return resolveSubagentModelOverride(
+		agentModel,
+		parentModel,
+		availableModels,
+		preferredProvider,
+		{ ...options, source: "inherited" },
+	);
+}
+
 export interface BuildModelCandidatesOptions {
 	/** Fallback models are inherited agent config and warn, rather than error, when out of scope. */
 	scope?: ModelScopeConfig;
@@ -267,6 +292,7 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/fetch failed/i,
 	/network error/i,
 	/socket hang up/i,
+	/stream ended without finish_reason/i,
 	/upstream/i,
 	/timed? out/i,
 	/timeout/i,
@@ -279,8 +305,18 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/model.*(?:load|fail|error)/i,
 ];
 
+/**
+ * Failures reported as `<tool> failed (exit N): ...` or `<tool> failed with
+ * exit code N` come from a tool call inside the child's task, not from the
+ * provider/model, however network-flavored their details read. Retrying a
+ * different model cannot fix them and would rerun the whole task. Tool names
+ * include namespaced forms like `mcp.server/write`.
+ */
+const TOOL_FAILURE_PREFIX = /^[\w.:@/-]+ failed (?:(?:\(exit \d+\):)|(?:with exit code \d+))(?:\s|$)/i;
+
 export function isRetryableModelFailure(error: string | undefined): boolean {
 	if (!error) return false;
+	if (TOOL_FAILURE_PREFIX.test(error.trim())) return false;
 	return RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
 }
 

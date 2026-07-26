@@ -67,11 +67,26 @@ const JsonSchemaObject = Type.Unsafe({
 
 const AcceptanceOverride = Type.Unsafe({
 	anyOf: [
-		{ type: "string", enum: ["auto", "none", "attested", "checked", "verified", "reviewed"] },
+		{ type: "string", enum: ["auto", "attested", "checked", "verified"] },
+		{
+			type: "string",
+			enum: ["reviewed"],
+			deprecated: true,
+			description: "Invalid as an explicit policy. Recognized only so preflight can explain that reviewed is an achieved status.",
+		},
 		{ type: "boolean", enum: [false] },
 		{ type: "object", additionalProperties: true },
 	],
-	description: "Optional acceptance policy. Omitted means auto-inferred; verified requires configured runtime commands.",
+	description: "Optional acceptance policy. For reviewer/read-only calls, omit acceptance. Evidence levels end at verified; require independent review with acceptance.review.required. The value reviewed is an achieved status and is accepted by the schema only for actionable preflight recovery. In the current/default contract, omitted means auto-inferred. With agentContract.version=1, omitted means not requested and acceptance failures are reported separately from execution.",
+});
+
+const AgentContractOverride = Type.Object({
+	version: Type.Integer({ enum: [1], description: "Opt into generic agent contract v1 for this run/child." }),
+}, { additionalProperties: false, description: "Opt-in compatibility contract. Omit to use current default behavior." });
+
+const ChainGateOverride = Type.String({
+	enum: ["execution", "acceptance"],
+	description: "For agentContract.version=1 chain steps, choose whether the chain advances on execution success or acceptance success. Defaults to execution.",
 });
 
 const TurnBudgetOverride = Type.Object({
@@ -104,11 +119,13 @@ const TaskItem = Type.Object({
 	model: Type.Optional(Type.String({ description: "Override model for this task (e.g. 'google/gemini-3-pro')" })),
 	skill: Type.Optional(SkillOverride),
 	toolBudget: Type.Optional(ToolBudgetOverride),
+	outputSchema: Type.Optional(JsonSchemaObject),
 	acceptance: Type.Optional(AcceptanceOverride),
+	agentContract: Type.Optional(AgentContractOverride),
 });
 
 // Parallel task item (within a parallel step)
-const ParallelTaskSchema = Type.Object({
+export const ParallelTaskSchema = Type.Object({
 	agent: Type.String(),
 	task: Type.Optional(Type.String({ description: "Task template with {task}, {previous}, {chain_dir} variables. Defaults to {previous}." })),
 	phase: Type.Optional(Type.String({ description: "Optional phase/group label for status and graph rendering." })),
@@ -125,9 +142,11 @@ const ParallelTaskSchema = Type.Object({
 	model: Type.Optional(Type.String({ description: "Override model for this task" })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
+	agentContract: Type.Optional(AgentContractOverride),
+	gateOn: Type.Optional(ChainGateOverride),
 });
 
-const DynamicExpandSchema = Type.Object({
+export const DynamicExpandSchema = Type.Object({
 	from: Type.Object({
 		output: Type.String({ description: "Prior named structured output to expand from." }),
 		path: Type.String({ description: "JSON Pointer into the structured output, e.g. /items." }),
@@ -138,7 +157,7 @@ const DynamicExpandSchema = Type.Object({
 	onEmpty: Type.Optional(Type.String({ enum: ["skip", "fail"], description: "Empty input behavior. Defaults to skip." })),
 }, { additionalProperties: false });
 
-const DynamicParallelTemplateSchema = Type.Object({
+export const DynamicParallelTemplateSchema = Type.Object({
 	agent: Type.String(),
 	task: Type.Optional(Type.String({ description: "Task template with {item}, {item.path}, {task}, {previous}, {chain_dir}, and {outputs.name} variables." })),
 	phase: Type.Optional(Type.String({ description: "Optional phase/group label for status and graph rendering." })),
@@ -153,15 +172,17 @@ const DynamicParallelTemplateSchema = Type.Object({
 	model: Type.Optional(Type.String({ description: "Override model for this task" })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
+	agentContract: Type.Optional(AgentContractOverride),
+	gateOn: Type.Optional(ChainGateOverride),
 }, { additionalProperties: false });
 
-const DynamicCollectSchema = Type.Object({
+export const DynamicCollectSchema = Type.Object({
 	as: Type.String({ description: "Safe output name for the ordered collected result array." }),
 	outputSchema: Type.Optional(JsonSchemaObject),
 }, { additionalProperties: false });
 
 // Flattened so chain steps do not need an object-shape anyOf/oneOf union.
-const ChainItem = Type.Object({
+export const ChainItem = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Sequential step agent name" })),
 	task: Type.Optional(Type.String({
 		description: "Task template with variables: {task}=original request, {previous}=prior step's text response, {chain_dir}=shared folder, {outputs.name}=prior named output. Required for first step, defaults to '{previous}' for subsequent steps."
@@ -179,6 +200,8 @@ const ChainItem = Type.Object({
 	model: Type.Optional(Type.String({ description: "Override model for this step" })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
+	agentContract: Type.Optional(AgentContractOverride),
+	gateOn: Type.Optional(ChainGateOverride),
 	parallel: Type.Optional(Type.Unsafe({
 		anyOf: [
 			Type.Array(ParallelTaskSchema, { minItems: 1, description: "Tasks to run in parallel" }),
@@ -218,16 +241,16 @@ const SubagentParamsSchema = Type.Object({
 	task: Type.Optional(Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({
-		description: "Management/control action only. Must be omitted for execution mode (single, parallel, or chain)."
+		description: "Optional management/control action. Omit this field entirely for execution/delegation ({agent, task}, {tasks}, or {chain}); use it only for management/control actions."
 	})),
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for action='status', action='interrupt', action='resume', action='steer', or action='append-step'."
+		description: "Run id or prefix for action='status', action='interrupt', action='stop', action='resume', action='steer', or action='append-step'."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for action='interrupt', action='resume', action='steer', or action='append-step'. Defaults to the most recently active controllable run for interrupt. Prefer id for new calls."
+		description: "Target run ID for action='interrupt', action='stop', action='resume', action='steer', or action='append-step'. Prefer id for new calls."
 	})),
 	dir: Type.Optional(Type.String({
-		description: "Async run directory for action='status', action='resume', or action='steer'."
+		description: "Async run directory for action='status', action='stop', action='resume', or action='steer'."
 	})),
 	index: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based child index for actions that target a specific child or transcript." })),
 	view: Type.Optional(Type.String({
@@ -235,7 +258,12 @@ const SubagentParamsSchema = Type.Object({
 		description: "Optional status view. Use view='fleet' for a read-only active foreground/async fleet surface, or view='transcript' with id/dir (and optional index) to tail a run transcript.",
 	})),
 	lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 500, description: "Maximum transcript lines for action='status', view='transcript'. Defaults to 80." })),
-	message: Type.Optional(Type.String({ description: "Follow-up message for action='resume' or non-terminal guidance for action='steer'. Use index to choose a child from multi-child runs." })),
+	message: Type.Optional(Type.String({ description: "Follow-up message for action='resume' (revive paused, completed, or failed children, or reach a routed nested run) or live async guidance for action='steer'. Stopped runs are non-resumable. Use index to choose a child from multi-child runs." })),
+	steeringRecovery: Type.Optional(Type.Boolean({ description: "For action='steer', allow pause-and-revive recovery after a missed acknowledgment. Defaults true for direct tool calls; extension RPC steering forces false so callers retain exact child ownership." })),
+	additional: Type.Optional(Type.Integer({ minimum: 1, description: "Positive launches to add with action='grant-spawn-budget'. Root interactive parent with native user confirmation only; total grants cannot exceed the original configured cap." })),
+	scope: Type.Optional(Type.String({ enum: ["session", "user", "project"], description: "Scope for action='watchdog.configure'. Defaults to session to avoid persistent settings writes unless user/project is explicit." })),
+	target: Type.Optional(Type.String({ enum: ["main", "children", "child"], description: "Target for action='watchdog.configure'. Defaults to main. Use target='child' with agent for a per-agent child watchdog override." })),
+	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level for action='watchdog.configure' (off/minimal/low/medium/high/xhigh/max, inherit, or false for off)." })),
 	schedule: Type.Optional(Type.String({ description: "Explicit one-shot schedule for action='schedule'. Only honored when scheduledRuns.enabled is true. Use '+10m' or a future ISO timestamp with timezone; scheduled runs always launch async with fresh context." })),
 	scheduleName: Type.Optional(Type.String({ description: "Optional display name for action='schedule'." })),
 	// Chain identifier for management (can't reuse 'chain' — that's the execution array)
@@ -288,14 +316,16 @@ const SubagentParamsSchema = Type.Object({
 	outputMode: Type.Optional(OutputModeOverride),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for single agent (e.g. 'anthropic/claude-sonnet-4')" })),
+	outputSchema: Type.Optional(JsonSchemaObject),
+	agentContract: Type.Optional(AgentContractOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 });
 
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
 
-const WaitParamsSchema = Type.Object({
+const SubagentWaitParamsSchema = Type.Object({
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix to wait for one specific run. Omit to wait across every active async run started in this session.",
+		description: "Async run or remembered detached foreground run id/prefix to wait for one specific run. Omit to wait across every active async run started in this session.",
 	})),
 	all: Type.Optional(Type.Boolean({
 		description: "Wait for ALL active runs to finish. Default false: return as soon as the first run finishes, so a fleet manager can spawn a replacement and wait again. Ignored when id targets a single run.",
@@ -306,4 +336,4 @@ const WaitParamsSchema = Type.Object({
 	})),
 });
 
-export const WaitParams = keepTopLevelParameterDescriptions(WaitParamsSchema);
+export const SubagentWaitParams = keepTopLevelParameterDescriptions(SubagentWaitParamsSchema);

@@ -5,6 +5,7 @@ import {
 	fuzzyResolveModel,
 	isRetryableModelFailure,
 	normalizeModelSegment,
+	resolveEffectiveSubagentModel,
 	resolveModelCandidate,
 	resolveSubagentModelOverride,
 } from "../../src/runs/shared/model-fallback.ts";
@@ -71,12 +72,24 @@ describe("model fallback helpers", () => {
 		assert.equal(isRetryableModelFailure("authentication failed"), true);
 		assert.equal(isRetryableModelFailure("Subagent produced no output (possible model cold-start or empty response)."), true);
 		assert.equal(isRetryableModelFailure("model load failed"), true);
+		assert.equal(isRetryableModelFailure("Stream ended without finish_reason"), true);
+		assert.equal(isRetryableModelFailure("Request timed out."), true);
 	});
 
 	it("does not treat ordinary task/tool failures as retryable model failures", () => {
 		assert.equal(isRetryableModelFailure("bash failed (exit 1): command not found"), false);
 		assert.equal(isRetryableModelFailure("read failed (exit 1): no such file or directory"), false);
 		assert.equal(isRetryableModelFailure(undefined), false);
+	});
+
+	it("does not treat network-flavored tool failures as retryable model failures", () => {
+		assert.equal(isRetryableModelFailure("bash failed (exit 1): requests.exceptions.ConnectionError: Connection error."), false);
+		assert.equal(isRetryableModelFailure("bash failed (exit 1): urllib.error.URLError: request timed out"), false);
+		assert.equal(isRetryableModelFailure("fetch_content failed with exit code 1"), false);
+		assert.equal(isRetryableModelFailure("mcp.server/write failed (exit 1): request timed out"), false);
+		assert.equal(isRetryableModelFailure("mcp:tools.search failed with exit code 1"), false);
+		assert.equal(isRetryableModelFailure("Provider error: bash failed (exit 1): request timed out"), true);
+		assert.equal(isRetryableModelFailure("bash failed (exit unknown): request timed out"), true);
 	});
 });
 
@@ -148,6 +161,29 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 		// the global default.
 		assert.notEqual(resolveSubagentModelOverride("inherit", parentModel, availableModels), "inherit");
 		assert.notEqual(resolveSubagentModelOverride("inherit", undefined, availableModels), "inherit");
+	});
+});
+
+describe("resolveEffectiveSubagentModel", () => {
+	const availableModels = [
+		{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+	];
+
+	it("falls back to the agent model when inheritance has no parent", () => {
+		assert.equal(resolveEffectiveSubagentModel("", "openai/gpt-5-mini", undefined, availableModels), "openai/gpt-5-mini");
+		assert.equal(resolveEffectiveSubagentModel("inherit", "openai/gpt-5-mini", undefined, availableModels), "openai/gpt-5-mini");
+	});
+
+	it("keeps agent models inherited for scope enforcement", () => {
+		const warnings: string[] = [];
+		assert.equal(
+			resolveEffectiveSubagentModel(undefined, "openai/gpt-5-mini", undefined, availableModels, undefined, {
+				scope: { enforce: true, allow: ["anthropic/*"] },
+				onWarn: (violation) => warnings.push(violation.message),
+			}),
+			"openai/gpt-5-mini",
+		);
+		assert.equal(warnings.length, 1);
 	});
 });
 

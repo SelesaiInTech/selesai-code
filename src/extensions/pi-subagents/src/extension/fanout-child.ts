@@ -5,6 +5,7 @@ import type { ExtensionAPI, ToolDefinition } from "@selesai/code";
 import { discoverAgents } from "../agents/agents.ts";
 import { getArtifactsDir } from "../shared/artifacts.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
+import { resolveWaitToolConfig } from "../runs/background/wait-config.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import { readNestedControlRequests, resolveNestedRouteFromEnv, writeNestedControlResult } from "../runs/shared/nested-events.ts";
 import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom.ts";
@@ -146,6 +147,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		state,
 		config,
 		asyncByDefault: config.asyncByDefault === true,
+		waitToolEnabled: resolveWaitToolConfig(config.waitTool).enabled,
 		tempArtifactsDir: getArtifactsDir(null),
 		getSubagentSessionRoot,
 		expandTilde,
@@ -159,7 +161,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		description: [
 			"Delegate to subagents from child-safe fanout mode.",
 			"Allowed management/control actions: list, get, status, interrupt, resume, steer, append-step, doctor.",
-			"Agent config mutation actions (create, update, delete, eject, disable, enable, reset) are blocked in this mode.",
+			"Mutating management actions (create, update, delete, eject, disable, enable, reset, grant-spawn-budget) are blocked in this mode.",
 		].join("\n"),
 		parameters: SubagentParams,
 		execute(id, params, signal, onUpdate, ctx) {

@@ -1,11 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSubagentEnv } from "../../shared/env.ts";
 
-export const SELESAI_PACKAGE = "@selesai/code";
+export const PI_CODING_AGENT_PACKAGE = "@selesai/code";
 export const SELESAI_SUBAGENT_PI_BINARY_ENV = "SELESAI_SUBAGENT_PI_BINARY";
 
-export function findSelesaiPackageRootFromEntry(
+export function findPiPackageRootFromEntry(
 	entryPoint: string,
 ): string | undefined {
 	let dir = path.dirname(entryPoint);
@@ -15,24 +16,24 @@ export function findSelesaiPackageRootFromEntry(
 			const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as {
 				name?: unknown;
 			};
-			if (pkg.name === SELESAI_PACKAGE) return dir;
+			if (pkg.name === PI_CODING_AGENT_PACKAGE) return dir;
 		}
 		dir = path.dirname(dir);
 	}
 	return undefined;
 }
 
-export function resolveInstalledSelesaiPackageRoot(): string | undefined {
-	return findSelesaiPackageRootFromEntry(
-		fileURLToPath(import.meta.resolve(SELESAI_PACKAGE)),
+export function resolveInstalledPiPackageRoot(): string | undefined {
+	return findPiPackageRootFromEntry(
+		fileURLToPath(import.meta.resolve(PI_CODING_AGENT_PACKAGE)),
 	);
 }
 
-export function resolveSelesaiPackageRoot(): string | undefined {
+export function resolvePiPackageRoot(): string | undefined {
 	try {
 		const entry = process.argv[1];
 		return entry
-			? findSelesaiPackageRootFromEntry(fs.realpathSync(entry))
+			? findPiPackageRootFromEntry(fs.realpathSync(entry))
 			: undefined;
 	} catch {
 		// process.argv[1] probing is best-effort; callers can fall back to PATH/package resolution.
@@ -40,11 +41,12 @@ export function resolveSelesaiPackageRoot(): string | undefined {
 	}
 }
 
-export interface SelesaiSpawnDeps {
+export interface PiSpawnDeps {
 	platform?: NodeJS.Platform;
 	execPath?: string;
 	argv1?: string;
 	existsSync?: (filePath: string) => boolean;
+	realpathSync?: (filePath: string) => string;
 	readFileSync?: (filePath: string, encoding: "utf-8") => string;
 	resolvePackageJson?: () => string;
 	resolvePackageEntry?: () => string;
@@ -52,7 +54,7 @@ export interface SelesaiSpawnDeps {
 	env?: NodeJS.ProcessEnv;
 }
 
-interface SelesaiSpawnCommand {
+interface PiSpawnCommand {
 	command: string;
 	args: string[];
 }
@@ -69,10 +71,11 @@ function normalizePath(filePath: string): string {
 	return path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
 }
 
-export function resolveWindowsSelesaiCliScript(
-	deps: SelesaiSpawnDeps = {},
+export function resolvePiCliScript(
+	deps: PiSpawnDeps = {},
 ): string | undefined {
 	const existsSync = deps.existsSync ?? fs.existsSync;
+	const realpathSync = deps.realpathSync ?? fs.realpathSync;
 	const readFileSync =
 		deps.readFileSync ??
 		((filePath, encoding) => fs.readFileSync(filePath, encoding));
@@ -81,7 +84,14 @@ export function resolveWindowsSelesaiCliScript(
 	if (argv1) {
 		const argvPath = normalizePath(argv1);
 		if (isRunnableNodeScript(argvPath, existsSync)) {
-			return argvPath;
+			try {
+				const canonicalArgvPath = realpathSync(argvPath);
+				if (isRunnableNodeScript(canonicalArgvPath, existsSync) && findPiPackageRootFromEntry(canonicalArgvPath)) {
+					return canonicalArgvPath;
+				}
+			} catch {
+				// Host package metadata is untrusted here; keep resolving the installed Pi CLI.
+			}
 		}
 	}
 
@@ -89,14 +99,14 @@ export function resolveWindowsSelesaiCliScript(
 		const resolvePackageJson =
 			deps.resolvePackageJson ??
 			(() => {
-				const root = deps.piPackageRoot ?? resolveSelesaiPackageRoot();
+				const root = deps.piPackageRoot ?? resolvePiPackageRoot();
 				if (root) return path.join(root, "package.json");
 				const packageRoot = deps.resolvePackageEntry
-					? findSelesaiPackageRootFromEntry(deps.resolvePackageEntry())
-					: resolveInstalledSelesaiPackageRoot();
+					? findPiPackageRootFromEntry(deps.resolvePackageEntry())
+					: resolveInstalledPiPackageRoot();
 				if (!packageRoot)
 					throw new Error(
-						`Could not resolve ${SELESAI_PACKAGE} package root`,
+						`Could not resolve ${PI_CODING_AGENT_PACKAGE} package root`,
 					);
 				return path.join(packageRoot, "package.json");
 			});
@@ -115,32 +125,29 @@ export function resolveWindowsSelesaiCliScript(
 			return candidate;
 		}
 	} catch {
-		// Windows CLI resolution is optional; falling back to `pi` lets PATH handle execution.
+		// Verified CLI resolution is optional; falling back to `selesai` lets PATH handle execution.
 		return undefined;
 	}
 
 	return undefined;
 }
 
-export function getSelesaiSpawnCommand(
+export function getPiSpawnCommand(
 	args: string[],
-	deps: SelesaiSpawnDeps = {},
-): SelesaiSpawnCommand {
+	deps: PiSpawnDeps = {},
+): PiSpawnCommand {
 	const env = deps.env ?? process.env;
-	const piBinary = env[SELESAI_SUBAGENT_PI_BINARY_ENV]?.trim();
+	const piBinary = readSubagentEnv(env, SELESAI_SUBAGENT_PI_BINARY_ENV)?.trim();
 	if (piBinary) {
 		return { command: piBinary, args };
 	}
 
-	const platform = deps.platform ?? process.platform;
-	if (platform === "win32") {
-		const piCliPath = resolveWindowsSelesaiCliScript(deps);
-		if (piCliPath) {
-			return {
-				command: deps.execPath ?? process.execPath,
-				args: [piCliPath, ...args],
-			};
-		}
+	const piCliPath = resolvePiCliScript(deps);
+	if (piCliPath) {
+		return {
+			command: deps.execPath ?? process.execPath,
+			args: [piCliPath, ...args],
+		};
 	}
 
 	return { command: "selesai", args };

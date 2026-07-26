@@ -122,6 +122,8 @@ function extractSkillPathsFromPackageRoot(packageRoot: string, source: SkillSour
 let cachedGlobalNpmRoot: string | null = null;
 
 function getGlobalNpmRoot(): string | null {
+	const offline = process.env.PI_OFFLINE?.toLowerCase();
+	if (offline === "1" || offline === "true" || offline === "yes") return null;
 	if (cachedGlobalNpmRoot !== null) return cachedGlobalNpmRoot;
 	try {
 		cachedGlobalNpmRoot = execSync("npm root -g", { encoding: "utf-8", timeout: 5000 }).trim();
@@ -608,9 +610,22 @@ function readSkill(
 export function resolveSkills(
 	skillNames: string[],
 	cwd: string,
+	localSkillPaths?: string[],
+	localBaseDir?: string,
 ): { resolved: ResolvedSkill[]; missing: string[] } {
 	const resolved: ResolvedSkill[] = [];
 	const missing: string[] = [];
+	const localByName = new Map<string, CachedSkillEntry>();
+	if (localSkillPaths?.length) {
+		const agentDir = getAgentDir();
+		const localEntries = collectFilesystemSkills(cwd, agentDir, localSkillPaths.map((entry) => ({
+			path: path.resolve(localBaseDir ?? cwd, entry),
+			source: "unknown" as const,
+		})));
+		for (const entry of localEntries) {
+			if (!localByName.has(entry.name)) localByName.set(entry.name, entry);
+		}
+	}
 
 	for (const name of skillNames) {
 		const trimmed = name.trim();
@@ -620,18 +635,14 @@ export function resolveSkills(
 			continue;
 		}
 
-		const location = resolveSkillPath(trimmed, cwd);
-		if (!location) {
-			missing.push(trimmed);
-			continue;
+		const local = localByName.get(trimmed);
+		let skill = local ? readSkill(trimmed, local.filePath, local.source) : undefined;
+		if (!skill) {
+			const location = resolveSkillPath(trimmed, cwd);
+			if (location) skill = readSkill(trimmed, location.path, location.source);
 		}
-
-		const skill = readSkill(trimmed, location.path, location.source);
-		if (skill) {
-			resolved.push(skill);
-		} else {
-			missing.push(trimmed);
-		}
+		if (skill) resolved.push(skill);
+		else missing.push(trimmed);
 	}
 
 	return { resolved, missing };
@@ -641,8 +652,10 @@ export function resolveSkillsWithFallback(
 	skillNames: string[],
 	primaryCwd: string,
 	fallbackCwd?: string,
+	localSkillPaths?: string[],
+	localBaseDir?: string,
 ): { resolved: ResolvedSkill[]; missing: string[] } {
-	const primary = resolveSkills(skillNames, primaryCwd);
+	const primary = resolveSkills(skillNames, primaryCwd, localSkillPaths, localBaseDir);
 	if (!fallbackCwd || primary.missing.length === 0) return primary;
 	if (path.resolve(primaryCwd) === path.resolve(fallbackCwd)) return primary;
 

@@ -53,6 +53,91 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("preserves agent contract projections on step summaries", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-contract-"));
+		try {
+			createAsyncDir(root, "run-contract", {
+				runId: "run-contract",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{
+					agent: "worker",
+					status: "complete",
+					agentContract: { version: 1 },
+					execution: { status: "completed", success: true, exitCode: 0 },
+					acceptance: { status: "rejected", effectiveAcceptance: { level: "checked", explicit: true } },
+					review: { status: "not-requested" },
+					effects: { fileMutation: { status: "missing", expected: true, attempted: false } },
+				}],
+			});
+
+			const runs = listAsyncRuns(root, { states: ["complete"] });
+			const step = runs[0]?.steps[0];
+			assert.equal(step?.agentContract?.version, 1);
+			assert.deepEqual(step?.execution, { status: "completed", success: true, exitCode: 0 });
+			assert.equal(step?.acceptance?.status, "rejected");
+			assert.equal(step?.review?.status, "not-requested");
+			assert.equal(step?.effects?.fileMutation?.status, "missing");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves capability ceiling and audit projections on summaries", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-capability-"));
+		try {
+			const ceiling = { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["plan"] };
+			const audit = { ceiling, requestedTools: ["read", "write"], effectiveTools: ["read"], removedTools: ["write"], internalTools: [], extensionsDenied: true, removedExtensionCount: 1, requestedMcpToolCount: 0, effectiveMcpTools: [] };
+			createAsyncDir(root, "run-capability", {
+				runId: "run-capability",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				capabilityCeiling: ceiling,
+				capabilityAudit: audit,
+				steps: [{ agent: "worker", status: "complete", capabilityCeiling: ceiling, capabilityAudit: audit }],
+			});
+
+			const runs = listAsyncRuns(root, { states: ["complete"] });
+			assert.deepEqual(runs[0]?.capabilityCeiling, ceiling);
+			assert.deepEqual(runs[0]?.capabilityAudit, audit);
+			assert.deepEqual(runs[0]?.steps[0]?.capabilityCeiling, ceiling);
+			assert.deepEqual(runs[0]?.steps[0]?.capabilityAudit, audit);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("formats async run and step context labels", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-context-"));
+		try {
+			createAsyncDir(root, "run-context", {
+				runId: "run-context",
+				mode: "parallel",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [
+					{ agent: "scout", context: "fresh", status: "running" },
+					{ agent: "worker", context: "fork", status: "running" },
+				],
+			});
+
+			const runs = listAsyncRuns(root, { states: ["running"] });
+			assert.equal(runs[0]?.context, "mixed");
+			assert.deepEqual(runs[0]?.steps.map((step) => step.context), ["fresh", "fork"]);
+			const text = formatAsyncRunList(runs);
+			assert.match(text, /run-context \| running .* \| parallel \[mixed\]/);
+			assert.match(text, /1\. scout \[fresh\] \| running/);
+			assert.match(text, /2\. worker \[fork\] \| running/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("formats model thinking in step summaries", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-model-thinking-"));
 		try {
@@ -102,6 +187,33 @@ describe("async status helpers", () => {
 			assert.equal(runs[0]?.steps[0]?.activityState, "needs_attention");
 			const text = formatAsyncRunList(runs, "Active async runs");
 			assert.match(text, /no activity for/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("renders deferred turn-budget termination distinctly from a soft wrap-up request", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-turn-budget-deferred-"));
+		try {
+			createAsyncDir(root, "run-deferred", {
+				runId: "run-deferred",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 1_000,
+				lastUpdate: Date.now(),
+				wrapUpRequested: true,
+				turnBudget: { maxTurns: 2, graceTurns: 1, turnCount: 3, outcome: "termination-deferred", wrapUpRequestedAtTurn: 2, terminationDeferredAtTurn: 3 },
+				steps: [{
+					agent: "worker",
+					status: "running",
+					wrapUpRequested: true,
+					turnBudget: { maxTurns: 2, graceTurns: 1, turnCount: 3, outcome: "termination-deferred", wrapUpRequestedAtTurn: 2, terminationDeferredAtTurn: 3 },
+				}],
+			});
+
+			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
+			assert.match(text, /turn-budget termination deferred 3\/2\+1/);
+			assert.doesNotMatch(text, /wrap-up requested/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

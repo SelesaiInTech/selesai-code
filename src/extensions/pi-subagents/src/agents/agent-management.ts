@@ -21,8 +21,9 @@ import {
 	removeBuiltinAgentOverrideFields,
 } from "./agents.ts";
 import { serializeAgent } from "./agent-serializer.ts";
+import { mergeAgentsForScope } from "./agent-selection.ts";
 import { serializeChain, serializeJsonChain } from "./chain-serializer.ts";
-import { discoverAvailableSkills } from "./skills.ts";
+import { discoverAvailableSkills, resolveSkills } from "./skills.ts";
 import {
 	buildProactiveSkillSubagentRecommendationLines,
 } from "./proactive-skills.ts";
@@ -30,7 +31,9 @@ import { parseFrontmatter } from "./frontmatter.ts";
 import { toModelInfo } from "../shared/model-info.ts";
 import { resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-fallback.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
-import type { Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
+import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
+import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
+import type { AcceptanceInput, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
 import { getProjectConfigDir } from "../shared/utils.ts";
 
 type ManagementAction = "list" | "get" | "models" | "create" | "update" | "delete" | "eject" | "disable" | "enable" | "reset";
@@ -119,7 +122,7 @@ function findChains(name: string, cwd: string, scope: AgentScope = "both"): Chai
 	const raw = name.trim();
 	const sanitized = sanitizeName(raw);
 	return discoverAgentsAll(cwd).chains
-		.filter((c) => (scope === "both" || c.source === scope) && (c.name === raw || c.name === sanitized))
+		.filter((c) => (scope === "both" || c.source === "package" || c.source === scope) && (c.name === raw || c.name === sanitized))
 		.sort((a, b) => a.source.localeCompare(b.source));
 }
 
@@ -187,16 +190,25 @@ function fallbackModelsWarning(ctx: ManagementContext, fallbackModels: string[] 
 	return missing.length ? `Warning: fallback models not in the current model registry: ${missing.join(", ")}.` : undefined;
 }
 
-function skillsWarning(cwd: string, skills: string[] | undefined): string | undefined {
-	if (!skills || skills.length === 0) return undefined;
-	const available = new Set(discoverAvailableSkills(cwd).map((s) => s.name));
-	const missing = skills.filter((s) => !available.has(s));
+function skillsWarning(cwd: string, agent: Pick<AgentConfig, "skills" | "skillPath" | "filePath">): string | undefined {
+	if (!agent.skills?.length) return undefined;
+	const { missing } = resolveSkills(
+		agent.skills,
+		cwd,
+		agent.skillPath,
+		agent.filePath ? path.dirname(agent.filePath) : cwd,
+	);
 	return missing.length ? `Warning: skills not found: ${missing.join(", ")}.` : undefined;
 }
 
-function editableAgentConfig(agent: AgentConfig): AgentConfig {
+export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 	const base = agent.override?.base;
-	if (!base) return { ...agent };
+	if (!base) {
+		return {
+			...agent,
+			extensions: agent.extensionsFromDefault ? undefined : agent.extensions ? [...agent.extensions] : undefined,
+		};
+	}
 
 	return {
 		...agent,
@@ -207,11 +219,14 @@ function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		inheritProjectContext: base.inheritProjectContext,
 		inheritSkills: base.inheritSkills,
 		defaultContext: base.defaultContext,
+		acceptanceRole: base.acceptanceRole,
 		disabled: base.disabled,
 		systemPrompt: base.systemPrompt,
 		skills: base.skills ? [...base.skills] : undefined,
+		skillPath: base.skillPath ? [...base.skillPath] : undefined,
 		tools: base.tools ? [...base.tools] : undefined,
 		mcpDirectTools: base.mcpDirectTools ? [...base.mcpDirectTools] : undefined,
+		extensions: base.extensions ? [...base.extensions] : undefined,
 		subagentOnlyExtensions: base.subagentOnlyExtensions ? [...base.subagentOnlyExtensions] : undefined,
 		completionGuard: base.completionGuard,
 		override: undefined,
@@ -227,7 +242,7 @@ function readAgentFrontmatterFields(filePath: string): Set<string> {
 	}
 }
 
-function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<string, unknown>): Set<string> {
+export function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<string, unknown>): Set<string> {
 	const fields = readAgentFrontmatterFields(agent.filePath);
 	const changed = (...names: string[]) => {
 		for (const name of names) fields.delete(name);
@@ -241,6 +256,7 @@ function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<string,
 	if (hasKey(cfg, "fallbackModels")) changed("fallbackModels");
 	if (hasKey(cfg, "tools")) changed("tools");
 	if (hasKey(cfg, "skills")) changed("skill", "skills");
+	if (hasKey(cfg, "skillPath")) changed("skillPath");
 	if (hasKey(cfg, "extensions")) changed("extensions");
 	if (hasKey(cfg, "subagentOnlyExtensions")) changed("subagentOnlyExtensions");
 	if (hasKey(cfg, "thinking")) {
@@ -260,6 +276,11 @@ function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<string,
 		fields.add("inheritSkills");
 	}
 	if (hasKey(cfg, "defaultContext")) changed("defaultContext");
+	if (hasKey(cfg, "async")) changed("async");
+	if (hasKey(cfg, "timeoutMs")) changed("timeoutMs");
+	if (hasKey(cfg, "turnBudget")) changed("turnBudget");
+	if (hasKey(cfg, "acceptance")) changed("acceptance");
+	if (hasKey(cfg, "acceptanceRole")) changed("acceptanceRole");
 	if (hasKey(cfg, "output")) changed("output");
 	if (hasKey(cfg, "reads")) changed("defaultReads");
 	if (hasKey(cfg, "progress")) changed("defaultProgress");
@@ -382,6 +403,14 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		else if (typeof cfg.skills === "string") { const skills = parseCsv(cfg.skills); target.skills = skills.length ? skills : undefined; }
 		else return "config.skills must be a comma-separated string or false when provided.";
 	}
+	if (hasKey(cfg, "skillPath")) {
+		if (cfg.skillPath === false || cfg.skillPath === "") target.skillPath = undefined;
+		else if (typeof cfg.skillPath === "string") { const skillPath = parseCsv(cfg.skillPath); target.skillPath = skillPath.length ? skillPath : undefined; }
+		else if (Array.isArray(cfg.skillPath) && cfg.skillPath.every((entry) => typeof entry === "string")) {
+			const skillPath = [...new Set(cfg.skillPath.map((entry) => entry.trim()).filter(Boolean))];
+			target.skillPath = skillPath.length ? skillPath : undefined;
+		} else return "config.skillPath must be a comma-separated string, string array, or false when provided.";
+	}
 	if (hasKey(cfg, "extensions")) {
 		if (cfg.extensions === false) target.extensions = undefined;
 		else if (cfg.extensions === "") target.extensions = [];
@@ -415,6 +444,37 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		if (cfg.defaultContext === false || cfg.defaultContext === "") target.defaultContext = undefined;
 		else if (cfg.defaultContext === "fresh" || cfg.defaultContext === "fork") target.defaultContext = cfg.defaultContext;
 		else return "config.defaultContext must be 'fresh', 'fork', or false when provided.";
+	}
+	if (hasKey(cfg, "async")) {
+		if (cfg.async === "") target.defaultAsync = undefined;
+		else if (typeof cfg.async === "boolean") target.defaultAsync = cfg.async;
+		else return "config.async must be a boolean or empty string when provided.";
+	}
+	if (hasKey(cfg, "timeoutMs")) {
+		if (cfg.timeoutMs === false || cfg.timeoutMs === "") target.defaultTimeoutMs = undefined;
+		else if (typeof cfg.timeoutMs === "number" && Number.isInteger(cfg.timeoutMs) && cfg.timeoutMs > 0) target.defaultTimeoutMs = cfg.timeoutMs;
+		else return "config.timeoutMs must be a positive integer or false when provided.";
+	}
+	if (hasKey(cfg, "turnBudget")) {
+		if (cfg.turnBudget === false || cfg.turnBudget === "") target.defaultTurnBudget = undefined;
+		else {
+			const resolved = resolveTurnBudgetConfig(cfg.turnBudget, "config.turnBudget");
+			if (resolved.error) return resolved.error;
+			target.defaultTurnBudget = resolved.turnBudget;
+		}
+	}
+	if (hasKey(cfg, "acceptance")) {
+		if (cfg.acceptance === "") target.defaultAcceptance = undefined;
+		else {
+			const errors = validateAcceptanceInput(cfg.acceptance, "config.acceptance");
+			if (errors.length > 0) return errors.join(" ");
+			target.defaultAcceptance = cfg.acceptance as AcceptanceInput;
+		}
+	}
+	if (hasKey(cfg, "acceptanceRole")) {
+		if (cfg.acceptanceRole === false || cfg.acceptanceRole === "") target.acceptanceRole = undefined;
+		else if (cfg.acceptanceRole === "read-only" || cfg.acceptanceRole === "writer") target.acceptanceRole = cfg.acceptanceRole;
+		else return "config.acceptanceRole must be 'read-only', 'writer', or false when provided.";
 	}
 	if (hasKey(cfg, "output")) {
 		if (cfg.output === false || cfg.output === "") target.output = undefined;
@@ -508,10 +568,16 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.fallbackModels?.length) lines.push(`Fallback models: ${agent.fallbackModels.join(", ")}`);
 	if (tools.length) lines.push(`Tools: ${tools.join(", ")}`);
 	if (agent.skills?.length) lines.push(`Skills: ${agent.skills.join(", ")}`);
+	if (agent.skillPath?.length) lines.push(`Skill paths: ${agent.skillPath.join(", ")}`);
 	lines.push(`System prompt mode: ${agent.systemPromptMode}`);
 	lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
 	lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
 	if (agent.defaultContext) lines.push(`Default context: ${agent.defaultContext}`);
+	if (agent.defaultAsync !== undefined) lines.push(`Async: ${agent.defaultAsync ? "true" : "false"}`);
+	if (agent.defaultTimeoutMs !== undefined) lines.push(`Timeout: ${agent.defaultTimeoutMs}ms`);
+	if (agent.defaultTurnBudget) lines.push(`Turn budget: ${JSON.stringify(agent.defaultTurnBudget)}`);
+	if (agent.defaultAcceptance !== undefined) lines.push(`Acceptance: ${typeof agent.defaultAcceptance === "object" ? JSON.stringify(agent.defaultAcceptance) : String(agent.defaultAcceptance)}`);
+	if (agent.acceptanceRole) lines.push(`Acceptance role: ${agent.acceptanceRole}`);
 	if (agent.source === "builtin") lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);
 	if (agent.extensions !== undefined) lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
 	if (agent.subagentOnlyExtensions !== undefined) lines.push(`Subagent-only extensions: ${agent.subagentOnlyExtensions.length ? agent.subagentOnlyExtensions.join(", ") : "(none)"}`);
@@ -580,7 +646,8 @@ function formatChainDetail(chain: ChainConfig): string {
 export function handleList(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
 	const scope = normalizeListScope(params.agentScope) ?? "both";
 	const d = discoverAgentsAll(ctx.cwd);
-	const scopedAgents = allAgents(d).filter((a) => scope === "both" || a.source === "builtin" || a.source === "package" || a.source === scope).sort((a, b) => a.name.localeCompare(b.name));
+	const scopedAgents = mergeAgentsForScope(scope, d.user, d.project, d.builtin, d.package)
+		.sort((a, b) => a.name.localeCompare(b.name));
 	const agents = scopedAgents.filter((a) => !a.disabled);
 	const chains = d.chains.filter((c) => scope === "both" || c.source === "package" || c.source === scope).sort((a, b) => a.name.localeCompare(b.name));
 	const diagnostics = d.chainDiagnostics.filter((entry) => scope === "both" || entry.source === scope);
@@ -687,11 +754,17 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 
 function handleGet(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
 	if (!params.agent && !params.chainName) return result("Specify 'agent' or 'chainName' for get.", true);
+	const scope = normalizeListScope(params.agentScope);
+	if (!scope) return result("agentScope must be 'user', 'project', or 'both' for get.", true);
 	const hasBoth = Boolean(params.agent && params.chainName);
 	const blocks: string[] = [];
 	let anyFound = false;
 	if (params.agent) {
-		const matches = findAgents(params.agent, ctx.cwd, "both");
+		const raw = params.agent.trim();
+		const sanitized = sanitizeName(raw);
+		const d = discoverAgentsAll(ctx.cwd);
+		const matches = mergeAgentsForScope(scope, d.user, d.project, d.builtin, d.package)
+			.filter((agent) => agent.name === raw || agent.name === sanitized);
 		if (!matches.length) {
 			const msg = `Agent '${params.agent}' not found. Available: ${availableNames(ctx.cwd, "agent").join(", ") || "none"}.`;
 			if (!hasBoth) return result(msg, true);
@@ -702,7 +775,7 @@ function handleGet(params: ManagementParams, ctx: ManagementContext): AgentToolR
 		}
 	}
 	if (params.chainName) {
-		const matches = findChains(params.chainName, ctx.cwd, "both");
+		const matches = findChains(params.chainName, ctx.cwd, scope);
 		if (!matches.length) {
 			const msg = `Chain '${params.chainName}' not found. Available: ${availableNames(ctx.cwd, "chain").join(", ") || "none"}.`;
 			if (!hasBoth) return result(msg, true);
@@ -770,7 +843,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	if (mw) warnings.push(mw);
 	const fmw = fallbackModelsWarning(ctx, agent.fallbackModels);
 	if (fmw) warnings.push(fmw);
-	const sw = skillsWarning(ctx.cwd, agent.skills);
+	const sw = skillsWarning(ctx.cwd, agent);
 	if (sw) warnings.push(sw);
 	fs.writeFileSync(targetPath, serializeAgent(agent), "utf-8");
 	return result([`Created agent '${runtimeName}' at ${targetPath}.`, ...warnings].join("\n"));
@@ -819,8 +892,8 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 			const fmw = fallbackModelsWarning(ctx, updated.fallbackModels);
 			if (fmw) warnings.push(fmw);
 		}
-		if (hasKey(cfg, "skills")) {
-			const sw = skillsWarning(ctx.cwd, updated.skills);
+		if (hasKey(cfg, "skills") || hasKey(cfg, "skillPath")) {
+			const sw = skillsWarning(ctx.cwd, updated);
 			if (sw) warnings.push(sw);
 		}
 		if (updated.name !== oldName) {

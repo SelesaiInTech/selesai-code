@@ -299,7 +299,7 @@ describe("buildAgentMemoryInjection", () => {
 			const memoryFile = path.join(memoryDir, AGENT_MEMORY_FILE);
 			assert.match(injection, new RegExp(`Memory file: ${escapeRegex(memoryFile)}`));
 			assert.match(injection, /Release gotcha: tag before gh release\./);
-			// Must not collide with the owner's ~/.pi/agent/memory/{project}/ layout.
+			// Must not collide with the owner's ~/.selesai/agent/memory/{project}/ layout.
 			assert.doesNotMatch(injection, /agent\/memory\/[^/]+\/release-agent/);
 		});
 	});

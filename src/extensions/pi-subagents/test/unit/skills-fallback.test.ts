@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -229,6 +230,12 @@ describe("skills filesystem fallback", () => {
 		const { resolved, missing } = resolveSkills(["pi-subagents", "safe-bash"], tempDir);
 		assert.deepEqual(missing, ["pi-subagents"]);
 		assert.deepEqual(resolved.map((skill) => skill.name), ["safe-bash"]);
+
+		const agentDir = path.join(tempDir, "agent");
+		writeSkillFile(path.join(agentDir, "skills", "pi-subagents"), "Still parent-only.");
+		const local = resolveSkills(["pi-subagents"], tempDir, ["./skills"], agentDir);
+		assert.deepEqual(local.resolved, []);
+		assert.deepEqual(local.missing, ["pi-subagents"]);
 	});
 
 	it("classifies package-provided skills as project-package", () => {
@@ -295,6 +302,59 @@ describe("skills filesystem fallback", () => {
 		assert.deepEqual(missing, []);
 		assert.equal(resolved.length, 1);
 		assert.equal(resolved[0]?.source, "project-package");
+	});
+
+	it("skips optional global npm discovery in offline mode", () => {
+		const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+		const binDir = path.join(tempDir, "bin");
+		const fakeHome = path.join(tempDir, "home");
+		const marker = path.join(tempDir, "npm-calls.txt");
+		fs.mkdirSync(binDir, { recursive: true });
+		fs.mkdirSync(fakeHome, { recursive: true });
+		fs.writeFileSync(
+			path.join(binDir, "npm"),
+			"#!/bin/sh\nprintf 'npm-root-called\\n' >> \"$PI_DISCOVERY_MARKER\"\nexit 1\n",
+			{ encoding: "utf-8", mode: 0o755 },
+		);
+		fs.writeFileSync(
+			path.join(binDir, "npm.cmd"),
+			"@echo off\r\n>>\"%PI_DISCOVERY_MARKER%\" echo npm-root-called\r\nexit /b 1\r\n",
+			"utf-8",
+		);
+
+		const script = `
+			import fs from "node:fs";
+			const [{ clearSkillCache, discoverAvailableSkills }, { discoverAgents }] = await Promise.all([
+				import("./src/agents/skills.ts"),
+				import("./src/agents/agents.ts"),
+			]);
+			discoverAvailableSkills(process.cwd());
+			discoverAgents(process.cwd(), "both");
+			if (fs.existsSync(process.env.PI_DISCOVERY_MARKER)) {
+				throw new Error("npm was invoked while PI_OFFLINE was enabled");
+			}
+			delete process.env.PI_OFFLINE;
+			clearSkillCache();
+			discoverAvailableSkills(process.cwd());
+			discoverAgents(process.cwd(), "both");
+		`;
+		execFileSync(
+			process.execPath,
+			["--experimental-transform-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+			{
+				cwd: projectRoot,
+				env: {
+					...process.env,
+					HOME: fakeHome,
+					USERPROFILE: fakeHome,
+					PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+					PI_DISCOVERY_MARKER: marker,
+					PI_OFFLINE: "1",
+				},
+				stdio: "pipe",
+			},
+		);
+		assert.deepEqual(fs.readFileSync(marker, "utf-8").trim().split(/\r?\n/), ["npm-root-called", "npm-root-called"]);
 	});
 
 	it("falls back to the runtime cwd when the execution cwd lacks the skill", () => {
@@ -409,13 +469,63 @@ describe("skills filesystem fallback", () => {
 		}
 	});
 
+	it("resolves agent-local files and directories before global skills without publishing them", () => {
+		makeProjectSkill(tempDir, "shared", "global body");
+		const agentDir = path.join(tempDir, "agents", "nested");
+		writeSkillFile(path.join(agentDir, "skills", "shared"), "local shared body");
+		writeSkillFile(path.join(agentDir, "direct"), "local direct body");
+
+		const local = resolveSkills(["shared", "direct", "missing"], tempDir, ["./skills", "./direct/SKILL.md"], agentDir);
+		assert.deepEqual(local.resolved.map((skill) => [skill.name, skill.content]), [
+			["shared", "local shared body"],
+			["direct", "local direct body"],
+		]);
+		assert.deepEqual(local.missing, ["missing"]);
+		assert.equal(resolveSkills(["shared"], tempDir).resolved[0]?.content, "global body");
+		assert.equal(discoverAvailableSkills(tempDir).some((skill) => skill.name === "direct"), false);
+	});
+
+	it("does not read malformed global settings when every selected local skill resolves", () => {
+		const agentDir = path.join(tempDir, "agents", "nested");
+		writeSkillFile(path.join(agentDir, "skills", "local"), "local body");
+		fs.mkdirSync(path.join(tempDir, ".selesai"), { recursive: true });
+		fs.writeFileSync(path.join(tempDir, ".selesai", "settings.json"), "{bad-json", "utf-8");
+
+		const result = resolveSkills(["local"], tempDir, ["./skills"], agentDir);
+		assert.deepEqual(result.missing, []);
+		assert.equal(result.resolved[0]?.content, "local body");
+	});
+
+	it("falls back globally when an agent-local skill candidate cannot be read", () => {
+		makeProjectSkill(tempDir, "shared", "global body");
+		const agentDir = path.join(tempDir, "agents", "nested");
+		const invalidLocalFile = path.join(agentDir, "skills", "shared", "SKILL.md");
+		fs.mkdirSync(invalidLocalFile, { recursive: true });
+
+		const result = resolveSkills(["shared"], tempDir, ["./skills"], agentDir);
+		assert.deepEqual(result.missing, []);
+		assert.equal(result.resolved[0]?.content, "global body");
+	});
+
+	it("keeps same-named agent-local skills isolated between invocations", () => {
+		makeProjectSkill(tempDir, "global-only", "global fallback");
+		const one = path.join(tempDir, "one");
+		const two = path.join(tempDir, "two");
+		writeSkillFile(path.join(one, "skills", "private"), "one private");
+		writeSkillFile(path.join(two, "skills", "private"), "two private");
+
+		assert.equal(resolveSkills(["private", "global-only"], tempDir, ["./skills"], one).resolved[0]?.content, "one private");
+		assert.equal(resolveSkills(["private", "global-only"], tempDir, ["./skills"], two).resolved[0]?.content, "two private");
+		assert.equal(resolveSkills(["global-only"], tempDir, ["./skills"], one).resolved[0]?.content, "global fallback");
+	});
+
 	it("surfaces malformed project settings files instead of silently ignoring them", () => {
 		fs.mkdirSync(path.join(tempDir, ".selesai"), { recursive: true });
 		fs.writeFileSync(path.join(tempDir, ".selesai", "settings.json"), "{bad-json", "utf-8");
 
 		assert.throws(
 			() => resolveSkills(["missing-skill"], tempDir),
-			/Failed to read skills settings file .+\.pi[\\/]settings\.json/,
+			/Failed to read skills settings file .+\.selesai[\\/]settings\.json/,
 		);
 	});
 

@@ -3,19 +3,27 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@selesai/code";
 import { Compile } from "typebox/compile";
 import { resolveAsyncRunLocation } from "../runs/background/async-resume.ts";
-import { deliverTimeoutRequest } from "../runs/background/control-channel.ts";
+import { deliverStopRequest } from "../runs/background/control-channel.ts";
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
-import { type Details, ASYNC_DIR, RESULTS_DIR } from "../shared/types.ts";
+import {
+	type Details,
+	ASYNC_DIR,
+	RESULTS_DIR,
+	SUBAGENT_ASYNC_COMPLETE_EVENT,
+	SUBAGENT_PROCESS_TERMINAL_EVENT,
+	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+} from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
+import { validateChainInput } from "./chain-validation.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
 export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
 export const SUBAGENT_RPC_READY_EVENT = "subagents:rpc:v1:ready";
 export const SUBAGENT_RPC_REPLY_EVENT_PREFIX = "subagents:rpc:v1:reply:";
 
-export const SUBAGENT_RPC_METHODS = ["ping", "status", "spawn", "interrupt", "stop"] as const;
+export const SUBAGENT_RPC_METHODS = ["ping", "status", "spawn", "steer", "interrupt", "stop"] as const;
 export type SubagentRpcMethod = typeof SUBAGENT_RPC_METHODS[number];
 
 export interface SubagentRpcRequestEnvelope {
@@ -111,6 +119,13 @@ function assertRecordParams(params: unknown, method: SubagentRpcMethod): Record<
 }
 
 function assertSubagentParams(params: SubagentParamsLike, label: string): void {
+	// Friendly chain validation first: name the disallowed property, list allowed
+	// ones, and show a valid example instead of raw TypeBox diagnostics.
+	try {
+		validateChainInput(params);
+	} catch (error) {
+		throw new SubagentRpcError("invalid_params", `${label}: ${error instanceof Error ? error.message : String(error)}`);
+	}
 	if (subagentParamsValidator.Check(params)) return;
 	const messages = [...subagentParamsValidator.Errors(params)]
 		.slice(0, 4)
@@ -164,13 +179,18 @@ function pingData(ctx: ExtensionContext | null) {
 		capabilities: {
 			status: true,
 			asyncSpawn: true,
+			steer: true,
+			nonRecoveringSteer: true,
 			interrupt: true,
 			stop: true,
+			processTerminalProof: { version: 1, lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION },
 		},
 		events: {
 			ready: SUBAGENT_RPC_READY_EVENT,
 			request: SUBAGENT_RPC_REQUEST_EVENT,
 			replyPrefix: SUBAGENT_RPC_REPLY_EVENT_PREFIX,
+			asyncComplete: SUBAGENT_ASYNC_COMPLETE_EVENT,
+			processTerminal: SUBAGENT_PROCESS_TERMINAL_EVENT,
 		},
 		session: sessionData(ctx),
 	};
@@ -202,6 +222,20 @@ function spawnParams(params: unknown): SubagentParamsLike {
 		throw new SubagentRpcError("invalid_params", "RPC spawn cannot open the clarify UI; omit clarify or set clarify: false.");
 	}
 	return { ...(input as SubagentParamsLike), async: true, clarify: false };
+}
+
+function steerParams(params: unknown): SubagentParamsLike {
+	const input = assertRecordParams(params, "steer");
+	if (typeof input.message !== "string" || !input.message.trim())
+		throw new SubagentRpcError("invalid_params", "RPC steer requires a non-empty message.");
+	const target = normalizeTargetParams(input, "steer");
+	if (!target.id && !target.runId && !target.dir) throw new SubagentRpcError("invalid_params", "RPC steer requires id, runId, or dir.");
+	return {
+		action: "steer",
+		...target,
+		message: input.message.trim(),
+		steeringRecovery: false,
+	};
 }
 
 function stopAsyncRun(
@@ -247,7 +281,7 @@ function stopAsyncRun(
 	}
 
 	try {
-		deliverTimeoutRequest({
+		deliverStopRequest({
 			asyncDir: location.asyncDir,
 			pid: status.pid,
 			kill: options.kill,
@@ -280,6 +314,9 @@ async function handleRequest(
 	}
 	if (request.method === "status") {
 		return executeChecked(options, ctx, request.requestId, request.method, { action: "status", ...normalizeTargetParams(request.params, "status") });
+	}
+	if (request.method === "steer") {
+		return executeChecked(options, ctx, request.requestId, request.method, steerParams(request.params));
 	}
 	if (request.method === "interrupt") {
 		return executeChecked(options, ctx, request.requestId, request.method, { action: "interrupt", ...normalizeTargetParams(request.params, "interrupt") });

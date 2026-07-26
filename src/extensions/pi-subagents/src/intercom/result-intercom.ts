@@ -5,6 +5,7 @@ import {
 	type IntercomEventBus,
 	type NestedRunSummary,
 	type PublicNestedRunSummary,
+	type ParallelHandoffReference,
 	type SingleResult,
 	type SubagentResultIntercomChild,
 	type SubagentResultIntercomPayload,
@@ -22,6 +23,7 @@ export function resolveSubagentResultStatus(input: {
 	detached?: boolean;
 }): SubagentResultStatus {
 	if (input.detached) return "detached";
+	if (input.state === "stopped") return "stopped";
 	if (input.interrupted || input.state === "paused") return "paused";
 	if (typeof input.success === "boolean") return input.success ? "completed" : "failed";
 	if (input.state === "complete") return "completed";
@@ -35,6 +37,7 @@ function countStatuses(children: SubagentResultIntercomChild[]): Record<Subagent
 		completed: 0,
 		failed: 0,
 		paused: 0,
+		stopped: 0,
 		detached: 0,
 	};
 	for (const child of children) {
@@ -47,6 +50,7 @@ function formatStatusCounts(counts: Record<SubagentResultStatus, number>): strin
 	const parts = [
 		counts.completed ? `${counts.completed} completed` : undefined,
 		counts.failed ? `${counts.failed} failed` : undefined,
+		counts.stopped ? `${counts.stopped} stopped` : undefined,
 		counts.paused ? `${counts.paused} paused` : undefined,
 		counts.detached ? `${counts.detached} detached` : undefined,
 	].filter((part): part is string => Boolean(part));
@@ -56,6 +60,7 @@ function formatStatusCounts(counts: Record<SubagentResultStatus, number>): strin
 function resolveGroupedStatus(children: SubagentResultIntercomChild[]): SubagentResultStatus {
 	const counts = countStatuses(children);
 	if (counts.failed > 0) return "failed";
+	if (counts.stopped > 0) return "stopped";
 	if (counts.paused > 0) return "paused";
 	if (counts.completed > 0) return "completed";
 	if (counts.detached > 0) return "detached";
@@ -175,6 +180,7 @@ interface GroupedResultIntercomMessageInput {
 	asyncId?: string;
 	asyncDir?: string;
 	chainSteps?: number;
+	parallelHandoff?: ParallelHandoffReference;
 }
 
 function asyncResumeGuidance(input: {
@@ -203,6 +209,7 @@ function formatSubagentResultIntercomMessage(input: {
 	asyncId?: string;
 	asyncDir?: string;
 	chainSteps?: number;
+	parallelHandoff?: ParallelHandoffReference;
 }): string {
 	const counts = countStatuses(input.children);
 	const lines: string[] = [
@@ -218,6 +225,7 @@ function formatSubagentResultIntercomMessage(input: {
 	}
 	if (input.asyncId) lines.push(`Async id: ${input.asyncId}`);
 	if (input.asyncDir) lines.push(`Async dir: ${input.asyncDir}`);
+	if (input.parallelHandoff) lines.push(`Parallel handoff: ${input.parallelHandoff.path}`);
 	const resumeGuidance = asyncResumeGuidance(input);
 	if (resumeGuidance) lines.push(resumeGuidance);
 	if (input.children.some((child) => child.intercomTarget)) {
@@ -262,6 +270,7 @@ export function buildSubagentResultIntercomPayload(input: GroupedResultIntercomM
 		...(input.asyncId ? { asyncId: input.asyncId } : {}),
 		...(input.asyncDir ? { asyncDir: input.asyncDir } : {}),
 		...(typeof input.chainSteps === "number" ? { chainSteps: input.chainSteps } : {}),
+		...(input.parallelHandoff ? { parallelHandoff: input.parallelHandoff } : {}),
 		...(firstChild?.agent ? { agent: firstChild.agent } : {}),
 		...(firstChild?.index !== undefined ? { index: firstChild.index } : {}),
 		...(firstChild?.artifactPath ? { artifactPath: firstChild.artifactPath } : {}),
@@ -347,6 +356,8 @@ export function formatSubagentResultReceipt(input: {
 		`Run: ${input.runId}`,
 		`Children: ${formatStatusCounts(counts)}`,
 	];
+
+	if (input.payload.parallelHandoff) lines.push(`Parallel handoff: ${input.payload.parallelHandoff.path}`);
 
 	const artifacts = input.payload.children.filter((child) => typeof child.artifactPath === "string");
 	if (artifacts.length > 0) {

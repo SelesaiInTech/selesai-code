@@ -36,7 +36,249 @@ describe("async resume lookup", () => {
 			assert.equal(target.agent, "worker");
 			assert.equal(target.sessionFile, sessionFile);
 			assert.equal(target.cwd, root);
-			assert.equal(target.intercomTarget, "subagent-worker-run-abc-1");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves and validates persisted capability ceilings for resume", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-ceiling-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-ceiling");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-ceiling", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
+				capabilityCeiling: { version: 1, allowedTools: ["read", "write"], denyExtensions: true, sources: ["run"] },
+				steps: [{ agent: "worker", status: "complete", sessionFile, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: false, sources: ["step"] } }],
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-ceiling" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.deepEqual(target.capabilityCeiling, { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["run", "step"] });
+
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-ceiling", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
+				capabilityCeiling: { version: 2, allowedTools: ["read"], denyExtensions: true, sources: ["run"] },
+				steps: [{ agent: "worker", status: "complete", sessionFile }],
+			});
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-ceiling" }, { asyncDirRoot: asyncRoot, resultsDir }), /capabilityCeiling version/);
+
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			writeJson(path.join(resultsDir, "run-ceiling.json"), {
+				runId: "run-ceiling", mode: "single", state: "complete", success: true, cwd: root,
+				capabilityCeiling: { version: 1, allowedTools: ["read", "grep"], denyExtensions: false, sources: ["result"] },
+				results: [{ agent: "worker", success: true, sessionFile, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["result-step"] } }],
+			});
+			const resultOnly = resolveAsyncResumeTarget({ id: "run-ceiling" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.deepEqual(resultOnly.capabilityCeiling, { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["result", "result-step"] });
+
+			writeJson(path.join(resultsDir, "run-ceiling.json"), {
+				runId: "run-ceiling", mode: "single", state: "complete", success: true, cwd: root,
+				results: [{ agent: "worker", success: true, sessionFile, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true } }],
+			});
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-ceiling" }, { asyncDirRoot: asyncRoot, resultsDir }), /capabilityCeiling sources/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects unknown, cross-run, and wrong-agent recovery descriptors", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-descriptor-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-descriptor");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-descriptor", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
+			});
+			const descriptor = {
+				version: 1, sourceRunId: "run-descriptor", agent: "worker", cwd: root, systemPromptMode: "replace",
+				inheritProjectContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
+			};
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, token: "must-not-be-accepted" });
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /unknown field 'token'/);
+
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				...descriptor,
+				capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true },
+			});
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /capabilityCeiling sources/);
+
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, sourceRunId: "another-run" });
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /different source run/);
+
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, agent: "another-agent" });
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /not 'worker'/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("accepts legacy resolved acceptance metadata in recovery descriptors", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-acceptance-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-acceptance");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
+			});
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				version: 1,
+				sourceRunId: "run-acceptance",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+				acceptance: {
+					level: "attested",
+					explicit: true,
+					inferredReason: ["async write-capable or risky run"],
+					criteria: [{ id: "criterion-1", must: "Return evidence", evidence: ["manual-notes"], severity: "required" }],
+					evidence: ["manual-notes", "residual-risks"],
+					verify: [],
+					stopRules: [],
+				},
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-acceptance" }, { asyncDirRoot: asyncRoot, resultsDir });
+
+			assert.equal(target.kind, "revive");
+			assert.deepEqual(target.recoveryDescriptor?.acceptance, {
+				level: "attested",
+				criteria: [{ id: "criterion-1", must: "Return evidence", evidence: ["manual-notes"], severity: "required" }],
+				evidence: ["manual-notes", "residual-risks"],
+				verify: [],
+				stopRules: [],
+			});
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects stale explicit reviewed acceptance metadata in recovery descriptors", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-reviewed-acceptance-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-reviewed-acceptance");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-reviewed-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
+			});
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				version: 1,
+				sourceRunId: "run-reviewed-acceptance",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+				acceptance: {
+					level: "reviewed",
+					explicit: true,
+					inferredReason: ["async write-capable or risky run"],
+					criteria: ["Return evidence"],
+					evidence: ["validation-output"],
+					verify: [],
+					review: { agent: "reviewer", required: true },
+					stopRules: [],
+				},
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-reviewed-acceptance" }, { asyncDirRoot: asyncRoot, resultsDir }),
+				/achieved status.*acceptance\.review\.required/i,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("drops inferred legacy acceptance metadata from recovery descriptors", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-inferred-acceptance-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-inferred-acceptance");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-inferred-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
+			});
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				version: 1,
+				sourceRunId: "run-inferred-acceptance",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+				acceptance: {
+					level: "reviewed",
+					explicit: false,
+					inferredReason: ["async write-capable or risky run"],
+					criteria: [],
+					evidence: [],
+					verify: [],
+					review: { agent: "reviewer", required: true },
+					stopRules: [],
+				},
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-inferred-acceptance" }, { asyncDirRoot: asyncRoot, resultsDir });
+
+			assert.equal(target.kind, "revive");
+			assert.equal(target.recoveryDescriptor?.acceptance, undefined);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects stopped runs instead of reviving them", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-stopped-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncRoot, "run-stopped", "status.json"), {
+				runId: "run-stopped",
+				mode: "single",
+				state: "stopped",
+				stopped: true,
+				startedAt: 100,
+				endedAt: 200,
+				lastUpdate: 200,
+				cwd: root,
+				sessionFile,
+				steps: [{ agent: "worker", status: "stopped", stopped: true, sessionFile }],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-stopped" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				/stopped and cannot be resumed/,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -133,6 +375,40 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("rejects malformed result model metadata", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-malformed-result-model-"));
+		try {
+			const resultsDir = path.join(root, "results");
+			writeJson(path.join(resultsDir, "run-result-model.json"), {
+				id: "run-result-model",
+				agent: "worker",
+				success: true,
+				state: "complete",
+				results: [{ agent: "worker", model: { id: "bad" } }],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-result-model" }, { asyncDirRoot: path.join(root, "runs"), resultsDir }, { requireSessionFile: false }),
+				/results\[0\].model must be a string/,
+			);
+
+			writeJson(path.join(resultsDir, "run-result-model.json"), {
+				id: "run-result-model",
+				agent: "worker",
+				success: true,
+				state: "complete",
+				results: [{ agent: "worker", thinking: { level: "high" } }],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-result-model" }, { asyncDirRoot: path.join(root, "runs"), resultsDir }, { requireSessionFile: false }),
+				/results\[0\].thinking must be a string/,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects malformed status session ids", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-malformed-session-id-"));
 		try {
@@ -155,7 +431,41 @@ describe("async resume lookup", () => {
 		}
 	});
 
-	it("returns a live intercom target for a running child", () => {
+	it("rejects malformed status model metadata", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-malformed-status-model-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			writeJson(path.join(asyncRoot, "run-status-model", "status.json"), {
+				runId: "run-status-model",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running", model: { id: "bad" } }],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-status-model" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				/steps\[0\].model must be a string/,
+			);
+
+			writeJson(path.join(asyncRoot, "run-status-model", "status.json"), {
+				runId: "run-status-model",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running", thinking: { level: "high" } }],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-status-model" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				/steps\[0\].thinking must be a string/,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("returns live child metadata for a running child", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-live-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -165,13 +475,97 @@ describe("async resume lookup", () => {
 				state: "running",
 				startedAt: 100,
 				lastUpdate: 100,
-				steps: [{ agent: "scout", status: "running" }],
+				steps: [{ agent: "scout", status: "running", model: "openai/gpt-4.1", thinking: "off" }],
 			});
 
 			const target = resolveAsyncResumeTarget({ id: "run-live" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
 
 			assert.equal(target.kind, "live");
-			assert.equal(target.intercomTarget, "subagent-scout-run-live-1");
+			assert.equal(target.model, "openai/gpt-4.1");
+			assert.equal(target.thinking, "off");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("enforces current-session ownership for status and result-only runs", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-ownership-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			writeJson(path.join(asyncRoot, "owned", "status.json"), {
+				runId: "owned",
+				sessionId: "session-a",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+			writeJson(path.join(asyncRoot, "sessionless", "status.json"), {
+				runId: "sessionless",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+			writeJson(path.join(resultsDir, "result-only.json"), {
+				id: "result-only",
+				sessionId: "session-a",
+				agent: "worker",
+				state: "complete",
+				success: true,
+			});
+			writeJson(path.join(asyncRoot, "mixed", "status.json"), {
+				runId: "mixed",
+				sessionId: "session-a",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			writeJson(path.join(resultsDir, "mixed.json"), {
+				id: "mixed",
+				agent: "worker",
+				state: "complete",
+				success: true,
+			});
+			writeJson(path.join(asyncRoot, "mixed-reverse", "status.json"), {
+				runId: "mixed-reverse",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			writeJson(path.join(resultsDir, "mixed-reverse.json"), {
+				id: "mixed-reverse",
+				sessionId: "session-a",
+				agent: "worker",
+				state: "complete",
+				success: true,
+			});
+
+			assert.equal(resolveAsyncResumeTarget({ id: "owned" }, { asyncDirRoot: asyncRoot, resultsDir }, { sessionId: "session-a" }).kind, "live");
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "owned" }, { asyncDirRoot: asyncRoot, resultsDir }, { sessionId: "session-b" }),
+				/not found in the active session/,
+			);
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "sessionless" }, { asyncDirRoot: asyncRoot, resultsDir }, { sessionId: "session-a" }),
+				/not found in the active session/,
+			);
+			assert.equal(resolveAsyncResumeTarget({ id: "result-only" }, { asyncDirRoot: asyncRoot, resultsDir }, { requireSessionFile: false, sessionId: "session-a" }).kind, "revive");
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "result-only" }, { asyncDirRoot: asyncRoot, resultsDir }, { requireSessionFile: false, sessionId: "session-b" }),
+				/not found in the active session/,
+			);
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "mixed" }, { asyncDirRoot: asyncRoot, resultsDir }, { requireSessionFile: false, sessionId: "session-a" }),
+				/not found in the active session/,
+			);
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "mixed-reverse" }, { asyncDirRoot: asyncRoot, resultsDir }, { requireSessionFile: false, sessionId: "session-a" }),
+				/not found in the active session/,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -247,7 +641,7 @@ describe("async resume lookup", () => {
 				lastUpdate: 200,
 				steps: [
 					{ agent: "a", status: "complete", sessionFile: firstSession },
-					{ agent: "b", status: "complete", sessionFile: secondSession },
+					{ agent: "b", status: "complete", sessionFile: secondSession, model: "anthropic/claude-sonnet-4", thinking: "high" },
 				],
 			});
 
@@ -260,6 +654,46 @@ describe("async resume lookup", () => {
 			assert.equal(target.agent, "b");
 			assert.equal(target.index, 1);
 			assert.equal(target.sessionFile, secondSession);
+			assert.equal(target.model, "anthropic/claude-sonnet-4");
+			assert.equal(target.thinking, "high");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("resolves a completed result-only child with per-child model metadata", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-only-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const firstSession = path.join(root, "a.jsonl");
+			const secondSession = path.join(root, "b.jsonl");
+			fs.writeFileSync(firstSession, "", "utf-8");
+			fs.writeFileSync(secondSession, "", "utf-8");
+			writeJson(path.join(resultsDir, "run-result-only.json"), {
+				id: "run-result-only",
+				mode: "parallel",
+				success: true,
+				state: "complete",
+				cwd: root,
+				results: [
+					{ agent: "a", success: true, sessionFile: firstSession, model: "openai/gpt-4.1" },
+					{ agent: "b", success: true, sessionFile: secondSession, model: "anthropic/claude-sonnet-4", thinking: "high" },
+				],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-result-only" }, { asyncDirRoot: asyncRoot, resultsDir }),
+				/Provide index to choose one/,
+			);
+			const target = resolveAsyncResumeTarget({ id: "run-result-only", index: 1 }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(target.kind, "revive");
+			assert.equal(target.agent, "b");
+			assert.equal(target.index, 1);
+			assert.equal(target.cwd, root);
+			assert.equal(target.sessionFile, secondSession);
+			assert.equal(target.model, "anthropic/claude-sonnet-4");
+			assert.equal(target.thinking, "high");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -272,7 +706,6 @@ describe("async resume lookup", () => {
 			state: "complete",
 			agent: "worker",
 			index: 0,
-			intercomTarget: "subagent-worker-run-old-1",
 			sessionFile: "/tmp/session.jsonl",
 		}, "What changed?");
 

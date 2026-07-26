@@ -54,7 +54,7 @@ describe("Path resolution for .agents and ~/.agents", () => {
 		assert.strictEqual(resolved?.path, path.join(userSkillsDir, "test-skill-2.md"));
 	});
 
-	test("should resolve project agents from both .agents and .pi/agents", () => {
+	test("should resolve project agents from both .agents and .selesai/agents", () => {
 		const legacyDir = path.join(cwdDir, ".agents");
 		const agentsDir = path.join(cwdDir, ".selesai", "agents");
 		fs.mkdirSync(path.join(cwdDir, ".agents", "skills"), { recursive: true });

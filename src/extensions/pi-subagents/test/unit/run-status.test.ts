@@ -308,7 +308,7 @@ describe("async run status inspection", () => {
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
-			assert.match(text, /Subagent fleet: 2 active/);
+			assert.match(text, /Subagent fleet: 2 tracked/);
 			assert.match(text, /Foreground runs:/);
 			assert.match(text, /fg-run \| running \| scout/);
 			assert.match(text, /Async runs:/);
@@ -456,9 +456,8 @@ describe("async run status inspection", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				currentStep: 0,
-				steerCount: 2,
-				lastSteerAt: 150,
-				steps: [{ agent: "worker", status: "running", startedAt: 100, steerCount: 2, lastSteerAt: 150 }],
+				steering: { requested: 2, scheduled: 1, pending: 1, delivered: 2, failed: 0, recovered: 1, lastRequestedAt: 150, lastDeliveredAt: 150, recent: [{ id: "request", requestedAt: 150, message: "guidance", targets: [{ index: 0, state: "recovered", recoveredAt: 180, lateDeliveredAt: 190 }] }] },
+				steps: [{ agent: "worker", status: "running", startedAt: 100, steering: { requested: 2, scheduled: 1, pending: 1, delivered: 2, failed: 0, recovered: 1, lastRequestedAt: 150, lastDeliveredAt: 150, recent: [{ id: "request", requestedAt: 150, message: "guidance", targets: [{ index: 0, state: "recovered", recoveredAt: 180, lateDeliveredAt: 190 }] }] } }],
 			}, null, 2), "utf-8");
 
 			const exact = inspectSubagentStatus({ id: "run-steered" }, {
@@ -469,8 +468,8 @@ describe("async run status inspection", () => {
 			});
 			const exactText = textContent(exact);
 			assert.equal(exact.isError, undefined);
-			assert.match(exactText, /Steering: 2 steers, last 1970-01-01T00:00:00\.150Z/);
-			assert.match(exactText, /Step 1: worker running, steering: 2 steers, last 1970-01-01T00:00:00\.150Z/);
+			assert.match(exactText, /Steering: 2 requested, 1 scheduled, 1 pending, 2 delivered, 0 failed, 1 recovered, 1 late acknowledged/);
+			assert.match(exactText, /Step 1: worker running/);
 
 			const list = inspectSubagentStatus({}, {
 				asyncDirRoot: asyncRoot,
@@ -480,7 +479,7 @@ describe("async run status inspection", () => {
 			});
 			const listText = textContent(list);
 			assert.equal(list.isError, undefined);
-			assert.match(listText, /2 steers \| last steer 1970-01-01T00:00:00\.150Z/);
+			assert.match(listText, /steering 1 scheduled, 1 pending, 2 delivered, 0 failed, 1 recovered/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -956,6 +955,40 @@ describe("async run status inspection", () => {
 
 			assert.equal(result.isError, true);
 			assert.match(textContent(result), /Transcript index must be an integer/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("shows stopped result-only runs without revive guidance", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-stopped-result-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(path.join(asyncRoot, "run-stopped-result"), { recursive: true });
+			fs.mkdirSync(resultsDir, { recursive: true });
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(path.join(resultsDir, "run-stopped-result.json"), JSON.stringify({
+				id: "run-stopped-result",
+				agent: "worker",
+				success: false,
+				state: "stopped",
+				stopped: true,
+				sessionFile,
+				summary: "Subagent stopped by user.",
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-stopped-result" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /State: stopped/);
+			assert.match(text, /Resume: unavailable; stopped runs are not resumable/);
+			assert.doesNotMatch(text, /Revive:/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

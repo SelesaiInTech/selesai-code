@@ -3,6 +3,8 @@ export interface RunnerSubagentStep {
 	parentSessionId?: string;
 	agent: string;
 	task: string;
+	/** Resolved launch context for this child. */
+	context?: "fresh" | "fork";
 	importAsyncRoot?: {
 		runId: string;
 		asyncDir: string;
@@ -28,17 +30,29 @@ export interface RunnerSubagentStep {
 	inheritSkills: boolean;
 	skills?: string[];
 	outputPath?: string;
+	/** Defer the authoritative output instruction until a dynamic fanout item is materialized. */
+	namespaceOutputPath?: boolean;
 	outputMode?: "inline" | "file-only";
 	sessionFile?: string;
 	maxSubagentDepth?: number;
+	waitToolEnabled?: boolean;
 	structuredOutput?: {
 		schema: import("../../shared/types.ts").JsonSchemaObject;
 		schemaPath: string;
 		outputPath: string;
 	};
 	structuredOutputSchema?: import("../../shared/types.ts").JsonSchemaObject;
+	agentContract?: import("../../shared/types.ts").AgentContract;
+	definitionDigest?: string;
+	launchBindingTask?: string;
+	launchContractDigest?: string;
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
+	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
+	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
+	gateOn?: import("../../shared/types.ts").ChainGateLayer;
 	toolBudget?: import("../../shared/types.ts").ResolvedToolBudget;
+	capabilityCeiling?: import("./capability-ceiling.ts").ResolvedSubagentCapabilityCeiling;
+	capabilityAudit?: import("./capability-ceiling.ts").SubagentCapabilityAudit;
 }
 
 export interface ParallelStepGroup {
@@ -59,6 +73,10 @@ export interface DynamicRunnerGroup {
 	sessionFiles?: (string | undefined)[];
 	thinkingOverrides?: (string | undefined)[];
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
+	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
+	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
+	agentContract?: import("../../shared/types.ts").AgentContract;
+	gateOn?: import("../../shared/types.ts").ChainGateLayer;
 }
 
 export type RunnerStep = RunnerSubagentStep | ParallelStepGroup | DynamicRunnerGroup;

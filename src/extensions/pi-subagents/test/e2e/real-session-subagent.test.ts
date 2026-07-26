@@ -37,7 +37,7 @@ const ISOLATED_ENV_KEYS = [
 	"SELESAI_SUBAGENT_EXTRA_AGENT_DIRS",
 	"SELESAI_SUBAGENT_PARENT_SESSION",
 	"SELESAI_SUBAGENT_PI_BINARY",
-	"SELESAI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT",
+	"SELESAI_SUBAGENTS_SELESAI_CODING_AGENT_PACKAGE_ROOT",
 ] as const;
 
 describe("real Pi-session subagent E2E", { skip: !available ? "pi runtime packages not available" : undefined }, () => {
@@ -46,6 +46,134 @@ describe("real Pi-session subagent E2E", { skip: !available ? "pi runtime packag
 	afterEach(async () => {
 		await run?.dispose();
 		run = undefined;
+	});
+
+	it("loads requested extension tools in direct and chain children and diagnoses missing providers", async () => {
+		const { runRealSubagentSession, subagentCall, subagentToolResults } = await import("../support/real-session-runner.ts");
+		const extensionAgent = `---
+name: extension-worker
+description: Uses a child-only fixture tool
+tools: read, fixture_search
+subagentOnlyExtensions: ./fixture-extension.ts
+completionGuard: false
+---
+Use the available tools.`;
+		const missingAgent = `---
+name: missing-extension-worker
+description: Requests an extension tool without loading its provider
+tools: read, missing_search
+completionGuard: false
+---
+Use the available tools.`;
+		const fixtureExtension = `export default function (pi) {
+	pi.registerTool({
+		name: "fixture_search",
+		label: "Fixture Search",
+		description: "Search the E2E fixture.",
+		parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false },
+		async execute() { return { content: [{ type: "text", text: "fixture result" }] }; },
+	});
+}`;
+
+		run = await runRealSubagentSession({
+			prompt: "Run the direct, chain, and missing-provider child checks.",
+			childText: CHILD_MARKER,
+			reportChildTools: true,
+			projectFiles: {
+				".selesai/agents/extension-worker.md": extensionAgent,
+				".selesai/agents/missing-extension-worker.md": missingAgent,
+				"fixture-extension.ts": fixtureExtension,
+			},
+			respond(context) {
+				const resultCount = (context.messages as Array<{ role?: string; toolName?: string }>).filter((message) => message.role === "toolResult" && message.toolName === "subagent").length;
+				if (resultCount === 0) {
+					return subagentCall({ agent: "extension-worker", task: "Report active tools.", context: "fresh", agentScope: "project" }, "call-direct-extension");
+				}
+				if (resultCount === 1) {
+					return subagentCall({ chain: [{ agent: "extension-worker", task: "Report active tools." }], async: false, clarify: false, agentScope: "project" }, "call-chain-extension");
+				}
+				if (resultCount === 2) {
+					return subagentCall({
+						chain: [{
+							agent: "extension-worker",
+							task: "Submit the required structured marker.",
+							outputSchema: {
+								type: "object",
+								properties: { marker: { type: "string" } },
+								required: ["marker"],
+								additionalProperties: false,
+							},
+						}],
+						async: false,
+						clarify: false,
+						agentScope: "project",
+					}, "call-structured-output");
+				}
+				if (resultCount === 3) {
+					return subagentCall({ agent: "missing-extension-worker", task: "Report active tools.", context: "fresh", agentScope: "project" }, "call-missing-extension");
+				}
+				return "Child tool checks complete.";
+			},
+			timeoutMs: 60_000,
+		});
+
+		const results = subagentToolResults(run.parentSession);
+		const toolMessages = run.parentSession.messages.filter((message) => message.role === "toolResult" && (message as { toolName?: string }).toolName === "subagent");
+		const chainDetails = JSON.stringify((toolMessages[1] as { details?: unknown } | undefined)?.details);
+		const structuredDetails = JSON.stringify((toolMessages[2] as { details?: unknown } | undefined)?.details);
+		assert.equal(results.length, 4);
+		assert.match(results[0] ?? "", /ACTIVE_TOOLS:[^\n]*fixture_search/);
+		assert.match(results[0] ?? "", /ACTIVE_TOOLS:[^\n]*read/);
+		assert.match(chainDetails, /ACTIVE_TOOLS:[^\n]*fixture_search/);
+		assert.match(chainDetails, /ACTIVE_TOOLS:[^\n]*read/);
+		assert.match(structuredDetails, /STRUCTURED_OUTPUT_OK/);
+		assert.match(results[3] ?? "", /requested unavailable child tools: missing_search/);
+		assert.match(results[3] ?? "", /subagentOnlyExtensions/);
+	});
+
+	it("accepts child tools registered by async before_agent_start hooks", async () => {
+		const { runRealSubagentSession, subagentCall, subagentToolResults } = await import("../support/real-session-runner.ts");
+		const asyncExtensionAgent = `---
+name: async-extension-worker
+description: Uses a child-only tool registered from before_agent_start
+tools: read, fixture_async_search
+subagentOnlyExtensions: ./fixture-async-extension.ts
+completionGuard: false
+---
+Report active tools.`;
+		const fixtureAsyncExtension = `export default function (pi) {
+	pi.on("before_agent_start", async () => {
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		pi.registerTool({
+			name: "fixture_async_search",
+			label: "Fixture Async Search",
+			description: "Search the async E2E fixture.",
+			parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false },
+			async execute() { return { content: [{ type: "text", text: "async fixture result" }] }; },
+		});
+	});
+}`;
+
+		run = await runRealSubagentSession({
+			prompt: "Run the async child tool check.",
+			childText: CHILD_MARKER,
+			reportChildTools: true,
+			projectFiles: {
+				".selesai/agents/async-extension-worker.md": asyncExtensionAgent,
+				"fixture-async-extension.ts": fixtureAsyncExtension,
+			},
+			respond(context) {
+				const resultCount = (context.messages as Array<{ role?: string; toolName?: string }>).filter((message) => message.role === "toolResult" && message.toolName === "subagent").length;
+				if (resultCount > 0) return "Async child tool check complete.";
+				return subagentCall({ agent: "async-extension-worker", task: "Report active tools.", context: "fresh", agentScope: "project" }, "call-async-extension");
+			},
+			timeoutMs: 60_000,
+		});
+
+		const results = subagentToolResults(run.parentSession);
+		assert.equal(results.length, 1);
+		assert.match(results[0] ?? "", /ACTIVE_TOOLS:[^\n]*fixture_async_search/);
+		assert.doesNotMatch(results[0] ?? "", /requested unavailable child tools/);
 	});
 
 	it("boots the extension in a real parent session and delivers a faux child result", async () => {
@@ -59,7 +187,7 @@ describe("real Pi-session subagent E2E", { skip: !available ? "pi runtime packag
 		process.env.SELESAI_SUBAGENT_EXTRA_AGENT_DIRS = BOGUS_EXTRA_DIRS;
 		process.env.SELESAI_SUBAGENT_PARENT_SESSION = "polluted-parent";
 		process.env.SELESAI_SUBAGENT_PI_BINARY = BOGUS_PI_BINARY;
-		process.env.SELESAI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT = BOGUS_PI_PACKAGE_ROOT;
+		process.env.SELESAI_SUBAGENTS_SELESAI_CODING_AGENT_PACKAGE_ROOT = BOGUS_PI_PACKAGE_ROOT;
 
 		try {
 			run = await runRealSubagentSession({

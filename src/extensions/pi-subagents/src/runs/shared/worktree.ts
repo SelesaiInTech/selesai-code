@@ -18,7 +18,7 @@ interface WorktreeInfo {
 	syntheticPaths: string[];
 }
 
-interface WorktreeDiff {
+export interface WorktreeDiff {
 	index: number;
 	agent: string;
 	branch: string;
@@ -27,6 +27,23 @@ interface WorktreeDiff {
 	insertions: number;
 	deletions: number;
 	patchPath: string;
+	error?: string;
+}
+
+export interface WorktreeCleanupTask {
+	index: number;
+	path: string;
+	branch: string;
+	worktreeRemoved: boolean;
+	branchRemoved: boolean;
+	errors?: string[];
+}
+
+export interface WorktreeCleanupReport {
+	state: "complete" | "partial";
+	tasks: WorktreeCleanupTask[];
+	pruned: boolean;
+	errors?: string[];
 }
 
 interface WorktreeTaskCwdConflict {
@@ -426,7 +443,7 @@ function removeSyntheticPathsBeforeDiff(worktree: WorktreeInfo): void {
 	}
 }
 
-function emptyDiff(index: number, agent: string, branch: string, patchPath: string): WorktreeDiff {
+function emptyDiff(index: number, agent: string, branch: string, patchPath: string, error?: string): WorktreeDiff {
 	return {
 		index,
 		agent,
@@ -436,6 +453,7 @@ function emptyDiff(index: number, agent: string, branch: string, patchPath: stri
 		insertions: 0,
 		deletions: 0,
 		patchPath,
+		...(error ? { error } : {}),
 	};
 }
 
@@ -497,13 +515,30 @@ function writeEmptyPatch(patchPath: string): void {
 	}
 }
 
-function cleanupSingleWorktree(repoCwd: string, worktree: WorktreeInfo): void {
-	try { runGitChecked(repoCwd, ["worktree", "remove", "--force", worktree.path]); } catch {
-		// Cleanup is best-effort to avoid masking caller errors.
+function cleanupSingleWorktree(repoCwd: string, worktree: WorktreeInfo): WorktreeCleanupTask {
+	const errors: string[] = [];
+	let worktreeRemoved = false;
+	let branchRemoved = false;
+	try {
+		runGitChecked(repoCwd, ["worktree", "remove", "--force", worktree.path]);
+		worktreeRemoved = true;
+	} catch (error) {
+		errors.push(`worktree removal failed: ${error instanceof Error ? error.message : String(error)}`);
 	}
-	try { runGitChecked(repoCwd, ["branch", "-D", worktree.branch]); } catch {
-		// Cleanup is best-effort to avoid masking caller errors.
+	try {
+		runGitChecked(repoCwd, ["branch", "-D", worktree.branch]);
+		branchRemoved = true;
+	} catch (error) {
+		errors.push(`branch removal failed: ${error instanceof Error ? error.message : String(error)}`);
 	}
+	return {
+		index: worktree.index,
+		path: worktree.path,
+		branch: worktree.branch,
+		worktreeRemoved,
+		branchRemoved,
+		...(errors.length ? { errors } : {}),
+	};
 }
 
 function hasWorktreeChanges(diff: WorktreeDiff): boolean {
@@ -560,23 +595,37 @@ export function diffWorktrees(setup: WorktreeSetup, agents: string[], diffsDir: 
 		const patchPath = path.join(diffsDir, `task-${index}-${safePatchAgentName(agent)}.patch`);
 		try {
 			diffs.push(captureWorktreeDiff(setup, worktree, agent, patchPath));
-		} catch {
-			// Preserve execution flow; failed diff capture maps to an empty per-task patch.
+		} catch (error) {
+			// Preserve execution flow while retaining the failed capture as handoff evidence.
 			writeEmptyPatch(patchPath);
-			diffs.push(emptyDiff(index, agent, worktree.branch, patchPath));
+			diffs.push(emptyDiff(index, agent, worktree.branch, patchPath, error instanceof Error ? error.message : String(error)));
 		}
 	}
 
 	return diffs;
 }
 
-export function cleanupWorktrees(setup: WorktreeSetup): void {
+export function cleanupWorktrees(setup: WorktreeSetup): WorktreeCleanupReport {
+	const tasks: WorktreeCleanupTask[] = [];
 	for (let index = setup.worktrees.length - 1; index >= 0; index--) {
-		cleanupSingleWorktree(setup.cwd, setup.worktrees[index]!);
+		tasks.push(cleanupSingleWorktree(setup.cwd, setup.worktrees[index]!));
 	}
-	try { runGitChecked(setup.cwd, ["worktree", "prune"]); } catch {
-		// Pruning is best-effort cleanup.
+	tasks.sort((left, right) => left.index - right.index);
+	const errors: string[] = [];
+	let pruned = false;
+	try {
+		runGitChecked(setup.cwd, ["worktree", "prune"]);
+		pruned = true;
+	} catch (error) {
+		errors.push(`worktree prune failed: ${error instanceof Error ? error.message : String(error)}`);
 	}
+	const state = tasks.every((task) => task.worktreeRemoved && task.branchRemoved) && pruned ? "complete" : "partial";
+	return {
+		state,
+		tasks,
+		pruned,
+		...(errors.length ? { errors } : {}),
+	};
 }
 
 export function formatWorktreeDiffSummary(diffs: WorktreeDiff[]): string {

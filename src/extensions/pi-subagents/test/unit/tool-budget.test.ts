@@ -23,6 +23,17 @@ describe("tool-budget module", () => {
 		assert.deepEqual(resolved.budget, { soft: 2, hard: 4, block: "*" });
 	});
 
+	it("accepts a zero hard limit only when the internal minimum opts in", () => {
+		assert.deepEqual(
+			validateToolBudgetConfig({ hard: 0, block: "*" }, "toolBudget", { minimumHard: 0 }).budget,
+			{ hard: 0, block: "*" },
+		);
+		assert.equal(
+			validateToolBudgetConfig({ soft: 0, hard: 0, block: "*" }, "toolBudget", { minimumHard: 0 }).error,
+			"toolBudget.soft must be an integer >= 1 when provided.",
+		);
+	});
+
 	it("rejects unsafe configs", () => {
 		assert.equal(validateToolBudgetConfig({ hard: 0 }).error, "toolBudget.hard must be an integer >= 1.");
 		assert.equal(validateToolBudgetConfig({ soft: 5, hard: 4 }).error, "toolBudget.soft must be <= toolBudget.hard.");
@@ -33,6 +44,9 @@ describe("tool-budget module", () => {
 	it("serializes and decodes env config", () => {
 		const budget = { soft: 2, hard: 4, block: ["read"] };
 		assert.deepEqual(decodeToolBudgetEnv(encodeToolBudgetEnv(budget)), budget);
+		const zeroBudget = { hard: 0, block: "*" as const };
+		assert.throws(() => decodeToolBudgetEnv(encodeToolBudgetEnv(zeroBudget)), /SELESAI_SUBAGENT_TOOL_BUDGET\.hard must be an integer >= 1/);
+		assert.deepEqual(decodeToolBudgetEnv(encodeToolBudgetEnv(zeroBudget), { allowZero: true }), zeroBudget);
 	});
 
 	it("tracks state and block decisions", () => {
@@ -42,6 +56,7 @@ describe("tool-budget module", () => {
 		assert.equal(toolBudgetState(budget, 4, "read").outcome, "hard-blocked");
 		assert.equal(shouldBlockToolForBudget(budget, "read", 4), true);
 		assert.equal(shouldBlockToolForBudget(budget, "write", 4), false);
+		assert.equal(shouldBlockToolForBudget({ hard: 0, block: "*" }, "read", 1), true);
 	});
 
 	it("formats user-facing budget messages", () => {

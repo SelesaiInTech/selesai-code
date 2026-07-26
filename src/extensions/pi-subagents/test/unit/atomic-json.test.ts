@@ -7,14 +7,23 @@ class FakeFs {
 	files = new Map<string, string>();
 	madeDirs: string[] = [];
 	renameCalls = 0;
+	failMkdirCodes: string[] = [];
 	failRenameCodes: string[] = [];
+	writeOptions = new Map<string, unknown>();
 
 	mkdirSync(dirPath: string): void {
 		this.madeDirs.push(dirPath);
+		const failureCode = this.failMkdirCodes.shift();
+		if (failureCode) {
+			const error = new Error(`mkdir failed with ${failureCode}`) as NodeJS.ErrnoException;
+			error.code = failureCode;
+			throw error;
+		}
 	}
 
-	writeFileSync(filePath: string, contents: string): void {
+	writeFileSync(filePath: string, contents: string, options?: unknown): void {
 		this.files.set(filePath, contents);
+		this.writeOptions.set(filePath, options);
 	}
 
 	renameSync(sourcePath: string, targetPath: string): void {
@@ -63,6 +72,37 @@ describe("writeAtomicJson", () => {
 		assert.deepEqual(fakeFs.madeDirs, [path.dirname(targetPath)]);
 		assert.equal(fakeFs.files.get(targetPath), JSON.stringify({ state: "running" }, null, 2));
 		assert.equal(fakeFs.files.size, 1);
+	});
+
+	it("retries transient directory creation failures before writing", () => {
+		const fakeFs = new FakeFs();
+		fakeFs.failMkdirCodes = ["EPERM", "EACCES"];
+		const waits: number[] = [];
+		const writeAtomicJson = createWriter(fakeFs, waits);
+		const targetPath = path.join("/tmp", "status.json");
+
+		writeAtomicJson(targetPath, { state: "running" });
+
+		assert.equal(fakeFs.renameCalls, 1);
+		assert.deepEqual(waits, [1, 2]);
+		assert.deepEqual(fakeFs.madeDirs, [path.dirname(targetPath), path.dirname(targetPath), path.dirname(targetPath)]);
+		assert.equal(fakeFs.files.get(targetPath), JSON.stringify({ state: "running" }, null, 2));
+	});
+
+	it("writes the temporary descriptor with the requested private mode", () => {
+		const fakeFs = new FakeFs();
+		const writeAtomicJson = createAtomicJsonWriter({
+			fs: fakeFs as any,
+			now: () => 12345,
+			pid: 678,
+			random: () => 0.5,
+			mode: 0o600,
+		});
+		const targetPath = path.join("/tmp", "recovery-descriptor.json");
+
+		writeAtomicJson(targetPath, { sourceRunId: "run" });
+
+		assert.deepEqual([...fakeFs.writeOptions.values()], [{ encoding: "utf-8", mode: 0o600 }]);
 	});
 
 	it("uses longer default retries for transient Windows rename locks", () => {

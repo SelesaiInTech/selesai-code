@@ -27,6 +27,7 @@ import {
 	SUBAGENT_PARENT_RUN_ID_ENV,
 } from "./pi-args.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { sanitizeProcessTerminal } from "../background/process-terminal.ts";
 
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");
 const ROUTE_FILE = "route.json";
@@ -202,7 +203,7 @@ function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
 	const maxTurns = clampNumber(raw.maxTurns);
 	const graceTurns = clampNumber(raw.graceTurns);
 	const turnCount = clampNumber(raw.turnCount);
-	const outcome = raw.outcome === "within-budget" || raw.outcome === "wrap-up-requested" || raw.outcome === "exceeded" ? raw.outcome : undefined;
+	const outcome = raw.outcome === "within-budget" || raw.outcome === "wrap-up-requested" || raw.outcome === "termination-deferred" || raw.outcome === "exceeded" ? raw.outcome : undefined;
 	if (maxTurns === undefined || graceTurns === undefined || turnCount === undefined || !outcome) return undefined;
 	return {
 		maxTurns,
@@ -210,12 +211,13 @@ function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
 		turnCount,
 		outcome,
 		...(clampNumber(raw.wrapUpRequestedAtTurn) !== undefined ? { wrapUpRequestedAtTurn: clampNumber(raw.wrapUpRequestedAtTurn) } : {}),
+		...(clampNumber(raw.terminationDeferredAtTurn) !== undefined ? { terminationDeferredAtTurn: clampNumber(raw.terminationDeferredAtTurn) } : {}),
 		...(clampNumber(raw.exceededAtTurn) !== undefined ? { exceededAtTurn: clampNumber(raw.exceededAtTurn) } : {}),
 	};
 }
 
 function sanitizeState(value: unknown, fallback: NestedRunState): NestedRunState {
-	return value === "queued" || value === "running" || value === "complete" || value === "failed" || value === "paused"
+	return value === "queued" || value === "running" || value === "complete" || value === "failed" || value === "paused" || value === "stopped"
 		? value
 		: fallback;
 }
@@ -225,7 +227,7 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 	const raw = input as Record<string, unknown>;
 	const agent = stringValue(raw.agent, 128);
 	if (!agent) return undefined;
-	const status = raw.status === "pending" || raw.status === "running" || raw.status === "complete" || raw.status === "completed" || raw.status === "failed" || raw.status === "paused"
+	const status = raw.status === "pending" || raw.status === "running" || raw.status === "complete" || raw.status === "completed" || raw.status === "failed" || raw.status === "paused" || raw.status === "stopped"
 		? raw.status
 		: "pending";
 	return {
@@ -243,6 +245,7 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		...(clampNumber(raw.endedAt) !== undefined ? { endedAt: clampNumber(raw.endedAt) } : {}),
 		...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
 		...(raw.timedOut === true ? { timedOut: true } : {}),
+		...(raw.stopped === true ? { stopped: true } : {}),
 		...(sanitizeTurnBudget(raw.turnBudget) ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) } : {}),
 		...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
 		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
@@ -298,6 +301,7 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		...(clampNumber(raw.timeoutMs) !== undefined ? { timeoutMs: clampNumber(raw.timeoutMs) } : {}),
 		...(clampNumber(raw.deadlineAt) !== undefined ? { deadlineAt: clampNumber(raw.deadlineAt) } : {}),
 		...(raw.timedOut === true ? { timedOut: true } : {}),
+		...(raw.stopped === true ? { stopped: true } : {}),
 		...(sanitizeTurnBudget(raw.turnBudget) ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) } : {}),
 		...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
 		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
@@ -353,7 +357,7 @@ export function parseNestedEventRecords(content: string, route: NestedRoute): Ne
 }
 
 function terminal(state: NestedRunState): boolean {
-	return state === "complete" || state === "failed" || state === "paused";
+	return state === "complete" || state === "failed" || state === "paused" || state === "stopped";
 }
 
 function mergeSummary(existing: NestedRunSummary | undefined, event: NestedEventRecord): NestedRunSummary {
@@ -609,7 +613,9 @@ export function projectNestedEvents(route: NestedRoute): NestedRegistry {
 		} catch {
 			continue;
 		}
-		for (const event of parseNestedEventRecords(content, route)) {
+		const records = parseNestedEventRecords(content, route);
+		if (records.length === 0) continue;
+		for (const event of records) {
 			registry = applyNestedEvent(registry, event);
 			changed = true;
 		}
@@ -617,11 +623,34 @@ export function projectNestedEvents(route: NestedRoute): NestedRegistry {
 		changed = true;
 	}
 	if (changed) {
-		registry = { ...registry, processedEvents: [...seen].slice(-1000) };
+		const processedEvents = [...seen];
+		const retainedEvents = processedEvents.slice(-1000);
+		const evictedEvents = processedEvents.slice(0, -1000);
+		registry = { ...registry, processedEvents: retainedEvents };
 		// Parent projection is the only writer to this sidecar registry. Child and
 		// runner processes only create immutable event files, so parent status.json
 		// remains owned by the existing runner writer and is never rewritten here.
 		writeAtomicJson(registryPath(route), registry);
+
+		// The registry retains only a bounded filename cursor. Remove the old
+		// immutable status records after the cursor is durable; otherwise an evicted
+		// filename is rediscovered on the next projection and replayed forever.
+		for (const entry of evictedEvents) {
+			const eventPath = path.join(route.eventSink, entry);
+			if (!containedPath(route.eventSink, eventPath)) continue;
+			try {
+				const stat = fs.statSync(eventPath);
+				if (!stat.isFile() || stat.size > MAX_EVENT_BYTES) continue;
+				const content = fs.readFileSync(eventPath, "utf-8");
+				const hasStatusRecord = parseNestedEventRecords(content, route).length > 0;
+				const hasControlResult = content
+					.split("\n")
+					.some((line) => line.trim() && parseControlResult(line.trim(), route));
+				if (hasStatusRecord && !hasControlResult) fs.unlinkSync(eventPath);
+			} catch {
+				// A cleanup failure must not make a successfully projected status fail.
+			}
+		}
 	}
 	return registry;
 }
@@ -845,6 +874,9 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.pid ? { pid: status.pid } : {}),
 		...(status.sessionId ? { sessionId: status.sessionId } : {}),
 		mode: status.mode ?? fallback.mode,
+		...(status.processTerminal ? { processTerminal: sanitizeProcessTerminal(status.processTerminal, { runId: status.runId || fallback.id, runnerProcessInstanceId: status.processTerminal.runnerProcessInstanceId }, `${asyncDir}/status.json`) } : {}),
+		...(status.capabilityCeiling ? { capabilityCeiling: status.capabilityCeiling } : {}),
+		...(status.capabilityAudit ? { capabilityAudit: status.capabilityAudit } : {}),
 		state: status.state,
 		...(status.currentStep !== undefined ? { currentStep: status.currentStep } : {}),
 		...(status.chainStepCount !== undefined ? { chainStepCount: status.chainStepCount } : {}),
@@ -859,6 +891,7 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
 		...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
 		...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
+		...(status.stopped !== undefined ? { stopped: status.stopped } : {}),
 		...(status.turnBudget ? { turnBudget: status.turnBudget } : {}),
 		...(status.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: status.turnBudgetExceeded } : {}),
 		...(status.wrapUpRequested !== undefined ? { wrapUpRequested: status.wrapUpRequested } : {}),
@@ -867,7 +900,7 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.endedAt !== undefined ? { endedAt: status.endedAt } : {}),
 		lastUpdate: status.lastUpdate ?? fallback.ts,
 		...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
-		...(status.steps?.length ? { steps: status.steps.map((step) => ({
+		...(status.steps?.length ? { steps: status.steps.map((step, index) => ({
 			agent: step.agent,
 			status: step.status,
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
@@ -882,9 +915,13 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 			...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
 			...(step.error ? { error: step.error } : {}),
 			...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
+			...(step.stopped !== undefined ? { stopped: step.stopped } : {}),
 			...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
 			...(step.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: step.turnBudgetExceeded } : {}),
 			...(step.wrapUpRequested !== undefined ? { wrapUpRequested: step.wrapUpRequested } : {}),
+			...(step.processTerminal ? { processTerminal: sanitizeProcessTerminal(step.processTerminal, { runId: status.runId || fallback.id, runnerProcessInstanceId: step.processTerminal.runnerProcessInstanceId }, `${asyncDir}/status.json step ${index}`) } : {}),
+			...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
+			...(step.capabilityAudit ? { capabilityAudit: step.capabilityAudit } : {}),
 		})).slice(0, MAX_STEPS) } : {}),
 	};
 }

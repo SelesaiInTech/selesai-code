@@ -6,7 +6,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import { stripThinkingTagsFromText } from "../../../../utils/thinking-tags.js"; // ponytail: .js not .ts — extension .ts is copied verbatim into dist/, only compiled .js exists there
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
 
@@ -15,8 +14,24 @@ import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, Neste
 // ============================================================================
 
 const DEFAULT_CONFIG_DIR_NAME = ".selesai";
-const SELESAI_CODING_AGENT_PACKAGE_NAME = "@selesai/code";
+const PI_CODING_AGENT_PACKAGE_NAME = "@selesai/code";
+
+function stripThinkingTagsFromText(text: string): string {
+	return text.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/^<think>[\s\S]*$/, "");
+}
 export const SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV = "SELESAI_SUBAGENTS_SELESAI_PACKAGE_ROOT";
+
+export function resolveWatchPath(
+	watchPath: string,
+	nativeRealpath: (filePath: string) => string = fs.realpathSync.native,
+): string {
+	// libuv's Windows watcher cannot mix 8.3 registration paths with long event paths.
+	try {
+		return nativeRealpath(watchPath);
+	} catch {
+		return watchPath;
+	}
+}
 
 function validConfigDirName(value: unknown): string | undefined {
 	return typeof value === "string" && value.trim() ? value : undefined;
@@ -29,7 +44,7 @@ function readConfigDirNameFromPackageRoot(packageRoot: string | undefined): stri
 			name?: unknown;
 			piConfig?: { configDir?: unknown };
 		};
-		if (pkg.name !== SELESAI_CODING_AGENT_PACKAGE_NAME) return undefined;
+		if (pkg.name !== PI_CODING_AGENT_PACKAGE_NAME) return undefined;
 		return validConfigDirName(pkg.piConfig?.configDir);
 	} catch {
 		return undefined;
@@ -77,7 +92,7 @@ export function getAgentDir(): string {
 	return configured || path.join(os.homedir(), getConfigDirName(), "agent");
 }
 
-const statusCache = new Map<string, { mtime: number; status: AsyncStatus }>();
+const statusCache = new Map<string, { mtime: number; ctime: number; size: number; ino: number; status: AsyncStatus }>();
 
 function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -112,7 +127,13 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 	}
 
 	const cached = statusCache.get(statusPath);
-	if (cached && cached.mtime === stat.mtimeMs) {
+	if (
+		cached
+		&& cached.mtime === stat.mtimeMs
+		&& cached.ctime === stat.ctimeMs
+		&& cached.size === stat.size
+		&& cached.ino === stat.ino
+	) {
 		return cached.status;
 	}
 
@@ -135,7 +156,13 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 		});
 	}
 
-	statusCache.set(statusPath, { mtime: stat.mtimeMs, status });
+	statusCache.set(statusPath, {
+		mtime: stat.mtimeMs,
+		ctime: stat.ctimeMs,
+		size: stat.size,
+		ino: stat.ino,
+		status,
+	});
 	if (statusCache.size > 50) {
 		const firstKey = statusCache.keys().next().value;
 		if (firstKey) statusCache.delete(firstKey);
@@ -250,18 +277,22 @@ export function getFinalOutput(messages: Message[]): string {
 		const hasAssistantError = ("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0)
 			|| ("stopReason" in msg && msg.stopReason === "error");
 		if (hasAssistantError) continue;
+		const messageText = msg.content
+			.filter((part) => part.type === "text" && part.text.trim().length > 0)
+			.map((part) => part.type === "text" ? part.text : "")
+			.join("\n");
 		for (let j = msg.content.length - 1; j >= 0; j--) {
 			const part = msg.content[j];
 			if (part.type !== "text" || part.text.trim().length === 0) continue;
 			validTextParts.push(part.text);
-			if (/```acceptance-report\s*\n[\s\S]*?```/i.test(part.text)) return part.text;
+			if (/```acceptance[-_]report\s*\n[\s\S]*?```/i.test(part.text)) return messageText;
 			for (const match of part.text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
 				const body = match[1] ?? "";
-				if (/"criteriaSatisfied"/.test(body) && /"(?:changedFiles|testsAddedOrUpdated|commandsRun|validationOutput|residualRisks|noStagedFiles|diffSummary|reviewFindings|manualNotes)"/.test(body)) {
-					return part.text;
+				if (/"(?:criteriaSatisfied|criteria_satisfied)"/.test(body) && /"(?:changedFiles|changed_files|testsAddedOrUpdated|tests_added_or_updated|commandsRun|commands_run|validationOutput|validation_output|residualRisks|residual_risks|noStagedFiles|no_staged_files|diffSummary|diff_summary|reviewFindings|review_findings|manualNotes|manual_notes)"/.test(body)) {
+					return messageText;
 				}
 			}
-			if (/ACCEPTANCE_REPORT\s*:/i.test(part.text)) return part.text;
+			if (/ACCEPTANCE_REPORT\s*:/i.test(part.text)) return messageText;
 		}
 	}
 	return validTextParts[0] ?? "";
@@ -385,6 +416,14 @@ export function compactForegroundDetails(details: Details): Details {
 	};
 }
 
+export function hasEmptyTerminalAssistantResponse(messages: Message[]): boolean {
+	const lastAssistant = messages.findLast((message) => message.role === "assistant");
+	return lastAssistant?.role === "assistant"
+		&& Array.isArray(lastAssistant.content)
+		&& lastAssistant.content.length === 0
+		&& lastAssistant.usage.output === 0;
+}
+
 /**
  * Detect errors in subagent execution from messages (only errors with no subsequent success)
  */
@@ -411,50 +450,17 @@ export function detectSubagentError(messages: Message[]): ErrorInfo {
 		const toolName = "toolName" in msg && typeof msg.toolName === "string" ? msg.toolName : undefined;
 		const isError = "isError" in msg && msg.isError === true;
 
-		if (isError) {
-			const text = msg.content.find((c) => c.type === "text");
-			const details = text && "text" in text ? text.text : undefined;
-			const exitMatch = details?.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
-			return {
-				hasError: true,
-				exitCode: exitMatch ? parseInt(exitMatch[1], 10) : 1,
-				errorType: toolName || "tool",
-				details: details?.slice(0, 200),
-			};
-		}
-
-		if (toolName !== "bash") continue;
+		if (!isError) continue;
 
 		const text = msg.content.find((c) => c.type === "text");
-		if (!text || !("text" in text)) continue;
-		const output = text.text;
-
-		const exitMatch = output.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
-		if (exitMatch) {
-			const code = parseInt(exitMatch[1], 10);
-			if (code !== 0) {
-				return { hasError: true, exitCode: code, errorType: "bash", details: output.slice(0, 200) };
-			}
-		}
-
-		// NOTE: These patterns can match legitimate output (grep results, logs,
-		// testing). With the assistant-message check above, most false positives
-		// are mitigated since the agent will have responded after routine errors.
-		const fatalPatterns = [
-			/command not found/i,
-			/permission denied/i,
-			/no such file or directory/i,
-			/segmentation fault/i,
-			/killed|terminated/i,
-			/out of memory/i,
-			/connection refused/i,
-			/timeout/i,
-		];
-		for (const pattern of fatalPatterns) {
-			if (pattern.test(output)) {
-				return { hasError: true, exitCode: 1, errorType: "bash", details: output.slice(0, 200) };
-			}
-		}
+		const details = text && "text" in text ? text.text : undefined;
+		const exitMatch = details?.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
+		return {
+			hasError: true,
+			exitCode: exitMatch ? parseInt(exitMatch[1], 10) : 1,
+			errorType: toolName || "tool",
+			details: details?.slice(0, 200),
+		};
 	}
 
 	return { hasError: false };
@@ -523,7 +529,7 @@ export function extractToolArgsPreview(args: Record<string, unknown>): string {
  */
 export function extractTextFromContent(content: unknown): string {
 	if (!content) return "";
-	// Handle string content directly
+	// Selesai normalizes providers that embed <think> blocks in text output.
 	if (typeof content === "string") return stripThinkingTagsFromText(content);
 	// Handle array content
 	if (!Array.isArray(content)) return "";

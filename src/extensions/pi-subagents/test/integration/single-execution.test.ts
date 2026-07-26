@@ -25,7 +25,26 @@ import {
 	events,
 	tryImport,
 } from "../support/helpers.ts";
-import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT } from "../../src/shared/types.ts";
+import registerSubagentExtension from "../../src/extension/index.ts";
+import {
+	SUBAGENT_DELEGATION_PROTOCOL_VERSION,
+	SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
+	SUBAGENT_DELEGATION_REQUEST_EVENT,
+	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+	SUBAGENT_DELEGATION_STARTED_EVENT,
+	SUBAGENT_DELEGATION_UPDATE_EVENT,
+	type SubagentDelegationResponse,
+	type SubagentDelegationUpdate,
+	type SubagentDelegationV2Request,
+	type SubagentDelegationV2Response,
+	type SubagentDelegationV2Started,
+} from "../../src/api/delegation.ts";
+import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, type SubagentState } from "../../src/shared/types.ts";
+import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
+import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
+import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
+import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import {
 	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_PARENT_CHILD_INDEX_ENV,
@@ -67,6 +86,7 @@ interface RunSyncResult {
 	agent: string;
 	messages: unknown[];
 	error?: string;
+	protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number };
 	model?: string;
 	skills?: string[];
 	skillsWarning?: string;
@@ -91,6 +111,11 @@ interface RunSyncResult {
 	outputReference?: { path: string; bytes: number; lines: number; message: string };
 	outputSaveError?: string;
 	sessionFile?: string;
+	structuredOutput?: unknown;
+	agentContract?: { version: 1 };
+	execution?: { status?: string; success?: boolean; exitCode?: number; error?: string };
+	review?: { status?: string };
+	effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean; message?: string } };
 	acceptance?: {
 		status?: string;
 		verifyRuns?: Array<{ status?: string }>;
@@ -101,6 +126,56 @@ interface RunSyncResult {
 interface MockPiCallRecord {
 	args?: string[];
 	systemPrompts?: Array<{ mode?: string; path?: string; text?: string; error?: string }>;
+}
+
+function writeWatchdogSettings(projectDir: string, tailMs = 120_000): void {
+	const settingsPath = path.join(projectDir, ".selesai", "settings.json");
+	fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+	fs.writeFileSync(settingsPath, JSON.stringify({
+		subagents: {
+			watchdog: {
+				enabled: true,
+				children: {
+					enabled: true,
+					watchdogTailTimeoutMs: tailMs,
+				},
+			},
+		},
+	}, null, 2), "utf-8");
+}
+
+async function withIsolatedWatchdogSettings<T>(projectDir: string, run: () => Promise<T>): Promise<T> {
+	const previousAgentDir = process.env.SELESAI_CODING_AGENT_DIR;
+	const previousHome = process.env.HOME;
+	const previousUserProfile = process.env.USERPROFILE;
+	const isolatedHome = path.join(projectDir, "isolated-home");
+	process.env.SELESAI_CODING_AGENT_DIR = path.join(isolatedHome, ".selesai", "agent");
+	process.env.HOME = isolatedHome;
+	process.env.USERPROFILE = isolatedHome;
+	try {
+		return await run();
+	} finally {
+		if (previousAgentDir === undefined) delete process.env.SELESAI_CODING_AGENT_DIR;
+		else process.env.SELESAI_CODING_AGENT_DIR = previousAgentDir;
+		if (previousHome === undefined) delete process.env.HOME;
+		else process.env.HOME = previousHome;
+		if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+		else process.env.USERPROFILE = previousUserProfile;
+	}
+}
+
+function childWatchdogStatus(phase: "idle" | "reviewing" | "autofollow" | "settling" | "stale" | "failed", seq: number, followUpPending = false) {
+	return {
+		type: CHILD_WATCHDOG_STATUS_EVENT,
+		runId: "watchdog-child-run",
+		agent: "echo",
+		childIndex: 0,
+		stepIndex: 0,
+		seq,
+		phase,
+		ts: Date.now() + seq,
+		followUpPending,
+	};
 }
 
 function mockAssistantMessage(text: string, stopReason: "stop" | "tool_use" = "stop") {
@@ -143,13 +218,17 @@ interface ExecutorToolResult {
 	isError?: boolean;
 	details?: {
 		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
+		asyncId?: string;
 		timeoutMs?: number;
+		turnBudget?: { maxTurns: number; graceTurns: number };
+		artifacts?: { dir: string; files: ArtifactPaths[] };
 	};
 }
 
 interface ExecutorModule {
 	createSubagentExecutor?: (...args: unknown[]) => {
 		execute: (...args: unknown[]) => Promise<ExecutorToolResult>;
+		executeDelegated: (...args: unknown[]) => Promise<ExecutorToolResult>;
 	};
 }
 
@@ -218,16 +297,31 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		return readCall().args;
 	}
 
-	function makeExecutor(agents = [makeAgent("echo")], config: Record<string, unknown> = {}) {
+	function makeExecutor(
+		agents = [makeAgent("echo")],
+		config: Record<string, unknown> = {},
+		asyncByDefault = false,
+		initialSpawnState?: NonNullable<SubagentState["subagentSpawns"]>,
+		allowMutatingManagementActions = true,
+		initialAsyncJobs: SubagentState["asyncJobs"] = new Map(),
+	) {
 		return createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
-			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			state: {
+				baseCwd: tempDir,
+				currentSessionId: initialSpawnState?.sessionId ?? null,
+				...(initialSpawnState ? { subagentSpawns: initialSpawnState } : {}),
+				asyncJobs: initialAsyncJobs,
+				foregroundControls: new Map(),
+				lastForegroundControlId: null,
+			},
 			config,
-			asyncByDefault: false,
+			asyncByDefault,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (value: string) => value,
 			discoverAgents: () => ({ agents }),
+			allowMutatingManagementActions,
 		});
 	}
 
@@ -263,6 +357,83 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /single alias finished/);
 	});
 
+	it("admits a zero run-level tool budget only for marked v2 delegated execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const zeroBudget = { hard: 0, block: "*" as const };
+		const params = { agent: "echo", task: "Answer without tools", toolBudget: zeroBudget };
+		const ctx = makeMinimalCtx(tempDir);
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const ordinary = await executor.execute(
+			"ordinary-zero-budget",
+			{ ...params, delegatedAllowZeroToolBudget: true },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		assert.equal(ordinary.isError, true);
+		assert.match(ordinary.content[0]?.text ?? "", /toolBudget\.hard must be an integer >= 1/);
+
+		const v1Delegated = await executor.executeDelegated(
+			"v1-delegated-zero-budget",
+			params,
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		assert.equal(v1Delegated.isError, true);
+		assert.match(v1Delegated.content[0]?.text ?? "", /toolBudget\.hard must be an integer >= 1/);
+
+		mockPi.onCall({ echoEnv: [TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV] });
+		const v2Delegated = await executor.executeDelegated(
+			"v2-delegated-zero-budget",
+			{ ...params, delegatedAllowZeroToolBudget: true },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		assert.equal(v2Delegated.isError, undefined);
+		const env = JSON.parse(v2Delegated.content[0]?.text ?? "{}") as Record<string, string>;
+		assert.deepEqual(JSON.parse(env[TOOL_BUDGET_ENV] ?? "null"), zeroBudget);
+		assert.equal(env[TOOL_BUDGET_ZERO_AUTH_ENV], "1");
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("keeps delegated agent and config tool budgets at a minimum of one", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const ctx = makeMinimalCtx(tempDir);
+		const cases = [
+			makeExecutor([makeAgent("echo", { toolBudget: { hard: 0 } })]),
+			makeExecutor([makeAgent("echo")], { toolBudget: { hard: 0 } }),
+		];
+		for (const [index, executor] of cases.entries()) {
+			const result = await executor.executeDelegated(
+				`delegated-default-zero-budget-${index}`,
+				{ agent: "echo", task: "Do work", delegatedAllowZeroToolBudget: true },
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /(?:agent\.|config\.)?toolBudget\.hard must be an integer >= 1/);
+		}
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects string \"none\" acceptance before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"string-none-acceptance",
+			{ agent: "echo", task: "Do work", acceptance: "none" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /acceptance level "none" requires a reason/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("rejects unknown action strings at runtime", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 
@@ -277,6 +448,45 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, true);
 		assert.match(result.content[0]?.text ?? "", /Unknown action: not-a-real-action/);
 		assert.match(result.content[0]?.text ?? "", /Valid:/);
+	});
+
+	it("routes watchdog.configure through the management action path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const gpt = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
+		const opus = { provider: "anthropic", id: "claude-opus-4-8", reasoning: true };
+		const models = [gpt, opus];
+		const watchdog = new MainWatchdogRuntime({ cwd: tempDir });
+		const executor = createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined },
+			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			config: {},
+			asyncByDefault: false,
+			watchdog,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => tempDir,
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents: [makeAgent("echo")] }),
+		});
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			model: gpt,
+			modelRegistry: {
+				getAvailable: () => models,
+				find: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id),
+				hasConfiguredAuth: (model: unknown) => Boolean(model),
+			},
+		};
+
+		const result = await executor.execute(
+			"watchdog-configure",
+			{ action: "watchdog.configure", model: "recommended" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /session model configured: anthropic\/claude-opus-4-8:high/);
+		assert.equal(watchdog.getSnapshot(tempDir).config.main.model, "anthropic/claude-opus-4-8");
 	});
 
 	it("rejects duplicate concurrent subagent execution calls", async () => {
@@ -294,7 +504,310 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("blocks total subagent spawns after the per-session quota", async () => {
+	it("allows concurrent delegated foreground execution calls", async () => {
+		mockPi.onCall({ output: "first delegated call", delay: 100 });
+		mockPi.onCall({ output: "second delegated call", delay: 100 });
+		const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
+		const ctx = makeMinimalCtx(tempDir);
+
+		const [first, second] = await Promise.all([
+			executor.executeDelegated("first", { agent: "echo", task: "First delegated call" }, new AbortController().signal, undefined, ctx),
+			executor.executeDelegated("second", { agent: "second", task: "Second delegated call" }, new AbortController().signal, undefined, ctx),
+		]);
+
+		assert.equal(first.isError, undefined);
+		assert.equal(second.isError, undefined);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("routes registered strict v1 delegation through the concurrent executor", async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("read", { path: "package.json" })], delay: 20 },
+				{ jsonl: [events.toolEnd("read"), events.toolResult("read", "{}")], delay: 20 },
+				{ jsonl: [events.assistantMessage("registered first delegated call")] },
+			],
+		});
+		mockPi.onCall({ output: "registered second delegated call", delay: 100 });
+		const extensionEvents = createEventBus();
+		const runtimeHandlers = new Map<string, Array<(event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void>>();
+		const fakePi = new Proxy({
+			events: extensionEvents,
+			on(event: string, handler: (event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void) {
+				const handlers = runtimeHandlers.get(event) ?? [];
+				handlers.push(handler);
+				runtimeHandlers.set(event, handlers);
+				return () => runtimeHandlers.set(event, (runtimeHandlers.get(event) ?? []).filter((entry) => entry !== handler));
+			},
+			registerTool() {},
+			registerCommand() {},
+			registerShortcut() {},
+			registerMessageRenderer() {},
+			sendMessage() {},
+			getSessionName() { return undefined; },
+		}, {
+			get(target, prop) {
+				if (prop in target) return target[prop as keyof typeof target];
+				return () => undefined;
+			},
+		});
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			sessionManager: {
+				getSessionId: () => "registered-delegation-session",
+				getSessionFile: () => path.join(tempDir, "registered-delegation-session.jsonl"),
+				getEntries: () => [],
+			},
+		};
+		const responses: SubagentDelegationResponse[] = [];
+		const updates: SubagentDelegationUpdate[] = [];
+		extensionEvents.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => responses.push(payload as SubagentDelegationResponse));
+		extensionEvents.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => updates.push(payload as SubagentDelegationUpdate));
+
+		try {
+			registerSubagentExtension(fakePi as never);
+			for (const handler of runtimeHandlers.get("session_start") ?? []) {
+				await handler({ reason: "startup" }, ctx);
+			}
+			extensionEvents.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, {
+				version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
+				requestId: "registered-a",
+				agent: "worker",
+				task: "First registered delegated call",
+				context: "fresh",
+				cwd: tempDir,
+				agentContract: { version: 1 },
+			});
+			extensionEvents.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, {
+				version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
+				requestId: "registered-b",
+				agent: "reviewer",
+				task: "Second registered delegated call",
+				context: "fresh",
+				cwd: tempDir,
+				agentContract: { version: 1 },
+			});
+
+			const callDeadlineAt = Date.now() + 30_000;
+			while (mockPi.callCount() < 2 && Date.now() < callDeadlineAt) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(mockPi.callCount(), 2, "registered strict v1 requests should bypass the ordinary one-call guard");
+
+			const responseDeadlineAt = Date.now() + 30_000;
+			while (responses.length < 2 && Date.now() < responseDeadlineAt) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.deepEqual(responses.map((response) => response.requestId).sort(), ["registered-a", "registered-b"]);
+			assert.ok(responses.every((response) => response.status === "completed"));
+			assert.deepEqual(responses.map((response) => response.output).sort(), [
+				"registered first delegated call",
+				"registered second delegated call",
+			]);
+			const toolResponse = responses.find((response) => response.output === "registered first delegated call");
+			assert.ok(toolResponse);
+			assert.equal(updates.some((update) => update.requestId === toolResponse.requestId && update.currentTool === "read"), true);
+		} finally {
+			for (const handler of runtimeHandlers.get("session_shutdown") ?? []) {
+				await handler({}, ctx);
+			}
+		}
+	});
+
+	it("routes registered strict v2 text delegation through the concurrent executor", async () => {
+		const literalJsonText = '{"looks":"json"}';
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("read", { path: "package.json" })], delay: 20 },
+				{ jsonl: [events.toolEnd("read"), events.toolResult("read", "{}")], delay: 20 },
+				{
+					jsonl: [{
+						type: "message_end",
+						message: {
+							role: "assistant",
+							content: [{ type: "text", text: literalJsonText }],
+							model: "mock/test-model",
+							stopReason: "stop",
+							usage: {
+								input: 11,
+								output: 7,
+								cacheRead: 3,
+								cacheWrite: 2,
+								cost: { total: 0.0125 },
+							},
+						},
+					}],
+					delay: 60,
+				},
+			],
+		});
+		mockPi.onCall({ output: "registered v2 second node", delay: 100 });
+		const extensionEvents = createEventBus();
+		const runtimeHandlers = new Map<string, Array<(event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void>>();
+		const fakePi = new Proxy({
+			events: extensionEvents,
+			on(event: string, handler: (event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void) {
+				const handlers = runtimeHandlers.get(event) ?? [];
+				handlers.push(handler);
+				runtimeHandlers.set(event, handlers);
+				return () => runtimeHandlers.set(event, (runtimeHandlers.get(event) ?? []).filter((entry) => entry !== handler));
+			},
+			registerTool() {},
+			registerCommand() {},
+			registerShortcut() {},
+			registerMessageRenderer() {},
+			sendMessage() {},
+			getSessionName() { return undefined; },
+		}, {
+			get(target, prop) {
+				if (prop in target) return target[prop as keyof typeof target];
+				return () => undefined;
+			},
+		});
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			modelRegistry: {
+				getAvailable: () => [{ provider: "mock", id: "test-model", reasoning: true }],
+			},
+			sessionManager: {
+				getSessionId: () => "registered-delegation-v2-session",
+				getSessionFile: () => path.join(tempDir, "registered-delegation-v2-session.jsonl"),
+				getEntries: () => [],
+			},
+		};
+		const started: SubagentDelegationV2Started[] = [];
+		const responses: SubagentDelegationV2Response[] = [];
+		extensionEvents.on(SUBAGENT_DELEGATION_STARTED_EVENT, (payload) => {
+			if ((payload as { version?: unknown }).version === SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION) {
+				started.push(payload as SubagentDelegationV2Started);
+			}
+		});
+		extensionEvents.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
+			if ((payload as { version?: unknown }).version === SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION) {
+				responses.push(payload as SubagentDelegationV2Response);
+			}
+		});
+
+		const firstRequest = {
+			version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
+			requestId: "registered-v2-a",
+			ownerRunId: "owner-v2",
+			nodeId: "node-a",
+			agent: "worker",
+			task: "Return literal JSON-looking text",
+			context: "fresh",
+			cwd: tempDir,
+			model: "mock/test-model",
+			thinking: "high",
+			result: { kind: "text" },
+		} satisfies SubagentDelegationV2Request;
+		const secondRequest = {
+			version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
+			requestId: "registered-v2-b",
+			ownerRunId: "owner-v2",
+			nodeId: "node-b",
+			agent: "reviewer",
+			task: "Run the second logical node",
+			context: "fresh",
+			cwd: tempDir,
+			model: "mock/test-model",
+			thinking: "high",
+			result: { kind: "text" },
+		} satisfies SubagentDelegationV2Request;
+
+		try {
+			registerSubagentExtension(fakePi as never);
+			for (const handler of runtimeHandlers.get("session_start") ?? []) {
+				await handler({ reason: "startup" }, ctx);
+			}
+			extensionEvents.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, firstRequest);
+			extensionEvents.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, secondRequest);
+
+			const callDeadlineAt = Date.now() + 30_000;
+			while (mockPi.callCount() < 2 && responses.length < 2 && Date.now() < callDeadlineAt) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(mockPi.callCount(), 2, `different V2 logical nodes should use the concurrent delegated execution path: ${JSON.stringify(responses)}`);
+			assert.deepEqual(started.map(({ requestId, ownerRunId, nodeId }) => ({ requestId, ownerRunId, nodeId })).sort((a, b) => a.nodeId.localeCompare(b.nodeId)), [
+				{ requestId: "registered-v2-a", ownerRunId: "owner-v2", nodeId: "node-a" },
+				{ requestId: "registered-v2-b", ownerRunId: "owner-v2", nodeId: "node-b" },
+			]);
+
+			const responseDeadlineAt = Date.now() + 30_000;
+			while (responses.length < 2 && Date.now() < responseDeadlineAt) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(responses.length, 2);
+			assert.ok(responses.every((response) => response.status === "completed"));
+			const terminalResponses = responses.filter((response) => response.status !== "invalid_request");
+			assert.equal(terminalResponses.length, 2);
+			for (const response of terminalResponses) {
+				assert.equal(response.ownerRunId, "owner-v2");
+				assert.equal(response.model, "mock/test-model:high");
+				assert.equal(response.thinking, "high");
+			}
+			const literalResponse = terminalResponses.find((response) => response.result?.kind === "text" && response.result.text === literalJsonText);
+			assert.ok(literalResponse);
+			assert.deepEqual(literalResponse.result, { kind: "text", text: literalJsonText });
+			assert.deepEqual(literalResponse.usage && {
+				input: literalResponse.usage.input,
+				output: literalResponse.usage.output,
+				cacheRead: literalResponse.usage.cacheRead,
+				cacheWrite: literalResponse.usage.cacheWrite,
+				cost: literalResponse.usage.cost,
+				turns: literalResponse.usage.turns,
+				toolCalls: literalResponse.usage.toolCalls,
+			}, {
+				input: 11,
+				output: 7,
+				cacheRead: 3,
+				cacheWrite: 2,
+				cost: 0.0125,
+				turns: 1,
+				toolCalls: 1,
+			});
+			assert.equal(typeof literalResponse.usage?.durationMs, "number");
+			const plainResponse = terminalResponses.find((response) => response.result?.kind === "text" && response.result.text === "registered v2 second node");
+			assert.ok(plainResponse);
+		} finally {
+			for (const handler of runtimeHandlers.get("session_shutdown") ?? []) {
+				await handler({}, ctx);
+			}
+		}
+	});
+
+	it("allows concurrent async launches in one turn", async () => {
+		mockPi.onCall({ output: "async one" });
+		mockPi.onCall({ output: "async two" });
+		const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
+		const ctx = makeMinimalCtx(tempDir);
+		const [first, second] = await Promise.all([
+			executor.execute("first", { agent: "echo", task: "First", async: true }, new AbortController().signal, undefined, ctx),
+			executor.execute("second", { agent: "second", task: "Second", async: true }, new AbortController().signal, undefined, ctx),
+		]);
+		assert.doesNotMatch(first.content[0]?.text ?? "", /Issue exactly ONE subagent call per turn/);
+		assert.doesNotMatch(second.content[0]?.text ?? "", /Issue exactly ONE subagent call per turn/);
+		const deadlineAt = Date.now() + 30_000;
+		while (mockPi.callCount() < 2 && Date.now() < deadlineAt) {
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		assert.equal(mockPi.callCount(), 2, "both detached mock children should start before test cleanup");
+	});
+
+	it("does not impose a cumulative spawn cap by default", async () => {
+		mockPi.onCall({ output: "continued after forty launches" });
+		const spawnState = { sessionId: "session-123", count: 40 };
+		const executor = makeExecutor([makeAgent("echo")], {}, false, spawnState);
+		const ctx = makeMinimalCtx(tempDir);
+
+		const result = await executor.execute("forty-one", { agent: "echo", task: "Continue work" }, new AbortController().signal, undefined, ctx);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(spawnState.count, 40, "unlimited sessions should bypass cumulative accounting");
+	});
+
+	it("blocks total subagent spawns after an opt-in per-session quota", async () => {
 		mockPi.onCall({ output: "first call completed" });
 		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 1 });
 		const ctx = makeMinimalCtx(tempDir);
@@ -306,6 +819,185 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(second.isError, true);
 		assert.match(second.content[0]?.text ?? "", /Subagent spawn limit reached for this session \(1\/1 used, 1 requested\)/);
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("reports structured spawn-budget usage through status", async () => {
+		const spawnState = { sessionId: "session-123", count: 3, configuredLimit: 4, granted: 1, grantHistory: [] };
+		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 4 }, false, spawnState);
+
+		const status = await executor.execute("status", { action: "status" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+
+		assert.match(status.content[0]?.text ?? "", /^Spawn budget: 3\/5 used, 2 remaining/);
+		assert.deepEqual(status.details?.spawnBudget, {
+			used: 3,
+			configuredLimit: 4,
+			granted: 1,
+			limit: 5,
+			remaining: 2,
+			grantRemaining: 3,
+			grantHistory: [],
+		});
+	});
+
+	it("preflights static chains before creating run artifacts", async () => {
+		const sessionDir = path.join(tempDir, "preflight-session");
+		const executor = makeExecutor(
+			[makeAgent("echo"), makeAgent("second")],
+			{ maxSubagentSpawnsPerSession: 1 },
+		);
+		const result = await executor.execute(
+			"chain-preflight",
+			{
+				chain: [
+					{ agent: "echo", task: "First" },
+					{ agent: "second", task: "Second" },
+				],
+				sessionDir,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /0\/1 used, 2 requested\).*1 remaining/);
+		assert.match(result.content[0]?.text ?? "", /no children were started/);
+		assert.equal(fs.existsSync(sessionDir), false);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("applies bounded root-interactive spawn-budget grants", async () => {
+		mockPi.onCall({ output: "continued after grant" });
+		const spawnState = { sessionId: "session-123", count: 1 };
+		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 1 }, false, spawnState);
+		const decisions = [false, true];
+		let confirmations = 0;
+		const interactiveCtx = {
+			...makeMinimalCtx(tempDir),
+			hasUI: true,
+			ui: { confirm: async () => { confirmations += 1; return decisions.shift() ?? false; } },
+		};
+
+		const canceled = await executor.execute(
+			"cancel-grant",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			interactiveCtx,
+		);
+		const granted = await executor.execute(
+			"grant",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			interactiveCtx,
+		);
+		const run = await executor.execute(
+			"after-grant",
+			{ agent: "echo", task: "Continue" },
+			new AbortController().signal,
+			undefined,
+			interactiveCtx,
+		);
+		const exhausted = await executor.execute(
+			"grant-again",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			interactiveCtx,
+		);
+
+		assert.equal(canceled.isError, undefined);
+		assert.match(canceled.content[0]?.text ?? "", /grant canceled; no capacity was added/i);
+		assert.equal(granted.isError, undefined);
+		assert.match(granted.content[0]?.text ?? "", /grant applied: \+1/i);
+		assert.equal(confirmations, 2);
+		assert.equal(granted.details?.spawnBudget?.limit, 2);
+		assert.equal(run.isError, undefined);
+		assert.equal(spawnState.count, 2);
+		assert.equal(exhausted.isError, true);
+		assert.match(exhausted.content[0]?.text ?? "", /only 0 of the original configured limit remains grantable/);
+	});
+
+	it("rechecks spawn-budget state after confirmation", async () => {
+		const spawnState = { sessionId: "session-123", count: 0 };
+		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 2 }, false, spawnState);
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			hasUI: true,
+			ui: { confirm: async () => { spawnState.count = 1; return true; } },
+		};
+
+		const result = await executor.execute(
+			"grant-race",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /budget, or active-child state changed/);
+		assert.equal(result.details?.spawnBudget?.granted, 0);
+	});
+
+	it("rejects spawn-budget grants outside a settled root interactive session", async () => {
+		mockPi.onCall({ output: "still running", delay: 100 });
+		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 2 });
+		const headless = await executor.execute(
+			"headless-grant",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const childSafe = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 2 }, false, undefined, false);
+		const child = await childSafe.execute(
+			"child-grant",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			{ ...makeMinimalCtx(tempDir), hasUI: true },
+		);
+		const asyncActive = makeExecutor(
+			[makeAgent("echo")],
+			{ maxSubagentSpawnsPerSession: 2 },
+			false,
+			undefined,
+			true,
+			new Map([["async-active", { asyncId: "async-active", asyncDir: tempDir, status: "running", sessionId: "session-123" }]]),
+		);
+		const detached = await asyncActive.execute(
+			"async-active-grant",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			{ ...makeMinimalCtx(tempDir), hasUI: true },
+		);
+		const running = executor.execute(
+			"running",
+			{ agent: "echo", task: "Long run" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const active = await executor.execute(
+			"active-grant",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			{ ...makeMinimalCtx(tempDir), hasUI: true },
+		);
+		await running;
+
+		assert.equal(headless.isError, true);
+		assert.match(headless.content[0]?.text ?? "", /root interactive parent session/);
+		assert.equal(child.isError, true);
+		assert.match(child.content[0]?.text ?? "", /root interactive parent session/);
+		assert.equal(detached.isError, true);
+		assert.match(detached.content[0]?.text ?? "", /rejected while current-session children are queued or running/);
+		assert.equal(active.isError, true);
+		assert.match(active.content[0]?.text ?? "", /rejected while current-session children are queued or running/);
 	});
 
 	it("allows management actions while an execution call is in progress", async () => {
@@ -379,6 +1071,161 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		]);
 	});
 
+	it("agent contract v1 reports omitted acceptance separately without injecting a prompt", async () => {
+		mockPi.onCall({ output: "Plan only" });
+		const agents = [makeAgent("worker", { tools: ["read", "write"] })];
+
+		const result = await runSync(tempDir, agents, "worker", "Implement the approved file changes", {
+			runId: "v1-no-acceptance",
+			agentContract: { version: 1 },
+		});
+		const call = readCall();
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.agentContract?.version, 1);
+		assert.deepEqual(result.execution, { status: "completed", success: true, exitCode: 0 });
+		assert.equal(result.acceptance?.status, "not-required");
+		assert.equal(result.review?.status, "not-requested");
+		assert.deepEqual(result.effects, {});
+		assert.doesNotMatch(call.args.join("\n"), /## Acceptance Contract/);
+	});
+
+	it("agent contract v1 keeps acceptance rejection out of execution status", async () => {
+		mockPi.onCall({ output: "Done\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
+		const agents = [makeAgent("worker", { tools: ["read"], completionGuard: false })];
+
+		const result = await runSync(tempDir, agents, "worker", "Summarize the fix", {
+			runId: "v1-acceptance-reject",
+			agentContract: { version: 1 },
+			acceptance: { level: "checked", criteria: ["Return required proof"] },
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.error, undefined);
+		assert.equal(result.execution?.status, "completed");
+		assert.equal(result.execution?.success, true);
+		assert.equal(result.acceptance?.status, "rejected");
+		assert.match(result.acceptance.runtimeChecks?.[0]?.message ?? "", /not-satisfied/);
+	});
+
+	it("agent contract v1 records explicit completion guard as an effect", async () => {
+		mockPi.onCall({ output: "Plan only" });
+		const agents = [makeAgent("worker", { tools: ["read", "write"], completionGuard: true })];
+
+		const result = await runSync(tempDir, agents, "worker", "Implement the approved file changes", {
+			runId: "v1-completion-effect",
+			agentContract: { version: 1 },
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.execution?.status, "completed");
+		assert.equal(result.effects?.fileMutation?.status, "missing");
+		assert.equal(result.effects?.fileMutation?.expected, true);
+		assert.equal(result.effects?.fileMutation?.attempted, false);
+	});
+
+	it("direct single tool calls support outputSchema", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({
+			stdoutRaw: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true, note: "captured" } } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: { ok: true, note: "captured" },
+		});
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"single-schema",
+			{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" }, note: { type: "string" } } }, acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.deepEqual(result.details?.results?.[0]?.structuredOutput, { ok: true, note: "captured" });
+	});
+
+	it("rejects structured output capture files that were not produced by the structured_output tool", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "spoofed", structuredOutputCapture: { ok: true } });
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"single-schema-spoof",
+			{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, acceptance: false, artifacts: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const child = result.details?.results?.[0];
+		assert.equal(result.isError, true);
+		assert.equal(child?.structuredOutputFailed, true);
+		assert.match(child?.error ?? "", /Missing structured_output call/);
+		assert.ok(child?.structuredOutputPath);
+		assert.equal(fs.existsSync(path.dirname(child.structuredOutputPath)), false);
+	});
+
+	it("does not create a temporary structured output directory before file-only validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const previousTmpdir = process.env.TMPDIR;
+		process.env.TMPDIR = tempDir;
+		try {
+			const executor = makeExecutor([makeAgent("echo")]);
+
+			const result = await executor.execute(
+				"single-schema-file-only-missing-path",
+				{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, outputMode: "file-only", acceptance: false, artifacts: false },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /outputMode: "file-only"/);
+			assert.equal(mockPi.callCount(), 0);
+			assert.equal(fs.readdirSync(tempDir).some((name) => name.startsWith("pi-subagent-structured-")), false);
+		} finally {
+			if (previousTmpdir === undefined) delete process.env.TMPDIR;
+			else process.env.TMPDIR = previousTmpdir;
+		}
+	});
+
+	it("allows a structured_output tool call at the exact strict turn boundary", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({
+			stdoutRaw: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "toolCall", id: "structured-1", name: "structured_output", arguments: { value: { ok: true } } }],
+						model: "mock/test-model",
+						stopReason: "toolUse",
+						usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+					},
+				},
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: { ok: true },
+		});
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"single-schema-strict-boundary",
+			{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, turnBudget: { maxTurns: 1, graceTurns: 0 }, enforceHardTurnLimit: true, acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const child = result.details?.results?.[0];
+		assert.equal(result.isError, undefined);
+		assert.equal(child?.turnBudgetExceeded, undefined);
+		assert.deepEqual(child?.structuredOutput, { ok: true });
+	});
+
 	it("returns captured output when the foreground executor fails an implementation run", async () => {
 		mockPi.onCall({ output: "Oracle review:\n- finding one\n- finding two" });
 		const executor = makeExecutor([makeAgent("oracle")]);
@@ -423,7 +1270,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.finalOutput, "Validation report after the patch");
 	});
 
-	it("keeps bash-enabled agents conservative unless completion guard is disabled", async () => {
+	it("keeps bash-enabled implementation tasks conservative unless completion guard is disabled", async () => {
 		mockPi.onCall({ output: "cold start test after patch" });
 		mockPi.onCall({ output: "cold start test after patch" });
 		const agents = [
@@ -431,13 +1278,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			makeAgent("test-runner-optout", { tools: ["read", "grep", "bash", "ls"], completionGuard: false }),
 		];
 
-		const withoutOptOut = await runSync(tempDir, agents, "test-runner", "Run cold start test after patch", {
+		const withoutOptOut = await runSync(tempDir, agents, "test-runner", "Patch the cold start test", {
 			runId: "guard-bash-conservative",
 		});
 		assert.equal(withoutOptOut.exitCode, 1);
 		assert.match(withoutOptOut.error ?? "", /completed without making edits/);
 
-		const withOptOut = await runSync(tempDir, agents, "test-runner-optout", "Run cold start test after patch", {
+		const withOptOut = await runSync(tempDir, agents, "test-runner-optout", "Patch the cold start test", {
 			runId: "guard-bash-optout",
 		});
 		assert.equal(withOptOut.exitCode, 0);
@@ -623,6 +1470,59 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(result.attemptedModels, ["github-copilot/gpt-5-mini"]);
 	});
 
+	it("parses split UTF-8 JSON and a final unterminated protocol line", async () => {
+		const line = Buffer.from(JSON.stringify(events.assistantMessage("你好 from fragmented JSON")));
+		const unicodeStart = line.indexOf(Buffer.from("你"));
+		mockPi.onCall({ stdoutBase64Chunks: [
+			line.subarray(0, unicodeStart + 1).toString("base64"),
+			line.subarray(unicodeStart + 1).toString("base64"),
+		] });
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Read fragmented output", { acceptance: false });
+		assert.equal(result.exitCode, 0);
+		assert.equal(getFinalOutput(result.messages), "你好 from fragmented JSON");
+	});
+
+	it("fails with protocol_output_limit when a child emits an oversized stdout line", async () => {
+		mockPi.onCall({ stdoutRaw: "x".repeat(MAX_CHILD_PENDING_LINE_BYTES + 1) });
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Emit malformed output", { acceptance: false });
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.protocolError?.code, "protocol_output_limit");
+		assert.equal(result.protocolError?.stream, "stdout");
+		assert.match(result.error ?? "", /protocol_output_limit/);
+	});
+
+	it("keeps only a bounded UTF-8 stderr tail", async () => {
+		mockPi.onCall({ output: "failed", stderr: `${"x".repeat(MAX_CHILD_STDERR_BYTES + 1024)}终`, exitCode: 1 });
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Fail noisily", { acceptance: false });
+		assert.equal(result.exitCode, 1);
+		assert.ok(Buffer.byteLength(result.error ?? "") <= MAX_CHILD_STDERR_BYTES);
+		assert.match(result.error ?? "", /终$/);
+	});
+
+	it("cancels final drain while agent_end reports a retry and waits for agent_settled", async () => {
+		mockPi.onCall({ steps: [
+			{ jsonl: [events.assistantMessage("retrying response"), { type: "agent_end", willRetry: true }] },
+			{ delay: 1400, jsonl: [events.assistantMessage("settled response"), { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+		] });
+		const startedAt = Date.now();
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Retry once", { acceptance: false });
+		assert.equal(result.exitCode, 0);
+		assert.equal(getFinalOutput(result.messages), "settled response");
+		assert.ok(Date.now() - startedAt >= 1200, "foreground runner must not terminate during the retry delay");
+	});
+
+	it("treats agent_settled as a clean terminal watermark", async () => {
+		const nonTerminalMessage = events.assistantMessage("settled without a terminal assistant stop") as { message: { stopReason: string } };
+		nonTerminalMessage.message.stopReason = "length";
+		mockPi.onCall({ jsonl: [nonTerminalMessage, { type: "agent_settled" }], keepAliveAfterFinalMessageMs: 5000 });
+		const startedAt = Date.now();
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Wait until settled", { acceptance: false });
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.error, undefined);
+		assert.equal(getFinalOutput(result.messages), "settled without a terminal assistant stop");
+		assert.ok(Date.now() - startedAt < 4000, "agent_settled should trigger bounded child cleanup");
+	});
+
 	it("tracks usage from message events", async () => {
 		mockPi.onCall({ output: "Done" });
 		const agents = makeAgentConfigs(["echo"]);
@@ -726,6 +1626,40 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.finalOutput, "Recovered from empty output");
 		assert.match(result.modelAttempts?.[0]?.error ?? "", /no output/i);
 		assert.deepEqual(result.modelAttempts?.map((attempt) => attempt.success), [false, true]);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("prefers empty-output fallback over an earlier tool error", async () => {
+		mockPi.onCall({
+			jsonl: [
+				events.toolResult("read", "ENOENT: no such file or directory", true),
+				events.toolResult("read", "recovered file contents"),
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "openai/gpt-5-mini",
+						stopReason: "stop",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+			exitCode: 0,
+		});
+		mockPi.onCall({ output: "Recovered on fallback" });
+		const agents = [makeAgent("echo", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "fallback-empty-output-after-tool-error",
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.model, "anthropic/claude-sonnet-4");
+		assert.match(result.modelAttempts?.[0]?.error ?? "", /no output/i);
 		assert.equal(mockPi.callCount(), 2);
 	});
 
@@ -901,7 +1835,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 	it("does not retry on ordinary task/tool failures", async () => {
 		mockPi.onCall({
-			jsonl: [events.toolResult("bash", "process exited with code 127")],
+			jsonl: [events.toolResult("bash", "process exited with code 127", true)],
 			exitCode: 0,
 		});
 		const agents = [makeAgent("echo", {
@@ -965,6 +1899,30 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.progress.currentToolStartedAt, undefined);
 	});
 
+	it("does not flag a delayed active tool as idle attention", async () => {
+		const updates: Array<{ details?: { progress?: ProgressSummary[] } }> = [];
+		const controlEvents: NonNullable<RunSyncResult["controlEvents"]> = [];
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("bash", { command: "sleep 2" })] },
+				{ delay: 2_000, jsonl: [events.toolEnd("bash"), events.toolResult("bash", "done")] },
+				{ jsonl: [events.assistantMessage("Done")] },
+			],
+		});
+
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			runId: "delayed-tool-attention",
+			controlConfig: { enabled: true, needsAttentionAfterMs: 200, activeNoticeAfterMs: 999_999, notifyOn: ["needs_attention"] },
+			onUpdate: (update: { details?: { progress?: ProgressSummary[] } }) => updates.push(update),
+			onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) => controlEvents.push(event),
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.progress.activityState, undefined);
+		assert.equal(controlEvents.some((event) => event.type === "needs_attention"), false);
+		assert.equal(updates.some((update) => update.details?.progress?.some((progress) => progress.currentTool === "bash")), true);
+	});
+
 	it("sets progress.status to failed on non-zero exit", async () => {
 		mockPi.onCall({ exitCode: 1 });
 		const agents = makeAgentConfigs(["fail"]);
@@ -1008,6 +1966,23 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		} finally {
 			removeTempDir(taskCwd);
 		}
+	});
+
+	it("injects an agent-file-relative local skill into the foreground child prompt", async () => {
+		mockPi.onCall({ output: "Done" });
+		const agentFile = path.join(tempDir, "agents", "nested", "worker.md");
+		const skillFile = path.join(path.dirname(agentFile), "skills", "local", "SKILL.md");
+		fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+		fs.writeFileSync(skillFile, "---\ndescription: local skill description\n---\nLocal skill body\n", "utf-8");
+		const agents = [makeAgent("worker", { filePath: agentFile, skills: ["local"], skillPath: ["./skills"] })];
+
+		const result = await runSync(tempDir, agents, "worker", "Task", {});
+
+		assert.equal(result.exitCode, 0);
+		assert.deepEqual(result.skills, ["local"]);
+		const prompt = readCall().systemPrompts.map((record) => record.text ?? "").join("\n");
+		assert.match(prompt, /local skill description/);
+		assert.match(prompt, new RegExp(escapeRegExp(skillFile)));
 	});
 
 	it("falls back to the runtime cwd when the task cwd lacks a skill", async () => {
@@ -1066,6 +2041,51 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(transcript.at(-1)?.text ?? "", /^Result text/);
 		assert.equal(result.transcriptError, undefined);
 		assert.ok(fs.existsSync(artifactsDir), "artifacts dir should exist");
+		const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as { launchContractDigest?: string };
+		assert.equal(metadata.launchContractDigest, result.launchContractDigest);
+	});
+
+	it("routes foreground artifacts to the configured session directory", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "session artifact result" });
+		const sessionFile = path.join(tempDir, "sessions", "parent-session", "session.jsonl");
+		const ctx = makeMinimalCtx(tempDir);
+		ctx.sessionManager.getSessionFile = () => sessionFile;
+		const executor = makeExecutor([makeAgent("echo")], { artifactDir: "session" });
+
+		const result = await executor.execute(
+			"session-artifact-dir",
+			{ agent: "echo", task: "Write session-scoped artifacts", runId: "session-artifacts" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		const expectedDir = path.join(path.dirname(sessionFile), "subagent-artifacts");
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.artifacts?.dir, expectedDir);
+		assert.ok(result.details?.artifacts?.files[0]?.outputPath.startsWith(`${expectedDir}${path.sep}`));
+		assert.equal(fs.readFileSync(result.details.artifacts.files[0].outputPath, "utf-8"), "session artifact result");
+		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
+	});
+
+	it("writes a failure stub to foreground output artifacts when no output was produced", async () => {
+		mockPi.onCall({ output: "", stderr: "model unavailable", exitCode: 1 });
+		const artifactsDir = path.join(tempDir, "artifacts-failed-output");
+
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			runId: "failed-no-output",
+			artifactsDir,
+			artifactConfig: { enabled: true, includeInput: true, includeOutput: true, includeMetadata: true },
+			acceptance: false,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.ok(result.artifactPaths?.outputPath, "should expose an output artifact path");
+		const artifact = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+		assert.match(artifact, /Subagent run failed before producing output\./);
+		assert.match(artifact, /Error:\nmodel unavailable/);
+		assert.match(artifact, /Transcript:/);
+		assert.match(artifact, /Metadata:/);
 	});
 
 	it("does not surface transcript paths when transcript artifacts are disabled", async () => {
@@ -1201,6 +2221,36 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(systemPrompt, /Ignore any other output filename or output path mentioned elsewhere/);
 	});
 
+	it("persists read-only file-only output without requiring a child write tool", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "complete read-only analysis" });
+		const outputPath = path.join(tempDir, "read-only-analysis.md");
+		const executor = makeExecutor([makeAgent("analyst", {
+			tools: ["read", "grep", "find", "ls"],
+			systemPrompt: "Analyze without modifying files.",
+		})]);
+
+		const result = await executor.execute(
+			"single-read-only-output",
+			{ agent: "analyst", task: "Analyze the runtime", output: outputPath, outputMode: "file-only", acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const call = readCall();
+		const taskArg = call.args.at(-1) ?? "";
+		const systemPrompt = call.systemPrompts[0]?.text ?? "";
+		assert.equal(result.isError, undefined);
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), "complete read-only analysis");
+		assert.match(result.content[0]?.text ?? "", /Output saved to:/);
+		for (const instruction of [taskArg, systemPrompt]) {
+			assert.match(instruction, /Return the complete artifact in your final response\./);
+			assert.match(instruction, /runtime will persist it to exactly this path:/);
+			assert.match(instruction, /Do not call contact_supervisor merely because no write-capable tool is available\./);
+			assert.doesNotMatch(instruction, /Write your findings to exactly this path/);
+		}
+	});
+
 	it("treats string false as disabled output in foreground single runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "inline report" });
 		const executor = makeExecutor([makeAgent("echo", { output: "default-report.md" })]);
@@ -1221,6 +2271,50 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.doesNotMatch(readCallArgs().at(-1) ?? "", /Write your findings to(?: exactly this path)?:/);
 	});
 
+	it("rejects explicit reviewed acceptance at every execution nesting level before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const cases = [
+			{ agent: "echo", task: "Review", acceptance: "reviewed" },
+			{ agent: "echo", task: "Review", acceptance: { level: "reviewed" } },
+			{ tasks: [{ agent: "echo", task: "Review", acceptance: "reviewed" }] },
+			{ chain: [{ agent: "echo", task: "Review", acceptance: { level: "reviewed" } }] },
+			{ chain: [{ parallel: [{ agent: "echo", task: "Review", acceptance: "reviewed" }] }] },
+			{ chain: [{ expand: { from: { output: "targets", path: "/items" } }, parallel: { agent: "echo", acceptance: { level: "reviewed" } }, collect: { as: "reviews" } }] },
+		];
+		for (const [index, params] of cases.entries()) {
+			const executor = makeExecutor();
+			const result = await executor.execute(
+				`reviewed-acceptance-${index}`,
+				params,
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /achieved status.*omit acceptance.*acceptance\.review\.required/i);
+		}
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects explicit reviewed acceptance before appending a chain step", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.execute(
+			"append-reviewed-acceptance",
+			{
+				action: "append-step",
+				id: "missing-run",
+				chain: [{ agent: "echo", task: "Review the previous work", acceptance: { level: "reviewed" } }],
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Cannot append step:.*achieved status.*acceptance\.review\.required/i);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("rejects mismatched foreground timeout aliases before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor();
 
@@ -1235,6 +2329,109 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, true);
 		assert.match(result.content[0]?.text ?? "", /aliases/);
 		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("applies agent frontmatter defaults to single-agent launches", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([
+			makeAgent("echo", {
+				defaultAsync: true,
+				defaultTimeoutMs: 2_000,
+				defaultTurnBudget: { maxTurns: 4, graceTurns: 2 },
+			}),
+		]);
+
+		const result = await executor.execute(
+			"agent-launch-defaults",
+			{ agent: "echo", task: "Task" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /Async:/);
+		assert.equal(typeof result.details?.asyncId, "string");
+		assert.equal(result.details?.timeoutMs, 2_000);
+		assert.deepEqual(result.details?.turnBudget, { maxTurns: 4, graceTurns: 2 });
+	});
+
+	it("applies agent acceptance defaults and lets explicit calls override them", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "default acceptance disabled" });
+		mockPi.onCall({ stdoutRaw: `${JSON.stringify(events.assistantMessage("explicit checked response without a report"))}\n` });
+		const executor = makeExecutor([
+			makeAgent("echo", { defaultAcceptance: { level: "none", reason: "lightweight response" } }),
+		]);
+
+		const defaulted = await executor.execute(
+			"agent-acceptance-default",
+			{ agent: "echo", task: "Return a concise answer" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(defaulted.isError, undefined);
+		assert.equal(defaulted.details?.results?.[0]?.acceptance?.status, "not-required");
+		assert.equal(defaulted.details?.results?.[0]?.acceptance?.effectiveAcceptance.reason, "lightweight response");
+
+		const explicit = await executor.execute(
+			"agent-acceptance-explicit",
+			{ agent: "echo", task: "Return a concise answer", acceptance: "checked" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(explicit.isError, true);
+		assert.equal(explicit.details?.results?.[0]?.acceptance?.status, "rejected");
+	});
+
+	it("lets agent frontmatter override the global async default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "agent foreground default finished" });
+		const executor = makeExecutor(
+			[makeAgent("echo", { defaultAsync: false })],
+			{},
+			true,
+		);
+
+		const result = await executor.execute(
+			"agent-foreground-default",
+			{ agent: "echo", task: "Task" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /agent foreground default finished/);
+		assert.equal(result.details?.asyncId, undefined);
+	});
+
+	it("lets explicit single-agent launch values override frontmatter defaults", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "explicit foreground finished" });
+		const executor = makeExecutor([
+			makeAgent("echo", {
+				defaultAsync: true,
+				defaultTimeoutMs: 1,
+				defaultTurnBudget: { maxTurns: 1, graceTurns: 0 },
+			}),
+		]);
+
+		const result = await executor.execute(
+			"explicit-launch-values",
+			{
+				agent: "echo",
+				task: "Task",
+				async: false,
+				timeoutMs: 2_000,
+				turnBudget: { maxTurns: 4, graceTurns: 2 },
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /explicit foreground finished/);
+		assert.equal(result.details?.asyncId, undefined);
 	});
 
 	it("allows timeout settings for async runs before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -1316,6 +2513,18 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			if (prevMaxDepth === undefined) delete process.env.SELESAI_SUBAGENT_MAX_DEPTH;
 			else process.env.SELESAI_SUBAGENT_MAX_DEPTH = prevMaxDepth;
 		}
+	});
+
+	it("passes the effective wait-tool setting through to child execution", async () => {
+		mockPi.onCall({ echoEnv: [WAIT_TOOL_ENABLED_ENV] });
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			runId: "wait-tool-env",
+			waitToolEnabled: false,
+		});
+		assert.equal(result.exitCode, 0);
+		assert.deepEqual(JSON.parse(result.finalOutput ?? "{}"), {
+			[WAIT_TOOL_ENABLED_ENV]: "false",
+		});
 	});
 
 	it("passes prompt inheritance env flags through to child execution", async () => {
@@ -1410,6 +2619,19 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 	});
 
+	it("fails with actionable diagnostics when a requested extension tool is not loaded", async () => {
+		mockPi.onCall({ output: "Model incorrectly claimed success", missingTools: ["fixture_search"] });
+		const agents = [makeAgent("extension-worker", { tools: ["read", "fixture_search"], fallbackModels: ["mock/fallback-model"] })];
+
+		const result = await runSync(tempDir, agents, "extension-worker", "Use fixture search", { runId: "missing-extension-tool" });
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /requested unavailable child tools: fixture_search/);
+		assert.match(result.error ?? "", /subagentOnlyExtensions/);
+		assert.match(result.error ?? "", /strict allowlist/);
+		assert.equal(result.modelAttempts?.length, 1);
+	});
+
 	it("passes custom tool extensions through even when explicit extensions are allowlisted", { skip: process.platform === "win32" ? "extension path resolution intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ output: "Done" });
 		const agents = [makeAgent("echo", {
@@ -1445,6 +2667,71 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
 		assert.ok(extensionArgs.some((arg) => arg.endsWith(path.join("src", "runs", "shared", "subagent-prompt-runtime.ts"))));
 		assert.ok(extensionArgs.some((arg) => arg.replace(/\\/g, "/").endsWith("child-only-tool.ts")));
+	});
+
+	it("ignores child watchdog status when foreground child watchdogs are not configured", async () => {
+		await withIsolatedWatchdogSettings(tempDir, async () => {
+			mockPi.onCall({
+				jsonl: [events.assistantMessage("done-without-watchdog-config"), childWatchdogStatus("reviewing", 1)],
+				keepAliveAfterFinalMessageMs: 10000,
+			});
+			const agents = makeAgentConfigs(["echo"]);
+
+			const start = Date.now();
+			const result = await runSync(tempDir, agents, "echo", "Task", { runId: "watchdog-child-run" });
+			const elapsed = Date.now() - start;
+
+			assert.ok(elapsed < 5000, `unconfigured watchdog status should not delay final drain, took ${elapsed}ms`);
+			assert.equal(result.exitCode, 0);
+			assert.equal(result.finalOutput, "done-without-watchdog-config");
+			assert.equal((result as RunSyncResult & { watchdog?: unknown }).watchdog, undefined);
+		});
+	});
+
+	it("waits for child watchdog settlement before foreground final-drain cleanup", async () => {
+		await withIsolatedWatchdogSettings(tempDir, async () => {
+			writeWatchdogSettings(tempDir);
+			mockPi.onCall({
+				steps: [
+					{ jsonl: [events.assistantMessage("done-before-watchdog"), childWatchdogStatus("reviewing", 1)] },
+					{ delay: 1400, jsonl: [childWatchdogStatus("idle", 2)] },
+				],
+				keepAliveAfterFinalMessageMs: 10000,
+			});
+			const agents = makeAgentConfigs(["echo"]);
+
+			const start = Date.now();
+			const result = await runSync(tempDir, agents, "echo", "Task", { runId: "watchdog-child-run" });
+			const elapsed = Date.now() - start;
+
+			assert.ok(elapsed >= 1200, `watchdog settlement should delay final drain, took ${elapsed}ms`);
+			assert.ok(elapsed < 6000, `settled watchdog should still allow cleanup, took ${elapsed}ms`);
+			assert.equal(result.exitCode, 0);
+			assert.equal(result.finalOutput, "done-before-watchdog");
+			assert.equal((result as RunSyncResult & { watchdog?: { phase?: string } }).watchdog?.phase, "idle");
+		});
+	});
+
+	it("falls back after child watchdog tail timeout without failing successful foreground output", async () => {
+		await withIsolatedWatchdogSettings(tempDir, async () => {
+			writeWatchdogSettings(tempDir, 150);
+			mockPi.onCall({
+				jsonl: [events.assistantMessage("done-before-watchdog-timeout"), childWatchdogStatus("reviewing", 1)],
+				keepAliveAfterFinalMessageMs: 10000,
+			});
+			const agents = makeAgentConfigs(["echo"]);
+
+			const start = Date.now();
+			const result = await runSync(tempDir, agents, "echo", "Task", { runId: "watchdog-child-run" });
+			const elapsed = Date.now() - start;
+
+			assert.ok(elapsed < 5000, `watchdog tail fallback should not hang, took ${elapsed}ms`);
+			assert.equal(result.exitCode, 0);
+			assert.equal(result.finalOutput, "done-before-watchdog-timeout");
+			const watchdog = (result as RunSyncResult & { watchdog?: { phase?: string; timedOut?: boolean } }).watchdog;
+			assert.equal(watchdog?.phase, "stale");
+			assert.equal(watchdog?.timedOut, true);
+		});
 	});
 
 	it("treats forced drain after final assistant output as cleanup success", async () => {
@@ -1578,6 +2865,63 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.finalOutput ?? "", /final wrapped output/);
 	});
 
+	it("defers a foreground hard turn limit through active tool work and aborts at the next assistant boundary", async () => {
+		mockPi.onCall({
+			steps: [
+				{
+					jsonl: [
+						mockAssistantMessage("starting required tool work", "tool_use"),
+						events.toolStart("bash", { command: "node build.mjs" }),
+					],
+				},
+				{
+					delay: 500,
+					jsonl: [
+						events.toolResult("bash", "build completed"),
+						events.toolEnd("bash"),
+						mockAssistantMessage("safe assistant boundary reached", "stop"),
+					],
+				},
+			],
+		});
+		const agents = makeAgentConfigs(["worker"]);
+		const snapshots: Array<{
+			turnBudget?: { outcome?: string; terminationDeferredAtTurn?: number };
+			turnBudgetExceeded?: boolean;
+			error?: string;
+			currentTool?: string;
+			status?: string;
+		}> = [];
+
+		const result = await runSync(tempDir, agents, "worker", "Finish active tool work before enforcing the hard limit.", {
+			turnBudget: { maxTurns: 1, graceTurns: 0 },
+			runId: "foreground-turn-budget-deferred",
+			onUpdate(update: { details?: { results?: Array<{ turnBudget?: { outcome?: string; terminationDeferredAtTurn?: number }; turnBudgetExceeded?: boolean; error?: string }>; progress?: Array<{ currentTool?: string; status?: string }> } }) {
+				const current = update.details?.results?.[0];
+				const progress = update.details?.progress?.[0];
+				snapshots.push({
+					turnBudget: current?.turnBudget,
+					turnBudgetExceeded: current?.turnBudgetExceeded,
+					error: current?.error,
+					currentTool: progress?.currentTool,
+					status: progress?.status,
+				});
+			},
+		});
+
+		const duringTool = snapshots.find((snapshot) => snapshot.turnBudget?.outcome === "termination-deferred" && snapshot.currentTool === "bash");
+		assert.ok(duringTool, "expected a running snapshot with deferred termination and the active tool");
+		assert.equal(duringTool.turnBudget?.terminationDeferredAtTurn, 1);
+		assert.equal(duringTool.turnBudgetExceeded, undefined);
+		assert.equal(duringTool.error, undefined);
+		assert.equal(duringTool.status, "running");
+		assert.equal(result.turnBudgetExceeded, true);
+		assert.equal(result.turnBudget?.outcome, "exceeded");
+		assert.equal(result.turnBudget?.turnCount, 2);
+		assert.match(result.finalOutput ?? "", /safe assistant boundary reached/);
+		assert.ok(result.messages?.some((message) => message.role === "toolResult" && JSON.stringify(message.content).includes("build completed")));
+	});
+
 	it("does not run acceptance verification after a foreground timeout", async () => {
 		const markerPath = path.join(tempDir, "verify-ran.txt");
 		const report = [
@@ -1699,25 +3043,166 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 			const result = await runPromise;
 
-			assert.equal(result.exitCode, 0);
+			assert.equal(result.exitCode, -2);
 			assert.equal(result.detached, true);
 			assert.equal(result.detachedReason, "intercom coordination");
-			assert.equal(result.finalOutput, "Detached for intercom coordination.");
+			assert.equal(result.finalOutput, "Detached for intercom coordination before task completion.");
 			assert.equal(result.progress?.status, "detached");
 			assert.equal(accepted, true);
 		});
 	}
+
+	it("enforces the stdout protocol limit after foreground detachment", async () => {
+		const eventBus = createEventBus();
+		mockPi.onCall({ steps: [
+			{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+			{ delay: 100, stdoutRaw: "x".repeat(MAX_CHILD_PENDING_LINE_BYTES + 1) },
+			{ delay: 5000 },
+		] });
+		let detachEmitted = false;
+		let recoveredResult: RunSyncResult | undefined;
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Detach then emit malformed output", {
+			runId: "detached-protocol-limit",
+			allowIntercomDetach: true,
+			intercomEvents: eventBus,
+			acceptance: false,
+			onUpdate: (update) => {
+				if (detachEmitted) return;
+				const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } }).details?.progress;
+				if (!Array.isArray(progress) || !progress.some((item) => item.currentTool === "contact_supervisor")) return;
+				detachEmitted = true;
+				eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "detached-protocol-request" });
+			},
+			onDetachedExit: (postExit) => { recoveredResult = postExit as RunSyncResult; },
+		});
+		assert.equal(result.exitCode, -2);
+		for (let attempt = 0; attempt < 100 && !recoveredResult; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(recoveredResult?.exitCode, 1);
+		assert.equal(recoveredResult?.protocolError?.code, "protocol_output_limit");
+	});
+
+	it("does not save a detached placeholder to an explicit file-only output", async () => {
+		const eventBus = createEventBus();
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 1000, jsonl: [events.assistantMessage("after reply")] },
+			],
+		});
+		const agents = makeAgentConfigs(["echo"]);
+		const outputPath = path.join(tempDir, "detached-output.md");
+		let detachEmitted = false;
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "detached-file-only-output",
+			allowIntercomDetach: true,
+			intercomEvents: eventBus,
+			outputPath,
+			outputMode: "file-only",
+			onUpdate: (update) => {
+				if (detachEmitted) return;
+				const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } }).details?.progress;
+				if (!Array.isArray(progress) || !progress.some((p) => p?.currentTool === "contact_supervisor")) return;
+				detachEmitted = true;
+				eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "file-only-detach" });
+			},
+		});
+
+		assert.equal(result.exitCode, -2);
+		assert.equal(result.detached, true);
+		assert.equal(result.savedOutputPath, undefined);
+		assert.equal(fs.existsSync(outputPath), false);
+		assert.match(result.outputSaveError ?? "", /not finalized/);
+	});
+
+	it("finalizes explicit output before reporting detached child post-exit success", async () => {
+		const eventBus = createEventBus();
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 100, jsonl: [events.assistantMessage("after reply")] },
+			],
+		});
+		const agents = makeAgentConfigs(["echo"]);
+		const outputPath = path.join(tempDir, "detached-final-output.md");
+		let detachEmitted = false;
+		let recoveredResult: RunSyncResult | undefined;
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "detached-file-only-post-exit-output",
+			allowIntercomDetach: true,
+			intercomEvents: eventBus,
+			outputPath,
+			outputMode: "file-only",
+			onUpdate: (update) => {
+				if (detachEmitted) return;
+				const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } }).details?.progress;
+				if (!Array.isArray(progress) || !progress.some((p) => p?.currentTool === "contact_supervisor")) return;
+				detachEmitted = true;
+				eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "file-only-post-exit-detach" });
+			},
+			onDetachedExit: (postExit) => {
+				recoveredResult = postExit as RunSyncResult;
+			},
+		});
+
+		assert.equal(result.exitCode, -2);
+		assert.equal(result.detached, true);
+		assert.equal(fs.existsSync(outputPath), false);
+
+		for (let attempt = 0; attempt < 100 && (!fs.existsSync(outputPath) || !recoveredResult); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), "after reply");
+		assert.ok(recoveredResult);
+		assert.equal(recoveredResult.exitCode, 0);
+		assert.equal(recoveredResult.progress?.status, "completed");
+		assert.equal(recoveredResult.savedOutputPath, outputPath);
+		assert.equal(recoveredResult.outputSaveError, undefined);
+		assert.match(recoveredResult.finalOutput ?? "", /^Output saved to:/);
+	});
+
+	it("aborts a foreground coordination tool start instead of detaching without a delivered handoff", async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 10000, jsonl: [events.assistantMessage("after abort")] },
+			],
+		});
+		const agents = makeAgentConfigs(["echo"]);
+		const controller = new AbortController();
+		let aborted = false;
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "contact-supervisor-abort-without-handoff",
+			allowIntercomDetach: true,
+			signal: controller.signal,
+			onUpdate: (update) => {
+				if (aborted) return;
+				const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } }).details?.progress;
+				if (!Array.isArray(progress) || !progress.some((p) => p?.currentTool === "contact_supervisor")) return;
+				aborted = true;
+				controller.abort();
+			},
+		});
+
+		assert.equal(aborted, true);
+		assert.notEqual(result.exitCode, -2);
+		assert.equal(result.detached, undefined);
+		assert.notEqual(result.progress?.status, "detached");
+	});
 
 	for (const testCase of [
 		{ name: "intercom ask", toolName: "intercom", args: { action: "ask", to: "orchestrator" } },
 		{ name: "contact_supervisor need_decision", toolName: "contact_supervisor", args: { reason: "need_decision", message: "Need a decision" } },
 		{ name: "contact_supervisor interview_request", toolName: "contact_supervisor", args: { reason: "interview_request", message: "Need input", interview: { questions: [] } } },
 	]) {
-		it(`proactively detaches foreground children on blocking ${testCase.name}`, async () => {
+		it(`does not detach foreground children on blocking ${testCase.name} before a delivered handoff`, async () => {
 			mockPi.onCall({
 				steps: [
 					{ jsonl: [events.toolStart(testCase.toolName, testCase.args)] },
-					{ delay: 1000, jsonl: [events.assistantMessage("received pong")] },
+					{ delay: 50, jsonl: [events.assistantMessage("received pong")] },
 				],
 			});
 			const agents = makeAgentConfigs(["echo"]);
@@ -1728,10 +3213,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			});
 
 			assert.equal(result.exitCode, 0);
-			assert.equal(result.detached, true);
-			assert.equal(result.detachedReason, "intercom coordination");
-			assert.equal(result.finalOutput, "Detached for intercom coordination.");
-			assert.equal(result.progress?.status, "detached");
+			assert.equal(result.detached, undefined);
+			assert.equal(result.finalOutput, "received pong");
+			assert.equal(result.progress?.status, "completed");
 		});
 	}
 
@@ -1807,7 +3291,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(quietResult.exitCode, 0);
 		assert.equal(quietResult.detached, undefined);
-		assert.equal(intercomResult.exitCode, 0);
+		assert.equal(intercomResult.exitCode, -2);
 		assert.equal(intercomResult.detached, true);
 		assert.equal(firstDetachResponse, true);
 	});

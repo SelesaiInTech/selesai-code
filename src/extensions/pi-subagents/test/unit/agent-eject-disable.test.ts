@@ -74,18 +74,18 @@ describe("agent eject/disable/enable/reset management actions", () => {
 	describe("eject", () => {
 		it("copies a bundled builtin to user scope verbatim and shadows the builtin", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			const builtin = discoverAgentsAll(tempDir).builtin.find((a) => a.name === "reviewer");
+			const builtin = discoverAgentsAll(tempDir).builtin.find((a) => a.name === "commentator");
 			assert.ok(builtin);
 
-			const ejected = handleManagementAction("eject", { agent: "reviewer" }, ctx);
+			const ejected = handleManagementAction("eject", { agent: "commentator" }, ctx);
 			assert.equal(ejected.isError, false);
-			assert.match(readText(ejected), /Ejected agent 'reviewer' from builtin to user scope/);
+			assert.match(readText(ejected), /Ejected agent 'commentator' from builtin to user scope/);
 
-			const target = userAgentPath("reviewer");
+			const target = userAgentPath("commentator");
 			assert.equal(fs.existsSync(target), true);
 			assert.equal(fs.readFileSync(target, "utf-8"), fs.readFileSync(builtin.filePath, "utf-8"));
 
-			const effective = discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer");
+			const effective = discoverAgents(tempDir, "both").agents.find((a) => a.name === "commentator");
 			assert.ok(effective);
 			assert.equal(effective.source, "user");
 			assert.equal(effective.filePath, target);
@@ -94,38 +94,38 @@ describe("agent eject/disable/enable/reset management actions", () => {
 		it("ejects to project scope when agentScope is project", () => {
 			fs.mkdirSync(path.join(tempDir, ".selesai"), { recursive: true });
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			const ejected = handleManagementAction("eject", { agent: "scout", agentScope: "project" }, ctx);
+			const ejected = handleManagementAction("eject", { agent: "explorer", agentScope: "project" }, ctx);
 			assert.equal(ejected.isError, false);
 			assert.match(readText(ejected), /to project scope/);
-			assert.equal(fs.existsSync(projectAgentPath("scout")), true);
-			assert.equal(discoverAgentsAll(tempDir).project.find((a) => a.name === "scout")?.source, "project");
+			assert.equal(fs.existsSync(projectAgentPath("explorer")), true);
+			assert.equal(discoverAgentsAll(tempDir).project.find((a) => a.name === "explorer")?.source, "project");
 		});
 
 		it("copies a package agent that shadows a builtin by runtime precedence", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			writePackageAgent("reviewer");
-			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer")?.source, "package");
+			writePackageAgent("commentator");
+			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "commentator")?.source, "package");
 
-			const ejected = handleManagementAction("eject", { agent: "reviewer" }, ctx);
+			const ejected = handleManagementAction("eject", { agent: "commentator" }, ctx);
 			assert.equal(ejected.isError, false);
 			assert.match(readText(ejected), /from package to user scope/);
-			assert.equal(fs.readFileSync(userAgentPath("reviewer"), "utf-8"), fs.readFileSync(packageAgentPath("reviewer"), "utf-8"));
+			assert.equal(fs.readFileSync(userAgentPath("commentator"), "utf-8"), fs.readFileSync(packageAgentPath("commentator"), "utf-8"));
 		});
 
 		it("refuses invalid management scopes without writing user files", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			const ejected = handleManagementAction("eject", { agent: "reviewer", agentScope: "workspace" }, ctx);
+			const ejected = handleManagementAction("eject", { agent: "commentator", agentScope: "workspace" }, ctx);
 			assert.equal(ejected.isError, true);
 			assert.match(readText(ejected), /agentScope must be 'user' or 'project'/);
-			assert.equal(fs.existsSync(userAgentPath("reviewer")), false);
+			assert.equal(fs.existsSync(userAgentPath("commentator")), false);
 		});
 
 		it("refuses to eject when a custom agent already exists", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			fs.mkdirSync(path.dirname(userAgentPath("reviewer")), { recursive: true });
-			fs.writeFileSync(userAgentPath("reviewer"), "---\nname: reviewer\ndescription: Mine\n---\n\nMine.\n", "utf-8");
+			fs.mkdirSync(path.dirname(userAgentPath("commentator")), { recursive: true });
+			fs.writeFileSync(userAgentPath("commentator"), "---\nname: commentator\ndescription: Mine\n---\n\nMine.\n", "utf-8");
 
-			const ejected = handleManagementAction("eject", { agent: "reviewer" }, ctx);
+			const ejected = handleManagementAction("eject", { agent: "commentator" }, ctx);
 			assert.equal(ejected.isError, true);
 			assert.match(readText(ejected), /already a custom user agent/);
 		});
@@ -141,48 +141,48 @@ describe("agent eject/disable/enable/reset management actions", () => {
 	describe("disable", () => {
 		it("hides a builtin from runtime discovery via a user settings override", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			const disabled = handleManagementAction("disable", { agent: "reviewer" }, ctx);
+			const disabled = handleManagementAction("disable", { agent: "commentator" }, ctx);
 			assert.equal(disabled.isError, false);
-			assert.match(readText(disabled), /Disabled agent 'reviewer' via user settings override/);
+			assert.match(readText(disabled), /Disabled agent 'commentator' via user settings override/);
 
-			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer"), undefined);
-			const all = discoverAgentsAll(tempDir).builtin.find((a) => a.name === "reviewer");
+			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "commentator"), undefined);
+			const all = discoverAgentsAll(tempDir).builtin.find((a) => a.name === "commentator");
 			assert.ok(all);
 			assert.equal(all.disabled, true);
 			assert.equal(all.override?.scope, "user");
 
-			const settings = readJson(userSettingsPath()) as { subagents: { agentOverrides: { reviewer: { disabled: boolean } } } };
-			assert.equal(settings.subagents.agentOverrides.reviewer.disabled, true);
+			const settings = readJson(userSettingsPath()) as { subagents: { agentOverrides: { commentator: { disabled: boolean } } } };
+			assert.equal(settings.subagents.agentOverrides.commentator.disabled, true);
 		});
 
 		it("merges disabled into an existing override without dropping other fields", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 			writeJson(userSettingsPath(), {
-				subagents: { agentOverrides: { reviewer: { model: "openai/gpt-5.4" } } },
+				subagents: { agentOverrides: { commentator: { model: "openai/gpt-5.4" } } },
 			});
 
-			handleManagementAction("disable", { agent: "reviewer" }, ctx);
+			handleManagementAction("disable", { agent: "commentator" }, ctx);
 
-			const settings = readJson(userSettingsPath()) as { subagents: { agentOverrides: { reviewer: { model: string; disabled: boolean } } } };
-			assert.deepEqual(settings.subagents.agentOverrides.reviewer, { model: "openai/gpt-5.4", disabled: true });
+			const settings = readJson(userSettingsPath()) as { subagents: { agentOverrides: { commentator: { model: string; disabled: boolean } } } };
+			assert.deepEqual(settings.subagents.agentOverrides.commentator, { model: "openai/gpt-5.4", disabled: true });
 		});
 
 		it("hides a disabled agent from agent-facing list output", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			handleManagementAction("disable", { agent: "reviewer" }, ctx);
+			handleManagementAction("disable", { agent: "commentator" }, ctx);
 
 			const text = readText(handleManagementAction("list", {}, ctx));
-			assert.doesNotMatch(text, /^- reviewer /m);
+			assert.doesNotMatch(text, /^- commentator /m);
 		});
 
 		it("writes a project-scoped override when agentScope is project", () => {
 			fs.mkdirSync(path.join(tempDir, ".selesai"), { recursive: true });
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			const disabled = handleManagementAction("disable", { agent: "reviewer", agentScope: "project" }, ctx);
+			const disabled = handleManagementAction("disable", { agent: "commentator", agentScope: "project" }, ctx);
 			assert.equal(disabled.isError, false);
 			assert.match(readText(disabled), /via project settings override/);
 
-			const all = discoverAgentsAll(tempDir).builtin.find((a) => a.name === "reviewer");
+			const all = discoverAgentsAll(tempDir).builtin.find((a) => a.name === "commentator");
 			assert.equal(all?.override?.scope, "project");
 			assert.equal(fs.existsSync(projectSettingsPath()), true);
 		});
@@ -206,14 +206,14 @@ describe("agent eject/disable/enable/reset management actions", () => {
 
 		it("also disables a package agent via a settings override", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			writePackageAgent("packaged-reviewer");
-			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "packaged-reviewer")?.source, "package");
+			writePackageAgent("packaged-commentator");
+			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "packaged-commentator")?.source, "package");
 
-			const disabled = handleManagementAction("disable", { agent: "packaged-reviewer" }, ctx);
+			const disabled = handleManagementAction("disable", { agent: "packaged-commentator" }, ctx);
 			assert.equal(disabled.isError, false);
-			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "packaged-reviewer"), undefined);
+			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "packaged-commentator"), undefined);
 
-			const all = discoverAgentsAll(tempDir).package.find((a) => a.name === "packaged-reviewer");
+			const all = discoverAgentsAll(tempDir).package.find((a) => a.name === "packaged-commentator");
 			assert.equal(all?.disabled, true);
 			assert.equal(all?.override?.scope, "user");
 		});
@@ -222,34 +222,34 @@ describe("agent eject/disable/enable/reset management actions", () => {
 	describe("enable", () => {
 		it("restores a previously disabled builtin to runtime discovery", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			handleManagementAction("disable", { agent: "reviewer" }, ctx);
-			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer"), undefined);
+			handleManagementAction("disable", { agent: "commentator" }, ctx);
+			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "commentator"), undefined);
 
-			const enabled = handleManagementAction("enable", { agent: "reviewer" }, ctx);
+			const enabled = handleManagementAction("enable", { agent: "commentator" }, ctx);
 			assert.equal(enabled.isError, false);
-			assert.match(readText(enabled), /Enabled agent 'reviewer'/);
-			assert.ok(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer"));
+			assert.match(readText(enabled), /Enabled agent 'commentator'/);
+			assert.ok(discoverAgents(tempDir, "both").agents.find((a) => a.name === "commentator"));
 
 			const settings = readJson(userSettingsPath()) as { subagents?: { agentOverrides?: Record<string, unknown> } };
-			assert.equal(settings.subagents?.agentOverrides?.reviewer, undefined);
+			assert.equal(settings.subagents?.agentOverrides?.commentator, undefined);
 		});
 
 		it("preserves other override fields when removing the disabled flag", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 			writeJson(userSettingsPath(), {
-				subagents: { agentOverrides: { reviewer: { model: "openai/gpt-5.4", disabled: true } } },
+				subagents: { agentOverrides: { commentator: { model: "openai/gpt-5.4", disabled: true } } },
 			});
 
-			handleManagementAction("enable", { agent: "reviewer" }, ctx);
+			handleManagementAction("enable", { agent: "commentator" }, ctx);
 
-			const settings = readJson(userSettingsPath()) as { subagents: { agentOverrides: { reviewer: { model: string; disabled?: boolean } } } };
-			assert.deepEqual(settings.subagents.agentOverrides.reviewer, { model: "openai/gpt-5.4" });
-			assert.ok(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer"));
+			const settings = readJson(userSettingsPath()) as { subagents: { agentOverrides: { commentator: { model: string; disabled?: boolean } } } };
+			assert.deepEqual(settings.subagents.agentOverrides.commentator, { model: "openai/gpt-5.4" });
+			assert.ok(discoverAgents(tempDir, "both").agents.find((a) => a.name === "commentator"));
 		});
 
 		it("reports already enabled and makes no changes when nothing is disabled", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			const enabled = handleManagementAction("enable", { agent: "reviewer" }, ctx);
+			const enabled = handleManagementAction("enable", { agent: "commentator" }, ctx);
 			assert.equal(enabled.isError, false);
 			assert.match(readText(enabled), /already enabled/);
 			assert.equal(fs.existsSync(userSettingsPath()), false);
@@ -258,9 +258,9 @@ describe("agent eject/disable/enable/reset management actions", () => {
 		it("points to the disabling scope when enabling the wrong scope", () => {
 			fs.mkdirSync(path.join(tempDir, ".selesai"), { recursive: true });
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			handleManagementAction("disable", { agent: "reviewer", agentScope: "project" }, ctx);
+			handleManagementAction("disable", { agent: "commentator", agentScope: "project" }, ctx);
 
-			const enabled = handleManagementAction("enable", { agent: "reviewer" }, ctx);
+			const enabled = handleManagementAction("enable", { agent: "commentator" }, ctx);
 			assert.equal(enabled.isError, true);
 			assert.match(readText(enabled), /still disabled via a project scope override/);
 			assert.match(readText(enabled), /agentScope: 'project'/);
@@ -277,45 +277,45 @@ describe("agent eject/disable/enable/reset management actions", () => {
 	describe("reset", () => {
 		it("deletes a custom shadow file and restores the bundled builtin", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			handleManagementAction("eject", { agent: "reviewer" }, ctx);
-			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer")?.source, "user");
+			handleManagementAction("eject", { agent: "commentator" }, ctx);
+			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "commentator")?.source, "user");
 
-			const reset = handleManagementAction("reset", { agent: "reviewer" }, ctx);
+			const reset = handleManagementAction("reset", { agent: "commentator" }, ctx);
 			assert.equal(reset.isError, false);
 			assert.match(readText(reset), /Deleted custom user agent file/);
-			assert.match(readText(reset), /Reset agent 'reviewer' to its bundled builtin default/);
-			assert.equal(fs.existsSync(userAgentPath("reviewer")), false);
-			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer")?.source, "builtin");
+			assert.match(readText(reset), /Reset agent 'commentator' to its bundled builtin default/);
+			assert.equal(fs.existsSync(userAgentPath("commentator")), false);
+			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "commentator")?.source, "builtin");
 		});
 
 		it("removes a settings override and restores the pristine builtin", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			handleManagementAction("disable", { agent: "reviewer" }, ctx);
-			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer"), undefined);
+			handleManagementAction("disable", { agent: "commentator" }, ctx);
+			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "commentator"), undefined);
 
-			const reset = handleManagementAction("reset", { agent: "reviewer" }, ctx);
+			const reset = handleManagementAction("reset", { agent: "commentator" }, ctx);
 			assert.equal(reset.isError, false);
 			assert.match(readText(reset), /Removed user settings override/);
-			assert.ok(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer"));
+			assert.ok(discoverAgents(tempDir, "both").agents.find((a) => a.name === "commentator"));
 			assert.equal((readJson(userSettingsPath()) as { subagents?: unknown }).subagents, undefined);
 		});
 
 		it("removes both a custom file and a settings override in one reset", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			handleManagementAction("eject", { agent: "reviewer" }, ctx);
-			handleManagementAction("disable", { agent: "reviewer" }, ctx);
+			handleManagementAction("eject", { agent: "commentator" }, ctx);
+			handleManagementAction("disable", { agent: "commentator" }, ctx);
 
-			const reset = handleManagementAction("reset", { agent: "reviewer" }, ctx);
+			const reset = handleManagementAction("reset", { agent: "commentator" }, ctx);
 			assert.equal(reset.isError, false);
 			assert.match(readText(reset), /Deleted custom user agent file/);
 			assert.match(readText(reset), /Removed user settings override/);
-			assert.equal(fs.existsSync(userAgentPath("reviewer")), false);
-			assert.ok(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer"));
+			assert.equal(fs.existsSync(userAgentPath("commentator")), false);
+			assert.ok(discoverAgents(tempDir, "both").agents.find((a) => a.name === "commentator"));
 		});
 
 		it("reports a no-op when there is nothing to reset in the target scope", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-			const reset = handleManagementAction("reset", { agent: "reviewer" }, ctx);
+			const reset = handleManagementAction("reset", { agent: "commentator" }, ctx);
 			assert.equal(reset.isError, false);
 			assert.match(readText(reset), /no user customization to reset/);
 			assert.match(readText(reset), /at its bundled builtin default/);

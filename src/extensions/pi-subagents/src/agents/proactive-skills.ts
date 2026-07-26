@@ -4,8 +4,8 @@ import type { ProactiveSkillSubagentsConfig } from "../shared/types.ts";
 const SUBAGENT_ORCHESTRATION_SKILL = "pi-subagents";
 const DEFAULT_MIN_REFERENCES = 2;
 const DEFAULT_MAX_RECOMMENDATIONS = 3;
-const DEFAULT_PREFERRED_AGENT = "reviewer";
-const FALLBACK_AGENT_ORDER = ["reviewer", "context-builder", "delegate"];
+const DEFAULT_PREFERRED_AGENT = "commentator";
+const FALLBACK_AGENT_ORDER = ["commentator", "architect", "builder"];
 const MAX_RECOMMENDATION_CAP = 5;
 
 export interface ResolvedProactiveSkillSubagentsConfig {

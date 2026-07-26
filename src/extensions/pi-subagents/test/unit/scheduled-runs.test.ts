@@ -14,6 +14,7 @@ import {
 	scheduledRunsEnabled,
 } from "../../src/runs/background/scheduled-runs.ts";
 import type { ExtensionConfig } from "../../src/shared/types.ts";
+import { encodeSubagentCapabilityCeiling, resolveCurrentSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
 import type { ExtensionContext } from "@selesai/code";
 
 type TimerHandle = number;
@@ -78,7 +79,7 @@ async function flushMicrotasks(times = 10): Promise<void> {
 	for (let i = 0; i < times; i++) await Promise.resolve();
 }
 
-function createHarness(options: { config?: ExtensionConfig; storeRoot?: string; now?: number } = {}): TestHarness {
+function createHarness(options: { config?: ExtensionConfig; storeRoot?: string; now?: number; resolveCapabilityCeiling?: (sessionId: string) => { version: 1; allowedTools?: string[]; denyExtensions: boolean; sources: string[] } | undefined } = {}): TestHarness {
 	const timers = new FakeTimers();
 	const launches: LaunchRecord[] = [];
 	const clock = { now: options.now ?? 1_000_000 };
@@ -89,6 +90,7 @@ function createHarness(options: { config?: ExtensionConfig; storeRoot?: string; 
 		now: () => clock.now,
 		randomId: () => "id-" + randomUUID().slice(0, 4),
 		timers,
+		resolveCapabilityCeiling: options.resolveCapabilityCeiling,
 		launch: (params, ctx, signal) => {
 			let resolve!: LaunchRecord["resolve"];
 			const promise = new Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown>; isError?: boolean }>((res) => {
@@ -190,6 +192,30 @@ describe("ScheduledRunManager create/list/status/cancel", () => {
 		assert.equal(harness.timers.pendingCount(), 0);
 	});
 
+	it("rejects capability-ceiling-restricted schedules instead of persisting policy-less jobs", async () => {
+		const harness = createHarness({ resolveCapabilityCeiling: () => ({ version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["plan"] }) });
+		const result = await harness.manager.handleToolCall({ action: "schedule", agent: "worker", task: "review", schedule: "+10m" }, harness.ctx);
+		assert.equal(isError(result), true);
+		assert.match(result.content[0]!.text, /does not yet persist ceilings/);
+		assert.equal(harness.launches.length, 0);
+	});
+
+
+	it("rejects schedules restricted only by inherited process policy", async () => {
+		const previous = process.env.SELESAI_SUBAGENT_CAPABILITY_CEILING_V1;
+		try {
+			process.env.SELESAI_SUBAGENT_CAPABILITY_CEILING_V1 = encodeSubagentCapabilityCeiling({ version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["ancestor"] });
+			const harness = createHarness({ resolveCapabilityCeiling: resolveCurrentSubagentCapabilityCeiling });
+			const result = await harness.manager.handleToolCall({ action: "schedule", agent: "worker", task: "review", schedule: "+10m" }, harness.ctx);
+			assert.equal(isError(result), true);
+			assert.match(result.content[0]!.text, /does not yet persist ceilings/);
+			assert.equal(harness.launches.length, 0);
+		} finally {
+			if (previous === undefined) delete process.env.SELESAI_SUBAGENT_CAPABILITY_CEILING_V1;
+			else process.env.SELESAI_SUBAGENT_CAPABILITY_CEILING_V1 = previous;
+		}
+	});
+
 	it("creates a scheduled job and arms a timer", async () => {
 		const harness = freshHarness();
 		const result = await harness.manager.handleToolCall({ action: "schedule", agent: "scout", task: "review later", schedule: "+10m", scheduleName: "nightly review" }, harness.ctx);
@@ -209,6 +235,27 @@ describe("ScheduledRunManager create/list/status/cancel", () => {
 		// no execution mode at all
 		const none = await harness.manager.handleToolCall({ action: "schedule", schedule: "+10m" }, harness.ctx);
 		assert.match(none.content[0]!.text, /exactly one execution mode/);
+	});
+
+	it("rejects explicit reviewed acceptance at every scheduled nesting level before persisting a job", async () => {
+		const harness = freshHarness();
+		const cases = [
+			{ agent: "scout", task: "review later", acceptance: "reviewed" },
+			{ agent: "scout", task: "review later", acceptance: { level: "reviewed" } },
+			{ tasks: [{ agent: "scout", task: "review later", acceptance: "reviewed" }] },
+			{ chain: [{ agent: "scout", task: "review later", acceptance: { level: "reviewed" } }] },
+			{ chain: [{ parallel: [{ agent: "scout", task: "review later", acceptance: "reviewed" }] }] },
+		];
+		for (const params of cases) {
+			const result = await harness.manager.handleToolCall({
+				action: "schedule",
+				schedule: "+10m",
+				...params,
+			}, harness.ctx);
+			assert.equal(isError(result), true);
+			assert.match(result.content[0]!.text, /achieved status.*omit acceptance.*acceptance\.review\.required/i);
+		}
+		assert.equal(harness.timers.pendingCount(), 0);
 	});
 
 	it("requires a schedule and rejects fork/async-false/clarify-true", async () => {

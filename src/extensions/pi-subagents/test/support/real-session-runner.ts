@@ -1,23 +1,21 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { type AssistantMessage, type Context, type ToolCall } from "@earendil-works/pi-ai";
 import {
-	type AssistantMessage,
-	type Context,
 	type FauxContentBlock,
 	type FauxResponseStep,
 	fauxAssistantMessage,
 	fauxText,
 	fauxToolCall,
-	registerFauxProvider,
-	type ToolCall,
-} from "@earendil-works/pi-ai";
+	fauxProvider,
+} from "@earendil-works/pi-ai/providers/faux";
 import {
 	type AgentSession,
 	type AgentSessionEvent,
-	type ModelRegistry,
 	createAgentSession,
+	ModelRuntime,
 	DefaultResourceLoader,
 	SessionManager,
 	SettingsManager,
@@ -34,6 +32,8 @@ export interface RealSessionRunOptions {
 	childText: string;
 	respond: FauxResponder;
 	timeoutMs?: number;
+	projectFiles?: Record<string, string>;
+	reportChildTools?: boolean;
 }
 
 export interface RealSessionRun {
@@ -98,51 +98,59 @@ function toAssistantMessage(reply: FauxReply): AssistantMessage {
 	return fauxAssistantMessage(content, { stopReason: hasToolCall ? "toolUse" : "stop" });
 }
 
-function createModelRegistry(model: { provider: string; id: string }) {
-	return {
-		find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
-		getAll: () => [model],
-		getAvailable: () => [model],
-		hasConfiguredAuth: () => true,
-		isUsingOAuth: () => false,
-		getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "faux", headers: {} }),
-		registerProvider: () => {},
-		unregisterProvider: () => {},
-	};
-}
-
-function installChildPiShim(childText: string): () => void {
+function installChildPiShim(childText: string, reportChildTools = false): () => void {
 	const rootDir = mkdtempSync(path.join(os.tmpdir(), "pi-real-session-cli-"));
 	const binDir = path.join(rootDir, "bin");
+	const piPackageDir = path.join(rootDir, "pi-package");
+	const childCliPath = path.join(piPackageDir, "dist", "cli.mjs");
 	const previousPath = process.env.PATH;
+	const previousPiBinary = process.env.SELESAI_SUBAGENT_PI_BINARY;
 	const previousChildText = process.env.SELESAI_SUBAGENTS_E2E_CHILD_TEXT;
+	const previousReportTools = process.env.SELESAI_SUBAGENTS_E2E_REPORT_CHILD_TOOLS;
 	const previousArgv1 = process.argv[1];
 
 	writeFileSync(path.join(rootDir, ".keep"), "");
 	mkdirSync(binDir, { recursive: true });
+	mkdirSync(path.dirname(childCliPath), { recursive: true });
+	writeFileSync(childCliPath, `import ${JSON.stringify(pathToFileURL(CHILD_CLI_PATH).href)};\n`);
+	writeFileSync(
+		path.join(piPackageDir, "package.json"),
+		JSON.stringify({ name: "@selesai/code" }),
+	);
 	writeFileSync(
 		path.join(binDir, "pi"),
-		`#!/bin/sh\nexec "${process.execPath}" "${CHILD_CLI_PATH}" "$@"\n`,
+		`#!/bin/sh\nexec "${process.execPath}" "${childCliPath}" "$@"\n`,
 		{ mode: 0o755 },
 	);
 	writeFileSync(
 		path.join(binDir, "pi.cmd"),
-		`@echo off\r\n"${process.execPath}" "${CHILD_CLI_PATH}" %*\r\n`,
+		`@echo off\r\n"${process.execPath}" "${childCliPath}" %*\r\n`,
 	);
 
 	process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
+	if (process.platform === "win32") {
+		delete process.env.SELESAI_SUBAGENT_PI_BINARY;
+		process.argv[1] = childCliPath;
+	} else {
+		process.env.SELESAI_SUBAGENT_PI_BINARY = path.join(binDir, "pi");
+	}
 	process.env.SELESAI_SUBAGENTS_E2E_CHILD_TEXT = childText;
-	if (process.platform === "win32") process.argv[1] = CHILD_CLI_PATH;
+	if (reportChildTools) process.env.SELESAI_SUBAGENTS_E2E_REPORT_CHILD_TOOLS = "1";
+	else delete process.env.SELESAI_SUBAGENTS_E2E_REPORT_CHILD_TOOLS;
 
 	return () => {
 		if (previousPath === undefined) delete process.env.PATH;
 		else process.env.PATH = previousPath;
-		if (previousChildText === undefined) delete process.env.SELESAI_SUBAGENTS_E2E_CHILD_TEXT;
-		else process.env.SELESAI_SUBAGENTS_E2E_CHILD_TEXT = previousChildText;
+		if (previousPiBinary === undefined) delete process.env.SELESAI_SUBAGENT_PI_BINARY;
+		else process.env.SELESAI_SUBAGENT_PI_BINARY = previousPiBinary;
 		if (process.platform === "win32") {
 			if (previousArgv1 === undefined) delete process.argv[1];
 			else process.argv[1] = previousArgv1;
 		}
+		if (previousChildText === undefined) delete process.env.SELESAI_SUBAGENTS_E2E_CHILD_TEXT;
+		else process.env.SELESAI_SUBAGENTS_E2E_CHILD_TEXT = previousChildText;
+		if (previousReportTools === undefined) delete process.env.SELESAI_SUBAGENTS_E2E_REPORT_CHILD_TOOLS;
+		else process.env.SELESAI_SUBAGENTS_E2E_REPORT_CHILD_TOOLS = previousReportTools;
 		rmSync(rootDir, { recursive: true, force: true });
 	};
 }
@@ -171,11 +179,10 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 		["SELESAI_SUBAGENT_MAX_DEPTH", process.env.SELESAI_SUBAGENT_MAX_DEPTH],
 		["SELESAI_SUBAGENT_PARENT_SESSION", process.env.SELESAI_SUBAGENT_PARENT_SESSION],
 		["SELESAI_SUBAGENT_PI_BINARY", process.env.SELESAI_SUBAGENT_PI_BINARY],
-		["SELESAI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT", process.env.SELESAI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT],
+		["SELESAI_SUBAGENTS_SELESAI_CODING_AGENT_PACKAGE_ROOT", process.env.SELESAI_SUBAGENTS_SELESAI_CODING_AGENT_PACKAGE_ROOT],
 	]);
-	const uninstallChildPi = installChildPiShim(options.childText);
+	const uninstallChildPi = installChildPiShim(options.childText, options.reportChildTools);
 	let session: AgentSession | undefined;
-	let faux: ReturnType<typeof registerFauxProvider> | undefined;
 	let disposed = false;
 
 	const dispose = async () => {
@@ -187,7 +194,6 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 		try {
 			session?.dispose();
 		} catch {}
-		faux?.unregister();
 		uninstallChildPi();
 		restoreEnv(envSnapshot);
 		try {
@@ -208,14 +214,32 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 		delete process.env.SELESAI_SUBAGENT_DEPTH;
 		delete process.env.SELESAI_SUBAGENT_MAX_DEPTH;
 		delete process.env.SELESAI_SUBAGENT_PARENT_SESSION;
-		delete process.env.SELESAI_SUBAGENT_PI_BINARY;
-		delete process.env.SELESAI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT;
+		delete process.env.SELESAI_SUBAGENTS_SELESAI_CODING_AGENT_PACKAGE_ROOT;
+		for (const [relativePath, content] of Object.entries(options.projectFiles ?? {})) {
+			const target = path.resolve(cwd, relativePath);
+			if (target !== cwd && !target.startsWith(`${cwd}${path.sep}`)) throw new Error(`E2E project file escapes cwd: ${relativePath}`);
+			mkdirSync(path.dirname(target), { recursive: true });
+			writeFileSync(target, content, "utf-8");
+		}
 
-		faux = registerFauxProvider({
+		const faux = fauxProvider({
 			provider: "faux-e2e-parent",
 			models: [{ id: "parent", contextWindow: 200_000 }],
 		});
-		const model = faux.getModel();
+		const modelRuntime = await ModelRuntime.create({
+			authPath: path.join(home, "auth.json"),
+			modelsPath: null,
+			allowModelNetwork: false,
+		});
+		modelRuntime.registerProvider(faux.provider.id, {
+			name: faux.provider.name,
+			api: faux.api,
+			apiKey: "faux",
+			streamSimple: faux.provider.streamSimple,
+			models: [...faux.models],
+		});
+		const model = modelRuntime.getModel(faux.provider.id, "parent");
+		if (!model) throw new Error("faux parent model was not registered");
 		const respond = options.respond;
 		const responseFactory: FauxResponseStep = async (context, _streamOptions, state) => toAssistantMessage(await respond(context, state));
 		faux.setResponses(Array.from({ length: 8 }, () => responseFactory));
@@ -241,7 +265,7 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 			cwd,
 			agentDir: home,
 			model,
-			modelRegistry: createModelRegistry(model) as unknown as ModelRegistry,
+			modelRuntime,
 			resourceLoader: loader,
 			sessionManager: SessionManager.create(cwd, path.join(home, "sessions")),
 			settingsManager,

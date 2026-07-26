@@ -4,7 +4,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
-import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
+import { SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
+import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, MCP_DIRECT_CHILD_TOOLS_ENV, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
+import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
 import {
 	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_PARENT_CHILD_INDEX_ENV,
@@ -38,6 +42,9 @@ const originalEnv = {
 	SELESAI_SUBAGENT_PARENT_CAPABILITY_TOKEN: process.env.SELESAI_SUBAGENT_PARENT_CAPABILITY_TOKEN,
 	SELESAI_SUBAGENT_PARENT_SESSION: process.env.SELESAI_SUBAGENT_PARENT_SESSION,
 	SELESAI_SUBAGENT_RUN_ID: process.env.SELESAI_SUBAGENT_RUN_ID,
+	[MCP_DIRECT_CHILD_TOOLS_ENV]: process.env[MCP_DIRECT_CHILD_TOOLS_ENV],
+	[TOOL_BUDGET_ZERO_AUTH_ENV]: process.env[TOOL_BUDGET_ZERO_AUTH_ENV],
+	[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV]: process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV],
 };
 const originalCwd = process.cwd();
 const tempRoots: string[] = [];
@@ -184,6 +191,66 @@ describe("buildPiArgs session wiring", () => {
 
 		assert.equal(env[SUBAGENT_PARENT_SESSION_ENV], "inherited-parent");
 	});
+
+	it("passes the effective wait-tool setting explicitly to children", () => {
+		assert.equal(buildPiArgs({
+			baseArgs: [], task: "test", sessionEnabled: false,
+			inheritProjectContext: true, inheritSkills: true,
+			waitToolEnabled: false,
+		}).env[WAIT_TOOL_ENABLED_ENV], "false");
+		assert.equal(buildPiArgs({
+			baseArgs: [], task: "test", sessionEnabled: false,
+			inheritProjectContext: true, inheritSkills: true,
+			waitToolEnabled: true,
+		}).env[WAIT_TOOL_ENABLED_ENV], "true");
+	});
+
+	it("passes child watchdog config only when explicitly provided", () => {
+		const withoutWatchdog = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+		assert.equal(withoutWatchdog.env[CHILD_WATCHDOG_CONFIG_ENV], undefined);
+
+		const withWatchdog = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			childWatchdog: {
+				enabled: true,
+				runId: "run-1",
+				agent: "worker",
+				childIndex: 2,
+				watchdogTailTimeoutMs: 1234,
+				agentEndTimeoutMs: 500,
+				maxWarnings: 1,
+				lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
+				autoFollowBlockers: true,
+				autoFollowMaxAttempts: 3,
+				stalemateRepeats: 2,
+			},
+		});
+		const encoded = withWatchdog.env[CHILD_WATCHDOG_CONFIG_ENV];
+		assert.equal(typeof encoded, "string");
+		assert.deepEqual(JSON.parse(encoded ?? "{}"), {
+			enabled: true,
+			runId: "run-1",
+			agent: "worker",
+			childIndex: 2,
+			watchdogTailTimeoutMs: 1234,
+			agentEndTimeoutMs: 500,
+			maxWarnings: 1,
+			lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
+			autoFollowBlockers: true,
+			autoFollowMaxAttempts: 3,
+			stalemateRepeats: 2,
+		});
+	});
 });
 
 describe("buildPiArgs model wiring", () => {
@@ -234,6 +301,24 @@ describe("buildPiArgs model wiring", () => {
 		assert.ok(args.includes("openai-codex/gpt-5.4-mini:high"));
 	});
 
+	it("passes max thinking through to the model argument", () => {
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			model: "openai/gpt-5",
+			thinking: "max",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.equal(applyThinkingSuffix("openai/gpt-5", "max"), "openai/gpt-5:max");
+		assert.equal(applyThinkingSuffix("openai/gpt-5:max", "high"), "openai/gpt-5:max");
+		assert.equal(applyThinkingSuffix("openai/gpt-5:max", "high", true), "openai/gpt-5:high");
+		assert.ok(args.includes("--model"));
+		assert.ok(args.includes("openai/gpt-5:max"));
+	});
+
 	it("passes explicit thinking off through to the model arg", () => {
 		const { args } = buildPiArgs({
 			baseArgs: ["-p"],
@@ -249,6 +334,27 @@ describe("buildPiArgs model wiring", () => {
 		assert.equal(applyThinkingSuffix("anthropic/claude-haiku-4-5:high", "off", true), "anthropic/claude-haiku-4-5:off");
 		assert.ok(args.includes("--model"));
 		assert.ok(args.includes("anthropic/claude-haiku-4-5:off"));
+	});
+
+	it("does not append a thinking suffix for boolean false", () => {
+		const model = "glm-5.2-short-fast";
+		const once = applyThinkingSuffix(model, false);
+		assert.equal(once, model);
+		assert.equal(applyThinkingSuffix(once, false), model);
+
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			model,
+			thinking: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.ok(args.includes("--model"));
+		assert.ok(args.includes(model));
+		assert.ok(!args.some((arg) => arg.includes(":false")));
 	});
 
 	it("leaves provider-specific model suffixes untouched when thinking is disabled", () => {
@@ -325,6 +431,47 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		});
 
 		assert.deepEqual(JSON.parse(env[TOOL_BUDGET_ENV] ?? "{}"), { soft: 2, hard: 3, block: ["read"] });
+		assert.equal(env[TOOL_BUDGET_ZERO_AUTH_ENV], undefined);
+	});
+
+	it("clears inherited zero tool-budget authorization unless this launch owns it", () => {
+		process.env[TOOL_BUDGET_ZERO_AUTH_ENV] = "1";
+		const inherited = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			toolBudget: { hard: 1, block: ["read"] },
+		});
+		assert.equal(inherited.env[TOOL_BUDGET_ZERO_AUTH_ENV], undefined);
+
+		const owned = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			toolBudget: { hard: 0, block: "*" },
+			allowZeroToolBudget: true,
+		});
+		assert.equal(owned.env[TOOL_BUDGET_ZERO_AUTH_ENV], "1");
+	});
+
+	it("clears inherited MCP direct-tool metadata for non-MCP launches", () => {
+		for (const staleValue of [JSON.stringify(["fixture_search"]), "not-json"]) {
+			process.env[MCP_DIRECT_CHILD_TOOLS_ENV] = staleValue;
+			const { env } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				tools: ["read", "fixture_search"],
+			});
+
+			assert.equal(env[MCP_DIRECT_CHILD_TOOLS_ENV], undefined);
+		}
 	});
 
 	it("passes child intercom and orchestrator metadata through env", () => {
@@ -370,7 +517,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 	});
 
 	it("emits explicit builtin tool allowlists", () => {
-		const { args } = buildPiArgs({
+		const { args, env, toolDiagnosticPath } = buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",
 			sessionEnabled: false,
@@ -381,6 +528,40 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 		const toolsArg = args[args.indexOf("--tools") + 1];
 		assert.equal(toolsArg, "read,grep,find,ls,bash,edit,write,contact_supervisor");
+		assert.deepEqual(JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"), toolsArg.split(","));
+		assert.equal(env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV], toolDiagnosticPath);
+	});
+
+	it("keeps structured_output available under explicit tool allowlists", () => {
+		const { args, env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read", "fixture_search"],
+			structuredOutput: {
+				schema: { type: "object", properties: {}, additionalProperties: false },
+				schemaPath: "/tmp/schema.json",
+				outputPath: "/tmp/output.json",
+			},
+		});
+
+		assert.equal(args[args.indexOf("--tools") + 1], "read,fixture_search,structured_output");
+		assert.deepEqual(JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"), ["read", "fixture_search", "structured_output"]);
+	});
+
+	it("forwards the Pi package root to child processes for host peer resolution", () => {
+		process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV] = "/opt/pi-coding-agent";
+		const { env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.equal(env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV], "/opt/pi-coding-agent");
 	});
 
 	it("adds read to explicit tool allowlists when skills must be loaded lazily", () => {
@@ -427,23 +608,69 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 		assert.equal(args[args.indexOf("--tools") + 1], "read,bash,chrome_devtools_take_screenshot,chrome_devtools_click");
 		assert.equal(env.MCP_DIRECT_TOOLS, "chrome-devtools");
+		assert.equal(env[REQUIRED_CHILD_TOOLS_ENV], JSON.stringify(["read", "bash", "chrome_devtools_take_screenshot", "chrome_devtools_click"]));
+		assert.equal(env[MCP_DIRECT_CHILD_TOOLS_ENV], JSON.stringify(["chrome_devtools_take_screenshot", "chrome_devtools_click"]));
 	});
 
-	it("preserves no --tools for MCP-only agents", () => {
-		const fixture = createMcpFixture();
-		writeMcpFixture(fixture);
+	it("emits --no-tools for explicit empty tool allowlists", () => {
+		for (const requireReadTool of [false, true]) {
+			const { args, env } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				requireReadTool,
+				tools: [],
+			});
 
-		const { args, env } = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "hello",
-			sessionEnabled: false,
-			inheritProjectContext: false,
-			inheritSkills: false,
-			mcpDirectTools: ["chrome-devtools"],
-		});
+			assert.ok(args.includes("--no-tools"));
+			assert.equal(args.includes("--tools"), false);
+			assert.equal(env.MCP_DIRECT_TOOLS, "__none__");
+		}
+	});
 
-		assert.equal(args.includes("--tools"), false);
-		assert.equal(env.MCP_DIRECT_TOOLS, "chrome-devtools");
+	it("restricts MCP-only agents to selected direct MCP tool names", () => {
+		for (const requireReadTool of [false, true]) {
+			const fixture = createMcpFixture();
+			writeMcpFixture(fixture);
+
+			const { args, env } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				requireReadTool,
+				mcpDirectTools: ["chrome-devtools"],
+			});
+
+			assert.equal(args[args.indexOf("--tools") + 1], "chrome_devtools_take_screenshot,chrome_devtools_click");
+			assert.equal(env.MCP_DIRECT_TOOLS, "chrome-devtools");
+		}
+	});
+
+	it("fails closed with --no-tools when MCP-only names cannot be resolved", () => {
+		for (const requireReadTool of [false, true]) {
+			const fixture = createMcpFixture();
+			writeJson(path.join(fixture.agentDir, "mcp.json"), {
+				mcpServers: { "chrome-devtools": { command: "npx", args: ["chrome-devtools-mcp"] } },
+			});
+
+			const { args, env } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				requireReadTool,
+				mcpDirectTools: ["chrome-devtools"],
+			});
+
+			assert.ok(args.includes("--no-tools"));
+			assert.equal(args.includes("--tools"), false);
+			assert.equal(env.MCP_DIRECT_TOOLS, "chrome-devtools");
+		}
 	});
 
 	it("supports direct MCP server/tool filters", () => {
@@ -548,7 +775,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 	it("resolves project MCP config from the child cwd and expands SELESAI_CODING_AGENT_DIR", () => {
 		const fixture = createMcpFixture();
-		process.env.SELESAI_CODING_AGENT_DIR = "~/.pi/agent";
+		process.env.SELESAI_CODING_AGENT_DIR = "~/.selesai/agent";
 		process.chdir(fixture.root);
 		writeMcpFixture(fixture, {
 			serverName: "project-mcp",

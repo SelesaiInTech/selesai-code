@@ -12,7 +12,7 @@ import {
 	SUBAGENT_RUN_ID_ENV,
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../runs/shared/pi-args.ts";
-import { POLL_INTERVAL_MS, TEMP_ROOT_DIR, type SubagentState } from "../shared/types.ts";
+import { INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
 import { writeAtomicJson } from "../shared/atomic-json.ts";
 
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
@@ -22,6 +22,8 @@ export const NATIVE_SUPERVISOR_TOOL_NAME = "subagent_supervisor";
 const MAX_MESSAGE_BYTES = 64 * 1024;
 const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
 const CHANNEL_POLL_MS = Math.min(POLL_INTERVAL_MS, 500);
+const STALE_EMPTY_CHANNEL_AGE_MS = 60 * 1000;
+const STALE_EMPTY_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 1000;
 
 type SupervisorReason = "need_decision" | "interview_request" | "progress_update";
 
@@ -29,6 +31,7 @@ interface SupervisorRequest {
 	type: "subagent.supervisor.request";
 	id: string;
 	createdAt: number;
+	expiresAt?: number;
 	reason: SupervisorReason;
 	message: string;
 	expectsReply: boolean;
@@ -203,9 +206,8 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 	});
 }
 
-async function waitForReply(channelDir: string, requestId: string, signal?: AbortSignal): Promise<SupervisorReply> {
+async function waitForReply(channelDir: string, requestId: string, deadline: number, signal?: AbortSignal): Promise<SupervisorReply> {
 	const file = replyPath(channelDir, requestId);
-	const deadline = Date.now() + askTimeoutMs();
 	while (Date.now() <= deadline) {
 		if (signal?.aborted) throw new Error("Supervisor request cancelled.");
 		if (fs.existsSync(file)) {
@@ -228,11 +230,15 @@ async function sendSupervisorRequest(params: ContactSupervisorParams, signal?: A
 	ensureSupervisorChannelDir(metadata.channelDir);
 	const requestId = randomUUID();
 	const expectsReply = params.reason !== "progress_update";
+	const createdAt = Date.now();
+	const replyDeadline = createdAt + askTimeoutMs();
+	const expiresAt = expectsReply ? replyDeadline : undefined;
 	const message = formatChildMessage({ ...metadata, reason: params.reason, message: params.message, interview: params.interview });
 	const request: SupervisorRequest = {
 		type: "subagent.supervisor.request",
 		id: requestId,
-		createdAt: Date.now(),
+		createdAt,
+		...(expiresAt !== undefined ? { expiresAt } : {}),
 		reason: params.reason,
 		message,
 		expectsReply,
@@ -255,17 +261,22 @@ async function sendSupervisorRequest(params: ContactSupervisorParams, signal?: A
 		};
 	}
 
-	const reply = await waitForReply(metadata.channelDir, requestId, signal);
-	const details: Record<string, unknown> = { requestId, reason: params.reason };
-	if (params.reason === "interview_request") {
-		const structured = parseStructuredReply(reply.message);
-		if (structured.error) details.structuredReplyParseError = structured.error;
-		else details.structuredReply = structured.value;
+	try {
+		const reply = await waitForReply(metadata.channelDir, requestId, replyDeadline, signal);
+		const details: Record<string, unknown> = { requestId, reason: params.reason };
+		if (params.reason === "interview_request") {
+			const structured = parseStructuredReply(reply.message);
+			if (structured.error) details.structuredReplyParseError = structured.error;
+			else details.structuredReply = structured.value;
+		}
+		return {
+			content: [{ type: "text", text: `**Reply from supervisor:**\n${reply.message}` }],
+			details,
+		};
+	} catch (error) {
+		removeRequestFile(requestPath(metadata.channelDir, requestId));
+		throw error;
 	}
-	return {
-		content: [{ type: "text", text: `**Reply from supervisor:**\n${reply.message}` }],
-		details,
-	};
 }
 
 function hasTool(pi: ExtensionAPI, name: string): boolean {
@@ -350,6 +361,77 @@ function listRequestFiles(): Array<{ channelDir: string; file: string }> {
 	return files;
 }
 
+function readDirectoryEntries(dir: string): fs.Dirent[] | undefined {
+	try {
+		return fs.readdirSync(dir, { withFileTypes: true });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		return undefined;
+	}
+}
+
+function directoryMtimeMs(dir: string): number {
+	try {
+		return fs.statSync(dir).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
+function removeEmptyDirectory(dir: string): boolean {
+	try {
+		fs.rmdirSync(dir);
+		return true;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ENOENT") return true;
+		if (code === "ENOTEMPTY" || code === "EEXIST" || code === "EPERM" || code === "EBUSY") return false;
+		throw error;
+	}
+}
+
+function removeStaleEmptySupervisorChannel(channelDir: string, nowMs: number): boolean {
+	const requestsDir = path.join(channelDir, REQUESTS_DIR);
+	const repliesDir = path.join(channelDir, REPLIES_DIR);
+	const newestKnownMtimeMs = Math.max(
+		directoryMtimeMs(channelDir),
+		directoryMtimeMs(requestsDir),
+		directoryMtimeMs(repliesDir),
+	);
+	if (nowMs - newestKnownMtimeMs < STALE_EMPTY_CHANNEL_AGE_MS) return false;
+
+	const requestEntries = readDirectoryEntries(requestsDir);
+	if (!requestEntries || requestEntries.length > 0) return false;
+	const replyEntries = readDirectoryEntries(repliesDir);
+	if (!replyEntries || replyEntries.length > 0) return false;
+
+	if (!removeEmptyDirectory(requestsDir)) return false;
+	if (!removeEmptyDirectory(repliesDir)) return false;
+	if (!removeEmptyDirectory(channelDir)) return false;
+	return true;
+}
+
+function cleanupStaleEmptySupervisorChannels(nowMs = Date.now()): number {
+	let channelEntries: fs.Dirent[];
+	try {
+		channelEntries = fs.readdirSync(SUPERVISOR_CHANNEL_ROOT, { withFileTypes: true });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+		throw error;
+	}
+
+	let removed = 0;
+	for (const entry of channelEntries) {
+		if (!entry.isDirectory()) continue;
+		try {
+			if (removeStaleEmptySupervisorChannel(path.join(SUPERVISOR_CHANNEL_ROOT, entry.name), nowMs)) removed++;
+		} catch {
+			// Cleanup is opportunistic; active writers can race with us and will be picked up by a later pass.
+		}
+	}
+	return removed;
+}
+
 function currentContextSessionId(state: Pick<SubagentState, "currentSessionId">, ctx: ExtensionContext): string | undefined {
 	try {
 		const sessionId = ctx.sessionManager.getSessionId();
@@ -363,6 +445,94 @@ function currentContextSessionId(state: Pick<SubagentState, "currentSessionId">,
 function requestMatchesContext(request: SupervisorRequest, state: Pick<SubagentState, "currentSessionId">, ctx: ExtensionContext): boolean {
 	const currentSessionId = currentContextSessionId(state, ctx);
 	return Boolean(currentSessionId && request.orchestratorSessionId === currentSessionId);
+}
+
+function rememberedForegroundChild(request: SupervisorRequest, state: SubagentState) {
+	const run = state.foregroundRuns?.get(request.runId);
+	const child = run?.children.find((candidate) => candidate.index === request.childIndex && candidate.agent === request.agent)
+		?? run?.children[request.childIndex];
+	return run && child ? { run, child } : undefined;
+}
+
+function markForegroundSupervisorAttention(request: SupervisorRequest, state: SubagentState): void {
+	const remembered = rememberedForegroundChild(request, state);
+	if (!remembered || remembered.child.status !== "detached") return;
+	const updatedAt = Date.now();
+	remembered.run.updatedAt = updatedAt;
+	remembered.child.activityState = "needs_attention";
+	remembered.child.lastActivityAt = request.createdAt;
+	remembered.child.currentTool = "contact_supervisor";
+	remembered.child.currentToolStartedAt = request.createdAt;
+	remembered.child.updatedAt = updatedAt;
+}
+
+function clearForegroundSupervisorAttention(request: SupervisorRequest, pending: Map<string, PendingSupervisorRequest>, state: SubagentState): void {
+	if ([...pending.values()].some((candidate) =>
+		candidate.expectsReply
+		&& candidate.runId === request.runId
+		&& candidate.agent === request.agent
+		&& candidate.childIndex === request.childIndex
+	)) return;
+	const remembered = rememberedForegroundChild(request, state);
+	if (!remembered || remembered.child.status !== "detached" || remembered.child.currentTool !== "contact_supervisor") return;
+	const updatedAt = Date.now();
+	remembered.run.updatedAt = updatedAt;
+	remembered.child.activityState = undefined;
+	remembered.child.lastActivityAt = updatedAt;
+	remembered.child.currentTool = undefined;
+	remembered.child.currentToolStartedAt = undefined;
+	remembered.child.updatedAt = updatedAt;
+}
+
+function removeRequestFile(file: string): void {
+	try {
+		fs.rmSync(file, { force: true });
+	} catch {
+		// Request cleanup is best-effort; reply files and timeout errors remain authoritative.
+	}
+}
+
+type SupervisorRequestLifecycle = "pending" | "resolved" | "expired" | "inactive" | "missing" | "wrong-session";
+
+function requestExpiresAt(request: SupervisorRequest, now: number): number {
+	const expiresAt = (request as { expiresAt?: unknown }).expiresAt;
+	if (typeof expiresAt === "number" && Number.isFinite(expiresAt)) return expiresAt;
+	return Number.isFinite(request.createdAt) ? request.createdAt + askTimeoutMs() : now;
+}
+
+function requestRunInactive(request: SupervisorRequest, state: SubagentState): boolean {
+	if (state.foregroundControls.has(request.runId)) return false;
+	const foreground = rememberedForegroundChild(request, state);
+	if (foreground) return foreground.child.status !== "detached";
+
+	const asyncJob = state.asyncJobs.get(request.runId);
+	if (!asyncJob) return false;
+	if (asyncJob.status === "complete" || asyncJob.status === "failed" || asyncJob.status === "paused") return true;
+	const stepStatus = asyncJob.steps?.[request.childIndex]?.status;
+	return stepStatus === "complete" || stepStatus === "completed" || stepStatus === "failed" || stepStatus === "paused";
+}
+
+function requestLifecycle(request: PendingSupervisorRequest, state: SubagentState, ctx: ExtensionContext | undefined, now: number): SupervisorRequestLifecycle {
+	if (ctx && !requestMatchesContext(request, state, ctx)) return "wrong-session";
+	if (!fs.existsSync(request.requestFile)) return "missing";
+	if (request.expectsReply && fs.existsSync(replyPath(request.channelDir, request.id))) return "resolved";
+	if (request.expectsReply && now > requestExpiresAt(request, now)) return "expired";
+	if (request.expectsReply && requestRunInactive(request, state)) return "inactive";
+	return "pending";
+}
+
+function cleanupRequestLifecycle(request: PendingSupervisorRequest, lifecycle: SupervisorRequestLifecycle): void {
+	if (lifecycle === "resolved" || lifecycle === "expired" || lifecycle === "inactive") removeRequestFile(request.requestFile);
+}
+
+function refreshPendingRequests(pending: Map<string, PendingSupervisorRequest>, state: SubagentState, ctx: ExtensionContext | undefined): void {
+	const now = Date.now();
+	for (const request of pending.values()) {
+		const lifecycle = requestLifecycle(request, state, ctx, now);
+		if (lifecycle === "pending") continue;
+		pending.delete(request.id);
+		cleanupRequestLifecycle(request, lifecycle);
+	}
 }
 
 function formatPendingLine(request: PendingSupervisorRequest): string {
@@ -387,11 +557,7 @@ function writeReply(request: PendingSupervisorRequest, message: string): void {
 		message: message.trim(),
 	};
 	writeAtomicJson(replyPath(request.channelDir, request.id), reply);
-	try {
-		fs.rmSync(request.requestFile, { force: true });
-	} catch {
-		// Best effort: the reply file is authoritative for the child.
-	}
+	removeRequestFile(request.requestFile);
 }
 
 function resolvePendingRequest(pending: Map<string, PendingSupervisorRequest>, params: IntercomParams): PendingSupervisorRequest {
@@ -427,7 +593,7 @@ function publicPendingRequests(pending: Map<string, PendingSupervisorRequest>): 
 	}));
 }
 
-function buildParentIntercomTool(pending: Map<string, PendingSupervisorRequest>, name = "intercom"): ToolDefinition<typeof IntercomParamsSchema, Record<string, unknown>> {
+function buildParentIntercomTool(pending: Map<string, PendingSupervisorRequest>, state: SubagentState, name = "intercom"): ToolDefinition<typeof IntercomParamsSchema, Record<string, unknown>> {
 	return {
 		name,
 		label: name === "intercom" ? "Intercom" : "Subagent Supervisor",
@@ -436,6 +602,7 @@ function buildParentIntercomTool(pending: Map<string, PendingSupervisorRequest>,
 			: "Native pi-subagents supervisor channel. Use reply/pending/status to answer child subagent requests without overriding pi-intercom.",
 		parameters: IntercomParamsSchema,
 		async execute(_id, params) {
+			refreshPendingRequests(pending, state, state.lastUiContext ?? undefined);
 			const input = params as IntercomParams;
 			if (input.action === "status") {
 				return { content: [{ type: "text", text: `Native supervisor channel active. Pending replies: ${pending.size}.` }], details: { active: true, pending: pending.size, root: SUPERVISOR_CHANNEL_ROOT } };
@@ -448,6 +615,7 @@ function buildParentIntercomTool(pending: Map<string, PendingSupervisorRequest>,
 				const request = resolvePendingRequest(pending, input);
 				writeReply(request, input.message ?? "");
 				pending.delete(request.id);
+				clearForegroundSupervisorAttention(request, pending, state);
 				return { content: [{ type: "text", text: `Replied to supervisor request ${request.id}.` }], details: { replyTo: request.id, runId: request.runId, agent: request.agent } };
 			}
 			if (input.action === "send" || input.action === "ask") {
@@ -462,27 +630,47 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	const pending = new Map<string, PendingSupervisorRequest>();
 	const seenFiles = new Set<string>();
 	let poller: ReturnType<typeof setInterval> | undefined;
+	let lastStaleCleanupAt = 0;
 
 	const registerParentTools = (): void => {
-		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentIntercomTool(pending, NATIVE_SUPERVISOR_TOOL_NAME));
-		if (!hasTool(pi, "intercom")) pi.registerTool(buildParentIntercomTool(pending));
+		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentIntercomTool(pending, state, NATIVE_SUPERVISOR_TOOL_NAME));
+		if (!hasTool(pi, "intercom")) pi.registerTool(buildParentIntercomTool(pending, state));
+	};
+
+	const cleanupStaleChannelsIfDue = (): void => {
+		const nowMs = Date.now();
+		if (nowMs - lastStaleCleanupAt < STALE_EMPTY_CHANNEL_CLEANUP_INTERVAL_MS) return;
+		lastStaleCleanupAt = nowMs;
+		try {
+			cleanupStaleEmptySupervisorChannels(nowMs);
+		} catch {
+			// Supervisor delivery must not fail because best-effort temp cleanup failed.
+		}
 	};
 
 	const poll = (): void => {
+		cleanupStaleChannelsIfDue();
 		const ctx = state.lastUiContext;
 		if (!ctx) return;
+		refreshPendingRequests(pending, state, ctx);
+		const now = Date.now();
 		for (const { channelDir, file } of listRequestFiles()) {
 			if (seenFiles.has(file)) continue;
 			const request = parseRequestFile(file, channelDir);
 			if (!request || !requestMatchesContext(request, state, ctx)) continue;
+			const lifecycle = requestLifecycle(request, state, undefined, now);
+			if (lifecycle !== "pending") {
+				seenFiles.add(file);
+				cleanupRequestLifecycle(request, lifecycle);
+				continue;
+			}
 			seenFiles.add(file);
-			if (request.expectsReply) pending.set(request.id, request);
+			if (request.expectsReply) {
+				pending.set(request.id, request);
+				markForegroundSupervisorAttention(request, state);
+			}
 			else {
-				try {
-					fs.rmSync(request.requestFile, { force: true });
-				} catch {
-					// Non-blocking progress updates are already delivered to this session.
-				}
+				removeRequestFile(request.requestFile);
 			}
 			pi.sendMessage({
 				customType: "subagent_supervisor_request",
@@ -496,7 +684,15 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 					agent: request.agent,
 					childIndex: request.childIndex,
 				},
-			});
+			}, { triggerTurn: true });
+			if (request.expectsReply) {
+				(pi as { events?: IntercomEventBus }).events?.emit(INTERCOM_DETACH_REQUEST_EVENT, {
+					requestId: request.id,
+					runId: request.runId,
+					agent: request.agent,
+					childIndex: request.childIndex,
+				});
+			}
 		}
 	};
 

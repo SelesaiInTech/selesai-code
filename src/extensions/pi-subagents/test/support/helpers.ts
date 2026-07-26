@@ -51,6 +51,8 @@ interface AgentConfig {
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	skills?: string[];
+	skillPath?: string[];
+	filePath?: string;
 	thinking?: string;
 	systemPromptMode?: string;
 	inheritProjectContext?: boolean;
@@ -59,6 +61,7 @@ interface AgentConfig {
 	output?: string | false;
 	reads?: string[] | false;
 	progress?: boolean;
+	toolBudget?: { soft?: number; hard: number; block?: string[] | "*" };
 	mcpDirectTools?: string[];
 	maxSubagentDepth?: number;
 	completionGuard?: boolean;
@@ -153,6 +156,8 @@ export async function tryImport<T>(specifier: string): Promise<T | null> {
 	}
 }
 
+let writeCallSeq = 0;
+
 export const events = {
 	assistantMessage(text: string, model = "mock/test-model"): object {
 		return {
@@ -165,6 +170,33 @@ export const events = {
 				usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
 			},
 		};
+	},
+
+	/** Assistant write tool call plus its successful tool result, as one completed write. */
+	completedWrite(filePath: string, content: string, model = "mock/test-model"): object[] {
+		const id = `write-${++writeCallSeq}`;
+		return [
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", id, name: "write", arguments: { path: filePath, content } }],
+					model,
+					stopReason: "toolUse",
+					usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+				},
+			},
+			{
+				type: "tool_result_end",
+				message: {
+					role: "toolResult",
+					toolCallId: id,
+					toolName: "write",
+					isError: false,
+					content: [{ type: "text", text: `Wrote ${filePath}` }],
+				},
+			},
+		];
 	},
 
 	toolStart(toolName: string, args: Record<string, unknown> = {}): object {

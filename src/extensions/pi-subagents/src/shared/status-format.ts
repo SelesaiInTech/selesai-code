@@ -16,7 +16,10 @@ export function formatActivityLabel(lastActivityAt: number | undefined, activity
 	}
 	const age = formatActivityAge(Math.max(0, now - lastActivityAt));
 	if (activityState === "needs_attention") return `no activity for ${age}`;
-	if (activityState === "active_long_running") return `active but long-running · last activity ${age} ago`;
+	if (activityState === "active_long_running") {
+		const activityAge = age === "now" ? "now" : `${age} ago`;
+		return `active but long-running · last activity ${activityAge}`;
+	}
 	return age === "now" ? "active now" : `active ${age} ago`;
 }
 
@@ -27,6 +30,7 @@ function isCompletedStepStatus(status: AsyncJobStep["status"]): boolean {
 export function aggregateStepStatus(steps: StepStatusLike[]): AsyncJobStep["status"] {
 	if (steps.some((step) => step.status === "running")) return "running";
 	if (steps.some((step) => step.status === "failed")) return "failed";
+	if (steps.some((step) => step.status === "stopped")) return "stopped";
 	if (steps.some((step) => step.status === "paused")) return "paused";
 	if (steps.length > 0 && steps.every((step) => isCompletedStepStatus(step.status))) return "complete";
 	return "pending";
@@ -40,10 +44,12 @@ export function formatParallelOutcome(steps: StepStatusLike[], total: number, op
 	const running = steps.filter((step) => step.status === "running").length;
 	const done = steps.filter((step) => isCompletedStepStatus(step.status)).length;
 	const failed = steps.filter((step) => step.status === "failed").length;
+	const stopped = steps.filter((step) => step.status === "stopped").length;
 	const paused = steps.filter((step) => step.status === "paused").length;
 	const parts = [`${done}/${total} done`];
 	if (options.showRunning !== false && running > 0) parts.unshift(formatAgentRunningLabel(running));
 	if (failed > 0) parts.push(`${failed} failed`);
+	if (stopped > 0) parts.push(`${stopped} stopped`);
 	if (paused > 0) parts.push(`${paused} paused`);
 	return parts.join(" · ");
 }

@@ -2,7 +2,7 @@
 description: Parallel context builders for planning handoff
 ---
 
-Launch fresh-context `context-builder` subagents in parallel to build grounded handoff context for planning or implementation.
+Launch fresh-context `explorer` subagents in parallel to build grounded handoff context for planning or implementation.
 
 Use the `subagent` tool in chain mode with a single parallel step, not top-level parallel tasks, so relative output files live under the temporary chain directory. Use `context: "fresh"` unless I explicitly ask for forked context. Give every parallel task a distinct `output` path, `label`, and `as` name, for example:
 
@@ -18,7 +18,7 @@ Treat the slash command arguments as the primary request, target, or focus:
 
 $@
 
-If the invocation provides a URL, issue link, file path, plan path, or freeform request, read or fetch that target before assigning builder angles, then pass the target explicitly into every `context-builder` task.
+If the invocation provides a URL, issue link, file path, plan path, or freeform request, read or fetch that target before assigning builder angles, then pass the target explicitly into every `explorer` task.
 
 Choose two or three strong builders based on the request. Prefer three only when the scope benefits from independent context slices. These are examples, not fixed defaults:
 
@@ -44,7 +44,7 @@ Ask each builder to produce a compact handoff file with:
 - constraints and invariants;
 - risks and unknowns;
 - validation commands or next-best checks;
-- a `meta-prompt` section for the next planner or role subagent.
+- a `meta-prompt` section for the next architect or role subagent.
 
 After the builders return, synthesize their outputs into:
 - the most important context the next agent needs;
