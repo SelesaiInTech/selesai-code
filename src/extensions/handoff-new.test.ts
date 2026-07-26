@@ -108,9 +108,9 @@ function createCtx(opts: {
 	customResult?: string | null;
 	mode?: string;
 } = {}) {
-	const calls: { newSession: any; editorText: string | null; notify: { msg: string; kind: string }[] } = {
+	const calls: { newSession: any; userMessage: string | null; notify: { msg: string; kind: string }[] } = {
 		newSession: null,
-		editorText: null,
+		userMessage: null,
 		notify: [],
 	};
 	const ctx: any = {
@@ -128,9 +128,9 @@ function createCtx(opts: {
 		ui: {
 			notify: (msg: string, kind: string) => calls.notify.push({ msg, kind }),
 			custom: async <T>(_factory: any): Promise<T> => (opts.customResult === undefined ? "HANDOFF PROMPT" : opts.customResult) as unknown as T,
-			setEditorText: (text: string) => {
-				calls.editorText = text;
-			},
+		},
+		async sendUserMessage(text: string) {
+			calls.userMessage = text;
 		},
 		async newSession(options: any) {
 			calls.newSession = options;
@@ -143,12 +143,12 @@ function createCtx(opts: {
 	return { ctx, calls };
 }
 
-test("happy path: newSession called with parentSession, editor text set", async () => {
+test("happy path: newSession called with parentSession, handoff submitted", async () => {
 	const { commands } = createPiHarness();
 	const { ctx, calls } = createCtx();
 	await commands.get("handoff-new")!.handler("continue the fix", ctx);
 	assert.equal(calls.newSession.parentSession, "/tmp/old.json");
-	assert.equal(calls.editorText, "HANDOFF PROMPT");
+	assert.equal(calls.userMessage, "HANDOFF PROMPT");
 	assert.equal(calls.newSession.cancelled, undefined);
 });
 
@@ -157,8 +157,7 @@ test("no goal arg uses DEFAULT_GOAL", async () => {
 	const { ctx, calls } = createCtx();
 	await commands.get("handoff-new")!.handler("   ", ctx);
 	// happy path still completes; default goal only affects the AI prompt text.
-	assert.equal(calls.editorText, "HANDOFF PROMPT");
-	assert.ok(calls.notify.some((n) => /Handoff ready/.test(n.msg)));
+	assert.equal(calls.userMessage, "HANDOFF PROMPT");
 });
 
 test("non-tui mode fails cleanly, no new session", async () => {

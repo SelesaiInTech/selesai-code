@@ -1,14 +1,14 @@
 /**
  * /handoff-new — generate a handoff prompt and open a clean new session with
- * that content as the first unsent prompt (editor text, not hidden system
- * prompt). Sibling of examples/extensions/handoff.ts, adapted to this repo's
+ * that content as the first prompt. Sibling of examples/extensions/handoff.ts,
+ * adapted to this repo's
  * import conventions and reduced to the one thing that ships.
  *
  * Usage:
  *   /handoff-new continue implementing the workflow fix
  *
- * If no goal argument is given, a default goal is used. The new session opens
- * with the generated text in its editor; the user can change it before submit.
+ * If no goal argument is given, a default goal is used. The generated handoff
+ * is submitted immediately in the new session.
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -86,7 +86,7 @@ export function buildAiContext(conversationText: string, goal: string): Context 
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("handoff-new", {
-		description: "Generate a handoff prompt and open a clean new session with it as the first draft",
+		description: "Generate a handoff prompt and continue in a clean new session",
 		handler: handoffNew,
 	});
 }
@@ -152,12 +152,10 @@ async function handoffNew(args: string, ctx: ExtensionCommandContext) {
 		return;
 	}
 
-	// Editor text, NOT a hidden system prompt: the user can edit before submit.
 	const newSessionResult = await ctx.newSession({
 		parentSession: currentSessionFile,
 		withSession: async (replacementCtx) => {
-			replacementCtx.ui.setEditorText(result);
-			replacementCtx.ui.notify("Handoff ready. Submit when ready.", "info");
+			await replacementCtx.sendUserMessage(result);
 		},
 	});
 
