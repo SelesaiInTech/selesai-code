@@ -3,8 +3,8 @@ draft: false
 title: Evidence and methodology
 ---
 
+import CapabilityEvidenceTable from "../../components/CapabilityEvidenceTable.astro";
 import SourceEvidence from "../../components/SourceEvidence.astro";
-import { capabilities } from "../../data/capabilities.ts";
 
 Every comparison claim and capability description on this site links back to the Selesai source repository. We treat the source as the primary evidence.
 
@@ -21,11 +21,7 @@ Every comparison claim and capability description on this site links back to the
 
 ## Capability evidence mapping
 
-| Capability | Source paths | Evidence links |
-| --- | --- | --- |
-{capabilities.map((c) => (
-  `| ${c.en.displayName} | ${c.sourcePaths.join(", ")} | ${c.sourceLinks.map((l) => `[${l.text}](${l.url})`).join(", ")} |\n`
-))}
+<CapabilityEvidenceTable locale="en" />
 
 ## Versioning
 

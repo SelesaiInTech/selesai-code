@@ -155,18 +155,6 @@ header.header {
   margin-block-end: 1rem;
 }
 
-.category-section > h2::before {
-  display: inline-block;
-  width: 0.55rem;
-  height: 0.55rem;
-  margin-inline-end: 0.65rem;
-  border-radius: 50%;
-  background: var(--sl-color-accent);
-  box-shadow: 0 0 18px var(--sl-color-accent);
-  content: "";
-  vertical-align: 0.18em;
-}
-
 /* Homepage */
 [data-page-title] .accent,
 .hero .accent {

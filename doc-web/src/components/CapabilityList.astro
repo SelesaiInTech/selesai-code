@@ -1,0 +1,86 @@
+---
+import { capabilities, type Category } from "../data/capabilities.ts";
+
+export interface Props {
+  category: Category;
+  locale: "en" | "id";
+}
+
+const { category, locale } = Astro.props;
+const items = capabilities.filter((capability) => capability.category === category);
+---
+
+<ul class="capability-list">
+  {items.map((capability) => {
+    const path = locale === "en" ? capability.guideRoute : `id/${capability.guideRoute}`;
+    return (
+      <li>
+        <a href={`${import.meta.env.BASE_URL}${path}/`}>
+          <strong>{capability[locale].displayName}</strong>
+          <span>{capability[locale].benefit}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+      </li>
+    );
+  })}
+</ul>
+
+<style>
+  .capability-list {
+    margin: 1rem 0 2.5rem;
+    padding: 0;
+    border-top: 1px solid var(--selesai-border);
+    list-style: none;
+  }
+
+  li {
+    margin: 0;
+    border-bottom: 1px solid var(--selesai-border);
+  }
+
+  a {
+    display: grid;
+    grid-template-columns: minmax(10rem, 0.65fr) 1.35fr auto;
+    gap: 1rem;
+    align-items: baseline;
+    padding: 1rem 0.25rem;
+    color: var(--sl-color-text);
+    text-decoration: none;
+  }
+
+  strong {
+    color: var(--sl-color-white);
+    font-size: var(--sl-text-base);
+  }
+
+  a > span:not(.arrow) {
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-sm);
+    line-height: 1.55;
+  }
+
+  .arrow {
+    color: var(--sl-color-accent-high);
+    transition: transform 150ms ease;
+  }
+
+  a:hover strong,
+  a:focus-visible strong {
+    color: var(--sl-color-accent-high);
+  }
+
+  a:hover .arrow {
+    transform: translateX(0.2rem);
+  }
+
+  @media (max-width: 40rem) {
+    a {
+      grid-template-columns: 1fr auto;
+    }
+
+    a > span:not(.arrow) {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+  }
+</style>

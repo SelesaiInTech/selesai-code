@@ -3,8 +3,8 @@ draft: false
 title: Bukti dan metodologi
 ---
 
+import CapabilityEvidenceTable from "../../../components/CapabilityEvidenceTable.astro";
 import SourceEvidence from "../../../components/SourceEvidence.astro";
-import { capabilities } from "../../../data/capabilities.ts";
 
 Setiap klaim perbandingan dan deskripsi kemampuan di situs ini ditautkan kembali ke repositori source Selesai. Kami menjadikan source sebagai bukti utama.
 
@@ -21,11 +21,7 @@ Setiap klaim perbandingan dan deskripsi kemampuan di situs ini ditautkan kembali
 
 ## Pemetaan bukti kemampuan
 
-| Kemampuan | Jalur source | Tautan bukti |
-| --- | --- | --- |
-{capabilities.map((c) => (
-  `| ${c.id.displayName} | ${c.sourcePaths.join(", ")} | ${c.sourceLinks.map((l) => `[${l.text}](${l.url})`).join(", ")} |\n`
-))}
+<CapabilityEvidenceTable locale="id" />
 
 ## Versioning
 

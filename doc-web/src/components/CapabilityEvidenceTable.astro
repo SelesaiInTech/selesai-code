@@ -1,0 +1,162 @@
+---
+import { capabilities } from "../data/capabilities.ts";
+
+export interface Props {
+  locale: "en" | "id";
+}
+
+const { locale } = Astro.props;
+const labels = locale === "en"
+  ? { capability: "Capability", paths: "Source paths", links: "Evidence links" }
+  : { capability: "Kemampuan", paths: "Jalur source", links: "Tautan bukti" };
+---
+
+<div class="evidence-table-wrap not-content">
+  <table class="evidence-table">
+    <thead>
+      <tr>
+        <th scope="col">{labels.capability}</th>
+        <th scope="col">{labels.paths}</th>
+        <th scope="col">{labels.links}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {capabilities.map((capability) => (
+        <tr>
+          <th scope="row" data-label={labels.capability}>{capability[locale].displayName}</th>
+          <td data-label={labels.paths}>
+            <ul class="path-list">
+              {capability.sourcePaths.map((path) => <li><code>{path}</code></li>)}
+            </ul>
+          </td>
+          <td data-label={labels.links}>
+            <ul class="link-list">
+              {capability.sourceLinks.map((link) => (
+                <li><a href={link.url} target="_blank" rel="noopener noreferrer">{link.text}</a></li>
+              ))}
+            </ul>
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>
+
+<style>
+  .evidence-table-wrap {
+    margin-block: 1.5rem 2.5rem;
+    overflow: hidden;
+    border: 1px solid var(--selesai-border);
+    border-radius: 1rem;
+    background: var(--selesai-surface);
+  }
+
+  .evidence-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--sl-text-sm);
+  }
+
+  th,
+  td {
+    padding: 1rem;
+    border-bottom: 1px solid var(--selesai-border);
+    text-align: start;
+    vertical-align: top;
+  }
+
+  thead {
+    background: var(--sl-color-accent-low);
+  }
+
+  thead th {
+    color: var(--sl-color-accent-high);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  tbody th {
+    width: 25%;
+    color: var(--sl-color-white);
+    font-weight: 700;
+  }
+
+  tbody tr:last-child > * {
+    border-bottom: 0;
+  }
+
+  ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  li + li {
+    margin-top: 0.45rem;
+  }
+
+  code {
+    overflow-wrap: anywhere;
+    color: var(--sl-color-gray-2);
+    font-size: 0.75rem;
+  }
+
+  a {
+    color: var(--sl-color-accent-high);
+    font-weight: 650;
+    text-underline-offset: 0.2em;
+  }
+
+  @media (max-width: 42rem) {
+    .evidence-table-wrap {
+      overflow: visible;
+      border: 0;
+      background: transparent;
+    }
+
+    .evidence-table,
+    .evidence-table tbody,
+    .evidence-table tr,
+    .evidence-table th,
+    .evidence-table td {
+      display: block;
+      width: 100%;
+    }
+
+    .evidence-table thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+
+    .evidence-table tr {
+      margin-bottom: 1rem;
+      overflow: hidden;
+      border: 1px solid var(--selesai-border);
+      border-radius: 0.8rem;
+      background: var(--selesai-surface);
+    }
+
+    .evidence-table th,
+    .evidence-table td {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--selesai-border);
+    }
+
+    .evidence-table th::before,
+    .evidence-table td::before {
+      display: block;
+      margin-bottom: 0.35rem;
+      color: var(--sl-color-gray-3);
+      content: attr(data-label);
+      font-size: 0.65rem;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+  }
+</style>

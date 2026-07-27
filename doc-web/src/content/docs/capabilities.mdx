@@ -1,26 +1,17 @@
 ---
 draft: false
 title: Capabilities
+description: Explore the tools, workflows, recovery features, and productivity improvements bundled with Selesai.
 ---
 
-import CapabilityCard from "../../components/CapabilityCard.astro";
-import { capabilities, categories } from "../../data/capabilities.ts";
+import CapabilityList from "../../components/CapabilityList.astro";
+import { categories } from "../../data/capabilities.ts";
 
-Selesai ships every capability listed below as part of the `@selesai/code` package. Each card links to a deep guide with copyable examples, configuration, limits, and source evidence.
+Selesai ships every capability listed below as part of the `@selesai/code` package. Each entry links to a guide with examples, configuration, limits, and source evidence.
 
-{categories.map((cat) => (
-  <section className="category-section" id={cat.id}>
-    <h2>{cat.en}</h2>
-    <div className="capability-grid">
-      {capabilities.filter((c) => c.category === cat.id).map((c) => (
-        <CapabilityCard slug={c.slug} locale="en" />
-      ))}
-    </div>
+{categories.map((category) => (
+  <section className="category-section" id={category.id}>
+    <h2>{category.en}</h2>
+    <CapabilityList category={category.id} locale="en" />
   </section>
 ))}
-
-## Comparison badges
-
-- **Selesai difference** — a capability that changes how work is structured compared with Pi baseline usage.
-- **Bundled** — a capability that Selesai ships in-tree and tests as part of the release.
-- **Ergonomics** — small but commonly requested improvements that reduce friction or token spend.

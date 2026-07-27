@@ -1,26 +1,17 @@
 ---
 draft: false
 title: Kemampuan
+description: Jelajahi tools, workflow, fitur pemulihan, dan peningkatan produktivitas yang dibundel bersama Selesai.
 ---
 
-import CapabilityCard from "../../../components/CapabilityCard.astro";
-import { capabilities, categories } from "../../../data/capabilities.ts";
+import CapabilityList from "../../../components/CapabilityList.astro";
+import { categories } from "../../../data/capabilities.ts";
 
-Selesai mengirimkan setiap kemampuan di bawah ini sebagai bagian dari package `@selesai/code`. Setiap kartu menautkan ke panduan mendalam dengan contoh yang dapat disalin, konfigurasi, batasan, dan bukti source.
+Selesai mengirimkan setiap kemampuan di bawah ini sebagai bagian dari package `@selesai/code`. Setiap entri menautkan ke panduan dengan contoh, konfigurasi, batasan, dan bukti source.
 
-{categories.map((cat) => (
-  <section className="category-section" id={cat.id}>
-    <h2>{cat.id}</h2>
-    <div className="capability-grid">
-      {capabilities.filter((c) => c.category === cat.id).map((c) => (
-        <CapabilityCard slug={c.slug} locale="id" />
-      ))}
-    </div>
+{categories.map((category) => (
+  <section className="category-section" id={category.id}>
+    <h2>{category.indonesian}</h2>
+    <CapabilityList category={category.id} locale="id" />
   </section>
 ))}
-
-## Penjelasan badge perbandingan
-
-- **Perbedaan Selesai** — kemampuan yang mengubah cara kerja dibandingkan penggunaan Pi dasar.
-- **Dibundel** — kemampuan yang Selesai kirimkan in-tree dan uji sebagai bagian dari rilis.
-- **Ergonomi** — perbaikan kecil yang sering diminta untuk mengurangi gesekan atau penggunaan token.
