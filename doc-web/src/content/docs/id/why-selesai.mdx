@@ -1,0 +1,63 @@
+---
+draft: false
+title: Mengapa Selesai
+---
+
+import ComparisonCallout from "../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../components/SourceEvidence.astro";
+
+# Mengapa Selesai
+
+Selesai adalah fork dari [Pi coding agent](https://github.com/earendil-works/pi). Selesai mempertahankan inti terminal-first yang dapat di-*hack* dan menambahkan satu set extension, skill, serta perbaikan ruang kerja yang terkoordinasi. Halaman ini memisahkan apa yang sudah disediakan Pi dari apa yang ditambahkan atau dibundel Selesai, serta menautkan setiap klaim material Selesai ke bukti.
+
+## Apa yang sudah dilakukan Pi
+
+Pi tetap menjadi harness coding kecil dan mumpuni. Selesai mempertahankan kemampuan dasar ini:
+
+- coding interaktif terminal-first dengan `read`, `bash`, `edit`, `write`, `grep`, `find`, dan `ls`;
+- beberapa model provider, API key, OAuth, thinking level, gambar, dan retry;
+- sesi persisten dengan resume, fork, navigasi tree, compaction, dan export;
+- mode print, JSON event-stream, dan RPC;
+- extension TypeScript, skill, template prompt, tema, package, dan SDK Node.js yang dapat di-*embed*;
+- project trust dan resource loading yang dapat dikonfigurasi.
+
+<ComparisonCallout
+  claim="Selesai tidak menghapus inti Pi. Selesai dibangun di atas harness coding interaktif yang sama."
+  evidence={[
+    { text: "Selesai README — inti kompatibel Pi", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/README.md" },
+    { text: "Repositori Pi", url: "https://github.com/earendil-works/pi" }
+  ]}
+/>
+
+## Apa yang ditambahkan atau dibundel Selesai
+
+| Area | Tambahan Selesai | Bukti |
+| --- | --- | --- |
+| Delegasi subagent | Peran fokus in-tree (`architect`, `builder`, `commentator`, `explorer`, `recapper`, `researcher`), run foreground/background/paralel/berantai, tool/turn budget, komunikasi supervisor, worktree isolation | [source pi-subagents](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-subagents/) |
+| Workflow tahan lama | Mode `prototype`, `quick`, dan `task` dengan state persisten, fase yang dapat dilanjutkan, dan siklus hidup eksplisit | [source workflow](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/workflow/) |
+| Riset web | Tool `web_explore` dengan pencarian terbatas, fetch, peringkat sumber, dan eskalasi headless | [source pi-web-agent](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-web-agent/) |
+| Pertanyaan interaktif | TUI dengan single/multi-select, freeform, image/info, navigasi keyboard, filtering, pembatalan | [source question](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/question/) |
+| Ruang kerja terminal | Footer powerline, tata letak editor tetap, tur `/guide` berulang, bash persisten, stash/restore | [source pi-powerline-footer](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-powerline-footer/) |
+| Kontinuitas | Checkpoint rewind, `/undo`, `/handoff-new`, pengingat konteks, copy-turn, dan intercom antar sesi lokal | [bagian recovery README](https://github.com/SelesaiInTech/selesai-code/blob/main/README.md) |
+| Skill dibundel | ponytail, caveman, grill-me, implanger, planger, handoff, improve-codebase, dan workflow-creation dipanggil dengan `/skill:<name>` | [src/skills](https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/) |
+
+## Mengapa *bundling* penting
+
+Pi memiliki ekosistem extension yang luas. Memasang banyak package terpisah berarti harus melacak pemeliharaan, kompatibilitas, dan batas supply-chain-nya. Selesai membawa extension yang mendefinisikan pengalaman Selesai di `src/extensions/`, mengujinya bersama aplikasi, dan mengirimkannya bersama setiap rilis.
+
+Ini membuat source tetap terlihat, dapat direview, dan diaudit di satu tempat. Ini tidak menghilangkan risiko supply-chain — Selesai masih memiliki runtime dependencies — tetapi menghilangkan kebutuhan untuk memasang banyak extension tidak terkait sebelum Selesai menjadi berguna.
+
+<ComparisonCallout
+  claim="Selesai adalah fork terkoordinasi, bukan installer plugin yang longgar. Kemampuan inti berada in-tree, di-versioning, dan diuji bersama."
+  evidence={[
+    { text: "Mengapa extension dibundel", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/README.md" }
+  ]}
+/>
+
+## Hasil praktis
+
+- **Lebih sedikit gesekan setup:** instal `@selesai/code` dan dapatkan subagent, workflow, riset web, pertanyaan interaktif, tool recovery, skill, dan UI yang lebih kaya dalam satu package.
+- **Pengeluaran token lebih kecil:** `/handoff-new`, pengingat konteks, dan footer powerline membantu menjaga konteks tetap kecil dan fokus.
+- **Pemulihan lebih baik:** rewind yang didukung git, undo per turn, dan handoff sesi mengurangi biaya kesalahan.
+
+<SourceEvidence slug="pi-subagents" />

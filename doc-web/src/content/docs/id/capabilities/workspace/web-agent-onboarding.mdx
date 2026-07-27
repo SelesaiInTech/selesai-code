@@ -1,0 +1,49 @@
+---
+draft: false
+title: Onboarding web agent
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Onboarding web agent
+
+## Apa ini dan mengapa membantu
+
+Extension `web-agent-onboarding` menyediakan jalur konfigurasi pertama kali untuk web agent yang dibundel, secara opsional mengaktifkan Brave Search dengan fallback DuckDuckGo.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai `src/extensions/web-agent-onboarding.ts`.
+
+## Mulai cepat
+
+Saat pertama kali berjalan, Selesai mungkin meminta Anda mengkonfigurasi pencarian web. Untuk menjalankan ulang onboarding:
+
+```sh
+/web-agent-onboard
+```
+
+## Konfigurasi
+
+1. Kunjungi halaman Brave Search API untuk meminta akses.
+2. Buat API key di dashboard Brave API.
+3. Tempelkan key saat diminta selama onboarding.
+
+DuckDuckGo tetap menjadi fallback jika Brave tidak dikonfigurasi.
+
+## Batasan dan edge case
+
+- Brave Search memerlukan API key dan mungkin memiliki batas penggunaan.
+- Fallback DuckDuckGo tidak memerlukan key tetapi dapat membatasi penggunaan intensif.
+- Akses jaringan diperlukan untuk kedua backend pencarian.
+
+<ComparisonCallout
+  claim="Selesai membundel onboarding pencarian pertama kali sehingga riset web langsung berfungsi dengan jalur fallback."
+  evidence={[
+    { text: "source web-agent-onboarding", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/web-agent-onboarding.ts" },
+    { text: "source pi-web-agent", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-web-agent/" }
+  ]}
+/>
+
+<SourceEvidence slug="web-agent-onboarding" />

@@ -1,0 +1,45 @@
+---
+draft: false
+title: Session handoff
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# Session handoff
+
+## What it is and why it helps
+
+`/handoff-new` creates an editable continuation prompt in a clean session. Keeping context small improves result quality, cuts token spend, and reduces the chance of the model losing track of the plan.
+
+## Availability
+
+Included in `@selesai/code` as the `handoff-new` extension and supported by the `handoff` skills.
+
+## Quick start
+
+```sh
+/handoff-new
+```
+
+Selesai will create a fresh session with a compact continuation prompt. You can edit the prompt before the new session starts.
+
+## Configuration
+
+No separate configuration is required. The handoff prompt is generated from the current session state and is editable before confirmation.
+
+## Limits and edge cases
+
+- Handoff starts a new session; any in-progress background work in the current session should be reviewed first.
+- The continuation prompt may summarize details; verify critical context is preserved.
+- If you decline to edit, Selesai uses the generated prompt as-is.
+
+<ComparisonCallout
+  claim="Selesai makes handoff a first-class command so you can reset context as soon as a session grows, directly reducing token cost."
+  evidence={[
+    { text: "handoff-new source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/handoff-new.ts" },
+    { text: "handoff skills", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/handoff/" }
+  ]}
+/>
+
+<SourceEvidence slug="handoff-new" />

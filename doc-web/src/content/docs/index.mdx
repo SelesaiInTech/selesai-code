@@ -1,0 +1,60 @@
+---
+draft: false
+title: Selesai Documentation
+---
+
+import InstallCommand from "../../components/InstallCommand.astro";
+import CapabilityCard from "../../components/CapabilityCard.astro";
+import { capabilities, categories } from "../../data/capabilities.ts";
+
+# Selesai
+
+Selesai is a maintained, extension-first fork of the [Pi coding agent](https://github.com/earendil-works/pi). It keeps Pi's small, hackable coding harness and ships a coordinated set of extensions, skills, and display improvements as part of the application.
+
+The goal is simple: make a capable coding agent useful out of the box, maximize token utilization, and get better or comparable results with fewer tokens and lower cost — without asking every user to install and trust a long list of unrelated extensions.
+
+## Install
+
+<InstallCommand command="npm install -g --ignore-scripts @selesai/code" />
+
+Then run:
+
+<InstallCommand command="selesai" />
+
+For a one-off run:
+
+<InstallCommand command="npx @selesai/code" />
+
+## Start using Selesai
+
+```sh
+# Ask a question
+selesai "Explain this repository and tell me how to run its checks"
+
+# One-off review
+selesai -p "Review the current git diff without editing files"
+```
+
+## Explore capabilities
+
+Selesai bundles every capability below and keeps them in-tree so the source is visible, reviewable, and versioned with each release.
+
+{/* Render cards by category */}
+{categories.map((cat) => (
+  <>
+    <h2 id={cat.id}>{cat.en}</h2>
+    <div className="capability-grid">
+      {capabilities.filter((c) => c.category === cat.id).map((c) => (
+        <CapabilityCard slug={c.slug} locale="en" />
+      ))}
+    </div>
+  </>
+))}
+
+## Why Selesai
+
+Compare Selesai's bundled experience with the original Pi agent on the [Why Selesai](/why-selesai/) page. Every claim is linked to source evidence.
+
+## Language
+
+This site is available in [Bahasa Indonesia](/id/).

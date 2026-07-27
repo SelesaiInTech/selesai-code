@@ -1,0 +1,49 @@
+---
+draft: false
+title: Web agent onboarding
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# Web agent onboarding
+
+## What it is and why it helps
+
+The `web-agent-onboarding` extension provides a first-run configuration path for the bundled web agent, optionally enabling Brave Search with DuckDuckGo fallback.
+
+## Availability
+
+Included in `@selesai/code` as `src/extensions/web-agent-onboarding.ts`.
+
+## Quick start
+
+On first run, Selesai may prompt you to configure web search. To re-run onboarding:
+
+```sh
+/web-agent-onboard
+```
+
+## Configuration
+
+1. Visit the Brave Search API page to request access.
+2. Create an API key in the Brave API dashboard.
+3. Paste the key when prompted during onboarding.
+
+DuckDuckGo remains the fallback if Brave is not configured.
+
+## Limits and edge cases
+
+- Brave Search requires an API key and may have usage limits.
+- DuckDuckGo fallback does not require a key but may rate-limit heavy use.
+- Network access is required for both search backends.
+
+<ComparisonCallout
+  claim="Selesai bundles first-run search onboarding so web research works immediately with a fallback path."
+  evidence={[
+    { text: "web-agent-onboarding source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/web-agent-onboarding.ts" },
+    { text: "pi-web-agent source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-web-agent/" }
+  ]}
+/>
+
+<SourceEvidence slug="web-agent-onboarding" />

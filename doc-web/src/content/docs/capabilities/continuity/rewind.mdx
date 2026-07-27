@@ -1,0 +1,44 @@
+---
+draft: false
+title: Rewind checkpoints
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# Rewind checkpoints
+
+## What it is and why it helps
+
+The `pi-rewind-hook` extension provides exact, git-backed file checkpoints across `/fork`, `/tree`, resumed sessions, and session lineage. You can recover an earlier state of files without manual git commands.
+
+## Availability
+
+Included in `@selesai/code` as `src/extensions/pi-rewind-hook/`.
+
+## Quick start
+
+Rewind is triggered through Selesai's slash commands:
+
+```sh
+/rewind <target>
+```
+
+## Configuration
+
+No separate configuration is required. The extension hooks into session lifecycle events and records checkpoints automatically.
+
+## Limits and edge cases
+
+- Rewind relies on git being available in the project directory.
+- It records file state, not memory or external world state.
+- Checkpoints may be limited by the available git history if commits are made outside Selesai.
+
+<ComparisonCallout
+  claim="Selesai bundles automatic git-backed checkpoints so you can recover exact file states without leaving the terminal."
+  evidence={[
+    { text: "pi-rewind-hook source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-rewind-hook/" }
+  ]}
+/>
+
+<SourceEvidence slug="pi-rewind-hook" />

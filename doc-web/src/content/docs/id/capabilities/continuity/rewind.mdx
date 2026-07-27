@@ -1,0 +1,44 @@
+---
+draft: false
+title: Checkpoint rewind
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Checkpoint rewind
+
+## Apa ini dan mengapa membantu
+
+Extension `pi-rewind-hook` menyediakan checkpoint file yang tepat dan didukung git di `/fork`, `/tree`, sesi yang dilanjutkan, dan silsilah sesi. Anda dapat memulihkan state file sebelumnya tanpa perintah git manual.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai `src/extensions/pi-rewind-hook/`.
+
+## Mulai cepat
+
+Rewind dipicu melalui perintah slash Selesai:
+
+```sh
+/rewind <target>
+```
+
+## Konfigurasi
+
+Tidak diperlukan konfigurasi terpisah. Extension ini hook ke event siklus hidup sesi dan merekam checkpoint secara otomatis.
+
+## Batasan dan edge case
+
+- Rewind bergantung pada ketersediaan git di direktori project.
+- Rewind mencatat state file, bukan memori atau state dunia eksternal.
+- Checkpoint mungkin terbatas oleh riwayat git yang tersedia jika commit dibuat di luar Selesai.
+
+<ComparisonCallout
+  claim="Selesai membundel checkpoint otomatis yang didukung git sehingga Anda dapat memulihkan state file yang tepat tanpa meninggalkan terminal."
+  evidence={[
+    { text: "source pi-rewind-hook", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-rewind-hook/" }
+  ]}
+/>
+
+<SourceEvidence slug="pi-rewind-hook" />

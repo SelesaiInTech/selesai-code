@@ -1,0 +1,48 @@
+---
+draft: false
+title: Ponytail
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# Ponytail
+
+## What it is and why it helps
+
+`ponytail` is a family of communication modes and review helpers that make agent responses minimal, compressed, and focused. Invoke it with `/skill:ponytail` or related variants such as `/skill:ponytail-review`, `/skill:ponytail-audit`, `/skill:ponytail-gain`, `/skill:ponytail-debt`, and `/skill:ponytail-help`.
+
+## Availability
+
+Included in `@selesai/code` as the `ponytail` extension and the `ponytail*` skills in `src/skills/`.
+
+## Quick start
+
+```sh
+/skill:ponytail
+```
+
+For a review:
+
+```sh
+/skill:ponytail-review
+```
+
+## Configuration
+
+No separate configuration is required. The skill changes how the agent formats and scopes its responses.
+
+## Limits and edge cases
+
+- Ponytail modes reduce verbosity; complex explanations may need to be requested explicitly.
+- Variants are tuned for specific tasks; choose the variant that matches the current goal.
+
+<ComparisonCallout
+  claim="Selesai bundles ponytail as both an extension and a family of skills, so users can switch to compressed, task-focused responses on demand."
+  evidence={[
+    { text: "ponytail extension", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/ponytail/" },
+    { text: "ponytail skills", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/ponytail/" }
+  ]}
+/>
+
+<SourceEvidence slug="ponytail" />

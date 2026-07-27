@@ -1,0 +1,28 @@
+---
+draft: false
+title: Kemampuan
+---
+
+import CapabilityCard from "../../../components/CapabilityCard.astro";
+import { capabilities, categories } from "../../../data/capabilities.ts";
+
+# Kemampuan
+
+Selesai mengirimkan setiap kemampuan di bawah ini sebagai bagian dari package `@selesai/code`. Setiap kartu menautkan ke panduan mendalam dengan contoh yang dapat disalin, konfigurasi, batasan, dan bukti source.
+
+{categories.map((cat) => (
+  <section className="category-section" id={cat.id}>
+    <h2>{cat.id}</h2>
+    <div className="capability-grid">
+      {capabilities.filter((c) => c.category === cat.id).map((c) => (
+        <CapabilityCard slug={c.slug} locale="id" />
+      ))}
+    </div>
+  </section>
+))}
+
+## Penjelasan badge perbandingan
+
+- **Perbedaan Selesai** — kemampuan yang mengubah cara kerja dibandingkan penggunaan Pi dasar.
+- **Dibundel** — kemampuan yang Selesai kirimkan in-tree dan uji sebagai bagian dari rilis.
+- **Ergonomi** — perbaikan kecil yang sering diminta untuk mengurangi gesekan atau penggunaan token.

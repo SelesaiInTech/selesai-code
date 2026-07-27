@@ -1,0 +1,24 @@
+{
+  "name": "selesai-docs",
+  "version": "0.5.22",
+  "private": true,
+  "type": "module",
+  "description": "Bilingual documentation website for Selesai, the maintained extension-first fork of the Pi coding agent.",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro check && astro build",
+    "preview": "astro preview",
+    "validate:content": "node scripts/validate-content.mjs",
+    "check:links": "node scripts/check-built-links.mjs",
+    "verify": "npm run validate:content && npm run build && npm run check:links"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@astrojs/starlight": "^0.32.2",
+    "astro": "^5.1.5",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

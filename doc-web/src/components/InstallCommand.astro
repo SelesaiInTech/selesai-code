@@ -1,0 +1,81 @@
+---
+export interface Props {
+  command: string;
+}
+const { command } = Astro.props;
+---
+
+<div class="install-command">
+  <pre><code>{command}</code></pre>
+  <button
+    type="button"
+    class="copy-button"
+    data-command={command}
+    aria-label="Copy command to clipboard"
+  >
+    Copy
+  </button>
+  <span class="copy-status" role="status" aria-live="polite"></span>
+</div>
+
+<script>
+  document.addEventListener("click", async (event) => {
+    const button = (event.target as HTMLElement).closest(".copy-button");
+    if (!(button instanceof HTMLButtonElement)) return;
+
+    const command = button.getAttribute("data-command") || "";
+    try {
+      await navigator.clipboard.writeText(command);
+      const status = button.nextElementSibling;
+      if (status) status.textContent = "Copied";
+      setTimeout(() => {
+        if (status) status.textContent = "";
+      }, 1500);
+    } catch {
+      const status = button.nextElementSibling;
+      if (status) status.textContent = "Copy failed";
+    }
+  });
+</script>
+
+<style is:global>
+  .install-command {
+    position: relative;
+    margin: 1rem 0;
+  }
+  .install-command pre {
+    background: var(--sl-color-bg-inline-code);
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    padding-inline-end: 5rem;
+    overflow-x: auto;
+  }
+  .install-command code {
+    font-family: var(--__sl-font-mono);
+    font-size: var(--sl-text-code-sm);
+  }
+  .copy-button {
+    position: absolute;
+    inset-block-start: 0.5rem;
+    inset-inline-end: 0.5rem;
+    background: var(--sl-color-bg-nav);
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.375rem;
+    color: var(--sl-color-text);
+    cursor: pointer;
+    font-size: var(--sl-text-xs);
+    padding: 0.375rem 0.625rem;
+  }
+  .copy-button:focus-visible {
+    outline: 2px solid var(--sl-color-accent);
+    outline-offset: 2px;
+  }
+  .copy-status {
+    position: absolute;
+    inset-block-end: 0.5rem;
+    inset-inline-end: 0.5rem;
+    font-size: var(--sl-text-xs);
+    color: var(--sl-color-accent-high);
+  }
+</style>

@@ -1,0 +1,42 @@
+---
+draft: false
+title: Undo per turn
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Undo per turn
+
+## Apa ini dan mengapa membantu
+
+Extension `undo` memberikan undo tingkat turn untuk edit, write, dan shell command bermutasi yang terdeteksi. Jika agent membuat perubahan tak terduga, Anda dapat mengembalikannya satu langkah demi satu langkah.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai `src/extensions/undo.ts`.
+
+## Mulai cepat
+
+```sh
+/undo
+```
+
+## Konfigurasi
+
+Tidak diperlukan konfigurasi terpisah. Extension ini melacak mutasi yang dilakukan agent selama sesi dan mengeksposnya sebagai turn yang dapat di-undo.
+
+## Batasan dan edge case
+
+- Hanya edit, write, dan shell command bermutasi yang terdeteksi yang dapat di-undo.
+- Undo bekerja satu turn pada satu waktu; turn non-mutasi sebelumnya tidak memengaruhi state file.
+- Jika shell command tidak dikenali sebagai bermutasi, maka tidak akan masuk ke undo stack.
+
+<ComparisonCallout
+  claim="Selesai membundel perintah undo tingkat turn sehingga kesalahan dapat dikembalikan tanpa mengedit riwayat git secara manual."
+  evidence={[
+    { text: "source undo", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/undo.ts" }
+  ]}
+/>
+
+<SourceEvidence slug="undo" />

@@ -1,0 +1,42 @@
+---
+draft: false
+title: Caveman
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# Caveman
+
+## What it is and why it helps
+
+`caveman` is a compressed communication style invoked with `/skill:caveman`. It asks the agent to be terse, focused, and avoid unnecessary prose.
+
+## Availability
+
+Included in `@selesai/code` as the `caveman` extension and `src/skills/caveman/`.
+
+## Quick start
+
+```sh
+/skill:caveman
+```
+
+## Configuration
+
+No separate configuration is required.
+
+## Limits and edge cases
+
+- Caveman reduces explanation depth; use it when you already understand the domain.
+- Switch back to normal mode if you need detailed reasoning.
+
+<ComparisonCallout
+  claim="Selesai bundles a built-in terse mode so users can cut response length and token cost quickly."
+  evidence={[
+    { text: "caveman extension", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/caveman/" },
+    { text: "caveman skill", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/caveman/" }
+  ]}
+/>
+
+<SourceEvidence slug="caveman" />

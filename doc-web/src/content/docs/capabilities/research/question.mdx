@@ -1,0 +1,49 @@
+---
+draft: false
+title: Interactive questions
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# Interactive questions
+
+## What it is and why it helps
+
+The bundled `question` tool gives Selesai a real TUI for decisions. Instead of forcing every clarification through plain text, the agent can present single-select, multi-select, freeform, and image/info questions with descriptions, context summaries, and keyboard navigation.
+
+## Availability
+
+Included in `@selesai/code` as the `question` extension.
+
+## Quick start
+
+When a Selesai workflow or request needs a decision, it can call the `question` tool:
+
+```text
+Use question to ask the user which test framework to use.
+```
+
+## Configuration
+
+No separate configuration is required. The tool supports:
+
+- single- and multi-select options;
+- descriptions and context summaries;
+- freeform answers with optional comments;
+- keyboard navigation, filtering, and cancellation;
+- image and info question types.
+
+## Limits and edge cases
+
+- The TUI runs in the terminal; it requires an interactive session. In non-interactive mode (`-p`), the agent falls back to plain-text behavior.
+- Cancelling a question returns control to the user prompt.
+
+<ComparisonCallout
+  claim="Selesai ships an interactive TUI for decisions, reducing the friction of multi-option clarifications."
+  evidence={[
+    { text: "question source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/question/" }
+  ]}
+/>
+
+<SourceEvidence slug="question" />

@@ -1,0 +1,49 @@
+---
+draft: false
+title: Get started
+---
+
+import InstallCommand from "../../components/InstallCommand.astro";
+
+# Get started
+
+## Install Selesai
+
+Use npm to install the package globally. The `--ignore-scripts` flag skips lifecycle scripts; Selesai ships its assets in `dist/`.
+
+<InstallCommand command="npm install -g --ignore-scripts @selesai/code" />
+
+The published package is `@selesai/code` and the binary is `selesai`.
+
+## Run Selesai
+
+<InstallCommand command="selesai" />
+
+For a one-off run that does not leave a global install:
+
+<InstallCommand command="npx @selesai/code" />
+
+## First commands
+
+```sh
+# Ask the agent to explain a codebase
+selesai "Explain this repository and tell me how to run its checks"
+
+# Non-interactive, read-only request
+selesai -p "Review the current git diff without editing files"
+```
+
+## Configuration locations
+
+Selesai stores state in two places:
+
+- `~/.selesai/agent/` — user-level state and resources
+- `./.selesai/` — project-local settings and resources
+
+Sensitive credentials, such as API keys, are handled through token onboarding and provider configuration. Add provider credentials carefully and avoid committing them to version control.
+
+## Next steps
+
+- See [Why Selesai](/why-selesai/) for an evidence-backed comparison with Pi.
+- Browse the [capabilities catalogue](/capabilities/).
+- Use the search box to find a specific extension or command.

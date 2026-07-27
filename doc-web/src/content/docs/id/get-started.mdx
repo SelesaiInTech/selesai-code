@@ -1,0 +1,49 @@
+---
+draft: false
+title: Mulai
+---
+
+import InstallCommand from "../../../components/InstallCommand.astro";
+
+# Mulai
+
+## Instal Selesai
+
+Gunakan npm untuk memasang package secara global. Flag `--ignore-scripts` melewati lifecycle script karena Selesai sudah mengirimkan asetnya di `dist/`.
+
+<InstallCommand command="npm install -g --ignore-scripts @selesai/code" />
+
+Package yang dipublikasikan adalah `@selesai/code` dan binarinya adalah `selesai`.
+
+## Jalankan Selesai
+
+<InstallCommand command="selesai" />
+
+Untuk satu kali pakai tanpa instalasi global:
+
+<InstallCommand command="npx @selesai/code" />
+
+## Perintah pertama
+
+```sh
+# Minta agen menjelaskan codebase
+selesai "Explain this repository and tell me how to run its checks"
+
+# Permintaan sekali pakai, read-only
+selesai -p "Review the current git diff without editing files"
+```
+
+## Lokasi konfigurasi
+
+selesai menyimpan status di dua tempat:
+
+- `~/.selesai/agent/` — status dan resource tingkat user
+- `./.selesai/` — pengaturan dan resource tingkat project
+
+Kredensial sensitif seperti API key ditangani melalui token onboarding dan konfigurasi provider. Tambahkan kredensial provider dengan hati-hati dan hindari meng-*commit*-nya ke version control.
+
+## Langkah selanjutnya
+
+- Lihat [Mengapa Selesai](/id/why-selesai/) untuk perbandingan dengan Pi yang berbasis bukti.
+- Jelajahi [katalog kemampuan](/id/capabilities/).
+- Gunakan kotak pencarian untuk menemukan extension atau perintah tertentu.

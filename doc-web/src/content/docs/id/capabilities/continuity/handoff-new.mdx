@@ -1,0 +1,45 @@
+---
+draft: false
+title: Handoff sesi
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Handoff sesi
+
+## Apa ini dan mengapa membantu
+
+`/handoff-new` membuat prompt kelanjutan yang dapat diedit dalam sesi bersih. Menjaga konteks tetap kecil meningkatkan kualitas hasil, mengurangi pengeluaran token, dan mengurangi kemungkinan model kehilangan jejak rencana.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai extension `handoff-new` dan didukung oleh skill `handoff`.
+
+## Mulai cepat
+
+```sh
+/handoff-new
+```
+
+Selesai akan membuat sesi baru dengan prompt kelanjutan yang ringkas. Anda dapat mengedit prompt sebelum sesi baru dimulai.
+
+## Konfigurasi
+
+Tidak diperlukan konfigurasi terpisah. Prompt handoff dibuat dari state sesi saat ini dan dapat diedit sebelum konfirmasi.
+
+## Batasan dan edge case
+
+- Handoff memulai sesi baru; pekerjaan background yang sedang berlangsung di sesi saat ini harus ditinjau terlebih dahulu.
+- Prompt kelanjutan dapat meringkas detail; verifikasi konteks kritis tetap terjaga.
+- Jika Anda menolak untuk mengedit, Selesai menggunakan prompt yang dibuat apa adanya.
+
+<ComparisonCallout
+  claim="Selesai menjadikan handoff perintah kelas satu sehingga Anda dapat mereset konteks begitu sesi membesar, langsung mengurangi biaya token."
+  evidence={[
+    { text: "source handoff-new", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/handoff-new.ts" },
+    { text: "skill handoff", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/handoff/" }
+  ]}
+/>
+
+<SourceEvidence slug="handoff-new" />

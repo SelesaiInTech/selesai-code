@@ -1,0 +1,59 @@
+---
+draft: false
+title: Dokumentasi Selesai
+---
+
+import InstallCommand from "../../../components/InstallCommand.astro";
+import CapabilityCard from "../../../components/CapabilityCard.astro";
+import { capabilities, categories } from "../../../data/capabilities.ts";
+
+# Selesai
+
+Selesai adalah fork yang dikelola dari [Pi coding agent](https://github.com/earendil-works/pi), dengan pendekatan *extension-first*. Selesai mempertahankan *harness* coding kecil dan dapat di-hack dari Pi, lalu mengirimkan satu set extension, skill, dan perbaikan tampilan terkoordinasi sebagai bagian dari aplikasi.
+
+Tujuannya sederhana: membuat coding agent yang mampu langsung berguna, memaksimalkan pemanfaatan token, dan mendapatkan hasil setara atau lebih baik dengan lebih sedikit token dan biaya lebih rendah — tanpa mengharuskan setiap pengguna memasang dan mempercayai banyak sekumpulan extension tidak terkait.
+
+## Instal
+
+<InstallCommand command="npm install -g --ignore-scripts @selesai/code" />
+
+Kemudian jalankan:
+
+<InstallCommand command="selesai" />
+
+Untuk satu kali pakai:
+
+<InstallCommand command="npx @selesai/code" />
+
+## Mulai menggunakan Selesai
+
+```sh
+# Tanyakan pertanyaan
+selesai "Explain this repository and tell me how to run its checks"
+
+# Review sekali pakai
+selesai -p "Review the current git diff without editing files"
+```
+
+## Jelajahi kemampuan
+
+Selesai membundel setiap kemampuan di bawah ini secara in-tree sehingga source terlihat, dapat direview, dan di-*versioning* bersama setiap rilis.
+
+{categories.map((cat) => (
+  <>
+    <h2 id={cat.id}>{cat.id}</h2>
+    <div className="capability-grid">
+      {capabilities.filter((c) => c.category === cat.id).map((c) => (
+        <CapabilityCard slug={c.slug} locale="id" />
+      ))}
+    </div>
+  </>
+))}
+
+## Mengapa Selesai
+
+Bandingkan pengalaman bundled Selesai dengan Pi asli di halaman [Mengapa Selesai](/id/why-selesai/). Setiap klaim ditautkan ke bukti source.
+
+## Bahasa
+
+Situs ini tersedia dalam [English](/).

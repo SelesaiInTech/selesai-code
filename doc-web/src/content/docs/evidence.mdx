@@ -1,0 +1,41 @@
+---
+draft: false
+title: Evidence and methodology
+---
+
+import SourceEvidence from "../../components/SourceEvidence.astro";
+import { capabilities } from "../../data/capabilities.ts";
+
+# Evidence and methodology
+
+Every comparison claim and capability description on this site links back to the Selesai source repository. We treat the source as the primary evidence.
+
+## Evidence sources
+
+| Kind | Where it lives |
+| --- | --- |
+| Package and install metadata | [`package.json`](https://github.com/SelesaiInTech/selesai-code/blob/main/package.json) |
+| Public positioning and Pi comparison | [`README.md`](https://github.com/SelesaiInTech/selesai-code/blob/main/README.md) |
+| Bundled extension manifest | [`src/extensions/package.json`](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/package.json) |
+| Capability behavior | Each extension's source directory, entry module, tests, and `README.md` |
+| Skills | [`src/skills/`](https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/) |
+| Release history | `CHANGELOG.md` when present |
+
+## Capability evidence mapping
+
+| Capability | Source paths | Evidence links |
+| --- | --- | --- |
+{capabilities.map((c) => (
+  `| ${c.en.displayName} | ${c.sourcePaths.join(", ")} | ${c.sourceLinks.map((l) => `[${l.text}](${l.url})`).join(", ")} |\n`
+))}
+
+## Versioning
+
+This documentation represents the current/latest version of Selesai. The site was initially built against Selesai `0.5.22`.
+
+For upstream Pi references, we link to the [Pi repository](https://github.com/earendil-works/pi) only where a comparison explicitly needs it. We do not state that Pi lacks a capability unless that claim is supported by the available evidence.
+
+<SourceEvidence links={[
+  { text: "Selesai package.json", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/package.json" },
+  { text: "Selesai README.md", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/README.md" }
+]} />

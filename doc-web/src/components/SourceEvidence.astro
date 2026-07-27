@@ -1,0 +1,60 @@
+---
+import { getCapability } from "../data/capabilities.ts";
+
+export interface Props {
+  slug?: string;
+  links?: { text: string; url: string }[];
+  version?: string;
+}
+const { slug, links: explicitLinks, version = "0.5.22" } = Astro.props;
+
+const capability = slug ? getCapability(slug) : undefined;
+const links = explicitLinks ?? capability?.sourceLinks ?? [];
+---
+
+<div class="source-evidence">
+  <p class="source-evidence__head">Source evidence</p>
+  {version && <p class="source-evidence__version">Selesai version: {version}</p>}
+  <ul>
+    {
+      links.map((link) => (
+        <li>
+          <a href={link.url} target="_blank" rel="noopener noreferrer">
+            {link.text}
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</div>
+
+<style>
+  .source-evidence {
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin: 1.5rem 0;
+    background: var(--sl-color-bg-inline-code);
+  }
+  .source-evidence__head {
+    font-weight: 600;
+    margin: 0 0 0.25rem;
+    color: var(--sl-color-white);
+  }
+  .source-evidence__version {
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+    margin: 0 0 0.5rem;
+  }
+  .source-evidence ul {
+    margin: 0;
+    padding-inline-start: 1.25rem;
+  }
+  .source-evidence li {
+    font-size: var(--sl-text-sm);
+    margin: 0.125rem 0;
+  }
+  .source-evidence a {
+    color: var(--sl-color-accent-high);
+  }
+</style>

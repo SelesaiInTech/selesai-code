@@ -1,0 +1,64 @@
+---
+export interface Props {
+  title?: string;
+  claim: string;
+  evidence: { text: string; url: string }[];
+}
+const { title = "Why Selesai", claim, evidence = [] } = Astro.props;
+const hasEvidence = evidence.length > 0;
+---
+
+<aside class="comparison-callout" aria-label={title}>
+  <p class="comparison-callout__eyebrow">{title}</p>
+  <p class="comparison-callout__claim">{claim}</p>
+  {
+    hasEvidence && (
+      <div class="comparison-callout__evidence">
+        <span class="comparison-callout__label">Evidence:</span>
+        {evidence.map((link, index) => (
+          <>
+            {index > 0 && ", "}
+            <a href={link.url} target="_blank" rel="noopener noreferrer">
+              {link.text}
+            </a>
+          </>
+        ))}
+      </div>
+    )
+  }
+</aside>
+
+<style>
+  .comparison-callout {
+    border-inline-start: 4px solid var(--sl-color-accent);
+    background: var(--sl-color-accent-low);
+    padding: 1rem;
+    border-radius: 0 0.5rem 0.5rem 0;
+    margin: 1.5rem 0;
+  }
+  .comparison-callout__eyebrow {
+    font-size: var(--sl-text-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+    color: var(--sl-color-accent-high);
+    margin: 0 0 0.25rem;
+  }
+  .comparison-callout__claim {
+    font-size: var(--sl-text-base);
+    margin: 0;
+    color: var(--sl-color-white);
+  }
+  .comparison-callout__evidence {
+    font-size: var(--sl-text-sm);
+    margin-top: 0.5rem;
+    color: var(--sl-color-gray-2);
+  }
+  .comparison-callout__label {
+    font-weight: 600;
+  }
+  .comparison-callout a {
+    color: var(--sl-color-accent-high);
+    text-decoration: underline;
+  }
+</style>

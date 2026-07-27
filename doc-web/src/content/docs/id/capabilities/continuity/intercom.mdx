@@ -1,0 +1,54 @@
+---
+draft: false
+title: Koordinasi sesi
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Koordinasi sesi
+
+## Apa ini dan mengapa membantu
+
+Extension `pi-intercom` adalah tool agent untuk koordinasi sesi lokal 1:1. Extension ini memungkinkan dua sesi Selesai yang diberi nama berbagi progres, mengajukan pertanyaan, dan mengirim lampiran tanpa menggunakan layanan eksternal.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai `src/extensions/pi-intercom/`.
+
+## Mulai cepat
+
+Mulai dua sesi di folder yang sama dengan nama berbeda:
+
+```sh
+# Terminal A
+/name CalculatorProject
+
+# Terminal B
+/name DiscussionMaster
+```
+
+Kemudian minta salah satu sesi untuk mengkritik ide:
+
+```text
+Use intercom to ask DiscussionMaster to critique this implementation idea.
+```
+
+## Konfigurasi
+
+Tidak diperlukan konfigurasi terpisah. Intercom bekerja secara lokal antar sesi bernama yang berjalan di mesin yang sama.
+
+## Batasan dan edge case
+
+- Kedua sesi harus berjalan di mesin lokal yang sama.
+- Sesi harus memiliki nama yang jelas dan stabil agar manusia dan agent dapat mengarahkan pesan dengan benar.
+- Intercom bukan tool kolaborasi remote; hanya untuk koordinasi lokal.
+
+<ComparisonCallout
+  claim="Selesai menyertakan pesan antar-sesi native sehingga agent yang didelegasikan dapat berkoordinasi dengan sesi lokal lain tanpa meninggalkan host."
+  evidence={[
+    { text: "source pi-intercom", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-intercom/" }
+  ]}
+/>
+
+<SourceEvidence slug="pi-intercom" />

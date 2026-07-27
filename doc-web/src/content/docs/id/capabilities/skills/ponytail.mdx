@@ -1,0 +1,48 @@
+---
+draft: false
+title: Ponytail
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Ponytail
+
+## Apa ini dan mengapa membantu
+
+`ponytail` adalah keluarga mode komunikasi dan helper review yang membuat respons agent menjadi minimal, terkompresi, dan fokus. Panggil dengan `/skill:ponytail` atau varian terkait seperti `/skill:ponytail-review`, `/skill:ponytail-audit`, `/skill:ponytail-gain`, `/skill:ponytail-debt`, dan `/skill:ponytail-help`.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai extension `ponytail` dan skill `ponytail*` di `src/skills/`.
+
+## Mulai cepat
+
+```sh
+/skill:ponytail
+```
+
+Untuk review:
+
+```sh
+/skill:ponytail-review
+```
+
+## Konfigurasi
+
+Tidak diperlukan konfigurasi terpisah. Skill ini mengubah cara agent memformat dan menentukan cakupan respons.
+
+## Batasan dan edge case
+
+- Mode ponytail mengurangi verbositas; penjelasan kompleks mungkin perlu diminta secara eksplisit.
+- Varian disesuaikan untuk task tertentu; pilih varian yang cocok dengan tujuan saat ini.
+
+<ComparisonCallout
+  claim="Selesai membundel ponytail sebagai extension sekaligus keluarga skill, sehingga user dapat beralih ke respons terkompresi dan fokus task sesuai permintaan."
+  evidence={[
+    { text: "extension ponytail", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/ponytail/" },
+    { text: "skill ponytail", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/ponytail/" }
+  ]}
+/>
+
+<SourceEvidence slug="ponytail" />

@@ -1,0 +1,43 @@
+---
+draft: false
+title: Skill inline
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Skill inline
+
+## Apa ini dan mengapa membantu
+
+Extension `inline-skills` memungkinkan agent menerima ajakan skill ringan secara inline, tanpa file skill terpisah di project. Ini menurunkan hambatan untuk penggunaan skill sekali pakai.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai `src/extensions/inline-skills.ts`.
+
+## Mulai cepat
+
+```text
+Use the inline skills interface to adopt a concise review skill for this diff.
+```
+
+## Konfigurasi
+
+Tidak diperlukan konfigurasi terpisah. Skill inline diterima melalui lapisan interaksi agent normal.
+
+## Batasan dan edge case
+
+- Skill inline bersifat sementara; perilaku skill persisten tetap harus menggunakan `src/skills/` atau file skill tingkat user.
+- Extension ini memvalidasi ajakan skill sebelum menerapkannya.
+- Tidak semua skill dapat digunakan secara inline; skill multi-file kompleks masih memerlukan definisi skill lengkap.
+
+<ComparisonCallout
+  claim="Selesai mendukung ajakan skill inline ringan, membuat penggunaan skill sekali pakai lebih cepat."
+  evidence={[
+    { text: "source inline-skills", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/inline-skills.ts" },
+    { text: "skills loader", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/core/skills.ts" }
+  ]}
+/>
+
+<SourceEvidence slug="inline-skills" />

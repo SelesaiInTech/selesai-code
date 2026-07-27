@@ -1,0 +1,52 @@
+---
+draft: false
+title: Web research
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# Web research
+
+## What it is and why it helps
+
+The bundled `pi-web-agent` provides a single `web_explore` tool for research that needs current sources. It performs bounded search and fetch passes, ranks sources, extracts readable content, and escalates to a headless browser when needed.
+
+## Availability
+
+Included in `@selesai/code`. DuckDuckGo is the default search path. Optional first-run onboarding can configure Brave Search with DuckDuckGo fallback.
+
+## Quick start
+
+```text
+Search the web for the latest React Server Components best practices and compare them with this codebase.
+```
+
+## Configuration
+
+Use `/web-agent` to access backend and presentation settings plus diagnostics.
+
+To enable Brave Search:
+
+1. Visit the [Brave Search API page](https://brave.com/search/api/).
+2. Create a key in the [Brave API dashboard](https://api-dashboard.search.brave.com/app/keys).
+3. Run the web-agent onboarding flow.
+
+```sh
+/web-agent
+```
+
+## Limits and edge cases
+
+- `web_explore` is for current documentation, technical discussions, comparisons, and recommendations.
+- It is not a license to silently make arbitrary network calls from shell commands.
+- Some hosts block automated fetch; the orchestrator can escalate to a headless browser when the source supports it.
+
+<ComparisonCallout
+  claim="Selesai bundles one high-level research tool with source ranking and escalation, rather than leaving the user to assemble separate search and fetch extensions."
+  evidence={[
+    { text: "pi-web-agent source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-web-agent/" }
+  ]}
+/>
+
+<SourceEvidence slug="pi-web-agent" />

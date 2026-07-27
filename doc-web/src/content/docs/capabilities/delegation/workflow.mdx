@@ -1,0 +1,62 @@
+---
+draft: false
+title: Durable workflows
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# Durable workflows
+
+## What it is and why it helps
+
+Selesai's workflow engine runs multi-phase project workflows in `prototype`, `quick`, or `task` mode. Workflows persist state and phase artifacts on disk, so they can be resumed explicitly after interruption or a fresh terminal session.
+
+## Availability
+
+Available in `@selesai/code` as the bundled `workflow` extension. Users start or resume workflows directly with slash commands.
+
+## Quick start
+
+```sh
+# Start a prototype workflow (discovery-first)
+/workflow-prototype
+
+# Start a quick workflow (lighter ceremony)
+/workflow-quick
+
+# Start a task workflow (direct implementation)
+/workflow-task
+```
+
+## Modes
+
+| Mode | Flow | Best for |
+| --- | --- | --- |
+| `prototype` | grill → research → plan → reuse → handoff → build/review loop → audit | New prototypes that need discovery and external research |
+| `quick` | grill → plan → reuse → handoff → build/review loop → audit | Smaller prototypes with less ceremony |
+| `task` | plan → reuse → handoff → build/review loop | Direct implementation work |
+
+## Configuration
+
+Workflows are configured by mode files in `src/extensions/workflow/modes/`. You can also create custom workflow modes as skills.
+
+```sh
+# Resume a workflow
+selesai "/workflow-resume"      # example; exact command follows Selesai runtime binding
+```
+
+## Limits and edge cases
+
+- The agent cannot initiate a workflow automatically; you must use a slash command.
+- An explicit close step is required to finalize a workflow.
+- Resuming depends on persisted state; if state files are deleted, the workflow restarts.
+
+<ComparisonCallout
+  claim="Selesai persists workflow state on disk so you can resume long-running work across sessions instead of rebuilding context from scratch."
+  evidence={[
+    { text: "workflow source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/workflow/" }
+  ]}
+/>
+
+<SourceEvidence slug="workflow" />

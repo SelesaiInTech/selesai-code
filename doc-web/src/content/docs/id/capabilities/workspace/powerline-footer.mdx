@@ -1,0 +1,46 @@
+---
+draft: false
+title: Footer powerline
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Footer powerline
+
+## Apa ini dan mengapa membantu
+
+Extension `pi-powerline-footer` meningkatkan ruang kerja terminal dengan status bar powerline, tata letak editor tetap, tur `/guide` berulang, bash persisten, editor stash/restore, dan pesan working-vibe bertema.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai `src/extensions/pi-powerline-footer/`.
+
+## Mulai cepat
+
+Dalam sesi Selesai interaktif, lihat bagian bawah terminal:
+
+```sh
+selesai
+```
+
+Status bar menampilkan model, thinking level, path, state git, konteks, token, biaya, cache, dan data sesi.
+
+## Konfigurasi
+
+Tidak diperlukan konfigurasi terpisah. Footer beradaptasi dengan state project dan mendukung preset yang dapat dikonfigurasi.
+
+## Batasan dan edge case
+
+- Memerlukan terminal yang mendukung font dan glyph Nerd Font untuk pengalaman terbaik.
+- State bash persisten bersifat lokal untuk sesi Selesai.
+- Tur `/guide` dapat ditutup dan akan mengingat penutupan tersebut.
+
+<ComparisonCallout
+  claim="Selesai membundel UI terminal yang lebih kaya sehingga Anda dapat melihat status model, biaya, dan konteks tanpa menjalankan perintah tambahan."
+  evidence={[
+    { text: "source pi-powerline-footer", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-powerline-footer/" }
+  ]}
+/>
+
+<SourceEvidence slug="pi-powerline-footer" />

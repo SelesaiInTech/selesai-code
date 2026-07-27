@@ -1,0 +1,77 @@
+---
+import { getCapability, categoryLabel } from "../data/capabilities.ts";
+
+export interface Props {
+  slug: string;
+  locale: "en" | "id";
+}
+
+const { slug, locale } = Astro.props;
+const c = getCapability(slug);
+if (!c) throw new Error(`Unknown capability: ${slug}`);
+const name = locale === "en" ? c.en.displayName : c.id.displayName;
+const benefit = locale === "en" ? c.en.benefit : c.id.benefit;
+const route = locale === "en" ? `/${c.guideRoute}/` : `/id/${c.guideRoute}/`;
+const category = categoryLabel(c.category, locale);
+const badge =
+  c.piComparison === "core-differentiator"
+    ? locale === "en" ? "Selesai difference" : "Perbedaan Selesai"
+    : c.piComparison === "bundled"
+    ? locale === "en" ? "Bundled" : "Dibundel"
+    : locale === "en" ? "Ergonomics" : "Ergonomi";
+---
+
+<a href={route} class="capability-card">
+  <span class="capability-card__category">{category}</span>
+  <h3 class="capability-card__title">{name}</h3>
+  <p class="capability-card__benefit">{benefit}</p>
+  <span class="capability-card__badge">{badge}</span>
+</a>
+
+<style>
+  .capability-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.75rem;
+    background: var(--sl-color-bg);
+    color: var(--sl-color-text);
+    text-decoration: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .capability-card:hover,
+  .capability-card:focus-visible {
+    border-color: var(--sl-color-accent);
+    box-shadow: 0 0 0 3px var(--sl-color-accent-low);
+  }
+  .capability-card:focus-visible {
+    outline: none;
+  }
+  .capability-card__category {
+    font-size: var(--sl-text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+    color: var(--sl-color-gray-3);
+  }
+  .capability-card__title {
+    font-size: var(--sl-text-lg);
+    margin: 0;
+    color: var(--sl-color-white);
+  }
+  .capability-card__benefit {
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-2);
+    margin: 0;
+    flex: 1;
+  }
+  .capability-card__badge {
+    align-self: flex-start;
+    font-size: var(--sl-text-xs);
+    color: var(--sl-color-accent-high);
+    background: var(--sl-color-accent-low);
+    border-radius: 9999px;
+    padding: 0.25rem 0.625rem;
+  }
+</style>

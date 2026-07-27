@@ -1,0 +1,42 @@
+---
+draft: false
+title: Caveman
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Caveman
+
+## Apa ini dan mengapa membantu
+
+`caveman` adalah gaya komunikasi terkompresi yang dipanggil dengan `/skill:caveman`. Skill ini meminta agent untuk menjadi singkat, fokus, dan menghindari prosa yang tidak perlu.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai extension `caveman` dan `src/skills/caveman/`.
+
+## Mulai cepat
+
+```sh
+/skill:caveman
+```
+
+## Konfigurasi
+
+Tidak diperlukan konfigurasi terpisah.
+
+## Batasan dan edge case
+
+- Caveman mengurangi kedalaman penjelasan; gunakan saat Anda sudah memahami domainnya.
+- Beralih kembali ke mode normal jika Anda membutuhkan penalaran terperinci.
+
+<ComparisonCallout
+  claim="Selesai membundel mode singkat bawaan sehingga user dapat dengan cepat mengurangi panjang respons dan biaya token."
+  evidence={[
+    { text: "extension caveman", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/caveman/" },
+    { text: "skill caveman", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/caveman/" }
+  ]}
+/>
+
+<SourceEvidence slug="caveman" />

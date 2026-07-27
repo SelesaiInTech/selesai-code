@@ -1,0 +1,50 @@
+---
+draft: false
+title: Onboarding token
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Onboarding token
+
+## Apa ini dan mengapa membantu
+
+Extension `tokenin-onboarding` memandu user pertama kali melalui setup kredensial provider dan token API sehingga Selesai dapat berkomunikasi dengan model provider tanpa mengedit file konfigurasi secara manual.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai `src/extensions/tokenin-onboarding.ts`.
+
+## Mulai cepat
+
+Saat pertama kali berjalan, Selesai meminta kredensial provider. Untuk menjalankan ulang onboarding:
+
+```sh
+/tokenin-onboard
+```
+
+## Konfigurasi
+
+Ikuti prompt interaktif untuk memilih provider dan menempelkan API key. Selesai menyimpan kredensial di lokasi konfigurasi standar.
+
+```sh
+# Alur pertama kali yang umum
+selesai
+# Ikuti prompt tokenin untuk menambahkan provider key Anda
+```
+
+## Batasan dan edge case
+
+- Jaga API key tetap rahasia. Jangan commit ke version control.
+- Provider key mungkin memerlukan billing yang diaktifkan.
+- Jika provider tidak tersedia, periksa terlebih dahulu apakah key ditempel dengan benar dan aktif.
+
+<ComparisonCallout
+  claim="Selesai membundel setup kredensial interaktif pertama kali sehingga user dapat mulai dengan provider tanpa mengedit file konfigurasi secara manual."
+  evidence={[
+    { text: "source tokenin-onboarding", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/tokenin-onboarding.ts" }
+  ]}
+/>
+
+<SourceEvidence slug="tokenin-onboarding" />

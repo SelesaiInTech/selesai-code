@@ -1,0 +1,54 @@
+---
+draft: false
+title: Session coordination
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# Session coordination
+
+## What it is and why it helps
+
+The `pi-intercom` extension is an agent tool for local 1:1 session coordination. It lets two named Selesai sessions share progress, ask questions, and send attachments without using external services.
+
+## Availability
+
+Included in `@selesai/code` as `src/extensions/pi-intercom/`.
+
+## Quick start
+
+Start two sessions in the same folder with different names:
+
+```sh
+# Terminal A
+/name CalculatorProject
+
+# Terminal B
+/name DiscussionMaster
+```
+
+Then ask one session to critique an idea:
+
+```text
+Use intercom to ask DiscussionMaster to critique this implementation idea.
+```
+
+## Configuration
+
+No separate configuration is required. Intercom works locally between named sessions running on the same machine.
+
+## Limits and edge cases
+
+- Both sessions must run on the same local machine.
+- Sessions must have clear, stable names so humans and agents can route messages correctly.
+- Intercom is not a remote collaboration tool; it is for local coordination only.
+
+<ComparisonCallout
+  claim="Selesai includes native inter-session messaging so a delegated agent can coordinate with another local session without leaving the host."
+  evidence={[
+    { text: "pi-intercom source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-intercom/" }
+  ]}
+/>
+
+<SourceEvidence slug="pi-intercom" />

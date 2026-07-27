@@ -1,0 +1,42 @@
+---
+draft: false
+title: Public code search
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# Public code search
+
+## What it is and why it helps
+
+The `grep-app` extension searches public GitHub code through [grep.app](https://grep.app) and fetches the matching source so the agent can inspect it without leaving the terminal.
+
+## Availability
+
+Included in `@selesai/code` as `src/extensions/grep-app/`.
+
+## Quick start
+
+```text
+Search grep.app for how other projects implement exponential backoff in TypeScript.
+```
+
+## Configuration
+
+No separate configuration is required beyond the extension being loaded by the Selesai runtime.
+
+## Limits and edge cases
+
+- Results depend on what grep.app has indexed; very recent repositories may not appear.
+- Fetched snippets may need review before reuse because public code can be outdated or incorrect.
+- Respect license terms when copying code from public repositories.
+
+<ComparisonCallout
+  claim="Selesai bundles public code search so the agent can reference external examples without opening a browser."
+  evidence={[
+    { text: "grep-app source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/grep-app/" }
+  ]}
+/>
+
+<SourceEvidence slug="grep-app" />

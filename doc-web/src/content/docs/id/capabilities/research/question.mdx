@@ -1,0 +1,49 @@
+---
+draft: false
+title: Pertanyaan interaktif
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Pertanyaan interaktif
+
+## Apa ini dan mengapa membantu
+
+Tool `question` yang dibundel memberikan Selesai TUI nyata untuk keputusan. Alih-alih memaksa setiap klarifikasi melalui teks biasa, agent dapat menampilkan pertanyaan single-select, multi-select, freeform, dan image/info dengan deskripsi, ringkasan konteks, dan navigasi keyboard.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai extension `question`.
+
+## Mulai cepat
+
+Saat workflow atau permintaan Selesai membutuhkan keputusan, tool `question` dapat dipanggil:
+
+```text
+Use question to ask the user which test framework to use.
+```
+
+## Konfigurasi
+
+Tidak diperlukan konfigurasi terpisah. Tool ini mendukung:
+
+- opsi single- dan multi-select;
+- deskripsi dan ringkasan konteks;
+- jawaban freeform dengan komentar opsional;
+- navigasi keyboard, filtering, dan pembatalan;
+- tipe pertanyaan image dan info.
+
+## Batasan dan edge case
+
+- TUI berjalan di terminal; memerlukan sesi interaktif. Dalam mode non-interaktif (`-p`), agent akan fallback ke perilaku teks biasa.
+- Membatalkan pertanyaan mengembalikan kontrol ke user prompt.
+
+<ComparisonCallout
+  claim="Selesai mengirimkan TUI interaktif untuk keputusan, mengurangi gesekan klarifikasi multi-opsi."
+  evidence={[
+    { text: "source question", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/question/" }
+  ]}
+/>
+
+<SourceEvidence slug="question" />

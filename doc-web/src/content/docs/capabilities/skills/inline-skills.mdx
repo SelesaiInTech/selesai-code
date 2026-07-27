@@ -1,0 +1,43 @@
+---
+draft: false
+title: Inline skills
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# Inline skills
+
+## What it is and why it helps
+
+The `inline-skills` extension lets the agent accept lightweight skill invitations inline, without a separate skill file in the project. This lowers the barrier for one-off skill usage.
+
+## Availability
+
+Included in `@selesai/code` as `src/extensions/inline-skills.ts`.
+
+## Quick start
+
+```text
+Use the inline skills interface to adopt a concise review skill for this diff.
+```
+
+## Configuration
+
+No separate configuration is required. Inline skills are accepted through the normal agent interaction layer.
+
+## Limits and edge cases
+
+- Inline skills are temporary; persistent skill behavior should still use `src/skills/` or user-level skill files.
+- The extension validates skill invitations before applying them.
+- Not all skills can be used inline; complex multi-file skills still need full skill definitions.
+
+<ComparisonCallout
+  claim="Selesai supports lightweight inline skill invitations, making one-off skill use faster."
+  evidence={[
+    { text: "inline-skills source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/inline-skills.ts" },
+    { text: "skills loader", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/core/skills.ts" }
+  ]}
+/>
+
+<SourceEvidence slug="inline-skills" />

@@ -1,0 +1,41 @@
+---
+draft: false
+title: Salin turn
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Salin turn
+
+## Apa ini dan mengapa membantu
+
+Extension `copy-turn` memungkinkan Anda menyalin hasil user atau assistant dari sesi berdasarkan hash, sehingga dapat ditempel di tempat lain tanpa mengetik ulang output panjang.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai `src/extensions/copy-turn.ts`.
+
+## Mulai cepat
+
+```sh
+/cp <hash>
+```
+
+## Konfigurasi
+
+Tidak diperlukan konfigurasi terpisah.
+
+## Batasan dan edge case
+
+- Anda membutuhkan hash dari target turn. Hash ditampilkan oleh UI sesi Selesai.
+- Konten yang disalin masuk ke clipboard sistem; dapat ditimpa oleh salinan berikutnya.
+
+<ComparisonCallout
+  claim="Selesai membundel cara cepat menyalin turn sebelumnya berdasarkan hash, mengurangi pengetikan ulang manual."
+  evidence={[
+    { text: "source copy-turn", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/copy-turn.ts" }
+  ]}
+/>
+
+<SourceEvidence slug="copy-turn" />

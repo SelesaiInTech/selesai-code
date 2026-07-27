@@ -1,0 +1,42 @@
+---
+draft: false
+title: Pencarian kode publik
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Pencarian kode publik
+
+## Apa ini dan mengapa membantu
+
+Extension `grep-app` mencari kode GitHub publik melalui [grep.app](https://grep.app) dan mengambil source yang cocok sehingga agent dapat memeriksanya tanpa meninggalkan terminal.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sebagai `src/extensions/grep-app/`.
+
+## Mulai cepat
+
+```text
+Search grep.app for how other projects implement exponential backoff in TypeScript.
+```
+
+## Konfigurasi
+
+Tidak diperlukan konfigurasi terpisah selain extension dimuat oleh runtime Selesai.
+
+## Batasan dan edge case
+
+- Hasil bergantung pada apa yang diindeks grep.app; repositori yang sangat baru mungkin belum muncul.
+- Snippet yang diambil mungkin perlu ditinjau sebelum digunakan karena kode publik bisa usang atau salah.
+- Hormati ketentuan lisensi saat menyalin kode dari repositori publik.
+
+<ComparisonCallout
+  claim="Selesai membundel pencarian kode publik sehingga agent dapat mereferensikan contoh eksternal tanpa membuka browser."
+  evidence={[
+    { text: "source grep-app", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/grep-app/" }
+  ]}
+/>
+
+<SourceEvidence slug="grep-app" />

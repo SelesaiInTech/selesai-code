@@ -1,0 +1,45 @@
+---
+draft: false
+title: RTK integration
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# RTK integration
+
+## What it is and why it helps
+
+The `rtk` extension rewrites compatible shell commands to reduce noisy output and token burn when `rtk` is installed on the system. It converts commands like `ls` or `cat` into quieter equivalents behind the scenes.
+
+## Availability
+
+Included in `@selesai/code` as `src/extensions/rtk.ts`. Requires the separate `rtk` binary to be installed.
+
+## Quick start
+
+Install `rtk` on your system, then run Selesai normally. Compatible commands will be rewritten automatically.
+
+```sh
+# Example command that may be rewritten if rtk is available
+selesai -p "list the files in the current directory"
+```
+
+## Configuration
+
+No Selesai-specific configuration is required. The extension detects `rtk` availability at runtime.
+
+## Limits and edge cases
+
+- Only compatible commands are rewritten. Commands that `rtk` does not understand are left unchanged.
+- If `rtk` is not installed, Selesai runs commands as-is.
+- Rewritten output may differ slightly from the original command; review if the exact output matters.
+
+<ComparisonCallout
+  claim="Selesai can route compatible shell commands through rtk to reduce noisy output and save tokens when rtk is present."
+  evidence={[
+    { text: "rtk source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/rtk.ts" }
+  ]}
+/>
+
+<SourceEvidence slug="rtk" />

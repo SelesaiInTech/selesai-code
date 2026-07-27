@@ -1,0 +1,41 @@
+---
+draft: false
+title: Copy turn
+---
+
+import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+# Copy turn
+
+## What it is and why it helps
+
+The `copy-turn` extension lets you copy a user or assistant result from the session by hash, so you can paste it elsewhere without re-typing long outputs.
+
+## Availability
+
+Included in `@selesai/code` as `src/extensions/copy-turn.ts`.
+
+## Quick start
+
+```sh
+/cp <hash>
+```
+
+## Configuration
+
+No separate configuration is required.
+
+## Limits and edge cases
+
+- You need the hash of the target turn. Hashes are displayed by the Selesai session UI.
+- The copied content goes to the system clipboard; it may be overwritten by later copies.
+
+<ComparisonCallout
+  claim="Selesai bundles a quick way to copy any prior turn by hash, reducing manual re-typing."
+  evidence={[
+    { text: "copy-turn source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/copy-turn.ts" }
+  ]}
+/>
+
+<SourceEvidence slug="copy-turn" />

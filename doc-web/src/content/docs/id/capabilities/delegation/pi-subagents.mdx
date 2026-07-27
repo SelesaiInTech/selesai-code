@@ -1,0 +1,70 @@
+---
+draft: false
+title: Delegasi subagent
+---
+
+import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+# Delegasi subagent
+
+## Apa ini dan mengapa membantu
+
+Selesai membundel extension `pi-subagents` dan mengadaptasinya ke runtime Selesai. Extension ini menyediakan peran agent yang fokus, manajemen siklus hidup, dan kontrol run sehingga Anda dapat mendelegasikan pekerjaan tanpa kehilangan visibilitas atau kontrol.
+
+## Ketersediaan
+
+Termasuk dalam `@selesai/code` sejak versi `0.5.22` dengan peran seperti:
+
+- `architect`
+- `builder`
+- `commentator`
+- `explorer`
+- `recapper`
+- `researcher`
+
+## Mulai cepat
+
+Gunakan prompt bahasa alami untuk mendelegasikan pekerjaan:
+
+```text
+Ask the architect to challenge this plan before we implement it.
+```
+
+```text
+Run parallel commentator agents for correctness, tests, and unnecessary complexity.
+```
+
+```text
+Have the builder implement this plan, then review the result.
+```
+
+## Konfigurasi
+
+Subagent dikonfigurasi melalui definisi agent tingkat project dan user. Kontrol umum meliputi:
+
+- override model/tool/skill;
+- run foreground, background, paralel, atau berantai;
+- tool/turn budget;
+- skema output dan jalur artifact;
+- worktree isolation untuk task paralel.
+
+```sh
+# Contoh: daftar peran subagent yang tersedia di Selesai
+selesai -p "list subagent roles and tools"
+```
+
+## Batasan dan edge case
+
+- Agent yang didelegasikan berjalan dalam environment host yang sama; batas kepercayaan sama dengan sesi utama.
+- Run background berlanjut sampai selesai kecuali diinterupsi; arahkan melalui antarmuka status/intercom Selesai.
+- Model/tool budget diberlakukan oleh Selesai; periksa penggunaan budget di status footer.
+
+<ComparisonCallout
+  claim="Selesai mengirimkan komunikasi supervisor native sehingga agent yang didelegasikan dapat meminta keputusan ke sesi utama alih-alih menebak."
+  evidence={[
+    { text: "README pi-subagents", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-subagents/README.md" }
+  ]}
+/>
+
+<SourceEvidence slug="pi-subagents" />
