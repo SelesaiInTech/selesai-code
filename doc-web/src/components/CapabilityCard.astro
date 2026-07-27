@@ -11,7 +11,8 @@ const c = getCapability(slug);
 if (!c) throw new Error(`Unknown capability: ${slug}`);
 const name = locale === "en" ? c.en.displayName : c.id.displayName;
 const benefit = locale === "en" ? c.en.benefit : c.id.benefit;
-const route = locale === "en" ? `/${c.guideRoute}/` : `/id/${c.guideRoute}/`;
+const path = locale === "en" ? c.guideRoute : `id/${c.guideRoute}`;
+const route = `${import.meta.env.BASE_URL}${path}/`;
 const category = categoryLabel(c.category, locale);
 const badge =
   c.piComparison === "core-differentiator"
