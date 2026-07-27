@@ -97,6 +97,7 @@ class QuestionComponent extends Container implements Component {
 	private titleText: Text;
 	private questionText: Text;
 	private contextComponent?: Component;
+	private savedAnswerText?: Text;
 	private modeContainer: Container;
 	private helpText: Text;
 
@@ -117,6 +118,7 @@ class QuestionComponent extends Container implements Component {
 		private keybindings: KeybindingsManager,
 		private shortcuts: ResolvedShortcuts,
 		private onDone: (result: QuestionResponse | null) => void,
+		private initialAnswer?: QuestionResponse,
 	) {
 		super();
 
@@ -147,6 +149,12 @@ class QuestionComponent extends Container implements Component {
 			this.addChild(this.contextComponent);
 		}
 
+		if (this.initialAnswer?.kind === "selection") {
+			this.addChild(new Spacer(1));
+			this.savedAnswerText = new Text("", 1, 0);
+			this.addChild(this.savedAnswerText);
+		}
+
 		this.addChild(new Spacer(1));
 
 		this.modeContainer = new Container();
@@ -160,7 +168,7 @@ class QuestionComponent extends Container implements Component {
 		this.addChild(new BoxBorderBottom((s: string) => theme.fg("accent", s), `v${QUESTION_VERSION}`, (s: string) => theme.fg("dim", s)));
 
 		this.updateStaticText();
-		this.showSelectMode();
+		this.restoreInitialAnswer();
 	}
 
 	get focused(): boolean {
@@ -202,6 +210,9 @@ class QuestionComponent extends Container implements Component {
 		const title = this.mode === "comment" ? "Optional comment" : "Question";
 		this.titleText.setText(theme.fg("accent", theme.bold(title)));
 		this.questionText.setText(theme.fg("text", theme.bold(this.question)));
+		if (this.savedAnswerText && this.initialAnswer?.kind === "selection") {
+			this.savedAnswerText.setText(`${theme.fg("success", "Saved answer:")} ${theme.fg("text", formatResponseSummary(this.initialAnswer))}`);
+		}
 		if (this.contextComponent && this.context) {
 			const mdTheme = safeMarkdownTheme();
 			if (mdTheme && this.contextComponent instanceof Markdown) {
@@ -256,6 +267,26 @@ class QuestionComponent extends Container implements Component {
 				.join(" • ");
 			this.helpText.setText(theme.fg("dim", hints));
 		}
+	}
+
+	private restoreInitialAnswer(): void {
+		if (!this.initialAnswer) {
+			this.showSelectMode();
+			return;
+		}
+		if (this.initialAnswer.kind === "freeform") {
+			this.freeformDraft = this.initialAnswer.text;
+			this.showFreeformMode();
+			return;
+		}
+		this.ensureList().restoreSelection(this.initialAnswer.selections, this.initialAnswer.comment);
+		if (this.initialAnswer.comment) {
+			this.pendingSelections = [...this.initialAnswer.selections];
+			this.commentDraft = this.initialAnswer.comment;
+			this.showCommentMode();
+			return;
+		}
+		this.showSelectMode();
 	}
 
 	private ensureList(): QuestionList {
@@ -451,7 +482,14 @@ class BatchQuestionComponent extends Container implements Component {
 				const response = this.answers.get(question.id);
 				const marker = response ? this.theme.fg("success", "✓") : this.theme.fg("warning", "○");
 				const answer = response ? formatResponseSummary(response) : "Unanswered";
-				this.content.addChild(new Text(`${marker} ${this.theme.fg("accent", question.label)} ${this.theme.fg("dim", "—")} ${this.theme.fg(response ? "text" : "warning", answer)}`, 1, 0));
+				this.content.addChild(
+					new Text(
+						`${marker} ${this.theme.fg("accent", this.theme.bold(question.label))}\n${this.theme.fg("dim", question.question)}\n${this.theme.fg("dim", "Answer:")} ${this.theme.fg(response ? "text" : "warning", answer)}`,
+						1,
+						0,
+					),
+				);
+				this.content.addChild(new Spacer(1));
 			}
 		} else {
 			const question = this.questions[this.currentPage];
@@ -467,6 +505,7 @@ class BatchQuestionComponent extends Container implements Component {
 				this.keybindings,
 				question.shortcuts,
 				(response) => this.saveAnswer(question, response),
+				this.answers.get(question.id),
 			);
 			this.questionComponent.focused = this.focusedState;
 			this.content.addChild(this.questionComponent);

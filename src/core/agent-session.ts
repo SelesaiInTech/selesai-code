@@ -121,19 +121,34 @@ export interface ParsedSkillBlock {
 	userMessage: string | undefined;
 }
 
-/**
- * Parse a skill block from message text.
- * Returns null if the text doesn't contain a skill block.
- */
+export interface ParsedSkillBlocks {
+	skills: ParsedSkillBlock[];
+	userMessage: string | undefined;
+}
+
+/** Parse consecutive skill blocks at the start of a user message. */
+export function parseSkillBlocks(text: string): ParsedSkillBlocks | null {
+	const skills: ParsedSkillBlock[] = [];
+	let remaining = text;
+
+	while (remaining.startsWith("<skill ")) {
+		const match = remaining.match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?=\n\n|$)/);
+		if (!match) return null;
+		skills.push({ name: match[1], location: match[2], content: match[3], userMessage: undefined });
+		remaining = remaining.slice(match[0].length);
+		if (remaining.startsWith("\n\n")) remaining = remaining.slice(2);
+	}
+
+	if (skills.length === 0) return null;
+	const userMessage = remaining.trim() || undefined;
+	return { skills, userMessage };
+}
+
+/** Parse one skill block, retained for API compatibility. */
 export function parseSkillBlock(text: string): ParsedSkillBlock | null {
-	const match = text.match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/);
-	if (!match) return null;
-	return {
-		name: match[1],
-		location: match[2],
-		content: match[3],
-		userMessage: match[4]?.trim() || undefined,
-	};
+	const parsed = parseSkillBlocks(text);
+	if (!parsed || parsed.skills.length !== 1) return null;
+	return { ...parsed.skills[0], userMessage: parsed.userMessage };
 }
 
 /** Session-specific events that extend the core AgentEvent */

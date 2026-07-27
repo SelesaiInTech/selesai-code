@@ -67,6 +67,17 @@ export class QuestionList implements Component {
 		return this.commentEnabled;
 	}
 
+	restoreSelection(selections: readonly string[], comment?: string): void {
+		const indexes = selections
+			.map((label) => this.options.findIndex((option) => option.label === label))
+			.filter((index) => index >= 0);
+		this.checked = new Set(indexes);
+		this.selectedIndex = indexes[0] ?? 0;
+		this.commentEnabled = Boolean(comment);
+		this.searchQuery = "";
+		this.invalidate();
+	}
+
 	setMaxVisibleRows(rows: number): void {
 		if (this.selectionMode.multi) return; // ponytail: multi-select uses fixed max 10, no-op here
 		const next = Math.max(1, Math.floor(rows));

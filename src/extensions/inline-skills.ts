@@ -35,7 +35,7 @@ export function createInlineSkillAutocompleteProvider(pi: ExtensionAPI, current:
 			}
 
 			const items: AutocompleteItem[] = getSkillCommands(pi)
-				.filter((command) => getSkillName(command).startsWith(token.toLowerCase()))
+				.filter((command) => getSkillName(command).includes(token.toLowerCase()))
 				.map((command) => ({
 					value: `#${getSkillName(command)}`,
 					label: `#${getSkillName(command)}`,
@@ -55,19 +55,27 @@ export function createInlineSkillAutocompleteProvider(pi: ExtensionAPI, current:
 
 export function expandInlineSkills(text: string, pi: ExtensionAPI): string {
 	const skills = new Map(getSkillCommands(pi).map((command) => [getSkillName(command), command]));
+	const selected: SkillCommand[] = [];
+	const seen = new Set<string>();
 
-	return text.replace(INLINE_SKILL_TOKEN, (match, prefix: string, name: string) => {
-		const command = skills.get(name.toLowerCase());
-		if (!command) return match;
+	for (const match of text.matchAll(INLINE_SKILL_TOKEN)) {
+		const command = skills.get(match[2].toLowerCase());
+		if (!command || seen.has(command.name)) continue;
+		seen.add(command.name);
+		selected.push(command);
+	}
 
+	const blocks = selected.flatMap((command) => {
 		try {
 			const body = stripFrontmatter(readFileSync(command.sourceInfo.path, "utf-8")).trim();
 			const location = command.sourceInfo.path;
-			return `${prefix}<skill name="${getSkillName(command)}" location="${location}">\nReferences are relative to ${dirname(location)}.\n\n${body}\n</skill>`;
+			return [`<skill name="${getSkillName(command)}" location="${location}">\nReferences are relative to ${dirname(location)}.\n\n${body}\n</skill>`];
 		} catch {
-			return match;
+			return [];
 		}
 	});
+
+	return blocks.length > 0 ? `${blocks.join("\n\n")}\n\n${text}` : text;
 }
 
 export default function inlineSkillsExtension(pi: ExtensionAPI): void {

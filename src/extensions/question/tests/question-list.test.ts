@@ -163,6 +163,20 @@ test("MultiSelect: confirm with checked items → onSubmit with sorted labels", 
 	assert.deepEqual(submitted, [["a", "b"], false]); // sorted by index
 });
 
+test("QuestionList: restores saved multi-select choices and comment state", () => {
+	const list = new QuestionList(opts(["a", "b", "c"]), MultiSelect, false, true, fakeTheme, fakeKeybindings(), disabledShortcut);
+	list.restoreSelection(["a", "c"], "reason");
+	assert.deepEqual([...((list as any).checked)], [0, 2]);
+	assert.equal((list as any).selectedIndex, 0);
+	assert.equal(list.isCommentEnabled(), true);
+});
+
+test("QuestionList: restores saved single-select cursor", () => {
+	const list = new QuestionList(opts(["a", "b", "c"]), SingleSelect, false, false, fakeTheme, fakeKeybindings(), disabledShortcut);
+	list.restoreSelection(["b"]);
+	assert.equal((list as any).selectedIndex, 1);
+});
+
 test("MultiSelect: confirm with nothing checked → fallback to highlighted label", () => {
 	const list = new QuestionList(opts(["a", "b"]), MultiSelect, false, false, fakeTheme, fakeKeybindings(["tui.select.confirm"]), disabledShortcut);
 	let submitted: [string[], boolean] | null = null;

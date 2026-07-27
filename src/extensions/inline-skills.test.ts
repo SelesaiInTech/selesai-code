@@ -19,48 +19,65 @@ function createPi(commands: ReturnType<typeof skill>[]) {
 describe("inline-skills", () => {
 	const tempDirs: string[] = [];
 	afterEach(() => {
-		for (const dir of tempDirs.splice(0)) {
-			rmSync(dir, { recursive: true, force: true });
-		}
+		for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 	});
 
 	it("suggests skills after # anywhere in a line", async () => {
 		const pi = createPi([skill("research", "/skills/research/SKILL.md"), skill("review", "/skills/review/SKILL.md")]);
-		const base = {
-			getSuggestions: vi.fn(async () => null),
-			applyCompletion: vi.fn(),
-		} as any;
+		const base = { getSuggestions: vi.fn(async () => null), applyCompletion: vi.fn() } as any;
 		const provider = createInlineSkillAutocompleteProvider(pi, base);
 
-		const suggestions = await provider.getSuggestions(["Draft #res"], 0, 10, {} as any);
-
-		expect(provider.triggerCharacters).toEqual(["#"]);
-		expect(suggestions).toEqual({
+		expect(await provider.getSuggestions(["Draft #res"], 0, 10, {} as any)).toEqual({
 			prefix: "#res",
 			items: [{ value: "#research", label: "#research", description: "research description" }],
 		});
 	});
 
-	it("expands known inline skills and leaves unknown hashtags untouched", () => {
+	it("suggests skills matching a later hyphenated segment", async () => {
+		const pi = createPi([skill("batch-grill-me", "/skills/batch-grill-me/SKILL.md")]);
+		const base = { getSuggestions: vi.fn(async () => null), applyCompletion: vi.fn() } as any;
+		const provider = createInlineSkillAutocompleteProvider(pi, base);
+
+		expect(await provider.getSuggestions(["#grill"], 0, 6, {} as any)).toEqual({
+			prefix: "#grill",
+			items: [{ value: "#batch-grill-me", label: "#batch-grill-me", description: "batch-grill-me description" }],
+		});
+	});
+
+	it("prepends every referenced skill and preserves the original prompt", () => {
 		const dir = mkdtempSync(join(tmpdir(), "inline-skills-"));
 		tempDirs.push(dir);
-		const file = join(dir, "SKILL.md");
-		writeFileSync(file, "---\nname: research\ndescription: Research facts\n---\n\nUse primary sources.\n");
-		const pi = createPi([skill("research", file)]);
+		const research = join(dir, "research.md");
+		const grill = join(dir, "grill.md");
+		writeFileSync(research, "---\nname: research\ndescription: Research\n---\nResearch instructions.\n");
+		writeFileSync(grill, "---\nname: batch-grill-me\ndescription: Grill\n---\nGrill instructions.\n");
+		const pi = createPi([skill("research", research), skill("batch-grill-me", grill)]);
+		const prompt = "Plan with #research and #batch-grill-me; keep #unknown.";
 
-		const text = expandInlineSkills("Plan first #research then write; keep #unknown and #research_note literal.", pi);
+		const text = expandInlineSkills(prompt, pi);
 
-		expect(text).toContain("Plan first <skill name=\"research\"");
-		expect(text).toContain("References are relative to " + dir);
-		expect(text).toContain("Use primary sources.");
-		expect(text).toContain("</skill> then write; keep #unknown and #research_note literal.");
+		expect(text.match(/<skill name=/g)).toHaveLength(2);
+		expect(text).toContain("Research instructions.");
+		expect(text).toContain("Grill instructions.");
+		expect(text.endsWith(prompt)).toBe(true);
+	});
+
+	it("deduplicates repeated skill references", () => {
+		const dir = mkdtempSync(join(tmpdir(), "inline-skills-"));
+		tempDirs.push(dir);
+		const file = join(dir, "research.md");
+		writeFileSync(file, "---\ndescription: Research\n---\nResearch instructions.\n");
+		const text = expandInlineSkills("Use #research, then #research again", createPi([skill("research", file)]));
+
+		expect(text.match(/<skill name=/g)).toHaveLength(1);
+		expect(text.endsWith("Use #research, then #research again")).toBe(true);
 	});
 
 	it("registers autocomplete and transforms interactive input", () => {
 		const dir = mkdtempSync(join(tmpdir(), "inline-skills-"));
 		tempDirs.push(dir);
-		const file = join(dir, "SKILL.md");
-		writeFileSync(file, "---\ndescription: Research facts\n---\nUse primary sources.\n");
+		const file = join(dir, "research.md");
+		writeFileSync(file, "---\ndescription: Research\n---\nResearch instructions.\n");
 		const handlers = new Map<string, Function>();
 		const pi = {
 			getCommands: vi.fn(() => [skill("research", file)]),
@@ -73,7 +90,7 @@ describe("inline-skills", () => {
 		const result = handlers.get("input")!({ text: "Use #research now", source: "interactive" });
 
 		expect(addAutocompleteProvider).toHaveBeenCalledOnce();
-		expect(result).toMatchObject({ action: "transform", text: expect.stringContaining("<skill name=\"research\"") });
+		expect(result).toMatchObject({ action: "transform", text: expect.stringMatching(/<skill[\s\S]*Use #research now$/) });
 		expect(handlers.get("input")!({ text: "#research", source: "extension" })).toEqual({ action: "continue" });
 	});
 });
