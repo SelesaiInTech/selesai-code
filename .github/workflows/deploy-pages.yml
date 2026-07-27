@@ -1,4 +1,4 @@
-name: Deploy Selesai Docs to GitHub Pages
+name: Publish Selesai Docs
 
 on:
   push:
@@ -6,16 +6,14 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: pages
+  group: gh-pages
   cancel-in-progress: true
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,29 +24,36 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          cache-dependency-path: doc-web/package-lock.json
 
-      - name: Install dependencies
-        run: npm ci
-        working-directory: doc-web
-
-      - name: Verify build
-        run: npm run verify
+      - name: Verify site
+        run: npm ci && npm run verify
         working-directory: doc-web
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
 
-      - name: Upload to Pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: doc-web/dist
+      - name: Publish gh-pages branch
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TOKEN: ${{ github.token }}
+        run: |
+          publish_dir="$RUNNER_TEMP/gh-pages"
+          if git ls-remote --exit-code --heads origin gh-pages; then
+            git clone --depth 1 --branch gh-pages "https://x-access-token:${TOKEN}@github.com/${REPOSITORY}.git" "$publish_dir"
+          else
+            git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${REPOSITORY}.git" "$publish_dir"
+            git -C "$publish_dir" checkout --orphan gh-pages
+            git -C "$publish_dir" rm -rf .
+          fi
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          find "$publish_dir" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a doc-web/dist/. "$publish_dir/"
+          touch "$publish_dir/.nojekyll"
+
+          git -C "$publish_dir" config user.name "github-actions[bot]"
+          git -C "$publish_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$publish_dir" add --all
+          if ! git -C "$publish_dir" diff --cached --quiet; then
+            git -C "$publish_dir" commit -m "docs: publish site"
+            git -C "$publish_dir" push origin gh-pages
+          fi
