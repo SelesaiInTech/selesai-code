@@ -55,7 +55,6 @@ export function prepareQuestions(value: unknown): { questions: PreparedQuestion[
 			label: clean(raw.label) ?? `Q${number}`,
 			question,
 			context: clean(raw.context),
-			allowComment: raw.allowComment ?? false,
 		};
 
 		if (raw.type === "text") {
@@ -79,7 +78,6 @@ export function prepareQuestions(value: unknown): { questions: PreparedQuestion[
 
 export function saveDraftQuestion(
 	states: Map<string, DraftQuestionState>,
-	comments: Map<string, string>,
 	id: string,
 	response: QuestionResponse | null,
 	markBlankSkipped: boolean,
@@ -88,7 +86,6 @@ export function saveDraftQuestion(
 		states.set(id, { status: "answered", response });
 		return;
 	}
-	comments.delete(id);
 	if (markBlankSkipped) states.set(id, { status: "skipped" });
 	else states.delete(id);
 }
@@ -96,15 +93,11 @@ export function saveDraftQuestion(
 export function buildQuestionAnswers(
 	questions: PreparedQuestion[],
 	states: ReadonlyMap<string, DraftQuestionState>,
-	comments: ReadonlyMap<string, string>,
 ): QuestionAnswer[] {
 	return questions.map((question) => {
 		const state = states.get(question.id);
 		if (!state) return { id: question.id, status: "unanswered" };
 		if (state.status !== "answered" || !state.response) return { id: question.id, status: "skipped" };
-		const comment = question.allowComment ? clean(comments.get(question.id)) : undefined;
-		return comment
-			? { id: question.id, status: "answered", response: state.response, comment }
-			: { id: question.id, status: "answered", response: state.response };
+		return { id: question.id, status: "answered", response: state.response };
 	});
 }

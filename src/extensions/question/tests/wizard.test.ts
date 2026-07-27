@@ -44,12 +44,12 @@ function type(component: any, text: string) {
 	for (const character of text) component.handleInput(character);
 }
 
-test("wizard submits typed selections, text, and review comments", async () => {
+test("wizard submits typed selections and text without review comments", async () => {
 	const { component, execution } = await runWizard({
 		questions: [
-			{ id: "choice", type: "select", question: "Choose", options: [{ value: "one", label: "One" }], allowComment: true },
+			{ id: "choice", type: "select", question: "Choose", options: [{ value: "one", label: "One" }] },
 			{ id: "many", type: "multiselect", question: "Choose many", options: [{ value: "a", label: "A" }, { value: "b", label: "B" }] },
-			{ id: "note", type: "text", question: "Explain", allowComment: true },
+			{ id: "note", type: "text", question: "Explain" },
 		],
 	});
 	component().handleInput(ENTER);
@@ -61,24 +61,16 @@ test("wizard submits typed selections, text, and review comments", async () => {
 	type(component(), "details");
 	component().handleInput(ESC);
 	component().handleInput(TAB);
-	component().handleInput(SHIFT_TAB);
-	type(component(), "tail");
-	component().handleInput(ENTER);
-	assert.match(component().render(120).join("\n"), /tail/);
-	component().handleInput(SHIFT_TAB);
-	component().handleInput(SHIFT_TAB);
-	type(component(), "head");
-	component().handleInput(ENTER);
-	component().handleInput(TAB);
+	assert.doesNotMatch(component().render(120).join("\n"), /Optional comment/);
 	component().handleInput(ENTER);
 
 	const result = await execution;
 	assert.deepEqual(result.details, {
 		status: "submitted",
 		answers: [
-			{ id: "choice", status: "answered", response: { kind: "selection", values: ["one"] }, comment: "head" },
+			{ id: "choice", status: "answered", response: { kind: "selection", values: ["one"] } },
 			{ id: "many", status: "answered", response: { kind: "selection", values: ["a", "b"] } },
-			{ id: "note", status: "answered", response: { kind: "text", text: "details" }, comment: "tail" },
+			{ id: "note", status: "answered", response: { kind: "text", text: "details" } },
 		],
 	});
 });

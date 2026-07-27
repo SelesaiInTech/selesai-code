@@ -19,7 +19,6 @@ interface RawQuestionBase {
 	label?: string;
 	question: string;
 	context?: string;
-	allowComment?: boolean;
 }
 
 export interface RawSelectQuestion extends RawQuestionBase {
@@ -45,7 +44,6 @@ export interface PreparedQuestionBase {
 	label: string;
 	question: string;
 	context?: string;
-	allowComment: boolean;
 }
 
 export interface PreparedSelectQuestion extends PreparedQuestionBase {
@@ -73,7 +71,7 @@ export type QuestionResponse =
 	| { kind: "text"; text: string };
 
 export type QuestionAnswer =
-	| { id: string; status: "answered"; response: QuestionResponse; comment?: string }
+	| { id: string; status: "answered"; response: QuestionResponse }
 	| { id: string; status: "skipped" | "unanswered" };
 
 export type QuestionToolResult =
@@ -86,8 +84,7 @@ export interface DraftQuestionState {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy list internals. Comment rows remain private implementation details;
-// public question comments are collected only on the review page.
+// Legacy list internals.
 // ---------------------------------------------------------------------------
 
 export type ResolvedShortcut =

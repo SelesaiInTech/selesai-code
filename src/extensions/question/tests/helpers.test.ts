@@ -38,7 +38,6 @@ test("formatQuestionResponse maps stable values to labels", () => {
 		type: "multiselect",
 		options: [{ value: "a", label: "Alpha" }, { value: "b", label: "Beta" }],
 		allowOther: true,
-		allowComment: false,
 	};
 	assert.equal(formatQuestionResponse(question, { kind: "selection", values: ["b"], otherText: "Gamma" }), "Beta, Other: Gamma");
 });

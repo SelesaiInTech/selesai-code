@@ -19,6 +19,9 @@ test("QuestionParamsSchema rejects legacy and mistyped fields", () => {
 		questions: [{ ...valid.questions[0], allowMultiple: true }],
 	}), false);
 	assert.equal(Value.Check(QuestionParamsSchema, {
+		questions: [{ ...valid.questions[0], allowComment: true }],
+	}), false);
+	assert.equal(Value.Check(QuestionParamsSchema, {
 		questions: [{ type: "text", question: "Explain", options: [] }],
 	}), false);
 	assert.equal(Value.Check(QuestionParamsSchema, {

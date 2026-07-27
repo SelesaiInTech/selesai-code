@@ -14,7 +14,6 @@ const QuestionBase = {
 	label: Type.Optional(Type.String({ description: "Short page label. Defaults to Q1, Q2, and so on." })),
 	question: Type.String({ description: "Question shown to the user" }),
 	context: Type.Optional(Type.String({ description: "Optional plain-text context shown before the question" })),
-	allowComment: Type.Optional(Type.Boolean({ description: "Allow an optional multiline comment on the review page" })),
 };
 
 const SelectQuestionSchema = Type.Object({

@@ -4,7 +4,6 @@ import type { ExtensionAPI, KeybindingsManager, Theme } from "@selesai/code";
 import {
 	Container,
 	type Component,
-	CURSOR_MARKER,
 	Editor,
 	type EditorTheme,
 	Key,
@@ -296,83 +295,32 @@ class QuestionComponent extends Container implements Component {
 	}
 }
 
-interface ReviewEditor {
-	id: string;
-	questionIndex: number;
-	editor: Editor;
-}
-
 class ReviewComponent implements Component {
-	private editors: ReviewEditor[] = [];
-	private focusIndex = 0;
 	private focusedState = false;
 
 	constructor(
 		private questions: PreparedQuestion[],
 		private states: ReadonlyMap<string, DraftQuestionState>,
-		private comments: Map<string, string>,
-		private tui: TUI,
 		private theme: Theme,
 		private onBack: () => void,
 		private onCancel: () => void,
 		private onSubmit: () => void,
-	) {
-		for (let questionIndex = 0; questionIndex < questions.length; questionIndex++) {
-			const question = questions[questionIndex]!;
-			const state = states.get(question.id);
-			if (!question.allowComment || state?.status !== "answered") continue;
-			const editor = new Editor(tui, editorTheme(theme));
-			editor.setText(comments.get(question.id) ?? "");
-			editor.onChange = (text) => comments.set(question.id, text);
-			editor.onSubmit = (text) => {
-				const normalized = text.trim();
-				comments.set(question.id, normalized);
-				editor.setText(normalized);
-				this.moveFocus(1);
-			};
-			this.editors.push({ id: question.id, questionIndex, editor });
-		}
-		this.focusIndex = this.editors.length;
-		this.syncFocus();
-	}
+	) {}
 
 	get focused(): boolean {
 		return this.focusedState;
 	}
 	set focused(value: boolean) {
 		this.focusedState = value;
-		this.syncFocus();
 	}
 
-	private get submitFocused(): boolean {
-		return this.focusIndex === this.editors.length;
-	}
-
-	private syncFocus(): void {
-		this.editors.forEach(({ editor }, index) => {
-			editor.focused = this.focusedState && index === this.focusIndex;
-		});
-	}
-
-	private moveFocus(delta: number): void {
-		const count = this.editors.length + 1;
-		this.focusIndex = (this.focusIndex + delta + count) % count;
-		this.syncFocus();
-		this.tui.requestRender();
-	}
-
-	invalidate(): void {
-		for (const { editor } of this.editors) editor.invalidate();
-	}
+	invalidate(): void {}
 
 	render(width: number): string[] {
 		const safeWidth = Math.max(12, width);
 		const lines: string[] = [];
-		const blockRanges: Array<{ start: number; end: number; questionIndex: number }> = [];
-		for (let questionIndex = 0; questionIndex < this.questions.length; questionIndex++) {
-			const question = this.questions[questionIndex]!;
+		for (const question of this.questions) {
 			const state = this.states.get(question.id);
-			const start = lines.length;
 			const status = state?.status ?? "unanswered";
 			const marker = status === "answered" ? this.theme.fg("success", "✓") : status === "skipped" ? this.theme.fg("warning", "−") : this.theme.fg("dim", "○");
 			lines.push(truncateToWidth(`${marker} ${this.theme.fg("accent", this.theme.bold(question.label))} · ${this.theme.fg(status === "answered" ? "success" : status === "skipped" ? "warning" : "dim", status)}`, safeWidth, ""));
@@ -381,65 +329,29 @@ class ReviewComponent implements Component {
 				const preview = previewText(formatQuestionResponse(question, state.response));
 				lines.push(...wrapTextWithAnsi(`${this.theme.fg("dim", "Answer:")} ${this.theme.fg("text", preview)}`, safeWidth));
 			}
-			const reviewEditor = this.editors.find((entry) => entry.questionIndex === questionIndex);
-			if (reviewEditor) {
-				lines.push(this.theme.fg("dim", "Optional comment:"));
-				lines.push(...reviewEditor.editor.render(safeWidth));
-			}
 			lines.push("");
-			blockRanges.push({ start, end: lines.length, questionIndex });
 		}
 
 		const bodyBudget = Math.max(7, (process.stdout.rows || 24) - 9);
 		let body = lines;
 		if (lines.length > bodyBudget) {
-			let anchor = lines.length - 1;
-			if (!this.submitFocused) {
-				const markerLine = lines.findIndex((line) => line.includes(CURSOR_MARKER));
-				const editor = this.editors[this.focusIndex];
-				anchor = markerLine >= 0 ? markerLine : (blockRanges.find((range) => range.questionIndex === editor?.questionIndex)?.start ?? 0);
-			}
-			const start = Math.max(0, Math.min(lines.length - bodyBudget, anchor - Math.floor(bodyBudget / 2)));
-			body = lines.slice(start, start + bodyBudget);
-			if (start > 0) body[0] = this.theme.fg("dim", "↑ earlier answers");
-			if (start + bodyBudget < lines.length) body[body.length - 1] = this.theme.fg("dim", "↓ later answers");
+			body = lines.slice(-bodyBudget);
+			body[0] = this.theme.fg("dim", "↑ earlier answers");
 		}
-		const submit = this.submitFocused
-			? this.theme.bg("selectedBg", this.theme.fg("text", "  Submit  "))
-			: this.theme.fg("success", "  Submit  ");
+		const submit = this.theme.bg("selectedBg", this.theme.fg("text", "  Submit  "));
 		return [...body, truncateToWidth(submit, safeWidth, "")];
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, Key.tab)) {
-			this.moveFocus(1);
-			return;
-		}
-		if (matchesKey(data, Key.shift("tab"))) {
-			this.moveFocus(-1);
-			return;
-		}
-		if (this.submitFocused) {
-			if (matchesKey(data, Key.enter)) this.onSubmit();
-			else if (matchesKey(data, Key.left)) this.onBack();
-			else if (matchesKey(data, Key.escape)) this.onCancel();
-			return;
-		}
-		if (matchesKey(data, Key.escape)) {
-			this.focusIndex = this.editors.length;
-			this.syncFocus();
-			this.tui.requestRender();
-			return;
-		}
-		this.editors[this.focusIndex]?.editor.handleInput(data);
-		this.tui.requestRender();
+		if (matchesKey(data, Key.enter)) this.onSubmit();
+		else if (matchesKey(data, Key.left)) this.onBack();
+		else if (matchesKey(data, Key.escape)) this.onCancel();
 	}
 }
 
 class BatchQuestionComponent extends Container implements Component {
 	private currentPage = 0;
 	private states = new Map<string, DraftQuestionState>();
-	private comments = new Map<string, string>();
 	private questionComponent?: QuestionComponent;
 	private reviewComponent?: ReviewComponent;
 	private focusedState = false;
@@ -488,7 +400,7 @@ class BatchQuestionComponent extends Container implements Component {
 			const answered = [...this.states.values()].filter((state) => state.status === "answered").length;
 			const skipped = [...this.states.values()].filter((state) => state.status === "skipped").length;
 			this.header.setText(this.theme.fg("accent", this.theme.bold(`Review · ${answered} answered · ${skipped} skipped · ${this.questions.length - this.states.size} unanswered`)));
-			this.legend.setText(this.theme.fg("dim", "Tab/Shift+Tab fields • Enter save/submit • Shift+Enter newline • ← from Submit edits answers • Esc blur/cancel"));
+			this.legend.setText(this.theme.fg("dim", "Enter submit • ← edit answers • Esc cancel"));
 			return;
 		}
 		const question = this.questions[this.currentPage]!;
@@ -505,15 +417,13 @@ class BatchQuestionComponent extends Container implements Component {
 			this.reviewComponent = new ReviewComponent(
 				this.questions,
 				this.states,
-				this.comments,
-				this.tui,
 				this.theme,
 				() => {
 					this.currentPage = this.questions.length - 1;
 					this.showPage();
 				},
 				this.cancel,
-				() => this.onDone({ status: "submitted", answers: buildQuestionAnswers(this.questions, this.states, this.comments) }),
+				() => this.onDone({ status: "submitted", answers: buildQuestionAnswers(this.questions, this.states) }),
 			);
 			this.reviewComponent.focused = this.focusedState;
 			this.content.addChild(this.reviewComponent);
@@ -533,7 +443,7 @@ class BatchQuestionComponent extends Container implements Component {
 		if (this.isReviewPage || !this.questionComponent) return;
 		const question = this.questions[this.currentPage]!;
 		const response = this.questionComponent.getResponse();
-		saveDraftQuestion(this.states, this.comments, question.id, response, markBlankSkipped);
+		saveDraftQuestion(this.states, question.id, response, markBlankSkipped);
 	}
 
 	private goNext(): void {
@@ -571,16 +481,14 @@ class BatchQuestionComponent extends Container implements Component {
 
 function answerText(answer: QuestionAnswer): string {
 	if (answer.status !== "answered") return answer.status;
-	const comment = answer.comment ? ` — comment: ${answer.comment}` : "";
-	return `${formatResponseSummary(answer.response)}${comment}`;
+	return formatResponseSummary(answer.response);
 }
 
 function rawQuestionLabel(question: RawQuestion | undefined, answer: QuestionAnswer): string {
 	if (!question || answer.status !== "answered" || answer.response.kind === "text") return answerText(answer);
 	const labels = answer.response.values.map((value) => question.options.find((option) => option.value === value)?.label ?? value);
 	if (answer.response.otherText) labels.push(`Other: ${answer.response.otherText}`);
-	const comment = answer.comment ? ` — comment: ${answer.comment}` : "";
-	return `${labels.join(", ")}${comment}`;
+	return labels.join(", ");
 }
 
 export default function questionExtension(pi: ExtensionAPI) {
@@ -588,7 +496,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 		name: "question",
 		label: "Question",
 		description:
-			"Ask one or more typed questions in a terminal wizard. Supports select, multiselect, text, stable option values, Other answers, partial atomic submission, and optional review-page comments.",
+			"Ask one or more typed questions in a terminal wizard. Supports select, multiselect, text, stable option values, Other answers, and partial atomic submission.",
 		promptSnippet: "Ask the user one or more typed questions when a decision is required.",
 		promptGuidelines: [
 			"Use question only for decisions the user must make; inspect facts yourself.",
