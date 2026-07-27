@@ -1,0 +1,82 @@
+{
+  "runId": "edfb6986",
+  "agent": "commentator",
+  "task": "Read-only diagnosis. User reports pi-subagents inspector breaks after below-editor preview -> Down, Enter. Screenshot: inspector overlay seems duplicated/overflowed when child output long. Inspect src/extensions/pi-subagents/src/tui/{fleet.ts,fleet-transcript.ts,fleet-status.ts} and relevant TUI source. Identify exact likely failure path, evidence/line refs, minimal fix options. No edits.\n\n---\n**Output:**\nWrite your findings to exactly this path: /Users/andrewanggada/Documents/workdir/js_proj/selesai/.pi-subagents/artifacts/outputs/edfb6986/.selesai/artifacts/fleet-tui-diagnosis.md\nThis path is authoritative for this run.\nIgnore any other output filename or output path mentioned elsewhere, including output destinations in the base agent prompt, system prompt, or task instructions.",
+  "exitCode": 1,
+  "usage": {
+    "input": 666139,
+    "output": 1297,
+    "cacheRead": 109872,
+    "cacheWrite": 0,
+    "cost": 0.6641146499999999,
+    "turns": 17
+  },
+  "model": "tokenin/kimi-k2.7-code:high",
+  "attemptedModels": [
+    "tokenin/kimi-k2.7-code:high"
+  ],
+  "modelAttempts": [
+    {
+      "model": "tokenin/kimi-k2.7-code:high",
+      "success": false,
+      "exitCode": 1,
+      "error": "Subagent timed out after 120000ms.",
+      "usage": {
+        "input": 666139,
+        "output": 1297,
+        "cacheRead": 109872,
+        "cacheWrite": 0,
+        "cost": 0.6641146499999999,
+        "turns": 17
+      }
+    }
+  ],
+  "durationMs": 119980,
+  "toolCount": 22,
+  "error": "Subagent timed out after 120000ms.",
+  "launchContractDigest": "6db0416df3f5c941a00813a8ffd4e10a52d5b9498c298a189d02741f31457ada",
+  "acceptance": {
+    "status": "not-required",
+    "evidenceStatus": "not-required",
+    "explicit": true,
+    "effectiveAcceptance": {
+      "level": "none",
+      "explicit": true,
+      "inferredReason": [
+        "read-only/reviewer-style agent"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Return concrete findings with file paths and severity when applicable",
+          "evidence": [],
+          "severity": "required"
+        }
+      ],
+      "evidence": [],
+      "verify": [],
+      "stopRules": [],
+      "reason": "disabled by deprecated false shorthand"
+    },
+    "inferredReason": [
+      "read-only/reviewer-style agent"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Return concrete findings with file paths and severity when applicable",
+        "evidence": [],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [],
+    "verifyRuns": []
+  },
+  "transcriptPath": "/Users/andrewanggada/Documents/workdir/js_proj/selesai/.pi-subagents/artifacts/edfb6986_commentator_0_transcript.jsonl",
+  "skills": [
+    "ponytail",
+    "caveman",
+    "planger"
+  ],
+  "timestamp": 1785156911372
+}

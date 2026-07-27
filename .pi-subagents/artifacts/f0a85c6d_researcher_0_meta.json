@@ -1,0 +1,43 @@
+{
+  "runId": "f0a85c6d",
+  "agent": "researcher",
+  "task": "Research only; do not edit or implement anything. Determine the latest released/current upstream version of @mariozechner/pi-coding-agent as of 2026-07-20, then compare notable upstream changes with this local fork at /Users/andrewanggada/Documents/workdir/js_proj/selesai. Identify the fork's current upstream baseline/version and produce a prioritized list of updates that could be ported later. Use authoritative sources (upstream repository releases/tags/changelog/package metadata and local git/package files), cite URLs/commits/tags and exact local file paths/lines where possible. Pay special attention to fork-specific config-dir/name changes: never recommend blindly restoring `.pi` paths or upstream package aliases. Include compatibility risks and suggested verification commands. Research and report only—make no file changes.",
+  "exitCode": 1,
+  "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "cost": 0,
+    "turns": 0
+  },
+  "model": "kimi-k2.7-code:medium",
+  "attemptedModels": [
+    "kimi-k2.7-code:medium"
+  ],
+  "modelAttempts": [
+    {
+      "model": "kimi-k2.7-code:medium",
+      "success": false,
+      "exitCode": 1,
+      "error": "Warning: Extension \"copy-turn\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"copy-turn\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nWarning: Extension \"pi-powerline-footer\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"pi-powerline-footer\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nWarning: Extension \"question\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"question\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nWarning: Extension \"rtk\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"rtk\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nNo API key found for vercel-ai-gateway.\n\nUse /login to log into a provider via OAuth or API key. See:\n  /opt/homebrew/Cellar/node/24.7.0/lib/node_modules/@selesai/code/docs/providers.md\n  /opt/homebrew/Cellar/node/24.7.0/lib/node_modules/@selesai/code/docs/models.md\n\u001b[?2026h\u001b[r\u001b[?1006l\u001b[?1002l\u001b[?1000l\u001b[?1007h\u001b[?1049l\u001b[<999u\u001b[>4;0m\u001b[?2026l",
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0,
+        "turns": 0
+      }
+    }
+  ],
+  "durationMs": 5835,
+  "toolCount": 0,
+  "error": "Warning: Extension \"copy-turn\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"copy-turn\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nWarning: Extension \"pi-powerline-footer\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"pi-powerline-footer\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nWarning: Extension \"question\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"question\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nWarning: Extension \"rtk\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"rtk\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nNo API key found for vercel-ai-gateway.\n\nUse /login to log into a provider via OAuth or API key. See:\n  /opt/homebrew/Cellar/node/24.7.0/lib/node_modules/@selesai/code/docs/providers.md\n  /opt/homebrew/Cellar/node/24.7.0/lib/node_modules/@selesai/code/docs/models.md\n\u001b[?2026h\u001b[r\u001b[?1006l\u001b[?1002l\u001b[?1000l\u001b[?1007h\u001b[?1049l\u001b[<999u\u001b[>4;0m\u001b[?2026l",
+  "transcriptPath": "/Users/andrewanggada/Documents/workdir/js_proj/selesai/.pi-subagents/artifacts/f0a85c6d_researcher_0_transcript.jsonl",
+  "skills": [
+    "ponytail",
+    "caveman"
+  ],
+  "timestamp": 1784557106672
+}

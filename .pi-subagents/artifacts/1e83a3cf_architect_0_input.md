@@ -1,0 +1,6 @@
+# Task for architect
+
+You are a delegated subagent running from a fork of the parent session. Treat the inherited conversation as reference-only context, not a live thread to continue. Do not continue or answer prior messages as if they are waiting for a reply. Your sole job is to execute the task below and return a focused result for that task using your tools.
+
+Task:
+Create the complete concrete build plan for this task. Read the requirements artifact at `/Users/andrewanggada/Documents/workdir/js_proj/selesai/.selesai/artifacts/9a4fe92d-bdf3-41d5-98ff-b1bbacf313ce/requirements.md` and inspect both source repo `/Users/andrewanggada/Documents/workdir/js_proj/selesai` and empty target `/Users/andrewanggada/Documents/workdir/js_proj/selesai-docs` as needed. Plan exactly what to build, technical stack/architecture, content inventory/evidence approach, pages/components, i18n/search/accessibility/deployment, ordered implementation steps, verification, and what the finished prototype looks like. Be decisive; do not edit or write any artifact. Return the entire plan inline and end with exactly one final line by itself: `WORKFLOW_PLAN_STATUS: ready`.

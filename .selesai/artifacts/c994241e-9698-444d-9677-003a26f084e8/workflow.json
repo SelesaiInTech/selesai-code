@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "id": "c994241e-9698-444d-9677-003a26f084e8",
+  "mode": "task",
+  "status": "active",
+  "goal": "Fix stale bash tool command header after RTK tool_call mutation: TUI/stream events must display rewritten executed args, with regression test and minimal diff.",
+  "artifactDir": "/Users/andrewanggada/Documents/workdir/js_proj/selesai/.selesai/artifacts/c994241e-9698-444d-9677-003a26f084e8",
+  "phase": "loop",
+  "autoArmed": true,
+  "createdAt": "2026-07-23T19:21:19.820Z",
+  "updatedAt": "2026-07-23T20:11:50.643Z",
+  "loopState": {
+    "reviewRound": 3,
+    "maxIterations": 3,
+    "stage": "maxed",
+    "reviewPath": "loop-review-3.md"
+  }
+}

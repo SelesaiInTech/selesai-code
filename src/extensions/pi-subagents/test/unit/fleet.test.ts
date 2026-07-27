@@ -539,7 +539,7 @@ describe("native subagent fleet", () => {
 		}
 	});
 
-	it("refreshes the roster while the overlay remains open", async () => {
+	it("refreshes the roster while the inspector remains open", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-refresh-"));
 		try {
 			const state = stateForTest();

@@ -1,0 +1,39 @@
+{
+  "runId": "ffe5dd8f",
+  "agent": "reviewer",
+  "task": "Review the durable workflow-resume implementation against plan.md for correctness/regressions. Read only workflow-related diff and tests. Do not edit. Report only concrete defects with file/line and a minimal fix; say no findings if none.",
+  "exitCode": 1,
+  "usage": {
+    "input": 83634,
+    "output": 4407,
+    "cacheRead": 281600,
+    "cacheWrite": 0,
+    "cost": 0.34559,
+    "turns": 9
+  },
+  "model": "openai-codex/gpt-5.6-terra:high",
+  "attemptedModels": [
+    "openai-codex/gpt-5.6-terra:high"
+  ],
+  "modelAttempts": [
+    {
+      "model": "openai-codex/gpt-5.6-terra:high",
+      "success": false,
+      "exitCode": 1,
+      "error": "Subagent timed out after 120000ms.",
+      "usage": {
+        "input": 83634,
+        "output": 4407,
+        "cacheRead": 281600,
+        "cacheWrite": 0,
+        "cost": 0.34559,
+        "turns": 9
+      }
+    }
+  ],
+  "durationMs": 120024,
+  "toolCount": 19,
+  "error": "Subagent timed out after 120000ms.",
+  "transcriptPath": "/Users/andrewanggada/Documents/workdir/js_proj/selesai/.pi-subagents/artifacts/ffe5dd8f_reviewer_0_transcript.jsonl",
+  "timestamp": 1783709275364
+}

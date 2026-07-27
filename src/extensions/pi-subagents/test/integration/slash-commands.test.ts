@@ -2042,7 +2042,7 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 			);
 			rendered = component.render(100).join("\n");
 			component.dispose();
-			assert.deepEqual(options, { overlay: true, overlayOptions: { anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 } });
+			assert.equal(options, undefined);
 			return undefined;
 		};
 		const pi = {

@@ -653,10 +653,6 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 	try {
 		await ctx.ui.custom<undefined>(
 			(tui, theme, _keybindings, done) => new SubagentFleetComponent(tui, theme, state, done, options),
-			{
-				overlay: true,
-				overlayOptions: { anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 },
-			},
 		);
 	} finally {
 		state.fleetInspectorOpen = wasOpen;

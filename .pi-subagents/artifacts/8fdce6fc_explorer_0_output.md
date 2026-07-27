@@ -1,0 +1,1 @@
+Subagent exceeded turn budget after 6 assistant turns (soft limit 5 + grace 1).

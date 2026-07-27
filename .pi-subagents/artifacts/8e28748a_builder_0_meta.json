@@ -1,0 +1,43 @@
+{
+  "runId": "8e28748a",
+  "agent": "builder",
+  "task": "Take over and complete the partial task-workflow hardening work now. A previous builder left `src/extensions/workflow/task-validators.tss` (wrong extension) and partial changes. First rename/fix it to `.ts`, then implement the missing state-machine config and adapter behavior from `.selesai/artifacts/24dcbf40-8724-4270-bd71-a5c3423f56c5/plan.md`; update task mode, tests, and docs. Do edits and run tests—do not explain a plan. Keep all changes scoped to the task workflow.",
+  "exitCode": 143,
+  "usage": {
+    "input": 198484,
+    "output": 2938,
+    "cacheRead": 39520,
+    "cacheWrite": 0,
+    "cost": 0.2096978,
+    "turns": 12
+  },
+  "model": "tokenin/kimi-k2.7-code:high",
+  "attemptedModels": [
+    "tokenin/kimi-k2.7-code:high"
+  ],
+  "modelAttempts": [
+    {
+      "model": "tokenin/kimi-k2.7-code:high",
+      "success": false,
+      "exitCode": 143,
+      "error": "Warning: Extension \"copy-turn\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"copy-turn\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nWarning: Extension \"pi-powerline-footer\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"pi-powerline-footer\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nWarning: Extension \"question\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"question\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nWarning: Extension \"rtk\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"rtk\": \"pi\" } or \"selesai\" in settings.json to change the winner.\n\u001b[?2026h\u001b[r\u001b[?1006l\u001b[?1002l\u001b[?1000l\u001b[?1007h\u001b[?1049l\u001b[<999u\u001b[>4;0m\u001b[?2026l",
+      "usage": {
+        "input": 198484,
+        "output": 2938,
+        "cacheRead": 39520,
+        "cacheWrite": 0,
+        "cost": 0.2096978,
+        "turns": 12
+      }
+    }
+  ],
+  "durationMs": 131191,
+  "toolCount": 19,
+  "error": "Warning: Extension \"copy-turn\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"copy-turn\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nWarning: Extension \"pi-powerline-footer\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"pi-powerline-footer\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nWarning: Extension \"question\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"question\": \"pi\" } or \"selesai\" in settings.json to change the winner.\nWarning: Extension \"rtk\" exists in both ~/.selesai/agent/extensions and ~/.pi/agent/extensions; loaded the selesai copy, skipped the other. Set \"extensionHost\": { \"rtk\": \"pi\" } or \"selesai\" in settings.json to change the winner.\n\u001b[?2026h\u001b[r\u001b[?1006l\u001b[?1002l\u001b[?1000l\u001b[?1007h\u001b[?1049l\u001b[<999u\u001b[>4;0m\u001b[?2026l",
+  "transcriptPath": "/Users/andrewanggada/Documents/workdir/js_proj/selesai/.pi-subagents/artifacts/8e28748a_builder_0_transcript.jsonl",
+  "skills": [
+    "ponytail",
+    "implanger"
+  ],
+  "timestamp": 1783801803908
+}
