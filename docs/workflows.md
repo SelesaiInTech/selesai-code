@@ -20,7 +20,7 @@ src/extensions/workflow/
 - **`state-machine.ts`** is the deep module. It owns the phase graph, artifact gating, skip rules, the terminal close gate, and the reentrancy guard. It imports nothing external — no `node:fs`, no pi API, no `pi-tui`, no `typebox`. Every method returns a `WorkflowEffect` (a discriminated union in domain vocabulary) that the adapter pattern-matches on.
 - **`adapter.ts`** is the thin glue. It owns Pi/fs wiring, durable state, explicit resume, loop review persistence, and the git-based `reuse` skip predicate. Parent-written artifacts advance durable phase state and queue hidden engine continuations; every built-in mode flows automatically.
 - **`workflow.json`** in each artifact directory is the canonical, versioned run record. It is atomically replaced after state changes; session custom entries are only pointers for UI/history and never reconstruct an active run.
-- **`extension.ts`** imports each mode's registration object and calls `createWorkflowExtension(config, options)(pi)` for each. One extension load registers one shared writer plus `start_workflow`, `resume_workflow`, and `end_workflow`; each lifecycle call selects a mode.
+- **`extension.ts`** imports each mode's registration object and calls `createWorkflowExtension(config, options)(pi)` for each. One extension load registers the model-facing artifact writer and `end_workflow` tool. Starting and resuming are user-only actions exposed by each mode's slash command.
 - **A mode file** is pure data: the phase list, per-phase artifact filenames, prompt generators, terminal close artifacts, and command/status/entry identities. Prompts receive `{ artifactDir, userPrompt }`. Each mode exports a `WorkflowModeRegistration` object (e.g. `prototypeMode`, `quickMode`); it does not call `createWorkflowExtension` itself.
 
 ## To add a future mode
@@ -106,7 +106,7 @@ import { rigorousMode } from "./modes/rigorous.ts";
 const MODES = [prototypeMode, quickMode, rigorousMode] as const;
 ```
 
-That's it. The loader picks it up at boot (`package.json` loads only `./extension.ts`); the shared lifecycle tools accept `mode: "rigorous"`, and the `/rigorous` command is registered automatically. There is no `next` tool — phases auto-advance as artifacts land and only `end_workflow({ mode: "rigorous" })` completes the terminal phase.
+That's it. The loader picks it up at boot (`package.json` loads only `./extension.ts`), and the `/rigorous` command is registered automatically. There is no model-facing start/resume or `next` tool — users start and resume through `/rigorous`, phases auto-advance as artifacts land, and only `end_workflow({ mode: "rigorous" })` completes the terminal phase.
 
 ## Built-in modes
 
@@ -152,12 +152,12 @@ Each started workflow receives a UUID artifact directory under `.selesai/artifac
 
 Runs are **never** auto-resumed on session start. At most one run can be attached to a Pi instance, but older active runs remain resumable:
 
-- `start_workflow({ mode, goal })`, `resume_workflow({ mode, run: "<id-or-path>" })`, and `end_workflow({ mode })`, where `mode` is `prototype`, `quick`, or `task`
+- Workflow initiation is user-only: `/workflow-prototype <goal>`, `/workflow-quick <goal>`, or `/workflow-task <goal>`
 - `/workflow-prototype resume <id-or-artifact-dir-or-workflow.json>` / `/workflow-quick resume ...` / `/workflow-task resume ...`
 - `/workflow-prototype resume`, `/workflow-quick resume`, or `/workflow-task resume` lists active runs (and offers a UI picker when available).
 - `/workflow-prototype help`, `/workflow-quick help`, or `/workflow-task help` shows the start, resume, continue, and explicit-completion lifecycle.
 
-Resume validates the selected file is under the artifacts base, belongs to that mode, is active, and matches its containing directory. It reconciles the current expected artifact once before emitting the current prompt, covering a crash after `write_workflow_artifact` writes the file but before the phase-state write. Valid artifact writes queue one hidden engine-controlled continuation using `steer` and terminate the current parent turn; invalid writes stay in the current phase and do not terminate. Prompts injected by start, resume, and continue commands are hidden custom messages rather than visible synthetic user messages. Transition-capable calls (`write_workflow_artifact`, loop commentator transitions, and `end_workflow`) must be the sole tool call in their assistant batch; the adapter fails closed when that cannot be proven. Corrupt records are skipped during discovery. Reloads never auto-resume; explicit `resume_workflow` remains required.
+Resume validates the selected file is under the artifacts base, belongs to that mode, is active, and matches its containing directory. It reconciles the current expected artifact once before emitting the current prompt, covering a crash after `write_workflow_artifact` writes the file but before the phase-state write. Valid artifact writes queue one hidden engine-controlled continuation using `steer` and terminate the current parent turn; invalid writes stay in the current phase and do not terminate. Prompts injected by start, resume, and continue commands are hidden custom messages rather than visible synthetic user messages. Transition-capable calls (`write_workflow_artifact`, loop commentator transitions, and `end_workflow`) must be the sole tool call in their assistant batch; the adapter fails closed when that cannot be proven. Corrupt records are skipped during discovery. Reloads never auto-resume; the user must explicitly resume through a mode's slash command.
 
 A valid terminal artifact makes a workflow **terminal-ready**; it does not complete the run. Call `end_workflow({ mode })` to write `status: "completed"`, append the done entry, and terminate. This is the only completion path.
 

@@ -9,10 +9,11 @@
 	},
 	"peerDependencies": {
 		"@selesai/code": "*",
+		"@earendil-works/pi-ai": "*",
 		"@earendil-works/pi-tui": "*",
 		"typebox": "*"
 	},
 	"scripts": {
-		"test": "node --experimental-strip-types --test tests/**/*.test.ts"
+		"test": "tsx --test tests/**/*.test.ts"
 	}
 }

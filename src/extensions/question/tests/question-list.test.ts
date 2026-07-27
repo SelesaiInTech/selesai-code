@@ -36,7 +36,7 @@ const disabledShortcut: ResolvedShortcut = {
 	matches: ((_data: string) => false) as (data: string) => false,
 };
 
-const opts = (labels: string[]) => labels.map((label) => ({ label }));
+const opts = (labels: string[]) => labels.map((label) => ({ value: label, label }));
 
 // Terminal data bytes
 const ESC = "\x1b";
@@ -177,12 +177,12 @@ test("QuestionList: restores saved single-select cursor", () => {
 	assert.equal((list as any).selectedIndex, 1);
 });
 
-test("MultiSelect: confirm with nothing checked → fallback to highlighted label", () => {
+test("MultiSelect: confirm with nothing checked → empty selection", () => {
 	const list = new QuestionList(opts(["a", "b"]), MultiSelect, false, false, fakeTheme, fakeKeybindings(["tui.select.confirm"]), disabledShortcut);
 	let submitted: [string[], boolean] | null = null;
 	list.onSubmit = (selections, commentEnabled) => (submitted = [selections, commentEnabled]);
 	list.handleInput(ENTER);
-	assert.deepEqual(submitted, [["a"], false]); // highlighted fallback
+	assert.deepEqual(submitted, [[], false]);
 });
 
 test("MultiSelect: confirm with no options → onCancel", () => {

@@ -7,14 +7,12 @@ import {
 	type Component,
 	fuzzyFilter,
 	Key,
-	Markdown,
 	matchesKey,
 	truncateToWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
 import { COMMENT_TOGGLE_LABEL, SPLIT_PANE_LEFT_MIN_WIDTH, SPLIT_PANE_MIN_WIDTH, SPLIT_PANE_RIGHT_MIN_WIDTH, SPLIT_PANE_SEPARATOR } from "./constants.ts";
-import { safeMarkdownTheme } from "./helpers.ts";
 import { matchesDown, matchesUp } from "./navigation.ts";
 import { renderSingleSelectRows } from "./row-layout.ts";
 import type { QuestionOption, ResolvedShortcut } from "./types.ts";
@@ -67,15 +65,20 @@ export class QuestionList implements Component {
 		return this.commentEnabled;
 	}
 
-	restoreSelection(selections: readonly string[], comment?: string): void {
-		const indexes = selections
-			.map((label) => this.options.findIndex((option) => option.label === label))
+	restoreSelection(values: readonly string[], comment?: string): void {
+		const indexes = values
+			.map((value) => this.options.findIndex((option) => option.value === value))
 			.filter((index) => index >= 0);
 		this.checked = new Set(indexes);
 		this.selectedIndex = indexes[0] ?? 0;
 		this.commentEnabled = Boolean(comment);
 		this.searchQuery = "";
 		this.invalidate();
+	}
+
+	getCheckedValues(): string[] {
+		if (!this.selectionMode.multi) return [];
+		return this.selectionMode.buildResult({ selectedIndex: this.selectedIndex, checked: this.checked, options: this.options });
 	}
 
 	setMaxVisibleRows(rows: number): void {
@@ -212,7 +215,6 @@ export class QuestionList implements Component {
 
 	private buildPreviewLines(width: number, filtered: QuestionOption[], maxLines: number): string[] {
 		if (maxLines <= 0) return [];
-		const mdTheme = safeMarkdownTheme();
 		let md = "";
 
 		if (this.isCommentToggleRow(this.selectedIndex, filtered)) {
@@ -234,14 +236,9 @@ export class QuestionList implements Component {
 			}
 		}
 
-		let lines: string[];
-		if (mdTheme) {
-			lines = new Markdown(md.trim(), 0, 0, mdTheme).render(width);
-		} else {
-			lines = [];
-			for (const line of wrapTextWithAnsi(md.trim(), Math.max(10, width))) {
-				lines.push(truncateToWidth(line, width, ""));
-			}
+		const lines: string[] = [];
+		for (const line of wrapTextWithAnsi(md.trim(), Math.max(10, width))) {
+			lines.push(truncateToWidth(line, width, ""));
 		}
 		while (lines.length > 0 && lines[lines.length - 1]?.trim() === "") lines.pop();
 		if (lines.length <= maxLines) return lines;
@@ -317,7 +314,7 @@ export class QuestionList implements Component {
 				this.onEnterFreeform?.();
 				return;
 			}
-			const result = filtered[this.selectedIndex]?.label;
+			const result = filtered[this.selectedIndex]?.value;
 			if (result) this.onSubmit?.([result], this.commentEnabled);
 			else this.onCancel?.();
 			return;
@@ -404,8 +401,7 @@ export class QuestionList implements Component {
 				checked: this.checked,
 				options: this.options,
 			});
-			if (result.length > 0) this.onSubmit?.(result, this.commentEnabled);
-			else this.onCancel?.();
+			this.onSubmit?.(result, this.commentEnabled);
 		}
 	}
 

@@ -572,54 +572,6 @@ function unknownMode(mode: string) {
   };
 }
 
-async function startController(controller: WorkflowController, goal: string, ctx: ExtensionContext) {
-  const { pi, config, sm, deps } = controller;
-  const other = activeControllersFor(pi).find((candidate) => candidate.sm !== sm);
-  if (other) {
-    return {
-      content: [{ type: "text" as const, text: `A ${other.config.mode} workflow is already active (phase: ${other.sm.snapshot.phase}). Close it before starting ${config.mode}.` }],
-      details: { phase: other.sm.snapshot.phase, alreadyActive: true },
-    };
-  }
-  const before = checkpoint(controller);
-  const eff = await sm.start(goal, deps);
-  if (eff.kind === "started") {
-    controller.run = {
-      version: 1,
-      id: basename(sm.snapshot.artifactDir),
-      mode: config.mode,
-      status: "active",
-      goal: sm.snapshot.userPrompt,
-      artifactDir: sm.snapshot.artifactDir,
-      phase: sm.snapshot.phase,
-      autoArmed: sm.snapshot.autoArmed,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    try {
-      await persistAfter(controller, before);
-    } catch (error) {
-      return {
-        content: [{ type: "text" as const, text: `Could not start durable workflow: ${error instanceof Error ? error.message : String(error)}` }],
-        details: { persistenceError: true },
-      };
-    }
-    controller.seenToolCallIds.clear();
-    controller.lastBlockedKey = undefined;
-  }
-  applyControllerEffect(controller, ctx, eff, { queuePrompt: false });
-  if (eff.kind === "alreadyActive") {
-    return {
-      content: [{ type: "text" as const, text: `A ${config.mode} workflow is already active (phase: ${eff.phase}). Do not call start_workflow again. Phases auto-advance as artifacts land; call end_workflow only from the final phase.` }],
-      details: { phase: eff.phase, alreadyActive: true },
-    };
-  }
-  return {
-    content: [{ type: "text" as const, text: `${config.footerLabel} workflow started. ${eff.prompt}` }],
-    details: { mode: config.mode, phase: eff.phase },
-  };
-}
-
 async function endController(controller: WorkflowController, ctx: ExtensionContext) {
   const { config, sm, deps } = controller;
   const before = checkpoint(controller);
@@ -669,32 +621,8 @@ async function endController(controller: WorkflowController, ctx: ExtensionConte
 function registerSharedWorkflowTools(pi: ExtensionAPI): void {
   if (registry.toolsRegisteredFor.has(pi)) return;
   registry.toolsRegisteredFor.add(pi);
-  pi.registerTool({
-    name: "start_workflow",
-    label: "Start Workflow",
-    description: "Start a durable workflow. Select prototype, quick, or task; do not call while another workflow is active.",
-    parameters: Type.Object({
-      mode: Type.String({ description: "Workflow mode: prototype, quick, task, or another installed mode." }),
-      goal: Type.String(),
-    }),
-    async execute(_id, params, _signal, _onUpdate, ctx) {
-      const controller = controllerForMode(pi, params.mode);
-      return controller ? startController(controller, params.goal, ctx) : unknownMode(params.mode);
-    },
-  } satisfies ToolDefinition);
-  pi.registerTool({
-    name: "resume_workflow",
-    label: "Resume Workflow",
-    description: "Resume a durable workflow by mode and selected run id, artifact directory, or workflow.json path.",
-    parameters: Type.Object({
-      mode: Type.String({ description: "Workflow mode: prototype, quick, task, or another installed mode." }),
-      run: Type.String(),
-    }),
-    async execute(_id, params, _signal, _onUpdate, ctx) {
-      const controller = controllerForMode(pi, params.mode);
-      return controller ? resumeController(controller, ctx, params.run, "end_workflow") : unknownMode(params.mode);
-    },
-  } satisfies ToolDefinition);
+  // Starting and resuming are user-only slash-command actions. Exposing them
+  // as model tools lets an agent opt the user into a workflow unprompted.
   pi.registerTool({
     name: "end_workflow",
     label: "End Workflow",
@@ -733,8 +661,8 @@ export function createWorkflowExtension(
     const { mode, footerLabel } = config;
     const end = "end_workflow";
 
-    // Workflow lifecycle tools are registered once per Pi instance below.
-    // They dispatch by `mode`; mode-specific tool aliases are intentionally absent.
+    // Workflow tools are registered once per Pi instance below. Starting and
+    // resuming remain user-only through the mode-specific slash commands.
     // ── session_start: disk state is never auto-attached. A session entry is
     // merely a convenience pointer for rendering a stale-but-useful footer. ──
     pi.on("session_start", async (_event: any, ctx: ExtensionContext) => {

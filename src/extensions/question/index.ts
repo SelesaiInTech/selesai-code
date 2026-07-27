@@ -1,420 +1,458 @@
-// Question extension entry point.
-// Owns: QuestionComponent (mode-switching + editor lifecycle + box borders),
-// tool registration, execute() orchestration via UIProtocol.
+// Batch-first interactive question tool.
 
 import type { ExtensionAPI, KeybindingsManager, Theme } from "@selesai/code";
 import {
 	Container,
 	type Component,
+	CURSOR_MARKER,
 	Editor,
 	type EditorTheme,
 	Key,
-	Markdown,
 	matchesKey,
 	Spacer,
 	Text,
 	type TUI,
 	truncateToWidth,
+	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
-import { prepareBatchQuestions } from "./batch.ts";
-import { BOX_BORDER_LEFT, BOX_BORDER_OVERHEAD, BOX_BORDER_RIGHT, QUESTION_VERSION } from "./constants.ts";
-import { askBatchViaDialogs, DialogFallback } from "./dialog-adapter.ts";
-import { createFreeformResponse, createSelectionResponse, formatOptionsForMessage, formatResponseSummary, getOptionsFormatError, normalizeOptions, oneLine, safeMarkdownTheme } from "./helpers.ts";
+import { buildQuestionAnswers, prepareQuestions, saveDraftQuestion } from "./batch.ts";
+import { BOX_BORDER_LEFT, BOX_BORDER_OVERHEAD, BOX_BORDER_RIGHT, DISABLED_SHORTCUT, QUESTION_VERSION } from "./constants.ts";
+import { createSelectionResponse, createTextResponse, formatQuestionResponse, formatResponseSummary, oneLine, previewText, trimText } from "./helpers.ts";
 import { QuestionList } from "./question-list.ts";
 import { MultiSelect, SingleSelect } from "./selection-mode.ts";
-import { resolveShortcuts } from "./shortcuts.ts";
 import { QuestionParamsSchema } from "./schemas.ts";
-import type { BatchAnswer, BatchQuestionDetails, BatchedQuestion, QuestionDetails, QuestionMode, QuestionOption, QuestionResponse, RawOption, ResolvedShortcuts } from "./types.ts";
-import { createTUIProtocol } from "./tui-adapter.ts";
-import type { CustomFactory, UIProtocol } from "./ui-protocol.ts";
-
-// ---------------------------------------------------------------------------
-// Box borders (manual ANSI components, self-contained)
-// ---------------------------------------------------------------------------
+import type {
+	DraftQuestionState,
+	PreparedQuestion,
+	QuestionAnswer,
+	QuestionMode,
+	QuestionResponse,
+	QuestionToolResult,
+	RawQuestion,
+} from "./types.ts";
 
 class BoxBorderTop implements Component {
 	constructor(
-		private color: (s: string) => string,
-		private title?: string,
-		private titleColor?: (s: string) => string,
+		private color: (value: string) => string,
+		private title: string,
+		private titleColor: (value: string) => string,
 	) {}
 	invalidate(): void {}
 	render(width: number): string[] {
 		const inner = Math.max(0, width - 2);
-		if (!this.title || inner < this.title.length + 4) {
-			return [this.color(`╭${"─".repeat(inner)}╮`)];
-		}
 		const label = ` ${this.title} `;
-		const remaining = inner - 1 - label.length;
-		const titleStyle = this.titleColor ?? this.color;
-		return [this.color("╭─") + titleStyle(label) + this.color("─".repeat(Math.max(0, remaining)) + "╮")];
+		if (inner < label.length + 2) return [this.color(`╭${"─".repeat(inner)}╮`)];
+		return [this.color("╭─") + this.titleColor(label) + this.color(`${"─".repeat(Math.max(0, inner - label.length - 1))}╮`)];
 	}
 }
 
 class BoxBorderBottom implements Component {
 	constructor(
-		private color: (s: string) => string,
-		private label?: string,
-		private labelColor?: (s: string) => string,
+		private color: (value: string) => string,
+		private label: string,
+		private labelColor: (value: string) => string,
 	) {}
 	invalidate(): void {}
 	render(width: number): string[] {
 		const inner = Math.max(0, width - 2);
-		if (!this.label || inner < this.label.length + 4) {
-			return [this.color(`╰${"─".repeat(inner)}╯`)];
-		}
-		const tag = ` ${this.label} `;
-		const leftDashes = inner - tag.length - 1;
-		const style = this.labelColor ?? this.color;
-		return [this.color("╰" + "─".repeat(Math.max(0, leftDashes))) + style(tag) + this.color("─╯")];
+		const label = ` ${this.label} `;
+		if (inner < label.length + 2) return [this.color(`╰${"─".repeat(inner)}╯`)];
+		return [this.color(`╰${"─".repeat(Math.max(0, inner - label.length - 1))}`) + this.labelColor(label) + this.color("─╯")];
 	}
 }
 
-function createEditorTheme(theme: Theme): EditorTheme {
+function editorTheme(theme: Theme): EditorTheme {
 	return {
-		borderColor: (s) => theme.fg("accent", s),
+		borderColor: (value) => theme.fg("accent", value),
 		selectList: {
-			selectedPrefix: (t) => theme.fg("accent", t),
-			selectedText: (t) => theme.fg("accent", t),
-			description: (t) => theme.fg("muted", t),
-			scrollInfo: (t) => theme.fg("dim", t),
-			noMatch: (t) => theme.fg("warning", t),
+			selectedPrefix: (value) => theme.fg("accent", value),
+			selectedText: (value) => theme.fg("accent", value),
+			description: (value) => theme.fg("muted", value),
+			scrollInfo: (value) => theme.fg("dim", value),
+			noMatch: (value) => theme.fg("warning", value),
 		},
 	};
 }
 
-// ---------------------------------------------------------------------------
-// Question component (Container-based layout)
-// ---------------------------------------------------------------------------
-
 class QuestionComponent extends Container implements Component {
-	private mode: QuestionMode = "select";
-	private pendingSelections: string[] = [];
-	private freeformDraft = "";
-	private commentDraft = "";
-
-	private titleText: Text;
-	private questionText: Text;
-	private contextComponent?: Component;
-	private savedAnswerText?: Text;
-	private modeContainer: Container;
-	private helpText: Text;
-
+	private mode: QuestionMode;
+	private selectionValues: string[] = [];
+	private otherDraft = "";
 	private list?: QuestionList;
 	private editor?: Editor;
-
-	private _focused = false;
+	private editorActive = true;
+	private focusedState = false;
+	private answerText = new Text("", 1, 0);
+	private modeContainer = new Container();
+	private helpText = new Text("", 1, 0);
 
 	constructor(
-		private question: string,
-		private context: string | undefined,
-		private options: QuestionOption[],
-		private allowMultiple: boolean,
-		private allowFreeform: boolean,
-		private allowComment: boolean,
+		private question: PreparedQuestion,
 		private tui: TUI,
 		private theme: Theme,
 		private keybindings: KeybindingsManager,
-		private shortcuts: ResolvedShortcuts,
-		private onDone: (result: QuestionResponse | null) => void,
-		private initialAnswer?: QuestionResponse,
+		private onCancel: () => void,
+		initialResponse?: QuestionResponse,
 	) {
 		super();
-
-		this.addChild(
-			new BoxBorderTop(
-				(s: string) => theme.fg("accent", s),
-				"question",
-				(s: string) => theme.fg("dim", theme.bold(s)),
-			),
-		);
+		this.mode = question.type === "text" ? "text" : "select";
+		this.addChild(new BoxBorderTop((value) => theme.fg("accent", value), "question", (value) => theme.fg("dim", theme.bold(value))));
 		this.addChild(new Spacer(1));
-
-		this.titleText = new Text("", 1, 0);
-		this.addChild(this.titleText);
-		this.addChild(new Spacer(1));
-
-		this.questionText = new Text("", 1, 0);
-		this.addChild(this.questionText);
-
-		if (this.context) {
+		this.addChild(new Text(theme.fg("text", theme.bold(question.question)), 1, 0));
+		if (question.context) {
 			this.addChild(new Spacer(1));
-			const mdTheme = safeMarkdownTheme();
-			if (mdTheme) {
-				this.contextComponent = new Markdown(`**Context:**\n${this.context}`, 1, 0, mdTheme);
-			} else {
-				this.contextComponent = new Text(`${theme.fg("accent", theme.bold("Context:"))}\n${theme.fg("dim", this.context)}`, 1, 0);
-			}
-			this.addChild(this.contextComponent);
+			this.addChild(new Text(`${theme.fg("accent", theme.bold("Context:"))}\n${theme.fg("dim", question.context)}`, 1, 0));
 		}
-
-		if (this.initialAnswer?.kind === "selection") {
-			this.addChild(new Spacer(1));
-			this.savedAnswerText = new Text("", 1, 0);
-			this.addChild(this.savedAnswerText);
-		}
-
 		this.addChild(new Spacer(1));
-
-		this.modeContainer = new Container();
+		this.addChild(this.answerText);
+		this.addChild(new Spacer(1));
 		this.addChild(this.modeContainer);
-
 		this.addChild(new Spacer(1));
-		this.helpText = new Text("", 1, 0);
 		this.addChild(this.helpText);
-
 		this.addChild(new Spacer(1));
-		this.addChild(new BoxBorderBottom((s: string) => theme.fg("accent", s), `v${QUESTION_VERSION}`, (s: string) => theme.fg("dim", s)));
-
-		this.updateStaticText();
-		this.restoreInitialAnswer();
+		this.addChild(new BoxBorderBottom((value) => theme.fg("accent", value), `v${QUESTION_VERSION}`, (value) => theme.fg("dim", value)));
+		this.restore(initialResponse);
+		this.rebuildMode();
 	}
 
 	get focused(): boolean {
-		return this._focused;
+		return this.focusedState;
+	}
+	set focused(value: boolean) {
+		this.focusedState = value;
+		if (this.editor) this.editor.focused = value && this.editorActive;
 	}
 
 	get isEditing(): boolean {
-		return this.mode === "freeform" || this.mode === "comment";
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-		if (this.editor && (this.mode === "freeform" || this.mode === "comment")) {
-			(this.editor as any).focused = value;
-		}
-	}
-
-	override invalidate(): void {
-		super.invalidate();
-		this.updateStaticText();
-		this.updateHelpText();
+		return (this.mode === "text" || this.mode === "other") && this.editorActive;
 	}
 
 	override render(width: number): string[] {
 		const innerWidth = Math.max(1, width - BOX_BORDER_OVERHEAD);
-		const rawLines = super.render(innerWidth);
-		const borderColor = (s: string) => this.theme.fg("accent", s);
-		const titleColor = (s: string) => this.theme.fg("dim", this.theme.bold(s));
-		return rawLines.map((line, index) => {
-			if (index === 0) return new BoxBorderTop(borderColor, "question", titleColor).render(width)[0];
-			if (index === rawLines.length - 1)
-				return new BoxBorderBottom(borderColor, `v${QUESTION_VERSION}`, (s: string) => this.theme.fg("dim", s)).render(width)[0];
-			const padded = truncateToWidth(line, innerWidth, "", true);
-			return `${borderColor(BOX_BORDER_LEFT)}${padded}${borderColor(BOX_BORDER_RIGHT)}`;
+		const lines = super.render(innerWidth);
+		const border = (value: string) => this.theme.fg("accent", value);
+		return lines.map((line, index) => {
+			if (index === 0) return new BoxBorderTop(border, "question", (value) => this.theme.fg("dim", this.theme.bold(value))).render(width)[0]!;
+			if (index === lines.length - 1) return new BoxBorderBottom(border, `v${QUESTION_VERSION}`, (value) => this.theme.fg("dim", value)).render(width)[0]!;
+			return `${border(BOX_BORDER_LEFT)}${truncateToWidth(line, innerWidth, "", true)}${border(BOX_BORDER_RIGHT)}`;
 		});
 	}
 
-	private updateStaticText(): void {
-		const theme = this.theme;
-		const title = this.mode === "comment" ? "Optional comment" : "Question";
-		this.titleText.setText(theme.fg("accent", theme.bold(title)));
-		this.questionText.setText(theme.fg("text", theme.bold(this.question)));
-		if (this.savedAnswerText && this.initialAnswer?.kind === "selection") {
-			this.savedAnswerText.setText(`${theme.fg("success", "Saved answer:")} ${theme.fg("text", formatResponseSummary(this.initialAnswer))}`);
-		}
-		if (this.contextComponent && this.context) {
-			const mdTheme = safeMarkdownTheme();
-			if (mdTheme && this.contextComponent instanceof Markdown) {
-				(this.contextComponent as Markdown).setText(`**Context:**\n${this.context}`);
-			} else {
-				(this.contextComponent as Text).setText(`${theme.fg("accent", theme.bold("Context:"))}\n${theme.fg("dim", this.context)}`);
-			}
-		}
+	override invalidate(): void {
+		super.invalidate();
+		this.updateAnswerText();
+		this.updateHelp();
 	}
 
-	private updateHelpText(): void {
-		const theme = this.theme;
-		const kb = this.keybindings;
-		const commentHint =
-			this.allowComment && !this.shortcuts.commentToggle.disabled
-				? `${theme.fg("dim", this.shortcuts.commentToggle.spec)}${theme.fg("muted", " toggle context")}`
-				: null;
-
-		if (this.mode === "freeform" || this.mode === "comment") {
-			const hints = [
-				`${theme.fg("dim", kb.getKeys("tui.input.submit").join("/"))}${theme.fg("muted", this.mode === "comment" ? " submit/skip" : " submit")}`,
-				`${theme.fg("dim", kb.getKeys("tui.input.newLine").join("/"))}${theme.fg("muted", " newline")}`,
-				`${theme.fg("dim", "esc")}${theme.fg("muted", " back")}`,
-			]
-				.filter((h): h is string => !!h)
-				.join(" • ");
-			this.helpText.setText(theme.fg("dim", hints));
+	private restore(response?: QuestionResponse): void {
+		if (!response) return;
+		if (response.kind === "text") {
+			this.mode = "text";
+			this.ensureEditor().setText(response.text);
 			return;
 		}
-
-		if (this.allowMultiple) {
-			const hints = [
-				`${theme.fg("dim", "↑↓")}${theme.fg("muted", " navigate")}`,
-				`${theme.fg("dim", "space")}${theme.fg("muted", " toggle")}`,
-				commentHint,
-				`${theme.fg("dim", kb.getKeys("tui.select.confirm").join("/"))}${theme.fg("muted", " submit")}`,
-				`${theme.fg("dim", kb.getKeys("tui.select.cancel").join("/"))}${theme.fg("muted", " cancel")}`,
-			]
-				.filter((h): h is string => !!h)
-				.join(" • ");
-			this.helpText.setText(theme.fg("dim", hints));
-		} else {
-			const hints = [
-				`${theme.fg("dim", "type")}${theme.fg("muted", " filter")}`,
-				`${theme.fg("dim", kb.getKeys("tui.editor.deleteCharBackward").join("/"))}${theme.fg("muted", " erase")}`,
-				`${theme.fg("dim", "↑↓")}${theme.fg("muted", " navigate")}`,
-				commentHint,
-				`${theme.fg("dim", kb.getKeys("tui.select.confirm").join("/"))}${theme.fg("muted", " select")}`,
-				`${theme.fg("dim", "esc")}${theme.fg("muted", " clear/cancel")}`,
-			]
-				.filter((h): h is string => !!h)
-				.join(" • ");
-			this.helpText.setText(theme.fg("dim", hints));
+		this.selectionValues = [...response.values];
+		this.otherDraft = response.otherText ?? "";
+		this.ensureList().restoreSelection(response.values);
+		if (response.otherText) {
+			this.mode = "other";
+			this.ensureEditor().setText(response.otherText);
 		}
-	}
-
-	private restoreInitialAnswer(): void {
-		if (!this.initialAnswer) {
-			this.showSelectMode();
-			return;
-		}
-		if (this.initialAnswer.kind === "freeform") {
-			this.freeformDraft = this.initialAnswer.text;
-			this.showFreeformMode();
-			return;
-		}
-		this.ensureList().restoreSelection(this.initialAnswer.selections, this.initialAnswer.comment);
-		if (this.initialAnswer.comment) {
-			this.pendingSelections = [...this.initialAnswer.selections];
-			this.commentDraft = this.initialAnswer.comment;
-			this.showCommentMode();
-			return;
-		}
-		this.showSelectMode();
 	}
 
 	private ensureList(): QuestionList {
 		if (this.list) return this.list;
+		const multi = this.question.type === "multiselect";
 		const list = new QuestionList(
-			this.options,
-			this.allowMultiple ? MultiSelect : SingleSelect,
-			this.allowFreeform,
-			this.allowComment,
+			this.question.options,
+			multi ? MultiSelect : SingleSelect,
+			this.question.allowOther,
+			false,
 			this.theme,
 			this.keybindings,
-			this.shortcuts.commentToggle,
+			DISABLED_SHORTCUT,
 		);
-		list.onSubmit = (selections, commentEnabled) => this.handleSelectionSubmit(selections, commentEnabled);
-		list.onCancel = () => this.onDone(null);
-		list.onEnterFreeform = () => this.showFreeformMode();
+		list.onSubmit = (values) => {
+			this.selectionValues = values;
+			if (!multi) this.otherDraft = "";
+			this.updateAnswerText();
+			this.tui.requestRender();
+		};
+		list.onEnterFreeform = () => this.showOther();
+		list.onCancel = this.onCancel;
 		this.list = list;
 		return list;
 	}
 
 	private ensureEditor(): Editor {
 		if (this.editor) return this.editor;
-		const editor = new Editor(this.tui, createEditorTheme(this.theme));
-		editor.onSubmit = (text: string) => this.handleEditorSubmit(text);
+		const editor = new Editor(this.tui, editorTheme(this.theme));
+		editor.onChange = () => {
+			this.updateAnswerText();
+			this.tui.requestRender();
+		};
+		editor.onSubmit = (text) => {
+			editor.setText(text.trim());
+			this.updateAnswerText();
+			this.tui.requestRender();
+		};
 		this.editor = editor;
 		return editor;
 	}
 
-	private handleSelectionSubmit(selections: string[], wantsComment: boolean): void {
-		if (this.allowComment && wantsComment) {
-			this.pendingSelections = selections;
-			this.commentDraft = "";
-			this.showCommentMode();
-			return;
-		}
-		this.onDone(createSelectionResponse(selections) ?? null);
+	private showOther(): void {
+		this.mode = "other";
+		this.editorActive = true;
+		const editor = this.ensureEditor();
+		editor.setText(this.otherDraft);
+		this.rebuildMode();
 	}
 
-	private handleEditorSubmit(text: string): void {
-		if (this.mode === "freeform") {
-			const r = createFreeformResponse(text);
-			this.onDone(r ?? null);
-			return;
-		}
-		if (this.mode === "comment") {
-			this.commentDraft = text;
-			this.onDone(createSelectionResponse(this.pendingSelections, text) ?? null);
-		}
-	}
-
-	private showSelectMode(): void {
+	private showSelect(): void {
+		if (this.mode === "other") this.otherDraft = this.ensureEditor().getText();
 		this.mode = "select";
-		this.pendingSelections = [];
+		this.editorActive = false;
+		this.rebuildMode();
+	}
+
+	private rebuildMode(): void {
 		this.modeContainer.clear();
-		this.modeContainer.addChild(this.ensureList());
-		this.updateHelpText();
+		if (this.mode === "select") {
+			this.modeContainer.addChild(this.ensureList());
+		} else {
+			const editor = this.ensureEditor();
+			editor.focused = this.focusedState && this.editorActive;
+			this.modeContainer.addChild(new Text(this.theme.fg("accent", this.theme.bold(this.mode === "text" ? "Answer" : "Other answer")), 1, 0));
+			this.modeContainer.addChild(new Spacer(1));
+			this.modeContainer.addChild(editor);
+		}
+		this.updateAnswerText();
+		this.updateHelp();
 		this.invalidate();
 		this.tui.requestRender();
 	}
 
-	private showFreeformMode(): void {
-		this.mode = "freeform";
-		this.modeContainer.clear();
-		const editor = this.ensureEditor();
-		(editor as any).setText?.(this.freeformDraft);
-		(editor as any).focused = this._focused;
-		this.modeContainer.addChild(new Text(this.theme.fg("accent", this.theme.bold("Custom response")), 1, 0));
-		this.modeContainer.addChild(new Spacer(1));
-		this.modeContainer.addChild(editor);
-		this.updateHelpText();
-		this.invalidate();
-		this.tui.requestRender();
+	private updateAnswerText(): void {
+		const response = this.getResponse();
+		this.answerText.setText(
+			response
+				? `${this.theme.fg("success", "Draft:")} ${this.theme.fg("text", oneLine(formatQuestionResponse(this.question, response), 160))}`
+				: this.theme.fg("dim", "No answer yet"),
+		);
 	}
 
-	private showCommentMode(): void {
-		this.mode = "comment";
-		this.modeContainer.clear();
-		const editor = this.ensureEditor();
-		(editor as any).setText?.(this.commentDraft);
-		(editor as any).focused = this._focused;
-		const label = this.pendingSelections.length === 1 ? "Selected option:" : "Selected options:";
-		this.modeContainer.addChild(new Text(this.theme.fg("accent", this.theme.bold(label)), 1, 0));
-		this.modeContainer.addChild(new Text(this.theme.fg("text", this.pendingSelections.join(", ")), 1, 0));
-		this.modeContainer.addChild(new Spacer(1));
-		this.modeContainer.addChild(editor);
-		this.updateHelpText();
-		this.invalidate();
-		this.tui.requestRender();
+	private updateHelp(): void {
+		if (this.mode === "select") {
+			const multi = this.question.type === "multiselect";
+			this.helpText.setText(
+				this.theme.fg(
+					"dim",
+					multi
+						? "↑↓ navigate • space toggle • enter save selection • Tab/→ next • Shift+Tab/← previous • esc cancel"
+						: "type filter • ↑↓ navigate • enter save choice • Tab/→ next • Shift+Tab/← previous • esc cancel",
+				),
+			);
+			return;
+		}
+		this.helpText.setText(
+			this.theme.fg(
+				"dim",
+				`${this.keybindings.getKeys("tui.input.submit").join("/")} save • ${this.keybindings.getKeys("tui.input.newLine").join("/")} newline • Tab next • Shift+Tab previous • esc ${this.mode === "other" ? "choices" : "blur"}`,
+			),
+		);
+	}
+
+	getResponse(): QuestionResponse | null {
+		if (this.question.type === "text") return createTextResponse(this.ensureEditor().getText());
+		const values = this.question.type === "multiselect" ? this.ensureList().getCheckedValues() : this.selectionValues;
+		const otherText = this.mode === "other" ? this.ensureEditor().getText() : this.otherDraft;
+		return createSelectionResponse(this.question.type === "select" && trimText(otherText) ? [] : values, otherText);
 	}
 
 	handleInput(data: string): void {
-		if (this.mode === "freeform" || this.mode === "comment") {
-			if (matchesKey(data, Key.escape)) {
-				this.showSelectMode();
-				return;
-			}
-			if (this.keybindings.matches(data, "tui.select.cancel")) {
-				this.onDone(null);
-				return;
-			}
-			this.ensureEditor().handleInput(data);
+		if (this.mode === "other" && matchesKey(data, Key.escape)) {
+			this.showSelect();
+			return;
+		}
+		if (this.mode === "text" && matchesKey(data, Key.escape) && this.editorActive) {
+			this.editorActive = false;
+			this.ensureEditor().focused = false;
+			this.updateHelp();
 			this.tui.requestRender();
 			return;
 		}
-		this.ensureList().handleInput(data);
+		if ((this.mode === "text" || this.mode === "other") && !this.editorActive) {
+			if (matchesKey(data, Key.enter)) {
+				this.editorActive = true;
+				this.ensureEditor().focused = this.focusedState;
+				this.tui.requestRender();
+			}
+			return;
+		}
+		if (this.mode === "text" || this.mode === "other") this.ensureEditor().handleInput(data);
+		else this.ensureList().handleInput(data);
 		this.tui.requestRender();
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Batched-question component
-// ---------------------------------------------------------------------------
+interface ReviewEditor {
+	id: string;
+	questionIndex: number;
+	editor: Editor;
+}
+
+class ReviewComponent implements Component {
+	private editors: ReviewEditor[] = [];
+	private focusIndex = 0;
+	private focusedState = false;
+
+	constructor(
+		private questions: PreparedQuestion[],
+		private states: ReadonlyMap<string, DraftQuestionState>,
+		private comments: Map<string, string>,
+		private tui: TUI,
+		private theme: Theme,
+		private onBack: () => void,
+		private onCancel: () => void,
+		private onSubmit: () => void,
+	) {
+		for (let questionIndex = 0; questionIndex < questions.length; questionIndex++) {
+			const question = questions[questionIndex]!;
+			const state = states.get(question.id);
+			if (!question.allowComment || state?.status !== "answered") continue;
+			const editor = new Editor(tui, editorTheme(theme));
+			editor.setText(comments.get(question.id) ?? "");
+			editor.onChange = (text) => comments.set(question.id, text);
+			editor.onSubmit = (text) => {
+				const normalized = text.trim();
+				comments.set(question.id, normalized);
+				editor.setText(normalized);
+				this.moveFocus(1);
+			};
+			this.editors.push({ id: question.id, questionIndex, editor });
+		}
+		this.focusIndex = this.editors.length;
+		this.syncFocus();
+	}
+
+	get focused(): boolean {
+		return this.focusedState;
+	}
+	set focused(value: boolean) {
+		this.focusedState = value;
+		this.syncFocus();
+	}
+
+	private get submitFocused(): boolean {
+		return this.focusIndex === this.editors.length;
+	}
+
+	private syncFocus(): void {
+		this.editors.forEach(({ editor }, index) => {
+			editor.focused = this.focusedState && index === this.focusIndex;
+		});
+	}
+
+	private moveFocus(delta: number): void {
+		const count = this.editors.length + 1;
+		this.focusIndex = (this.focusIndex + delta + count) % count;
+		this.syncFocus();
+		this.tui.requestRender();
+	}
+
+	invalidate(): void {
+		for (const { editor } of this.editors) editor.invalidate();
+	}
+
+	render(width: number): string[] {
+		const safeWidth = Math.max(12, width);
+		const lines: string[] = [];
+		const blockRanges: Array<{ start: number; end: number; questionIndex: number }> = [];
+		for (let questionIndex = 0; questionIndex < this.questions.length; questionIndex++) {
+			const question = this.questions[questionIndex]!;
+			const state = this.states.get(question.id);
+			const start = lines.length;
+			const status = state?.status ?? "unanswered";
+			const marker = status === "answered" ? this.theme.fg("success", "✓") : status === "skipped" ? this.theme.fg("warning", "−") : this.theme.fg("dim", "○");
+			lines.push(truncateToWidth(`${marker} ${this.theme.fg("accent", this.theme.bold(question.label))} · ${this.theme.fg(status === "answered" ? "success" : status === "skipped" ? "warning" : "dim", status)}`, safeWidth, ""));
+			lines.push(...wrapTextWithAnsi(this.theme.fg("dim", question.question), safeWidth));
+			if (state?.status === "answered" && state.response) {
+				const preview = previewText(formatQuestionResponse(question, state.response));
+				lines.push(...wrapTextWithAnsi(`${this.theme.fg("dim", "Answer:")} ${this.theme.fg("text", preview)}`, safeWidth));
+			}
+			const reviewEditor = this.editors.find((entry) => entry.questionIndex === questionIndex);
+			if (reviewEditor) {
+				lines.push(this.theme.fg("dim", "Optional comment:"));
+				lines.push(...reviewEditor.editor.render(safeWidth));
+			}
+			lines.push("");
+			blockRanges.push({ start, end: lines.length, questionIndex });
+		}
+
+		const bodyBudget = Math.max(7, (process.stdout.rows || 24) - 9);
+		let body = lines;
+		if (lines.length > bodyBudget) {
+			let anchor = lines.length - 1;
+			if (!this.submitFocused) {
+				const markerLine = lines.findIndex((line) => line.includes(CURSOR_MARKER));
+				const editor = this.editors[this.focusIndex];
+				anchor = markerLine >= 0 ? markerLine : (blockRanges.find((range) => range.questionIndex === editor?.questionIndex)?.start ?? 0);
+			}
+			const start = Math.max(0, Math.min(lines.length - bodyBudget, anchor - Math.floor(bodyBudget / 2)));
+			body = lines.slice(start, start + bodyBudget);
+			if (start > 0) body[0] = this.theme.fg("dim", "↑ earlier answers");
+			if (start + bodyBudget < lines.length) body[body.length - 1] = this.theme.fg("dim", "↓ later answers");
+		}
+		const submit = this.submitFocused
+			? this.theme.bg("selectedBg", this.theme.fg("text", "  Submit  "))
+			: this.theme.fg("success", "  Submit  ");
+		return [...body, truncateToWidth(submit, safeWidth, "")];
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, Key.tab)) {
+			this.moveFocus(1);
+			return;
+		}
+		if (matchesKey(data, Key.shift("tab"))) {
+			this.moveFocus(-1);
+			return;
+		}
+		if (this.submitFocused) {
+			if (matchesKey(data, Key.enter)) this.onSubmit();
+			else if (matchesKey(data, Key.left)) this.onBack();
+			else if (matchesKey(data, Key.escape)) this.onCancel();
+			return;
+		}
+		if (matchesKey(data, Key.escape)) {
+			this.focusIndex = this.editors.length;
+			this.syncFocus();
+			this.tui.requestRender();
+			return;
+		}
+		this.editors[this.focusIndex]?.editor.handleInput(data);
+		this.tui.requestRender();
+	}
+}
 
 class BatchQuestionComponent extends Container implements Component {
 	private currentPage = 0;
-	private readonly answers = new Map<string, QuestionResponse>();
+	private states = new Map<string, DraftQuestionState>();
+	private comments = new Map<string, string>();
 	private questionComponent?: QuestionComponent;
+	private reviewComponent?: ReviewComponent;
 	private focusedState = false;
 	private header = new Text("", 1, 0);
 	private content = new Container();
 	private legend = new Text("", 1, 0);
 
 	constructor(
-		private questions: BatchedQuestion[],
+		private questions: PreparedQuestion[],
 		private tui: TUI,
 		private theme: Theme,
 		private keybindings: KeybindingsManager,
-		private onDone: (answers: BatchAnswer[] | null) => void,
+		private onDone: (result: QuestionToolResult) => void,
 	) {
 		super();
 		this.addChild(this.header);
@@ -431,6 +469,7 @@ class BatchQuestionComponent extends Container implements Component {
 	set focused(value: boolean) {
 		this.focusedState = value;
 		if (this.questionComponent) this.questionComponent.focused = value;
+		if (this.reviewComponent) this.reviewComponent.focused = value;
 	}
 
 	override invalidate(): void {
@@ -442,399 +481,176 @@ class BatchQuestionComponent extends Container implements Component {
 		return this.currentPage === this.questions.length;
 	}
 
-	private allAnswered(): boolean {
-		return this.questions.every((question) => this.answers.has(question.id));
-	}
+	private cancel = (): void => this.onDone({ status: "cancelled", reason: "user" });
 
 	private updateChrome(): void {
-		const answered = this.answers.size;
 		if (this.isReviewPage) {
-			this.header.setText(this.theme.fg("accent", this.theme.bold(`Review answers · ${answered}/${this.questions.length} answered`)));
-			this.legend.setText(
-				this.theme.fg(
-					"dim",
-					this.allAnswered()
-						? "Shift+Tab/← previous • Enter submit all answers • Esc cancel"
-						: "Shift+Tab/← previous • Answer every question before submitting • Esc cancel",
-				),
-			);
+			const answered = [...this.states.values()].filter((state) => state.status === "answered").length;
+			const skipped = [...this.states.values()].filter((state) => state.status === "skipped").length;
+			this.header.setText(this.theme.fg("accent", this.theme.bold(`Review · ${answered} answered · ${skipped} skipped · ${this.questions.length - this.states.size} unanswered`)));
+			this.legend.setText(this.theme.fg("dim", "Tab/Shift+Tab fields • Enter save/submit • Shift+Enter newline • ← from Submit edits answers • Esc blur/cancel"));
 			return;
 		}
-		const question = this.questions[this.currentPage];
-		this.header.setText(
-			this.theme.fg(
-				"accent",
-				this.theme.bold(`${question.label} · ${this.currentPage + 1}/${this.questions.length}${this.answers.has(question.id) ? " · answered" : ""}`),
-			),
-		);
-		this.legend.setText(this.theme.fg("dim", "Tab next • Shift+Tab previous • ←→ navigate outside text entry • Answers save when selected"));
+		const question = this.questions[this.currentPage]!;
+		const status = this.states.get(question.id)?.status ?? "unanswered";
+		this.header.setText(this.theme.fg("accent", this.theme.bold(`${question.label} · Question ${this.currentPage + 1} of ${this.questions.length} · ${status}`)));
+		this.legend.setText(this.theme.fg("dim", "Tab/→ next • Shift+Tab/← previous • blank Next skips • answers commit only on final Submit"));
 	}
 
 	private showPage(): void {
 		this.content.clear();
 		this.questionComponent = undefined;
-		this.updateChrome();
-
+		this.reviewComponent = undefined;
 		if (this.isReviewPage) {
-			this.content.addChild(new Text(this.theme.fg("accent", this.theme.bold("Ready to submit")), 1, 0));
-			this.content.addChild(new Spacer(1));
-			for (const question of this.questions) {
-				const response = this.answers.get(question.id);
-				const marker = response ? this.theme.fg("success", "✓") : this.theme.fg("warning", "○");
-				const answer = response ? formatResponseSummary(response) : "Unanswered";
-				this.content.addChild(
-					new Text(
-						`${marker} ${this.theme.fg("accent", this.theme.bold(question.label))}\n${this.theme.fg("dim", question.question)}\n${this.theme.fg("dim", "Answer:")} ${this.theme.fg(response ? "text" : "warning", answer)}`,
-						1,
-						0,
-					),
-				);
-				this.content.addChild(new Spacer(1));
-			}
-		} else {
-			const question = this.questions[this.currentPage];
-			this.questionComponent = new QuestionComponent(
-				question.question,
-				question.context,
-				question.options,
-				question.allowMultiple,
-				question.allowFreeform,
-				question.allowComment,
+			this.reviewComponent = new ReviewComponent(
+				this.questions,
+				this.states,
+				this.comments,
 				this.tui,
 				this.theme,
-				this.keybindings,
-				question.shortcuts,
-				(response) => this.saveAnswer(question, response),
-				this.answers.get(question.id),
+				() => {
+					this.currentPage = this.questions.length - 1;
+					this.showPage();
+				},
+				this.cancel,
+				() => this.onDone({ status: "submitted", answers: buildQuestionAnswers(this.questions, this.states, this.comments) }),
 			);
+			this.reviewComponent.focused = this.focusedState;
+			this.content.addChild(this.reviewComponent);
+		} else {
+			const question = this.questions[this.currentPage]!;
+			const state = this.states.get(question.id);
+			this.questionComponent = new QuestionComponent(question, this.tui, this.theme, this.keybindings, this.cancel, state?.response);
 			this.questionComponent.focused = this.focusedState;
 			this.content.addChild(this.questionComponent);
 		}
+		this.updateChrome();
 		this.invalidate();
 		this.tui.requestRender();
 	}
 
-	private saveAnswer(question: BatchedQuestion, response: QuestionResponse | null): void {
-		if (response === null) {
-			this.onDone(null);
-			return;
-		}
-		this.answers.set(question.id, response);
-		this.goNext();
+	private saveCurrent(markBlankSkipped: boolean): void {
+		if (this.isReviewPage || !this.questionComponent) return;
+		const question = this.questions[this.currentPage]!;
+		const response = this.questionComponent.getResponse();
+		saveDraftQuestion(this.states, this.comments, question.id, response, markBlankSkipped);
 	}
 
 	private goNext(): void {
+		this.saveCurrent(true);
 		if (this.currentPage < this.questions.length) this.currentPage++;
 		this.showPage();
 	}
 
 	private goPrevious(): void {
+		this.saveCurrent(false);
 		if (this.currentPage > 0) this.currentPage--;
 		this.showPage();
 	}
 
 	handleInput(data: string): void {
 		if (this.isReviewPage) {
-			if (matchesKey(data, Key.enter) && this.allAnswered()) {
-				this.onDone(this.questions.map((question) => ({ id: question.id, question: question.question, response: this.answers.get(question.id)! })));
-				return;
-			}
-			if (matchesKey(data, Key.escape) || this.keybindings.matches(data, "tui.select.cancel")) {
-				this.onDone(null);
-				return;
-			}
-			if (matchesKey(data, Key.shift("tab")) || matchesKey(data, Key.left)) this.goPrevious();
+			this.reviewComponent?.handleInput(data);
 			return;
 		}
-
-		if (matchesKey(data, Key.tab)) {
+		if (matchesKey(data, Key.tab) || (!this.questionComponent?.isEditing && matchesKey(data, Key.right))) {
 			this.goNext();
 			return;
 		}
-		if (matchesKey(data, Key.shift("tab"))) {
+		if (matchesKey(data, Key.shift("tab")) || (!this.questionComponent?.isEditing && matchesKey(data, Key.left))) {
 			this.goPrevious();
 			return;
 		}
-		if (!this.questionComponent?.isEditing) {
-			if (matchesKey(data, Key.right)) {
-				this.goNext();
-				return;
-			}
-			if (matchesKey(data, Key.left)) {
-				this.goPrevious();
-				return;
-			}
+		if (!this.questionComponent?.isEditing && matchesKey(data, Key.escape) && this.questions[this.currentPage]?.type === "text") {
+			this.cancel();
+			return;
 		}
 		this.questionComponent?.handleInput(data);
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Tool registration
-// ---------------------------------------------------------------------------
+function answerText(answer: QuestionAnswer): string {
+	if (answer.status !== "answered") return answer.status;
+	const comment = answer.comment ? ` — comment: ${answer.comment}` : "";
+	return `${formatResponseSummary(answer.response)}${comment}`;
+}
+
+function rawQuestionLabel(question: RawQuestion | undefined, answer: QuestionAnswer): string {
+	if (!question || answer.status !== "answered" || answer.response.kind === "text") return answerText(answer);
+	const labels = answer.response.values.map((value) => question.options.find((option) => option.value === value)?.label ?? value);
+	if (answer.response.otherText) labels.push(`Other: ${answer.response.otherText}`);
+	const comment = answer.comment ? ` — comment: ${answer.comment}` : "";
+	return `${labels.join(", ")}${comment}`;
+}
 
 export default function questionExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "question",
 		label: "Question",
 		description:
-			"Ask the user one question or a paged batch through the Pi UI and return the answer(s). Supports multiple-choice options, multi-select, freeform answers, optional context, comments, and a final batch review/submit page. Use when you need user input to proceed.",
-		promptSnippet: "Ask the user a question when required information is missing.",
+			"Ask one or more typed questions in a terminal wizard. Supports select, multiselect, text, stable option values, Other answers, partial atomic submission, and optional review-page comments.",
+		promptSnippet: "Ask the user one or more typed questions when a decision is required.",
 		promptGuidelines: [
-			"Use question only when you cannot proceed safely or accurately without user input.",
-			"Ask concise questions. Prefer options when choices are known.",
-			"Set allowFreeform=true when user may need to provide a custom answer.",
-			"Use allowMultiple=true when more than one option may apply.",
-			"Pass a short summary via context when the question depends on prior findings.",
-			"After the user answers, continue the task immediately using that answer; do not stop and ask the user to type continue unless the task is complete.",
-			"Do not use question for information you can infer, inspect, or compute with other tools.",
-			"For independent related decisions, send one question call with a questions array. The user can use Tab/Shift+Tab or Left/Right to revisit pages, then presses Enter on the review page to submit all answers.",
+			"Use question only for decisions the user must make; inspect facts yourself.",
+			"Send one questions array containing independent decisions that can be answered together.",
+			"Use stable option values separate from human-readable labels.",
+			"Use text questions only when known choices cannot represent the answer.",
+			"After question returns, continue immediately using submitted answers; skipped and unanswered are distinct states.",
 		],
-		// Block other tool calls in the same turn until the user answers, so the
-		// model can't batch question with side-effecting tools and run them first.
 		executionMode: "sequential",
 		parameters: QuestionParamsSchema,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			if (Array.isArray(params.questions)) {
-				const prepared = prepareBatchQuestions(params.questions);
-				if ("error" in prepared) {
-					return { content: [{ type: "text", text: prepared.error }], isError: true, details: { questions: [], answers: [], cancelled: true } satisfies BatchQuestionDetails };
-				}
-				const questions = prepared.questions;
-				const detailsBase = {
-					questions: questions.map(({ id, label, question, context, options }) => ({ id, label, question, context, options })),
-				};
-				if (signal?.aborted) {
-					return { content: [{ type: "text", text: "Question batch cancelled" }], details: { ...detailsBase, answers: [], cancelled: true } satisfies BatchQuestionDetails };
-				}
+			const prepared = prepareQuestions(params.questions);
+			if ("error" in prepared) throw new Error(prepared.error);
+			if (ctx.mode !== "tui") throw new Error("Question requires terminal TUI mode.");
+			if (signal?.aborted) return { content: [{ type: "text", text: "Question cancelled" }], details: { status: "cancelled", reason: "user" } satisfies QuestionToolResult };
 
-				const protocol = createTUIProtocol(ctx);
-				if (!protocol.hasUI) {
-					return {
-						content: [{ type: "text", text: "Question batch requires interactive mode." }],
-						isError: true,
-						details: { ...detailsBase, answers: [], cancelled: true } satisfies BatchQuestionDetails,
-					};
-				}
-				onUpdate?.({ content: [{ type: "text", text: "Waiting for answers to question batch..." }], details: { ...detailsBase, answers: [], cancelled: false } satisfies BatchQuestionDetails });
-
-				let answers: BatchAnswer[] | null | undefined;
-				try {
-					const customFactory: CustomFactory<BatchAnswer[] | null> = (tui, theme, keybindings, done) => {
-						if (signal) signal.addEventListener("abort", () => done(null), { once: true });
-						const timeout = params.timeout as number | undefined;
-						if (timeout && timeout > 0) setTimeout(() => done(null), timeout);
-						return new BatchQuestionComponent(questions, tui, theme, keybindings, done);
-					};
-					answers = await protocol.custom(customFactory);
-					if (answers === undefined) answers = await askBatchViaDialogs(questions, protocol, params.timeout as number | undefined);
-				} catch (error) {
-					const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
-					return { content: [{ type: "text", text: `Question batch failed: ${message}` }], isError: true, details: { ...detailsBase, answers: [], cancelled: true } satisfies BatchQuestionDetails };
-				}
-
-				if (!answers) {
-					return { content: [{ type: "text", text: "User cancelled the question batch" }], details: { ...detailsBase, answers: [], cancelled: true } satisfies BatchQuestionDetails };
-				}
-				return {
-					content: [{ type: "text", text: answers.map((answer) => `${answer.id}: ${formatResponseSummary(answer.response)}`).join("\n") }],
-					details: { ...detailsBase, answers, cancelled: false } satisfies BatchQuestionDetails,
-				};
-			}
-
-			if (signal?.aborted) {
-				return {
-					content: [{ type: "text", text: "Question cancelled" }],
-					details: { question: params.question, options: [], response: null, cancelled: true } satisfies QuestionDetails,
-				};
-			}
-
-			const rawQuestion = params.question as string;
-			// `title` is a deprecated alias for context; merge if only title is given.
-			const rawContext = (params.context as string | undefined)?.trim() || (params.title as string | undefined)?.trim() || undefined;
-			const allowMultiple = params.allowMultiple ?? false;
-			const allowFreeform = params.allowFreeform ?? !((params.options ?? []).length > 0);
-			const allowComment = params.allowComment ?? false;
-			const timeout = params.timeout as number | undefined;
-
-			const shortcuts: ResolvedShortcuts = resolveShortcuts(
-				params.commentToggleKey as string | null | undefined,
-				process.env.PI_QUESTION_COMMENT_TOGGLE_KEY,
-			);
-
-			const optionsFormatError = getOptionsFormatError(params.options as RawOption[] | undefined);
-			if (optionsFormatError) {
-				return {
-					content: [{ type: "text", text: optionsFormatError }],
-					isError: true,
-					details: { question: rawQuestion, context: rawContext, options: [], response: null, cancelled: true } satisfies QuestionDetails,
-				};
-			}
-
-			const options = normalizeOptions(params.options as RawOption[] | undefined);
-			const normalizedContext = rawContext || undefined;
-			const detailsBase = { question: rawQuestion, context: normalizedContext, options };
-
-			const protocol: UIProtocol = createTUIProtocol(ctx);
-
-			if (!protocol.hasUI) {
-				const optionText = options.length > 0 ? `\n\nOptions:\n${formatOptionsForMessage(options)}` : "";
-				const freeformHint = allowFreeform ? "\n\nYou can also answer freely." : "";
-				const commentHint = allowComment ? "\n\nAfter choosing, you may add an optional comment." : "";
-				const contextText = normalizedContext ? `\n\nContext:\n${normalizedContext}` : "";
-				return {
-					content: [
-						{ type: "text", text: `Question requires interactive mode. Please answer:\n\n${rawQuestion}${contextText}${optionText}${freeformHint}${commentHint}` },
-					],
-					isError: true,
-					details: { ...detailsBase, response: null, cancelled: true } satisfies QuestionDetails,
-				};
-			}
-
-			if (options.length === 0 && !allowFreeform) {
-				return {
-					content: [{ type: "text", text: "Question options are empty and allowFreeform is false." }],
-					isError: true,
-					details: { ...detailsBase, response: null, cancelled: true } satisfies QuestionDetails,
-				};
-			}
-
-			onUpdate?.({
-				content: [{ type: "text", text: "Waiting for user input..." }],
-				details: { ...detailsBase, response: null, cancelled: false } satisfies QuestionDetails,
+			onUpdate?.({ content: [{ type: "text", text: `Waiting for answers to ${prepared.questions.length} question${prepared.questions.length === 1 ? "" : "s"}...` }] });
+			const result = await ctx.ui.custom<QuestionToolResult>((tui, theme, keybindings, done) => {
+				if (signal) signal.addEventListener("abort", () => done({ status: "cancelled", reason: "user" }), { once: true });
+				return new BatchQuestionComponent(prepared.questions, tui, theme, keybindings, done);
 			});
+			if (!result) throw new Error("Question TUI did not return a result.");
 
-			let result: QuestionResponse | null;
-
-			try {
-				const customFactory: CustomFactory<QuestionResponse | null> = (
-					tui: TUI,
-					theme: Theme,
-					keybindings: KeybindingsManager,
-					done: (result: QuestionResponse | null) => void,
-				) => {
-					if (signal) {
-						const onAbort = () => done(null);
-						signal.addEventListener("abort", onAbort, { once: true });
-					}
-					if (timeout && timeout > 0) setTimeout(() => done(null), timeout);
-
-					return new QuestionComponent(
-						rawQuestion,
-						normalizedContext,
-						options,
-						allowMultiple,
-						allowFreeform,
-						allowComment,
-						tui,
-						theme,
-						keybindings,
-						shortcuts,
-						done,
-					);
-				};
-
-				const customResult = await protocol.custom(customFactory);
-
-				if (customResult !== undefined) {
-					result = customResult;
-				} else {
-					// RPC/headless: custom() returns undefined — degrade to dialog protocol.
-					result = await DialogFallback.ask(
-						{ question: rawQuestion, context: normalizedContext, options, allowMultiple, allowFreeform, allowComment, shortcuts, timeout },
-						protocol,
-					);
-				}
-			} catch (error) {
-				const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
-				return {
-					content: [{ type: "text", text: `Question tool failed: ${message}` }],
-					isError: true,
-					details: { error: message } as unknown as QuestionDetails,
-				};
+			if (result.status === "cancelled") {
+				pi.events.emit("question:cancelled", { reason: result.reason });
+				return { content: [{ type: "text", text: "User cancelled the question batch" }], details: result };
 			}
-
-			if (result === null) {
-				pi.events.emit("question:cancelled", { question: rawQuestion, context: normalizedContext, options });
-				return {
-					content: [{ type: "text", text: "User cancelled the question" }],
-					details: { ...detailsBase, response: null, cancelled: true } satisfies QuestionDetails,
-				};
-			}
-
-			pi.events.emit("question:answered", { question: rawQuestion, context: normalizedContext, response: result });
+			pi.events.emit("question:submitted", { answers: result.answers });
 			return {
-				content: [{ type: "text", text: `User answered: ${formatResponseSummary(result)}` }],
-				details: { ...detailsBase, response: result, cancelled: false } satisfies QuestionDetails,
+				content: [{ type: "text", text: JSON.stringify(result) }],
+				details: result,
 			};
 		},
 
-		renderCall(args, theme, _context) {
-			const batch = Array.isArray(args.questions) ? args.questions : undefined;
-			if (batch) {
-				const labels = batch.map((item: { label?: string; id?: string }, index: number) => item.label || item.id || `Q${index + 1}`).join(", ");
-				return new Text(
-					`${theme.fg("toolTitle", theme.bold("QUESTION"))} ${theme.fg("accent", theme.bold(`${batch.length} question${batch.length === 1 ? "" : "s"}`))}${labels ? theme.fg("dim", ` · ${oneLine(labels, 100)}`) : ""}`,
-					0,
-					0,
-				);
-			}
-			const question = (args.question as string) || "";
-			const rawOptions = Array.isArray(args.options) ? args.options : [];
-			const title = args.context ? `${args.context}: ` : args.title ? `${args.title}: ` : "";
-			const optionCount = rawOptions.length;
-			const flags: string[] = [];
-			if (args.allowMultiple) flags.push("multi");
-			if (args.allowComment) flags.push("comment");
-			const suffix = optionCount
-				? theme.fg("dim", ` · ${optionCount} option${optionCount === 1 ? "" : "s"}${flags.length ? ` · ${flags.join("/")}` : ""}`)
-				: theme.fg("dim", ` · freeform${flags.length ? ` · ${flags.join("/")}` : ""}`);
+		renderCall(args, theme) {
+			const questions = Array.isArray(args.questions) ? (args.questions as RawQuestion[]) : [];
+			const labels = questions.map((question, index) => question.label || question.id || `Q${index + 1}`).join(", ");
 			return new Text(
-				`${theme.fg("toolTitle", theme.bold("QUESTION"))} ${theme.fg("accent", theme.bold(oneLine(title + question, 120)))}${suffix}`,
+				`${theme.fg("toolTitle", theme.bold("QUESTION"))} ${theme.fg("accent", theme.bold(`${questions.length} question${questions.length === 1 ? "" : "s"}`))}${labels ? theme.fg("dim", ` · ${oneLine(labels, 100)}`) : ""}`,
 				0,
 				0,
 			);
 		},
 
-		renderResult(result, options, theme, _context) {
-			const details = result.details as (QuestionDetails | BatchQuestionDetails) & { error?: string } | undefined;
-
-			if (details?.error) return new Text(theme.fg("error", details.error), 0, 0);
-
+		renderResult(result, options, theme, context) {
 			if (options.isPartial) {
-				const waitingText =
-					result.content
-						?.filter((part: { type?: string; text?: string }) => part?.type === "text")
-						.map((part: { text?: string }) => part.text ?? "")
-						.join("\n")
-						.trim() || "Waiting for user input...";
-				return new Text(theme.fg("muted", waitingText), 0, 0);
+				const text = result.content.find((part: { type?: string }) => part.type === "text") as { text?: string } | undefined;
+				return new Text(theme.fg("muted", text?.text ?? "Waiting for user input..."), 0, 0);
 			}
-
-			if (!details || details.cancelled) return new Text(theme.fg("warning", "question cancelled"), 0, 0);
-
-			if ("answers" in details) {
-				return new Text(details.answers.map((answer) => `${theme.fg("success", "✓")} ${theme.fg("accent", answer.id)}: ${theme.fg("text", oneLine(formatResponseSummary(answer.response), 120))}`).join("\n"), 0, 0);
-			}
-			if (!details.response) return new Text(theme.fg("warning", "question cancelled"), 0, 0);
-
-			const response = details.response;
-			let text = theme.fg("success", theme.bold("answered: "));
-			text += theme.fg("accent", theme.bold(oneLine(formatResponseSummary(response), 120)));
-
-			if (options.expanded && details.question) {
-				text += `\n${theme.fg("dim", `Q: ${oneLine(details.question, 200)}`)}`;
-				if (details.context) text += `\n${theme.fg("dim", oneLine(details.context, 200))}`;
-				if (response.kind === "selection" && details.options.length > 0) {
-					const selected = new Set(response.selections);
-					text += `\n${theme.fg("dim", "Options:")}`;
-					for (const opt of details.options) {
-						const desc = opt.description ? ` — ${opt.description}` : "";
-						const marker = selected.has(opt.label) ? theme.fg("success", "●") : theme.fg("dim", "○");
-						text += `\n  ${marker} ${theme.fg("dim", opt.label)}${theme.fg("dim", desc)}`;
-					}
-					if (response.comment) text += `\n${theme.fg("dim", "Comment:")} ${theme.fg("dim", response.comment)}`;
+			const details = result.details as QuestionToolResult | undefined;
+			if (!details || details.status === "cancelled") return new Text(theme.fg("warning", "question cancelled"), 0, 0);
+			const answered = details.answers.filter((answer) => answer.status === "answered").length;
+			const skipped = details.answers.filter((answer) => answer.status === "skipped").length;
+			const unanswered = details.answers.length - answered - skipped;
+			let text = `${theme.fg("success", "submitted")} ${theme.fg("dim", `· ${answered} answered · ${skipped} skipped · ${unanswered} unanswered`)}`;
+			if (options.expanded) {
+				const questions = (((context as { args?: { questions?: RawQuestion[] } }).args?.questions ?? []) as RawQuestion[]);
+				for (const answer of details.answers) {
+					const question = questions.find((candidate, index) => (candidate.id?.trim() || `q${index + 1}`) === answer.id);
+					const marker = answer.status === "answered" ? theme.fg("success", "✓") : answer.status === "skipped" ? theme.fg("warning", "−") : theme.fg("dim", "○");
+					text += `\n${marker} ${theme.fg("accent", answer.id)}: ${theme.fg(answer.status === "answered" ? "text" : "dim", oneLine(rawQuestionLabel(question, answer), 200))}`;
 				}
 			}
 			return new Text(text, 0, 0);

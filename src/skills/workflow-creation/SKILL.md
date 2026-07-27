@@ -33,7 +33,7 @@ Done when every proposed behavior has one owner: state machine, shared adapter, 
 For a new mode, add `src/extensions/workflow/modes/<name>.ts`, modeled on `quick.ts`, with only `WorkflowConfig` and `WorkflowModeRegistration`:
 
 - ordered phases, phase artifacts, prompts, validators, close artifacts/validators;
-- unique mode/status/entry identities and slash-command name; shared start/resume/end tools select the mode;
+- unique mode/status/entry identities and slash-command name; users start/resume through that command, while the shared end tool selects the mode;
 - prompts that name exact artifact paths and use `write_workflow_artifact` only for workflow artifacts.
 
 Register the mode once in `MODES` in `extension.ts`; document its lifecycle and commands in `docs/workflows.md`.
@@ -45,7 +45,7 @@ Done when the mode file has no filesystem, persistence, event-registration, or c
 The shared adapter owns UUID artifact directories, atomic saves, resume, loop review state, and reload safety. Do not reimplement them per mode.
 
 - Persisted state changes after start, artifact/loop transition, resume reconciliation, and explicit end.
-- Never auto-resume on `session_start`; an explicit selector attaches a run.
+- Never auto-resume on `session_start`; only a user-invoked mode command with an explicit selector attaches a run.
 - Artifact completion advances durable state then stops the parent turn; the user deliberately continues the attached mode.
 - Terminal-ready stays active. Only `end_workflow({ mode })` marks the record completed and terminates.
 - One `ExtensionAPI` hosts all modes: shared writer once, stale reload handlers inert, one attached run total.

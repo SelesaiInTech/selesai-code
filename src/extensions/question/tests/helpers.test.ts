@@ -2,177 +2,53 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-	normalizeOptions,
-	getOptionsFormatError,
-	createFreeformResponse,
 	createSelectionResponse,
+	createTextResponse,
+	formatQuestionResponse,
 	formatResponseSummary,
-	formatOptionsForMessage,
-	parseDialogSelections,
-	isCancelled,
 	oneLine,
+	previewText,
 } from "../helpers.ts";
+import type { PreparedQuestion } from "../types.ts";
 
-test("normalizeOptions: string array", () => {
-	assert.deepEqual(normalizeOptions(["a", "b"]), [
-		{ label: "a" },
-		{ label: "b" },
-	]);
+test("createTextResponse trims edges and rejects blank text", () => {
+	assert.equal(createTextResponse("  "), null);
+	assert.deepEqual(createTextResponse("  hello\nworld  "), { kind: "text", text: "hello\nworld" });
 });
 
-test("normalizeOptions: object array", () => {
-	assert.deepEqual(
-		normalizeOptions([{ label: "a", description: "desc" }]),
-		[{ label: "a", description: "desc" }],
-	);
-});
-
-test("normalizeOptions: mixed string and object", () => {
-	assert.deepEqual(normalizeOptions(["a", { label: "b", description: "d" }]), [
-		{ label: "a" },
-		{ label: "b", description: "d" },
-	]);
-});
-
-test("normalizeOptions: empty/undefined", () => {
-	assert.deepEqual(normalizeOptions(undefined), []);
-	assert.deepEqual(normalizeOptions([]), []);
-});
-
-test("normalizeOptions: whitespace-only labels filtered", () => {
-	assert.deepEqual(normalizeOptions(["  ", "a", ""]), [{ label: "a" }]);
-});
-
-test("getOptionsFormatError: rejects JSON-encoded option arrays", () => {
-	assert.match(getOptionsFormatError(['[{"label":"Yes","description":"desc"}]']) ?? "", /JSON-encoded string/);
-});
-
-test("getOptionsFormatError: allows normal string labels", () => {
-	assert.equal(getOptionsFormatError(["Yes", "No"]), null);
-});
-
-test("createFreeformResponse: null/undefined/empty → null", () => {
-	assert.equal(createFreeformResponse(null), null);
-	assert.equal(createFreeformResponse(undefined), null);
-	assert.equal(createFreeformResponse(""), null);
-	assert.equal(createFreeformResponse("   "), null);
-});
-
-test("createFreeformResponse: non-empty → { kind: freeform }", () => {
-	assert.deepEqual(createFreeformResponse("hello"), { kind: "freeform", text: "hello" });
-	assert.deepEqual(createFreeformResponse("  trim  "), { kind: "freeform", text: "trim" });
-});
-
-test("createSelectionResponse: empty → null", () => {
-	assert.equal(createSelectionResponse([]), null);
-	assert.equal(createSelectionResponse(["", "  "]), null);
-});
-
-test("createSelectionResponse: single", () => {
-	assert.deepEqual(createSelectionResponse(["a"]), { kind: "selection", selections: ["a"] });
-});
-
-test("createSelectionResponse: multiple with trim", () => {
-	assert.deepEqual(createSelectionResponse(["  a  ", "b"]), { kind: "selection", selections: ["a", "b"] });
-});
-
-test("createSelectionResponse: with comment", () => {
-	assert.deepEqual(createSelectionResponse(["a"], "note"), {
+test("createSelectionResponse supports values plus Other and rejects empty", () => {
+	assert.equal(createSelectionResponse([], "  "), null);
+	assert.deepEqual(createSelectionResponse([" a ", "b"], " other "), {
 		kind: "selection",
-		selections: ["a"],
-		comment: "note",
+		values: ["a", "b"],
+		otherText: "other",
 	});
 });
 
-test("createSelectionResponse: comment whitespace trimmed", () => {
-	assert.deepEqual(createSelectionResponse(["a"], "  note  "), {
-		kind: "selection",
-		selections: ["a"],
-		comment: "note",
-	});
+test("formatResponseSummary returns machine values", () => {
+	assert.equal(formatResponseSummary({ kind: "selection", values: ["a", "b"], otherText: "c" }), "a, b, c");
+	assert.equal(formatResponseSummary({ kind: "text", text: "hello" }), "hello");
 });
 
-test("createSelectionResponse: empty comment → no comment field", () => {
-	assert.deepEqual(createSelectionResponse(["a"], "   "), { kind: "selection", selections: ["a"] });
+test("formatQuestionResponse maps stable values to labels", () => {
+	const question: PreparedQuestion = {
+		id: "q1",
+		label: "Q1",
+		question: "Pick",
+		type: "multiselect",
+		options: [{ value: "a", label: "Alpha" }, { value: "b", label: "Beta" }],
+		allowOther: true,
+		allowComment: false,
+	};
+	assert.equal(formatQuestionResponse(question, { kind: "selection", values: ["b"], otherText: "Gamma" }), "Beta, Other: Gamma");
 });
 
-test("formatResponseSummary: freeform → text", () => {
-	assert.equal(formatResponseSummary({ kind: "freeform", text: "hello" }), "hello");
+test("previewText bounds multiline summaries", () => {
+	assert.equal(previewText("one\ntwo\nthree", 160, 2), "one\ntwo…");
+	assert.equal(previewText("a".repeat(200), 10, 2), `${"a".repeat(9)}…`);
 });
 
-test("formatResponseSummary: selection without comment", () => {
-	assert.equal(formatResponseSummary({ kind: "selection", selections: ["a", "b"] }), "a, b");
-});
-
-test("formatResponseSummary: selection with comment", () => {
-	assert.equal(
-		formatResponseSummary({ kind: "selection", selections: ["a", "b"], comment: "note" }),
-		"a, b — note",
-	);
-});
-
-test("formatOptionsForMessage: 0 options → empty string", () => {
-	assert.equal(formatOptionsForMessage([]), "");
-});
-
-test("formatOptionsForMessage: 1 option", () => {
-	assert.equal(formatOptionsForMessage([{ label: "a" }]), "1. a");
-});
-
-test("formatOptionsForMessage: with description", () => {
-	assert.equal(formatOptionsForMessage([{ label: "a", description: "desc" }]), "1. a — desc");
-});
-
-test("formatOptionsForMessage: multiple", () => {
-	assert.equal(
-		formatOptionsForMessage([{ label: "a" }, { label: "b", description: "d" }]),
-		"1. a\n2. b — d",
-	);
-});
-
-test("parseDialogSelections: basic CSV", () => {
-	assert.deepEqual(parseDialogSelections("a,b,c"), ["a", "b", "c"]);
-});
-
-test("parseDialogSelections: whitespace trimmed", () => {
-	assert.deepEqual(parseDialogSelections(" a , b "), ["a", "b"]);
-});
-
-test("parseDialogSelections: empty → []", () => {
-	assert.deepEqual(parseDialogSelections(""), []);
-});
-
-test("parseDialogSelections: empty entries filtered", () => {
-	assert.deepEqual(parseDialogSelections("a,,b"), ["a", "b"]);
-});
-
-test("isCancelled: null/undefined → true", () => {
-	assert.equal(isCancelled(null), true);
-	assert.equal(isCancelled(undefined), true);
-});
-
-test("isCancelled: falsy non-null → false", () => {
-	assert.equal(isCancelled(""), false);
-	assert.equal(isCancelled(0), false);
-	assert.equal(isCancelled(false), false);
-});
-
-test("oneLine: undefined → empty string", () => {
-	assert.equal(oneLine(undefined), "");
-	assert.equal(oneLine(null), "");
-});
-
-test("oneLine: short → unchanged", () => {
-	assert.equal(oneLine("hello"), "hello");
-});
-
-test("oneLine: long → truncated with …", () => {
-	const long = "a".repeat(120);
-	const result = oneLine(long, 10);
-	assert.equal(result.length, 10);
-	assert.equal(result.endsWith("…"), true);
-});
-
-test("oneLine: whitespace collapsed", () => {
+test("oneLine collapses whitespace and truncates", () => {
 	assert.equal(oneLine("  hello   world  "), "hello world");
+	assert.equal(oneLine("a".repeat(20), 10), `${"a".repeat(9)}…`);
 });

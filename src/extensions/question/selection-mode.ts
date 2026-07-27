@@ -20,8 +20,8 @@ export const SingleSelect: SelectionMode = {
 	multi: false,
 	toggle() {},
 	buildResult(state) {
-		const label = state.options[state.selectedIndex]?.label;
-		return label ? [label] : [];
+		const value = state.options[state.selectedIndex]?.value;
+		return value ? [value] : [];
 	},
 	handleNumberKey(idx, count) {
 		return { toggle: false, selectIndex: Math.min(idx, count - 1) };
@@ -36,12 +36,10 @@ export const MultiSelect: SelectionMode = {
 		else checked.add(index);
 	},
 	buildResult(state) {
-		const selectedTitles = Array.from(state.checked)
+		return Array.from(state.checked)
 			.sort((a, b) => a - b)
-			.map((i) => state.options[i]?.label)
-			.filter((t): t is string => !!t);
-		const fallback = state.options[state.selectedIndex]?.label;
-		return selectedTitles.length > 0 ? selectedTitles : fallback ? [fallback] : [];
+			.map((i) => state.options[i]?.value)
+			.filter((value): value is string => !!value);
 	},
 	handleNumberKey(idx, count) {
 		return { toggle: true, selectIndex: Math.min(idx, count - 1) };

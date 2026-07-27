@@ -64,7 +64,7 @@ Selesai includes a workflow engine with three modes:
 | `quick` | grill → plan → reuse → handoff → build/review loop → audit | Smaller prototypes with less ceremony |
 | `task` | plan → reuse → handoff → build/review loop | Direct implementation work |
 
-Workflows persist their state and phase artifacts on disk, can be resumed explicitly, and require an explicit close step. Use `/workflow-prototype`, `/workflow-quick`, or `/workflow-task`, or ask Selesai to start the appropriate workflow.
+Workflows persist their state and phase artifacts on disk, can be resumed explicitly, and require an explicit close step. Users start and resume them directly with `/workflow-prototype`, `/workflow-quick`, or `/workflow-task`; the agent cannot initiate a workflow.
 
 ### Web research
 

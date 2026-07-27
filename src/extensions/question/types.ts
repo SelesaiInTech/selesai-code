@@ -2,75 +2,92 @@
 
 import type { KeybindingsManager } from "@selesai/code";
 
-export type RawOption = string | { label: string; description?: string };
-
-export interface QuestionOption {
+export interface RawQuestionOption {
+	value: string;
 	label: string;
 	description?: string;
 }
 
-export type QuestionResponse =
-	| { kind: "selection"; selections: string[]; comment?: string }
-	| { kind: "freeform"; text: string };
-
-export interface QuestionDetails {
-	question: string;
-	context?: string;
-	options: QuestionOption[];
-	response: QuestionResponse | null;
-	cancelled: boolean;
+export interface QuestionOption {
+	value: string;
+	label: string;
+	description?: string;
 }
 
-export interface QuestionParams {
-	question: string;
-	context?: string;
-	options?: RawOption[];
-	allowMultiple?: boolean;
-	allowFreeform?: boolean;
-	allowComment?: boolean;
-	commentToggleKey?: string | null;
-	timeout?: number;
-}
-
-export interface RawBatchQuestion {
+interface RawQuestionBase {
 	id?: string;
 	label?: string;
 	question: string;
-	title?: string;
 	context?: string;
-	options?: RawOption[];
-	allowMultiple?: boolean;
-	allowFreeform?: boolean;
 	allowComment?: boolean;
-	commentToggleKey?: string | null;
 }
 
-export interface BatchedQuestion {
+export interface RawSelectQuestion extends RawQuestionBase {
+	type: "select";
+	options: RawQuestionOption[];
+	allowOther?: boolean;
+}
+
+export interface RawMultiSelectQuestion extends RawQuestionBase {
+	type: "multiselect";
+	options: RawQuestionOption[];
+	allowOther?: boolean;
+}
+
+export interface RawTextQuestion extends RawQuestionBase {
+	type: "text";
+}
+
+export type RawQuestion = RawSelectQuestion | RawMultiSelectQuestion | RawTextQuestion;
+
+export interface PreparedQuestionBase {
 	id: string;
 	label: string;
 	question: string;
-	context: string | undefined;
-	options: QuestionOption[];
-	allowMultiple: boolean;
-	allowFreeform: boolean;
+	context?: string;
 	allowComment: boolean;
-	shortcuts: ResolvedShortcuts;
 }
 
-export interface BatchAnswer {
-	id: string;
-	question: string;
-	response: QuestionResponse;
+export interface PreparedSelectQuestion extends PreparedQuestionBase {
+	type: "select";
+	options: QuestionOption[];
+	allowOther: boolean;
 }
 
-export interface BatchQuestionDetails {
-	questions: Array<Pick<BatchedQuestion, "id" | "label" | "question" | "context" | "options">>;
-	answers: BatchAnswer[];
-	cancelled: boolean;
+export interface PreparedMultiSelectQuestion extends PreparedQuestionBase {
+	type: "multiselect";
+	options: QuestionOption[];
+	allowOther: boolean;
+}
+
+export interface PreparedTextQuestion extends PreparedQuestionBase {
+	type: "text";
+	options: [];
+	allowOther: false;
+}
+
+export type PreparedQuestion = PreparedSelectQuestion | PreparedMultiSelectQuestion | PreparedTextQuestion;
+
+export type QuestionResponse =
+	| { kind: "selection"; values: string[]; otherText?: string }
+	| { kind: "text"; text: string };
+
+export type QuestionAnswer =
+	| { id: string; status: "answered"; response: QuestionResponse; comment?: string }
+	| { id: string; status: "skipped" | "unanswered" };
+
+export type QuestionToolResult =
+	| { status: "submitted"; answers: QuestionAnswer[] }
+	| { status: "cancelled"; reason: "user" };
+
+export interface DraftQuestionState {
+	status: "answered" | "skipped";
+	response?: QuestionResponse;
 }
 
 // ---------------------------------------------------------------------------
-// Shortcut resolution
+// Legacy list internals. Comment rows remain private implementation details;
+// public question comments are collected only on the review page.
 // ---------------------------------------------------------------------------
 
 export type ResolvedShortcut =
@@ -80,10 +97,6 @@ export type ResolvedShortcut =
 export interface ResolvedShortcuts {
 	commentToggle: ResolvedShortcut;
 }
-
-// ---------------------------------------------------------------------------
-// Single-select row layout
-// ---------------------------------------------------------------------------
 
 export interface AnnotatedRow {
 	line: string;
@@ -111,23 +124,12 @@ export interface RenderRowsParams {
 	hideDescriptions?: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Question component
-// ---------------------------------------------------------------------------
+export type QuestionMode = "select" | "other" | "text";
 
-export type QuestionMode = "select" | "freeform" | "comment";
-
-// ---------------------------------------------------------------------------
-// UI protocol (port for TUI vs dialog/RPC)
-// ---------------------------------------------------------------------------
-
-export interface ResolvedQuestionParams {
-	question: string;
-	context: string | undefined;
-	options: QuestionOption[];
-	allowMultiple: boolean;
-	allowFreeform: boolean;
-	allowComment: boolean;
-	shortcuts: ResolvedShortcuts;
-	timeout: number | undefined;
+export interface CustomFactoryResult {
+	handleInput(data: string): void;
+	render(width: number): string[];
+	focused: boolean;
 }
+
+export type QuestionKeybindings = KeybindingsManager;

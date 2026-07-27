@@ -1,57 +1,44 @@
-// Typebox schemas for the question tool parameters.
+// Strict, batch-first TypeBox schema for the question tool.
 
+import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
-const OptionSchema = Type.Union([
-	Type.String({ description: "Option label" }),
-	Type.Object({
-		label: Type.String({ description: "Option label shown to the user" }),
-		description: Type.Optional(Type.String({ description: "Optional help text shown under the option" })),
-	}),
-]);
+const OptionSchema = Type.Object({
+	value: Type.String({ description: "Stable machine value returned when selected" }),
+	label: Type.String({ description: "Human-readable option label" }),
+	description: Type.Optional(Type.String({ description: "Optional help text shown under the option" })),
+}, { additionalProperties: false });
 
-const QuestionFields = {
-	question: Type.String({ description: "Question to ask the user before continuing" }),
-	title: Type.Optional(Type.String({ description: "Short title for the question UI (deprecated alias for context summary)" })),
-	context: Type.Optional(Type.String({ description: "Relevant context summary shown before the question" })),
-	options: Type.Optional(
-		Type.Array(OptionSchema, {
-			description: "Optional multiple-choice options. Each option may be a string or { label, description }.",
-		}),
-	),
-	allowMultiple: Type.Optional(Type.Boolean({ description: "Allow selecting multiple options. Default: false" })),
-	allowFreeform: Type.Optional(
-		Type.Boolean({
-			description: "Allow a custom freeform answer. Defaults to true when no options are provided, false when options exist.",
-		}),
-	),
-	allowComment: Type.Optional(Type.Boolean({ description: "Collect an optional comment after selecting one or more options. Default: false" })),
-	commentToggleKey: Type.Optional(
-		Type.String({
-			description:
-				"Shortcut for toggling the optional comment/extra-context row when allowComment is true, e.g. 'ctrl+g'. Pass 'off' to disable. Default: PI_QUESTION_COMMENT_TOGGLE_KEY env var if set, otherwise 'ctrl+g'.",
-		}),
-	),
+const QuestionBase = {
+	id: Type.Optional(Type.String({ description: "Unique answer id. Missing ids become q1, q2, and so on." })),
+	label: Type.Optional(Type.String({ description: "Short page label. Defaults to Q1, Q2, and so on." })),
+	question: Type.String({ description: "Question shown to the user" }),
+	context: Type.Optional(Type.String({ description: "Optional plain-text context shown before the question" })),
+	allowComment: Type.Optional(Type.Boolean({ description: "Allow an optional multiline comment on the review page" })),
 };
 
-const SingleQuestionParamsSchema = Type.Object({
-	...QuestionFields,
-	timeout: Type.Optional(Type.Number({ description: "Auto-dismiss after N milliseconds. Returns null (cancelled) when expired." })),
-});
+const SelectQuestionSchema = Type.Object({
+	...QuestionBase,
+	type: StringEnum(["select"] as const),
+	options: Type.Array(OptionSchema, { minItems: 1, description: "Available choices" }),
+	allowOther: Type.Optional(Type.Boolean({ description: "Allow a custom Other text answer" })),
+}, { additionalProperties: false });
 
-const BatchQuestionSchema = Type.Object({
-	id: Type.Optional(Type.String({ description: "Unique answer id. Defaults to q1, q2, and so on." })),
-	label: Type.Optional(Type.String({ description: "Short page label. Defaults to Q1, Q2, and so on." })),
-	...QuestionFields,
-});
+const MultiSelectQuestionSchema = Type.Object({
+	...QuestionBase,
+	type: StringEnum(["multiselect"] as const),
+	options: Type.Array(OptionSchema, { minItems: 1, description: "Available choices" }),
+	allowOther: Type.Optional(Type.Boolean({ description: "Allow custom Other text alongside selected values" })),
+}, { additionalProperties: false });
 
-const BatchQuestionParamsSchema = Type.Object({
-	questions: Type.Array(BatchQuestionSchema, {
+const TextQuestionSchema = Type.Object({
+	...QuestionBase,
+	type: StringEnum(["text"] as const),
+}, { additionalProperties: false });
+
+export const QuestionParamsSchema = Type.Object({
+	questions: Type.Array(Type.Union([SelectQuestionSchema, MultiSelectQuestionSchema, TextQuestionSchema]), {
 		minItems: 1,
-		description:
-			"Questions to answer in one paged form. User can move between pages with Tab/Shift+Tab or Left/Right, then press Enter on the final review page to submit all answers.",
+		description: "One or more typed questions shown as a paged wizard followed by atomic review and submission.",
 	}),
-	timeout: Type.Optional(Type.Number({ description: "Auto-dismiss the whole batch after N milliseconds." })),
-});
-
-export const QuestionParamsSchema = Type.Union([SingleQuestionParamsSchema, BatchQuestionParamsSchema]);
+}, { additionalProperties: false });

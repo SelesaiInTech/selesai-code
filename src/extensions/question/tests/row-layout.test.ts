@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { wrapPlain, buildItemBlocks, flattenBlocks, renderSingleSelectRows } from "../row-layout.ts";
 import type { ItemBlock, QuestionOption } from "../types.ts";
 
-const opts = (labels: string[]): QuestionOption[] => labels.map((label) => ({ label }));
+const opts = (labels: string[]): QuestionOption[] => labels.map((label) => ({ value: label, label }));
 
 test("wrapPlain: empty → ['']", () => {
 	assert.deepEqual(wrapPlain("", 20), [""]);
@@ -45,7 +45,7 @@ test("buildItemBlocks: selected=1 → arrow pointer on block 1", () => {
 
 test("buildItemBlocks: with description → description lines included", () => {
 	const blocks = buildItemBlocks(
-		[{ label: "a", description: "some desc" }],
+		[{ value: "a", label: "a", description: "some desc" }],
 		80,
 		false,
 		false,
@@ -58,7 +58,7 @@ test("buildItemBlocks: with description → description lines included", () => {
 
 test("buildItemBlocks: hideDescriptions=true → no description lines", () => {
 	const blocks = buildItemBlocks(
-		[{ label: "a", description: "some desc" }],
+		[{ value: "a", label: "a", description: "some desc" }],
 		80,
 		false,
 		false,
@@ -125,7 +125,7 @@ test("renderSingleSelectRows: maxRows truncation with indicator", () => {
 
 test("renderSingleSelectRows: selected block larger than available → only selected + indicator", () => {
 	const rows = renderSingleSelectRows({
-		options: [{ label: "a".repeat(100) }],
+		options: [{ value: "a", label: "a".repeat(100) }],
 		selectedIndex: 0,
 		width: 10,
 		allowFreeform: false,

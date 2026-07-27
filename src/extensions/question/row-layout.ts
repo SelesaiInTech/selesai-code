@@ -60,11 +60,11 @@ export function buildItemBlocks(
 	if (allowComment) {
 		allItems.push({
 			type: "comment-toggle",
-			option: { label: `${commentEnabled ? "[✓]" : "[ ]"} ${COMMENT_TOGGLE_LABEL}` },
+			option: { value: "__comment__", label: `${commentEnabled ? "[✓]" : "[ ]"} ${COMMENT_TOGGLE_LABEL}` },
 		});
 	}
 	if (allowFreeform) {
-		allItems.push({ type: "freeform", option: { label: FREEFORM_LABEL } });
+		allItems.push({ type: "freeform", option: { value: "__other__", label: FREEFORM_LABEL } });
 	}
 
 	return allItems.map((item, itemIndex) => {

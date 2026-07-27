@@ -3,7 +3,7 @@
 import { Key } from "@earendil-works/pi-tui";
 import type { ResolvedShortcut } from "./types.ts";
 
-export const QUESTION_VERSION = "1";
+export const QUESTION_VERSION = "2";
 
 export const SPLIT_PANE_MIN_WIDTH = 84;
 export const SPLIT_PANE_LEFT_MIN_WIDTH = 32;

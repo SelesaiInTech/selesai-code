@@ -53,6 +53,16 @@ async function createHarness() {
   return { pi, events, eventHandlers, tools, commands, entries, sent, notifies, status, ctx };
 }
 
+async function startWorkflow(h: Awaited<ReturnType<typeof createHarness>>, goal = "build X"): Promise<void> {
+  await h.commands.get("workflow-task").handler(goal, { ...h.ctx, isIdle: () => true });
+  // Start prompt is already being processed in tests that exercise later phases.
+  h.sent.length = 0;
+}
+
+async function resumeWorkflow(h: Awaited<ReturnType<typeof createHarness>>, run: string): Promise<void> {
+  await h.commands.get("workflow-task").handler(`resume ${run}`, { ...h.ctx, isIdle: () => true });
+}
+
 describe("task workflow", () => {
   let cwd: string;
   let tmp: string;
@@ -117,15 +127,14 @@ describe("task workflow", () => {
     expect(await sm.end(deps)).toMatchObject({ kind: "closed", phase: "loop" });
   });
 
-  it("registers task tools and suppresses plan/reuse/handoff/build child file output", async () => {
+  it("keeps task initiation user-only and suppresses plan/reuse/handoff/build child file output", async () => {
     const h = await createHarness();
-    expect(h.tools.has("start_workflow")).toBe(true);
-    expect(h.tools.has("resume_workflow")).toBe(true);
+    expect(h.tools.has("start_workflow")).toBe(false);
+    expect(h.tools.has("resume_workflow")).toBe(false);
     expect(h.tools.has("end_workflow")).toBe(true);
-    expect(h.tools.get("start_workflow").description).toContain("prototype, quick, or task");
     expect(h.commands.has("workflow-task")).toBe(true);
 
-    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
+    await startWorkflow(h, "build X");
     const dir = h.entries.at(-1)!.data.artifactDir;
 
     const planInput: Record<string, unknown> = { agent: "architect", task: "plan it", output: join(dir, "plan.md") };
@@ -175,7 +184,7 @@ describe("task workflow", () => {
 
   it("fails closed when transition-capable calls are not proven exclusive", async () => {
     const h = await createHarness();
-    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
+    await startWorkflow(h, "build X");
     const batch = (ids: string[]) => ({
       getBranch: () => [{ type: "message", message: { role: "assistant", content: ids.map((id) => ({ type: "toolCall", id })) } }],
     });
@@ -202,7 +211,7 @@ describe("task workflow", () => {
 
   it("reload ignores its stale task handler; explicit task resume reconciles through handoff", async () => {
     const h = await createHarness();
-    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
+    await startWorkflow(h, "build X");
     const dir = h.entries.at(-1)!.data.artifactDir;
     const statePath = join(dir, "workflow.json");
     writeFileSync(join(dir, "plan.md"), "# Plan\nWORKFLOW_PLAN_STATUS: ready");
@@ -218,15 +227,14 @@ describe("task workflow", () => {
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ phase: "plan", status: "active" });
     expect(h.notifies).toHaveLength(0);
 
-    const resumed = await h.tools.get("resume_workflow").execute("resume", { mode: "task", run: JSON.parse(readFileSync(statePath, "utf8")).id }, undefined, undefined, h.ctx);
-    expect(resumed.details.phase).toBe("loop");
+    await resumeWorkflow(h, JSON.parse(readFileSync(statePath, "utf8")).id);
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ phase: "loop", status: "active" });
     expect(h.sent.at(-1)?.text).toContain("LOOP (orchestration) phase");
   });
 
   it("queues each next phase as a hidden steer and terminates at artifact boundaries", async () => {
     const h = await createHarness();
-    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
+    await startWorkflow(h, "build X");
 
     let result = await h.tools.get("write_workflow_artifact").execute(
       "write-plan",
@@ -265,7 +273,7 @@ describe("task workflow", () => {
 
   it("requires a valid handoff marker before entering the loop", async () => {
     const h = await createHarness();
-    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
+    await startWorkflow(h, "build X");
     const dir = h.entries.at(-1)!.data.artifactDir;
 
     await h.tools.get("write_workflow_artifact").execute(
@@ -307,7 +315,7 @@ describe("task workflow", () => {
 
   it("requires the parent to persist architect/explorer/recapper output before entering the loop", async () => {
     const h = await createHarness();
-    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
+    await startWorkflow(h, "build X");
     const dir = h.entries.at(-1)!.data.artifactDir;
 
     // Architect result alone does not create plan.md or advance the workflow.
@@ -390,7 +398,7 @@ describe("task workflow", () => {
 
   it("pauses durably after three blocking reviews", async () => {
     const h = await createHarness();
-    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
+    await startWorkflow(h, "build X");
     await h.tools.get("write_workflow_artifact").execute(
       "write-plan",
       { content: "WORKFLOW_PLAN_STATUS: ready" },
@@ -434,10 +442,8 @@ describe("task workflow", () => {
 
     const { createWorkflowExtension } = await import("../extensions/workflow/adapter.ts");
     createWorkflowExtension(taskMode.config, taskMode)(h.pi);
-    const resumed = await h.tools.get("resume_workflow").execute("resume", { mode: "task", run: JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8")).id }, undefined, undefined, h.ctx);
-    expect(resumed.details.phase).toBe("loop");
-    expect(h.notifies.at(-1)?.text).toContain("paused after 3/3");
-    expect(h.notifies.at(-1)?.text).toContain("loop-review-3.md");
+    await resumeWorkflow(h, JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8")).id);
+    expect(h.notifies.some(({ text }) => text.includes("paused after 3/3") && text.includes("loop-review-3.md"))).toBe(true);
   });
 
   it("rolls back durable state to the pre-reconcile checkpoint when a later reconcile step fails", async () => {
@@ -459,7 +465,7 @@ describe("task workflow", () => {
     vi.resetModules();
 
     const h = await createHarness();
-    await h.tools.get("start_workflow").execute("start", { mode: "task", goal: "build X" }, undefined, undefined, h.ctx);
+    await startWorkflow(h, "build X");
     const dir = h.entries.at(-1)!.data.artifactDir;
     const statePath = join(dir, "workflow.json");
     const runId = JSON.parse(readFileSync(statePath, "utf8")).id as string;
@@ -474,26 +480,22 @@ describe("task workflow", () => {
       JSON.stringify({ ...JSON.parse(readFileSync(statePath, "utf8")), phase: "plan", autoArmed: true }, null, 2),
     );
 
-    // The previous start_workflow leaves an active controller attached.
+    // The previous user start command leaves an active controller attached.
     // Detach it so resume can load the run fresh, matching real usage where
     // start and resume are separate parent turns.
     const { __resetWorkflowRegistryForTests, createWorkflowExtension } = await import("../extensions/workflow/adapter.ts");
     __resetWorkflowRegistryForTests();
     createWorkflowExtension(taskMode.config, taskMode)(h.pi);
 
-    const resumed = await h.tools
-      .get("resume_workflow")
-      .execute("resume", { mode: "task", run: runId }, undefined, undefined, h.ctx);
-    expect(resumed.details.persistenceError).toBe(true);
+    await resumeWorkflow(h, runId);
+    expect(h.notifies.at(-1)).toMatchObject({ level: "warning", text: expect.stringMatching(/could not be persisted/i) });
     expect(JSON.parse(readFileSync(statePath, "utf8")).phase).toBe("plan");
 
     vi.doUnmock("../extensions/workflow/run-state.ts");
     vi.resetModules();
     const h2 = await createHarness();
 
-    const resumed2 = await h2.tools
-      .get("resume_workflow")
-      .execute("resume", { mode: "task", run: runId }, undefined, undefined, h2.ctx);
-    expect(resumed2.details.phase).toBe("loop");
+    await resumeWorkflow(h2, runId);
+    expect(JSON.parse(readFileSync(statePath, "utf8")).phase).toBe("loop");
   });
 });

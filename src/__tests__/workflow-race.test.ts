@@ -39,6 +39,12 @@ async function createQuickHarness() {
 	return { events, tools, commands, entries, sent, status, ctxBase };
 }
 
+async function startWorkflow(h: Awaited<ReturnType<typeof createQuickHarness>>, goal = "build X"): Promise<void> {
+	await h.commands.get("workflow-quick").handler(goal, { ...h.ctxBase, isIdle: () => true });
+	// Start prompt is already being processed in tests that exercise later phases.
+	h.sent.length = 0;
+}
+
 describe("workflow hook-driven transitions (next tool removed)", () => {
 	let cwd: string;
 	let tmp: string;
@@ -55,10 +61,11 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 		rmSync(tmp, { recursive: true, force: true });
 	});
 
-	it("does not register a next tool", async () => {
+	it("keeps initiation user-only and does not register a next tool", async () => {
 		const h = await createQuickHarness();
 		expect(h.tools.has("next_quick_step")).toBe(false);
-		expect(h.tools.has("start_workflow")).toBe(true);
+		expect(h.tools.has("start_workflow")).toBe(false);
+		expect(h.tools.has("resume_workflow")).toBe(false);
 		expect(h.tools.has("end_workflow")).toBe(true);
 		expect(h.tools.has("write_workflow_artifact")).toBe(true);
 	});
@@ -77,9 +84,7 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 
 	it("artifact completion advances grilling→plan without queuing the plan agent", async () => {
 		const h = await createQuickHarness();
-		await h.tools.get("start_workflow").execute(
-			"id-1", { mode: "quick", goal: "build X" }, undefined, undefined, { ...h.ctxBase },
-		);
+		await startWorkflow(h, "build X");
 		const result = await h.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, { ...h.ctxBase });
 		expect(h.entries.at(-1)?.data.phase).toBe("plan");
 		expect(h.sent).toHaveLength(1);
@@ -92,9 +97,7 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 	it("tool_call blocks write while workflow is active", async () => {
 		const h = await createQuickHarness();
 		const c = { ...h.ctxBase };
-		await h.tools.get("start_workflow").execute(
-			"id-1", { mode: "quick", goal: "build X" }, undefined, undefined, c,
-		);
+		await startWorkflow(h, "build X");
 		const res = await h.events.get("tool_call")(
 			{ type: "tool_call", toolName: "write", toolCallId: "tc1", input: { path: "./.[密钥].md", content: "# reqs" } },
 			c,
@@ -106,9 +109,7 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 	it("requires the parent writer to advance plan→reuse", async () => {
 		const h = await createQuickHarness();
 		const c = { ...h.ctxBase };
-		await h.tools.get("start_workflow").execute(
-			"id-1", { mode: "quick", goal: "build X" }, undefined, undefined, c,
-		);
+		await startWorkflow(h, "build X");
 		const dir = h.entries.at(-1)!.data.artifactDir;
 		await h.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
 		expect(h.entries.at(-1)?.data.phase).toBe("plan");
@@ -129,9 +130,7 @@ describe("workflow hook-driven transitions (next tool removed)", () => {
 	it("terminal becomes ready once review.md lands and closes only on explicit end", async () => {
 		const h = await createQuickHarness();
 		const c = { ...h.ctxBase };
-		await h.tools.get("start_workflow").execute(
-			"id-1", { mode: "quick", goal: "build X" }, undefined, undefined, c,
-		);
+		await startWorkflow(h, "build X");
 		const dir = h.entries.at(-1)!.data.artifactDir;
 		await h.tools.get("write_workflow_artifact").execute("requirements", { content: "# requirements" }, undefined, undefined, c);
 		await h.tools.get("write_workflow_artifact").execute("plan", { content: "# plan\nWORKFLOW_PLAN_STATUS: ready" }, undefined, undefined, c);
