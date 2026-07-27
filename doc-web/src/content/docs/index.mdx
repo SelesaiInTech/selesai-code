@@ -1,60 +1,67 @@
 ---
-draft: false
-title: Selesai Documentation
+title: Selesai
+description: An extension-first coding agent with subagents, durable workflows, research, recovery, and token-conscious tooling built in.
+template: splash
+hero:
+  title: "The coding agent<br><span class='accent'>built to finish.</span>"
+  tagline: "Selesai turns a minimal coding harness into a complete workspace: delegate work, research the web, recover context, and ship without assembling a plugin stack first."
+  actions:
+    - text: Get started
+      link: get-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/SelesaiInTech/selesai-code
+      icon: external
+      variant: secondary
+  image:
+    html: |
+      <div class="terminal-card" aria-hidden="true">
+        <div class="terminal-card__bar"><i></i><i></i><i></i><span>selesai — main</span></div>
+        <div class="terminal-card__body">
+          <p><span class="prompt">❯</span> ship this feature safely</p>
+          <p class="muted">  Tracing codebase...</p>
+          <p>  ↗ delegated 3 focused checks</p>
+          <p>  ↺ checkpoint created</p>
+          <p>  ✓ implementation verified</p>
+          <p><span class="success">Done.</span> 12 files · 48 tests passed</p>
+        </div>
+      </div>
 ---
 
 import InstallCommand from "../../components/InstallCommand.astro";
 import CapabilityCard from "../../components/CapabilityCard.astro";
-import { capabilities, categories } from "../../data/capabilities.ts";
+import { capabilities } from "../../data/capabilities.ts";
 
-# Selesai
+<div className="trust-strip" aria-label="Project highlights">
+  <span>extension-first</span>
+  <span>in-tree tooling</span>
+  <span>bilingual docs</span>
+  <span>open source</span>
+  <span>npm: @selesai/code</span>
+</div>
 
-Selesai is a maintained, extension-first fork of the [Pi coding agent](https://github.com/earendil-works/pi). It keeps Pi's small, hackable coding harness and ships a coordinated set of extensions, skills, and display improvements as part of the application.
+<section className="home-section">
+  <div className="home-section__heading">
+    <p className="eyebrow">Start in one command</p>
+    <h2>No plugin scavenger hunt.</h2>
+    <p>Install one maintained package. Get the coordinated tools, skills, and terminal experience Selesai ships and tests together.</p>
+  </div>
+  <div className="install-panel">
+    <InstallCommand command="npm install -g --ignore-scripts @selesai/code" />
+    <InstallCommand command="selesai" />
+  </div>
+</section>
 
-The goal is simple: make a capable coding agent useful out of the box, maximize token utilization, and get better or comparable results with fewer tokens and lower cost — without asking every user to install and trust a long list of unrelated extensions.
-
-## Install
-
-<InstallCommand command="npm install -g --ignore-scripts @selesai/code" />
-
-Then run:
-
-<InstallCommand command="selesai" />
-
-For a one-off run:
-
-<InstallCommand command="npx @selesai/code" />
-
-## Start using Selesai
-
-```sh
-# Ask a question
-selesai "Explain this repository and tell me how to run its checks"
-
-# One-off review
-selesai -p "Review the current git diff without editing files"
-```
-
-## Explore capabilities
-
-Selesai bundles every capability below and keeps them in-tree so the source is visible, reviewable, and versioned with each release.
-
-{/* Render cards by category */}
-{categories.map((cat) => (
-  <>
-    <h2 id={cat.id}>{cat.en}</h2>
-    <div className="capability-grid">
-      {capabilities.filter((c) => c.category === cat.id).map((c) => (
-        <CapabilityCard slug={c.slug} locale="en" />
-      ))}
-    </div>
-  </>
-))}
-
-## Why Selesai
-
-Compare Selesai's bundled experience with the original Pi agent on the [Why Selesai](why-selesai/) page. Every claim is linked to source evidence.
-
-## Language
-
-This site is available in [Bahasa Indonesia](id/).
+<section className="home-section">
+  <div className="home-section__heading">
+    <p className="eyebrow">A complete working loop</p>
+    <h2>More than chat in a terminal.</h2>
+    <p>Delegate deep work, bring in external evidence, preserve session continuity, and keep token spend visible.</p>
+  </div>
+  <div className="capability-grid">
+    {capabilities.slice(0, 6).map((capability) => (
+      <CapabilityCard slug={capability.slug} locale="en" />
+    ))}
+  </div>
+  <a className="home-link" href="capabilities/">Explore every capability <span aria-hidden="true">→</span></a>
+</section>

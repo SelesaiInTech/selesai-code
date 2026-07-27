@@ -7,72 +7,151 @@ export interface Props {
 }
 
 const { slug, locale } = Astro.props;
-const c = getCapability(slug);
-if (!c) throw new Error(`Unknown capability: ${slug}`);
-const name = locale === "en" ? c.en.displayName : c.id.displayName;
-const benefit = locale === "en" ? c.en.benefit : c.id.benefit;
-const path = locale === "en" ? c.guideRoute : `id/${c.guideRoute}`;
+const capability = getCapability(slug);
+if (!capability) throw new Error(`Unknown capability: ${slug}`);
+
+const name = capability[locale].displayName;
+const benefit = capability[locale].benefit;
+const path = locale === "en" ? capability.guideRoute : `id/${capability.guideRoute}`;
 const route = `${import.meta.env.BASE_URL}${path}/`;
-const category = categoryLabel(c.category, locale);
+const category = categoryLabel(capability.category, locale);
+const icon = {
+  "delegation-and-workflows": "↗",
+  "research-and-interaction": "⌕",
+  "continuity-and-recovery": "↺",
+  "terminal-workspace": ">_",
+  "skills-and-productivity": "✦",
+}[capability.category];
 const badge =
-  c.piComparison === "core-differentiator"
+  capability.piComparison === "core-differentiator"
     ? locale === "en" ? "Selesai difference" : "Perbedaan Selesai"
-    : c.piComparison === "bundled"
-    ? locale === "en" ? "Bundled" : "Dibundel"
-    : locale === "en" ? "Ergonomics" : "Ergonomi";
+    : capability.piComparison === "bundled"
+      ? locale === "en" ? "Bundled" : "Dibundel"
+      : locale === "en" ? "Ergonomics" : "Ergonomi";
 ---
 
 <a href={route} class="capability-card">
-  <span class="capability-card__category">{category}</span>
+  <div class="capability-card__meta">
+    <span class="capability-card__icon" aria-hidden="true">{icon}</span>
+    <span class="capability-card__category">{category}</span>
+  </div>
   <h3 class="capability-card__title">{name}</h3>
   <p class="capability-card__benefit">{benefit}</p>
-  <span class="capability-card__badge">{badge}</span>
+  <div class="capability-card__footer">
+    <span class="capability-card__badge">{badge}</span>
+    <span class="capability-card__arrow" aria-hidden="true">→</span>
+  </div>
 </a>
 
 <style>
   .capability-card {
+    position: relative;
     display: flex;
+    min-height: 15.5rem;
     flex-direction: column;
-    gap: 0.5rem;
-    padding: 1rem;
-    border: 1px solid var(--sl-color-gray-5);
-    border-radius: 0.75rem;
-    background: var(--sl-color-bg);
+    gap: 1rem;
+    overflow: hidden;
+    padding: 1.4rem;
+    border: 1px solid var(--selesai-border);
+    border-radius: 1rem;
+    background: var(--selesai-surface);
     color: var(--sl-color-text);
     text-decoration: none;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: 0 1px 0 rgb(255 255 255 / 4%) inset;
+    transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
   }
+
+  .capability-card::before {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 2px;
+    background: linear-gradient(90deg, var(--sl-color-accent), transparent 70%);
+    content: "";
+    opacity: 0;
+    transition: opacity 180ms ease;
+  }
+
   .capability-card:hover,
   .capability-card:focus-visible {
-    border-color: var(--sl-color-accent);
-    box-shadow: 0 0 0 3px var(--sl-color-accent-low);
+    border-color: var(--selesai-border-hover);
+    box-shadow: 0 18px 50px rgb(0 0 0 / 18%);
+    transform: translateY(-3px);
   }
+
+  .capability-card:hover::before,
+  .capability-card:focus-visible::before {
+    opacity: 1;
+  }
+
   .capability-card:focus-visible {
-    outline: none;
+    outline: 2px solid var(--sl-color-accent);
+    outline-offset: 3px;
   }
-  .capability-card__category {
-    font-size: var(--sl-text-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.025em;
-    color: var(--sl-color-gray-3);
+
+  .capability-card__meta,
+  .capability-card__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
   }
-  .capability-card__title {
-    font-size: var(--sl-text-lg);
-    margin: 0;
-    color: var(--sl-color-white);
-  }
-  .capability-card__benefit {
-    font-size: var(--sl-text-sm);
-    color: var(--sl-color-gray-2);
-    margin: 0;
-    flex: 1;
-  }
-  .capability-card__badge {
-    align-self: flex-start;
-    font-size: var(--sl-text-xs);
-    color: var(--sl-color-accent-high);
+
+  .capability-card__icon {
+    display: grid;
+    width: 2.35rem;
+    height: 2.35rem;
+    place-items: center;
+    border: 1px solid var(--selesai-border);
+    border-radius: 0.65rem;
     background: var(--sl-color-accent-low);
-    border-radius: 9999px;
-    padding: 0.25rem 0.625rem;
+    color: var(--sl-color-accent-high);
+    font-family: var(--__sl-font-mono);
+    font-size: 0.8rem;
+    font-weight: 800;
+  }
+
+  .capability-card__category {
+    color: var(--sl-color-gray-3);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-align: end;
+    text-transform: uppercase;
+  }
+
+  .capability-card__title {
+    margin: 0.35rem 0 0;
+    color: var(--sl-color-white);
+    font-size: clamp(1.25rem, 2vw, 1.55rem);
+    letter-spacing: -0.025em;
+    line-height: 1.15;
+  }
+
+  .capability-card__benefit {
+    flex: 1;
+    margin: 0;
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-sm);
+    line-height: 1.65;
+  }
+
+  .capability-card__badge {
+    padding: 0.32rem 0.65rem;
+    border: 1px solid var(--selesai-border);
+    border-radius: 999px;
+    background: var(--sl-color-accent-low);
+    color: var(--sl-color-accent-high);
+    font-size: 0.7rem;
+    font-weight: 700;
+  }
+
+  .capability-card__arrow {
+    color: var(--sl-color-accent-high);
+    font-size: 1.25rem;
+    transition: transform 180ms ease;
+  }
+
+  .capability-card:hover .capability-card__arrow {
+    transform: translateX(0.25rem);
   }
 </style>

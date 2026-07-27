@@ -1,59 +1,67 @@
 ---
-draft: false
-title: Dokumentasi Selesai
+title: Selesai
+description: Coding agent extension-first dengan subagent, workflow tahan lama, riset, pemulihan, dan tooling hemat token yang sudah terintegrasi.
+template: splash
+hero:
+  title: "Coding agent yang<br><span class='accent'>menyelesaikan pekerjaan.</span>"
+  tagline: "Selesai mengubah coding harness minimal menjadi ruang kerja lengkap: delegasikan pekerjaan, riset web, pulihkan konteks, lalu ship tanpa harus merakit plugin stack lebih dulu."
+  actions:
+    - text: Mulai
+      link: get-started/
+      icon: right-arrow
+    - text: Lihat di GitHub
+      link: https://github.com/SelesaiInTech/selesai-code
+      icon: external
+      variant: secondary
+  image:
+    html: |
+      <div class="terminal-card" aria-hidden="true">
+        <div class="terminal-card__bar"><i></i><i></i><i></i><span>selesai — main</span></div>
+        <div class="terminal-card__body">
+          <p><span class="prompt">❯</span> ship fitur ini dengan aman</p>
+          <p class="muted">  Menelusuri codebase...</p>
+          <p>  ↗ 3 pemeriksaan didelegasikan</p>
+          <p>  ↺ checkpoint dibuat</p>
+          <p>  ✓ implementasi diverifikasi</p>
+          <p><span class="success">Selesai.</span> 12 file · 48 tes lulus</p>
+        </div>
+      </div>
 ---
 
 import InstallCommand from "../../../components/InstallCommand.astro";
 import CapabilityCard from "../../../components/CapabilityCard.astro";
-import { capabilities, categories } from "../../../data/capabilities.ts";
+import { capabilities } from "../../../data/capabilities.ts";
 
-# Selesai
+<div className="trust-strip" aria-label="Sorotan proyek">
+  <span>extension-first</span>
+  <span>tooling in-tree</span>
+  <span>dokumentasi bilingual</span>
+  <span>open source</span>
+  <span>npm: @selesai/code</span>
+</div>
 
-Selesai adalah fork yang dikelola dari [Pi coding agent](https://github.com/earendil-works/pi), dengan pendekatan *extension-first*. Selesai mempertahankan *harness* coding kecil dan dapat di-hack dari Pi, lalu mengirimkan satu set extension, skill, dan perbaikan tampilan terkoordinasi sebagai bagian dari aplikasi.
+<section className="home-section">
+  <div className="home-section__heading">
+    <p className="eyebrow">Mulai dengan satu command</p>
+    <h2>Tanpa berburu plugin.</h2>
+    <p>Instal satu package yang dikelola. Dapatkan tools, skills, dan pengalaman terminal yang dikirim serta diuji bersama oleh Selesai.</p>
+  </div>
+  <div className="install-panel">
+    <InstallCommand command="npm install -g --ignore-scripts @selesai/code" />
+    <InstallCommand command="selesai" />
+  </div>
+</section>
 
-Tujuannya sederhana: membuat coding agent yang mampu langsung berguna, memaksimalkan pemanfaatan token, dan mendapatkan hasil setara atau lebih baik dengan lebih sedikit token dan biaya lebih rendah — tanpa mengharuskan setiap pengguna memasang dan mempercayai banyak sekumpulan extension tidak terkait.
-
-## Instal
-
-<InstallCommand command="npm install -g --ignore-scripts @selesai/code" />
-
-Kemudian jalankan:
-
-<InstallCommand command="selesai" />
-
-Untuk satu kali pakai:
-
-<InstallCommand command="npx @selesai/code" />
-
-## Mulai menggunakan Selesai
-
-```sh
-# Tanyakan pertanyaan
-selesai "Explain this repository and tell me how to run its checks"
-
-# Review sekali pakai
-selesai -p "Review the current git diff without editing files"
-```
-
-## Jelajahi kemampuan
-
-Selesai membundel setiap kemampuan di bawah ini secara in-tree sehingga source terlihat, dapat direview, dan di-*versioning* bersama setiap rilis.
-
-{categories.map((cat) => (
-  <>
-    <h2 id={cat.id}>{cat.id}</h2>
-    <div className="capability-grid">
-      {capabilities.filter((c) => c.category === cat.id).map((c) => (
-        <CapabilityCard slug={c.slug} locale="id" />
-      ))}
-    </div>
-  </>
-))}
-
-## Mengapa Selesai
-
-Bandingkan pengalaman bundled Selesai dengan Pi asli di halaman [Mengapa Selesai](why-selesai/). Setiap klaim ditautkan ke bukti source.
-
-## Bahasa
-
-Situs ini tersedia dalam [English](../).
+<section className="home-section">
+  <div className="home-section__heading">
+    <p className="eyebrow">Siklus kerja lengkap</p>
+    <h2>Lebih dari chat di terminal.</h2>
+    <p>Delegasikan pekerjaan mendalam, kumpulkan bukti eksternal, pertahankan kontinuitas sesi, dan awasi penggunaan token.</p>
+  </div>
+  <div className="capability-grid">
+    {capabilities.slice(0, 6).map((capability) => (
+      <CapabilityCard slug={capability.slug} locale="id" />
+    ))}
+  </div>
+  <a className="home-link" href="capabilities/">Jelajahi semua kemampuan <span aria-hidden="true">→</span></a>
+</section>
