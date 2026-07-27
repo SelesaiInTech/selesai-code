@@ -7,11 +7,17 @@ import InstallCommand from "../../../components/InstallCommand.astro";
 
 ## Instal Selesai
 
-Gunakan npm untuk memasang package secara global. Flag `--ignore-scripts` melewati lifecycle script karena Selesai sudah mengirimkan asetnya di `dist/`.
+Gunakan npm untuk memasang package secara global. Izinkan lifecycle script berjalan agar Selesai dapat memasang dan mengonfigurasi aset bawaannya dengan benar.
 
-<InstallCommand command="npm install -g --ignore-scripts @selesai/code" />
+<InstallCommand command="npm install -g @selesai/code" />
 
 Package yang dipublikasikan adalah `@selesai/code` dan binarinya adalah `selesai`.
+
+## Sering perbarui
+
+Selesai dan ekosistem Pi berkembang cepat. Perbaikan penting, kemampuan baru, dan perubahan perilaku dapat hadir setiap hari, jadi sering perbarui instalasi Anda:
+
+<InstallCommand command="npm install -g @selesai/code@latest" />
 
 ## Jalankan Selesai
 
