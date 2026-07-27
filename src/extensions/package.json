@@ -13,6 +13,7 @@
 			"./question",
 			"./grep-app",
 			"./handoff-new.ts",
+			"./inline-skills.ts",
 			"./rtk.ts",
 			"./tokenin-onboarding.ts",
 			"./undo.ts",

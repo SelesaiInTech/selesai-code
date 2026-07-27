@@ -81,6 +81,14 @@ Skills register as `/skill:name` commands:
 
 Arguments after the command are appended to the skill content as `User: <args>`.
 
+### Inline Skill Picker
+
+In interactive chat, type `#` anywhere in a prompt to open completion for available skills. Select a skill to insert `#skill-name`; on send, Selesai expands it at that position.
+
+```text
+Draft implementation plan, then #codebase-design the module.
+```
+
 Toggle skill commands via `/settings` in interactive mode or in `settings.json`:
 
 ```json
