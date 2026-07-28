@@ -3,41 +3,59 @@ draft: false
 title: Integrasi RTK
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `rtk` menulis ulang tool call Bash yang kompatibel untuk menggunakan binary `rtk` eksternal. Ini mengurangi output command yang berisik dan menghemat token saat `rtk` terpasang, tanpa mengubah perilaku rewrite Selesai sendiri.
 
-Extension `rtk` menulis ulang shell command yang kompatibel untuk mengurangi output berisik dan penggunaan token saat `rtk` terpasang di sistem. Extension ini mengubah command seperti `ls` atau `cat` menjadi equivalent yang lebih diam di balik layar.
-
-## Ketersediaan
-
-Termasuk dalam `@selesai/code` sebagai `src/extensions/rtk.ts`. Memerlukan binary `rtk` yang terpisah untuk diinstal.
-
-## Mulai cepat
-
-Pasang `rtk` di sistem Anda, lalu jalankan Selesai seperti biasa. Command yang kompatibel akan ditulis ulang secara otomatis.
-
-```sh
-# Contoh command yang mungkin ditulis ulang jika rtk tersedia
-selesai -p "list the files in the current directory"
-```
-
-## Konfigurasi
-
-Tidak diperlukan konfigurasi khusus Selesai. Extension mendeteksi ketersediaan `rtk` saat runtime.
-
-## Batasan dan edge case
-
-- Hanya command yang kompatibel yang ditulis ulang. Command yang tidak dipahami `rtk` dibiarkan apa adanya.
-- Jika `rtk` tidak terpasang, Selesai menjalankan command apa adanya.
-- Output yang ditulis ulang mungkin sedikit berbeda dari command asli; tinjau jika output tepat diperlukan.
-
-<ComparisonCallout
-  claim="Selesai dapat mengarahkan shell command yang kompatibel melalui rtk untuk mengurangi output berisik dan menghemat token saat rtk tersedia."
-  evidence={[
-    { text: "source rtk", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/rtk.ts" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./rtk.ts"
+  runtimeSurface="automatic"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Extension dibundel bersama Selesai, tetapi **tidak aktif kecuali `rtk` terpasang**.
+- `rtk` harus tersedia di `PATH` dan melaporkan versi `0.23.0` atau lebih baru (`rtk rewrite` diperkenalkan di `0.23.0`).
+- Jika `rtk` tidak ada, lebih tua dari `0.23.0`, atau versinya tidak dapat diparse, extension mencetak peringatan dan tidak melakukan apa pun.
+
+## Yang disiapkan
+
+- Probe `rtk --version` saat extension dimuat dan keluar jika binary tidak ada atau terlalu tua.
+- Mendaftarkan listener `tool_call` yang mencegat Bash tool call dan mendelegasikan penulisan ulang command ke `rtk rewrite`.
+- Menerapkan command yang ditulis ulang hanya ketika `rtk rewrite` keluar dengan kode `0` atau `3` dan mengembalikan stdout non-kosong yang berbeda dari command asli.
+
+## Yang dapat dikonfigurasi
+
+| Environment variable | Efek |
+| --- | --- |
+| `RTK_DISABLED=1` | Menonaktifkan extension sepenuhnya, bahkan saat `rtk` terpasang. |
+
+Tidak ada file konfigurasi atau setting key khusus Selesai. Extension sengaja dibuat tipis; semua aturan rewrite berada di registry binary `rtk`.
+
+## Yang dapat dilakukan
+
+- Pasang `rtk >= 0.23.0` di `PATH` shell Anda, lalu jalankan Selesai. Tool call `bash` yang kompatibel ditulis ulang secara otomatis.
+- Setel `RTK_DISABLED=1` sebelum menjalankan Selesai untuk melewati rewriter.
+- Periksa command yang ditulis ulang di output tool jika model meminta perilaku shell yang tepat.
+
+## Perintah, tool, dan shortcut
+
+Tidak ada slash command, tool, atau shortcut. Extension hanya menulis ulang Bash tool call.
+
+| Mekanisme | Deskripsi |
+| --- | --- |
+| `rtk rewrite <cmd>` | Subproses eksternal yang mengembalikan ekuivalen yang lebih tenang atau menandakan tidak ada rewrite. |
+| Hook Bash tool call | Mencegat tool call `bash` sebelum eksekusi. |
+
+## Batasan dan keamanan
+
+- Hanya tool call `bash` yang ditulis ulang; tool lain tidak tersentuh.
+- Command yang sudah diawali `rtk ` dilewati untuk menghindari rekursi.
+- Rewrite bersifat advisory: jika `rtk rewrite` keluar dengan kode tak terduga, timeout setelah 2 detik, atau melempar error, command asli tetap berjalan (fail-open).
+- Extension tidak menambahkan tool baru atau mengubah perilaku model; hanya mengubah string command yang diteruskan ke Bash.
+- Pasang dan kelola `rtk` secara terpisah; Selesai tidak membundelnya.
 
 <SourceEvidence slug="rtk" />

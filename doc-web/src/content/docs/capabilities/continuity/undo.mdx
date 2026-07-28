@@ -3,38 +3,56 @@ draft: false
 title: Turn-level undo
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `undo` extension restores file changes from the most recent user turn. It tracks `edit` and `write` tool calls and can undo them one turn at a time, bringing the conversation back to the previous user message.
 
-The `undo` extension gives you turn-level undo for tracked edits, writes, and detected mutating shell commands. If the agent makes an unexpected change, you can roll back one step at a time.
-
-## Availability
-
-Included in `@selesai/code` as `src/extensions/undo.ts`.
-
-## Quick start
-
-```sh
-/undo
-```
-
-## Configuration
-
-No separate configuration is required. The extension tracks mutations made by the agent during the session and exposes them as undoable turns.
-
-## Limits and edge cases
-
-- Only tracked edits, writes, and detected mutating shell commands can be undone.
-- Undo works one turn at a time; earlier non-mutating turns do not affect file state.
-- If a shell command is not recognized as mutating, it will not be part of the undo stack.
-
-<ComparisonCallout
-  claim="Selesai bundles a turn-level undo command so mistakes can be reverted without manually editing git history."
-  evidence={[
-    { text: "undo source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/undo.ts" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./undo.ts"
+  runtimeSurface="command"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- Works inside a single Selesai session. Undo uses the current working directory of the session to resolve relative paths.
+- Requires an interactive session with a TUI for slash command input.
+
+## What it sets up
+
+- Watches `tool_call` and `tool_result` events for `edit` and `write` tools.
+- Builds a per-user-turn checkpoint that stores inverse edits, original file contents, and SHA-256 hashes of post-change file states.
+- Detects mutating Bash commands by pattern analysis but does **not** track their filesystem effects.
+
+## What you can configure
+
+- No user-facing configuration. The maximum old content retained for a `write` restore is 512 KiB.
+
+## What you can do
+
+- Undo the most recent user turn and restore tracked file changes.
+- See how many tracked operations are pending with `/undo-status`.
+- Force a restore even if the file changed since the checkpoint by using `/undo --force`.
+
+## Commands, tools, and shortcuts
+
+| Command | Description |
+| --- | --- |
+| `/undo` | Undo the last user turn and restore tracked `edit`/`write` changes. |
+| `/undo --force` | Restore tracked changes even if the file has been modified since the checkpoint. |
+| `/undo-status` | Show a summary of tracked checkpoints for the session. |
+
+When you run `/undo`, Selesai navigates the session tree to the parent of the current user message, restores the editor prompt, and deletes the checkpoint after replay.
+
+## Limits and safety
+
+- Only `edit` and `write` tool effects are restored. Mutating Bash commands are flagged but not reverted; you must undo those by hand.
+- Undo cannot revert root prompts in-place. For the very first prompt, use `/new` or `/tree` instead.
+- Files larger than 512 KiB at the time of the original `write` cannot be restored from the saved content.
+- `/undo` without `--force` refuses to restore a file whose current SHA-256 hash no longer matches the post-change hash recorded at the time of the original tool call.
+- Checkpoints are held in memory for the session; they are lost when the session ends.
 
 <SourceEvidence slug="undo" />

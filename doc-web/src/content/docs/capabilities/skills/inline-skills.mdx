@@ -3,39 +3,57 @@ draft: false
 title: Inline skills
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `inline-skills` extension lets you invite installed skills directly inside a message by typing `#skill-name`, instead of starting a separate `/skill:<name>` command. It provides autocomplete suggestions and expands matched skills into the conversation context before the agent runs.
 
-The `inline-skills` extension lets the agent accept lightweight skill invitations inline, without a separate skill file in the project. This lowers the barrier for one-off skill usage.
-
-## Availability
-
-Included in `@selesai/code` as `src/extensions/inline-skills.ts`.
-
-## Quick start
-
-```text
-Use the inline skills interface to adopt a concise review skill for this diff.
-```
-
-## Configuration
-
-No separate configuration is required. Inline skills are accepted through the normal agent interaction layer.
-
-## Limits and edge cases
-
-- Inline skills are temporary; persistent skill behavior should still use `src/skills/` or user-level skill files.
-- The extension validates skill invitations before applying them.
-- Not all skills can be used inline; complex multi-file skills still need full skill definitions.
-
-<ComparisonCallout
-  claim="Selesai supports lightweight inline skill invitations, making one-off skill use faster."
-  evidence={[
-    { text: "inline-skills source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/inline-skills.ts" },
-    { text: "skills loader", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/core/skills.ts" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./inline-skills.ts"
+  runtimeSurface="skill-backed"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- Bundled with Selesai and loaded automatically.
+- Works only with skills that are already installed as slash commands (source in `src/skills/` or user-level skill files).
+- Requires an interactive session with editor autocomplete; headless or non-TUI use still expands already-typed `#skill-name` tokens.
+
+## What it sets up
+
+- Registers an autocomplete provider triggered by `#`. As you type, it suggests installed skill names that contain the token.
+- Hooks `input` events to expand any `#skill-name` tokens into `<skill>` blocks appended before the original message.
+- Reads each skill's source file from the path recorded by the skill loader and strips its frontmatter.
+
+## What you can configure
+
+There is no dedicated configuration file. Inline-skills behavior is governed by which skills are installed and the extension's own source logic.
+
+## What you can do
+
+- Start typing `#` in the editor to see installed skill suggestions.
+- Accept a suggestion to insert `#skill-name` as text.
+- Send the message. Before the agent runs, the extension replaces the inline token with the skill's `<skill>` block.
+- Mention multiple skills in one message: `#grill-me #implanger` expands both if they are installed.
+
+## Commands, tools, and shortcuts
+
+There are no slash commands, tools, or shortcuts. The extension surface is:
+
+| Surface | Behavior |
+| --- | --- |
+| `#<token>` autocomplete | Suggests installed skills matching `<token>`. |
+| `#<skill-name>` in a message | Expands the matching skill body into context. |
+
+## Limits and safety
+
+- Inline skills only expand if the skill is installed and its `sourceInfo.path` is readable. Unavailable or unreadable skills are silently skipped.
+- Each distinct skill is expanded at most once per message, even if you mention it multiple times.
+- The matching is case-insensitive and accepts skill names using lowercase letters, digits, and hyphens.
+- An inline skill token must be preceded by a word boundary or whitespace and followed by a non-identifier character (space, punctuation, end of line) to be recognized.
+- The expansion is a pre-send transform; it does not add the skill as a persistent session instruction and it does not change the model's tool set.
+- If the input comes from another extension (`event.source === "extension"`), the transform is skipped to avoid loops.
 
 <SourceEvidence slug="inline-skills" />

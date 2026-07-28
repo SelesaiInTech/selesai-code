@@ -3,45 +3,54 @@ draft: false
 title: Onboarding web agent
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `web-agent-onboarding` berjalan pada startup Selesai interaktif pertama dan menawarkan untuk mengkonfigurasi Brave Search untuk `pi-web-agent` yang dibundel. Jika Anda menolak, agent menggunakan backend DuckDuckGo default.
 
-Extension `web-agent-onboarding` menyediakan jalur konfigurasi pertama kali untuk web agent yang dibundel, secara opsional mengaktifkan Brave Search dengan fallback DuckDuckGo.
-
-## Ketersediaan
-
-Termasuk dalam `@selesai/code` sebagai `src/extensions/web-agent-onboarding.ts`.
-
-## Mulai cepat
-
-Saat pertama kali berjalan, Selesai mungkin meminta Anda mengkonfigurasi pencarian web. Untuk menjalankan ulang onboarding:
-
-```sh
-/web-agent-onboard
-```
-
-## Konfigurasi
-
-1. Kunjungi halaman Brave Search API untuk meminta akses.
-2. Buat API key di dashboard Brave API.
-3. Tempelkan key saat diminta selama onboarding.
-
-DuckDuckGo tetap menjadi fallback jika Brave tidak dikonfigurasi.
-
-## Batasan dan edge case
-
-- Brave Search memerlukan API key dan mungkin memiliki batas penggunaan.
-- Fallback DuckDuckGo tidak memerlukan key tetapi dapat membatasi penggunaan intensif.
-- Akses jaringan diperlukan untuk kedua backend pencarian.
-
-<ComparisonCallout
-  claim="Selesai membundel onboarding pencarian pertama kali sehingga riset web langsung berfungsi dengan jalur fallback."
-  evidence={[
-    { text: "source web-agent-onboarding", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/web-agent-onboarding.ts" },
-    { text: "source pi-web-agent", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-web-agent/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./web-agent-onboarding.ts"
+  runtimeSurface="command"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
+- Hanya berjalan saat startup pertama (`event.reason === "startup"`) sampai marker onboarding ditulis.
+- Memerlukan sesi TUI interaktif untuk menampilkan konfirmasi dan prompt paste.
+- Akses jaringan ke `https://api-dashboard.search.brave.com/app/keys` diperlukan jika Anda memilih membuka dashboard Brave.
+
+## Yang disiapkan
+
+- Menulis `~/.selesai/agent/.webAgentOnboardingComplete` setelah onboarding selesai atau dilewati secara eksplisit.
+- Jika Anda setuju, menyimpan `webAgent.braveApiKey` di `~/.selesai/agent/settings.json`.
+- Menulis config backend global yang memilih Brave dengan fallback DuckDuckGo di `~/.selesai/agent/extensions/pi-web-agent/config.json`.
+- Memicu reload extension sehingga backend `pi-web-agent` membaca ulang config baru.
+
+## Yang dapat dikonfigurasi
+
+- Tidak diperlukan konfigurasi manual untuk jalur DuckDuckGo default.
+- Untuk mengubah atau menjalankan ulang onboarding nanti, gunakan `/setup-web-search`.
+- Untuk menjalankan ulang onboarding tanpa menulis apa pun, tetapkan `SELESAI_SKIP_WEB_AGENT_ONBOARDING=1` di environment.
+
+## Yang dapat dilakukan
+
+- Menerima prompt pertama kali untuk menggunakan Brave Search. Ia membuka dashboard Brave API key, memungkinkan Anda menempel key, dan mengalihkan `pi-web-agent` ke Brave secara otomatis.
+- Menolak prompt untuk mempertahankan backend DuckDuckGo.
+- Menjalankan `/setup-web-search` kapan saja untuk menjalankan ulang alur.
+
+## Perintah, tool, dan shortcut
+
+| Perintah | Deskripsi |
+| --- | --- |
+| `/setup-web-search` | Jalankan ulang alur Brave Search onboarding, lalu reload extension jika key tersimpan. |
+
+## Batasan dan keamanan
+
+- Marker onboarding mencegah prompt muncul lagi meskipun Anda melewati atau membatalkan. Gunakan `/setup-web-search` untuk menjalankan ulang.
+- Brave key disimpan di `~/.selesai/agent/settings.json`. Jangan commit file tersebut atau membagikan key.
+- Jika Brave tidak tersedia di wilayah Anda atau key tidak valid, `pi-web-agent` masih dapat fallback ke DuckDuckGo ketika `fallback: "duckduckgo"` dikonfigurasi.
 
 <SourceEvidence slug="web-agent-onboarding" />

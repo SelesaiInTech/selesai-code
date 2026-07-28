@@ -3,41 +3,59 @@ draft: false
 title: RTK integration
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `rtk` extension rewrites compatible Bash tool calls to use the external `rtk` binary. This reduces noisy command output and saves tokens when `rtk` is installed, without changing Selesai's own rewrite behavior.
 
-The `rtk` extension rewrites compatible shell commands to reduce noisy output and token burn when `rtk` is installed on the system. It converts commands like `ls` or `cat` into quieter equivalents behind the scenes.
-
-## Availability
-
-Included in `@selesai/code` as `src/extensions/rtk.ts`. Requires the separate `rtk` binary to be installed.
-
-## Quick start
-
-Install `rtk` on your system, then run Selesai normally. Compatible commands will be rewritten automatically.
-
-```sh
-# Example command that may be rewritten if rtk is available
-selesai -p "list the files in the current directory"
-```
-
-## Configuration
-
-No Selesai-specific configuration is required. The extension detects `rtk` availability at runtime.
-
-## Limits and edge cases
-
-- Only compatible commands are rewritten. Commands that `rtk` does not understand are left unchanged.
-- If `rtk` is not installed, Selesai runs commands as-is.
-- Rewritten output may differ slightly from the original command; review if the exact output matters.
-
-<ComparisonCallout
-  claim="Selesai can route compatible shell commands through rtk to reduce noisy output and save tokens when rtk is present."
-  evidence={[
-    { text: "rtk source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/rtk.ts" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./rtk.ts"
+  runtimeSurface="automatic"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- The extension is bundled with Selesai, but it is **disabled unless `rtk` is installed**.
+- `rtk` must be available in `PATH` and report version `0.23.0` or newer (`rtk rewrite` was introduced in `0.23.0`).
+- If `rtk` is missing, older than `0.23.0`, or the version cannot be parsed, the extension logs a warning and does nothing.
+
+## What it sets up
+
+- Probes `rtk --version` at extension load time and bails out if the binary is missing or too old.
+- Registers a `tool_call` listener that intercepts Bash tool calls and delegates command rewriting to `rtk rewrite`.
+- Applies the rewritten command only when `rtk rewrite` exits `0` or `3` and returns a non-empty stdout that differs from the original command.
+
+## What you can configure
+
+| Environment variable | Effect |
+| --- | --- |
+| `RTK_DISABLED=1` | Disable the extension entirely, even when `rtk` is installed. |
+
+There is no Selesai-specific configuration file or setting key. The extension is intentionally thin; all rewrite rules live in the `rtk` binary's registry.
+
+## What you can do
+
+- Install `rtk >= 0.23.0` in your shell `PATH`, then start Selesai. Compatible `bash` tool calls are rewritten automatically.
+- Set `RTK_DISABLED=1` before launching Selesai to bypass the rewriter.
+- Inspect the rewritten command in the tool output if the model asks for the exact shell behavior.
+
+## Commands, tools, and shortcuts
+
+There are no slash commands, tools, or shortcuts. The extension only rewrites Bash tool calls.
+
+| Mechanism | Description |
+| --- | --- |
+| `rtk rewrite <cmd>` | External subprocess that returns a quieter equivalent or signals no rewrite. |
+| Bash tool call hook | Intercepts `bash` tool calls before execution. |
+
+## Limits and safety
+
+- Only `bash` tool calls are rewritten; other tools are untouched.
+- Commands that already start with `rtk ` are skipped to avoid recursion.
+- Rewrites are advisory: if `rtk rewrite` exits with an unexpected code, times out after 2 seconds, or throws, the original command runs unchanged (fail-open).
+- The extension does not add new tools or change model behavior; it only mutates the command string passed to Bash.
+- Install and maintain `rtk` separately; Selesai does not bundle it.
 
 <SourceEvidence slug="rtk" />

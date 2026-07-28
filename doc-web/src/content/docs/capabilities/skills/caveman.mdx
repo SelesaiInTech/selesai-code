@@ -3,38 +3,70 @@ draft: false
 title: Caveman
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `caveman` extension adds a terse communication mode to Selesai. When active, it appends caveman instructions to the agent system prompt so answers stay short, focused, and free of unnecessary prose.
 
-`caveman` is a compressed communication style invoked with `/skill:caveman`. It asks the agent to be terse, focused, and avoid unnecessary prose.
-
-## Availability
-
-Included in `@selesai/code` as the `caveman` extension and `src/skills/caveman/`.
-
-## Quick start
-
-```sh
-/skill:caveman
-```
-
-## Configuration
-
-No separate configuration is required.
-
-## Limits and edge cases
-
-- Caveman reduces explanation depth; use it when you already understand the domain.
-- Switch back to normal mode if you need detailed reasoning.
-
-<ComparisonCallout
-  claim="Selesai bundles a built-in terse mode so users can cut response length and token cost quickly."
-  evidence={[
-    { text: "caveman extension", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/caveman/" },
-    { text: "caveman skill", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/caveman/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./caveman/index.js"
+  runtimeSurface="skill-backed"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- Bundled with Selesai and loaded automatically; no separate installation is required.
+- The companion skill lives in `src/skills/caveman/` and is invoked via `/skill:caveman` or the `/caveman` command.
+- Requires an interactive TUI session for the status-bar indicator and notifications.
+
+## What it sets up
+
+- Registers the `/caveman` slash command for toggling, enabling, disabling, and checking status.
+- Adds a `caveman-mode` custom session entry each time the mode changes, so the active state persists across turns in the same session.
+- Renders a status-bar indicator (`● 🦴 caveman: ON` or `○ 🦴 caveman: OFF`) while the extension is loaded.
+- Injects caveman instructions into `before_agent_start` when the mode is active.
+
+## What you can configure
+
+Caveman does not have its own configuration file. Behavior is controlled through the slash command and session state.
+
+| Control | Effect |
+| --- | --- |
+| `/caveman on` or `/caveman enable` | Turn caveman mode on for the session. |
+| `/caveman off` or `/caveman disable` | Turn caveman mode off for the session. |
+| `/caveman status` | Show whether caveman mode is currently on or off. |
+| `/caveman` | Toggle the current mode. |
+| `stop caveman` or `normal mode` | Standalone natural-language phrase that disables caveman mode. |
+
+The default fallback state if no session history exists is **on** (`active = true`).
+
+## What you can do
+
+- Switch to terse answers by typing `/caveman on` or invoking `/skill:caveman`.
+- Check the current state quickly with `/caveman status`.
+- Return to normal detail level with `/caveman off`, `stop caveman`, or `normal mode`.
+- Use caveman when you already understand the domain and only need concise direction, diff summaries, or command lists.
+
+## Commands, tools, and shortcuts
+
+| Command | Description |
+| --- | --- |
+| `/caveman` | Toggle caveman mode. |
+| `/caveman on` / `/caveman enable` | Enable caveman mode. |
+| `/caveman off` / `/caveman disable` | Disable caveman mode. |
+| `/caveman status` | Show current mode. |
+| `/skill:caveman` | Invoke the companion skill directly. |
+| `stop caveman` or `normal mode` | Disable via natural-language phrase (must be the whole message). |
+
+There are no registered tools or keyboard shortcuts.
+
+## Limits and safety
+
+- Caveman reduces explanation depth. Disable it when you need detailed reasoning, teaching, or step-by-step discussion.
+- The deactivation phrases (`stop caveman`, `normal mode`) only work as the full user message; they will not trigger inside a larger prompt.
+- Status is tracked per session branch via `caveman-mode` custom entries. New sessions without history fall back to the default-on state.
+- The extension modifies only the system prompt; it does not change which tools are available or how the model is called.
 
 <SourceEvidence slug="caveman" />

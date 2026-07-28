@@ -3,42 +3,93 @@ draft: false
 title: Footer powerline
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar bergaya powerline, tata letak editor tetap, tur panduan berulang, shortcut stash/riwayat editor, bash mode lengket, vibe working bertema, dan deteksi Nerd Font.
 
-Extension `pi-powerline-footer` meningkatkan ruang kerja terminal dengan status bar powerline, tata letak editor tetap, tur `/guide` berulang, bash persisten, editor stash/restore, dan pesan working-vibe bertema.
-
-## Ketersediaan
-
-Termasuk dalam `@selesai/code` sebagai `src/extensions/pi-powerline-footer/`.
-
-## Mulai cepat
-
-Dalam sesi Selesai interaktif, lihat bagian bawah terminal:
-
-```sh
-selesai
-```
-
-Status bar menampilkan model, thinking level, path, state git, konteks, token, biaya, cache, dan data sesi.
-
-## Konfigurasi
-
-Tidak diperlukan konfigurasi terpisah. Footer beradaptasi dengan state project dan mendukung preset yang dapat dikonfigurasi.
-
-## Batasan dan edge case
-
-- Memerlukan terminal yang mendukung font dan glyph Nerd Font untuk pengalaman terbaik.
-- State bash persisten bersifat lokal untuk sesi Selesai.
-- Tur `/guide` dapat ditutup dan akan mengingat penutupan tersebut.
-
-<ComparisonCallout
-  claim="Selesai membundel UI terminal yang lebih kaya sehingga Anda dapat melihat status model, biaya, dan konteks tanpa menjalankan perintah tambahan."
-  evidence={[
-    { text: "source pi-powerline-footer", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-powerline-footer/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./pi-powerline-footer"
+  runtimeSurface="mixed"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
+- Memerlukan sesi TUI interaktif. Tidak berpengaruh dalam mode headless.
+- Nerd Font direkomendasikan untuk preset `nerd` tetapi tidak wajib; preset `ascii` aman untuk terminal apa pun.
+- Sticky bash mode membutuhkan shell yang kompatibel POSIX.
+
+## Yang disiapkan
+
+- Mengganti footer/header/editor chrome default dengan segment bergaya powerline.
+- Mendaftarkan command `/powerline`, `/guide`, `/stash-history`, `/bash-mode`, `/bash-reset`, dan `/vibe`.
+- Mendaftarkan keyboard shortcut untuk editor stash, copy/cut, lompat chat, toggle bash-mode, dan riwayat stash.
+- Menyiapkan fixed-editor cluster saat diaktifkan sehingga editor dan baris status tetap di layar saat konten chat di-scroll.
+
+## Yang dapat dikonfigurasi
+
+Konfigurasi berada di `~/.selesai/agent/settings.json`.
+
+| Setting | Deskripsi |
+| --- | --- |
+| `powerline.preset` | `default`, `minimal`, `compact`, `full`, `nerd`, `ascii`. |
+| `powerline.fixedEditor` | Aktifkan atau nonaktifkan fixed-editor cluster. |
+| `powerline.mouseScroll` | Gunakan scroll mouse yang dimiliki aplikasi dalam mode fixed-editor. |
+| `powerline.customItems` | Promosikan key status extension apa pun menjadi item powerline tersendiri. |
+| `bashMode.toggleShortcut` | Default `ctrl+shift+b`. |
+| `bashMode.transcriptMaxLines` | Default `2000`. |
+| `bashMode.transcriptMaxBytes` | Default `524288`. |
+| `powerlineShortcuts.*` | Override shortcut seperti `stashHistory`, `copyEditor`, `cutEditor`, dll. |
+| `workingVibe` / `workingVibeMode` / `workingVibeModel` | Tema vibe, mode (`generate`/`file`), dan model. |
+
+Preset disimpan ke settings saat Anda mengubahnya dengan `/powerline <preset>`.
+
+## Yang dapat dilakukan
+
+- Toggle powerline on/off: `/powerline`.
+- Ganti preset: `/powerline nerd`.
+- Toggle fixed editor: `/powerline fixed-editor on|off|toggle`.
+- Toggle mouse scroll: `/powerline mouse-scroll on|off|toggle`.
+- Buka panduan berulang: `/guide` (atau `/guide compact`, `/guide off`, `/guide reset`).
+- Stash atau restore teks editor: `Alt+S`.
+- Buka riwayat prompt: `Ctrl+Alt+H` atau `/stash-history`.
+- Copy seluruh teks editor: `Ctrl+Alt+C`. Cut: `Ctrl+Alt+X`.
+- Toggle sticky bash mode: `Ctrl+Shift+B` atau `/bash-mode on|off|toggle`.
+- Reset shell yang dikelola: `/bash-reset`.
+- Set tema working vibe: `/vibe star trek` atau `/vibe off`.
+
+## Perintah, tool, dan shortcut
+
+| Perintah / shortcut | Deskripsi |
+| --- | --- |
+| `/powerline` | Toggle UI powerline. |
+| `/powerline <preset>` | Ganti status preset. |
+| `/powerline fixed-editor on\|off\|toggle` | Toggle fixed-editor cluster. |
+| `/powerline mouse-scroll on\|off\|toggle` | Toggle app mouse scroll. |
+| `/guide [full\|compact\|off\|reset]` | Buka, ringkas, tutup, atau reset panduan berulang. |
+| `/stash-history` | Buka prompt history picker. |
+| `/bash-mode on\|off\|toggle` | Toggle sticky bash mode. |
+| `/bash-reset` | Reset sesi shell yang dikelola. |
+| `/vibe [theme\|off\|mode\|model\|generate]` | Konfigurasi working-message vibes. |
+| `Alt+S` | Stash atau restore teks editor. |
+| `Ctrl+Alt+H` | Buka stash/prompt history. |
+| `Ctrl+Alt+C` | Copy seluruh teks editor. |
+| `Ctrl+Alt+X` | Cut seluruh teks editor. |
+| `Ctrl+Shift+B` | Toggle bash mode. |
+| `Ctrl+Shift+U` / `Ctrl+Shift+I` | Lompat ke pesan user sebelumnya/berikutnya. |
+| `Ctrl+Alt+,` / `Ctrl+Alt+.` | Lompat ke pesan LLM sebelumnya/berikutnya. |
+| `Ctrl+Shift+G` | Lompat chat ke bawah. |
+| `Cmd+Up` / `Cmd+Down` | Scroll chat naik/turun (saat fixed editor aktif). |
+
+## Batasan dan keamanan
+
+- UI powerline hanya dirender dalam sesi TUI interaktif.
+- Sticky bash mode menyimpan shell yang dikelola untuk sesi Selesai saat ini. Shell `cd` dan variabel yang diekspor bertahan antar command, tetapi shell dan transkripnya hilang saat sesi berakhir.
+- Pesan vibe yang dihasilkan menggunakan model yang dikonfigurasi dan di-rate-limit. Pre-generate file vibe dengan `/vibe generate <theme> <count>` untuk menghindari latency dan biaya API.
+- Shortcut lompat chat fixed-editor mungkin perlu di-remap pada terminal seperti Ghostty.
+- Konflik shortcut custom dengan key yang dicadangkan secara otomatis diresolve ke default yang aman.
 
 <SourceEvidence slug="pi-powerline-footer" />

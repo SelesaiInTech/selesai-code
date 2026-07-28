@@ -3,45 +3,77 @@ draft: false
 title: Interactive questions
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `question` extension provides a terminal wizard for asking the user one or more typed questions. It supports single-select, multi-select, free-form text, and context/info-only questions, with keyboard navigation and filtering.
 
-The bundled `question` tool gives Selesai a real TUI for decisions. Instead of forcing every clarification through plain text, the agent can present single-select, multi-select, freeform, and image/info questions with descriptions, context summaries, and keyboard navigation.
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./question"
+  runtimeSurface="tool"
+  locale="en"
+/>
 
-## Availability
+## Setup and prerequisites
 
-Included in `@selesai/code` as the `question` extension.
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- Requires terminal TUI mode. It cannot be used in headless or non-interactive sessions.
+- The agent invokes the tool; the user answers through the TUI.
 
-## Quick start
+## What it sets up
 
-When a Selesai workflow or request needs a decision, it can call the `question` tool:
+- Registers the `question` tool and renders a full-screen batch question component.
+- Each question has a stable `id`, a `label`, a `question` string, a `type`, and optional `options` and `context`.
+- Answers are returned as a structured result with `answered`, `skipped`, and `unanswered` statuses.
 
-```text
-Use question to ask the user which test framework to use.
+## What you can configure
+
+- No user-facing configuration. The question schema is fixed by the tool definition.
+
+## What you can do
+
+- Ask independent decisions that the user must make directly.
+- Present single-select, multi-select, text, or info-only questions.
+- Provide stable option `value`s separate from human-readable `label`s.
+
+## Commands, tools, and shortcuts
+
+There are no slash commands. The tool is invoked by the agent:
+
+```json
+question({
+  questions: [
+    {
+      id: "target_db",
+      label: "Database",
+      type: "select",
+      question: "Which database should we use?",
+      options: [
+        { value: "sqlite", label: "SQLite" },
+        { value: "postgres", label: "PostgreSQL" }
+      ],
+      allowOther: true
+    },
+    {
+      id: "skip_cache",
+      label: "Skip cache",
+      type: "text",
+      question: "Why skip the cache?"
+    }
+  ]
+})
 ```
 
-## Configuration
+Supported question types: `select`, `multiselect`, `text`, `image`, `info`.
 
-No separate configuration is required. The tool supports:
+When reviewing, the user can move between questions with `Tab`/`Shift+Tab`, leave a text question blank to skip it, and press `Enter` on the review screen to submit the final answers.
 
-- single- and multi-select options;
-- descriptions and context summaries;
-- freeform answers with optional comments;
-- keyboard navigation, filtering, and cancellation;
-- image and info question types.
+## Limits and safety
 
-## Limits and edge cases
-
-- The TUI runs in the terminal; it requires an interactive session. In non-interactive mode (`-p`), the agent falls back to plain-text behavior.
-- Cancelling a question returns control to the user prompt.
-
-<ComparisonCallout
-  claim="Selesai ships an interactive TUI for decisions, reducing the friction of multi-option clarifications."
-  evidence={[
-    { text: "question source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/question/" }
-  ]}
-/>
+- The tool only works in TUI mode. Invoking it from a non-interactive session throws an error.
+- Questions should be independent decisions that the user must make; the agent should inspect facts itself rather than asking the user for discoverable information.
+- `info` questions are context-only and do not require a response.
+- Blank text entries are recorded as `skipped`; the agent must handle skipped and unanswered statuses explicitly.
 
 <SourceEvidence slug="question" />

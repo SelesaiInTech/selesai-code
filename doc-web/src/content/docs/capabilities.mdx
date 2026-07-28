@@ -5,9 +5,9 @@ description: Explore the tools, workflows, recovery features, and productivity i
 ---
 
 import CapabilityList from "../../components/CapabilityList.astro";
-import { categories } from "../../data/capabilities.ts";
+import { categories, capabilities } from "../../data/capabilities.ts";
 
-Selesai ships every capability listed below as part of the `@selesai/code` package. Each entry links to a guide with examples, configuration, limits, and source evidence.
+Selesai ships the bundled capabilities below as part of the `@selesai/code` package. Optional extensions are listed separately at the bottom of the page. Each entry links to a guide with examples, configuration, limits, and source evidence.
 
 {categories.map((category) => (
   <section className="category-section" id={category.id}>
@@ -15,3 +15,13 @@ Selesai ships every capability listed below as part of the `@selesai/code` packa
     <CapabilityList category={category.id} locale="en" />
   </section>
 ))}
+
+{capabilities.some((c) => c.distribution === "optional") && (
+  <section className="category-section" id="optional-extensions">
+    <h2>Optional extensions</h2>
+    <p>These extensions are available but not loaded automatically. Install or enable them separately before use.</p>
+    {categories.map((category) => (
+      <CapabilityList category={category.id} locale="en" distribution="optional" />
+    ))}
+  </section>
+)}

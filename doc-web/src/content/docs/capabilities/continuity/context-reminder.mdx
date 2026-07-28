@@ -3,39 +3,48 @@ draft: false
 title: Context reminder
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `context-compaction-reminder` extension warns you when the conversation context grows large and suggests a handoff so you can keep token usage low and AI quality high.
 
-The `context-compaction-reminder` extension warns you when a conversation grows large and suggests a `/handoff-new` before quality degrades or costs rise further.
-
-## Availability
-
-Included in `@selesai/code` as `src/extensions/context-compaction-reminder.ts`.
-
-## Quick start
-
-When a reminder appears, use it as the signal to reset context:
-
-```sh
-/handoff-new
-```
-
-## Configuration
-
-No separate configuration is required. The reminder triggers based on session size heuristics.
-
-## Limits and edge cases
-
-- The reminder is advisory; you choose whether to hand off.
-- If you ignore it, token cost may increase and response quality may degrade.
-
-<ComparisonCallout
-  claim="Selesai surfaces an explicit context-size reminder so you can hand off before costs and quality degrade."
-  evidence={[
-    { text: "context-compaction-reminder source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/context-compaction-reminder.ts" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./context-compaction-reminder.ts"
+  runtimeSurface="automatic"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- The reminder is triggered after `agent_settled` events when the context is reported by the runtime.
+- No external configuration or credentials are required.
+
+## What it sets up
+
+- Listens to the `agent_settled` lifecycle event and reads `ctx.getContextUsage().tokens`.
+- Resets its flag whenever the session is compacted via `session_compact`.
+
+## What you can configure
+
+- No user-facing configuration. The threshold is hard-coded at 128,000 tokens.
+
+## What you can do
+
+- Receive a one-time warning when the conversation reaches 128,000 tokens.
+- Run `/handoff-new` to summarize the conversation into a clean session and continue from a smaller context.
+- Enable Auto Handoff in settings if you prefer compaction to happen automatically.
+
+## Commands, tools, and shortcuts
+
+- None. The reminder fires automatically.
+- The suggested follow-up is `/handoff-new` from the separate `handoff-new` extension.
+
+## Limits and safety
+
+- Only one reminder is shown per crossing of the threshold. If context drops below the threshold later, the reminder resets.
+- The warning is informational; it does not truncate context or stop the agent.
+- The extension relies on the runtime's context usage report. If context usage is unavailable, it does nothing.
 
 <SourceEvidence slug="context-compaction-reminder" />

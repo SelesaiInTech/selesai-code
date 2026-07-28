@@ -20,6 +20,8 @@
   --selesai-border: hsl(0 0% 100% / 10%);
   --selesai-border-hover: hsl(84 96% 58% / 58%);
   --selesai-purple: hsl(263 90% 68%);
+  --selesai-status-ok: hsl(84 70% 50%);
+  --selesai-status-warn: hsl(38 90% 58%);
   --sl-font: "Inter", "Aptos", "Segoe UI Variable", sans-serif;
   --sl-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
@@ -42,6 +44,8 @@
   --selesai-border: hsl(210 15% 10% / 12%);
   --selesai-border-hover: hsl(91 78% 37% / 58%);
   --selesai-purple: hsl(263 72% 52%);
+  --selesai-status-ok: hsl(91 78% 32%);
+  --selesai-status-warn: hsl(32 90% 42%);
 }
 
 html {
@@ -307,11 +311,139 @@ header.header {
   gap: 0.8rem;
 }
 
-.install-panel {
-  padding: clamp(1.2rem, 4vw, 2.2rem);
+/* Extension status callout */
+.extension-status {
+  margin: 1.25rem 0 1.75rem;
+  padding: 0.9rem 1rem;
   border: 1px solid var(--selesai-border);
-  border-radius: 1rem;
-  background: linear-gradient(135deg, var(--selesai-surface-raised), var(--selesai-surface));
+  border-radius: 0.55rem;
+  background: var(--selesai-surface-raised);
+}
+
+.extension-status.is-bundled {
+  border-inline-start: 4px solid var(--selesai-status-ok);
+}
+
+.extension-status.is-optional {
+  border-inline-start: 4px solid var(--selesai-status-warn);
+}
+
+.extension-status__badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.35rem;
+  font-size: var(--sl-text-sm);
+}
+
+.extension-status__dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--selesai-status-ok);
+}
+
+.extension-status.is-optional .extension-status__dot {
+  background: var(--selesai-status-warn);
+}
+
+.extension-status__desc {
+  margin: 0;
+  color: var(--sl-color-gray-2);
+  font-size: var(--sl-text-sm);
+  line-height: 1.55;
+}
+
+.extension-status__meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.9rem;
+  margin: 0.75rem 0 0;
+  font-size: var(--sl-text-sm);
+}
+
+.extension-status__meta dt {
+  color: var(--sl-color-gray-3);
+}
+
+.extension-status__meta dd {
+  margin: 0;
+}
+
+/* Compact reference tables and mobile-safe label/value stacks */
+.sl-markdown-content .ref-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0 1.5rem;
+  font-size: var(--sl-text-sm);
+}
+
+.sl-markdown-content .ref-table th,
+.sl-markdown-content .ref-table td {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--selesai-border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.sl-markdown-content .ref-table th {
+  background: var(--selesai-surface-raised);
+  font-weight: 600;
+}
+
+.sl-markdown-content .ref-table code {
+  white-space: nowrap;
+}
+
+@media (max-width: 44rem) {
+  .sl-markdown-content .ref-table {
+    display: block;
+    overflow-x: auto;
+  }
+
+  .extension-status__meta {
+    grid-template-columns: 1fr;
+    gap: 0.15rem 0;
+  }
+
+  .extension-status__meta dt {
+    margin-top: 0.35rem;
+  }
+}
+
+/* Warning treatment for external prerequisites */
+.sl-markdown-content .prereq-warning {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.85rem 1rem;
+  margin: 1rem 0 1.5rem;
+  border: 1px solid var(--selesai-status-warn);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--selesai-status-warn) 10%, transparent);
+}
+
+.sl-markdown-content .prereq-warning p {
+  margin: 0;
+  font-size: var(--sl-text-sm);
+}
+
+.sl-markdown-content .prereq-warning strong {
+  color: var(--selesai-status-warn);
+}
+
+/* Capability list optional badge */
+.capability-list .optional-badge,
+.capability-list .status-badge {
+  font-size: var(--sl-text-xs);
+  color: var(--selesai-status-warn);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  margin-inline-start: 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 @media (max-width: 44rem) {

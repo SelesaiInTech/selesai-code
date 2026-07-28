@@ -3,44 +3,75 @@ draft: false
 title: Ponytail
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `ponytail` menambahkan mode komunikasi terkompresi ke Selesai. Anda dapat beralih antara level kompresi `lite`, `full`, dan `ultra`, atau memanggil helper review khusus (`ponytail-review`, `ponytail-audit`, `ponytail-gain`, `ponytail-debt`, `ponytail-help`) melalui alias slash command.
 
-`ponytail` adalah keluarga mode komunikasi dan helper review yang membuat respons agent menjadi minimal, terkompresi, dan fokus. Panggil dengan `/skill:ponytail` atau varian terkait seperti `/skill:ponytail-review`, `/skill:ponytail-audit`, `/skill:ponytail-gain`, `/skill:ponytail-debt`, dan `/skill:ponytail-help`.
-
-## Ketersediaan
-
-Termasuk dalam `@selesai/code` sebagai extension `ponytail` dan skill `ponytail*` di `src/skills/`.
-
-## Mulai cepat
-
-```sh
-/skill:ponytail
-```
-
-Untuk review:
-
-```sh
-/skill:ponytail-review
-```
-
-## Konfigurasi
-
-Tidak diperlukan konfigurasi terpisah. Skill ini mengubah cara agent memformat dan menentukan cakupan respons.
-
-## Batasan dan edge case
-
-- Mode ponytail mengurangi verbositas; penjelasan kompleks mungkin perlu diminta secara eksplisit.
-- Varian disesuaikan untuk task tertentu; pilih varian yang cocok dengan tujuan saat ini.
-
-<ComparisonCallout
-  claim="Selesai membundel ponytail sebagai extension sekaligus keluarga skill, sehingga user dapat beralih ke respons terkompresi dan fokus task sesuai permintaan."
-  evidence={[
-    { text: "extension ponytail", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/ponytail/" },
-    { text: "skill ponytail", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/ponytail/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./ponytail/index.js"
+  runtimeSurface="skill-backed"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Dibundel bersama Selesai dan dimuat otomatis.
+- Skill pendamping berada di directory `src/skills/ponytail*`; extension itu sendiri adalah entrypoint, bukan skill individu.
+- Memerlukan sesi TUI interaktif untuk status bar dan umpan balik command.
+
+## Yang disiapkan
+
+- Mendaftarkan slash command `/ponytail` untuk mengatur atau melaporkan mode saat ini dan mode default.
+- Mendaftarkan alias `/ponytail-review`, `/ponytail-audit`, `/ponytail-gain`, `/ponytail-debt`, dan `/ponytail-help` yang mengirim pesan `/skill:ponytail-*` yang cocok.
+- Menyimpan perubahan mode sebagai entri custom session `ponytail-mode`.
+- Menulis mode default ke file konfigurasi ponytail saat Anda menggunakan `/ponytail default <mode>`.
+- Menampilkan indikator status bar (`● 🐴 ponytail: ⚡ FULL`) saat aktif.
+
+## Yang dapat dikonfigurasi
+
+| Setting | Urutan resolusi | Nilai |
+| --- | --- | --- |
+| Default mode | env `PONYTAIL_DEFAULT_MODE` → `~/.config/ponytail/config.json` `defaultMode` → `full` | `off`, `lite`, `full`, `ultra`, `review` |
+| Mode saat ini | History sesi → command `/ponytail <mode>` | `off`, `lite`, `full`, `ultra` |
+
+Environment variable menggantikan file konfigurasi; file konfigurasi menggantikan default built-in. `review` adalah alias config-only yang diresolve ke `full` saat runtime.
+
+Gunakan `/ponytail default off`, `/ponytail default lite`, `/ponytail default full`, atau `/ponytail default ultra` untuk mengubah default yang dipersist. Default yang tersimpan masih dapat ditimpa oleh `PONYTAIL_DEFAULT_MODE`.
+
+## Yang dapat dilakukan
+
+- Aktifkan kompresi dengan `/ponytail lite`, `/ponytail full`, atau `/ponytail ultra`.
+- Nonaktifkan dengan `/ponytail off`.
+- Cek mode saat ini dan default dengan `/ponytail status`.
+- Atur mode default baru dengan `/ponytail default <mode>`.
+- Jalankan helper review: `/ponytail-review` memperluas dan mengirim `/skill:ponytail-review`.
+- Kembali ke prosa normal dengan mengirim `stop ponytail` atau `normal mode` sebagai seluruh pesan.
+
+## Perintah, tool, dan shortcut
+
+| Perintah | Deskripsi |
+| --- | --- |
+| `/ponytail` | Toggle antara `off` dan mode default yang dikonfigurasi. |
+| `/ponytail <lite\|full\|ultra\|off>` | Set mode saat ini untuk sesi ini. |
+| `/ponytail status` | Tampilkan mode saat ini dan mode default yang dikonfigurasi. |
+| `/ponytail default <off\|lite\|full\|ultra\|review>` | Persist default mode baru. |
+| `/ponytail-review` | Alias untuk `/skill:ponytail-review`. |
+| `/ponytail-audit` | Alias untuk `/skill:ponytail-audit`. |
+| `/ponytail-gain` | Alias untuk `/skill:ponytail-gain`. |
+| `/ponytail-debt` | Alias untuk `/skill:ponytail-debt`. |
+| `/ponytail-help` | Alias untuk `/skill:ponytail-help`. |
+| `stop ponytail` / `normal mode` | Frasa natural language untuk mematikan ponytail. |
+
+Tidak ada keyboard shortcut atau tool agen.
+
+## Batasan dan keamanan
+
+- Mode berlaku per session branch. Saat Anda melanjutkan atau fork sesi, mode dipulihkan dari entri custom `ponytail-mode` terbaru di branch tersebut.
+- `review` valid sebagai default yang dipersist tetapi dinormalisasi ke `full` untuk sesi runtime.
+- Frasa deaktivasi hanya bekerja saat menjadi seluruh pesan user.
+- Helper review individu adalah skill pendamping, bukan extension terpisah yang dibundel; extension ini hanya menyediakan alias slash dan manajemen mode.
+- Level kompresi yang lebih tinggi mengurangi verbositas. Kembali ke level yang lebih rendah atau `off` saat Anda butuh penjelasan detail.
 
 <SourceEvidence slug="ponytail" />

@@ -3,37 +3,53 @@ draft: false
 title: Copy turn
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `copy-turn` extension lets you copy a user or assistant result from the current session branch using a short hash. It is useful when you want to reuse an earlier answer, a command output, or an assistant message without retyping it.
 
-The `copy-turn` extension lets you copy a user or assistant result from the session by hash, so you can paste it elsewhere without re-typing long outputs.
-
-## Availability
-
-Included in `@selesai/code` as `src/extensions/copy-turn.ts`.
-
-## Quick start
-
-```sh
-/cp <hash>
-```
-
-## Configuration
-
-No separate configuration is required.
-
-## Limits and edge cases
-
-- You need the hash of the target turn. Hashes are displayed by the Selesai session UI.
-- The copied content goes to the system clipboard; it may be overwritten by later copies.
-
-<ComparisonCallout
-  claim="Selesai bundles a quick way to copy any prior turn by hash, reducing manual re-typing."
-  evidence={[
-    { text: "copy-turn source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/copy-turn.ts" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./copy-turn.ts"
+  runtimeSurface="command"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- Requires an interactive Selesai session with the TUI.
+- Works only on messages in the current session branch. Messages are matched by a SHA-1 hash of their cleaned content.
+
+## What it sets up
+
+- Registers a custom `copy-turn` message renderer that adds a copy marker below user messages and appends a marker to the final assistant message of each turn.
+- Maintains a per-branch set of hashes by reading `ctx.sessionManager.getBranch()`.
+- Uses `copyToClipboard` from the Selesai runtime to copy matched content to the system clipboard.
+
+## What you can configure
+
+- No user-facing configuration. The extension uses a fixed 6-character hash prefix and reads messages from the current branch.
+- Markers are stripped from the model context so they do not leak into the agent's view.
+
+## What you can do
+
+- Copy a user or assistant message result to the clipboard by typing its hash.
+- Use a short prefix as long as it is unambiguous. If multiple messages match, Selesai tells you the full hashes so you can disambiguate.
+
+## Commands, tools, and shortcuts
+
+| Command | Description |
+| --- | --- |
+| `/cp <hash>` | Copy the result of the matching message to the clipboard. |
+
+The matching messages are filtered to the current branch, excluding custom `copy-turn` rows. For `bashExecution` messages the copied text is the command plus its output; for other roles it is the text content with the marker stripped.
+
+## Limits and safety
+
+- `/cp` works on messages that are still in the current branch. Navigating to a different session branch changes the available hashes.
+- The hash is a content hash, so editing a message after it was rendered produces a different hash.
+- Empty results and ambiguous prefixes are rejected with a warning.
+- The extension removes copy markers from model context, so it does not inflate context with repeated markers.
 
 <SourceEvidence slug="copy-turn" />

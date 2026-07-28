@@ -3,66 +3,103 @@ draft: false
 title: Subagent delegation
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `pi-subagents` extension gives Selesai focused child agents that run in the same workspace. You can ask for reviews, exploration, implementation, parallel audits, or background work in plain language; Selesai translates that into `subagent` tool calls or slash commands.
 
-Selesai bundles the `pi-subagents` extension and adapts it to the Selesai runtime. It provides focused agent roles, lifecycle management, and run controls that let you delegate work without losing visibility or control.
-
-## Availability
-
-Included in `@selesai/code` starting at version `0.5.22` with roles such as:
-
-- `architect`
-- `builder`
-- `commentator`
-- `explorer`
-- `recapper`
-- `researcher`
-
-## Quick start
-
-Use natural-language prompts to delegate work:
-
-```text
-Ask the architect to challenge this plan before we implement it.
-```
-
-```text
-Run parallel commentator agents for correctness, tests, and unnecessary complexity.
-```
-
-```text
-Have the builder implement this plan, then review the result.
-```
-
-## Configuration
-
-Subagents are configured via project-local and user-level agent definitions. Common controls include:
-
-- model/tool/skill overrides;
-- foreground, background, parallel, or chained runs;
-- tool/turn budgets;
-- output schemas and artifact paths;
-- worktree isolation for parallel tasks.
-
-```sh
-# Example: list available subagent commands in Selesai
-selesai -p "list subagent roles and tools"
-```
-
-## Limits and edge cases
-
-- Delegated agents run within the same host environment; trust boundaries are the same as the main session.
-- Background runs continue until completion unless interrupted; steer them through the Selesai status/intercom interface.
-- Model/tool budgets are enforced by Selesai; check budget usage in the footer status.
-
-<ComparisonCallout
-  claim="Selesai ships native supervisor communication so a delegated agent can ask the main session for a decision instead of guessing."
-  evidence={[
-    { text: "pi-subagents README", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-subagents/README.md" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./pi-subagents"
+  runtimeSurface="mixed"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- The Selesai model must have a valid API key.
+- Optional: for the `researcher` agent's web searches, install web search tooling; otherwise the agent falls back to available tools.
+- Optional: a permission-system integration works when both pi-subagents and `@gotgenes/pi-permission-system` are installed.
+
+## What it sets up
+
+- Registers the `subagent` tool for single, parallel, and chain runs.
+- Registers a family of slash commands: `/run`, `/chain`, `/parallel`, `/run-chain`, `/subagents`, `/subagent-cost`, `/subagents-doctor`, `/subagents-fleet`, `/subagents-stop`, `/subagents-models`, `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile`, plus prompt-workflow shortcuts such as `/parallel-review`.
+- Registers the `Ctrl+Alt+F` shortcut to open the live subagent fleet inspector.
+- Creates lifecycle artifacts for async runs under the Selesai subagent results directory.
+- Sets `SELESAI_SUBAGENT_PARENT_SESSION` in child processes for permission-system forwarding.
+
+## What you can configure
+
+Most configuration lives in `~/.selesai/agent/extensions/subagent/config.json` or `~/.selesai/agent/settings.json` under the `subagents` key.
+
+| Setting / scope | Description |
+| --- | --- |
+| `subagents.defaultModel` | Default model for agents without an explicit model. |
+| `subagents.defaultThinking` | Shared thinking level for agents without explicit thinking. |
+| `subagents.agentOverrides.<agent>` | Per-agent overrides for model, thinking, tools, skills, system prompt, etc. |
+| `subagents.modelScope` | Enforce an allow-list of provider/model globs for explicit calls. |
+| `subagents.watchdog` | Opt-in adversarial change reviewer with model and LSP settings. |
+| `subagents.defaultExtensions` | Extension allowlist for agents without their own `extensions` field. |
+| `asyncByDefault` | Make the `subagent` tool default to background. |
+| `maxSubagentDepth` | How many nested subagent generations are allowed. |
+| `intercomBridge` | Tune native supervisor coordination. |
+
+Agent discovery order (lowest to highest priority): builtin agents under `~/.selesai/agent/extensions/subagent/agents/`, installed package agents, user agents in `~/.selesai/agent/agents/**/*.md`, project agents in `.selesai/agents/**/*.md`.
+
+## What you can do
+
+- Ask in plain language: `Ask commentator to review this diff.`
+- Run a single agent: `/run commentator "review this plan"`.
+- Run agents in sequence: `/chain explorer "scan auth" -> architect "design refactor" -> builder "implement it"`.
+- Run agents in parallel: `/parallel commentator "check correctness" -> commentator "check tests"`.
+- Use inline group syntax: `/chain explorer -> (commentator "A" | commentator "B") -> writer "fix"`.
+- Run in the background: append `--bg`. Start from a forked session: append `--fork`.
+- Inspect active runs: `/subagents-fleet` or `subagent({ action: "status" })`.
+- Stop a run: `/subagents-stop <run-id>` or `subagent({ action: "stop", id: "..." })`.
+- Ask a child to contact the supervisor: `contact_supervisor({ reason: "need_decision", message: "..." })`.
+
+## Commands, tools, and shortcuts
+
+| Command / shortcut | Description |
+| --- | --- |
+| `subagent({ agent, task, async?, context?, model?, ... })` | Run one agent. |
+| `subagent({ tasks: [...] })` | Run agents in parallel. |
+| `subagent({ chain: [...] })` | Run agents in sequence with `{previous}` output. |
+| `subagent({ action: "status" })` | Show async run status. |
+| `subagent({ action: "stop", id })` | Stop an async run. |
+| `/run <agent> [task] [--bg] [--fork]` | Slash form of a single-agent run. |
+| `/chain ...` | Slash form of a sequential chain. |
+| `/parallel ...` | Slash form of a parallel run. |
+| `/run-chain <chainName> -- <task>` | Run a saved `.chain.md` or `.chain.json`. |
+| `/subagents-doctor` | Show setup diagnostics. |
+| `/subagents-fleet` | Open the live fleet inspector. |
+| `Ctrl+Alt+F` | Open the fleet inspector even while a foreground turn is active. |
+| `/subagents-stop [<run-id>]` | Stop async runs. |
+| `/subagent-cost` | Show parent and child usage cost for the session. |
+| `/subagents-models [<builtin-agent>]` | Show runtime-loaded builtin model mapping. |
+| `/subagents-watchdog [status\|on\|off\|recommend-model\|model ...]` | Configure the opt-in watchdog. |
+| `/parallel-review`, `/review-loop`, `/parallel-research`, etc. | Prompt-workflow shortcuts. |
+
+### Builtin agents
+
+| Agent | Use |
+| --- | --- |
+| `architect` | Produce a concrete implementation plan from existing context. |
+| `builder` | Implement approved work and validate results. |
+| `commentator` | Review code, plans, and diffs; catch drift and recommend fixes. |
+| `explorer` | Fast local codebase reconnaissance. |
+| `recapper` | Compile handoff context for later agents. |
+| `researcher` | Web/docs research with sources. |
+
+## Limits and safety
+
+- Child agents run in the same host environment as the parent; trust boundaries are the same.
+- Spawned children do not receive the bundled `pi-subagents` skill by default, and their tool visibility is controlled by the agent's `tools` frontmatter. A child only gets a child-safe `subagent` tool if its resolved `tools` includes `subagent`.
+- Forked children get filtered context that removes parent-only subagent artifacts.
+- Model and tool budgets, depth limits, and watchdog settings are enforced by the runtime.
+- Agent file discovery is ordered; project agents override user agents, and user agents override builtins of the same name.
+- The `pi-subagents` skill shipped with the extension is documentation/prompt guidance, not an independently installed extension entrypoint.
 
 <SourceEvidence slug="pi-subagents" />

@@ -3,42 +3,93 @@ draft: false
 title: Powerline footer
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powerline-style status bar, a fixed-editor layout, a recurring guide tour, editor stash/history shortcuts, sticky bash mode, AI-generated working vibes, and Nerd Font detection.
 
-The `pi-powerline-footer` extension upgrades the terminal workspace with a powerline status bar, fixed-editor layout, recurring `/guide` tour, persistent bash, editor stash/restore, and themed working-vibe messages.
-
-## Availability
-
-Included in `@selesai/code` as `src/extensions/pi-powerline-footer/`.
-
-## Quick start
-
-In an interactive Selesai session, look at the bottom of the terminal:
-
-```sh
-selesai
-```
-
-The status bar shows model, thinking level, path, git state, context, tokens, cost, cache, and session data.
-
-## Configuration
-
-No separate configuration is required. The footer adapts to the project state and supports configurable presets.
-
-## Limits and edge cases
-
-- Requires a terminal that supports the chosen font and Nerd Font glyphs for the best experience.
-- Persistent bash state is local to the Selesai session.
-- The `/guide` tour can be dismissed and will remember dismissal.
-
-<ComparisonCallout
-  claim="Selesai bundles a richer terminal UI so you can see model, cost, and context status without running extra commands."
-  evidence={[
-    { text: "pi-powerline-footer source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-powerline-footer/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./pi-powerline-footer"
+  runtimeSurface="mixed"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- Requires an interactive TUI session. It has no effect in headless mode.
+- Nerd Font is recommended for the `nerd` preset but not required; the `ascii` preset is safe for any terminal.
+- Sticky bash mode needs a POSIX-compatible shell.
+
+## What it sets up
+
+- Replaces the default footer/header/editor chrome with powerline-styled segments.
+- Registers the `/powerline`, `/guide`, `/stash-history`, `/bash-mode`, `/bash-reset`, and `/vibe` commands.
+- Registers keyboard shortcuts for editor stash, copy/cut, chat jumps, bash-mode toggle, and stash history.
+- Sets up a fixed-editor cluster when enabled so the editor and status rows stay on screen while chat content scrolls.
+
+## What you can configure
+
+Configuration lives in `~/.selesai/agent/settings.json`.
+
+| Setting | Description |
+| --- | --- |
+| `powerline.preset` | `default`, `minimal`, `compact`, `full`, `nerd`, `ascii`. |
+| `powerline.fixedEditor` | Enable or disable the fixed-editor cluster. |
+| `powerline.mouseScroll` | Use app-owned mouse scroll in fixed-editor mode. |
+| `powerline.customItems` | Promote any extension status key into a dedicated powerline item. |
+| `bashMode.toggleShortcut` | Default `ctrl+shift+b`. |
+| `bashMode.transcriptMaxLines` | Default `2000`. |
+| `bashMode.transcriptMaxBytes` | Default `524288`. |
+| `powerlineShortcuts.*` | Override shortcuts such as `stashHistory`, `copyEditor`, `cutEditor`, etc. |
+| `workingVibe` / `workingVibeMode` / `workingVibeModel` | Vibe theme, mode (`generate`/`file`), and model. |
+
+Presets are saved to settings when you change them with `/powerline <preset>`.
+
+## What you can do
+
+- Toggle powerline on/off: `/powerline`.
+- Switch preset: `/powerline nerd`.
+- Toggle fixed editor: `/powerline fixed-editor on|off|toggle`.
+- Toggle mouse scroll: `/powerline mouse-scroll on|off|toggle`.
+- Open the recurring guide: `/guide` (or `/guide compact`, `/guide off`, `/guide reset`).
+- Stash or restore editor text: `Alt+S`.
+- Open prompt history: `Ctrl+Alt+H` or `/stash-history`.
+- Copy full editor text: `Ctrl+Alt+C`. Cut: `Ctrl+Alt+X`.
+- Toggle sticky bash mode: `Ctrl+Shift+B` or `/bash-mode on|off|toggle`.
+- Reset the managed shell: `/bash-reset`.
+- Set a working vibe theme: `/vibe star trek` or `/vibe off`.
+
+## Commands, tools, and shortcuts
+
+| Command / shortcut | Description |
+| --- | --- |
+| `/powerline` | Toggle the powerline UI. |
+| `/powerline <preset>` | Switch status preset. |
+| `/powerline fixed-editor on\|off\|toggle` | Toggle fixed-editor cluster. |
+| `/powerline mouse-scroll on\|off\|toggle` | Toggle app mouse scroll. |
+| `/guide [full\|compact\|off\|reset]` | Open, compact, dismiss, or reset the recurring guide. |
+| `/stash-history` | Open the prompt history picker. |
+| `/bash-mode on\|off\|toggle` | Toggle sticky bash mode. |
+| `/bash-reset` | Reset the managed shell session. |
+| `/vibe [theme\|off\|mode\|model\|generate]` | Configure working-message vibes. |
+| `Alt+S` | Stash or restore editor text. |
+| `Ctrl+Alt+H` | Open stash/prompt history. |
+| `Ctrl+Alt+C` | Copy full editor text. |
+| `Ctrl+Alt+X` | Cut full editor text. |
+| `Ctrl+Shift+B` | Toggle bash mode. |
+| `Ctrl+Shift+U` / `Ctrl+Shift+I` | Jump to previous/next user message. |
+| `Ctrl+Alt+,` / `Ctrl+Alt+.` | Jump to previous/next LLM message. |
+| `Ctrl+Shift+G` | Jump chat to bottom. |
+| `Cmd+Up` / `Cmd+Down` | Scroll chat up/down (when fixed editor is on). |
+
+## Limits and safety
+
+- The powerline UI only renders in interactive TUI sessions.
+- Sticky bash mode keeps a managed shell for the current Selesai session. Shell `cd` and exported variables persist across commands, but the shell and its transcript are lost when the session ends.
+- Generated vibe messages use the configured model and are rate-limited. Pre-generate vibe files with `/vibe generate <theme> <count>` to avoid API latency and cost.
+- Fixed-editor chat jump shortcuts may need terminal remapping on terminals such as Ghostty.
+- Custom shortcut conflicts with reserved keys are automatically resolved to safe defaults.
 
 <SourceEvidence slug="pi-powerline-footer" />

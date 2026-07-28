@@ -3,46 +3,59 @@ draft: false
 title: Onboarding token
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `tokenin-onboarding` memandu user pertama kali menambahkan akun Token-In agar Selesai dapat mengautentikasi dengan provider model. Extension juga menyediakan command `/tokenin` untuk mengelola beberapa akun setelah onboarding.
 
-Extension `tokenin-onboarding` memandu user pertama kali melalui setup kredensial provider dan token API sehingga Selesai dapat berkomunikasi dengan model provider tanpa mengedit file konfigurasi secara manual.
-
-## Ketersediaan
-
-Termasuk dalam `@selesai/code` sebagai `src/extensions/tokenin-onboarding.ts`.
-
-## Mulai cepat
-
-Saat pertama kali berjalan, Selesai meminta kredensial provider. Untuk menjalankan ulang onboarding:
-
-```sh
-/tokenin-onboard
-```
-
-## Konfigurasi
-
-Ikuti prompt interaktif untuk memilih provider dan menempelkan API key. Selesai menyimpan kredensial di lokasi konfigurasi standar.
-
-```sh
-# Alur pertama kali yang umum
-selesai
-# Ikuti prompt tokenin untuk menambahkan provider key Anda
-```
-
-## Batasan dan edge case
-
-- Jaga API key tetap rahasia. Jangan commit ke version control.
-- Provider key mungkin memerlukan billing yang diaktifkan.
-- Jika provider tidak tersedia, periksa terlebih dahulu apakah key ditempel dengan benar dan aktif.
-
-<ComparisonCallout
-  claim="Selesai membundel setup kredensial interaktif pertama kali sehingga user dapat mulai dengan provider tanpa mengedit file konfigurasi secara manual."
-  evidence={[
-    { text: "source tokenin-onboarding", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/tokenin-onboarding.ts" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./tokenin-onboarding.ts"
+  runtimeSurface="command"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
+- Hanya berjalan saat startup interaktif pertama (`event.reason === "startup"`) sampai marker onboarding ditulis.
+- Memerlukan sesi TUI interaktif.
+- Anda membutuhkan token Token-In dari `https://token-in.selesai.in/dashboard/tokens`.
+
+## Yang disiapkan
+
+- Menulis `~/.selesai/agent/.tokenInOnboardingComplete` setelah onboarding selesai atau dilewati.
+- Menyimpan kredensial aktif di `auth.json` Selesai via `AuthStorage`.
+- Menyimpan detail multi-akun di `~/.selesai/agent/tokenin-auth.json` dengan file mode `0o600`.
+- Akun pertama yang ditambahkan selama onboarding diatur sebagai aktif secara otomatis.
+
+## Yang dapat dikonfigurasi
+
+- Tidak ada file konfigurasi khusus. Perilaku onboarding dikontrol oleh environment variables dan command manajemen akun.
+- Tetapkan `SELESAI_SKIP_TOKENIN_ONBOARDING=1` di environment untuk menekan prompt pertama kali sepenuhnya.
+
+## Yang dapat dilakukan
+
+- Saat pertama kali berjalan, konfirmasi ingin menghubungkan Token-In, buka dashboard, tempel token, dan aktifkan akun.
+- Menambahkan akun lain nanti dengan `/tokenin add`.
+- Mengalihkan akun aktif dengan `/tokenin switch`.
+- Menghapus akun yang tersimpan dengan `/tokenin remove` (tidak dapat menghapus akun aktif; alihkan dulu).
+
+## Perintah, tool, dan shortcut
+
+| Perintah | Deskripsi |
+| --- | --- |
+| `/tokenin add` | Buka dashboard Token-In, tempel token, dan tambahkan ke `tokenin-auth.json`. Jika ini akun pertama, ia menjadi aktif. |
+| `/tokenin switch` | Pilih akun tersimpan dan jadikan kredensial aktif. |
+| `/tokenin remove` | Pilih akun tersimpan yang tidak aktif dan hapus. |
+
+Command memvalidasi bahwa token yang ditempel diawali `sk-`. Token tidak valid ditolak dan prompt mencoba lagi pada peluncuran berikutnya.
+
+## Batasan dan keamanan
+
+- Token disimpan di `~/.selesai/agent/tokenin-auth.json` dengan mode `0o600`. Key aktif juga ditulis ke `auth.json` Selesai.
+- Jangan commit `tokenin-auth.json`, `auth.json`, atau file apa pun yang berisi token.
+- Prompt onboarding tidak muncul lagi setelah file marker ada, meskipun percobaan pertama gagal. Gunakan `/tokenin add` untuk mencoba lagi atau menambahkan token lain.
+- Perintah `/tokenin-onboard` **tidak** ada; gunakan `/tokenin add` atau tunggu onboarding pertama kali.
 
 <SourceEvidence slug="tokenin-onboarding" />

@@ -5,6 +5,9 @@ export type Category =
   | "terminal-workspace"
   | "skills-and-productivity";
 
+export type Distribution = "bundled" | "optional";
+export type RuntimeSurface = "automatic" | "command" | "tool" | "skill-backed" | "mixed";
+
 export interface Capability {
   slug: string;
   category: Category;
@@ -14,6 +17,9 @@ export interface Capability {
   sourceLinks: { text: string; url: string }[];
   guideRoute: string;
   piComparison: "core-differentiator" | "bundled" | "ergonomic" | "reference";
+  distribution: Distribution;
+  manifestEntry?: string;
+  runtimeSurface: RuntimeSurface;
 }
 
 const repo = "https://github.com/SelesaiInTech/selesai-code/blob/main";
@@ -44,6 +50,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/delegation/pi-subagents",
     piComparison: "core-differentiator",
+    distribution: "bundled",
+    manifestEntry: "./pi-subagents",
+    runtimeSurface: "mixed",
   },
   {
     slug: "workflow",
@@ -57,6 +66,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/delegation/workflow",
     piComparison: "core-differentiator",
+    distribution: "bundled",
+    manifestEntry: "./workflow",
+    runtimeSurface: "mixed",
   },
   {
     slug: "pi-web-agent",
@@ -70,6 +82,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/research/web-agent",
     piComparison: "bundled",
+    distribution: "bundled",
+    manifestEntry: "./pi-web-agent",
+    runtimeSurface: "mixed",
   },
   {
     slug: "question",
@@ -83,6 +98,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/research/question",
     piComparison: "bundled",
+    distribution: "bundled",
+    manifestEntry: "./question",
+    runtimeSurface: "tool",
   },
   {
     slug: "grep-app",
@@ -96,6 +114,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/research/grep-app",
     piComparison: "bundled",
+    distribution: "bundled",
+    manifestEntry: "./grep-app",
+    runtimeSurface: "tool",
   },
   {
     slug: "pi-intercom",
@@ -109,6 +130,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/continuity/intercom",
     piComparison: "bundled",
+    distribution: "bundled",
+    manifestEntry: "./pi-intercom/index.ts",
+    runtimeSurface: "mixed",
   },
   {
     slug: "undo",
@@ -122,6 +146,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/continuity/undo",
     piComparison: "ergonomic",
+    distribution: "bundled",
+    manifestEntry: "./undo.ts",
+    runtimeSurface: "command",
   },
   {
     slug: "copy-turn",
@@ -135,6 +162,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/continuity/copy-turn",
     piComparison: "ergonomic",
+    distribution: "bundled",
+    manifestEntry: "./copy-turn.ts",
+    runtimeSurface: "command",
   },
   {
     slug: "context-compaction-reminder",
@@ -148,6 +178,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/continuity/context-reminder",
     piComparison: "ergonomic",
+    distribution: "bundled",
+    manifestEntry: "./context-compaction-reminder.ts",
+    runtimeSurface: "automatic",
   },
   {
     slug: "handoff-new",
@@ -162,6 +195,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/continuity/handoff-new",
     piComparison: "core-differentiator",
+    distribution: "bundled",
+    manifestEntry: "./handoff-new.ts",
+    runtimeSurface: "command",
   },
   {
     slug: "pi-rewind-hook",
@@ -175,6 +211,8 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/continuity/rewind",
     piComparison: "ergonomic",
+    distribution: "optional",
+    runtimeSurface: "automatic",
   },
   {
     slug: "pi-powerline-footer",
@@ -188,6 +226,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/workspace/powerline-footer",
     piComparison: "bundled",
+    distribution: "bundled",
+    manifestEntry: "./pi-powerline-footer",
+    runtimeSurface: "mixed",
   },
   {
     slug: "web-agent-onboarding",
@@ -202,6 +243,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/workspace/web-agent-onboarding",
     piComparison: "bundled",
+    distribution: "bundled",
+    manifestEntry: "./web-agent-onboarding.ts",
+    runtimeSurface: "command",
   },
   {
     slug: "tokenin-onboarding",
@@ -215,6 +259,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/workspace/tokenin-onboarding",
     piComparison: "bundled",
+    distribution: "bundled",
+    manifestEntry: "./tokenin-onboarding.ts",
+    runtimeSurface: "command",
   },
   {
     slug: "inline-skills",
@@ -229,6 +276,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/skills/inline-skills",
     piComparison: "ergonomic",
+    distribution: "bundled",
+    manifestEntry: "./inline-skills.ts",
+    runtimeSurface: "skill-backed",
   },
   {
     slug: "ponytail",
@@ -243,6 +293,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/skills/ponytail",
     piComparison: "bundled",
+    distribution: "bundled",
+    manifestEntry: "./ponytail/index.js",
+    runtimeSurface: "skill-backed",
   },
   {
     slug: "caveman",
@@ -257,6 +310,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/skills/caveman",
     piComparison: "bundled",
+    distribution: "bundled",
+    manifestEntry: "./caveman/index.js",
+    runtimeSurface: "skill-backed",
   },
   {
     slug: "rtk",
@@ -270,6 +326,9 @@ export const capabilities: Capability[] = [
     ],
     guideRoute: "capabilities/skills/rtk",
     piComparison: "ergonomic",
+    distribution: "bundled",
+    manifestEntry: "./rtk.ts",
+    runtimeSurface: "automatic",
   },
 ];
 

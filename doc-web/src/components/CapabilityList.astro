@@ -4,19 +4,30 @@ import { capabilities, type Category } from "../data/capabilities.ts";
 export interface Props {
   category: Category;
   locale: "en" | "id";
+  distribution?: "bundled" | "optional";
 }
 
-const { category, locale } = Astro.props;
-const items = capabilities.filter((capability) => capability.category === category);
+const { category, locale, distribution = "bundled" } = Astro.props;
+const items = capabilities.filter(
+  (capability) =>
+    capability.category === category && capability.distribution === distribution
+);
+
+const optionalLabel = locale === "en" ? "optional" : "opsional";
+const bundledLabel = locale === "en" ? "bundled" : "bundel";
 ---
 
 <ul class="capability-list">
   {items.map((capability) => {
     const path = locale === "en" ? capability.guideRoute : `id/${capability.guideRoute}`;
+    const statusLabel = capability.distribution === "optional" ? optionalLabel : bundledLabel;
     return (
       <li>
         <a href={`${import.meta.env.BASE_URL}${path}/`}>
-          <strong>{capability[locale].displayName}</strong>
+          <strong>
+            {capability[locale].displayName}
+            <span class="status-badge" data-distribution={capability.distribution}>{statusLabel}</span>
+          </strong>
           <span>{capability[locale].benefit}</span>
           <span class="arrow" aria-hidden="true">→</span>
         </a>
@@ -51,6 +62,23 @@ const items = capabilities.filter((capability) => capability.category === catego
   strong {
     color: var(--sl-color-white);
     font-size: var(--sl-text-base);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .status-badge {
+    font-size: var(--sl-text-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.08rem 0.4rem;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    color: var(--selesai-status-ok);
+  }
+
+  .status-badge[data-distribution="optional"] {
+    color: var(--selesai-status-warn);
   }
 
   a > span:not(.arrow) {

@@ -3,58 +3,85 @@ draft: false
 title: Durable workflows
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `workflow` extension provides durable, resumable project workflows. Three modes are bundled: `prototype`, `quick`, and `task`. Each mode guides an implementation from requirements through review, with phase artifacts stored on disk so you can pause and resume work.
 
-Selesai's workflow engine runs multi-phase project workflows in `prototype`, `quick`, or `task` mode. Workflows persist state and phase artifacts on disk, so they can be resumed explicitly after interruption or a fresh terminal session.
-
-## Availability
-
-Available in `@selesai/code` as the bundled `workflow` extension. Users start or resume workflows directly with slash commands.
-
-## Quick start
-
-```sh
-# Start a prototype workflow (discovery-first)
-/workflow-prototype
-
-# Start a quick workflow (lighter ceremony)
-/workflow-quick
-
-# Start a task workflow (direct implementation)
-/workflow-task
-```
-
-## Modes
-
-| Mode | Flow | Best for |
-| --- | --- | --- |
-| `prototype` | grill → research → plan → reuse → handoff → build/review loop → audit | New prototypes that need discovery and external research |
-| `quick` | grill → plan → reuse → handoff → build/review loop → audit | Smaller prototypes with less ceremony |
-| `task` | plan → reuse → handoff → build/review loop | Direct implementation work |
-
-## Configuration
-
-Workflows are configured by mode files in `src/extensions/workflow/modes/`. You can also create custom workflow modes as skills.
-
-```sh
-# Resume a workflow
-selesai "/workflow-resume"      # example; exact command follows Selesai runtime binding
-```
-
-## Limits and edge cases
-
-- The agent cannot initiate a workflow automatically; you must use a slash command.
-- An explicit close step is required to finalize a workflow.
-- Resuming depends on persisted state; if state files are deleted, the workflow restarts.
-
-<ComparisonCallout
-  claim="Selesai persists workflow state on disk so you can resume long-running work across sessions instead of rebuilding context from scratch."
-  evidence={[
-    { text: "workflow source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/workflow/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./workflow"
+  runtimeSurface="mixed"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- Requires an interactive TUI session.
+- Each workflow mode writes phase artifacts under a generated `.selesai/artifacts/` directory inside the project. Ensure the project path is writable.
+- Subagent support is used internally (e.g., builder, commentator, architect, explorer, recapper); the `subagent` tool must be available.
+
+## What it sets up
+
+- Registers one slash command per mode: `/workflow-prototype`, `/workflow-quick`, `/workflow-task`.
+- Registers the shared `write_workflow_artifact` tool and the `end_workflow` tool.
+- Maintains a `workflow.json` run file inside each run's artifact directory so the run can be resumed later.
+- Reuses a global in-process registry so the three modes do not conflict when loaded together.
+
+## What you can configure
+
+- No dedicated user configuration file for the workflow engine itself.
+- Phase prompts and validators are fixed per mode in the mode source files.
+- Indirect configuration via `subagents` settings affects child agent behavior inside workflows.
+
+## What you can do
+
+- Start a durable plan/implement/review cycle:
+
+<div class="install-command">
+  <pre><code>/workflow-task add a persistent todo store with sqlite</code></pre>
+  <button type="button" class="copy-button" data-command="/workflow-task add a persistent todo store with sqlite" aria-label="Copy command to clipboard">Copy</button>
+  <span class="copy-status" role="status" aria-live="polite"></span>
+</div>
+
+- Resume a previous run: `/workflow-task resume` lists resumable runs, or `/workflow-task resume <run-id>` resumes a specific one.
+- Continue an active run: `/workflow-task` (no arguments) lets you continue at the current phase.
+- End a terminal-ready run by calling `end_workflow({ mode: "task" })` (or `prototype` / `quick`).
+
+### Mode phases
+
+| Mode | Phases |
+| --- | --- |
+| `task` | plan → reuse → handoff → loop |
+| `quick` | grilling → plan → reuse → handoff → loop → audit |
+| `prototype` | grilling → research → plan → reuse → handoff → loop → audit |
+
+- `grilling` asks clarification questions until the frontier of decisions is empty.
+- `research` gathers external evidence when needed.
+- `plan` produces a build plan that must end with `WORKFLOW_PLAN_STATUS: ready`.
+- `reuse` explores the existing codebase (skipped automatically if there is no git history).
+- `handoff` compiles a self-contained context document that must end with `WORKFLOW_HANDOFF_STATUS: ready`.
+- `loop` runs builder/commentator review cycles until the commentator ends with `WORKFLOW_REVIEW_STATUS: clean` or the max iteration cap is reached.
+- `audit` (quick/prototype only) performs a final review of uncommitted changes.
+
+## Commands, tools, and shortcuts
+
+| Command / tool | Description |
+| --- | --- |
+| `/workflow-prototype [<goal>\|resume]` | Run the full prototype workflow. |
+| `/workflow-quick [<goal>\|resume]` | Run the quick workflow without a research phase. |
+| `/workflow-task [<goal>\|resume]` | Run the task workflow with plan/reuse/handoff/loop. |
+| `write_workflow_artifact({ content })` | Write the current phase artifact; the engine advances to the next phase if validators pass. |
+| `end_workflow({ mode: "task"\|"quick"\|"prototype" })` | Explicitly close a terminal-ready workflow. |
+
+## Limits and safety
+
+- Only one workflow run can be active per mode at a time. End or detach the current run before starting another.
+- Parent-owned phase artifacts must be written with `write_workflow_artifact`; direct `write` or `edit` tool calls are blocked while a workflow is active.
+- The engine-owned `loop-complete.md` is written automatically when a clean review is detected. Do not write it yourself.
+- Loop review rounds are capped (default 3). A blocking review at the cap pauses the loop with a warning.
+- Completed workflow runs remain resumable until `end_workflow` writes `status: completed` to the run file.
+- Runs are never auto-resumed after reload. You must explicitly call `resume`.
 
 <SourceEvidence slug="workflow" />

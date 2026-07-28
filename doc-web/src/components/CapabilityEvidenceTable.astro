@@ -6,9 +6,30 @@ export interface Props {
 }
 
 const { locale } = Astro.props;
+const bundled = capabilities.filter((c) => c.distribution === "bundled");
+const optional = capabilities.filter((c) => c.distribution === "optional");
+
 const labels = locale === "en"
-  ? { capability: "Capability", paths: "Source paths", links: "Evidence links" }
-  : { capability: "Kemampuan", paths: "Jalur source", links: "Tautan bukti" };
+  ? {
+      capability: "Capability",
+      status: "Status",
+      bundled: "Bundled",
+      optional: "Optional",
+      paths: "Source paths",
+      links: "Evidence links",
+      optionalSection: "Optional extensions",
+      optionalHint: "These extensions are available but not loaded automatically. Install or enable them separately before use.",
+    }
+  : {
+      capability: "Kemampuan",
+      status: "Status",
+      bundled: "Bundel",
+      optional: "Opsional",
+      paths: "Jalur source",
+      links: "Tautan bukti",
+      optionalSection: "Ekstensi opsional",
+      optionalHint: "Ekstensi berikut tersedia tetapi tidak dimuat otomatis. Pasang atau aktifkan secara terpisah sebelum digunakan.",
+    };
 ---
 
 <div class="evidence-table-wrap not-content">
@@ -16,14 +37,18 @@ const labels = locale === "en"
     <thead>
       <tr>
         <th scope="col">{labels.capability}</th>
+        <th scope="col">{labels.status}</th>
         <th scope="col">{labels.paths}</th>
         <th scope="col">{labels.links}</th>
       </tr>
     </thead>
     <tbody>
-      {capabilities.map((capability) => (
-        <tr>
+      {bundled.map((capability) => (
+        <tr class="evidence-row--bundled">
           <th scope="row" data-label={labels.capability}>{capability[locale].displayName}</th>
+          <td data-label={labels.status}>
+            <span class={"status-pill is-bundled"}>{labels.bundled}</span>
+          </td>
           <td data-label={labels.paths}>
             <ul class="path-list">
               {capability.sourcePaths.map((path) => <li><code>{path}</code></li>)}
@@ -42,6 +67,47 @@ const labels = locale === "en"
   </table>
 </div>
 
+{optional.length > 0 && (
+  <>
+    <h3>{labels.optionalSection}</h3>
+    <p>{labels.optionalHint}</p>
+    <div class="evidence-table-wrap not-content is-optional-section">
+      <table class="evidence-table">
+        <thead>
+          <tr>
+            <th scope="col">{labels.capability}</th>
+            <th scope="col">{labels.status}</th>
+            <th scope="col">{labels.paths}</th>
+            <th scope="col">{labels.links}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {optional.map((capability) => (
+            <tr class="evidence-row--optional">
+              <th scope="row" data-label={labels.capability}>{capability[locale].displayName}</th>
+              <td data-label={labels.status}>
+                <span class={"status-pill is-optional"}>{labels.optional}</span>
+              </td>
+              <td data-label={labels.paths}>
+                <ul class="path-list">
+                  {capability.sourcePaths.map((path) => <li><code>{path}</code></li>)}
+                </ul>
+              </td>
+              <td data-label={labels.links}>
+                <ul class="link-list">
+                  {capability.sourceLinks.map((link) => (
+                    <li><a href={link.url} target="_blank" rel="noopener noreferrer">{link.text}</a></li>
+                  ))}
+                </ul>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </>
+)}
+
 <style>
   .evidence-table-wrap {
     margin-block: 1.5rem 2.5rem;
@@ -51,10 +117,34 @@ const labels = locale === "en"
     background: var(--selesai-surface);
   }
 
+  .evidence-table-wrap.is-optional-section {
+    border-inline-start: 4px solid var(--selesai-status-warn);
+  }
+
   .evidence-table {
     width: 100%;
     border-collapse: collapse;
     font-size: var(--sl-text-sm);
+  }
+
+  h3 {
+    margin: 2rem 0 0.5rem;
+    font-size: var(--sl-text-lg);
+  }
+
+  .status-pill {
+    display: inline-block;
+    font-size: var(--sl-text-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.12rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    color: var(--selesai-status-ok);
+  }
+
+  .status-pill.is-optional {
+    color: var(--selesai-status-warn);
   }
 
   th,
@@ -77,7 +167,7 @@ const labels = locale === "en"
   }
 
   tbody th {
-    width: 25%;
+    width: 22%;
     color: var(--sl-color-white);
     font-weight: 700;
   }
@@ -108,11 +198,16 @@ const labels = locale === "en"
     text-underline-offset: 0.2em;
   }
 
-  @media (max-width: 42rem) {
+  @media (max-width: 48rem) {
     .evidence-table-wrap {
       overflow: visible;
       border: 0;
       background: transparent;
+    }
+
+    .evidence-table-wrap.is-optional-section {
+      border: 0;
+      border-inline-start: 4px solid var(--selesai-status-warn);
     }
 
     .evidence-table,

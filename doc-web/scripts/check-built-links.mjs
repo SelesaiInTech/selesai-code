@@ -8,7 +8,12 @@ const distDir = path.resolve(__dirname, "../dist");
 
 const seen = new Set();
 const broken = [];
-const base = process.env.BASE_PATH ? process.env.BASE_PATH.replace(/\/$/, "") : "";
+const inferredBase =
+  process.env.BASE_PATH ||
+  (process.env.GITHUB_REPOSITORY
+    ? `/${process.env.GITHUB_REPOSITORY.split("/")[1] || ""}`
+    : "");
+const base = inferredBase.replace(/\/$/, "");
 
 function walk(dir) {
   if (!fs.existsSync(dir)) return;
@@ -46,8 +51,10 @@ function checkFile(file) {
   for (const [, href] of hrefs) {
     if (seen.has(`${file}::${href}`)) continue;
     seen.add(`${file}::${href}`);
+    // Skip external, mail, and same-page fragment links; they are not validated here.
+    if (/^(https?:|mailto:)/i.test(href) || href.startsWith("#")) continue;
     const target = resolveTarget(href, path.dirname(file));
-    if (target === undefined) {
+    if (target === null) {
       // internal link that could not be resolved
       broken.push({ file, href });
     }

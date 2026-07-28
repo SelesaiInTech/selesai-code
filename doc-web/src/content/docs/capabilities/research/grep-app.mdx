@@ -3,38 +3,75 @@ draft: false
 title: Public code search
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `grep-app` extension searches public GitHub code through grep.app and fetches matching source files directly into the agent conversation.
 
-The `grep-app` extension searches public GitHub code through [grep.app](https://grep.app) and fetches the matching source so the agent can inspect it without leaving the terminal.
-
-## Availability
-
-Included in `@selesai/code` as `src/extensions/grep-app/`.
-
-## Quick start
-
-```text
-Search grep.app for how other projects implement exponential backoff in TypeScript.
-```
-
-## Configuration
-
-No separate configuration is required beyond the extension being loaded by the Selesai runtime.
-
-## Limits and edge cases
-
-- Results depend on what grep.app has indexed; very recent repositories may not appear.
-- Fetched snippets may need review before reuse because public code can be outdated or incorrect.
-- Respect license terms when copying code from public repositories.
-
-<ComparisonCallout
-  claim="Selesai bundles public code search so the agent can reference external examples without opening a browser."
-  evidence={[
-    { text: "grep-app source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/grep-app/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./grep-app"
+  runtimeSurface="tool"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- Requires network access and the ability to fetch `https://grep.app/api/search` and `https://raw.githubusercontent.com`.
+- Public repositories only. Private code cannot be reached.
+
+## What it sets up
+
+- Registers the `grep_app_search` tool for searching grep.app.
+- Registers the `grep_app_fetch` tool for fetching a public GitHub file by `owner/repo`, path, ref, and optional line range.
+- Uses Cheerio to parse code snippets from grep.app HTML result pages.
+
+## What you can configure
+
+- No user-facing configuration. Search provider, fetch endpoint, and truncation limits are fixed in the extension source.
+
+## What you can do
+
+- Search for real usage examples or implementations across GitHub.
+- Fetch the full source of a file found in the search results.
+- Continue paging through results by increasing the `page` parameter.
+
+## Commands, tools, and shortcuts
+
+### `grep_app_search`
+
+Returns one page of up to 10 files with matched snippets.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `query` | string | Code or pattern to search for. |
+| `page` | integer | Result page, default 1. |
+| `caseSensitive` | boolean | Match case. |
+| `useRegex` | boolean | Treat `query` as a regular expression. |
+| `wholeWords` | boolean | Match whole words; cannot be combined with `useRegex`. |
+| `repo` | string | Repository filter, e.g. `facebook/react`. |
+| `path` | string | File path filter, e.g. `src/components/`. |
+| `language` | string | Language filter, e.g. `TypeScript`. |
+
+### `grep_app_fetch`
+
+Fetches a public GitHub file and returns selected lines.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `repo` | string | `owner/repository`. |
+| `path` | string | Path inside the repository. |
+| `ref` | string | Branch, tag, or commit; defaults to `HEAD`. |
+| `startLine` | integer | First line, default 1. |
+| `endLine` | integer | Last line; defaults to end of file. |
+
+## Limits and safety
+
+- Only public GitHub code is searchable.
+- Search results are subject to grep.app rate limits. A 429 response automatically falls back to a headless browser fetch.
+- Output is truncated to 50 KB or 2,000 lines; the full result is saved to a temporary file and referenced in the returned text.
+- Snippet line numbers come from grep.app HTML parsing and may occasionally be approximate.
+- Do not rely on fetched code for security-sensitive decisions without reviewing the actual repository state.
 
 <SourceEvidence slug="grep-app" />

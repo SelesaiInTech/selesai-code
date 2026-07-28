@@ -3,40 +3,63 @@ draft: false
 title: Checkpoint rewind
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `pi-rewind-hook` merekam checkpoint state file yang tepat dan memulihkannya selama navigasi `/fork` dan `/tree`. Extension ini tidak dibundel dalam manifest boot Selesai default dan harus dianggap sebagai ekstensi opsional.
 
-Extension `pi-rewind-hook` menyediakan checkpoint file yang tepat dan didukung git di `/fork`, `/tree`, sesi yang dilanjutkan, dan silsilah sesi. Anda dapat memulihkan state file sebelumnya tanpa perintah git manual.
-
-## Ketersediaan
-
-Termasuk dalam `@selesai/code` sebagai `src/extensions/pi-rewind-hook/`.
-
-## Mulai cepat
-
-Rewind dipicu melalui perintah slash Selesai:
-
-```sh
-/rewind <target>
-```
-
-## Konfigurasi
-
-Tidak diperlukan konfigurasi terpisah. Extension ini hook ke event siklus hidup sesi dan merekam checkpoint secara otomatis.
-
-## Batasan dan edge case
-
-- Rewind bergantung pada ketersediaan git di direktori project.
-- Rewind mencatat state file, bukan memori atau state dunia eksternal.
-- Checkpoint mungkin terbatas oleh riwayat git yang tersedia jika commit dibuat di luar Selesai.
-
-<ComparisonCallout
-  claim="Selesai membundel checkpoint otomatis yang didukung git sehingga Anda dapat memulihkan state file yang tepat tanpa meninggalkan terminal."
-  evidence={[
-    { text: "source pi-rewind-hook", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-rewind-hook/" }
-  ]}
+<ExtensionStatus
+  distribution="optional"
+  runtimeSurface="automatic"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Directory source ada tetapi `pi-rewind-hook` **tidak** tercantum di `src/extensions/package.json`, sehingga Selesai tidak memuatnya secara otomatis.
+- Untuk menggunakannya, instal sebagai extension Pi/Selesai dari `npm:pi-rewind-hook` (atau muat secara eksplisit jika Anda mengelola daftar extension sendiri).
+- Memerlukan repository git. Tidak berfungsi di luar git worktree.
+- Memerlukan versi Pi/Selesai dan runtime Node.js yang kompatibel.
+
+## Yang disiapkan
+
+- Hook ke event lifecycle sesi (`session_start`, `session_tree`, `session_before_fork`, `session_before_tree`, `turn_start`, `turn_end`, `agent_end`, `session_compact`, `session_shutdown`) untuk merekam snapshot worktree.
+- Menyimpan metadata dalam entri custom sesi tersembunyi `rewind-turn` dan `rewind-op`.
+- Menggunakan satu git reachability ref, `refs/pi-rewind/store`, untuk menjaga snapshot commit tetap hidup.
+
+## Yang dapat dikonfigurasi
+
+Pengaturan opsional di `~/.selesai/agent/settings.json` di bawah key `rewind`:
+
+| Setting | Tipe | Deskripsi |
+| --- | --- | --- |
+| `rewind.silentCheckpoints` | boolean | Sembunyikan notifikasi checkpoint di footer/status. |
+| `rewind.retention.maxSnapshots` | number | Batas jumlah snapshot unik yang tidak dipin yang tetap reachable. |
+| `rewind.retention.maxAgeDays` | number | Batas usia snapshot yang tidak dipin. |
+| `rewind.retention.pinLabeledEntries` | boolean | Pertahankan snapshot yang terikat ke node session-tree yang diberi label dari pruning. |
+| `rewind.retention.scanMode` | `"ancestor-only"` atau `"repo-sessions"` | Mode discovery untuk retention sweep; default `ancestor-only`. |
+| `rewind.retention.startupBudgetMs` | number | Budget waktu startup untuk retention sweep; jika dilewati, sweep dilewati. |
+
+Jika `rewind.retention` dihilangkan, riwayat tepat disimpan tanpa batas waktu. Ini dapat membesarkan penyimpanan objek git tanpa batas.
+
+## Yang dapat dilakukan
+
+- Selama `/fork`, pilih pesan dan pilih opsi restore: **Conversation only**, **Restore all**, **Code only**, atau **Undo last file rewind** ketika exact rewind point tersedia.
+- Selama navigasi `/tree`, pilih **Keep current files**, **Restore files to that point**, atau **Undo last file rewind** ketika node target memiliki checkpoint tepat.
+- Menjaga checkpoint otomatis di batas user pre-prompt, batas assistant `turn_end`, dan operasi stateful terpilih.
+
+## Perintah, tool, dan shortcut
+
+- **Tidak ada perintah `/rewind`**. Rewind dipicu secara otomatis sebagai bagian dari alur `/fork` dan `/tree`.
+- Extension ini tidak mendaftarkan command, tool, atau shortcut apa pun.
+
+## Batasan dan keamanan
+
+- Hanya berfungsi di dalam repository git.
+- Memulihkan state file tepat untuk file yang di-track dan file untracked yang tidak di-ignore. Ia menghapus path yang ada di snapshot saat ini tetapi tidak ada di snapshot target, lalu memulihkan snapshot target ke worktree tanpa staging git index yang sebenarnya.
+- File yang di-ignore, direktori kosong, checkpoint tepat untuk node `toolResult`, dan checkpoint tepat untuk node `bashExecution` berada di luar model snapshot.
+- Retention hanya memengaruhi reachability objek git. Metadata JSONL sesi adalah append-only dan tidak pernah dikompakkan oleh Rewind.
+- Snapshot commit dapat diprune jika retention diaktifkan dan tidak dipin; Rewind memvalidasi keberadaan commit sebelum menawarkan restore.
+- Session ledger, bukan ref `refs/pi-rewind/store`, adalah otoritatif untuk checkpoint mana yang berlaku untuk setiap node sesi.
 
 <SourceEvidence slug="pi-rewind-hook" />

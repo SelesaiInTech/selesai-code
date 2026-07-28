@@ -3,58 +3,85 @@ draft: false
 title: Workflow tahan lama
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `workflow` menyediakan workflow proyek yang tahan lama dan dapat dilanjutkan kembali. Tiga mode dibundel: `prototype`, `quick`, dan `task`. Setiap mode memandu implementasi dari requirements hingga review, dengan artifact fase yang disimpan di disk sehingga Anda dapat menjeda dan melanjutkan pekerjaan.
 
-Mesin workflow Selesai menjalankan alur kerja proyek multi-fase dalam mode `prototype`, `quick`, atau `task`. Workflow mempertahankan state dan artifact fase di disk, sehingga dapat dilanjutkan secara eksplisit setelah interupsi atau sesi terminal baru.
-
-## Ketersediaan
-
-Tersedia dalam `@selesai/code` sebagai extension `workflow` yang dibundel. User memulai atau melanjutkan workflow langsung dengan perintah slash.
-
-## Mulai cepat
-
-```sh
-# Mulai workflow prototype (discovery-first)
-/workflow-prototype
-
-# Mulai workflow quick (lebih ringan)
-/workflow-quick
-
-# Mulai workflow task (implementasi langsung)
-/workflow-task
-```
-
-## Mode
-
-| Mode | Alur | Cocok untuk |
-| --- | --- | --- |
-| `prototype` | grill → research → plan → reuse → handoff → build/review loop → audit | Prototipe baru yang memerlukan discovery dan riset eksternal |
-| `quick` | grill → plan → reuse → handoff → build/review loop → audit | Prototipe kecil dengan lebih sedikit ceremony |
-| `task` | plan → reuse → handoff → build/review loop | Pekerjaan implementasi langsung |
-
-## Konfigurasi
-
-Workflow dikonfigurasi oleh file mode di `src/extensions/workflow/modes/`. Anda juga dapat membuat custom workflow mode sebagai skill.
-
-```sh
-# Lanjutkan workflow
-selesai "/workflow-resume"      # contoh; perintah tepat mengikuti binding runtime Selesai
-```
-
-## Batasan dan edge case
-
-- Agent tidak dapat memulai workflow secara otomatis; Anda harus menggunakan perintah slash.
-- Langkah close eksplisit diperlukan untuk menyelesaikan workflow.
-- Melanjutkan bergantung pada state yang persisten; jika file state dihapus, workflow dimulai ulang.
-
-<ComparisonCallout
-  claim="Selesai mempertahankan state workflow di disk sehingga Anda dapat melanjutkan pekerjaan berkepanjangan antar sesi alih-alih membangun ulang konteks dari nol."
-  evidence={[
-    { text: "source workflow", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/workflow/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./workflow"
+  runtimeSurface="mixed"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
+- Memerlukan sesi TUI interaktif.
+- Setiap mode workflow menulis artifact fase di bawah direktori `.selesai/artifacts/` yang dihasilkan di dalam project. Pastikan path project dapat ditulis.
+- Dukungan subagent digunakan secara internal (misalnya builder, commentator, architect, explorer, recapper); tool `subagent` harus tersedia.
+
+## Yang disiapkan
+
+- Mendaftarkan satu slash command per mode: `/workflow-prototype`, `/workflow-quick`, `/workflow-task`.
+- Mendaftarkan tool `write_workflow_artifact` bersama dan tool `end_workflow`.
+- Memelihara file run `workflow.json` di dalam direktori artifact setiap run sehingga run dapat dilanjutkan nanti.
+- Menggunakan registry in-process global sehingga tiga mode tidak bertabrakan ketika dimuat bersama.
+
+## Yang dapat dikonfigurasi
+
+- Tidak ada file konfigurasi user khusus untuk workflow engine.
+- Prompt dan validator fase fixed per mode di file source mode.
+- Konfigurasi tidak langsung melalui pengaturan `subagents` memengaruhi perilaku child agent di dalam workflow.
+
+## Yang dapat dilakukan
+
+- Memulai siklus plan/implement/review yang tahan lama:
+
+<div class="install-command">
+  <pre><code>/workflow-task add a persistent todo store with sqlite</code></pre>
+  <button type="button" class="copy-button" data-command="/workflow-task add a persistent todo store with sqlite" aria-label="Copy command to clipboard">Copy</button>
+  <span class="copy-status" role="status" aria-live="polite"></span>
+</div>
+
+- Melanjutkan run sebelumnya: `/workflow-task resume` menampilkan daftar run yang dapat dilanjutkan, atau `/workflow-task resume <run-id>` melanjutkan run tertentu.
+- Melanjutkan run aktif: `/workflow-task` (tanpa argumen) memungkinkan Anda melanjutkan di fase saat ini.
+- Mengakhiri run yang terminal-ready dengan memanggil `end_workflow({ mode: "task" })` (atau `prototype` / `quick`).
+
+### Fase mode
+
+| Mode | Fase |
+| --- | --- |
+| `task` | plan → reuse → handoff → loop |
+| `quick` | grilling → plan → reuse → handoff → loop → audit |
+| `prototype` | grilling → research → plan → reuse → handoff → loop → audit |
+
+- `grilling` mengajukan pertanyaan klarifikasi sampai frontier keputusan kosong.
+- `research` mengumpulkan bukti eksternal bila diperlukan.
+- `plan` menghasilkan rencana build yang harus diakhiri dengan `WORKFLOW_PLAN_STATUS: ready`.
+- `reuse` mengeksplorasi codebase yang ada (dilewati otomatis jika tidak ada riwayat git).
+- `handoff` menyusun dokumen konteks mandiri yang harus diakhiri dengan `WORKFLOW_HANDOFF_STATUS: ready`.
+- `loop` menjalankan siklus review builder/commentator sampai commentator diakhiri dengan `WORKFLOW_REVIEW_STATUS: clean` atau cap iterasi maksimum tercapai.
+- `audit` (hanya quick/prototype) melakukan review akhir terhadap perubahan yang belum di-commit.
+
+## Perintah, tool, dan shortcut
+
+| Perintah / tool | Deskripsi |
+| --- | --- |
+| `/workflow-prototype [<goal>\|resume]` | Jalankan workflow prototype penuh. |
+| `/workflow-quick [<goal>\|resume]` | Jalankan workflow quick tanpa fase research. |
+| `/workflow-task [<goal>\|resume]` | Jalankan workflow task dengan plan/reuse/handoff/loop. |
+| `write_workflow_artifact({ content })` | Tulis artifact fase saat ini; engine maju ke fase berikutnya jika validator lolos. |
+| `end_workflow({ mode: "task"\|"quick"\|"prototype" })` | Tutup secara eksplisit workflow yang terminal-ready. |
+
+## Batasan dan keamanan
+
+- Hanya satu run workflow yang aktif per mode pada satu waktu. Akhiri atau lepaskan run saat ini sebelum memulai yang lain.
+- Artifact fase milik parent harus ditulis dengan `write_workflow_artifact`; tool call `write` atau `edit` langsung diblokir saat workflow aktif.
+- `loop-complete.md` milik engine ditulis otomatis ketika review bersih terdeteksi. Jangan menulisnya sendiri.
+- Putaran review loop dibatasi (default 3). Review blocking pada batas mem-pause loop dengan peringatan.
+- Run workflow yang selesai tetap dapat dilanjutkan sampai `end_workflow` menulis `status: completed` ke file run.
+- Run tidak pernah auto-resume setelah reload. Anda harus secara eksplisit memanggil `resume`.
 
 <SourceEvidence slug="workflow" />

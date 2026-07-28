@@ -3,44 +3,75 @@ draft: false
 title: Ponytail
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `ponytail` extension adds compressed communication modes to Selesai. You can switch between `lite`, `full`, and `ultra` compression levels, or call dedicated review helpers (`ponytail-review`, `ponytail-audit`, `ponytail-gain`, `ponytail-debt`, `ponytail-help`) through slash-command aliases.
 
-`ponytail` is a family of communication modes and review helpers that make agent responses minimal, compressed, and focused. Invoke it with `/skill:ponytail` or related variants such as `/skill:ponytail-review`, `/skill:ponytail-audit`, `/skill:ponytail-gain`, `/skill:ponytail-debt`, and `/skill:ponytail-help`.
-
-## Availability
-
-Included in `@selesai/code` as the `ponytail` extension and the `ponytail*` skills in `src/skills/`.
-
-## Quick start
-
-```sh
-/skill:ponytail
-```
-
-For a review:
-
-```sh
-/skill:ponytail-review
-```
-
-## Configuration
-
-No separate configuration is required. The skill changes how the agent formats and scopes its responses.
-
-## Limits and edge cases
-
-- Ponytail modes reduce verbosity; complex explanations may need to be requested explicitly.
-- Variants are tuned for specific tasks; choose the variant that matches the current goal.
-
-<ComparisonCallout
-  claim="Selesai bundles ponytail as both an extension and a family of skills, so users can switch to compressed, task-focused responses on demand."
-  evidence={[
-    { text: "ponytail extension", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/ponytail/" },
-    { text: "ponytail skills", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/ponytail/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./ponytail/index.js"
+  runtimeSurface="skill-backed"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- Bundled with Selesai and loaded automatically.
+- Companion skills are located in `src/skills/ponytail*` directories; the extension itself is the entrypoint, not the individual skills.
+- Requires an interactive TUI session for the status bar and command feedback.
+
+## What it sets up
+
+- Registers the `/ponytail` slash command to set or report the current mode and default mode.
+- Registers `/ponytail-review`, `/ponytail-audit`, `/ponytail-gain`, `/ponytail-debt`, and `/ponytail-help` aliases that send the matching `/skill:ponytail-*` message.
+- Persists mode changes as `ponytail-mode` custom session entries.
+- Writes the default mode to the ponytail config file when you use `/ponytail default <mode>`.
+- Shows a status-bar indicator (`● 🐴 ponytail: ⚡ FULL`) while active.
+
+## What you can configure
+
+| Setting | Resolution order | Values |
+| --- | --- | --- |
+| Default mode | `PONYTAIL_DEFAULT_MODE` env → `~/.config/ponytail/config.json` `defaultMode` → `full` | `off`, `lite`, `full`, `ultra`, `review` |
+| Current mode | Session history → `/ponytail <mode>` command | `off`, `lite`, `full`, `ultra` |
+
+The environment variable overrides the config file; the config file overrides the built-in default. `review` is a config-only alias that resolves to `full` at runtime.
+
+Use `/ponytail default off`, `/ponytail default lite`, `/ponytail default full`, or `/ponytail default ultra` to change the persisted default. A saved default can still be overridden by `PONYTAIL_DEFAULT_MODE`.
+
+## What you can do
+
+- Enable compression with `/ponytail lite`, `/ponytail full`, or `/ponytail ultra`.
+- Disable it with `/ponytail off`.
+- Check the current and default modes with `/ponytail status`.
+- Set a new default mode with `/ponytail default <mode>`.
+- Run a review helper: `/ponytail-review` expands and sends `/skill:ponytail-review`.
+- Return to normal prose by sending `stop ponytail` or `normal mode` as the full message.
+
+## Commands, tools, and shortcuts
+
+| Command | Description |
+| --- | --- |
+| `/ponytail` | Toggle between `off` and the configured default mode. |
+| `/ponytail <lite\|full\|ultra\|off>` | Set the current mode for this session. |
+| `/ponytail status` | Show current mode and configured default mode. |
+| `/ponytail default <off\|lite\|full\|ultra\|review>` | Persist a new default mode. |
+| `/ponytail-review` | Alias for `/skill:ponytail-review`. |
+| `/ponytail-audit` | Alias for `/skill:ponytail-audit`. |
+| `/ponytail-gain` | Alias for `/skill:ponytail-gain`. |
+| `/ponytail-debt` | Alias for `/skill:ponytail-debt`. |
+| `/ponytail-help` | Alias for `/skill:ponytail-help`. |
+| `stop ponytail` / `normal mode` | Natural-language phrase to disable ponytail. |
+
+There are no keyboard shortcuts or agent tools.
+
+## Limits and safety
+
+- The mode applies per session branch. When you resume or fork a session, the mode is restored from the most recent `ponytail-mode` custom entry in that branch.
+- `review` is valid as a persisted default but is normalized to `full` for runtime sessions.
+- The deactivation phrases only work when they are the entire user message.
+- Individual review helpers are companion skills, not separate bundled extensions; this extension only provides the slash aliases and mode management.
+- Higher compression levels reduce verbosity. Switch back to a lower level or `off` when you need detailed explanation.
 
 <SourceEvidence slug="ponytail" />

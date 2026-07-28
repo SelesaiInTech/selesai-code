@@ -3,50 +3,91 @@ draft: false
 title: Koordinasi sesi
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `pi-intercom` menambahkan pesan 1:1 langsung antar sesi Selesai di mesin yang sama. Anda dapat mengirim konteks, mengajukan pertanyaan, atau mendelegasikan pekerjaan dari satu sesi bernama ke sesi lainnya tanpa meninggalkan terminal.
 
-Extension `pi-intercom` adalah tool agent untuk koordinasi sesi lokal 1:1. Extension ini memungkinkan dua sesi Selesai yang diberi nama berbagi progres, mengajukan pertanyaan, dan mengirim lampiran tanpa menggunakan layanan eksternal.
-
-## Ketersediaan
-
-Termasuk dalam `@selesai/code` sebagai `src/extensions/pi-intercom/`.
-
-## Mulai cepat
-
-Mulai dua sesi di folder yang sama dengan nama berbeda:
-
-```sh
-# Terminal A
-/name CalculatorProject
-
-# Terminal B
-/name DiscussionMaster
-```
-
-Kemudian minta salah satu sesi untuk mengkritik ide:
-
-```text
-Use intercom to ask DiscussionMaster to critique this implementation idea.
-```
-
-## Konfigurasi
-
-Tidak diperlukan konfigurasi terpisah. Intercom bekerja secara lokal antar sesi bernama yang berjalan di mesin yang sama.
-
-## Batasan dan edge case
-
-- Kedua sesi harus berjalan di mesin lokal yang sama.
-- Sesi harus memiliki nama yang jelas dan stabil agar manusia dan agent dapat mengarahkan pesan dengan benar.
-- Intercom bukan tool kolaborasi remote; hanya untuk koordinasi lokal.
-
-<ComparisonCallout
-  claim="Selesai menyertakan pesan antar-sesi native sehingga agent yang didelegasikan dapat berkoordinasi dengan sesi lokal lain tanpa meninggalkan host."
-  evidence={[
-    { text: "source pi-intercom", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-intercom/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./pi-intercom/index.ts"
+  runtimeSurface="mixed"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
+- Diperlukan dua atau lebih sesi Selesai yang berjalan di mesin yang sama.
+- Intercom memerlukan proses broker lokal. Broker auto-spawn saat pertama kali digunakan.
+- Sesi harus diberi nama (atau extension menyediakan alias fallback) sehingga sesi lain dapat menargetkannya.
+- Memerlukan TUI untuk input overlay. Sesi non-interaktif masih dapat mengirim dan membalas via tool `intercom`.
+- Dapat dinonaktifkan dengan `enabled: false` di `~/.selesai/agent/intercom/config.json`.
+
+## Yang disiapkan
+
+- Mendaftarkan slash command `/intercom` dan shortcut `Alt+M` untuk membuka overlay daftar sesi.
+- Mendaftarkan tool `intercom` untuk discovery sesi, kirim, ask, dan reply yang didorong agent.
+- Mendaftarkan tool `contact_supervisor` secara native ketika `pi-subagents` menyediakan child bridge metadata (`SELESAI_SUBAGENT_ORCHESTRATOR_TARGET`, `SELESAI_SUBAGENT_RUN_ID`, `SELESAI_SUBAGENT_CHILD_AGENT`, `SELESAI_SUBAGENT_CHILD_INDEX`).
+- Memulai broker lokal sesuai permintaan dan mempublikasikan presence (name, cwd, model, status) untuk sesi yang terhubung.
+
+## Yang dapat dikonfigurasi
+
+Konfigurasi berada di `~/.selesai/agent/intercom/config.json`. Default:
+
+| Setting | Default | Deskripsi |
+| --- | --- | --- |
+| `brokerCommand` | `npx` | Command untuk memulai proses broker. |
+| `brokerArgs` | `["--no-install", "tsx"]` | Argumen yang dilewatkan sebelum script broker. |
+| `enabled` | `true` | Aktifkan atau nonaktifkan intercom untuk sesi ini. |
+| `replyHint` | `true` | Sertakan panggilan `intercom({ action: "reply", ... })` tepat di pesan masuk. |
+| `confirmSend` | `false` | Tampilkan dialog konfirmasi sebelum send non-reply dari sesi TUI. |
+| `status` | — | Sufiks status kustom opsional yang ditambahkan ke status lifecycle otomatis. |
+
+## Yang dapat dilakukan
+
+- Mengirim pesan fire-and-forget dengan `intercom({ action: "send", to: "worker", message: "..." })`.
+- Mengajukan pertanyaan blocking dengan `intercom({ action: "ask", to: "planner", message: "..." })`; jawaban kembali sebagai tool result dengan timeout 10 menit.
+- Membalas inbound ask terbaru dengan `intercom({ action: "reply", message: "..." })`.
+- Melihat daftar ask yang tertunda dengan `intercom({ action: "pending" })` atau memeriksa status broker dan sesi dengan `intercom({ action: "status" })`.
+
+## Perintah, tool, dan shortcut
+
+| Perintah / shortcut | Deskripsi |
+| --- | --- |
+| `/intercom` | Buka overlay daftar sesi. |
+| `Alt+M` | Buka overlay daftar sesi. |
+| `intercom({ action: "list" })` | Daftar sesi lokal yang terhubung. |
+| `intercom({ action: "send", to, message, attachments? })` | Kirim pesan segera. |
+| `intercom({ action: "ask", to, message })` | Kirim pesan dan tunggu sampai penerima membalas. |
+| `intercom({ action: "reply", message, to? })` | Balas ask inbound saat ini atau tunggal yang tertunda. |
+| `intercom({ action: "pending" })` | Tampilkan ask inbound yang belum terselesaikan. |
+| `intercom({ action: "status" })` | Tampilkan status koneksi dan jumlah sesi aktif. |
+| `contact_supervisor({ reason, message?, interview? })` | Tool khusus subagent untuk menghubungi sesi supervisor yang mendelegasikan. Alasan: `"need_decision"`, `"interview_request"`, `"progress_update"`. |
+
+### Lampiran pesan
+
+Anda dapat melampirkan snippet atau file ke send:
+
+```json
+intercom({
+  action: "send",
+  to: "worker",
+  message: "Ini fix-nya:",
+  attachments: [
+    { type: "snippet", name: "auth.ts", language: "typescript", content: "..." }
+  ]
+})
+```
+
+## Batasan dan keamanan
+
+- Hanya mesin yang sama. Broker menggunakan Unix domain socket (macOS/Linux) atau named pipe (Windows); tidak ada transport jaringan.
+- Hanya sesi yang berhasil mendaftar ke broker yang muncul di daftar.
+- `ask` memblokir agent pemanggil hingga 10 menit. Jika tidak ada balasan, tool error.
+- `reply` tanpa `to` hanya menyelesaikan satu ask tertunda. Jika ada beberapa ask tertunda, tentukan `to` atau periksa terlebih dahulu.
+- Pesan masuk disimpan dalam riwayat sesi; tidak ada kotak masuk atau transkrip terpisah.
+- Lampiran disertakan dalam body teks yang terlihat agent; overlay compose TUI belum menyediakan UI lampiran.
+- Balasan supervisor melalui `contact_supervisor` dilingkupi ke parent session id yang tepat; sesi Selesai lain tidak menerimanya.
 
 <SourceEvidence slug="pi-intercom" />

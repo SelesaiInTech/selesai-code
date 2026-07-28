@@ -3,45 +3,54 @@ draft: false
 title: Web agent onboarding
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `web-agent-onboarding` extension runs on the first interactive Selesai startup and offers to configure Brave Search for the bundled `pi-web-agent`. If you decline, the agent falls back to the default DuckDuckGo backend.
 
-The `web-agent-onboarding` extension provides a first-run configuration path for the bundled web agent, optionally enabling Brave Search with DuckDuckGo fallback.
-
-## Availability
-
-Included in `@selesai/code` as `src/extensions/web-agent-onboarding.ts`.
-
-## Quick start
-
-On first run, Selesai may prompt you to configure web search. To re-run onboarding:
-
-```sh
-/web-agent-onboard
-```
-
-## Configuration
-
-1. Visit the Brave Search API page to request access.
-2. Create an API key in the Brave API dashboard.
-3. Paste the key when prompted during onboarding.
-
-DuckDuckGo remains the fallback if Brave is not configured.
-
-## Limits and edge cases
-
-- Brave Search requires an API key and may have usage limits.
-- DuckDuckGo fallback does not require a key but may rate-limit heavy use.
-- Network access is required for both search backends.
-
-<ComparisonCallout
-  claim="Selesai bundles first-run search onboarding so web research works immediately with a fallback path."
-  evidence={[
-    { text: "web-agent-onboarding source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/web-agent-onboarding.ts" },
-    { text: "pi-web-agent source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-web-agent/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./web-agent-onboarding.ts"
+  runtimeSurface="command"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- Only runs during the first startup (`event.reason === "startup"`) until the onboarding marker is written.
+- Requires an interactive TUI session to show the confirmation and paste prompts.
+- Network access to `https://api-dashboard.search.brave.com/app/keys` is needed if you choose to open the Brave dashboard.
+
+## What it sets up
+
+- Writes `~/.selesai/agent/.webAgentOnboardingComplete` once onboarding is complete or explicitly skipped.
+- If you opt in, saves `webAgent.braveApiKey` in `~/.selesai/agent/settings.json`.
+- Writes a global backend config selecting Brave with DuckDuckGo fallback under `~/.selesai/agent/extensions/pi-web-agent/config.json`.
+- Triggers an extension reload so the `pi-web-agent` backend re-reads the new config.
+
+## What you can configure
+
+- No manual configuration is required for the default DuckDuckGo path.
+- To change or re-run the onboarding later, use `/setup-web-search`.
+- To rerun onboarding without writing anything, set `SELESAI_SKIP_WEB_AGENT_ONBOARDING=1` in the environment.
+
+## What you can do
+
+- Accept the first-run prompt to use Brave Search. It opens the Brave API key dashboard, lets you paste the key, and switches `pi-web-agent` to Brave automatically.
+- Decline the prompt to keep the DuckDuckGo backend.
+- Run `/setup-web-search` at any time to rerun the flow.
+
+## Commands, tools, and shortcuts
+
+| Command | Description |
+| --- | --- |
+| `/setup-web-search` | Re-run the Brave Search onboarding flow, then reload extensions if a key is saved. |
+
+## Limits and safety
+
+- The onboarding marker prevents the prompt from appearing again even if you skip or cancel. Use `/setup-web-search` to rerun it.
+- Brave keys are stored in `~/.selesai/agent/settings.json`. Do not commit that file or share the key.
+- If Brave is not available in your region or the key is invalid, `pi-web-agent` can still fall back to DuckDuckGo when `fallback: "duckduckgo"` is configured.
 
 <SourceEvidence slug="web-agent-onboarding" />

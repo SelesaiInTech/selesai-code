@@ -3,48 +3,102 @@ draft: false
 title: Riset web
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `pi-web-agent` menambahkan satu tool riset, `web_explore`, yang mencari, mengambil, memberi peringkat sumber, dan menaikkan ke headless browser ketika halaman membutuhkannya.
 
-`pi-web-agent` yang dibundel menyediakan satu tool `web_explore` untuk riset yang membutuhkan sumber terkini. Tool ini melakukan pencarian dan fetch terbatas, merangking sumber, mengekstrak konten yang *readable*, dan menaikkan ke headless browser bila diperlukan.
-
-## Ketersediaan
-
-Termasuk dalam `@selesai/code`. DuckDuckGo adalah jalur pencarian default. Onboarding pertama kali opsional dapat mengkonfigurasi Brave Search dengan fallback DuckDuckGo.
-
-## Mulai cepat
-
-```text
-Search the web for the latest React Server Components best practices and compare them with this codebase.
-```
-
-## Konfigurasi
-
-Gunakan `/web-agent` untuk mengakses pengaturan backend dan presentasi serta diagnostics.
-
-Untuk mengaktifkan Brave Search:
-
-1. Kunjungi [halaman Brave Search API](https://brave.com/search/api/).
-2. Buat key di [dashboard Brave API](https://api-dashboard.search.brave.com/app/keys).
-3. Jalankan alur onboarding web-agent.
-
-```sh
-/web-agent
-```
-
-## Batasan dan edge case
-
-- `web_explore` untuk dokumentasi terkini, diskusi teknis, perbandingan, dan rekomendasi.
-- Ini bukan lisensi untuk diam-diam melakukan network call sembarangan dari shell command.
-- Beberapa host memblokir fetch otomatis; orchestrator dapat menaikkan ke headless browser bila source mendukung.
-
-<ComparisonCallout
-  claim="Selesai membundel satu tool riset tingkat tinggi dengan peringkat sumber dan eskalasi, alih-alih meminta user merakit extension pencarian dan fetch terpisah."
-  evidence={[
-    { text: "source pi-web-agent", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-web-agent/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./pi-web-agent"
+  runtimeSurface="mixed"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
+- Pencarian default menggunakan DuckDuckGo; tidak diperlukan kredensial untuk jalur default.
+- Setup Brave Search opsional: extension pendamping `web-agent-onboarding` dapat menyimpan Brave API key.
+- Eskalasi headless menggunakan Playwright Chromium; pasang Chrome/Chromium/Edge/Brave jika Anda ingin rendering halaman headless.
+
+## Yang disiapkan
+
+- Mendaftarkan slash command `/web-agent` untuk memeriksa dan mengubah pengaturan presentation dan backend.
+- Mendaftarkan tool agent `web_explore` untuk riset web terbatas.
+- Memuat konfigurasi berlapis dari file config project dan global `pi-web-agent`.
+- Melengkapi system prompt pada `before_agent_start` sehingga agent tahu menggunakan `web_explore` untuk riset web alih-alih command shell atau panggilan HTTP langsung.
+
+## Yang dapat dikonfigurasi
+
+Gunakan `/web-agent` atau edit file config secara langsung. Konfigurasi dilapisi dari default → override global → override project.
+
+### Mode presentation
+
+| Scope | Path |
+| --- | --- |
+| Default | compact, preview, verbose |
+| Global | `~/.selesai/agent/extensions/pi-web-agent/config.json` |
+| Project | `.selesai/extensions/pi-web-agent/config.json` |
+
+### Pengaturan backend
+
+| Setting | Pilihan | Default |
+| --- | --- | --- |
+| Search provider | `duckduckgo`, `searxng`, `brave` | `duckduckgo` |
+| Search fallback | `duckduckgo`, `off` | `off` |
+| Fetch provider | `http`, `firecrawl` | `http` |
+| Fetch fallback | `http`, `off` | `off` |
+| Headless provider | `playwright` | `playwright` |
+
+Secret dan nilai backend non-secret dibaca dari sumber berlapis:
+
+| Backend | Nilai | Sumber (prioritas tertinggi pertama) |
+| --- | --- | --- |
+| Brave Search | API key | `webAgent.braveApiKey` di `~/.selesai/agent/settings.json` (ditulis oleh `web-agent-onboarding`), lalu environment variable `PI_WEB_AGENT_BRAVE_API_KEY` |
+| SearXNG | Base URL | `backends.search.baseUrl` di config `pi-web-agent` (project atau global) |
+| Firecrawl | API key | `backends.fetch.apiKey` di config `pi-web-agent` (project atau global), lalu environment variable `PI_WEB_AGENT_FIRECRAWL_API_KEY` |
+| Firecrawl | Base URL | `backends.fetch.baseUrl` di config `pi-web-agent` (project atau global) |
+
+Jauhkan API key dari config project yang dibagikan bila memungkinkan. Gunakan `settings.json` untuk Brave (per-user) dan environment variables untuk CI atau key sekali pakai. Base URL SearXNG dan Firecrawl bersifat non-secret dan dapat disimpan di file config.
+
+### Action `/web-agent` yang berguna
+
+| Action | Deskripsi |
+| --- | --- |
+| `/web-agent` | Buka menu action. |
+| `/web-agent settings` | Edit pengaturan presentation dan backend. |
+| `/web-agent show` | Cetak path dan mode config yang efektif. |
+| `/web-agent doctor` | Periksa dependensi runtime dan deteksi browser. |
+| `/web-agent mode compact` | Set default mode presentation project. |
+| `/web-agent reset project` | Hapus override tingkat project. |
+
+## Yang dapat dilakukan
+
+- Meminta agent meneliti topik terkini:
+
+<div class="install-command">
+  <pre><code>What is the current recommended way to handle React Server Actions in Next.js 15?</code></pre>
+  <button type="button" class="copy-button" data-command="What is the current recommended way to handle React Server Actions in Next.js 15?" aria-label="Copy command to clipboard">Copy</button>
+  <span class="copy-status" role="status" aria-live="polite"></span>
+</div>
+
+- Memperjelas tindak lanjut dengan memanggil `web_explore` lagi dengan query yang lebih sempit.
+- Mengubah output presentation ke `verbose` ketika Anda membutuhkan konten halaman penuh, atau `compact` ketika Anda ingin ringkasan singkat.
+
+## Perintah, tool, dan shortcut
+
+| Perintah / tool | Deskripsi |
+| --- | --- |
+| `web_explore({ query: "..." })` | Riset pertanyaan web dengan pass pencarian/fetch terbatas. |
+| `/web-agent [settings\|show\|doctor\|changelog\|reset project\|reset global]` | Kelola konfigurasi presentation dan backend. |
+
+## Batasan dan keamanan
+
+- Output dihasilkan dari sumber pihak ketiga; selalu verifikasi fakta kritis terhadap halaman asli.
+- Eskalasi headless dapat gagal jika tidak ada browser yang didukung yang terpasang.
+- SearXNG memerlukan `backends.search.baseUrl` di config; Brave memerlukan API key yang valid dari `webAgent.braveApiKey` (preferensi) atau `PI_WEB_AGENT_BRAVE_API_KEY`; Firecrawl memerlukan `backends.fetch.baseUrl` dan menerima `backends.fetch.apiKey` atau `PI_WEB_AGENT_FIRECRAWL_API_KEY`.
+- Extension menginstruksikan agen untuk tidak menggunakan command shell seperti `curl` atau URL HTTP langsung untuk riset web; ia harus menggunakan `web_explore`.
+- File config presentation hanya menyimpan nilai non-secret. Kunci Brave dapat disimpan per-user di `~/.selesai/agent/settings.json`; gunakan environment variables untuk CI atau key sekali pakai.
 
 <SourceEvidence slug="pi-web-agent" />

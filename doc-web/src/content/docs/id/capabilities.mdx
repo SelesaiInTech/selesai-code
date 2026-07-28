@@ -5,9 +5,9 @@ description: Jelajahi tools, workflow, fitur pemulihan, dan peningkatan produkti
 ---
 
 import CapabilityList from "../../../components/CapabilityList.astro";
-import { categories } from "../../../data/capabilities.ts";
+import { categories, capabilities } from "../../../data/capabilities.ts";
 
-Selesai mengirimkan setiap kemampuan di bawah ini sebagai bagian dari package `@selesai/code`. Setiap entri menautkan ke panduan dengan contoh, konfigurasi, batasan, dan bukti source.
+Selesai mengirimkan kemampuan bundel di bawah ini sebagai bagian dari package `@selesai/code`. Ekstensi opsional dicantumkan terpisah di bagian bawah halaman. Setiap entri menautkan ke panduan dengan contoh, konfigurasi, batasan, dan bukti source.
 
 {categories.map((category) => (
   <section className="category-section" id={category.id}>
@@ -15,3 +15,13 @@ Selesai mengirimkan setiap kemampuan di bawah ini sebagai bagian dari package `@
     <CapabilityList category={category.id} locale="id" />
   </section>
 ))}
+
+{capabilities.some((c) => c.distribution === "optional") && (
+  <section className="category-section" id="optional-extensions">
+    <h2>Ekstensi opsional</h2>
+    <p>Ekstensi berikut tersedia tetapi tidak dimuat otomatis. Pasang atau aktifkan secara terpisah sebelum digunakan.</p>
+    {categories.map((category) => (
+      <CapabilityList category={category.id} locale="id" distribution="optional" />
+    ))}
+  </section>
+)}

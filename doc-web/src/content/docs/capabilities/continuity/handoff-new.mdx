@@ -3,41 +3,56 @@ draft: false
 title: Session handoff
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `handoff-new` extension creates a fresh continuation prompt from the current conversation and starts it in a clean new session. This resets context and reduces token spend when a conversation has grown large or shifted direction.
 
-`/handoff-new` creates an editable continuation prompt in a clean session. Keeping context small improves result quality, cuts token spend, and reduces the chance of the model losing track of the plan.
-
-## Availability
-
-Included in `@selesai/code` as the `handoff-new` extension and supported by the `handoff` skills.
-
-## Quick start
-
-```sh
-/handoff-new
-```
-
-Selesai will create a fresh session with a compact continuation prompt. You can edit the prompt before the new session starts.
-
-## Configuration
-
-No separate configuration is required. The handoff prompt is generated from the current session state and is editable before confirmation.
-
-## Limits and edge cases
-
-- Handoff starts a new session; any in-progress background work in the current session should be reviewed first.
-- The continuation prompt may summarize details; verify critical context is preserved.
-- If you decline to edit, Selesai uses the generated prompt as-is.
-
-<ComparisonCallout
-  claim="Selesai makes handoff a first-class command so you can reset context as soon as a session grows, directly reducing token cost."
-  evidence={[
-    { text: "handoff-new source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/handoff-new.ts" },
-    { text: "handoff skills", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/handoff/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./handoff-new.ts"
+  runtimeSurface="command"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- Requires an interactive TUI session.
+- Requires a selected model and valid API credentials so the handoff document can be generated.
+- A model is used to summarize the conversation; the result is submitted as the first prompt of the new session.
+
+## What it sets up
+
+- Registers the `/handoff-new` slash command.
+- Reads the current session branch, including message and compaction entries.
+- Calls the configured model with a system prompt that asks for a handoff document and preserves branch structure around compaction summaries.
+- Starts a new session whose parent is the current session file, seeded with the generated handoff text.
+- Emits a `handoff-new` custom entry in the current session as a breadcrumb.
+
+## What you can configure
+
+- No dedicated configuration. The generated document template is fixed in the extension source.
+- To influence results, pass a goal as the command argument.
+
+## What you can do
+
+- Run `/handoff-new` to continue from a clean session after the model summarizes the current thread.
+- Run `/handoff-new implement the remaining database migrations` to tell the next session exactly what to focus on.
+- Use the output as an editable continuation prompt before the new session starts.
+
+## Commands, tools, and shortcuts
+
+| Command | Description |
+| --- | --- |
+| `/handoff-new [goal]` | Generate a handoff document and start a clean new session from it. |
+| `/skill:selesai-handoff [goal]` | Ask a skill-backed agent to launch a background Selesai session with a handoff summary instead of editing in place. |
+
+## Limits and safety
+
+- The model prompt explicitly asks it to redact sensitive information such as API keys, passwords, or PII, but you should still inspect the generated handoff before it is submitted.
+- Handoff generation requires a working model and API key. If generation fails, no new session is created.
+- The original session remains intact and can still be resumed or navigated via `/tree`.
+- The `selesai-handoff` skill is a companion resource; it is not a separate bundled extension entrypoint.
 
 <SourceEvidence slug="handoff-new" />

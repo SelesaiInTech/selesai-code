@@ -3,50 +3,91 @@ draft: false
 title: Session coordination
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `pi-intercom` extension adds direct 1:1 messaging between Selesai sessions on the same machine. You can send context, ask questions, or delegate work from one named session to another without leaving the terminal.
 
-The `pi-intercom` extension is an agent tool for local 1:1 session coordination. It lets two named Selesai sessions share progress, ask questions, and send attachments without using external services.
-
-## Availability
-
-Included in `@selesai/code` as `src/extensions/pi-intercom/`.
-
-## Quick start
-
-Start two sessions in the same folder with different names:
-
-```sh
-# Terminal A
-/name CalculatorProject
-
-# Terminal B
-/name DiscussionMaster
-```
-
-Then ask one session to critique an idea:
-
-```text
-Use intercom to ask DiscussionMaster to critique this implementation idea.
-```
-
-## Configuration
-
-No separate configuration is required. Intercom works locally between named sessions running on the same machine.
-
-## Limits and edge cases
-
-- Both sessions must run on the same local machine.
-- Sessions must have clear, stable names so humans and agents can route messages correctly.
-- Intercom is not a remote collaboration tool; it is for local coordination only.
-
-<ComparisonCallout
-  claim="Selesai includes native inter-session messaging so a delegated agent can coordinate with another local session without leaving the host."
-  evidence={[
-    { text: "pi-intercom source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-intercom/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./pi-intercom/index.ts"
+  runtimeSurface="mixed"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- Two or more Selesai sessions must be running on the same machine.
+- Intercom requires a local-only broker process. The broker auto-spawns on first use.
+- Sessions must be named (or the extension provides a fallback alias) so other sessions can target them.
+- Requires the TUI for overlay input. Non-interactive sessions can still send and reply via the `intercom` tool.
+- Can be disabled with `enabled: false` in `~/.selesai/agent/intercom/config.json`.
+
+## What it sets up
+
+- Registers the `/intercom` slash command and the `Alt+M` shortcut to open the session list overlay.
+- Registers the `intercom` tool for agent-driven session discovery, sends, asks, and replies.
+- Registers a native `contact_supervisor` tool when `pi-subagents` supplies child bridge metadata (`SELESAI_SUBAGENT_ORCHESTRATOR_TARGET`, `SELESAI_SUBAGENT_RUN_ID`, `SELESAI_SUBAGENT_CHILD_AGENT`, `SELESAI_SUBAGENT_CHILD_INDEX`).
+- Starts a local broker on demand and publishes presence (name, cwd, model, status) for connected sessions.
+
+## What you can configure
+
+Configuration lives in `~/.selesai/agent/intercom/config.json`. Defaults:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `brokerCommand` | `npx` | Command used to start the broker process. |
+| `brokerArgs` | `["--no-install", "tsx"]` | Arguments passed before the broker script. |
+| `enabled` | `true` | Enable or disable intercom for this session. |
+| `replyHint` | `true` | Include the exact `intercom({ action: "reply", ... })` call in incoming messages. |
+| `confirmSend` | `false` | Show a confirmation dialog before non-reply sends from TUI sessions. |
+| `status` | — | Optional custom status suffix appended to the automatic lifecycle status. |
+
+## What you can do
+
+- Send a fire-and-forget message with `intercom({ action: "send", to: "worker", message: "..." })`.
+- Ask a blocking question with `intercom({ action: "ask", to: "planner", message: "..." })`; the reply comes back as the tool result with a 10-minute timeout.
+- Reply to the most recent inbound ask with `intercom({ action: "reply", message: "..." })`.
+- List pending asks with `intercom({ action: "pending" })` or check broker and session status with `intercom({ action: "status" })`.
+
+## Commands, tools, and shortcuts
+
+| Command / shortcut | Description |
+| --- | --- |
+| `/intercom` | Open the session list overlay. |
+| `Alt+M` | Open the session list overlay. |
+| `intercom({ action: "list" })` | List connected local sessions. |
+| `intercom({ action: "send", to, message, attachments? })` | Send a message immediately. |
+| `intercom({ action: "ask", to, message })` | Send a message and block until the recipient replies. |
+| `intercom({ action: "reply", message, to? })` | Reply to the current or single pending inbound ask. |
+| `intercom({ action: "pending" })` | Show unresolved inbound asks. |
+| `intercom({ action: "status" })` | Show connection status and active session count. |
+| `contact_supervisor({ reason, message?, interview? })` | Subagent-only tool to contact the delegating supervisor session. Reasons: `"need_decision"`, `"interview_request"`, `"progress_update"`. |
+
+### Message attachments
+
+You can attach snippets or files to a send:
+
+```json
+intercom({
+  action: "send",
+  to: "worker",
+  message: "Here is the fix:",
+  attachments: [
+    { type: "snippet", name: "auth.ts", language: "typescript", content: "..." }
+  ]
+})
+```
+
+## Limits and safety
+
+- Same-machine only. The broker uses Unix domain sockets (macOS/Linux) or a named pipe (Windows); there is no network transport.
+- Only sessions that have successfully registered with the broker appear in the list.
+- `ask` blocks the calling agent for up to 10 minutes. If no reply arrives, the tool errors.
+- `reply` without `to` only resolves a single pending ask. With multiple pending asks, specify `to` or inspect them first.
+- Incoming messages are stored in the session history; there is no separate inbox or transcript.
+- Attachments are included in the agent-visible body text; the TUI compose overlay does not yet provide attachment UI.
+- Supervisor replies through `contact_supervisor` are scoped to the exact parent session id; other Selesai sessions do not receive them.
 
 <SourceEvidence slug="pi-intercom" />

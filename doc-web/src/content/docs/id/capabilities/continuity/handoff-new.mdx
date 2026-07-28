@@ -3,41 +3,56 @@ draft: false
 title: Handoff sesi
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `handoff-new` membuat prompt kelanjutan segar dari percakapan saat ini dan memulainya dalam sesi baru yang bersih. Ini mereset konteks dan mengurangi pengeluaran token ketika percakapan telah membesar atau berubah arah.
 
-`/handoff-new` membuat prompt kelanjutan yang dapat diedit dalam sesi bersih. Menjaga konteks tetap kecil meningkatkan kualitas hasil, mengurangi pengeluaran token, dan mengurangi kemungkinan model kehilangan jejak rencana.
-
-## Ketersediaan
-
-Termasuk dalam `@selesai/code` sebagai extension `handoff-new` dan didukung oleh skill `handoff`.
-
-## Mulai cepat
-
-```sh
-/handoff-new
-```
-
-Selesai akan membuat sesi baru dengan prompt kelanjutan yang ringkas. Anda dapat mengedit prompt sebelum sesi baru dimulai.
-
-## Konfigurasi
-
-Tidak diperlukan konfigurasi terpisah. Prompt handoff dibuat dari state sesi saat ini dan dapat diedit sebelum konfirmasi.
-
-## Batasan dan edge case
-
-- Handoff memulai sesi baru; pekerjaan background yang sedang berlangsung di sesi saat ini harus ditinjau terlebih dahulu.
-- Prompt kelanjutan dapat meringkas detail; verifikasi konteks kritis tetap terjaga.
-- Jika Anda menolak untuk mengedit, Selesai menggunakan prompt yang dibuat apa adanya.
-
-<ComparisonCallout
-  claim="Selesai menjadikan handoff perintah kelas satu sehingga Anda dapat mereset konteks begitu sesi membesar, langsung mengurangi biaya token."
-  evidence={[
-    { text: "source handoff-new", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/handoff-new.ts" },
-    { text: "skill handoff", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/handoff/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./handoff-new.ts"
+  runtimeSurface="command"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
+- Memerlukan sesi TUI interaktif.
+- Memerlukan model yang dipilih dan kredensial API yang valid agar dokumen handoff dapat dibuat.
+- Model digunakan untuk meringkas percakapan; hasilnya dikirim sebagai prompt pertama dari sesi baru.
+
+## Yang disiapkan
+
+- Mendaftarkan slash command `/handoff-new`.
+- Membaca branch sesi saat ini, termasuk entri pesan dan kompaksi.
+- Memanggil model yang dikonfigurasi dengan system prompt yang meminta dokumen handoff dan mempertahankan struktur branch di sekitar ringkasan kompaksi.
+- Memulai sesi baru yang parent-nya adalah file sesi saat ini, diisi dengan teks handoff yang dibuat.
+- Memancarkan entri kustom `handoff-new` di sesi saat ini sebagai jejak.
+
+## Yang dapat dikonfigurasi
+
+- Tidak ada konfigurasi khusus. Template dokumen yang dibuat fixed di source extension.
+- Untuk memengaruhi hasil, berikan goal sebagai argumen command.
+
+## Yang dapat dilakukan
+
+- Jalankan `/handoff-new` untuk melanjutkan dari sesi bersih setelah model meringkas thread saat ini.
+- Jalankan `/handoff-new implement the remaining database migrations` untuk memberitahu sesi berikutnya fokus yang tepat.
+- Gunakan output sebagai prompt kelanjutan yang dapat diedit sebelum sesi baru dimulai.
+
+## Perintah, tool, dan shortcut
+
+| Perintah | Deskripsi |
+| --- | --- |
+| `/handoff-new [goal]` | Menghasilkan dokumen handoff dan memulai sesi baru bersih darinya. |
+| `/skill:selesai-handoff [goal]` | Meminta agent yang didukung skill meluncurkan sesi Selesai background dengan ringkasan handoff alih-alih mengedit di tempat. |
+
+## Batasan dan keamanan
+
+- Prompt model secara eksplisit meminta redaksi informasi sensitif seperti API key, password, atau PII, tetapi Anda tetap harus memeriksa handoff yang dibuat sebelum dikirim.
+- Pembuatan handoff memerlukan model dan API key yang berfungsi. Jika pembuatan gagal, tidak ada sesi baru yang dibuat.
+- Sesi asli tetap utuh dan masih dapat dilanjutkan atau dinavigasi via `/tree`.
+- Skill `selesai-handoff` adalah resource pendamping; bukan entrypoint extension bundled yang terpisah.
 
 <SourceEvidence slug="handoff-new" />

@@ -3,40 +3,63 @@ draft: false
 title: Rewind checkpoints
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `pi-rewind-hook` extension records exact file-state checkpoints and restores them during `/fork` and `/tree` navigation. It is not bundled in the default Selesai boot manifest and must be treated as an optional extension.
 
-The `pi-rewind-hook` extension provides exact, git-backed file checkpoints across `/fork`, `/tree`, resumed sessions, and session lineage. You can recover an earlier state of files without manual git commands.
-
-## Availability
-
-Included in `@selesai/code` as `src/extensions/pi-rewind-hook/`.
-
-## Quick start
-
-Rewind is triggered through Selesai's slash commands:
-
-```sh
-/rewind <target>
-```
-
-## Configuration
-
-No separate configuration is required. The extension hooks into session lifecycle events and records checkpoints automatically.
-
-## Limits and edge cases
-
-- Rewind relies on git being available in the project directory.
-- It records file state, not memory or external world state.
-- Checkpoints may be limited by the available git history if commits are made outside Selesai.
-
-<ComparisonCallout
-  claim="Selesai bundles automatic git-backed checkpoints so you can recover exact file states without leaving the terminal."
-  evidence={[
-    { text: "pi-rewind-hook source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-rewind-hook/" }
-  ]}
+<ExtensionStatus
+  distribution="optional"
+  runtimeSurface="automatic"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- The source directory exists but `pi-rewind-hook` is **not** listed in `src/extensions/package.json`, so Selesai does not load it automatically.
+- To use it, install it as a Pi/Selesai extension from `npm:pi-rewind-hook` (or load it explicitly if you maintain your own extension list).
+- Requires a git repository. It does not work outside a git worktree.
+- Requires a compatible Pi/Selesai version and Node.js runtime.
+
+## What it sets up
+
+- Hooks into session lifecycle events (`session_start`, `session_tree`, `session_before_fork`, `session_before_tree`, `turn_start`, `turn_end`, `agent_end`, `session_compact`, `session_shutdown`) to record worktree snapshots.
+- Stores metadata in hidden `rewind-turn` and `rewind-op` custom session entries.
+- Uses a single git reachability ref, `refs/pi-rewind/store`, to keep snapshot commits alive.
+
+## What you can configure
+
+Optional settings in `~/.selesai/agent/settings.json` under the `rewind` key:
+
+| Setting | Type | Description |
+| --- | --- | --- |
+| `rewind.silentCheckpoints` | boolean | Hide footer/status checkpoint notifications. |
+| `rewind.retention.maxSnapshots` | number | Cap on unpinned unique snapshot commits kept reachable. |
+| `rewind.retention.maxAgeDays` | number | Age limit for unpinned snapshot commits. |
+| `rewind.retention.pinLabeledEntries` | boolean | Keep snapshots bound to labeled session-tree nodes exempt from pruning. |
+| `rewind.retention.scanMode` | `"ancestor-only"` or `"repo-sessions"` | Discovery mode for retention sweeps; default `ancestor-only`. |
+| `rewind.retention.startupBudgetMs` | number | Startup time budget for retention sweeps; if exceeded, the sweep is skipped. |
+
+If `rewind.retention` is omitted, exact history is kept indefinitely. This can grow git object storage without bound.
+
+## What you can do
+
+- During `/fork`, select a message and choose a restore option: **Conversation only**, **Restore all**, **Code only**, or **Undo last file rewind** when an exact rewind point is available.
+- During `/tree` navigation, choose **Keep current files**, **Restore files to that point**, or **Undo last file rewind** when the target node has an exact checkpoint.
+- Keep automatic checkpoints at user pre-prompt boundaries, assistant `turn_end` boundaries, and selected stateful operations.
+
+## Commands, tools, and shortcuts
+
+- There is **no `/rewind` command**. Rewind is triggered automatically as part of `/fork` and `/tree` flows.
+- The extension itself does not register any commands, tools, or shortcuts.
+
+## Limits and safety
+
+- Only works inside a git repository.
+- Restores the exact file state for tracked files and untracked, non-ignored files. It deletes paths present in the current snapshot but absent from the target snapshot, then restores the target snapshot into the worktree without staging the real git index.
+- Ignored files, empty directories, exact checkpoints for `toolResult` nodes, and exact checkpoints for `bashExecution` nodes are outside the snapshot model.
+- Retention only affects git object reachability. Session JSONL metadata is append-only and is never compacted by Rewind.
+- Snapshot commits may be pruned if retention is enabled and they are not pinned; Rewind validates commit existence before offering restore.
+- The session ledger, not the `refs/pi-rewind/store` ref, is authoritative for which checkpoint applies to each session node.
 
 <SourceEvidence slug="pi-rewind-hook" />

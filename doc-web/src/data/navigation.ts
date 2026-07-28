@@ -8,18 +8,32 @@ type SidebarConfig = Array<{
   items?: SidebarConfig;
 }>;
 
-const guides = categories.map((category) => ({
+const bundledGuides = categories.map((category) => ({
   label: category.en,
   translations: { id: category.indonesian },
   collapsed: true,
   items: capabilities
-    .filter((capability) => capability.category === category.id)
+    .filter((capability) => capability.category === category.id && capability.distribution === "bundled")
     .map((capability) => ({
       label: capability.en.displayName,
       translations: { id: capability.id.displayName },
       link: `/${capability.guideRoute}/`,
     })),
 }));
+
+const optionalCapabilities = capabilities.filter((c) => c.distribution === "optional");
+const optionalGroup = optionalCapabilities.length
+  ? {
+      label: "Optional extensions",
+      translations: { id: "Ekstensi opsional" },
+      collapsed: true,
+      items: optionalCapabilities.map((capability) => ({
+        label: capability.en.displayName,
+        translations: { id: capability.id.displayName },
+        link: `/${capability.guideRoute}/`,
+      })),
+    }
+  : undefined;
 
 export const navigation: SidebarConfig = [
   { label: "Overview", translations: { id: "Ringkasan" }, link: "/" },
@@ -30,7 +44,7 @@ export const navigation: SidebarConfig = [
     label: "Guides",
     translations: { id: "Panduan" },
     collapsed: false,
-    items: guides,
+    items: optionalGroup ? [...bundledGuides, optionalGroup] : bundledGuides,
   },
   { label: "Evidence", translations: { id: "Bukti" }, link: "/evidence/" },
   { label: "Changelog", link: "/changelog/" },

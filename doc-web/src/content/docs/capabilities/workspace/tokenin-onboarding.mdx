@@ -3,46 +3,59 @@ draft: false
 title: Token onboarding
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `tokenin-onboarding` extension guides first-time users through adding a Token-In account so Selesai can authenticate with the model provider. It also provides the `/tokenin` command to manage multiple accounts after onboarding.
 
-The `tokenin-onboarding` extension guides first-time users through provider credential and API token setup so Selesai can talk to model providers without editing configuration files by hand.
-
-## Availability
-
-Included in `@selesai/code` as `src/extensions/tokenin-onboarding.ts`.
-
-## Quick start
-
-On first run, Selesai prompts for provider credentials. To re-run the onboarding:
-
-```sh
-/tokenin-onboard
-```
-
-## Configuration
-
-Follow the interactive prompts to choose a provider and paste an API key. Selesai stores credentials in the standard config location.
-
-```sh
-# Typical first-run flow
-selesai
-# Follow the tokenin prompts to add your provider key
-```
-
-## Limits and edge cases
-
-- Keep API keys secret. Do not commit them to version control.
-- Provider keys may require billing to be enabled.
-- If a provider is not available, first check that the key was pasted correctly and is active.
-
-<ComparisonCallout
-  claim="Selesai bundles an interactive first-run credential setup so users can start with a provider without hand-editing config files."
-  evidence={[
-    { text: "tokenin-onboarding source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/tokenin-onboarding.ts" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./tokenin-onboarding.ts"
+  runtimeSurface="command"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- Runs only on the first interactive startup (`event.reason === "startup"`) until the onboarding marker is written.
+- Requires an interactive TUI session.
+- You need a Token-In token from `https://token-in.selesai.in/dashboard/tokens`.
+
+## What it sets up
+
+- Writes `~/.selesai/agent/.tokenInOnboardingComplete` once onboarding completes or is skipped.
+- Stores the active credential in Selesai's `auth.json` via `AuthStorage`.
+- Keeps multi-account details in `~/.selesai/agent/tokenin-auth.json` with file mode `0o600`.
+- The first account added during onboarding is set as active automatically.
+
+## What you can configure
+
+- No dedicated configuration file. Onboarding behavior is controlled by environment variables and account management commands.
+- Set `SELESAI_SKIP_TOKENIN_ONBOARDING=1` in the environment to suppress the first-run prompt entirely.
+
+## What you can do
+
+- On first run, confirm that you want to connect Token-In, open the dashboard, paste the token, and activate the account.
+- Add another account later with `/tokenin add`.
+- Switch the active account with `/tokenin switch`.
+- Remove a saved account with `/tokenin remove` (cannot remove the active account; switch first).
+
+## Commands, tools, and shortcuts
+
+| Command | Description |
+| --- | --- |
+| `/tokenin add` | Open the Token-In dashboard, paste a token, and add it to `tokenin-auth.json`. If it is the first account, it becomes active. |
+| `/tokenin switch` | Pick a saved account and make it the active credential. |
+| `/tokenin remove` | Pick a non-active saved account and remove it. |
+
+The command validates that the pasted token starts with `sk-`. Invalid tokens are rejected and the prompt retries on the next launch.
+
+## Limits and safety
+
+- Tokens are stored in `~/.selesai/agent/tokenin-auth.json` with mode `0o600`. The active key is also written to Selesai's `auth.json`.
+- Do not commit `tokenin-auth.json`, `auth.json`, or any file containing a token.
+- The onboarding prompt does not appear again after the marker file exists, even if the first attempt failed. Use `/tokenin add` to retry or add another token.
+- The `/tokenin-onboard` command does **not** exist; use `/tokenin add` or wait for first-run onboarding.
 
 <SourceEvidence slug="tokenin-onboarding" />

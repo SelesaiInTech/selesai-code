@@ -3,37 +3,53 @@ draft: false
 title: Salin turn
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `copy-turn` memungkinkan Anda menyalin hasil user atau assistant dari branch sesi saat ini menggunakan hash singkat. Berguna untuk menggunakan kembali jawaban sebelumnya, output command, atau pesan assistant tanpa mengetik ulang.
 
-Extension `copy-turn` memungkinkan Anda menyalin hasil user atau assistant dari sesi berdasarkan hash, sehingga dapat ditempel di tempat lain tanpa mengetik ulang output panjang.
-
-## Ketersediaan
-
-Termasuk dalam `@selesai/code` sebagai `src/extensions/copy-turn.ts`.
-
-## Mulai cepat
-
-```sh
-/cp <hash>
-```
-
-## Konfigurasi
-
-Tidak diperlukan konfigurasi terpisah.
-
-## Batasan dan edge case
-
-- Anda membutuhkan hash dari target turn. Hash ditampilkan oleh UI sesi Selesai.
-- Konten yang disalin masuk ke clipboard sistem; dapat ditimpa oleh salinan berikutnya.
-
-<ComparisonCallout
-  claim="Selesai membundel cara cepat menyalin turn sebelumnya berdasarkan hash, mengurangi pengetikan ulang manual."
-  evidence={[
-    { text: "source copy-turn", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/copy-turn.ts" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./copy-turn.ts"
+  runtimeSurface="command"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
+- Memerlukan sesi Selesai interaktif dengan TUI.
+- Hanya berfungsi pada pesan di branch sesi saat ini. Pesan dicocokkan dengan hash SHA-1 dari konten yang dibersihkan.
+
+## Yang disiapkan
+
+- Mendaftarkan message renderer `copy-turn` kustom yang menambahkan marker salin di bawah pesan user dan menambahkan marker pada pesan assistant final setiap turn.
+- Memelihara set hash per branch dengan membaca `ctx.sessionManager.getBranch()`.
+- Menggunakan `copyToClipboard` dari runtime Selesai untuk menyalin konten yang cocok ke clipboard sistem.
+
+## Yang dapat dikonfigurasi
+
+- Tidak ada konfigurasi yang tampak untuk user. Extension menggunakan prefix hash 6 karakter tetap dan membaca pesan dari branch saat ini.
+- Marker disingkirkan dari konteks model sehingga tidak bocor ke view agent.
+
+## Yang dapat dilakukan
+
+- Menyalin hasil pesan user atau assistant ke clipboard dengan mengetik hash-nya.
+- Menggunakan prefix singkat selama tidak ambigu. Jika beberapa pesan cocok, Selesai memberitahu hash lengkap agar Anda dapat membedakan.
+
+## Perintah, tool, dan shortcut
+
+| Perintah | Deskripsi |
+| --- | --- |
+| `/cp <hash>` | Menyalin hasil pesan yang cocok ke clipboard. |
+
+Pesan yang cocok difilter ke branch saat ini, tidak termasuk baris `copy-turn` kustom. Untuk pesan `bashExecution`, teks yang disalin adalah command ditambah output-nya; untuk role lain adalah konten teks dengan marker yang disingkirkan.
+
+## Batasan dan keamanan
+
+- `/cp` hanya berfungsi pada pesan yang masih ada di branch saat ini. Navigasi ke branch sesi yang berbeda mengubah hash yang tersedia.
+- Hash adalah content hash, sehingga mengedit pesan setelah dirender menghasilkan hash yang berbeda.
+- Hasil kosong dan prefix ambigu ditolak dengan peringatan.
+- Extension menghapus marker salin dari konteks model, sehingga tidak mengembang konteks dengan marker berulang.
 
 <SourceEvidence slug="copy-turn" />

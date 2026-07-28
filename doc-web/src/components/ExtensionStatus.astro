@@ -1,0 +1,140 @@
+---
+export interface Props {
+  distribution: "bundled" | "optional";
+  manifestEntry?: string;
+  runtimeSurface?: "automatic" | "command" | "tool" | "skill-backed" | "mixed";
+  locale: "en" | "id";
+}
+
+const { distribution, manifestEntry, runtimeSurface, locale } = Astro.props;
+
+const isBundled = distribution === "bundled";
+
+const labels = {
+  en: {
+    bundled: "Bundled with Selesai",
+    optional: "Optional extension",
+    bundledDesc: "Loaded automatically with Selesai; no per-extension npm install is required.",
+    optionalDesc: "Not loaded automatically. Install or enable it separately before use.",
+    manifest: "Manifest entry",
+    runtime: "Runtime surface",
+    surfaces: {
+      automatic: "Automatic",
+      command: "Slash command",
+      tool: "Agent tool",
+      "skill-backed": "Skill-backed",
+      mixed: "Mixed (commands, tools, shortcuts)",
+    },
+  },
+  id: {
+    bundled: "Dibundel bersama Selesai",
+    optional: "Ekstensi opsional",
+    bundledDesc: "Dimuat otomatis bersama Selesai; tidak diperlukan npm install per ekstensi.",
+    optionalDesc: "Tidak dimuat otomatis. Pasang atau aktifkan secara terpisah sebelum digunakan.",
+    manifest: "Entri manifest",
+    runtime: "Permukaan runtime",
+    surfaces: {
+      automatic: "Otomatis",
+      command: "Slash command",
+      tool: "Tool agent",
+      "skill-backed": "Didukung skill",
+      mixed: "Campuran (command, tool, shortcut)",
+    },
+  },
+};
+
+const t = labels[locale];
+---
+
+<div
+  class={`extension-status ${isBundled ? "is-bundled" : "is-optional"}`}
+  role="note"
+  aria-label={isBundled ? t.bundled : t.optional}
+>
+  <p class="extension-status__badge">
+    <span class="extension-status__dot" aria-hidden="true"></span>
+    <strong>{isBundled ? t.bundled : t.optional}</strong>
+  </p>
+  <p class="extension-status__desc">{isBundled ? t.bundledDesc : t.optionalDesc}</p>
+  {
+    (manifestEntry || runtimeSurface) && (
+      <dl class="extension-status__meta">
+        {manifestEntry && (
+          <>
+            <dt>{t.manifest}</dt>
+            <dd>
+              <code>{manifestEntry}</code>
+            </dd>
+          </>
+        )}
+        {runtimeSurface && (
+          <>
+            <dt>{t.runtime}</dt>
+            <dd>{t.surfaces[runtimeSurface]}</dd>
+          </>
+        )}
+      </dl>
+    )
+  }
+</div>
+
+<style>
+  .extension-status {
+    margin: 1.25rem 0 1.75rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid var(--selesai-border);
+    border-radius: 0.55rem;
+    background: var(--selesai-surface-raised);
+  }
+  .extension-status.is-bundled {
+    border-inline-start: 4px solid var(--selesai-status-ok);
+  }
+  .extension-status.is-optional {
+    border-inline-start: 4px solid var(--selesai-status-warn);
+  }
+  .extension-status__badge {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 0.35rem;
+    font-size: var(--sl-text-sm);
+  }
+  .extension-status__dot {
+    display: inline-block;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    background: var(--selesai-status-ok);
+  }
+  .extension-status.is-optional .extension-status__dot {
+    background: var(--selesai-status-warn);
+  }
+  .extension-status__desc {
+    margin: 0;
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-sm);
+    line-height: 1.55;
+  }
+  .extension-status__meta {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.35rem 0.9rem;
+    margin: 0.75rem 0 0;
+    font-size: var(--sl-text-sm);
+  }
+  .extension-status__meta dt {
+    color: var(--sl-color-gray-3);
+  }
+  .extension-status__meta dd {
+    margin: 0;
+  }
+  @media (max-width: 44rem) {
+    .extension-status__meta {
+      grid-template-columns: 1fr;
+      gap: 0.15rem 0;
+    }
+    .extension-status__meta dt {
+      margin-top: 0.35rem;
+    }
+  }
+</style>

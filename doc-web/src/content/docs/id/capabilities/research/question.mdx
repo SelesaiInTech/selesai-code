@@ -3,45 +3,77 @@ draft: false
 title: Pertanyaan interaktif
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `question` menyediakan wizard terminal untuk mengajukan satu atau lebih pertanyaan bertipe ke user. Mendukung single-select, multiselect, free-form text, dan pertanyaan konteks/info, dengan navigasi keyboard dan filtering.
 
-Tool `question` yang dibundel memberikan Selesai TUI nyata untuk keputusan. Alih-alih memaksa setiap klarifikasi melalui teks biasa, agent dapat menampilkan pertanyaan single-select, multi-select, freeform, dan image/info dengan deskripsi, ringkasan konteks, dan navigasi keyboard.
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./question"
+  runtimeSurface="tool"
+  locale="id"
+/>
 
-## Ketersediaan
+## Penyiapan dan prasyarat
 
-Termasuk dalam `@selesai/code` sebagai extension `question`.
+- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
+- Memerlukan mode terminal TUI. Tidak dapat digunakan di sesi headless atau non-interaktif.
+- Agent memanggil tool; user menjawab melalui TUI.
 
-## Mulai cepat
+## Yang disiapkan
 
-Saat workflow atau permintaan Selesai membutuhkan keputusan, tool `question` dapat dipanggil:
+- Mendaftarkan tool `question` dan merender komponen batch question full-screen.
+- Setiap pertanyaan memiliki `id` yang stabil, `label`, string `question`, `type`, dan `options` serta `context` opsional.
+- Jawaban dikembalikan sebagai hasil terstruktur dengan status `answered`, `skipped`, dan `unanswered`.
 
-```text
-Use question to ask the user which test framework to use.
+## Yang dapat dikonfigurasi
+
+- Tidak ada konfigurasi yang tampak untuk user. Skema pertanyaan fixed oleh definisi tool.
+
+## Yang dapat dilakukan
+
+- Mengajukan keputusan independen yang harus dibuat user secara langsung.
+- Menampilkan pertanyaan select, multiselect, text, atau info-only.
+- Menyediakan `value` opsi yang stabil terpisah dari `label` yang human-readable.
+
+## Perintah, tool, dan shortcut
+
+Tidak ada slash command. Tool dipanggil oleh agent:
+
+```json
+question({
+  questions: [
+    {
+      id: "target_db",
+      label: "Database",
+      type: "select",
+      question: "Which database should we use?",
+      options: [
+        { value: "sqlite", label: "SQLite" },
+        { value: "postgres", label: "PostgreSQL" }
+      ],
+      allowOther: true
+    },
+    {
+      id: "skip_cache",
+      label: "Skip cache",
+      type: "text",
+      question: "Why skip the cache?"
+    }
+  ]
+})
 ```
 
-## Konfigurasi
+Tipe pertanyaan yang didukung: `select`, `multiselect`, `text`, `image`, `info`.
 
-Tidak diperlukan konfigurasi terpisah. Tool ini mendukung:
+Saat meninjau, user dapat berpindah antar pertanyaan dengan `Tab`/`Shift+Tab`, membiarkan pertanyaan text kosong untuk melewatkannya, dan menekan `Enter` di layar review untuk mengirim jawaban akhir.
 
-- opsi single- dan multi-select;
-- deskripsi dan ringkasan konteks;
-- jawaban freeform dengan komentar opsional;
-- navigasi keyboard, filtering, dan pembatalan;
-- tipe pertanyaan image dan info.
+## Batasan dan keamanan
 
-## Batasan dan edge case
-
-- TUI berjalan di terminal; memerlukan sesi interaktif. Dalam mode non-interaktif (`-p`), agent akan fallback ke perilaku teks biasa.
-- Membatalkan pertanyaan mengembalikan kontrol ke user prompt.
-
-<ComparisonCallout
-  claim="Selesai mengirimkan TUI interaktif untuk keputusan, mengurangi gesekan klarifikasi multi-opsi."
-  evidence={[
-    { text: "source question", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/question/" }
-  ]}
-/>
+- Tool hanya berfungsi di mode TUI. Memanggilnya dari sesi non-interaktif menghasilkan error.
+- Pertanyaan seharusnya adalah keputusan independen yang harus dibuat user; agent harus memeriksa fakta sendiri daripada menanyakan informasi yang dapat ditemukan kepada user.
+- Pertanyaan `info` hanya berisi konteks dan tidak memerlukan respons.
+- Entri text kosong dicatat sebagai `skipped`; agent harus menangani status skipped dan unanswered secara eksplisit.
 
 <SourceEvidence slug="question" />

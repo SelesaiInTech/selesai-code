@@ -3,38 +3,75 @@ draft: false
 title: Pencarian kode publik
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `grep-app` mencari kode GitHub publik melalui grep.app dan mengambil file source yang cocok langsung ke dalam percakapan agent.
 
-Extension `grep-app` mencari kode GitHub publik melalui [grep.app](https://grep.app) dan mengambil source yang cocok sehingga agent dapat memeriksanya tanpa meninggalkan terminal.
-
-## Ketersediaan
-
-Termasuk dalam `@selesai/code` sebagai `src/extensions/grep-app/`.
-
-## Mulai cepat
-
-```text
-Search grep.app for how other projects implement exponential backoff in TypeScript.
-```
-
-## Konfigurasi
-
-Tidak diperlukan konfigurasi terpisah selain extension dimuat oleh runtime Selesai.
-
-## Batasan dan edge case
-
-- Hasil bergantung pada apa yang diindeks grep.app; repositori yang sangat baru mungkin belum muncul.
-- Snippet yang diambil mungkin perlu ditinjau sebelum digunakan karena kode publik bisa usang atau salah.
-- Hormati ketentuan lisensi saat menyalin kode dari repositori publik.
-
-<ComparisonCallout
-  claim="Selesai membundel pencarian kode publik sehingga agent dapat mereferensikan contoh eksternal tanpa membuka browser."
-  evidence={[
-    { text: "source grep-app", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/grep-app/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./grep-app"
+  runtimeSurface="tool"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
+- Memerlukan akses jaringan dan kemampuan mengambil `https://grep.app/api/search` dan `https://raw.githubusercontent.com`.
+- Hanya repository publik. Kode privat tidak dapat dijangkau.
+
+## Yang disiapkan
+
+- Mendaftarkan tool `grep_app_search` untuk pencarian grep.app.
+- Mendaftarkan tool `grep_app_fetch` untuk mengambil file GitHub publik berdasarkan `owner/repo`, path, ref, dan rentang baris opsional.
+- Menggunakan Cheerio untuk menguraikan snippet kode dari halaman hasil grep.app HTML.
+
+## Yang dapat dikonfigurasi
+
+- Tidak ada konfigurasi yang tampak untuk user. Provider pencarian, endpoint fetch, dan limit pemotongan fixed di source extension.
+
+## Yang dapat dilakukan
+
+- Mencari contoh penggunaan atau implementasi nyata di seluruh GitHub.
+- Mengambil source lengkap dari file yang ditemukan di hasil pencarian.
+- Melanjutkan ke halaman berikutnya dengan meningkatkan parameter `page`.
+
+## Perintah, tool, dan shortcut
+
+### `grep_app_search`
+
+Mengembalikan satu halaman hingga 10 file dengan snippet yang cocok.
+
+| Parameter | Tipe | Deskripsi |
+| --- | --- | --- |
+| `query` | string | Kode atau pola yang dicari. |
+| `page` | integer | Halaman hasil, default 1. |
+| `caseSensitive` | boolean | Cocokkan case. |
+| `useRegex` | boolean | Perlakukan `query` sebagai regular expression. |
+| `wholeWords` | boolean | Cocokkan whole words; tidak dapat digabung dengan `useRegex`. |
+| `repo` | string | Filter repository, mis. `facebook/react`. |
+| `path` | string | Filter path file, mis. `src/components/`. |
+| `language` | string | Filter bahasa, mis. `TypeScript`. |
+
+### `grep_app_fetch`
+
+Mengambil file GitHub publik dan mengembalikan baris terpilih.
+
+| Parameter | Tipe | Deskripsi |
+| --- | --- | --- |
+| `repo` | string | `owner/repository`. |
+| `path` | string | Path di dalam repository. |
+| `ref` | string | Branch, tag, atau commit; default `HEAD`. |
+| `startLine` | integer | Baris pertama, default 1. |
+| `endLine` | integer | Baris terakhir; default akhir file. |
+
+## Batasan dan keamanan
+
+- Hanya kode GitHub publik yang dapat dicari.
+- Hasil pencarian tunduk pada rate limit grep.app. Respons 429 secara otomatis fallback ke fetch headless browser.
+- Output dipotong ke 50 KB atau 2.000 baris; hasil lengkap disimpan ke file temporary dan direferensikan dalam teks yang dikembalikan.
+- Nomor baris snippet berasal dari parsing HTML grep.app dan kadang-kadang dapat bersifat perkiraan.
+- Jangan mengandalkan kode yang diambil untuk keputusan yang sensitif keamanan sebelum meninjau state repository yang sebenarnya.
 
 <SourceEvidence slug="grep-app" />

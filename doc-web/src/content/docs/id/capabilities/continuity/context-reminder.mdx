@@ -3,39 +3,48 @@ draft: false
 title: Pengingat konteks
 ---
 
-import ComparisonCallout from "../../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-## Apa ini dan mengapa membantu
+Extension `context-compaction-reminder` memberi peringatan saat konteks percakapan membesar dan menyarankan handoff sehingga Anda dapat menjaga penggunaan token rendah dan kualitas AI tetap tinggi.
 
-Extension `context-compaction-reminder` memperingatkan Anda saat percakapan menjadi besar dan menyarankan `/handoff-new` sebelum kualitas menurun atau biaya meningkat lebih lanjut.
-
-## Ketersediaan
-
-Termasuk dalam `@selesai/code` sebagai `src/extensions/context-compaction-reminder.ts`.
-
-## Mulai cepat
-
-Saat reminder muncul, gunakan sebagai sinyal untuk mereset konteks:
-
-```sh
-/handoff-new
-```
-
-## Konfigurasi
-
-Tidak diperlukan konfigurasi terpisah. Reminder dipicu berdasarkan heuristik ukuran sesi.
-
-## Batasan dan edge case
-
-- Reminder bersifat advisory; Anda memilih apakah akan melakukan handoff.
-- Jika diabaikan, biaya token dapat meningkat dan kualitas respons dapat menurun.
-
-<ComparisonCallout
-  claim="Selesai menampilkan pengingat ukuran konteks yang eksplisit sehingga Anda dapat melakukan handoff sebelum biaya dan kualitas menurun."
-  evidence={[
-    { text: "source context-compaction-reminder", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/context-compaction-reminder.ts" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./context-compaction-reminder.ts"
+  runtimeSurface="automatic"
+  locale="id"
 />
+
+## Penyiapan dan prasyarat
+
+- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
+- Peringatan dipicu setelah event `agent_settled` ketika konteks dilaporkan oleh runtime.
+- Tidak diperlukan konfigurasi atau kredensial eksternal.
+
+## Yang disiapkan
+
+- Mendengarkan event lifecycle `agent_settled` dan membaca `ctx.getContextUsage().tokens`.
+- Mereset flag-nya setiap kali sesi dikompakkan melalui `session_compact`.
+
+## Yang dapat dikonfigurasi
+
+- Tidak ada konfigurasi yang tampak untuk user. Threshold hard-coded di 128.000 token.
+
+## Yang dapat dilakukan
+
+- Menerima peringatan satu kali ketika percakapan mencapai 128.000 token.
+- Menjalankan `/handoff-new` untuk meringkas percakapan ke sesi bersih dan melanjutkan dari konteks yang lebih kecil.
+- Mengaktifkan Auto Handoff di settings jika Anda lebih suka kompaksi terjadi otomatis.
+
+## Perintah, tool, dan shortcut
+
+- Tidak ada. Pengingat muncul secara otomatis.
+- Tindak lanjut yang disarankan adalah `/handoff-new` dari extension `handoff-new` yang terpisah.
+
+## Batasan dan keamanan
+
+- Hanya satu pengingat yang ditampilkan per penyeberangan threshold. Jika konteks turun di bawah threshold kemudian, pengingat reset.
+- Peringatan bersifat informatif; tidak memotong konteks atau menghentikan agent.
+- Extension bergantung pada laporan penggunaan konteks dari runtime. Jika penggunaan konteks tidak tersedia, tidak terjadi apa-apa.
 
 <SourceEvidence slug="context-compaction-reminder" />

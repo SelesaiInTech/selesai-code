@@ -3,48 +3,102 @@ draft: false
 title: Web research
 ---
 
-import ComparisonCallout from "../../../../components/ComparisonCallout.astro";
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-## What it is and why it helps
+The `pi-web-agent` extension adds a single research tool, `web_explore`, that searches, fetches, ranks sources, and escalates to a headless browser when a page needs it.
 
-The bundled `pi-web-agent` provides a single `web_explore` tool for research that needs current sources. It performs bounded search and fetch passes, ranks sources, extracts readable content, and escalates to a headless browser when needed.
-
-## Availability
-
-Included in `@selesai/code`. DuckDuckGo is the default search path. Optional first-run onboarding can configure Brave Search with DuckDuckGo fallback.
-
-## Quick start
-
-```text
-Search the web for the latest React Server Components best practices and compare them with this codebase.
-```
-
-## Configuration
-
-Use `/web-agent` to access backend and presentation settings plus diagnostics.
-
-To enable Brave Search:
-
-1. Visit the [Brave Search API page](https://brave.com/search/api/).
-2. Create a key in the [Brave API dashboard](https://api-dashboard.search.brave.com/app/keys).
-3. Run the web-agent onboarding flow.
-
-```sh
-/web-agent
-```
-
-## Limits and edge cases
-
-- `web_explore` is for current documentation, technical discussions, comparisons, and recommendations.
-- It is not a license to silently make arbitrary network calls from shell commands.
-- Some hosts block automated fetch; the orchestrator can escalate to a headless browser when the source supports it.
-
-<ComparisonCallout
-  claim="Selesai bundles one high-level research tool with source ranking and escalation, rather than leaving the user to assemble separate search and fetch extensions."
-  evidence={[
-    { text: "pi-web-agent source", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-web-agent/" }
-  ]}
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./pi-web-agent"
+  runtimeSurface="mixed"
+  locale="en"
 />
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- Default search uses DuckDuckGo; no credentials are required for the default path.
+- Optional Brave Search setup: the companion `web-agent-onboarding` extension can save a Brave API key.
+- Headless escalation uses Playwright Chromium; install Chrome/Chromium/Edge/Brave if you want headless page rendering.
+
+## What it sets up
+
+- Registers the `/web-agent` slash command to inspect and change presentation and backend settings.
+- Registers the `web_explore` agent tool for bounded web research.
+- Loads layered configuration from project and global `pi-web-agent` config files.
+- Augments the system prompt on `before_agent_start` so the agent knows to use `web_explore` for web research instead of shell commands or direct HTTP calls.
+
+## What you can configure
+
+Use `/web-agent` or edit the config files directly. Config is layered from defaults → global project overrides.
+
+### Presentation modes
+
+| Scope | Path |
+| --- | --- |
+| Default | compact, preview, verbose |
+| Global | `~/.selesai/agent/extensions/pi-web-agent/config.json` |
+| Project | `.selesai/extensions/pi-web-agent/config.json` |
+
+### Backend settings
+
+| Setting | Options | Default |
+| --- | --- | --- |
+| Search provider | `duckduckgo`, `searxng`, `brave` | `duckduckgo` |
+| Search fallback | `duckduckgo`, `off` | `off` |
+| Fetch provider | `http`, `firecrawl` | `http` |
+| Fetch fallback | `http`, `off` | `off` |
+| Headless provider | `playwright` | `playwright` |
+
+Secrets and non-secret backend values are read from layered sources:
+
+| Backend | Value | Source (highest priority first) |
+| --- | --- | --- |
+| Brave Search | API key | `webAgent.braveApiKey` in `~/.selesai/agent/settings.json` (written by `web-agent-onboarding`), then `PI_WEB_AGENT_BRAVE_API_KEY` environment variable |
+| SearXNG | Base URL | `backends.search.baseUrl` in `pi-web-agent` config (project or global) |
+| Firecrawl | API key | `backends.fetch.apiKey` in `pi-web-agent` config (project or global), then `PI_WEB_AGENT_FIRECRAWL_API_KEY` environment variable |
+| Firecrawl | Base URL | `backends.fetch.baseUrl` in `pi-web-agent` config (project or global) |
+
+Keep API keys out of shared project config whenever possible. Use `settings.json` for Brave (per-user) and environment variables for CI or throwaway keys. SearXNG and Firecrawl base URLs are non-secret and can live in config files.
+
+### Useful `/web-agent` actions
+
+| Action | Description |
+| --- | --- |
+| `/web-agent` | Open the action menu. |
+| `/web-agent settings` | Edit presentation and backend settings. |
+| `/web-agent show` | Print effective config paths and modes. |
+| `/web-agent doctor` | Check runtime dependencies and browser detection. |
+| `/web-agent mode compact` | Set the project default presentation mode. |
+| `/web-agent reset project` | Delete project-level overrides. |
+
+## What you can do
+
+- Ask the agent to research a current topic:
+
+<div class="install-command">
+  <pre><code>What is the current recommended way to handle React Server Actions in Next.js 15?</code></pre>
+  <button type="button" class="copy-button" data-command="What is the current recommended way to handle React Server Actions in Next.js 15?" aria-label="Copy command to clipboard">Copy</button>
+  <span class="copy-status" role="status" aria-live="polite"></span>
+</div>
+
+- Refine a follow-up by calling `web_explore` again with a narrower query.
+- Change presentation output to `verbose` when you need full page content, or `compact` when you want a short summary.
+
+## Commands, tools, and shortcuts
+
+| Command / tool | Description |
+| --- | --- |
+| `web_explore({ query: "..." })` | Research a web question with bounded search/fetch passes. |
+| `/web-agent [settings\|show\|doctor\|changelog\|reset project\|reset global]` | Manage presentation and backend configuration. |
+
+## Limits and safety
+
+- Output is generated from third-party sources; always verify critical facts against the original page.
+- Headless escalation may fail if no supported browser is installed.
+- SearXNG requires `backends.search.baseUrl` in config; Brave requires a valid API key from `webAgent.braveApiKey` (preferred) or `PI_WEB_AGENT_BRAVE_API_KEY`; Firecrawl requires `backends.fetch.baseUrl` and accepts `backends.fetch.apiKey` or `PI_WEB_AGENT_FIRECRAWL_API_KEY`.
+- The extension instructs the agent not to use shell commands such as `curl` or direct HTTP URLs for web research; it must use `web_explore`.
+- Presentation config files store only non-secret values. The Brave key can be stored per-user in `~/.selesai/agent/settings.json`; use environment variables for CI or throwaway keys.
 
 <SourceEvidence slug="pi-web-agent" />
