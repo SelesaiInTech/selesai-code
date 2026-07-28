@@ -18,12 +18,14 @@
   "author": "nicobailon",
   "license": "MIT",
   "pi": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "scripts": {
     "test": "npx --yes tsx --tsconfig tsconfig.test.json --test index.test.ts"
   },
-  "devDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.51.0"
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
   }
 }

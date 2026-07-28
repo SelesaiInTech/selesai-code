@@ -12,7 +12,7 @@ Rewind metadata lives in the session itself as hidden entries, so rewind history
 
 ## Requirements
 
-- Pi agent v0.65.0+
+- Pi agent v0.74.0+
 - Node.js (for installation)
 - Git repository
 

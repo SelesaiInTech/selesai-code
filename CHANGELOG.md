@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Updated Pi package metadata and documentation for the `@earendil-works` Pi namespace.
+
 ## [1.8.4] - 2026-04-25
 
 ### Added
