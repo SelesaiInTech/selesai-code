@@ -1,6 +1,0 @@
-# Task for recapper
-
-You are a delegated subagent running from a fork of the parent session. Treat the inherited conversation as reference-only context, not a live thread to continue. Do not continue or answer prior messages as if they are waiting for a reply. Your sole job is to execute the task below and return a focused result for that task using your tools.
-
-Task:
-Produce a self-contained, complete implementation handoff for the Selesai bilingual documentation website prototype. Read all phase artifacts: requirements `/Users/andrewanggada/Documents/workdir/js_proj/selesai/.selesai/artifacts/9a4fe92d-bdf3-41d5-98ff-b1bbacf313ce/requirements.md`, plan `/Users/andrewanggada/Documents/workdir/js_proj/selesai/.selesai/artifacts/9a4fe92d-bdf3-41d5-98ff-b1bbacf313ce/plan.md`, and reuse assessment `/Users/andrewanggada/Documents/workdir/js_proj/selesai/.selesai/artifacts/9a4fe92d-bdf3-41d5-98ff-b1bbacf313ce/reuse.md`. Include objective, immutable decisions, paths/boundaries, source-of-truth facts, architecture, content/evidence rules, implementation order, validation/deployment requirements, known constraints/risks, and definition of done so loop-phase agents can work without re-grilling. Do not modify files or write an artifact. Return the handoff inline and end with exactly one final line by itself: `WORKFLOW_HANDOFF_STATUS: ready`.

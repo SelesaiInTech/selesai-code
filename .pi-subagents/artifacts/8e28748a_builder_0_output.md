@@ -1,3 +1,0 @@
-Already .ts. The user says "previous builder left `src/extensions/workflow/task-validators.tss` (wrong extension)". It's already .ts in workspace. Maybe previous tool rename happened? We can mention in report no rename needed; maybe it was already renamed. But plan says rename/fix to .ts. It is already. We just ensure references use it.
-
-Need implement. But first check existing tests pass/fail. Run tests and build.</think>
