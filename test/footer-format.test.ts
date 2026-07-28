@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { FOOTER_FORMAT_ALIASES } from "../extensions/zentui/config";
 import {
+	collectFooterFormatReferences,
+	compileCompactFormat,
 	joinNonEmpty,
 	parseFooterFormat,
 	renderFormatSplit,
+	renderFormatTokens,
 	stripOrphanSeparators,
 } from "../extensions/zentui/footer-format";
 
@@ -256,6 +260,91 @@ describe("joinNonEmpty", () => {
 		expect(joinNonEmpty(["a", "", "b", ""], " | ")).toBe("a | b");
 		expect(joinNonEmpty(["", ""], " | ")).toBe("");
 		expect(joinNonEmpty(["only"], " | ")).toBe("only");
+	});
+});
+
+describe("compact footer format", () => {
+	it("splits top-level wrap variables and records incoming boundary kinds", () => {
+		const expected = [
+			{ kind: "tokens", tokens: [{ kind: "var", name: "cwd" }], boundary: "space" },
+			{ kind: "tokens", tokens: [{ kind: "var", name: "context" }], boundary: "space" },
+		];
+		expect(compileCompactFormat(parseFooterFormat("$cwd$wrap$context"))).toEqual(expected);
+		expect(compileCompactFormat(parseFooterFormat("$cwd$" + "{wrap}$context"))).toEqual(expected);
+		expect(
+			compileCompactFormat(parseFooterFormat("$context$wrap_sep$tokens")).map(
+				({ kind, boundary }) => ({ kind, boundary }),
+			),
+		).toEqual([
+			{ kind: "tokens", boundary: "space" },
+			{ kind: "tokens", boundary: "separator" },
+		]);
+	});
+
+	it("keeps nested boundaries empty without splitting and leaves wide rendering unchanged", () => {
+		const [nested] = compileCompactFormat(
+			parseFooterFormat("$cwd(foo $wrap $context bar $wrap_sep $tokens)"),
+		);
+		expect(nested?.kind).toBe("tokens");
+		if (nested?.kind !== "tokens") return;
+		expect(
+			renderFormatTokens(
+				nested.tokens,
+				(name) => ({ cwd: "DIR", context: "CTX", tokens: "TOK" })[name] ?? "",
+			),
+		).toBe("DIRfoo  CTX bar  TOK");
+		expect(
+			renderFormatSplit(
+				parseFooterFormat("$cwd$wrap$context$wrap_sep$tokens"),
+				(name) => ({ cwd: "DIR", context: "CTX", tokens: "TOK" })[name] ?? "",
+			).left,
+		).toBe("DIRCTXTOK");
+	});
+
+	it("ignores fill and recognizes only a standalone extensions chunk", () => {
+		const chunks = compileCompactFormat(
+			parseFooterFormat("$cwd$fill$wrap $extensions $wrap prefix $extensions$wrap($extensions)"),
+		);
+		expect(chunks.map((chunk) => chunk.kind)).toEqual(["tokens", "extensions", "tokens", "tokens"]);
+	});
+
+	it("renders conditional chunks and preserves incoming boundaries around empty content", () => {
+		const chunks = compileCompactFormat(
+			parseFooterFormat("$cwd$wrap_sep$missing$wrap(on $git_branch) $git_status$wrap_sep$context"),
+		);
+		expect(chunks.map((chunk) => chunk.boundary)).toEqual([
+			"space",
+			"separator",
+			"space",
+			"separator",
+		]);
+		const rendered = chunks.flatMap((chunk) =>
+			chunk.kind === "tokens"
+				? [
+						{
+							text: renderFormatTokens(chunk.tokens, (name) =>
+								name === "git_status" ? "[!]" : "",
+							).trim(),
+							boundary: chunk.boundary,
+						},
+					]
+				: [],
+		);
+		expect(rendered).toEqual([
+			{ text: "", boundary: "space" },
+			{ text: "", boundary: "separator" },
+			{ text: "[!]", boundary: "space" },
+			{ text: "", boundary: "separator" },
+		]);
+	});
+
+	it("collects canonical data references and excludes layout variables", () => {
+		expect(
+			collectFooterFormatReferences(
+				parseFooterFormat("$directory $branch $wrap $wrap_sep $extensions $fill $duration"),
+				FOOTER_FORMAT_ALIASES,
+			),
+		).toEqual(new Set(["cwd", "git_branch", "session_duration"]));
 	});
 });
 
