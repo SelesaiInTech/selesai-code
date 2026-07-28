@@ -396,6 +396,28 @@ describe("task workflow", () => {
     expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"))).toMatchObject({ status: "completed", phase: "loop" });
   });
 
+  it("reads reviewer status from an intercom output artifact", async () => {
+    const h = await createHarness();
+    await startWorkflow(h, "build X");
+    await h.tools.get("write_workflow_artifact").execute("plan", { content: "WORKFLOW_PLAN_STATUS: ready" }, undefined, undefined, h.ctx);
+    await h.tools.get("write_workflow_artifact").execute("reuse", { content: "skip" }, undefined, undefined, h.ctx);
+    await h.tools.get("write_workflow_artifact").execute("handoff", { content: "WORKFLOW_HANDOFF_STATUS: ready" }, undefined, undefined, h.ctx);
+    const outputPath = join(tmp, "commentator-output.md");
+    writeFileSync(outputPath, "No blockers\nWORKFLOW_REVIEW_STATUS: clean");
+
+    await h.events.get("tool_result")({
+      toolName: "subagent",
+      toolCallId: "commentator-intercom",
+      input: { agent: "commentator" },
+      content: [{ type: "text", text: "Delivered single subagent result via intercom." }],
+      details: { results: [{ artifactPaths: { outputPath } }] },
+      isError: false,
+    }, h.ctx);
+
+    const dir = h.entries.at(-1)!.data.artifactDir;
+    expect(readFileSync(join(dir, "loop-complete.md"), "utf8")).toContain("WORKFLOW_LOOP_STATUS: clean");
+  });
+
   it("pauses durably after three blocking reviews", async () => {
     const h = await createHarness();
     await startWorkflow(h, "build X");

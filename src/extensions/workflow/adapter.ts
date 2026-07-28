@@ -64,6 +64,21 @@ function textFromToolResultContent(content: unknown): string | undefined {
   return joined || undefined;
 }
 
+// Intercom-enabled foreground subagents replace normal inline tool content
+// with a delivery receipt. Their real inline response remains in the result's
+// output artifact, so the workflow loop must read that before parsing markers.
+async function textFromSubagentResult(event: any): Promise<string | undefined> {
+  const inline = textFromToolResultContent(event.content);
+  if (inline?.match(LOOP_STATUS_RE)) return inline;
+  const outputPath = event.details?.results?.[0]?.artifactPaths?.outputPath;
+  if (typeof outputPath !== "string") return inline;
+  try {
+    return await readFile(outputPath, "utf8");
+  } catch {
+    return inline;
+  }
+}
+
 // Mutates a workflow subagent invocation to suppress both its configured
 // default output and any caller-provided child output path. `output: false`
 // preserves the normal inline result, which the parent must write explicitly.
@@ -748,7 +763,7 @@ export function createWorkflowExtension(
           ls.stage = "reviewing";
         } else if (agent === "commentator") {
           const reviewRound = ls.reviewRound + 1;
-          const reviewText = textFromToolResultContent(event.content);
+          const reviewText = await textFromSubagentResult(event);
           if (reviewText) {
             const reviewPath = `loop-review-${reviewRound}.md`;
             await mkdir(dir, { recursive: true });
