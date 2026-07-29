@@ -24,6 +24,11 @@ export interface SessionInfo {
 export interface Message {
   id: string;
   timestamp: number;
+  senderSequence?: number;
+  brokerReceivedAt?: number;
+  brokerDeliveredAt?: number;
+  receiverReceivedAt?: number;
+  injectedAt?: number;
   replyTo?: string;
   expectsReply?: boolean;
   content: {
@@ -37,6 +42,15 @@ export interface Attachment {
   name: string;
   content: string;
   language?: string;
+}
+
+export type MessageReceiptStatus = "receiver_received" | "queued" | "injected" | "acknowledged" | "expired" | "cancelled";
+
+export interface MessageReceipt {
+  messageId: string;
+  status: MessageReceiptStatus;
+  timestamp: number;
+  detail?: string;
 }
 
 export interface ExtensionCapability {
@@ -54,6 +68,7 @@ export type ClientMessage =
   | { type: "extension_capabilities_update"; extensions: ExtensionCapability[] }
   | { type: "list"; requestId: string }
   | { type: "send"; to: string; message: Message }
+  | { type: "message_receipt"; receipt: MessageReceipt }
   | { type: "cancel_ask"; messageId: string }
   | { type: "presence"; name?: string; status?: string; model?: string; contextPct?: number | null; contextTokens?: number | null; contextWindow?: number | null }
   | {
@@ -82,6 +97,7 @@ export type BrokerMessage =
   | { type: "error"; error: string }
   | { type: "delivered"; messageId: string }
   | { type: "delivery_failed"; messageId: string; reason: string }
+  | { type: "message_receipt"; from: SessionInfo; receipt: MessageReceipt }
   | { type: "extension_owner"; namespace: string; ownerId?: string; ownerEpoch?: string }
   | {
       type: "extension_message";

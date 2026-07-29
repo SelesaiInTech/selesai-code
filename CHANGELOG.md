@@ -4,6 +4,9 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 
 ## [Unreleased]
 
+### Fixed
+- Added protocol-visible delivery metadata, receiver lifecycle receipts, receiver-side inbound message dedupe, and clearer ask-timeout receipts for ordered delivery diagnostics. Thanks to Donnie Thomas for issue #65.
+
 ## [0.8.0] - 2026-07-29
 
 ### Added

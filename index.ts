@@ -10,7 +10,7 @@ import { ComposeOverlay, type ComposeResult } from "./ui/compose.ts";
 import { InlineMessageComponent } from "./ui/inline-message.ts";
 import { getAskTimeoutMs, loadConfig, type IntercomConfig } from "./config.ts";
 import { EXTENSION_BUS_FEATURE } from "./types.ts";
-import type { Attachment, BrokerMessage, Message, SessionInfo, SessionRegistration } from "./types.ts";
+import type { Attachment, BrokerMessage, Message, MessageReceiptStatus, SessionInfo, SessionRegistration } from "./types.ts";
 import {
   INTERCOM_EXTENSION_REGISTER_EVENT,
   INTERCOM_EXTENSION_REGISTRY_READY_EVENT,
@@ -30,6 +30,8 @@ const SUBAGENT_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
 const SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT = "subagent:result-intercom-delivery";
 const INBOUND_FLUSH_DELAY_MS = 200;
 const INBOUND_IDLE_RETRY_MS = 500;
+const INBOUND_MESSAGE_DEDUPE_MAX = 1000;
+const INBOUND_MESSAGE_DEDUPE_RETENTION_MS = 60 * 60 * 1000;
 const DEFAULT_UNNAMED_SESSION_ALIAS_PREFIX = "subagent-chat";
 const SUBAGENT_ORCHESTRATOR_TARGET_ENV = "PI_SUBAGENT_ORCHESTRATOR_TARGET";
 const SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV = "PI_SUBAGENT_ORCHESTRATOR_SESSION_ID";
@@ -438,6 +440,22 @@ function previewText(value: unknown, maxLength = 72): string | undefined {
 function firstTextContent(result: { content?: Array<{ type: string; text?: string }> }): string {
   return result.content?.find((item) => item.type === "text" && typeof item.text === "string")?.text?.replace(/\*\*/g, "") ?? "";
 }
+function formatMessageTimestamp(timestamp: number | undefined): string | undefined {
+  return typeof timestamp === "number" && Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
+}
+function formatInboundDeliveryMetadata(message: Message): string {
+  const parts = [`id ${message.id}`];
+  if (typeof message.senderSequence === "number") parts.push(`seq ${message.senderSequence}`);
+  const sentAt = formatMessageTimestamp(message.timestamp);
+  if (sentAt) parts.push(`sent ${sentAt}`);
+  const brokerDeliveredAt = formatMessageTimestamp(message.brokerDeliveredAt);
+  if (brokerDeliveredAt) parts.push(`broker delivered ${brokerDeliveredAt}`);
+  const receiverReceivedAt = formatMessageTimestamp(message.receiverReceivedAt);
+  if (receiverReceivedAt) parts.push(`receiver received ${receiverReceivedAt}`);
+  const injectedAt = formatMessageTimestamp(message.injectedAt);
+  if (injectedAt) parts.push(`injected ${injectedAt}`);
+  return parts.join(" · ");
+}
 function getNamePollMs(): number {
   const configured = process.env[NAME_POLL_MS_ENV];
   if (configured !== undefined) {
@@ -479,10 +497,55 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
   const activeTools = new Map<string, string>();
   const replyTracker = new ReplyTracker();
   const pendingIdleMessages: InboundMessageEntry[] = [];
+  const seenInboundMessages = new Map<string, number>();
+  const latestOutboundReceipts = new Map<string, { status: MessageReceiptStatus; timestamp: number; detail?: string }>();
   function dismissIncomingAsk(messageId: string): void {
     replyTracker.dismissPendingAsk(messageId);
     const queuedIndex = pendingIdleMessages.findIndex((entry) => entry.message.id === messageId);
     if (queuedIndex >= 0) pendingIdleMessages.splice(queuedIndex, 1);
+  }
+  function expirePendingIdleMessages(detail: string): void {
+    for (const entry of pendingIdleMessages) {
+      emitMessageReceipt(entry.message.id, "expired", detail);
+    }
+    pendingIdleMessages.length = 0;
+  }
+  function hasSeenInboundMessage(from: SessionInfo, message: Message, now = Date.now()): boolean {
+    for (const [key, seenAt] of seenInboundMessages) {
+      if (now - seenAt > INBOUND_MESSAGE_DEDUPE_RETENTION_MS) {
+        seenInboundMessages.delete(key);
+      }
+    }
+    const key = `${from.id}\0${message.id}`;
+    if (seenInboundMessages.has(key)) {
+      return true;
+    }
+    seenInboundMessages.set(key, now);
+    while (seenInboundMessages.size > INBOUND_MESSAGE_DEDUPE_MAX) {
+      const oldestKey = seenInboundMessages.keys().next().value;
+      if (typeof oldestKey !== "string") break;
+      seenInboundMessages.delete(oldestKey);
+    }
+    return false;
+  }
+  function emitMessageReceipt(messageId: string, status: MessageReceiptStatus, detail?: string): void {
+    try {
+      client?.sendMessageReceipt({
+        messageId,
+        status,
+        timestamp: Date.now(),
+        ...(detail ? { detail } : {}),
+      });
+    } catch {
+      // Receipts are diagnostics; message handling should not fail when the sender disconnects.
+    }
+  }
+  function latestDeliveryState(messageId: string | null, fallback: string): string {
+    if (!messageId) {
+      return fallback;
+    }
+    const receipt = latestOutboundReceipts.get(messageId);
+    return receipt ? receipt.status : fallback;
   }
   let inboundFlushTimer: NodeJS.Timeout | null = null;
   let replyWaiter: {
@@ -491,7 +554,7 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
     resolve: (message: Message) => void;
     reject: (error: Error) => void;
   } | null = null;
-  function waitForReply(from: string, replyTo: string, signal?: AbortSignal, onCancel?: () => void): Promise<Message> {
+  function waitForReply(from: string, replyTo: string, signal?: AbortSignal, cancelOnAbort?: () => void, getDeliveryState: () => string = () => "unknown"): Promise<Message> {
     if (replyWaiter) {
       return Promise.reject(new Error("Already waiting for a reply"));
     }
@@ -500,9 +563,8 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
     }
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        onCancel?.();
         const timeoutDescription = askTimeoutMs % 60000 === 0 ? `${askTimeoutMs / 60000} minutes` : `${askTimeoutMs}ms`;
-        rejectReplyWaiter(new Error(`No reply from "${from}" within ${timeoutDescription}`));
+        rejectReplyWaiter(new Error(`No reply from "${from}" for message ${replyTo} within ${timeoutDescription}. Last known delivery state: ${getDeliveryState()}. This waiter timeout is not cancellation; the delivered message may still be queued or actionable in the recipient session.`));
       }, askTimeoutMs);
       const cleanup = () => {
         clearTimeout(timeout);
@@ -512,7 +574,7 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
         }
       };
       const onAbort = () => {
-        onCancel?.();
+        cancelOnAbort?.();
         cleanup();
         reject(new Error("Cancelled"));
       };
@@ -793,17 +855,21 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
     if (runtimeStarted && !getLiveContext(runtimeContext, generation)) {
       return;
     }
+    const injectedMessage = { ...entry.message, injectedAt: Date.now() };
+    emitMessageReceipt(injectedMessage.id, "injected");
+    const deliveredEntry = { ...entry, message: injectedMessage };
     if (delivery !== "followUp") {
-      replyTracker.queueTurnContext({ from: entry.from, message: entry.message, receivedAt: Date.now() });
+      replyTracker.queueTurnContext({ from: entry.from, message: injectedMessage, receivedAt: Date.now() });
     }
     const senderDisplay = entry.from.name || entry.from.id.slice(0, 8);
     const replyInstruction = entry.replyCommand ? `\n\nTo reply, use the intercom tool: ${entry.replyCommand}` : "";
+    const deliveryMetadata = formatInboundDeliveryMetadata(injectedMessage);
     pi.sendMessage(
       {
         customType: "intercom_message",
-        content: `**📨 From ${senderDisplay}** (${entry.from.cwd})${replyInstruction}\n\n${entry.bodyText}`,
+        content: `**📨 From ${senderDisplay}** (${entry.from.cwd})${replyInstruction}\n\n_${deliveryMetadata}_\n\n${entry.bodyText}`,
         display: true,
-        details: entry,
+        details: deliveredEntry,
       },
       delivery === "trigger" && shouldTriggerInboundMessage(entry, forceTrigger)
         ? { triggerTurn: true }
@@ -849,6 +915,7 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
   }
   function queueIdleMessage(entry: InboundMessageEntry): void {
     pendingIdleMessages.push(entry);
+    emitMessageReceipt(entry.message.id, "queued");
     scheduleInboundFlush();
   }
   function handleIncomingMessage(ctx: ExtensionContext, from: SessionInfo, message: Message): void {
@@ -857,25 +924,34 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
     if (!liveContext) {
       return;
     }
+    const receiverReceivedAt = Date.now();
+    if (hasSeenInboundMessage(from, message, receiverReceivedAt)) {
+      emitMessageReceipt(message.id, "acknowledged", "duplicate message id suppressed");
+      return;
+    }
+    const receivedMessage = { ...message, receiverReceivedAt };
+    emitMessageReceipt(receivedMessage.id, "receiver_received");
     if (replyWaiter) {
       const senderTarget = from.name || from.id;
       const fromMatches = senderTarget.toLowerCase() === replyWaiter.from.toLowerCase()
         || from.id === replyWaiter.from;
-      const replyMatches = message.replyTo === replyWaiter.replyTo;
+      const replyMatches = receivedMessage.replyTo === replyWaiter.replyTo;
       if (fromMatches && replyMatches) {
-        replyWaiter.resolve(message);
+        emitMessageReceipt(receivedMessage.id, "acknowledged", "matched reply waiter");
+        replyWaiter.resolve(receivedMessage);
         return;
       }
     }
-    const attachmentText = message.content.attachments?.length
-      ? formatAttachments(message.content.attachments)
+    const attachmentText = receivedMessage.content.attachments?.length
+      ? formatAttachments(receivedMessage.content.attachments)
       : "";
-    const bodyText = `${message.content.text}${attachmentText}`;
-    const replyCommand = config.replyHint && message.expectsReply
+    const bodyText = `${receivedMessage.content.text}${attachmentText}`;
+    const replyCommand = config.replyHint && receivedMessage.expectsReply
       ? `intercom({ action: "reply", message: "..." })`
       : undefined;
-    replyTracker.recordIncomingMessage(from, message);
-    const entry = { from, message, replyCommand, bodyText };
+    replyTracker.recordIncomingMessage(from, receivedMessage, receiverReceivedAt);
+    emitMessageReceipt(receivedMessage.id, "acknowledged", "accepted by receiver");
+    const entry = { from, message: receivedMessage, replyCommand, bodyText };
     void (async () => {
       const activeContext = getLiveContext(liveContext, messageGeneration);
       if (!activeContext) {
@@ -956,6 +1032,13 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
             committed: message.committed,
             revision: message.revision,
             ...(message.reason ? { reason: message.reason } : {}),
+          });
+          break;
+        case "message_receipt":
+          latestOutboundReceipts.set(message.receipt.messageId, {
+            status: message.receipt.status,
+            timestamp: message.receipt.timestamp,
+            ...(message.receipt.detail ? { detail: message.receipt.detail } : {}),
           });
           break;
         case "session_joined":
@@ -1136,10 +1219,6 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
   }
   function startSessionRuntime(ctx: ExtensionContext): void {
     const previousClient = client;
-    if (previousClient) {
-      client = null;
-      void previousClient.disconnect().catch(() => undefined);
-    }
     shuttingDown = false;
     disposed = false;
     runtimeStarted = true;
@@ -1151,7 +1230,11 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
     clearInboundFlushTimer();
     rejectReplyWaiter(new Error("Session replaced"));
     replyTracker.reset();
-    pendingIdleMessages.length = 0;
+    expirePendingIdleMessages("receiver session replaced before injection");
+    if (previousClient) {
+      client = null;
+      void previousClient.disconnect().catch(() => undefined);
+    }
     runtimeContext = ctx;
     currentSessionId = ctx.sessionManager.getSessionId();
     currentIntercomSessionId = resolveConfiguredIntercomSessionId(currentSessionId, config);
@@ -1293,7 +1376,7 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
     restoreIntercomSessionId();
     rejectReplyWaiter(new Error("Session shutting down"));
     replyTracker.reset();
-    pendingIdleMessages.length = 0;
+    expirePendingIdleMessages("receiver session shut down before injection");
     clearInboundFlushTimer();
     agentRunning = false;
     activeTools.clear();
@@ -1536,9 +1619,11 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
         }
 
         let replyPromise: Promise<Message> | null = null;
+        let deliveryState = "created";
+        let questionId: string | null = null;
         try {
-          const questionId = randomUUID();
-          replyPromise = waitForReply(sendTo, questionId, signal, () => connectedClient.cancelAsk(questionId));
+          questionId = randomUUID();
+          replyPromise = waitForReply(sendTo, questionId, signal, () => connectedClient.cancelAsk(questionId!), () => latestDeliveryState(questionId, deliveryState));
           replyPromise.catch(() => undefined);
           if (signal?.aborted) {
             rejectReplyWaiter(new Error("Cancelled"));
@@ -1560,6 +1645,7 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
             text: requestText,
             expectsReply: true,
           });
+          deliveryState = sendResult.delivered ? "socket_delivered" : "delivery_failed";
           if (!sendResult.delivered) {
             const errorText = sendResult.reason ?? "Session may not exist or has disconnected.";
             rejectReplyWaiter(new Error(`Message to "${metadata.orchestratorTarget}" was not delivered: ${errorText}`));
@@ -1618,7 +1704,7 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
           }
           return {
             content: [{ type: "text", text: `Failed: ${getErrorMessage(error)}` }],
-            details: { error: true },
+            details: { error: true, ...(questionId ? { messageId: questionId, deliveryState: latestDeliveryState(questionId, deliveryState) } : {}) },
           };
         }
       },
@@ -1887,6 +1973,8 @@ Usage:
             };
           }
           let replyPromise: Promise<Message> | null = null;
+          let deliveryState = "created";
+          let questionId: string | null = null;
 
           try {
             const sendTo = await resolveSessionTarget(connectedClient, to) ?? to;
@@ -1908,8 +1996,8 @@ Usage:
                 details: { error: true },
               };
             }
-            const questionId = randomUUID();
-            replyPromise = waitForReply(sendTo, questionId, _signal, () => connectedClient.cancelAsk(questionId));
+            questionId = randomUUID();
+            replyPromise = waitForReply(sendTo, questionId, _signal, () => connectedClient.cancelAsk(questionId!), () => latestDeliveryState(questionId, deliveryState));
             replyPromise.catch(() => undefined);
             const sendResult = await connectedClient.send(sendTo, {
               messageId: questionId,
@@ -1919,6 +2007,7 @@ Usage:
               expectsReply: true,
             });
 
+            deliveryState = sendResult.delivered ? "socket_delivered" : "delivery_failed";
             if (!sendResult.delivered) {
               const errorText = sendResult.reason ?? "Session may not exist or has disconnected.";
               rejectReplyWaiter(new Error(`Message to "${to}" was not delivered: ${errorText}`));
@@ -1966,7 +2055,7 @@ Usage:
             }
             return {
               content: [{ type: "text", text: `Failed: ${getErrorMessage(error)}` }],
-              details: { error: true },
+              details: { error: true, ...(questionId ? { messageId: questionId, deliveryState: latestDeliveryState(questionId, deliveryState) } : {}) },
             };
           }
         }

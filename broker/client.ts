@@ -9,6 +9,8 @@ import type {
   BrokerMessage,
   ClientMessage,
   Message,
+  MessageReceipt,
+  MessageReceiptStatus,
   SessionInfo,
   SessionRegistration,
 } from "../types.ts";
@@ -35,6 +37,26 @@ function connectToBrokerTarget(target: BrokerConnectTarget): net.Socket {
   return typeof target === "string"
     ? net.connect(target)
     : net.connect({ host: target.host, port: target.port });
+}
+
+function isMessageReceiptStatus(value: unknown): value is MessageReceiptStatus {
+  return value === "receiver_received"
+    || value === "queued"
+    || value === "injected"
+    || value === "acknowledged"
+    || value === "expired"
+    || value === "cancelled";
+}
+
+function isMessageReceipt(value: unknown): value is MessageReceipt {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const receipt = value as Record<string, unknown>;
+  if (typeof receipt.messageId !== "string" || !isMessageReceiptStatus(receipt.status) || typeof receipt.timestamp !== "number") {
+    return false;
+  }
+  return receipt.detail === undefined || typeof receipt.detail === "string";
 }
 
 function isAttachment(value: unknown): value is Attachment {
@@ -68,6 +90,12 @@ function isMessage(value: unknown): value is Message {
 
   if (typeof message.id !== "string" || typeof message.timestamp !== "number") {
     return false;
+  }
+
+  for (const key of ["senderSequence", "brokerReceivedAt", "brokerDeliveredAt", "receiverReceivedAt", "injectedAt"] as const) {
+    if (message[key] !== undefined && typeof message[key] !== "number") {
+      return false;
+    }
   }
 
   if (message.replyTo !== undefined && typeof message.replyTo !== "string") {
@@ -136,6 +164,7 @@ export class IntercomClient extends EventEmitter {
   private _features = new Set<string>();
   private pendingSends = new Map<string, { resolve: (r: SendResult) => void; reject: (e: Error) => void }>();
   private pendingLists = new Map<string, { resolve: (sessions: SessionInfo[]) => void; reject: (e: Error) => void }>();
+  private nextSenderSequence = 1;
   private disconnecting = false;
   private disconnectError: Error | null = null;
 
@@ -413,6 +442,15 @@ export class IntercomClient extends EventEmitter {
         break;
       }
 
+      case "message_receipt": {
+        if (!isSessionInfo(brokerMessage.from) || !isMessageReceipt(brokerMessage.receipt)) {
+          throw new Error("Invalid message_receipt event");
+        }
+        this.emit("broker_message", brokerMessage as BrokerMessage);
+        this.emit("message_receipt", brokerMessage.from, brokerMessage.receipt);
+        break;
+      }
+
       case "session_joined": {
         if (!isSessionInfo(brokerMessage.session)) {
           throw new Error("Invalid session_joined message");
@@ -620,6 +658,7 @@ export class IntercomClient extends EventEmitter {
     const message: Message = {
       id: messageId,
       timestamp: Date.now(),
+      senderSequence: this.nextSenderSequence++,
       replyTo: options.replyTo,
       expectsReply: options.expectsReply,
       content: {
@@ -653,6 +692,19 @@ export class IntercomClient extends EventEmitter {
         reject(toError(error));
       }
     });
+  }
+
+  sendMessageReceipt(receipt: MessageReceipt): void {
+    if (this.disconnecting) {
+      return;
+    }
+
+    const socket = this.socket;
+    if (!socket || !this._sessionId || socket.destroyed || socket.writableEnded || !socket.writable) {
+      return;
+    }
+
+    writeMessage(socket, { type: "message_receipt", receipt });
   }
 
   cancelAsk(messageId: string): void {
@@ -696,5 +748,10 @@ export class IntercomClient extends EventEmitter {
   onBrokerMessage(handler: (message: BrokerMessage) => void): () => void {
     this.on("broker_message", handler);
     return () => this.off("broker_message", handler);
+  }
+
+  onMessageReceipt(handler: (from: SessionInfo, receipt: MessageReceipt) => void): () => void {
+    this.on("message_receipt", handler);
+    return () => this.off("message_receipt", handler);
   }
 }
