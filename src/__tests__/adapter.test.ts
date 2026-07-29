@@ -138,7 +138,7 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(pi.tools.has("start_workflow")).toBe(false);
 		expect(pi.tools.has("resume_workflow")).toBe(false);
 		expect(pi.tools.has("end_workflow")).toBe(true);
-		expect(pi.tools.has("start_quick_workflow")).toBe(false);
+		expect(pi.tools.has("start_quicktype_workflow")).toBe(false);
 		expect(pi.tools.has("start_task_workflow")).toBe(false);
 		expect(pi.tools.has("next_step")).toBe(false);
 		expect(pi.tools.has("write_workflow_artifact")).toBe(true);
@@ -275,10 +275,10 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(pi.sent).toHaveLength(sentBeforeFailure);
 	});
 
-	it("quick mode registers under quick tool names and entry type", async () => {
+	it("quicktype mode registers under quicktype tool names and entry type", async () => {
 		vi.resetModules();
 		const { default: prototypeMode } = await import("../extensions/workflow/modes/prototype.ts");
-		const { default: quickMode } = await import("../extensions/workflow/modes/quick.ts");
+		const { default: quicktypeMode } = await import("../extensions/workflow/modes/quicktype.ts");
 		const { createWorkflowExtension } = await import("../extensions/workflow/adapter.ts");
 		const tools = new Map<string, any>();
 		const commands = new Map<string, any>();
@@ -294,18 +294,19 @@ describe("prototype adapter (pi wiring smoke)", () => {
 			async exec() { return { code: 1, stdout: "", stderr: "" }; },
 		};
 		createWorkflowExtension(prototypeMode.config, prototypeMode)(pi);
-		createWorkflowExtension(quickMode.config, quickMode)(pi);
+		createWorkflowExtension(quicktypeMode.config, quicktypeMode)(pi);
 		expect(tools.has("start_workflow")).toBe(false);
 		expect(tools.has("resume_workflow")).toBe(false);
 		expect(tools.has("write_workflow_artifact")).toBe(true);
-		expect(commands.has("workflow-quick")).toBe(true);
+		expect(commands.has("workflow-quicktype")).toBe(true);
+		expect(commands.has("workflow-quick")).toBe(false);
 		const c: any = {
 			isIdle: () => true,
 			ui: { notify() {}, setStatus() {}, theme: { fg: (_c: string, t: string) => t } },
 		};
-		await commands.get("workflow-quick").handler("build Q", c);
-		expect(entries.at(-1)?.customType).toBe("quick-phase");
-		expect(entries.at(-1)?.data.mode).toBe("quick");
+		await commands.get("workflow-quicktype").handler("build Q", c);
+		expect(entries.at(-1)?.customType).toBe("quicktype-phase");
+		expect(entries.at(-1)?.data.mode).toBe("quicktype");
 	});
 
 	// ── Plan 5: subagent workflow contract tests ──

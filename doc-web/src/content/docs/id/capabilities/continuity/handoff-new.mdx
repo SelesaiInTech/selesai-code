@@ -4,6 +4,7 @@ title: Handoff sesi
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
 Extension `handoff-new` membuat prompt kelanjutan segar dari percakapan saat ini dan memulainya dalam sesi baru yang bersih. Ini mereset konteks dan mengurangi pengeluaran token ketika percakapan telah membesar atau berubah arah.
@@ -32,8 +33,8 @@ Extension `handoff-new` membuat prompt kelanjutan segar dari percakapan saat ini
 
 ## Yang dapat dikonfigurasi
 
-- Tidak ada konfigurasi khusus. Template dokumen yang dibuat fixed di source extension.
-- Untuk memengaruhi hasil, berikan goal sebagai argumen command.
+<ExtensionCustomization slug="handoff-new" locale="id" />
+
 
 ## Yang dapat dilakukan
 

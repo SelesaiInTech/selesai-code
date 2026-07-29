@@ -4,6 +4,7 @@ title: Caveman
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
 Extension `caveman` menambahkan mode komunikasi singkat ke Selesai. Saat aktif, extension menambahkan instruksi caveman ke system prompt agen sehingga jawaban tetap singkat, fokus, dan bebas prosa yang tidak perlu.
@@ -30,17 +31,8 @@ Extension `caveman` menambahkan mode komunikasi singkat ke Selesai. Saat aktif, 
 
 ## Yang dapat dikonfigurasi
 
-Caveman tidak memiliki file konfigurasi sendiri. Perilaku dikontrol melalui slash command dan state sesi.
+<ExtensionCustomization slug="caveman" locale="id" />
 
-| Kontrol | Efek |
-| --- | --- |
-| `/caveman on` atau `/caveman enable` | Menyalakan caveman mode untuk sesi. |
-| `/caveman off` atau `/caveman disable` | Mematikan caveman mode untuk sesi. |
-| `/caveman status` | Menampilkan apakah caveman mode sedang on atau off. |
-| `/caveman` | Toggle mode saat ini. |
-| `stop caveman` atau `normal mode` | Frasa natural language yang mematikan caveman mode. |
-
-Default fallback state jika tidak ada history sesi adalah **on** (`active = true`).
 
 ## Yang dapat dilakukan
 

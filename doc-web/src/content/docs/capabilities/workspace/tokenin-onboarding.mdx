@@ -4,6 +4,7 @@ title: Token onboarding
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `tokenin-onboarding` extension guides first-time users through adding a Token-In account so Selesai can authenticate with the model provider. It also provides the `/tokenin` command to manage multiple accounts after onboarding.
@@ -31,8 +32,8 @@ The `tokenin-onboarding` extension guides first-time users through adding a Toke
 
 ## What you can configure
 
-- No dedicated configuration file. Onboarding behavior is controlled by environment variables and account management commands.
-- Set `SELESAI_SKIP_TOKENIN_ONBOARDING=1` in the environment to suppress the first-run prompt entirely.
+<ExtensionCustomization slug="tokenin-onboarding" locale="en" />
+
 
 ## What you can do
 

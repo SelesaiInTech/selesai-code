@@ -4,6 +4,7 @@ title: Session coordination
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `pi-intercom` extension adds direct 1:1 messaging between Selesai sessions on the same machine. You can send context, ask questions, or delegate work from one named session to another without leaving the terminal.
@@ -33,16 +34,8 @@ The `pi-intercom` extension adds direct 1:1 messaging between Selesai sessions o
 
 ## What you can configure
 
-Configuration lives in `~/.selesai/agent/intercom/config.json`. Defaults:
+<ExtensionCustomization slug="pi-intercom" locale="en" />
 
-| Setting | Default | Description |
-| --- | --- | --- |
-| `brokerCommand` | `npx` | Command used to start the broker process. |
-| `brokerArgs` | `["--no-install", "tsx"]` | Arguments passed before the broker script. |
-| `enabled` | `true` | Enable or disable intercom for this session. |
-| `replyHint` | `true` | Include the exact `intercom({ action: "reply", ... })` call in incoming messages. |
-| `confirmSend` | `false` | Show a confirmation dialog before non-reply sends from TUI sessions. |
-| `status` | — | Optional custom status suffix appended to the automatic lifecycle status. |
 
 ## What you can do
 

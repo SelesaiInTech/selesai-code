@@ -128,6 +128,24 @@ function parseCapabilitiesTs() {
   return { error: null, records };
 }
 
+function loadCustomizationCatalog() {
+  const catalogPath = path.join(root, "src/data/extension-customization.json");
+  if (!fs.existsSync(catalogPath)) {
+    return { error: `Customization catalog not found: ${catalogPath}`, catalog: [] };
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+    const catalog = Array.isArray(data?.catalog) ? data.catalog : [];
+    return { error: null, catalog };
+  } catch (e) {
+    return { error: `Invalid JSON in ${catalogPath}: ${e.message}`, catalog: [] };
+  }
+}
+
+function normalizeSettingKey(key) {
+  return String(key ?? "").trim();
+}
+
 const errors = [];
 const { enGuides, idGuides } = loadCapabilities();
 
@@ -163,7 +181,7 @@ for (const g of enGuides) {
     if (content.includes("/rewind") && !/no\s+[`']?\/?rewind[`']?|tidak ada\s+[`']?\/?rewind[`']?|does not exist|tidak ada|bukan perintah|is not a command/i.test(content)) {
       errors.push(`${g} ${locale} references stale /rewind command`);
     }
-    if (content.includes("/tokenin-onboard") && !/does\s+[*_]*not[*_]*\s+exist|tidak\s+[*_]*ada[*_]*|bukan perintah|is not a command|tidak\s+tersedia|jangan gunakan/i.test(content)) {
+    if (content.includes("/tokenin-onboard") && !/does\s+[*_]*not[*_]*\s+exist|tidak\s*[*_]*\s*ada|bukan\s+perintah|is not a command|tidak\s+tersedia|jangan\s+gunakan/i.test(content)) {
       errors.push(`${g} ${locale} references stale /tokenin-onboard command`);
     }
   }
@@ -178,6 +196,7 @@ const corePages = [
   "evidence.mdx",
   "changelog.mdx",
   "accessibility.mdx",
+  "customization.mdx",
 ];
 for (const page of corePages) {
   for (const locale of ["en", "id"]) {
@@ -229,6 +248,12 @@ if (capabilitiesError) {
       );
     }
 
+    if (record.distribution === "core" && record.manifestEntry) {
+      errors.push(
+        `Core capability ${record.slug} must not declare manifestEntry ${record.manifestEntry}`
+      );
+    }
+
     if (record.distribution === "bundled" && record.guideRoute) {
       const relativeGuide = record.guideRoute.replace(/^capabilities\//, "");
       const expectedEntry = Object.entries(BUNDLED_EXTENSION_GUIDES).find(([, slug]) => slug === relativeGuide)?.[0];
@@ -255,6 +280,135 @@ if (capabilitiesError) {
       errors.push(
         `Bundled capability route capabilities/${route} is not covered by any manifest entry in src/extensions/package.json`
       );
+    }
+  }
+}
+
+// Customization catalog validation
+const { error: catalogError, catalog } = loadCustomizationCatalog();
+if (catalogError) {
+  errors.push(catalogError);
+}
+
+if (!catalogError && capabilityRecords.length > 0 && catalog.length > 0) {
+  const catalogBySlug = new Map(catalog.map((r) => [r.slug, r]));
+  const validDistributions = new Set(["bundled", "optional", "core"]);
+
+  // Exactly one catalog record for every capability slug
+  for (const cap of capabilityRecords) {
+    const record = catalogBySlug.get(cap.slug);
+    if (!record) {
+      errors.push(`Missing customization catalog record for capability ${cap.slug}`);
+      continue;
+    }
+
+    // Distribution must match capabilities.ts
+    if (record.distribution !== cap.distribution) {
+      errors.push(
+        `Customization record for ${cap.slug} declares distribution ${record.distribution} but capabilities.ts has ${cap.distribution}`
+      );
+    }
+
+    // Distribution validity
+    if (!validDistributions.has(record.distribution)) {
+      errors.push(`Customization record for ${cap.slug} has invalid distribution ${record.distribution}`);
+    }
+
+    // Manifest relationship: bundled records must reference a manifest entry, optional/core must not
+    if (record.distribution === "bundled") {
+      if (!cap.manifestEntry || !manifestSet.has(cap.manifestEntry)) {
+        errors.push(
+          `Bundled customization record ${cap.slug} is not backed by a manifest entry in src/extensions/package.json`
+        );
+      }
+    }
+    if ((record.distribution === "optional" || record.distribution === "core") && cap.manifestEntry) {
+      errors.push(
+        `${record.distribution} capability ${cap.slug} must not have a manifestEntry in capabilities.ts`
+      );
+    }
+
+    // Localized content for overview
+    if (!record.overview || typeof record.overview.en !== "string" || !record.overview.en.trim()) {
+      errors.push(`Customization record ${cap.slug} missing EN overview`);
+    }
+    if (!record.overview || typeof record.overview.id !== "string" || !record.overview.id.trim()) {
+      errors.push(`Customization record ${cap.slug} missing ID overview`);
+    }
+
+    // Source paths existence
+    const sourcePaths = Array.isArray(record.sourcePaths) ? record.sourcePaths : [];
+    if (sourcePaths.length === 0) {
+      errors.push(`Customization record ${cap.slug} has no sourcePaths`);
+    }
+    for (const sp of sourcePaths) {
+      const resolved = path.join(repoRoot, sp);
+      if (!fs.existsSync(resolved)) {
+        errors.push(`Customization record ${cap.slug} references missing source path: ${sp}`);
+      }
+    }
+
+    // noConfig consistency: no persistent user-owned settings/env/scopes. Invocation/session-only
+    // entries are allowed because they document behavior rather than user configuration.
+    if (record.noConfig === true) {
+      for (const setting of record.settings || []) {
+        const persistence = String(setting.persistence ?? "").toLowerCase();
+        if (!/invocation|session|command argument|tool call|source-defined|external binary|skill files/.test(persistence)) {
+          errors.push(
+            `Customization record ${cap.slug} sets noConfig but has setting ${normalizeSettingKey(setting.key)} with persistence ${setting.persistence}`
+          );
+        }
+      }
+      for (const envVar of record.envVars || []) {
+        errors.push(
+          `Customization record ${cap.slug} sets noConfig but declares env var ${envVar.key}; move it to controls/settings with invocation/session persistence or remove noConfig`
+        );
+      }
+      for (const scope of record.scopes || []) {
+        const scopePath = String(scope.path ?? "").toLowerCase();
+        if (!/invocation|session|command|tool|source|mode-owned/.test(scopePath)) {
+          errors.push(
+            `Customization record ${cap.slug} sets noConfig but declares persistent scope ${scope.path}`
+          );
+        }
+      }
+    }
+  }
+
+  // No extra catalog records that do not map to a capability
+  const capabilitySlugs = new Set(capabilityRecords.map((c) => c.slug));
+  for (const record of catalog) {
+    if (!capabilitySlugs.has(record.slug)) {
+      errors.push(`Customization catalog contains unknown slug: ${record.slug}`);
+    }
+  }
+
+  // Guide wiring: every EN/ID guide for a capability must import and invoke ExtensionCustomization with matching slug and locale
+  for (const g of enGuides) {
+    const cap = capabilityRecords.find((c) => c.guideRoute === `capabilities/${g}`);
+    if (!cap) continue;
+
+    for (const { locale, content, fullPath } of [
+      { locale: "en", content: readGuide(path.join(root, "src/content/docs/capabilities", `${g}.mdx`)), fullPath: `capabilities/${g}` },
+      { locale: "id", content: readGuide(path.join(root, "src/content/docs/id/capabilities", `${g}.mdx`)), fullPath: `id/capabilities/${g}` },
+    ]) {
+      if (!content.includes("import ExtensionCustomization")) {
+        errors.push(`${fullPath} does not import ExtensionCustomization`);
+        continue;
+      }
+      const invocationRegex = /<ExtensionCustomization\s+slug\s*=\s*["']([^"']+)["']\s+locale\s*=\s*["']([^"']+)["']\s*\/>/;
+      const match = content.match(invocationRegex);
+      if (!match) {
+        errors.push(`${fullPath} does not invoke ExtensionCustomization with slug and locale props`);
+      } else {
+        const [, invokedSlug, invokedLocale] = match;
+        if (invokedSlug !== cap.slug) {
+          errors.push(`${fullPath} invokes ExtensionCustomization with slug ${invokedSlug}, expected ${cap.slug}`);
+        }
+        if (invokedLocale !== locale) {
+          errors.push(`${fullPath} invokes ExtensionCustomization with locale ${invokedLocale}, expected ${locale}`);
+        }
+      }
     }
   }
 }

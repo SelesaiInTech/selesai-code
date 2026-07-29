@@ -11,7 +11,7 @@ import {
   reviewValidator,
 } from "../validators.ts";
 
-// ponytail: quick workflow — same tool-driven loop as prototype, without research:
+// ponytail: quicktype workflow — same tool-driven loop as prototype, without research:
 // grill → plan → reuse → handoff → loop → audit.
 // No research phase. skipRules + closeArtifacts wired by the adapter.
 
@@ -26,7 +26,7 @@ const phases: Phase[] = [
 
 const prompts: Partial<Record<Phase, (ctx: PromptContext) => string>> = {
   grilling: ({ artifactDir, userPrompt }) =>
-    `You are in the GRILLING phase of a QUICK workflow.
+    `You are in the GRILLING phase of a QUICKTYPE workflow.
 
 User request:
 ${userPrompt}
@@ -55,7 +55,7 @@ The workflow advances once ${artifactDir}/requirements.md exists.`,
   plan: ({ artifactDir }) =>
     `You are in the PLAN phase.
 
-This is a QUICK workflow — no separate research phase. Use ${artifactDir}/requirements.md to produce the concrete build plan: what to build, how, in order, components, and what the finished prototype looks like.
+This is a QUICKTYPE workflow — no separate research phase. Use ${artifactDir}/requirements.md to produce the concrete build plan: what to build, how, in order, components, and what the finished prototype looks like.
 
 Call the subagent tool with { agent: "architect", task: "...", output: false } (do NOT pass a model parameter). Craft the task from ${artifactDir}/requirements.md so the architect plans for THIS task. It must return the complete plan inline; do not tell it to write any artifact.
 
@@ -111,11 +111,11 @@ Review uncommitted changes for correctness, plan adherence, and over-engineering
 2. If that review lists actionable issues, call the subagent tool with { agent: "builder", task: "...", output: false } (do NOT pass a model parameter). Instruct it to fix every issue in the workspace, never in ${artifactDir}, then return its completion summary inline.
 3. Re-run the commentator and overwrite the parent-owned review artifact through write_workflow_artifact until it ends with WORKFLOW_REVIEW_STATUS: clean.
 
-Once ${artifactDir}/review.md exists and ends with the WORKFLOW_REVIEW_STATUS: clean marker, call end_workflow with { mode: "quick" } to complete the workflow.`,
+Once ${artifactDir}/review.md exists and ends with the WORKFLOW_REVIEW_STATUS: clean marker, call end_workflow with { mode: "quicktype" } to complete the workflow.`,
 };
 
 const config: WorkflowConfig = {
-  mode: "quick",
+  mode: "quicktype",
   phases,
   phaseArtifacts: {
     grilling: "requirements.md",
@@ -135,16 +135,16 @@ const config: WorkflowConfig = {
   closeValidators: { "review.md": reviewValidator },
   closeArtifacts: ["review.md"],
   loopMaxIterations: 3,
-  statusKey: "quick",
-  entryType: "quick-phase",
-  footerLabel: "quick",
+  statusKey: "quicktype",
+  entryType: "quicktype-phase",
+  footerLabel: "quicktype",
 };
 
-export const quickMode: WorkflowModeRegistration = {
+export const quicktypeMode: WorkflowModeRegistration = {
   config,
-  commandName: "workflow-quick",
+  commandName: "workflow-quicktype",
   commandDescription:
-    "Run the quick workflow (grill → plan → reuse → handoff → loop → audit)",
+    "Run the quicktype workflow (grill → plan → reuse → handoff → loop → audit)",
 };
 
-export default quickMode;
+export default quicktypeMode;

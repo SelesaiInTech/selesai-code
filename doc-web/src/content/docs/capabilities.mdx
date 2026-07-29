@@ -7,7 +7,7 @@ description: Explore the tools, workflows, recovery features, and productivity i
 import CapabilityList from "../../components/CapabilityList.astro";
 import { categories, capabilities } from "../../data/capabilities.ts";
 
-Selesai ships the bundled capabilities below as part of the `@selesai/code` package. Optional extensions are listed separately at the bottom of the page. Each entry links to a guide with examples, configuration, limits, and source evidence.
+Selesai ships the bundled capabilities below as part of the `@selesai/code` package. Optional extensions are listed separately at the bottom of the page. Core built-in extensions are documented on the [Customization](/customization/) page. Each entry links to a guide with examples, configuration, limits, and source evidence.
 
 {categories.map((category) => (
   <section className="category-section" id={category.id}>
@@ -16,6 +16,15 @@ Selesai ships the bundled capabilities below as part of the `@selesai/code` pack
   </section>
 ))}
 
+{capabilities.some((c) => c.distribution === "core") && (
+  <section className="category-section" id="core-extensions">
+    <h2>Core built-in extensions</h2>
+    <p>These capabilities are part of the Selesai runtime and are not listed in the extension manifest. See the <a href={`${import.meta.env.BASE_URL}customization/`}>Customization</a> page for a complete overview.</p>
+    {categories.map((category) => (
+      <CapabilityList category={category.id} locale="en" distribution="core" />
+    ))}
+  </section>
+)}
 {capabilities.some((c) => c.distribution === "optional") && (
   <section className="category-section" id="optional-extensions">
     <h2>Optional extensions</h2>

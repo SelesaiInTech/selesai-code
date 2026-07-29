@@ -5,7 +5,7 @@ export type Category =
   | "terminal-workspace"
   | "skills-and-productivity";
 
-export type Distribution = "bundled" | "optional";
+export type Distribution = "bundled" | "optional" | "core";
 export type RuntimeSurface = "automatic" | "command" | "tool" | "skill-backed" | "mixed";
 
 export interface Capability {
@@ -57,8 +57,8 @@ export const capabilities: Capability[] = [
   {
     slug: "workflow",
     category: "delegation-and-workflows",
-    en: { displayName: "Durable workflows", benefit: "Resumeable, stateful project workflows across prototype, quick, and task modes with explicit lifecycle management." },
-    id: { displayName: "Workflow tahan lama", benefit: "Alur kerja proyek yang stateful dan dapat dilanjutkan kembali dengan mode prototype, quick, dan task serta manajemen siklus hidup eksplisit." },
+    en: { displayName: "Durable workflows", benefit: "Resumable, stateful project workflows across prototype, quicktype, task, and direct loop modes with explicit lifecycle management." },
+    id: { displayName: "Workflow tahan lama", benefit: "Alur kerja proyek yang stateful dan dapat dilanjutkan kembali dengan mode prototype, quicktype, task, dan loop langsung serta manajemen siklus hidup eksplisit." },
     sourcePaths: ["src/extensions/workflow/", "README.md"],
     sourceLinks: [
       links("Workflow source", "src/extensions/workflow/"),
@@ -329,6 +329,21 @@ export const capabilities: Capability[] = [
     distribution: "bundled",
     manifestEntry: "./rtk.ts",
     runtimeSurface: "automatic",
+  },
+  {
+    slug: "llama",
+    category: "terminal-workspace",
+    en: { displayName: "llama.cpp model manager", benefit: "Manage local llama.cpp router models, search Hugging Face, and load/unload models from the TUI." },
+    id: { displayName: "Pengelola model llama.cpp", benefit: "Kelola model router llama.cpp lokal, cari Hugging Face, dan muat/bongkar model dari TUI." },
+    sourcePaths: ["src/core/llama/index.ts", "src/core/built-in-extensions.ts", "src/core/llama/client.ts"],
+    sourceLinks: [
+      links("llama.cpp source", "src/core/llama/index.ts"),
+      links("Built-in extensions", "src/core/built-in-extensions.ts"),
+    ],
+    guideRoute: "capabilities/workspace/llama",
+    piComparison: "bundled",
+    distribution: "core",
+    runtimeSurface: "command",
   },
 ];
 

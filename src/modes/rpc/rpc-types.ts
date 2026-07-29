@@ -118,13 +118,13 @@ export type PrototypePhase =
 	| "grilling" | "research" | "plan"
 	| "reuse" | "handoff" | "loop" | "audit" | "complete";
 
-export type QuickPhase =
+export type QuicktypePhase =
 	| "grilling" | "plan" | "reuse" | "handoff" | "loop" | "audit" | "complete";
 
 export interface WorkflowState {
-	mode: "prototype" | "quick";
-	phase: PrototypePhase | QuickPhase;
-	step: number; // prototype 1..8, quick 1..7 (max complete step is phases + 1)
+	mode: "prototype" | "quicktype";
+	phase: PrototypePhase | QuicktypePhase;
+	step: number; // prototype 1..8, quicktype 1..7 (max complete step is phases + 1)
 	done: boolean;
 }
 

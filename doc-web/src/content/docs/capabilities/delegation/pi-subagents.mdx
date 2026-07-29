@@ -4,6 +4,7 @@ title: Subagent delegation
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `pi-subagents` extension gives Selesai focused child agents that run in the same workspace. You can ask for reviews, exploration, implementation, parallel audits, or background work in plain language; Selesai translates that into `subagent` tool calls or slash commands.
@@ -32,21 +33,8 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 
 ## What you can configure
 
-Most configuration lives in `~/.selesai/agent/extensions/subagent/config.json` or `~/.selesai/agent/settings.json` under the `subagents` key.
+<ExtensionCustomization slug="pi-subagents" locale="en" />
 
-| Setting / scope | Description |
-| --- | --- |
-| `subagents.defaultModel` | Default model for agents without an explicit model. |
-| `subagents.defaultThinking` | Shared thinking level for agents without explicit thinking. |
-| `subagents.agentOverrides.<agent>` | Per-agent overrides for model, thinking, tools, skills, system prompt, etc. |
-| `subagents.modelScope` | Enforce an allow-list of provider/model globs for explicit calls. |
-| `subagents.watchdog` | Opt-in adversarial change reviewer with model and LSP settings. |
-| `subagents.defaultExtensions` | Extension allowlist for agents without their own `extensions` field. |
-| `asyncByDefault` | Make the `subagent` tool default to background. |
-| `maxSubagentDepth` | How many nested subagent generations are allowed. |
-| `intercomBridge` | Tune native supervisor coordination. |
-
-Agent discovery order (lowest to highest priority): builtin agents under `~/.selesai/agent/extensions/subagent/agents/`, installed package agents, user agents in `~/.selesai/agent/agents/**/*.md`, project agents in `.selesai/agents/**/*.md`.
 
 ## What you can do
 

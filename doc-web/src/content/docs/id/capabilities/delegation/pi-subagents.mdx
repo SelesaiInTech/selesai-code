@@ -4,6 +4,7 @@ title: Delegasi subagent
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
 Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan di workspace yang sama. Anda dapat meminta review, eksplorasi, implementasi, audit paralel, atau pekerjaan background dalam bahasa alami; Selesai menerjemahkannya menjadi tool call `subagent` atau slash command.
@@ -32,21 +33,8 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 
 ## Yang dapat dikonfigurasi
 
-Sebagian besar konfigurasi berada di `~/.selesai/agent/extensions/subagent/config.json` atau `~/.selesai/agent/settings.json` di bawah key `subagents`.
+<ExtensionCustomization slug="pi-subagents" locale="id" />
 
-| Setting / scope | Deskripsi |
-| --- | --- |
-| `subagents.defaultModel` | Default model untuk agen tanpa model eksplisit. |
-| `subagents.defaultThinking` | Level thinking bersama untuk agen tanpa thinking eksplisit. |
-| `subagents.agentOverrides.<agent>` | Override per agen untuk model, thinking, tool, skill, system prompt, dll. |
-| `subagents.modelScope` | Enforce allow-list provider/model glob untuk panggilan eksplisit. |
-| `subagents.watchdog` | Reviewer perubahan adversarial opsional dengan model dan pengaturan LSP. |
-| `subagents.defaultExtensions` | Allowlist extension untuk agen tanpa field `extensions` sendiri. |
-| `asyncByDefault` | Buat tool `subagent` default ke background. |
-| `maxSubagentDepth` | Berapa generasi subagent bersarang yang diizinkan. |
-| `intercomBridge` | Menyetel koordinasi supervisor native. |
-
-Urutan discovery agen (dari prioritas terendah ke tertinggi): builtin agent di bawah `~/.selesai/agent/extensions/subagent/agents/`, package agent yang terpasang, user agent di `~/.selesai/agent/agents/**/*.md`, project agent di `.selesai/agents/**/*.md`.
 
 ## Yang dapat dilakukan
 

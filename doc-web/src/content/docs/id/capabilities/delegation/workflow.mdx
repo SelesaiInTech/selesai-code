@@ -4,9 +4,10 @@ title: Workflow tahan lama
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-Extension `workflow` menyediakan workflow proyek yang tahan lama dan dapat dilanjutkan kembali. Tiga mode dibundel: `prototype`, `quick`, dan `task`. Setiap mode memandu implementasi dari requirements hingga review, dengan artifact fase yang disimpan di disk sehingga Anda dapat menjeda dan melanjutkan pekerjaan.
+Extension `workflow` menyediakan workflow proyek yang tahan lama dan dapat dilanjutkan kembali. Empat mode dibundel: `prototype`, `quicktype`, `task`, dan `loop`. Mode `loop` langsung untuk pekerjaan yang sudah direncanakan di percakapan parent; mode ini hanya menjalankan putaran builder/reviewer.
 
 <ExtensionStatus
   distribution="bundled"
@@ -24,16 +25,15 @@ Extension `workflow` menyediakan workflow proyek yang tahan lama dan dapat dilan
 
 ## Yang disiapkan
 
-- Mendaftarkan satu slash command per mode: `/workflow-prototype`, `/workflow-quick`, `/workflow-task`.
+- Mendaftarkan satu slash command per mode: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, `/workflow-loop`.
 - Mendaftarkan tool `write_workflow_artifact` bersama dan tool `end_workflow`.
 - Memelihara file run `workflow.json` di dalam direktori artifact setiap run sehingga run dapat dilanjutkan nanti.
-- Menggunakan registry in-process global sehingga tiga mode tidak bertabrakan ketika dimuat bersama.
+- Menggunakan registry in-process global sehingga empat mode tidak bertabrakan ketika dimuat bersama.
 
 ## Yang dapat dikonfigurasi
 
-- Tidak ada file konfigurasi user khusus untuk workflow engine.
-- Prompt dan validator fase fixed per mode di file source mode.
-- Konfigurasi tidak langsung melalui pengaturan `subagents` memengaruhi perilaku child agent di dalam workflow.
+<ExtensionCustomization slug="workflow" locale="id" />
+
 
 ## Yang dapat dilakukan
 
@@ -47,33 +47,35 @@ Extension `workflow` menyediakan workflow proyek yang tahan lama dan dapat dilan
 
 - Melanjutkan run sebelumnya: `/workflow-task resume` menampilkan daftar run yang dapat dilanjutkan, atau `/workflow-task resume <run-id>` melanjutkan run tertentu.
 - Melanjutkan run aktif: `/workflow-task` (tanpa argumen) memungkinkan Anda melanjutkan di fase saat ini.
-- Mengakhiri run yang terminal-ready dengan memanggil `end_workflow({ mode: "task" })` (atau `prototype` / `quick`).
+- Mengakhiri run yang terminal-ready dengan memanggil `end_workflow({ mode: "task" })` (atau `prototype` / `quicktype` / `loop`).
 
 ### Fase mode
 
 | Mode | Fase |
 | --- | --- |
 | `task` | plan → reuse → handoff → loop |
-| `quick` | grilling → plan → reuse → handoff → loop → audit |
+| `quicktype` | grilling → plan → reuse → handoff → loop → audit |
 | `prototype` | grilling → research → plan → reuse → handoff → loop → audit |
+| `loop` | loop (build ↔ review langsung) |
 
 - `grilling` mengajukan pertanyaan klarifikasi sampai frontier keputusan kosong.
 - `research` mengumpulkan bukti eksternal bila diperlukan.
 - `plan` menghasilkan rencana build yang harus diakhiri dengan `WORKFLOW_PLAN_STATUS: ready`.
 - `reuse` mengeksplorasi codebase yang ada (dilewati otomatis jika tidak ada riwayat git).
 - `handoff` menyusun dokumen konteks mandiri yang harus diakhiri dengan `WORKFLOW_HANDOFF_STATUS: ready`.
-- `loop` menjalankan siklus review builder/commentator sampai commentator diakhiri dengan `WORKFLOW_REVIEW_STATUS: clean` atau cap iterasi maksimum tercapai.
-- `audit` (hanya quick/prototype) melakukan review akhir terhadap perubahan yang belum di-commit.
+- `loop` menjalankan siklus review builder/commentator sampai commentator diakhiri dengan `WORKFLOW_REVIEW_STATUS: clean` atau cap iterasi maksimum tercapai. Dalam mode `loop` langsung, parent harus menyintesis rencana percakapan yang disepakati, batasan, dan kriteria penerimaan ke setiap prompt subagent baru; tidak ada artifact plan atau handoff.
+- `audit` (hanya quicktype/prototype) melakukan review akhir terhadap perubahan yang belum di-commit.
 
 ## Perintah, tool, dan shortcut
 
 | Perintah / tool | Deskripsi |
 | --- | --- |
 | `/workflow-prototype [<goal>\|resume]` | Jalankan workflow prototype penuh. |
-| `/workflow-quick [<goal>\|resume]` | Jalankan workflow quick tanpa fase research. |
+| `/workflow-quicktype [<goal>\|resume]` | Jalankan workflow prototype lebih cepat tanpa fase research. |
 | `/workflow-task [<goal>\|resume]` | Jalankan workflow task dengan plan/reuse/handoff/loop. |
+| `/workflow-loop [<goal>\|resume]` | Jalankan putaran builder/reviewer langsung untuk rencana yang sudah disepakati. |
 | `write_workflow_artifact({ content })` | Tulis artifact fase saat ini; engine maju ke fase berikutnya jika validator lolos. |
-| `end_workflow({ mode: "task"\|"quick"\|"prototype" })` | Tutup secara eksplisit workflow yang terminal-ready. |
+| `end_workflow({ mode: "task"\|"quicktype"\|"prototype"\|"loop" })` | Tutup secara eksplisit workflow yang terminal-ready. |
 
 ## Batasan dan keamanan
 

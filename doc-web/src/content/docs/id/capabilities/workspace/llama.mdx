@@ -1,0 +1,56 @@
+---
+draft: false
+title: Pengelola model llama.cpp
+---
+
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+Ekstensi llama.cpp adalah ekstensi inti tersembunyi yang memungkinkan Anda mengelola model router llama.cpp lokal dari TUI. Ekstensi ini tidak tercantum di manifest ekstensi bundel, tetapi didaftarkan saat boot sebagai ekstensi bawaan.
+
+<ExtensionStatus
+  distribution="core"
+  runtimeSurface="command"
+  locale="id"
+/>
+
+## Penyiapan dan prasyarat
+
+- Hanya tersedia dalam mode TUI interaktif.
+- Memerlukan server yang kompatibel dengan llama.cpp yang sedang berjalan.
+- Konfigurasikan URL server dengan `/login llama.cpp` sebelum menggunakan `/llama`.
+- Pencarian dan pengunduhan Hugging Face memerlukan `HF_TOKEN` untuk model gated.
+
+## Yang disiapkan
+
+- Mendaftarkan slash command `/llama` dan provider `llama.cpp`.
+- Membaca auth provider dari model registry.
+- Gagal dengan anggun saat server tidak terjangkau, menawarkan retry atau close.
+
+## Yang dapat dikonfigurasi
+
+<ExtensionCustomization slug="llama" locale="id" />
+
+
+## Yang dapat dilakukan
+
+- Melihat daftar model yang loaded, sleeping, dan unloaded di server yang dikonfigurasi.
+- Memuat atau membongkar model.
+- Mengunduh model baru dari Hugging Face, termasuk model gated dengan `HF_TOKEN`.
+- Memilih kuantisasi saat model menawarkan beberapa pilihan.
+
+## Perintah, tool, dan shortcut
+
+- `/login llama.cpp` — atur base URL server dan kunci API opsional.
+- `/llama` — buka TUI pengelolaan model. Tidak tersedia di luar mode interaktif.
+- Auth provider adalah permukaan konfigurasi utama. `LLAMA_BASE_URL` menimpa base URL yang tersimpan saat runtime.
+
+## Batasan dan keamanan
+
+- Hanya sesi interaktif yang dapat membuka `/llama`.
+- Mengunduh model gated mengharuskan menerima syarat akses di Hugging Face dan `HF_TOKEN` yang valid di server.
+- Memuat model dapat membongkar model lain tergantung kapasitas server.
+- Kegagalan server lokal dilaporkan sebagai peringatan, bukan crash.
+
+<SourceEvidence slug="llama" />

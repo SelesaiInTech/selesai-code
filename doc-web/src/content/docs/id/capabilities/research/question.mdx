@@ -4,9 +4,10 @@ title: Pertanyaan interaktif
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-Extension `question` menyediakan wizard terminal untuk mengajukan satu atau lebih pertanyaan bertipe ke user. Mendukung single-select, multiselect, free-form text, dan pertanyaan konteks/info, dengan navigasi keyboard dan filtering.
+Extension `question` menyediakan wizard terminal untuk mengajukan satu atau lebih pertanyaan bertipe ke user. Mendukung single-select, multiselect, dan free-form text, dengan navigasi keyboard dan filtering.
 
 <ExtensionStatus
   distribution="bundled"
@@ -29,12 +30,13 @@ Extension `question` menyediakan wizard terminal untuk mengajukan satu atau lebi
 
 ## Yang dapat dikonfigurasi
 
-- Tidak ada konfigurasi yang tampak untuk user. Skema pertanyaan fixed oleh definisi tool.
+<ExtensionCustomization slug="question" locale="id" />
+
 
 ## Yang dapat dilakukan
 
 - Mengajukan keputusan independen yang harus dibuat user secara langsung.
-- Menampilkan pertanyaan select, multiselect, text, atau info-only.
+- Menampilkan pertanyaan select, multiselect, atau free-form text.
 - Menyediakan `value` opsi yang stabil terpisah dari `label` yang human-readable.
 
 ## Perintah, tool, dan shortcut
@@ -65,7 +67,7 @@ question({
 })
 ```
 
-Tipe pertanyaan yang didukung: `select`, `multiselect`, `text`, `image`, `info`.
+Tipe pertanyaan yang didukung: `select`, `multiselect`, `text`.
 
 Saat meninjau, user dapat berpindah antar pertanyaan dengan `Tab`/`Shift+Tab`, membiarkan pertanyaan text kosong untuk melewatkannya, dan menekan `Enter` di layar review untuk mengirim jawaban akhir.
 
@@ -73,7 +75,7 @@ Saat meninjau, user dapat berpindah antar pertanyaan dengan `Tab`/`Shift+Tab`, m
 
 - Tool hanya berfungsi di mode TUI. Memanggilnya dari sesi non-interaktif menghasilkan error.
 - Pertanyaan seharusnya adalah keputusan independen yang harus dibuat user; agent harus memeriksa fakta sendiri daripada menanyakan informasi yang dapat ditemukan kepada user.
-- Pertanyaan `info` hanya berisi konteks dan tidak memerlukan respons.
+
 - Entri text kosong dicatat sebagai `skipped`; agent harus menangani status skipped dan unanswered secara eksplisit.
 
 <SourceEvidence slug="question" />

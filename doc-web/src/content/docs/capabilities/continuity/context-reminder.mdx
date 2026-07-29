@@ -4,6 +4,7 @@ title: Context reminder
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `context-compaction-reminder` extension warns you when the conversation context grows large and suggests a handoff so you can keep token usage low and AI quality high.
@@ -28,7 +29,8 @@ The `context-compaction-reminder` extension warns you when the conversation cont
 
 ## What you can configure
 
-- No user-facing configuration. The threshold is hard-coded at 128,000 tokens.
+<ExtensionCustomization slug="context-compaction-reminder" locale="en" />
+
 
 ## What you can do
 

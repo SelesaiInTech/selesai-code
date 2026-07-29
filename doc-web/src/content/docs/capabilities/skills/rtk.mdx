@@ -4,6 +4,7 @@ title: RTK integration
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `rtk` extension rewrites compatible Bash tool calls to use the external `rtk` binary. This reduces noisy command output and saves tokens when `rtk` is installed, without changing Selesai's own rewrite behavior.
@@ -29,11 +30,8 @@ The `rtk` extension rewrites compatible Bash tool calls to use the external `rtk
 
 ## What you can configure
 
-| Environment variable | Effect |
-| --- | --- |
-| `RTK_DISABLED=1` | Disable the extension entirely, even when `rtk` is installed. |
+<ExtensionCustomization slug="rtk" locale="en" />
 
-There is no Selesai-specific configuration file or setting key. The extension is intentionally thin; all rewrite rules live in the `rtk` binary's registry.
 
 ## What you can do
 

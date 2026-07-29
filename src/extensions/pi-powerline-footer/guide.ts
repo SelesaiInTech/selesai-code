@@ -33,10 +33,10 @@ export const GUIDE_FEATURES: readonly GuideFeature[] = [
     introducedIn: "0.5.13",
   },
   {
-    id: "workflow-quick",
+    id: "workflow-quicktype",
     section: "Start here",
-    title: "Quick",
-    example: '/workflow-quick "<goal>"',
+    title: "Quicktype",
+    example: '/workflow-quicktype "<goal>"',
     introducedIn: "0.5.13",
   },
   {
@@ -101,7 +101,7 @@ export const GUIDE_DISMISS_HINT = "Press any key to continue";
 
 export const GUIDE_COMPACT_LINES = [
   "/guide full · /settings",
-  '/workflow-task "<goal>" · /workflow-quick "<goal>"',
+  '/workflow-task "<goal>" · /workflow-quicktype "<goal>"',
   '/workflow-prototype "<goal>"',
   '"Ask the researcher to research <topic>."',
   "/skill:* · /undo · /handoff-new <next focus>",

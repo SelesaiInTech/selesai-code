@@ -6,12 +6,13 @@
 import type { ExtensionAPI } from "@selesai/code";
 import { __resetWorkflowRegistryForTests, createWorkflowExtension } from "./adapter.ts";
 import { prototypeMode } from "./modes/prototype.ts";
-import { quickMode } from "./modes/quick.ts";
+import { quicktypeMode } from "./modes/quicktype.ts";
 import { taskMode } from "./modes/task.ts";
+import { loopMode } from "./modes/loop.ts";
 
 export { __resetWorkflowRegistryForTests };
 
-const MODES = [prototypeMode, quickMode, taskMode] as const;
+const MODES = [prototypeMode, quicktypeMode, taskMode, loopMode] as const;
 
 export default function workflowModesExtension(pi: ExtensionAPI): void {
   for (const mode of MODES) {

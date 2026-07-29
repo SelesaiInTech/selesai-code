@@ -4,6 +4,7 @@ title: Onboarding token
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
 Extension `tokenin-onboarding` memandu user pertama kali menambahkan akun Token-In agar Selesai dapat mengautentikasi dengan provider model. Extension juga menyediakan command `/tokenin` untuk mengelola beberapa akun setelah onboarding.
@@ -31,8 +32,8 @@ Extension `tokenin-onboarding` memandu user pertama kali menambahkan akun Token-
 
 ## Yang dapat dikonfigurasi
 
-- Tidak ada file konfigurasi khusus. Perilaku onboarding dikontrol oleh environment variables dan command manajemen akun.
-- Tetapkan `SELESAI_SKIP_TOKENIN_ONBOARDING=1` di environment untuk menekan prompt pertama kali sepenuhnya.
+<ExtensionCustomization slug="tokenin-onboarding" locale="id" />
+
 
 ## Yang dapat dilakukan
 

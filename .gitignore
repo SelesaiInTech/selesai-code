@@ -6,3 +6,8 @@ dist/
 .DS_Store
 .env
 .env.local
+
+# Local agent/runtime artifacts
+.pi-subagents/artifacts/
+.selesai/artifacts/
+.upstream-cache/

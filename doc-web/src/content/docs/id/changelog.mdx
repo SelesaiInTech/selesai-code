@@ -3,14 +3,123 @@ draft: false
 title: Changelog
 ---
 
-## 0.5.22 — Situs dokumentasi awal
+Riwayat ini mengikuti tag rilis yang dapat dijangkau dari branch `main` Selesai. Tag dari riwayat Pi yang tidak terkait dan tidak di-merge tidak disertakan.
 
-- Meluncurkan situs dokumentasi Selesai di [GitHub Pages](https://selesaiintech.github.io/selesai-docs/).
-- Mendokumentasikan 17 kemampuan user-facing yang dibundel dalam bahasa Inggris dan Indonesia.
-- Menambahkan perbandingan dengan Pi coding agent asli yang berbasis bukti.
-- Menyertakan pencarian lokal Pagefind, mode gelap/terang, navigasi aksesibel, dan komponen instal yang dapat disalin.
-- Menambahkan skrip validasi konten dan validasi tautan hasil build.
-- Mengkonfigurasi deployment GitHub Actions Pages.
+## 0.5.24 — Loop workflow langsung dan pembaruan dokumentasi
+
+- Menambahkan `loop`, workflow builder/reviewer langsung untuk rencana yang sudah disepakati dalam percakapan parent.
+- Mengganti nama workflow prototype cepat tanpa research dari `quick` menjadi `quicktype`.
+- Memperluas dokumentasi kemampuan dan kustomisasi dwibahasa, termasuk panduan Llama lokal.
+
+## 0.5.23 — Situs dokumentasi dan perbaikan workflow
+
+- Meluncurkan situs dokumentasi Selesai di [GitHub Pages](https://selesaiintech.github.io/selesai-docs/) dengan panduan kemampuan berbahasa Inggris dan Indonesia, pencarian lokal, navigasi aksesibel, serta validasi konten dan tautan.
+- Memperbaiki workflow agar membaca output review yang dikirim melalui Intercom.
+
+## 0.5.22 — Inline skill dan alur pertanyaan
+
+- Menambahkan pemilih inline skill, dukungan beberapa blok inline skill, dan pemulihan jawaban pertanyaan tersimpan.
+- Mengerjakan ulang wizard pertanyaan batch dan meningkatkan pelaporan throughput Powerline.
+
+## 0.5.21 — Pertanyaan batch dan subagent
+
+- Menambahkan formulir pertanyaan batch dan pengiriman otomatis prompt handoff.
+- Memperbarui ekstensi Pi Subagents bawaan ke versi 0.37.0.
+
+## 0.5.20 — Perbaikan Intercom di Windows
+
+- Memperbaiki resolusi `tsx` bawaan untuk Intercom di Windows.
+
+## 0.5.19 — Grilling design-tree batch
+
+- Menambahkan grilling design-tree batch ke workflow.
+
+## 0.5.18 — Transisi workflow andal
+
+- Menjadikan transisi fase workflow sebagai kelanjutan tersembunyi yang eksklusif agar fase berikutnya terantre dengan andal.
+
+## 0.5.17 — Penyederhanaan workflow
+
+- Menyederhanakan perilaku adapter workflow serta memperbarui dokumentasi dan tes workflow.
+
+## 0.5.16 — Pembaruan pengaturan default
+
+- Memperbarui pengaturan default bawaan.
+
+## 0.5.15 — Dukungan Llama lokal dan perombakan sistem model
+
+- Menambahkan dukungan model Llama lokal serta mendesain ulang konfigurasi model, provider, kredensial, dan runtime.
+
+## 0.5.14 — Panduan Powerline dan pembersihan proyek
+
+- Menambahkan panduan Powerline Footer serta memperbarui dokumentasi proyek, skill, dan metadata ekstensi bawaan.
+
+## 0.5.13 — Terminologi bersama dan penyempurnaan skill
+
+- Menambahkan referensi ubiquitous language proyek serta menyempurnakan perilaku Caveman, Ponytail, dan workflow.
+
+## 0.5.12 — Ringkasan hasil Grep.app
+
+- Menambahkan ringkasan hasil ter-render untuk pencarian Grep.app dan pengambilan file GitHub.
+
+## 0.5.11 — Ekstensi Grep.app dan workflow task
+
+- Menambahkan ekstensi pencarian kode Grep.app.
+- Meningkatkan perencanaan dan eksekusi workflow task.
+
+## 0.5.10 — Penyempurnaan metadata subagent
+
+- Menyempurnakan instruksi researcher subagent bawaan dan metadata ekstensi.
+
+## 0.5.9 — Kompatibilitas model Token-In
+
+- Menandai model Token-In tidak mendukung developer role.
+
+## 0.5.8 — Pembaruan default bawaan
+
+- Memperbarui default pengaturan bawaan.
+
+## 0.5.4 — Handoff hasil generate yang lebih aman
+
+- Menolak handoff hasil generate yang kosong.
+
+## 0.5.3 — Notifikasi pembaruan rilis
+
+- Menambahkan notifikasi untuk rilis npm baru.
+
+## 0.5.1 — Default auto-handoff
+
+- Menambahkan konfigurasi handoff otomatis awal ke pengaturan.
+
+## 0.5.0 — Handoff otomatis dan peningkatan subagent
+
+- Menambahkan handoff sesi otomatis, meningkatkan eksekusi subagent, dan memperluas pelaporan penggunaan sesi Powerline.
+
+## 0.4.0 — Workflow yang dapat dilanjutkan
+
+- Menambahkan mode workflow task dan quick.
+- Menambahkan run workflow yang dapat dilanjutkan serta menyederhanakan perilaku handoff sesi.
+
+## 0.3.10 — Sinkronisasi upstream
+
+- Menyinkronkan dengan Pi upstream versi 0.80.6.
+
+## 0.3.9 — Perbaikan workflow dan Caveman
+
+- Memperbaiki perilaku fallback artefak workflow dan penanganan mode Caveman.
+
+## 0.3.7 — Pemulihan gate workflow
+
+- Menjaga fase workflow tetap siap setelah semantic gate gagal.
+
+## 0.3.6 — Pembersihan manifest ekstensi
+
+- Menghapus export ekstensi `gitignore-guard` yang usang.
+
+## 0.3.5 — Rilis Selesai bertag awal
+
+- Menambahkan panduan setup pertama, dukungan shared-host extension, onboarding Token-In, Caveman, dan skill handoff.
+- Mengarahkan path konfigurasi ekstensi bawaan melalui resolver direktori Selesai.
 
 ## Entri mendatang
 

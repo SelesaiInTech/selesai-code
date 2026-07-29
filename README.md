@@ -56,15 +56,16 @@ Have the builder implement this plan, then review the result.
 
 ### Durable workflows
 
-Selesai includes a workflow engine with three modes:
+Selesai includes a workflow engine with four modes:
 
 | Mode | Flow | Best for |
 | --- | --- | --- |
 | `prototype` | grill → research → plan → reuse → handoff → build/review loop → audit | New prototypes that need discovery and external research |
-| `quick` | grill → plan → reuse → handoff → build/review loop → audit | Smaller prototypes with less ceremony |
+| `quicktype` | grill → plan → reuse → handoff → build/review loop → audit | Quicker prototype: same flow without research |
 | `task` | plan → reuse → handoff → build/review loop | Direct implementation work |
+| `loop` | build/review loop | Work with an already-agreed plan |
 
-Workflows persist their state and phase artifacts on disk, can be resumed explicitly, and require an explicit close step. Users start and resume them directly with `/workflow-prototype`, `/workflow-quick`, or `/workflow-task`; the agent cannot initiate a workflow.
+Workflows persist their state and phase artifacts on disk, can be resumed explicitly, and require an explicit close step. Users start and resume them directly with `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, or `/workflow-loop`; the agent cannot initiate a workflow.
 
 ### Web research
 
@@ -96,7 +97,7 @@ The bundled `pi-powerline-footer` improves the interactive display with:
 
 ### Coordination between sessions
 
-`pi-intercom` is an agent tool for local 1:1 session coordination, not a skill or part of the quick guide. Ask Selesai to use it when another local session should review an idea, receive progress, or answer a question. Agents can `send`, `ask`, `reply`, inspect pending messages, and share attachments; delegated agents can use the native supervisor channel to request decisions or report meaningful progress.
+`pi-intercom` is an agent tool for local 1:1 session coordination, not a skill or part of the quicktype guide. Ask Selesai to use it when another local session should review an idea, receive progress, or answer a question. Agents can `send`, `ask`, `reply`, inspect pending messages, and share attachments; delegated agents can use the native supervisor channel to request decisions or report meaningful progress.
 
 Give sessions clear names so humans and delegated agents can find the right conversation:
 

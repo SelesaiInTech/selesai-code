@@ -38,6 +38,9 @@ export default defineConfig({
         baseUrl: "https://github.com/SelesaiInTech/selesai-code/edit/main/doc-web/",
       },
       pagefind: true,
+      components: {
+        TableOfContents: "./src/components/FloatingTableOfContents.astro",
+      },
       head: [
         {
           tag: "meta",

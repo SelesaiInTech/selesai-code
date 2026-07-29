@@ -4,6 +4,7 @@ title: Rewind checkpoints
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `pi-rewind-hook` extension records exact file-state checkpoints and restores them during `/fork` and `/tree` navigation. It is not bundled in the default Selesai boot manifest and must be treated as an optional extension.
@@ -29,18 +30,8 @@ The `pi-rewind-hook` extension records exact file-state checkpoints and restores
 
 ## What you can configure
 
-Optional settings in `~/.selesai/agent/settings.json` under the `rewind` key:
+<ExtensionCustomization slug="pi-rewind-hook" locale="en" />
 
-| Setting | Type | Description |
-| --- | --- | --- |
-| `rewind.silentCheckpoints` | boolean | Hide footer/status checkpoint notifications. |
-| `rewind.retention.maxSnapshots` | number | Cap on unpinned unique snapshot commits kept reachable. |
-| `rewind.retention.maxAgeDays` | number | Age limit for unpinned snapshot commits. |
-| `rewind.retention.pinLabeledEntries` | boolean | Keep snapshots bound to labeled session-tree nodes exempt from pruning. |
-| `rewind.retention.scanMode` | `"ancestor-only"` or `"repo-sessions"` | Discovery mode for retention sweeps; default `ancestor-only`. |
-| `rewind.retention.startupBudgetMs` | number | Startup time budget for retention sweeps; if exceeded, the sweep is skipped. |
-
-If `rewind.retention` is omitted, exact history is kept indefinitely. This can grow git object storage without bound.
 
 ## What you can do
 

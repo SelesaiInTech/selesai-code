@@ -4,6 +4,7 @@ title: Powerline footer
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powerline-style status bar, a fixed-editor layout, a recurring guide tour, editor stash/history shortcuts, sticky bash mode, AI-generated working vibes, and Nerd Font detection.
@@ -31,21 +32,8 @@ The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powe
 
 ## What you can configure
 
-Configuration lives in `~/.selesai/agent/settings.json`.
+<ExtensionCustomization slug="pi-powerline-footer" locale="en" />
 
-| Setting | Description |
-| --- | --- |
-| `powerline.preset` | `default`, `minimal`, `compact`, `full`, `nerd`, `ascii`. |
-| `powerline.fixedEditor` | Enable or disable the fixed-editor cluster. |
-| `powerline.mouseScroll` | Use app-owned mouse scroll in fixed-editor mode. |
-| `powerline.customItems` | Promote any extension status key into a dedicated powerline item. |
-| `bashMode.toggleShortcut` | Default `ctrl+shift+b`. |
-| `bashMode.transcriptMaxLines` | Default `2000`. |
-| `bashMode.transcriptMaxBytes` | Default `524288`. |
-| `powerlineShortcuts.*` | Override shortcuts such as `stashHistory`, `copyEditor`, `cutEditor`, etc. |
-| `workingVibe` / `workingVibeMode` / `workingVibeModel` | Vibe theme, mode (`generate`/`file`), and model. |
-
-Presets are saved to settings when you change them with `/powerline <preset>`.
 
 ## What you can do
 

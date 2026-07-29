@@ -1,10 +1,10 @@
 ---
-import { capabilities, type Category } from "../data/capabilities.ts";
+import { capabilities, type Category, type Distribution } from "../data/capabilities.ts";
 
 export interface Props {
   category: Category;
   locale: "en" | "id";
-  distribution?: "bundled" | "optional";
+  distribution?: "bundled" | "optional" | "core";
 }
 
 const { category, locale, distribution = "bundled" } = Astro.props;
@@ -13,28 +13,32 @@ const items = capabilities.filter(
     capability.category === category && capability.distribution === distribution
 );
 
-const optionalLabel = locale === "en" ? "optional" : "opsional";
-const bundledLabel = locale === "en" ? "bundled" : "bundel";
+const statusLabels: Record<Distribution, string> = {
+  bundled: locale === "en" ? "bundled" : "bundel",
+  optional: locale === "en" ? "optional" : "opsional",
+  core: locale === "en" ? "core" : "inti",
+};
 ---
 
-<ul class="capability-list">
-  {items.map((capability) => {
-    const path = locale === "en" ? capability.guideRoute : `id/${capability.guideRoute}`;
-    const statusLabel = capability.distribution === "optional" ? optionalLabel : bundledLabel;
-    return (
-      <li>
-        <a href={`${import.meta.env.BASE_URL}${path}/`}>
-          <strong>
-            {capability[locale].displayName}
-            <span class="status-badge" data-distribution={capability.distribution}>{statusLabel}</span>
-          </strong>
-          <span>{capability[locale].benefit}</span>
-          <span class="arrow" aria-hidden="true">→</span>
-        </a>
-      </li>
-    );
-  })}
-</ul>
+{items.length > 0 && (
+  <ul class="capability-list">
+    {items.map((capability) => {
+      const path = locale === "en" ? capability.guideRoute : `id/${capability.guideRoute}`;
+      return (
+        <li>
+          <a href={`${import.meta.env.BASE_URL}${path}/`}>
+            <strong>
+              {capability[locale].displayName}
+              {capability.distribution !== "bundled" && <span class="status-badge" data-distribution={capability.distribution}>{statusLabels[capability.distribution]}</span>}
+            </strong>
+            <span>{capability[locale].benefit}</span>
+            <span class="arrow" aria-hidden="true">→</span>
+          </a>
+        </li>
+      );
+    })}
+  </ul>
+)}
 
 <style>
   .capability-list {
@@ -79,6 +83,9 @@ const bundledLabel = locale === "en" ? "bundled" : "bundel";
 
   .status-badge[data-distribution="optional"] {
     color: var(--selesai-status-warn);
+  }
+  .status-badge[data-distribution="core"] {
+    color: var(--sl-color-accent-high);
   }
 
   a > span:not(.arrow) {

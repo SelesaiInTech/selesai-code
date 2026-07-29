@@ -4,6 +4,7 @@ title: Salin turn
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
 Extension `copy-turn` memungkinkan Anda menyalin hasil user atau assistant dari branch sesi saat ini menggunakan hash singkat. Berguna untuk menggunakan kembali jawaban sebelumnya, output command, atau pesan assistant tanpa mengetik ulang.
@@ -29,8 +30,8 @@ Extension `copy-turn` memungkinkan Anda menyalin hasil user atau assistant dari 
 
 ## Yang dapat dikonfigurasi
 
-- Tidak ada konfigurasi yang tampak untuk user. Extension menggunakan prefix hash 6 karakter tetap dan membaca pesan dari branch saat ini.
-- Marker disingkirkan dari konteks model sehingga tidak bocor ke view agent.
+<ExtensionCustomization slug="copy-turn" locale="id" />
+
 
 ## Yang dapat dilakukan
 

@@ -4,6 +4,7 @@ title: Ponytail
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
 Extension `ponytail` menambahkan mode komunikasi terkompresi ke Selesai. Anda dapat beralih antara level kompresi `lite`, `full`, dan `ultra`, atau memanggil helper review khusus (`ponytail-review`, `ponytail-audit`, `ponytail-gain`, `ponytail-debt`, `ponytail-help`) melalui alias slash command.
@@ -31,14 +32,8 @@ Extension `ponytail` menambahkan mode komunikasi terkompresi ke Selesai. Anda da
 
 ## Yang dapat dikonfigurasi
 
-| Setting | Urutan resolusi | Nilai |
-| --- | --- | --- |
-| Default mode | env `PONYTAIL_DEFAULT_MODE` → `~/.config/ponytail/config.json` `defaultMode` → `full` | `off`, `lite`, `full`, `ultra`, `review` |
-| Mode saat ini | History sesi → command `/ponytail <mode>` | `off`, `lite`, `full`, `ultra` |
+<ExtensionCustomization slug="ponytail" locale="id" />
 
-Environment variable menggantikan file konfigurasi; file konfigurasi menggantikan default built-in. `review` adalah alias config-only yang diresolve ke `full` saat runtime.
-
-Gunakan `/ponytail default off`, `/ponytail default lite`, `/ponytail default full`, atau `/ponytail default ultra` untuk mengubah default yang dipersist. Default yang tersimpan masih dapat ditimpa oleh `PONYTAIL_DEFAULT_MODE`.
 
 ## Yang dapat dilakukan
 

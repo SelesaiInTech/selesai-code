@@ -4,6 +4,7 @@ title: Public code search
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `grep-app` extension searches public GitHub code through grep.app and fetches matching source files directly into the agent conversation.
@@ -29,7 +30,8 @@ The `grep-app` extension searches public GitHub code through grep.app and fetche
 
 ## What you can configure
 
-- No user-facing configuration. Search provider, fetch endpoint, and truncation limits are fixed in the extension source.
+<ExtensionCustomization slug="grep-app" locale="en" />
+
 
 ## What you can do
 

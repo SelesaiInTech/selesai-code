@@ -4,6 +4,7 @@ title: Inline skills
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `inline-skills` extension lets you invite installed skills directly inside a message by typing `#skill-name`, instead of starting a separate `/skill:<name>` command. It provides autocomplete suggestions and expands matched skills into the conversation context before the agent runs.
@@ -29,7 +30,8 @@ The `inline-skills` extension lets you invite installed skills directly inside a
 
 ## What you can configure
 
-There is no dedicated configuration file. Inline-skills behavior is governed by which skills are installed and the extension's own source logic.
+<ExtensionCustomization slug="inline-skills" locale="en" />
+
 
 ## What you can do
 

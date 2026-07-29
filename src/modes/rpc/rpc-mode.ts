@@ -36,7 +36,7 @@ import type {
 	RpcSessionState,
 	RpcSlashCommand,
 				PrototypePhase,
-				QuickPhase,
+				QuicktypePhase,
 } from "./rpc-types.ts";
 
 // Re-export types for consumers
@@ -48,7 +48,7 @@ export type {
 	RpcSessionState,
 	RpcSlashCommand,
 	PrototypePhase,
-	QuickPhase,
+	QuicktypePhase,
 	WorkflowState,
 } from "./rpc-types.ts";
 
@@ -473,12 +473,12 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					for (let i = entries.length - 1; i >= 0; i--) {
 						const e = entries[i] as { type: string; customType?: string; data?: unknown };
 						const customType = e.customType;
-						if (e.type === "custom" && (customType === "prototype-phase" || customType === "quick-phase") && e.data) {
+						if (e.type === "custom" && (customType === "prototype-phase" || customType === "quicktype-phase") && e.data) {
 							const d = e.data as { phase?: string; step?: number; done?: boolean };
 							if (d && typeof d.phase === "string" && typeof d.step === "number" && !d.done) {
 								state.workflow = {
-									mode: customType === "prototype-phase" ? "prototype" : "quick",
-									phase: d.phase as PrototypePhase | QuickPhase,
+									mode: customType === "prototype-phase" ? "prototype" : "quicktype",
+									phase: d.phase as PrototypePhase | QuicktypePhase,
 									step: d.step,
 									done: false,
 								};

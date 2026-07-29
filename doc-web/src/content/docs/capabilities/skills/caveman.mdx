@@ -4,6 +4,7 @@ title: Caveman
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `caveman` extension adds a terse communication mode to Selesai. When active, it appends caveman instructions to the agent system prompt so answers stay short, focused, and free of unnecessary prose.
@@ -30,17 +31,8 @@ The `caveman` extension adds a terse communication mode to Selesai. When active,
 
 ## What you can configure
 
-Caveman does not have its own configuration file. Behavior is controlled through the slash command and session state.
+<ExtensionCustomization slug="caveman" locale="en" />
 
-| Control | Effect |
-| --- | --- |
-| `/caveman on` or `/caveman enable` | Turn caveman mode on for the session. |
-| `/caveman off` or `/caveman disable` | Turn caveman mode off for the session. |
-| `/caveman status` | Show whether caveman mode is currently on or off. |
-| `/caveman` | Toggle the current mode. |
-| `stop caveman` or `normal mode` | Standalone natural-language phrase that disables caveman mode. |
-
-The default fallback state if no session history exists is **on** (`active = true`).
 
 ## What you can do
 

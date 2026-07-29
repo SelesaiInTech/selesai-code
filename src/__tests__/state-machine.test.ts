@@ -419,7 +419,7 @@ import { handoffValidator, loopCompleteValidator, planValidator, reviewValidator
 
 describe("WorkflowStateMachine semantic gates (Plan 4)", () => {
   // ponytail: a config with validators on the critical phases. Mirrors the
-  // real prototype/quick configs so the test exercises the real wiring shape.
+  // real prototype/quicktype configs so the test exercises the real wiring shape.
   const gatedConfig: WorkflowConfig = {
     ...baseConfig,
     artifactValidators: {

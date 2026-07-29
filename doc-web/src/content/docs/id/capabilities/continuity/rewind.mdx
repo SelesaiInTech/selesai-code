@@ -4,6 +4,7 @@ title: Checkpoint rewind
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
 Extension `pi-rewind-hook` merekam checkpoint state file yang tepat dan memulihkannya selama navigasi `/fork` dan `/tree`. Extension ini tidak dibundel dalam manifest boot Selesai default dan harus dianggap sebagai ekstensi opsional.
@@ -29,18 +30,8 @@ Extension `pi-rewind-hook` merekam checkpoint state file yang tepat dan memulihk
 
 ## Yang dapat dikonfigurasi
 
-Pengaturan opsional di `~/.selesai/agent/settings.json` di bawah key `rewind`:
+<ExtensionCustomization slug="pi-rewind-hook" locale="id" />
 
-| Setting | Tipe | Deskripsi |
-| --- | --- | --- |
-| `rewind.silentCheckpoints` | boolean | Sembunyikan notifikasi checkpoint di footer/status. |
-| `rewind.retention.maxSnapshots` | number | Batas jumlah snapshot unik yang tidak dipin yang tetap reachable. |
-| `rewind.retention.maxAgeDays` | number | Batas usia snapshot yang tidak dipin. |
-| `rewind.retention.pinLabeledEntries` | boolean | Pertahankan snapshot yang terikat ke node session-tree yang diberi label dari pruning. |
-| `rewind.retention.scanMode` | `"ancestor-only"` atau `"repo-sessions"` | Mode discovery untuk retention sweep; default `ancestor-only`. |
-| `rewind.retention.startupBudgetMs` | number | Budget waktu startup untuk retention sweep; jika dilewati, sweep dilewati. |
-
-Jika `rewind.retention` dihilangkan, riwayat tepat disimpan tanpa batas waktu. Ini dapat membesarkan penyimpanan objek git tanpa batas.
 
 ## Yang dapat dilakukan
 

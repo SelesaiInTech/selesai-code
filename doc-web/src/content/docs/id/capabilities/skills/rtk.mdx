@@ -4,6 +4,7 @@ title: Integrasi RTK
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
 Extension `rtk` menulis ulang tool call Bash yang kompatibel untuk menggunakan binary `rtk` eksternal. Ini mengurangi output command yang berisik dan menghemat token saat `rtk` terpasang, tanpa mengubah perilaku rewrite Selesai sendiri.
@@ -29,11 +30,8 @@ Extension `rtk` menulis ulang tool call Bash yang kompatibel untuk menggunakan b
 
 ## Yang dapat dikonfigurasi
 
-| Environment variable | Efek |
-| --- | --- |
-| `RTK_DISABLED=1` | Menonaktifkan extension sepenuhnya, bahkan saat `rtk` terpasang. |
+<ExtensionCustomization slug="rtk" locale="id" />
 
-Tidak ada file konfigurasi atau setting key khusus Selesai. Extension sengaja dibuat tipis; semua aturan rewrite berada di registry binary `rtk`.
 
 ## Yang dapat dilakukan
 

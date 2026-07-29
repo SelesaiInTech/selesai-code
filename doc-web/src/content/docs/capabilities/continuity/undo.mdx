@@ -4,6 +4,7 @@ title: Turn-level undo
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `undo` extension restores file changes from the most recent user turn. It tracks `edit` and `write` tool calls and can undo them one turn at a time, bringing the conversation back to the previous user message.
@@ -29,7 +30,8 @@ The `undo` extension restores file changes from the most recent user turn. It tr
 
 ## What you can configure
 
-- No user-facing configuration. The maximum old content retained for a `write` restore is 512 KiB.
+<ExtensionCustomization slug="undo" locale="en" />
+
 
 ## What you can do
 

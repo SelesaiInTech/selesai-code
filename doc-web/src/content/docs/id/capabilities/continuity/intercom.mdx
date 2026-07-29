@@ -4,6 +4,7 @@ title: Koordinasi sesi
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
 Extension `pi-intercom` menambahkan pesan 1:1 langsung antar sesi Selesai di mesin yang sama. Anda dapat mengirim konteks, mengajukan pertanyaan, atau mendelegasikan pekerjaan dari satu sesi bernama ke sesi lainnya tanpa meninggalkan terminal.
@@ -33,16 +34,8 @@ Extension `pi-intercom` menambahkan pesan 1:1 langsung antar sesi Selesai di mes
 
 ## Yang dapat dikonfigurasi
 
-Konfigurasi berada di `~/.selesai/agent/intercom/config.json`. Default:
+<ExtensionCustomization slug="pi-intercom" locale="id" />
 
-| Setting | Default | Deskripsi |
-| --- | --- | --- |
-| `brokerCommand` | `npx` | Command untuk memulai proses broker. |
-| `brokerArgs` | `["--no-install", "tsx"]` | Argumen yang dilewatkan sebelum script broker. |
-| `enabled` | `true` | Aktifkan atau nonaktifkan intercom untuk sesi ini. |
-| `replyHint` | `true` | Sertakan panggilan `intercom({ action: "reply", ... })` tepat di pesan masuk. |
-| `confirmSend` | `false` | Tampilkan dialog konfirmasi sebelum send non-reply dari sesi TUI. |
-| `status` | — | Sufiks status kustom opsional yang ditambahkan ke status lifecycle otomatis. |
 
 ## Yang dapat dilakukan
 

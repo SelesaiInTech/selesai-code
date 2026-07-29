@@ -4,9 +4,10 @@ title: Interactive questions
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-The `question` extension provides a terminal wizard for asking the user one or more typed questions. It supports single-select, multi-select, free-form text, and context/info-only questions, with keyboard navigation and filtering.
+The `question` extension provides a terminal wizard for asking the user one or more typed questions. It supports single-select, multi-select, and free-form text questions, with keyboard navigation and filtering.
 
 <ExtensionStatus
   distribution="bundled"
@@ -29,12 +30,13 @@ The `question` extension provides a terminal wizard for asking the user one or m
 
 ## What you can configure
 
-- No user-facing configuration. The question schema is fixed by the tool definition.
+<ExtensionCustomization slug="question" locale="en" />
+
 
 ## What you can do
 
 - Ask independent decisions that the user must make directly.
-- Present single-select, multi-select, text, or info-only questions.
+- Present single-select, multi-select, or free-form text questions.
 - Provide stable option `value`s separate from human-readable `label`s.
 
 ## Commands, tools, and shortcuts
@@ -65,7 +67,7 @@ question({
 })
 ```
 
-Supported question types: `select`, `multiselect`, `text`, `image`, `info`.
+Supported question types: `select`, `multiselect`, `text`.
 
 When reviewing, the user can move between questions with `Tab`/`Shift+Tab`, leave a text question blank to skip it, and press `Enter` on the review screen to submit the final answers.
 
@@ -73,7 +75,7 @@ When reviewing, the user can move between questions with `Tab`/`Shift+Tab`, leav
 
 - The tool only works in TUI mode. Invoking it from a non-interactive session throws an error.
 - Questions should be independent decisions that the user must make; the agent should inspect facts itself rather than asking the user for discoverable information.
-- `info` questions are context-only and do not require a response.
+
 - Blank text entries are recorded as `skipped`; the agent must handle skipped and unanswered statuses explicitly.
 
 <SourceEvidence slug="question" />

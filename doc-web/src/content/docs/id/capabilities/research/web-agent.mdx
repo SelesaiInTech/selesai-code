@@ -4,6 +4,7 @@ title: Riset web
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
 Extension `pi-web-agent` menambahkan satu tool riset, `web_explore`, yang mencari, mengambil, memberi peringkat sumber, dan menaikkan ke headless browser ketika halaman membutuhkannya.
@@ -20,7 +21,7 @@ Extension `pi-web-agent` menambahkan satu tool riset, `web_explore`, yang mencar
 - Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
 - Pencarian default menggunakan DuckDuckGo; tidak diperlukan kredensial untuk jalur default.
 - Setup Brave Search opsional: extension pendamping `web-agent-onboarding` dapat menyimpan Brave API key.
-- Eskalasi headless menggunakan Playwright Chromium; pasang Chrome/Chromium/Edge/Brave jika Anda ingin rendering halaman headless.
+- Eskalasi headless menggunakan provider `local-browser` yang dibundel. Pastikan browser berbasis Chromium (Chrome, Chromium, Edge, atau Brave) tersedia di sistem jika Anda ingin rendering halaman headless.
 
 ## Yang disiapkan
 
@@ -31,47 +32,8 @@ Extension `pi-web-agent` menambahkan satu tool riset, `web_explore`, yang mencar
 
 ## Yang dapat dikonfigurasi
 
-Gunakan `/web-agent` atau edit file config secara langsung. Konfigurasi dilapisi dari default → override global → override project.
+<ExtensionCustomization slug="pi-web-agent" locale="id" />
 
-### Mode presentation
-
-| Scope | Path |
-| --- | --- |
-| Default | compact, preview, verbose |
-| Global | `~/.selesai/agent/extensions/pi-web-agent/config.json` |
-| Project | `.selesai/extensions/pi-web-agent/config.json` |
-
-### Pengaturan backend
-
-| Setting | Pilihan | Default |
-| --- | --- | --- |
-| Search provider | `duckduckgo`, `searxng`, `brave` | `duckduckgo` |
-| Search fallback | `duckduckgo`, `off` | `off` |
-| Fetch provider | `http`, `firecrawl` | `http` |
-| Fetch fallback | `http`, `off` | `off` |
-| Headless provider | `playwright` | `playwright` |
-
-Secret dan nilai backend non-secret dibaca dari sumber berlapis:
-
-| Backend | Nilai | Sumber (prioritas tertinggi pertama) |
-| --- | --- | --- |
-| Brave Search | API key | `webAgent.braveApiKey` di `~/.selesai/agent/settings.json` (ditulis oleh `web-agent-onboarding`), lalu environment variable `PI_WEB_AGENT_BRAVE_API_KEY` |
-| SearXNG | Base URL | `backends.search.baseUrl` di config `pi-web-agent` (project atau global) |
-| Firecrawl | API key | `backends.fetch.apiKey` di config `pi-web-agent` (project atau global), lalu environment variable `PI_WEB_AGENT_FIRECRAWL_API_KEY` |
-| Firecrawl | Base URL | `backends.fetch.baseUrl` di config `pi-web-agent` (project atau global) |
-
-Jauhkan API key dari config project yang dibagikan bila memungkinkan. Gunakan `settings.json` untuk Brave (per-user) dan environment variables untuk CI atau key sekali pakai. Base URL SearXNG dan Firecrawl bersifat non-secret dan dapat disimpan di file config.
-
-### Action `/web-agent` yang berguna
-
-| Action | Deskripsi |
-| --- | --- |
-| `/web-agent` | Buka menu action. |
-| `/web-agent settings` | Edit pengaturan presentation dan backend. |
-| `/web-agent show` | Cetak path dan mode config yang efektif. |
-| `/web-agent doctor` | Periksa dependensi runtime dan deteksi browser. |
-| `/web-agent mode compact` | Set default mode presentation project. |
-| `/web-agent reset project` | Hapus override tingkat project. |
 
 ## Yang dapat dilakukan
 

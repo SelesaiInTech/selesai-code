@@ -4,6 +4,7 @@ title: Copy turn
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `copy-turn` extension lets you copy a user or assistant result from the current session branch using a short hash. It is useful when you want to reuse an earlier answer, a command output, or an assistant message without retyping it.
@@ -29,8 +30,8 @@ The `copy-turn` extension lets you copy a user or assistant result from the curr
 
 ## What you can configure
 
-- No user-facing configuration. The extension uses a fixed 6-character hash prefix and reads messages from the current branch.
-- Markers are stripped from the model context so they do not leak into the agent's view.
+<ExtensionCustomization slug="copy-turn" locale="en" />
+
 
 ## What you can do
 

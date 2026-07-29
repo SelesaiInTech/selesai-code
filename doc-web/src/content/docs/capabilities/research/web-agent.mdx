@@ -4,6 +4,7 @@ title: Web research
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `pi-web-agent` extension adds a single research tool, `web_explore`, that searches, fetches, ranks sources, and escalates to a headless browser when a page needs it.
@@ -20,7 +21,7 @@ The `pi-web-agent` extension adds a single research tool, `web_explore`, that se
 - This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
 - Default search uses DuckDuckGo; no credentials are required for the default path.
 - Optional Brave Search setup: the companion `web-agent-onboarding` extension can save a Brave API key.
-- Headless escalation uses Playwright Chromium; install Chrome/Chromium/Edge/Brave if you want headless page rendering.
+- Headless escalation uses the bundled `local-browser` provider. Make sure a Chromium-based browser (Chrome, Chromium, Edge, or Brave) is available on the system if you want headless page rendering.
 
 ## What it sets up
 
@@ -31,47 +32,8 @@ The `pi-web-agent` extension adds a single research tool, `web_explore`, that se
 
 ## What you can configure
 
-Use `/web-agent` or edit the config files directly. Config is layered from defaults → global project overrides.
+<ExtensionCustomization slug="pi-web-agent" locale="en" />
 
-### Presentation modes
-
-| Scope | Path |
-| --- | --- |
-| Default | compact, preview, verbose |
-| Global | `~/.selesai/agent/extensions/pi-web-agent/config.json` |
-| Project | `.selesai/extensions/pi-web-agent/config.json` |
-
-### Backend settings
-
-| Setting | Options | Default |
-| --- | --- | --- |
-| Search provider | `duckduckgo`, `searxng`, `brave` | `duckduckgo` |
-| Search fallback | `duckduckgo`, `off` | `off` |
-| Fetch provider | `http`, `firecrawl` | `http` |
-| Fetch fallback | `http`, `off` | `off` |
-| Headless provider | `playwright` | `playwright` |
-
-Secrets and non-secret backend values are read from layered sources:
-
-| Backend | Value | Source (highest priority first) |
-| --- | --- | --- |
-| Brave Search | API key | `webAgent.braveApiKey` in `~/.selesai/agent/settings.json` (written by `web-agent-onboarding`), then `PI_WEB_AGENT_BRAVE_API_KEY` environment variable |
-| SearXNG | Base URL | `backends.search.baseUrl` in `pi-web-agent` config (project or global) |
-| Firecrawl | API key | `backends.fetch.apiKey` in `pi-web-agent` config (project or global), then `PI_WEB_AGENT_FIRECRAWL_API_KEY` environment variable |
-| Firecrawl | Base URL | `backends.fetch.baseUrl` in `pi-web-agent` config (project or global) |
-
-Keep API keys out of shared project config whenever possible. Use `settings.json` for Brave (per-user) and environment variables for CI or throwaway keys. SearXNG and Firecrawl base URLs are non-secret and can live in config files.
-
-### Useful `/web-agent` actions
-
-| Action | Description |
-| --- | --- |
-| `/web-agent` | Open the action menu. |
-| `/web-agent settings` | Edit presentation and backend settings. |
-| `/web-agent show` | Print effective config paths and modes. |
-| `/web-agent doctor` | Check runtime dependencies and browser detection. |
-| `/web-agent mode compact` | Set the project default presentation mode. |
-| `/web-agent reset project` | Delete project-level overrides. |
 
 ## What you can do
 

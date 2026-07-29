@@ -41,6 +41,11 @@ export const navigation: SidebarConfig = [
   { label: "Why Selesai", translations: { id: "Mengapa Selesai" }, link: "/why-selesai/" },
   { label: "Capabilities", translations: { id: "Kemampuan" }, link: "/capabilities/" },
   {
+    label: "Customization",
+    translations: { id: "Kustomisasi" },
+    link: "/customization/",
+  },
+  {
     label: "Guides",
     translations: { id: "Panduan" },
     collapsed: false,

@@ -3,14 +3,123 @@ draft: false
 title: Changelog
 ---
 
-## 0.5.22 — Initial documentation site
+This history follows release tags reachable from the Selesai `main` branch. Tags from unrelated, unmerged Pi history are excluded.
 
-- Launched the Selesai documentation site at [GitHub Pages](https://selesaiintech.github.io/selesai-docs/).
-- Documented all 17 bundled user-facing capabilities in English and Indonesian.
-- Added evidence-backed comparison with the original Pi coding agent.
-- Included local Pagefind search, dark/light mode, accessible navigation, and a copyable install component.
-- Added content validation and built-link validation scripts.
-- Configured GitHub Actions Pages deployment.
+## 0.5.24 — Direct workflow loop and documentation refresh
+
+- Added `loop`, a direct builder/reviewer workflow for plans already agreed in the parent conversation.
+- Renamed the quicker, no-research prototype workflow from `quick` to `quicktype`.
+- Expanded bilingual capability and customization documentation, including local Llama guidance.
+
+## 0.5.23 — Documentation site and workflow fix
+
+- Launched the Selesai documentation site at [GitHub Pages](https://selesaiintech.github.io/selesai-docs/), with English and Indonesian capability guides, local search, accessible navigation, and content/link validation.
+- Fixed workflows so they read review output sent through Intercom.
+
+## 0.5.22 — Inline skills and question flow
+
+- Added an inline-skill picker, support for multiple inline skill blocks, and restored saved question answers.
+- Reworked the batched question wizard and improved Powerline throughput reporting.
+
+## 0.5.21 — Batched questions and subagents
+
+- Added batched question forms and automatic submission of handoff prompts.
+- Updated the bundled Pi Subagents extension to version 0.37.0.
+
+## 0.5.20 — Windows Intercom fix
+
+- Fixed bundled `tsx` resolution for Intercom on Windows.
+
+## 0.5.19 — Batch design-tree grilling
+
+- Added batched design-tree grilling to workflows.
+
+## 0.5.18 — Reliable workflow transitions
+
+- Made workflow phase transitions exclusive, hidden continuations so the next phase is queued reliably.
+
+## 0.5.17 — Workflow simplification
+
+- Simplified workflow adapter behavior and updated workflow documentation and tests.
+
+## 0.5.16 — Default settings refresh
+
+- Refreshed bundled default settings.
+
+## 0.5.15 — Local Llama support and model system overhaul
+
+- Added local Llama model support and redesigned model, provider, credential, and runtime configuration.
+
+## 0.5.14 — Powerline guidance and project cleanup
+
+- Added Powerline Footer guidance and refreshed project documentation, skills, and bundled extension metadata.
+
+## 0.5.13 — Shared terminology and skill refinements
+
+- Added the project's ubiquitous-language reference and refined Caveman, Ponytail, and workflow behavior.
+
+## 0.5.12 — Grep.app result summaries
+
+- Added concise rendered summaries for Grep.app searches and GitHub file fetches.
+
+## 0.5.11 — Grep.app extension and task workflows
+
+- Added the Grep.app code-search extension.
+- Improved task-workflow planning and execution.
+
+## 0.5.10 — Subagent metadata refinement
+
+- Refined bundled subagent researcher instructions and extension metadata.
+
+## 0.5.9 — Token-In model compatibility
+
+- Marked Token-In models as not supporting the developer role.
+
+## 0.5.8 — Bundled defaults update
+
+- Updated bundled settings defaults.
+
+## 0.5.4 — Safer generated handoffs
+
+- Rejected empty generated handoffs.
+
+## 0.5.3 — Release update notices
+
+- Added notifications for new npm releases.
+
+## 0.5.1 — Auto-handoff defaults
+
+- Seeded the automatic-handoff configuration in settings.
+
+## 0.5.0 — Automatic handoff and subagent improvements
+
+- Added automatic session handoff, improved subagent execution, and expanded Powerline session-usage reporting.
+
+## 0.4.0 — Resumable workflows
+
+- Added task and quick workflow modes.
+- Added resumable workflow runs and simplified session handoff behavior.
+
+## 0.3.10 — Upstream sync
+
+- Synced with upstream Pi version 0.80.6.
+
+## 0.3.9 — Workflow and Caveman fixes
+
+- Fixed workflow artifact fallback behavior and Caveman mode handling.
+
+## 0.3.7 — Workflow gate recovery
+
+- Kept workflow phases armed after a failed semantic gate.
+
+## 0.3.6 — Extension manifest cleanup
+
+- Removed a stale `gitignore-guard` extension export.
+
+## 0.3.5 — Initial tagged Selesai release
+
+- Added first-time setup guidance, shared-host extension support, Token-In onboarding, Caveman, and handoff skills.
+- Routed bundled extension configuration paths through Selesai directory resolvers.
 
 ## Future entries
 

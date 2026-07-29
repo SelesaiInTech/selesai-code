@@ -1,0 +1,91 @@
+---
+import customization from "../data/extension-customization.json";
+import { capabilities, categories, type Distribution } from "../data/capabilities.ts";
+
+export interface Props { locale: "en" | "id"; }
+
+const { locale } = Astro.props;
+
+const labels = {
+  en: {
+    intro: "Every shipped, optional, and core extension is listed below with its primary configuration location and a link to its guide.",
+    bundled: "Bundled extensions", optional: "Optional extensions", core: "Core built-in extensions",
+    primaryConfig: "Primary configuration", guide: "Guide", noConfig: "No user configuration",
+    scopeBundled: "Loaded automatically from the bundled-extension manifest.",
+    scopeOptional: "Not loaded automatically; install or enable it separately.",
+    scopeCore: "Shipped as part of the Selesai core runtime; not in the extension manifest.",
+    name: "Name", category: "Category",
+  },
+  id: {
+    intro: "Setiap ekstensi yang dikirim, opsional, dan inti tercantum di bawah dengan lokasi konfigurasi utamanya dan tautan ke panduan.",
+    bundled: "Ekstensi bundel", optional: "Ekstensi opsional", core: "Ekstensi built-in inti",
+    primaryConfig: "Konfigurasi utama", guide: "Panduan", noConfig: "Tidak ada konfigurasi user",
+    scopeBundled: "Dimuat otomatis dari manifest ekstensi bundel.",
+    scopeOptional: "Tidak dimuat otomatis; pasang atau aktifkan secara terpisah.",
+    scopeCore: "Dikirim sebagai bagian dari runtime inti Selesai; tidak ada di manifest ekstensi.",
+    name: "Nama", category: "Kategori",
+  },
+};
+const t = labels[locale];
+
+const byDistribution = capabilities.reduce(
+  (acc, cap) => { acc[cap.distribution].push(cap); return acc; },
+  { bundled: [] as typeof capabilities, optional: [] as typeof capabilities, core: [] as typeof capabilities }
+);
+
+const distributionSections = [
+  { key: "bundled" as Distribution, title: t.bundled, description: t.scopeBundled },
+  { key: "optional" as Distribution, title: t.optional, description: t.scopeOptional },
+  { key: "core" as Distribution, title: t.core, description: t.scopeCore },
+];
+---
+
+<p>{t.intro}</p>
+
+{distributionSections.map((section) => {
+  const items = byDistribution[section.key];
+  if (items.length === 0) return null;
+  return (
+    <section class="customization-index-section">
+      <h2>{section.title}</h2>
+      <p>{section.description}</p>
+      <div class="customization-table-wrapper">
+        <table class="customization-table customization-index-table">
+          <thead>
+            <tr>
+              <th>{t.name}</th>
+              <th>{t.category}</th>
+              <th>{t.primaryConfig}</th>
+              <th>{t.guide}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((cap) => (
+              <tr>
+                <td><strong>{cap[locale].displayName}</strong></td>
+                <td>{categories.find((c) => c.id === cap.category)?.[locale === "en" ? "en" : "indonesian"] ?? cap.category}</td>
+                <td><code>{(() => {
+                  const record = customization.catalog.find((r: any) => r.slug === cap.slug);
+                  if (!record) return "—";
+                  if (record.noConfig) return t.noConfig;
+                  const scope = record.scopes[0];
+                  return scope ? scope.path : (record.settings[0]?.persistence ?? "—");
+                })()}</code></td>
+                <td><a href={`${import.meta.env.BASE_URL}${locale === "en" ? cap.guideRoute : `id/${cap.guideRoute}`}/`}>{locale === "en" ? "Open guide" : "Buka panduan"}</a></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+})}
+
+<style>
+  .customization-index-section { margin: 2rem 0; }
+  .customization-index-section h2 { margin-bottom: 0.5rem; }
+  .customization-table-wrapper { overflow-x: auto; }
+  .customization-table { width: 100%; border-collapse: collapse; font-size: var(--sl-text-sm); }
+  .customization-table th, .customization-table td { padding: 0.65rem 0.8rem !important; border: 1px solid var(--selesai-border); text-align: left; vertical-align: top; }
+  .customization-table th { background: var(--selesai-surface-raised); font-weight: 600; }
+</style>

@@ -1,0 +1,288 @@
+---
+import customization from "../data/extension-customization.json";
+import { capabilities } from "../data/capabilities.ts";
+
+export interface Props {
+  slug: string;
+  locale: "en" | "id";
+}
+
+const { slug, locale } = Astro.props as Props;
+const record = customization.catalog.find((r: any) => r.slug === slug);
+const cap = capabilities.find((c) => c.slug === slug);
+
+type LocalizedString = { en: string; id: string };
+type Scope = { label: LocalizedString; path: string; precedence: LocalizedString };
+type Setting = {
+  key: string;
+  type: string;
+  default?: string;
+  allowedValues?: string;
+  description: LocalizedString;
+  persistence: string;
+  sensitive?: boolean;
+};
+type EnvVar = { key: string; description: LocalizedString; sensitive?: boolean; allowedValues?: string };
+type Control = { name: string; description: LocalizedString };
+
+const typedRecord: {
+  overview?: LocalizedString;
+  scopes: Scope[];
+  settings: Setting[];
+  envVars: EnvVar[];
+  controls: Control[];
+  noConfig?: boolean;
+  sourcePaths: string[];
+} | undefined = record as any;
+
+const labels = {
+  en: {
+    noConfig: "No user configuration",
+    noConfigDesc: "This capability does not expose user-editable settings. Its behavior is controlled by the commands and runtime rules documented below.",
+    where: "Configuration locations and precedence",
+    settings: "Settings",
+    env: "Environment variables",
+    controls: "Command, tool, and shortcut controls",
+    key: "Key / path",
+    type: "Type",
+    default: "Default",
+    allowed: "Allowed values",
+    persistence: "Persistence",
+    description: "Description",
+    settingDetails: "Type, default, and values",
+    source: "Source evidence",
+    sensitive: "Sensitive value",
+  },
+  id: {
+    noConfig: "Tidak ada konfigurasi user",
+    noConfigDesc: "Kemampuan ini tidak mengekspos pengaturan yang dapat diedit user. Perilakunya dikontrol oleh command dan aturan runtime yang didokumentasikan di bawah.",
+    where: "Lokasi dan preseden konfigurasi",
+    settings: "Pengaturan",
+    env: "Variabel lingkungan",
+    controls: "Kontrol command, tool, dan shortcut",
+    key: "Kunci / path",
+    type: "Tipe",
+    default: "Default",
+    allowed: "Nilai yang diizinkan",
+    persistence: "Persistensi",
+    description: "Deskripsi",
+    settingDetails: "Tipe, default, dan nilai",
+    source: "Bukti source",
+    sensitive: "Nilai sensitif",
+  },
+};
+const t = labels[locale];
+
+function localized(text?: LocalizedString): string {
+  return text ? text[locale] : "";
+}
+---
+
+{!typedRecord && (
+  <div class="extension-customization extension-customization--missing" role="note">
+    <p>Customization catalog missing for <code>{slug}</code></p>
+  </div>
+)}
+
+{typedRecord && (
+  <div class="extension-customization">
+    <p>{localized(typedRecord.overview)}</p>
+
+    {typedRecord.noConfig ? (
+      <div class="callout" role="note">
+        <strong>{t.noConfig}</strong>
+        <p>{t.noConfigDesc}</p>
+      </div>
+    ) : typedRecord.scopes.length > 0 && (
+      <>
+        <h3>{t.where}</h3>
+        <ol class="config-scope-list">
+          {typedRecord.scopes.map((scope) => (
+            <li>
+              <strong>{localized(scope.label)}</strong>
+              <br />
+              <code>{scope.path}</code>
+              <br />
+              <span class="config-precedence">{localized(scope.precedence)}</span>
+            </li>
+          ))}
+        </ol>
+      </>
+    )}
+
+    {!typedRecord.noConfig && typedRecord.settings.length > 0 && (
+      <>
+        <h3>{t.settings}</h3>
+        <div class="customization-table-wrapper">
+          <table class="customization-table customization-table--settings">
+            <thead>
+              <tr>
+                <th>{t.key}</th>
+                <th>{t.settingDetails}</th>
+                <th>{t.description}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {typedRecord.settings.map((setting) => (
+                <tr>
+                  <td><code>{setting.key}</code>{setting.sensitive ? <span class="sensitive-tag" title={t.sensitive}>🔒</span> : null}</td>
+                  <td>
+                    <strong>{setting.type}</strong>
+                    <br />
+                    <span>{t.default}: {setting.default ?? "—"}</span>
+                    {setting.allowedValues && <><br /><span>{t.allowed}: {setting.allowedValues}</span></>}
+                  </td>
+                  <td>{localized(setting.description)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    )}
+
+    {!typedRecord.noConfig && typedRecord.envVars.length > 0 && (
+      <>
+        <h3>{t.env}</h3>
+        <div class="customization-table-wrapper">
+          <table class="customization-table">
+            <thead>
+              <tr>
+                <th>{t.key}</th>
+                {typedRecord.envVars.some((e) => e.allowedValues) && <th>{t.allowed}</th>}
+                <th>{t.description}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {typedRecord.envVars.map((env) => (
+                <tr>
+                  <td><code>{env.key}</code>{env.sensitive ? <span class="sensitive-tag" title={t.sensitive}>🔒</span> : null}</td>
+                  {typedRecord!.envVars.some((e) => e.allowedValues) && <td>{env.allowedValues ?? "—"}</td>}
+                  <td>{localized(env.description)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    )}
+
+    {typedRecord.controls.length > 0 && (
+      <>
+        <h3>{t.controls}</h3>
+        <div class="customization-table-wrapper">
+          <table class="customization-table">
+            <thead>
+              <tr>
+                <th>{t.key}</th>
+                <th>{t.description}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {typedRecord.controls.map((control) => (
+                <tr>
+                  <td><code>{control.name}</code></td>
+                  <td>{localized(control.description)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    )}
+
+    {typedRecord.sourcePaths.length > 0 && (
+      <>
+        <h3>{t.source}</h3>
+        <ul class="source-path-list">
+          {typedRecord.sourcePaths.map((p) => {
+            const link = cap?.sourceLinks.find((l) => l.url.endsWith(`/${p}`) || l.url.includes(p));
+            return (
+              <li>
+                <code>{p}</code>
+                {link && (
+                  <a href={link.url} target="_blank" rel="noopener noreferrer">
+                    {link.text}
+                  </a>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </>
+    )}
+  </div>
+)}
+
+<style>
+  .extension-customization {
+    margin: 1rem 0 2rem;
+  }
+  .extension-customization--missing {
+    padding: 1rem;
+    border: 1px solid var(--selesai-status-warn);
+    border-radius: 0.4rem;
+  }
+  .callout {
+    padding: 0.9rem 1rem;
+    border-radius: 0.4rem;
+    border: 1px solid var(--selesai-border);
+    background: var(--selesai-surface-raised);
+    margin: 1rem 0;
+  }
+  .callout p {
+    margin: 0.4rem 0 0;
+  }
+  .config-scope-list {
+    margin: 0.75rem 0 1.25rem;
+    padding-left: 1.25rem;
+  }
+  .config-scope-list li {
+    margin: 0.5rem 0;
+  }
+  .config-precedence {
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-sm);
+  }
+  .customization-table-wrapper {
+    overflow-x: auto;
+    margin: 0.5rem 0 1.5rem;
+  }
+  .customization-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--sl-text-sm);
+  }
+  .customization-table--settings { table-layout: fixed; }
+  .customization-table--settings :is(th, td):nth-child(1) { width: 27%; }
+  .customization-table--settings :is(th, td):nth-child(2) { width: 29%; }
+  .customization-table--settings :is(th, td):nth-child(3) { width: 44%; }
+  .customization-table--settings code { white-space: normal; overflow-wrap: anywhere; }
+  .customization-table th,
+  .customization-table td {
+    /* Override Starlight's edge-cell reset: reference tables need a visible gutter. */
+    padding: 0.65rem 0.8rem !important;
+    border: 1px solid var(--selesai-border);
+    text-align: left;
+    vertical-align: top;
+  }
+  .customization-table th {
+    background: var(--selesai-surface-raised);
+    font-weight: 600;
+  }
+  .sensitive-tag {
+    margin-left: 0.25rem;
+    font-size: var(--sl-text-xs);
+  }
+  .source-path-list {
+    margin: 0.5rem 0 0;
+    padding-left: 1.25rem;
+  }
+  .source-path-list li {
+    margin: 0.25rem 0;
+  }
+  .source-path-list a {
+    margin-left: 0.5rem;
+    font-size: var(--sl-text-sm);
+  }
+</style>

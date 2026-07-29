@@ -1,0 +1,56 @@
+---
+draft: false
+title: llama.cpp model manager
+---
+
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+The llama.cpp extension is a hidden core extension that lets you manage local llama.cpp router models from the TUI. It is not listed in the bundled-extension manifest, but it is registered at boot as a built-in extension.
+
+<ExtensionStatus
+  distribution="core"
+  runtimeSurface="command"
+  locale="en"
+/>
+
+## Setup and prerequisites
+
+- Available only in interactive TUI mode.
+- Requires a running llama.cpp-compatible server.
+- Configure the server URL with `/login llama.cpp` before using `/llama`.
+- Hugging Face search and downloads need `HF_TOKEN` for gated models.
+
+## What it sets up
+
+- Registers the `/llama` slash command and the `llama.cpp` provider.
+- Reads provider auth from the model registry.
+- Fails gracefully when the server is unreachable, offering retry or close.
+
+## What you can configure
+
+<ExtensionCustomization slug="llama" locale="en" />
+
+
+## What you can do
+
+- List loaded, sleeping, and unloaded models on the configured server.
+- Load or unload models.
+- Download new models from Hugging Face, including gated models with `HF_TOKEN`.
+- Select quantization when a model offers multiple options.
+
+## Commands, tools, and shortcuts
+
+- `/login llama.cpp` — set the server base URL and optional API key.
+- `/llama` — open the model-management TUI. Not available outside interactive mode.
+- Provider auth is the primary configuration surface. `LLAMA_BASE_URL` overrides the stored base URL at runtime.
+
+## Limits and safety
+
+- Only interactive sessions can open `/llama`.
+- Downloading gated models requires accepting access terms at Hugging Face and a valid `HF_TOKEN` on the server.
+- Loading a model may unload other models depending on server capacity.
+- Local-server failures are reported as warnings, not crashes.
+
+<SourceEvidence slug="llama" />

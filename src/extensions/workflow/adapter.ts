@@ -122,7 +122,7 @@ interface WorkflowController {
 
 const WORKFLOW_ARTIFACT_TOOL = "write_workflow_artifact";
 const WORKFLOW_CONTROL_MESSAGE = "selesai-workflow-control";
-// ponytail: shared across all module copies so prototype + quick registration
+// ponytail: shared across all module copies so prototype + quicktype registration
 // can race. Module-level state alone is not enough when the loader runs each
 // extension in its own module record.
 const WORKFLOW_GLOBAL = Symbol.for("selesai.workflow.registry.v1");
@@ -299,7 +299,7 @@ async function resumeController(
       }
       const ls = controller.loopState;
       continueAgent(pi, ctx, ls.stage === "reviewing"
-        ? `Resume the loop at review round ${ls.reviewRound + 1}: call the subagent tool now with { agent: "commentator", task: "..." } to review the builder's uncommitted diff against ${sm.snapshot.artifactDir}/plan.md. End the review with WORKFLOW_REVIEW_STATUS: clean or WORKFLOW_REVIEW_STATUS: blocking.`
+        ? `Resume the loop at review round ${ls.reviewRound + 1}: call the subagent tool now with { agent: "commentator", task: "..." } to review the builder's uncommitted diff against the original goal and parent conversation context. End the review with WORKFLOW_REVIEW_STATUS: clean or WORKFLOW_REVIEW_STATUS: blocking.`
         : `Resume the loop at review round ${ls.reviewRound}: call the subagent tool now with { agent: "builder", task: "..." } to address the feedback in ${sm.snapshot.artifactDir}/${ls.reviewPath ?? "loop-review-<round>.md"}.`);
     } else {
       applyControllerEffect(controller, ctx, current);
@@ -582,7 +582,7 @@ function controllerForMode(pi: ExtensionAPI, mode: string): WorkflowController |
 
 function unknownMode(mode: string) {
   return {
-    content: [{ type: "text" as const, text: `Unknown workflow mode: ${mode}. Use an installed mode (prototype, quick, or task).` }],
+    content: [{ type: "text" as const, text: `Unknown workflow mode: ${mode}. Use an installed mode.` }],
     details: { rejected: true, mode },
   };
 }
@@ -643,7 +643,7 @@ function registerSharedWorkflowTools(pi: ExtensionAPI): void {
     label: "End Workflow",
     description: "Close a terminal-ready durable workflow. Select its mode.",
     parameters: Type.Object({
-      mode: Type.String({ description: "Workflow mode: prototype, quick, task, or another installed mode." }),
+      mode: Type.String({ description: "Workflow mode: prototype, quicktype, task, or another installed mode." }),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const controller = controllerForMode(pi, params.mode);

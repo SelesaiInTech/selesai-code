@@ -4,6 +4,7 @@ title: Undo per turn
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
 Extension `undo` mengembalikan perubahan file dari user turn terbaru. Ia melacak tool call `edit` dan `write` serta dapat membatalkannya satu turn demi satu turn, mengembalikan percakapan ke pesan user sebelumnya.
@@ -29,7 +30,8 @@ Extension `undo` mengembalikan perubahan file dari user turn terbaru. Ia melacak
 
 ## Yang dapat dikonfigurasi
 
-- Tidak ada konfigurasi yang tampak untuk user. Konten lama maksimum yang disimpan untuk restore `write` adalah 512 KiB.
+<ExtensionCustomization slug="undo" locale="id" />
+
 
 ## Yang dapat dilakukan
 

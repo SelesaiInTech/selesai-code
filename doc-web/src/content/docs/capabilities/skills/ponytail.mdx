@@ -4,6 +4,7 @@ title: Ponytail
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
 The `ponytail` extension adds compressed communication modes to Selesai. You can switch between `lite`, `full`, and `ultra` compression levels, or call dedicated review helpers (`ponytail-review`, `ponytail-audit`, `ponytail-gain`, `ponytail-debt`, `ponytail-help`) through slash-command aliases.
@@ -31,14 +32,8 @@ The `ponytail` extension adds compressed communication modes to Selesai. You can
 
 ## What you can configure
 
-| Setting | Resolution order | Values |
-| --- | --- | --- |
-| Default mode | `PONYTAIL_DEFAULT_MODE` env → `~/.config/ponytail/config.json` `defaultMode` → `full` | `off`, `lite`, `full`, `ultra`, `review` |
-| Current mode | Session history → `/ponytail <mode>` command | `off`, `lite`, `full`, `ultra` |
+<ExtensionCustomization slug="ponytail" locale="en" />
 
-The environment variable overrides the config file; the config file overrides the built-in default. `review` is a config-only alias that resolves to `full` at runtime.
-
-Use `/ponytail default off`, `/ponytail default lite`, `/ponytail default full`, or `/ponytail default ultra` to change the persisted default. A saved default can still be overridden by `PONYTAIL_DEFAULT_MODE`.
 
 ## What you can do
 

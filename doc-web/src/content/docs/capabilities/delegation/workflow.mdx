@@ -4,9 +4,10 @@ title: Durable workflows
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-The `workflow` extension provides durable, resumable project workflows. Three modes are bundled: `prototype`, `quick`, and `task`. Each mode guides an implementation from requirements through review, with phase artifacts stored on disk so you can pause and resume work.
+The `workflow` extension provides durable, resumable project workflows. Four modes are bundled: `prototype`, `quicktype`, `task`, and `loop`. The direct `loop` mode is for work already planned in the parent conversation; it runs only builder/reviewer rounds.
 
 <ExtensionStatus
   distribution="bundled"
@@ -24,16 +25,15 @@ The `workflow` extension provides durable, resumable project workflows. Three mo
 
 ## What it sets up
 
-- Registers one slash command per mode: `/workflow-prototype`, `/workflow-quick`, `/workflow-task`.
+- Registers one slash command per mode: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, `/workflow-loop`.
 - Registers the shared `write_workflow_artifact` tool and the `end_workflow` tool.
 - Maintains a `workflow.json` run file inside each run's artifact directory so the run can be resumed later.
-- Reuses a global in-process registry so the three modes do not conflict when loaded together.
+- Reuses a global in-process registry so the four modes do not conflict when loaded together.
 
 ## What you can configure
 
-- No dedicated user configuration file for the workflow engine itself.
-- Phase prompts and validators are fixed per mode in the mode source files.
-- Indirect configuration via `subagents` settings affects child agent behavior inside workflows.
+<ExtensionCustomization slug="workflow" locale="en" />
+
 
 ## What you can do
 
@@ -47,33 +47,35 @@ The `workflow` extension provides durable, resumable project workflows. Three mo
 
 - Resume a previous run: `/workflow-task resume` lists resumable runs, or `/workflow-task resume <run-id>` resumes a specific one.
 - Continue an active run: `/workflow-task` (no arguments) lets you continue at the current phase.
-- End a terminal-ready run by calling `end_workflow({ mode: "task" })` (or `prototype` / `quick`).
+- End a terminal-ready run by calling `end_workflow({ mode: "task" })` (or `prototype` / `quicktype` / `loop`).
 
 ### Mode phases
 
 | Mode | Phases |
 | --- | --- |
 | `task` | plan → reuse → handoff → loop |
-| `quick` | grilling → plan → reuse → handoff → loop → audit |
+| `quicktype` | grilling → plan → reuse → handoff → loop → audit |
 | `prototype` | grilling → research → plan → reuse → handoff → loop → audit |
+| `loop` | loop (direct build ↔ review) |
 
 - `grilling` asks clarification questions until the frontier of decisions is empty.
 - `research` gathers external evidence when needed.
 - `plan` produces a build plan that must end with `WORKFLOW_PLAN_STATUS: ready`.
 - `reuse` explores the existing codebase (skipped automatically if there is no git history).
 - `handoff` compiles a self-contained context document that must end with `WORKFLOW_HANDOFF_STATUS: ready`.
-- `loop` runs builder/commentator review cycles until the commentator ends with `WORKFLOW_REVIEW_STATUS: clean` or the max iteration cap is reached.
-- `audit` (quick/prototype only) performs a final review of uncommitted changes.
+- `loop` runs builder/commentator review cycles until the commentator ends with `WORKFLOW_REVIEW_STATUS: clean` or the max iteration cap is reached. In direct `loop` mode, parent must synthesize the agreed conversation plan, constraints, and acceptance criteria into each fresh subagent prompt; no plan or handoff artifact is created.
+- `audit` (quicktype/prototype only) performs a final review of uncommitted changes.
 
 ## Commands, tools, and shortcuts
 
 | Command / tool | Description |
 | --- | --- |
 | `/workflow-prototype [<goal>\|resume]` | Run the full prototype workflow. |
-| `/workflow-quick [<goal>\|resume]` | Run the quick workflow without a research phase. |
+| `/workflow-quicktype [<goal>\|resume]` | Run the quicker prototype workflow without a research phase. |
 | `/workflow-task [<goal>\|resume]` | Run the task workflow with plan/reuse/handoff/loop. |
+| `/workflow-loop [<goal>\|resume]` | Run direct builder/reviewer rounds for an already-agreed plan. |
 | `write_workflow_artifact({ content })` | Write the current phase artifact; the engine advances to the next phase if validators pass. |
-| `end_workflow({ mode: "task"\|"quick"\|"prototype" })` | Explicitly close a terminal-ready workflow. |
+| `end_workflow({ mode: "task"\|"quicktype"\|"prototype"\|"loop" })` | Explicitly close a terminal-ready workflow. |
 
 ## Limits and safety
 

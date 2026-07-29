@@ -1,6 +1,6 @@
 ---
 export interface Props {
-  distribution: "bundled" | "optional";
+  distribution: "bundled" | "optional" | "core";
   manifestEntry?: string;
   runtimeSurface?: "automatic" | "command" | "tool" | "skill-backed" | "mixed";
   locale: "en" | "id";
@@ -8,14 +8,16 @@ export interface Props {
 
 const { distribution, manifestEntry, runtimeSurface, locale } = Astro.props;
 
-const isBundled = distribution === "bundled";
+const kind = distribution === "optional" ? "optional" : distribution === "core" ? "core" : "bundled";
 
 const labels = {
   en: {
     bundled: "Bundled with Selesai",
     optional: "Optional extension",
+    core: "Core built-in",
     bundledDesc: "Loaded automatically with Selesai; no per-extension npm install is required.",
     optionalDesc: "Not loaded automatically. Install or enable it separately before use.",
+    coreDesc: "Shipped as part of the Selesai core runtime; not listed in the extension manifest.",
     manifest: "Manifest entry",
     runtime: "Runtime surface",
     surfaces: {
@@ -29,8 +31,10 @@ const labels = {
   id: {
     bundled: "Dibundel bersama Selesai",
     optional: "Ekstensi opsional",
+    core: "Built-in inti",
     bundledDesc: "Dimuat otomatis bersama Selesai; tidak diperlukan npm install per ekstensi.",
     optionalDesc: "Tidak dimuat otomatis. Pasang atau aktifkan secara terpisah sebelum digunakan.",
+    coreDesc: "Dikirim sebagai bagian dari runtime inti Selesai; tidak tercantum di manifest ekstensi.",
     manifest: "Entri manifest",
     runtime: "Permukaan runtime",
     surfaces: {
@@ -44,18 +48,20 @@ const labels = {
 };
 
 const t = labels[locale];
+const title = kind === "bundled" ? t.bundled : kind === "optional" ? t.optional : t.core;
+const desc = kind === "bundled" ? t.bundledDesc : kind === "optional" ? t.optionalDesc : t.coreDesc;
 ---
 
 <div
-  class={`extension-status ${isBundled ? "is-bundled" : "is-optional"}`}
+  class={`extension-status is-${kind}`}
   role="note"
-  aria-label={isBundled ? t.bundled : t.optional}
+  aria-label={title}
 >
   <p class="extension-status__badge">
     <span class="extension-status__dot" aria-hidden="true"></span>
-    <strong>{isBundled ? t.bundled : t.optional}</strong>
+    <strong>{title}</strong>
   </p>
-  <p class="extension-status__desc">{isBundled ? t.bundledDesc : t.optionalDesc}</p>
+  <p class="extension-status__desc">{desc}</p>
   {
     (manifestEntry || runtimeSurface) && (
       <dl class="extension-status__meta">
@@ -92,6 +98,9 @@ const t = labels[locale];
   .extension-status.is-optional {
     border-inline-start: 4px solid var(--selesai-status-warn);
   }
+  .extension-status.is-core {
+    border-inline-start: 4px solid var(--sl-color-accent-high);
+  }
   .extension-status__badge {
     display: flex;
     align-items: center;
@@ -108,6 +117,9 @@ const t = labels[locale];
   }
   .extension-status.is-optional .extension-status__dot {
     background: var(--selesai-status-warn);
+  }
+  .extension-status.is-core .extension-status__dot {
+    background: var(--sl-color-accent-high);
   }
   .extension-status__desc {
     margin: 0;

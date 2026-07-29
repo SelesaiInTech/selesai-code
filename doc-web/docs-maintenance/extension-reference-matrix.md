@@ -152,7 +152,7 @@ extension documentation accurate. It is not published as user-facing content.
 
 - **Startup behavior**: Loaded automatically at boot via `./workflow`; state-machine-driven project workflows.
 - **Prerequisites**: Bundled; model API key.
-- **Config / settings / env**: Optional `~/.selesai/agent/extensions/workflow/config.json` and per-project `.selesai/extensions/workflow/config.json`.
+- **Config / settings / env**: None. Workflow modes, phases, prompts, validators, loop caps, artifact base path, and mode-owned behavior are defined in source. Users choose a mode and pass a goal/resume argument; they do not edit workflow behavior through user configuration files.
 - **Commands / tools / shortcuts**: `/prototype`, `/quick`, `/task`, phase lifecycle APIs.
 - **Persistence scope**: Resumable state files and artifacts per workflow run.
 - **Test / source evidence**: `src/extensions/workflow/extension.ts`, `adapter.ts`, `modes/`, tests.
