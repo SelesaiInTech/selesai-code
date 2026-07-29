@@ -2242,10 +2242,87 @@ test("intercom reply targets exact replyTo when multiple asks are pending", { co
   }
 });
 
-test("intercom reply dismisses stale pending ask only when sender session is gone", { concurrency: false }, async () => {
+test("broker queues replies to recently disconnected named senders", { concurrency: false }, async () => {
+  const { planner, orchestrator, cleanup } = await setupClients();
+  const replacement = new IntercomClient();
+
+  try {
+    const originalPlannerId = planner.sessionId!;
+    const receivedAsk = once(orchestrator, "message") as Promise<[SessionInfo, Message]>;
+    assert.equal((await planner.send(orchestrator.sessionId!, { messageId: "ephemeral-cli-ask", text: "Can you answer later?", expectsReply: true })).delivered, true);
+    await receivedAsk;
+    await planner.disconnect();
+
+    const queuedReply = once(replacement, "message") as Promise<[SessionInfo, Message]>;
+    const reply = await orchestrator.send(originalPlannerId, {
+      messageId: "queued-reply-to-ephemeral",
+      text: "Queued answer.",
+      replyTo: "ephemeral-cli-ask",
+    });
+    assert.equal(reply.delivered, true);
+
+    await replacement.connect({
+      name: "planner",
+      cwd: repoDir,
+      model: "test-model",
+      pid: process.pid,
+      startedAt: Date.now(),
+      lastActivity: Date.now(),
+    });
+    const [from, message] = await queuedReply;
+    assert.equal(from.id, orchestrator.sessionId);
+    assert.equal(message.id, "queued-reply-to-ephemeral");
+    assert.equal(message.replyTo, "ephemeral-cli-ask");
+    assert.equal(message.content.text, "Queued answer.");
+    assert.equal(typeof message.brokerReceivedAt, "number");
+    assert.equal(typeof message.brokerDeliveredAt, "number");
+  } finally {
+    await replacement.disconnect().catch(() => undefined);
+    await cleanup();
+  }
+});
+
+test("broker delivers old-id replies to an already reconnected same-name sender", { concurrency: false }, async () => {
+  const { planner, orchestrator, cleanup } = await setupClients();
+  const replacement = new IntercomClient();
+
+  try {
+    const originalPlannerId = planner.sessionId!;
+    const receivedAsk = once(orchestrator, "message") as Promise<[SessionInfo, Message]>;
+    assert.equal((await planner.send(orchestrator.sessionId!, { messageId: "reconnected-cli-ask", text: "Can you answer after reconnect?", expectsReply: true })).delivered, true);
+    await receivedAsk;
+    await planner.disconnect();
+
+    await replacement.connect({
+      name: "planner",
+      cwd: repoDir,
+      model: "test-model",
+      pid: process.pid,
+      startedAt: Date.now(),
+      lastActivity: Date.now(),
+    });
+    const deliveredReply = once(replacement, "message") as Promise<[SessionInfo, Message]>;
+    const reply = await orchestrator.send(originalPlannerId, {
+      messageId: "reply-after-cli-reconnect",
+      text: "Immediate answer after reconnect.",
+      replyTo: "reconnected-cli-ask",
+    });
+    assert.equal(reply.delivered, true);
+    const [, message] = await deliveredReply;
+    assert.equal(message.id, "reply-after-cli-reconnect");
+    assert.equal(message.replyTo, "reconnected-cli-ask");
+    assert.equal(message.content.text, "Immediate answer after reconnect.");
+  } finally {
+    await replacement.disconnect().catch(() => undefined);
+    await cleanup();
+  }
+});
+
+test("intercom reply queues mail for a disconnected named sender", { concurrency: false }, async () => {
   const { planner, cleanup } = await setupClients();
   const { default: piIntercomExtension } = await import("./index.ts");
   const harness = createExtensionHarness("stale-reply-worker");
+  const replacement = new IntercomClient();
 
   try {
     piIntercomExtension(harness.pi as never);
@@ -2261,12 +2338,25 @@ test("intercom reply dismisses stale pending ask only when sender session is gon
       message: "No sender remains.",
       replyTo: "stale-reply-ask",
     }, new AbortController().signal, undefined, harness.ctx);
-    assert.equal(result.details?.delivered, false);
-    assert.equal(result.details?.reason, "Session not found");
+    assert.equal(result.details?.delivered, true);
 
     const pending = await intercomTool.execute("pending-after-stale", { action: "pending" }, new AbortController().signal, undefined, harness.ctx);
     assert.match(pending.content[0]?.text ?? "", /No unresolved inbound asks/);
+
+    const queuedReply = once(replacement, "message") as Promise<[SessionInfo, Message]>;
+    await replacement.connect({
+      name: "planner",
+      cwd: repoDir,
+      model: "test-model",
+      pid: process.pid,
+      startedAt: Date.now(),
+      lastActivity: Date.now(),
+    });
+    const [, message] = await queuedReply;
+    assert.equal(message.replyTo, "stale-reply-ask");
+    assert.equal(message.content.text, "No sender remains.");
   } finally {
+    await replacement.disconnect().catch(() => undefined);
     await harness.emitLifecycle("session_shutdown");
     await cleanup();
   }

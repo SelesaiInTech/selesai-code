@@ -402,6 +402,7 @@ if (!result.delivered) {
   await intercom({ action: "list" });
 }
 ```
+Replies to recently disconnected named senders can be queued by the broker and delivered if that sender reconnects with the same name. New sends still need a known live or recently disconnected target.
 
 **Ask timeout**
 ```typescript

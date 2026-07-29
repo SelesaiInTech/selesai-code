@@ -35,6 +35,9 @@ const MAX_EXTENSIONS_PER_SESSION = 32;
 const MAX_EXTENSION_MESSAGE_BYTES = 16 * 1024;
 const MAX_EXTENSION_STATE_BYTES = 64 * 1024;
 const MESSAGE_RECEIPT_ROUTE_RETENTION_MS = 60 * 60 * 1000;
+const DISCONNECTED_SESSION_RETENTION_MS = 24 * 60 * 60 * 1000;
+const MAILBOX_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const MAX_MAILBOX_MESSAGES = 256;
 
 function serializedPayloadSize(payload: unknown): number | null {
   try {
@@ -75,6 +78,18 @@ interface MessageReceiptRoute {
   from: string;
   to: string;
   createdAt: number;
+}
+
+interface DisconnectedSession {
+  info: SessionInfo;
+  disconnectedAt: number;
+}
+
+interface MailboxMessage {
+  from: SessionInfo;
+  target: SessionInfo;
+  message: Message;
+  queuedAt: number;
 }
 
 function isMessageReceiptStatus(value: unknown): value is MessageReceiptStatus {
@@ -199,6 +214,8 @@ class IntercomBroker {
   private sessions = new Map<string, ConnectedSession>();
   private askEdges = new Map<string, AskEdge>();
   private messageReceiptRoutes = new Map<string, MessageReceiptRoute>();
+  private disconnectedSessions = new Map<string, DisconnectedSession>();
+  private mailboxMessages: MailboxMessage[] = [];
   private connections = new Set<net.Socket>();
   private unregisteredConnections = new Set<net.Socket>();
   private server: net.Server;
@@ -312,8 +329,8 @@ class IntercomBroker {
       if (sessionId) {
         const existing = this.sessions.get(sessionId);
         if (existing?.socket === socket) {
+          this.rememberDisconnectedSession(existing.info);
           this.sessions.delete(sessionId);
-          this.clearAskEdgesForSession(sessionId);
           this.clearMessageReceiptRoutesForSession(sessionId);
           this.broadcast({ type: "session_left", sessionId }, sessionId);
           this.recomputeNamespaceOwners();
@@ -437,6 +454,8 @@ class IntercomBroker {
           }
         }
 
+        this.pruneDisconnectedSessions();
+        this.pruneMailboxMessages();
         const previous = this.sessions.get(id);
         if (!previous && this.sessions.size >= MAX_SESSIONS) {
           writeMessage(socket, { type: "error", error: "Too many registered intercom sessions" });
@@ -461,13 +480,15 @@ class IntercomBroker {
           trustedLocal: typeof LISTEN_TARGET === "string" && process.platform !== "win32",
         };
 
-        this.sessions.set(id, {
+        const connectedSession: ConnectedSession = {
           socket,
           info,
           lastPresenceBroadcastAt: Date.now(),
           ownerOrder: previous?.ownerOrder ?? this.nextOwnerOrder++,
           extensions,
-        });
+        };
+        this.sessions.set(id, connectedSession);
+        this.disconnectedSessions.delete(id);
         
         if (this.shutdownTimer) {
           clearTimeout(this.shutdownTimer);
@@ -485,6 +506,7 @@ class IntercomBroker {
         this.broadcast({ type: "session_joined", session: info }, id);
 
         this.recomputeNamespaceOwners();
+        this.flushMailboxForSession(connectedSession);
 
         if (extensions) {
           for (const ext of extensions) {
@@ -514,8 +536,8 @@ class IntercomBroker {
         }
         const existing = this.sessions.get(currentId);
         if (existing?.socket === socket) {
+          this.rememberDisconnectedSession(existing.info);
           this.sessions.delete(currentId);
-          this.clearAskEdgesForSession(currentId);
           this.clearMessageReceiptRoutesForSession(currentId);
           this.broadcast({ type: "session_left", sessionId: currentId }, currentId);
           this.recomputeNamespaceOwners();
@@ -686,6 +708,87 @@ class IntercomBroker {
           break;
         }
 
+        const disconnectedTargets = this.findDisconnectedSessions(clientMessage.to);
+        if (disconnectedTargets.length === 1) {
+          if (message.replyTo && !replyEdge) {
+            writeMessage(socket, {
+              type: "delivery_failed",
+              messageId: message.id,
+              reason: "Reply target does not match a pending ask",
+            });
+            break;
+          }
+          const fromSession = this.sessions.get(currentId);
+          if (!fromSession || fromSession.socket !== socket) {
+            writeMessage(socket, {
+              type: "delivery_failed",
+              messageId: message.id,
+              reason: "Sender session not found",
+            });
+            break;
+          }
+          const target = disconnectedTargets[0]!.info;
+          if (message.supersedes) {
+            writeMessage(socket, {
+              type: "delivery_failed",
+              messageId: message.id,
+              reason: "Supersede target is not connected",
+            });
+            break;
+          }
+          if (replyEdge && (replyEdge.to !== currentId || replyEdge.from !== target.id)) {
+            writeMessage(socket, {
+              type: "delivery_failed",
+              messageId: message.id,
+              reason: "Reply target does not match the pending ask",
+            });
+            break;
+          }
+          const liveMailboxTarget = this.findUniqueLiveSessionForDisconnectedSession(target);
+          const effectiveTargetId = liveMailboxTarget?.info.id ?? target.id;
+          if (message.expectsReply) {
+            const reverseEdge = Array.from(this.askEdges.entries()).find(([edgeMessageId, edge]) => edgeMessageId !== message.replyTo && edge.from === effectiveTargetId && edge.to === currentId);
+            if (reverseEdge) {
+              writeMessage(socket, {
+                type: "delivery_failed",
+                messageId: message.id,
+                reason: "Mutual ask refused: target session is already waiting for a reply from this session.",
+              });
+              break;
+            }
+            this.askEdges.set(message.id, { from: currentId, to: effectiveTargetId, createdAt: Date.now() });
+          }
+          if (liveMailboxTarget) {
+            const deliveredMessage: Message = {
+              ...message,
+              brokerReceivedAt,
+              brokerDeliveredAt: Date.now(),
+            };
+            writeMessage(liveMailboxTarget.socket, {
+              type: "message",
+              from: fromSession.info,
+              message: deliveredMessage,
+            });
+            this.messageReceiptRoutes.set(message.id, { from: currentId, to: liveMailboxTarget.info.id, createdAt: brokerReceivedAt });
+          } else {
+            this.queueMailboxMessage(fromSession.info, target, message, brokerReceivedAt);
+          }
+          if (message.replyTo) {
+            this.askEdges.delete(message.replyTo);
+          }
+          writeMessage(socket, { type: "delivered", messageId: message.id });
+          break;
+        }
+
+        if (disconnectedTargets.length > 1) {
+          writeMessage(socket, {
+            type: "delivery_failed",
+            messageId: message.id,
+            reason: `Multiple disconnected sessions named \"${clientMessage.to}\" can receive queued mail. Use the session ID instead.`,
+          });
+          break;
+        }
+
         writeMessage(socket, {
           type: "delivery_failed",
           messageId: message.id,
@@ -723,8 +826,19 @@ class IntercomBroker {
           throw new Error("Invalid cancel_message message");
         }
         this.pruneMessageReceiptRoutes();
-        const route = this.messageReceiptRoutes.get(clientMessage.messageId);
+        this.pruneMailboxMessages();
         const sender = this.sessions.get(currentId);
+        const queuedIndex = this.mailboxMessages.findIndex(entry => entry.message.id === clientMessage.messageId && entry.from.id === currentId);
+        if (queuedIndex >= 0 && sender?.socket === socket) {
+          this.mailboxMessages.splice(queuedIndex, 1);
+          const edge = this.askEdges.get(clientMessage.messageId);
+          if (edge?.from === currentId) {
+            this.askEdges.delete(clientMessage.messageId);
+          }
+          writeMessage(socket, { type: "delivered", messageId: clientMessage.messageId });
+          break;
+        }
+        const route = this.messageReceiptRoutes.get(clientMessage.messageId);
         const receiver = route ? this.sessions.get(route.to) : undefined;
         if (route?.from !== currentId || sender?.socket !== socket || !receiver) {
           writeMessage(socket, {
@@ -858,6 +972,88 @@ class IntercomBroker {
     }
   }
 
+  private rememberDisconnectedSession(info: SessionInfo, now = Date.now()): void {
+    this.disconnectedSessions.set(info.id, { info: { ...info }, disconnectedAt: now });
+    this.pruneDisconnectedSessions(now);
+  }
+
+  private pruneDisconnectedSessions(now = Date.now()): void {
+    for (const [sessionId, session] of this.disconnectedSessions) {
+      if (now - session.disconnectedAt > DISCONNECTED_SESSION_RETENTION_MS) {
+        this.disconnectedSessions.delete(sessionId);
+      }
+    }
+  }
+
+  private pruneMailboxMessages(now = Date.now()): void {
+    for (let index = this.mailboxMessages.length - 1; index >= 0; index -= 1) {
+      const entry = this.mailboxMessages[index]!;
+      if (now - entry.queuedAt > MAILBOX_MESSAGE_RETENTION_MS) {
+        if (entry.message.expectsReply) {
+          this.askEdges.delete(entry.message.id);
+        }
+        this.messageReceiptRoutes.delete(entry.message.id);
+        this.mailboxMessages.splice(index, 1);
+      }
+    }
+  }
+
+  private queueMailboxMessage(from: SessionInfo, target: SessionInfo, message: Message, brokerReceivedAt: number): void {
+    this.pruneMailboxMessages(brokerReceivedAt);
+    while (this.mailboxMessages.length >= MAX_MAILBOX_MESSAGES) {
+      const evicted = this.mailboxMessages.shift();
+      if (!evicted) break;
+      if (evicted.message.expectsReply) {
+        this.askEdges.delete(evicted.message.id);
+      }
+      this.messageReceiptRoutes.delete(evicted.message.id);
+    }
+    this.mailboxMessages.push({
+      from: { ...from },
+      target: { ...target },
+      message: { ...message, brokerReceivedAt },
+      queuedAt: brokerReceivedAt,
+    });
+  }
+
+  private flushMailboxForSession(session: ConnectedSession, now = Date.now()): void {
+    this.pruneMailboxMessages(now);
+    const sessionName = session.info.name?.toLowerCase();
+    const uniqueLiveName = sessionName
+      ? Array.from(this.sessions.values()).filter(candidate => candidate.info.name?.toLowerCase() === sessionName).length === 1
+      : false;
+
+    for (let index = 0; index < this.mailboxMessages.length;) {
+      const entry = this.mailboxMessages[index]!;
+      const matchesId = entry.target.id === session.info.id;
+      const matchesUniqueName = Boolean(uniqueLiveName && sessionName && entry.target.name?.toLowerCase() === sessionName);
+      if (!matchesId && !matchesUniqueName) {
+        index += 1;
+        continue;
+      }
+
+      this.mailboxMessages.splice(index, 1);
+      const edge = this.askEdges.get(entry.message.id);
+      if (edge?.to === entry.target.id) {
+        edge.to = session.info.id;
+      }
+      const deliveredMessage: Message = {
+        ...entry.message,
+        brokerDeliveredAt: Date.now(),
+      };
+      writeMessage(session.socket, {
+        type: "message",
+        from: entry.from,
+        message: deliveredMessage,
+      });
+      this.messageReceiptRoutes.set(entry.message.id, {
+        from: entry.from.id,
+        to: session.info.id,
+        createdAt: entry.message.brokerReceivedAt ?? entry.queuedAt,
+      });
+    }
+  }
+
   private pruneAskEdges(now = Date.now()): void {
     for (const [messageId, edge] of this.askEdges) {
       if (now - edge.createdAt > this.askTimeoutMs) {
@@ -905,6 +1101,33 @@ class IntercomBroker {
     return Array.from(this.sessions.entries())
       .filter(([id]) => id.startsWith(nameOrId))
       .map(([, session]) => session);
+  }
+
+  private findDisconnectedSessions(nameOrId: string): DisconnectedSession[] {
+    this.pruneDisconnectedSessions();
+    const byId = this.disconnectedSessions.get(nameOrId);
+    if (byId) {
+      return [byId];
+    }
+
+    const lowerName = nameOrId.toLowerCase();
+    const byName = Array.from(this.disconnectedSessions.values()).filter(session => session.info.name?.toLowerCase() === lowerName);
+    if (byName.length > 0) {
+      return byName;
+    }
+
+    return Array.from(this.disconnectedSessions.entries())
+      .filter(([id]) => id.startsWith(nameOrId))
+      .map(([, session]) => session);
+  }
+
+  private findUniqueLiveSessionForDisconnectedSession(info: SessionInfo): ConnectedSession | null {
+    const lowerName = info.name?.toLowerCase();
+    if (!lowerName) {
+      return null;
+    }
+    const matches = Array.from(this.sessions.values()).filter(session => session.info.name?.toLowerCase() === lowerName);
+    return matches.length === 1 ? matches[0]! : null;
   }
 
   private broadcast(msg: BrokerMessage, exclude?: string): void {
@@ -1272,6 +1495,9 @@ class IntercomBroker {
     }
     this.sessions.clear();
     this.askEdges.clear();
+    this.messageReceiptRoutes.clear();
+    this.disconnectedSessions.clear();
+    this.mailboxMessages.length = 0;
     if (typeof LISTEN_TARGET === "string" && process.platform !== "win32") {
       try {
         unlinkSync(LISTEN_TARGET);
