@@ -1210,6 +1210,99 @@ test("busy interactive sessions idle-gate top-level asks without aborting", { co
   }
 });
 
+test("duplicate inbound message IDs inject once with visible delivery metadata", { concurrency: false }, async () => {
+  const { default: piIntercomExtension } = await import("./index.ts");
+  const { planner, cleanup } = await setupClients();
+  const harness = createExtensionHarness("dedupe-worker", { hasUI: true });
+
+  try {
+    piIntercomExtension(harness.pi as never);
+    await harness.emitLifecycle("session_start");
+    const worker = await waitForSessionByName(planner, "dedupe-worker");
+    const receipts: string[] = [];
+    const unsubscribeReceipts = planner.onMessageReceipt((_from, receipt) => {
+      if (receipt.messageId === "duplicate-inbound") receipts.push(receipt.detail ? `${receipt.status}:${receipt.detail}` : receipt.status);
+    });
+
+    try {
+      assert.equal((await planner.send(worker.id, { messageId: "duplicate-inbound", text: "First copy" })).delivered, true);
+      assert.equal((await planner.send(worker.id, { messageId: "duplicate-inbound", text: "Second copy" })).delivered, true);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } finally {
+      unsubscribeReceipts();
+    }
+
+    assert.equal(harness.sentMessages.length, 1);
+    assert.ok(receipts.includes("receiver_received"));
+    assert.ok(receipts.includes("acknowledged:accepted by receiver"));
+    assert.ok(receipts.includes("injected"));
+    assert.ok(receipts.includes("acknowledged:duplicate message id suppressed"));
+    const sent = harness.sentMessages[0]!;
+    assert.match(sent.message.content ?? "", /id duplicate-inbound/);
+    assert.match(sent.message.content ?? "", /seq 1/);
+    assert.match(sent.message.content ?? "", /broker delivered/);
+    assert.match(sent.message.content ?? "", /receiver received/);
+    assert.match(sent.message.content ?? "", /injected/);
+    const details = sent.message.details as { message?: Message };
+    assert.equal(details.message?.id, "duplicate-inbound");
+    assert.equal(details.message?.senderSequence, 1);
+    assert.equal(typeof details.message?.brokerReceivedAt, "number");
+    assert.equal(typeof details.message?.brokerDeliveredAt, "number");
+    assert.equal(typeof details.message?.receiverReceivedAt, "number");
+    assert.equal(typeof details.message?.injectedAt, "number");
+  } finally {
+    await harness.emitLifecycle("session_shutdown");
+    await cleanup();
+  }
+});
+
+test("busy interactive sessions keep same-sender queued messages in sequence order", { concurrency: false }, async () => {
+  const { default: piIntercomExtension } = await import("./index.ts");
+  const { planner, cleanup } = await setupClients();
+  let idle = false;
+  const harness = createExtensionHarness("sequence-worker", {
+    hasUI: true,
+    isIdle: () => idle,
+  });
+
+  try {
+    piIntercomExtension(harness.pi as never);
+    await harness.emitLifecycle("session_start");
+    const worker = await waitForSessionByName(planner, "sequence-worker");
+    const receipts = new Map<string, string[]>();
+    const unsubscribeReceipts = planner.onMessageReceipt((_from, receipt) => {
+      const statuses = receipts.get(receipt.messageId) ?? [];
+      statuses.push(receipt.status);
+      receipts.set(receipt.messageId, statuses);
+    });
+
+    assert.equal((await planner.send(worker.id, { messageId: "sequence-1", text: "First queued message" })).delivered, true);
+    assert.equal((await planner.send(worker.id, { messageId: "sequence-2", text: "Second queued message" })).delivered, true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(harness.sentMessages.length, 0);
+
+    idle = true;
+    await harness.emitLifecycle("agent_end");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(harness.sentMessages.length, 2);
+    assert.match(harness.sentMessages[0]?.message.content ?? "", /First queued message/);
+    assert.match(harness.sentMessages[1]?.message.content ?? "", /Second queued message/);
+    assert.equal(harness.sentMessages[0]?.options?.triggerTurn, true);
+    assert.equal(harness.sentMessages[1]?.options?.deliverAs, "followUp");
+    const firstDetails = harness.sentMessages[0]?.message.details as { message?: Message } | undefined;
+    const secondDetails = harness.sentMessages[1]?.message.details as { message?: Message } | undefined;
+    assert.equal(firstDetails?.message?.senderSequence, 1);
+    assert.equal(secondDetails?.message?.senderSequence, 2);
+    assert.deepEqual(receipts.get("sequence-1"), ["receiver_received", "acknowledged", "queued", "injected"]);
+    assert.deepEqual(receipts.get("sequence-2"), ["receiver_received", "acknowledged", "queued", "injected"]);
+    unsubscribeReceipts();
+  } finally {
+    await harness.emitLifecycle("session_shutdown");
+    await cleanup();
+  }
+});
+
 test("replied idle-gated asks are discarded before delivery", { concurrency: false }, async () => {
   const { default: piIntercomExtension } = await import("./index.ts");
   const { planner, cleanup } = await setupClients();
@@ -1328,6 +1421,10 @@ test("queued inbound messages are discarded after shutdown", { concurrency: fals
     piIntercomExtension(harness.pi as never);
     await harness.emitLifecycle("session_start");
     const target = await waitForSessionByName(planner, "disposed-worker");
+    const receipts: string[] = [];
+    const unsubscribeReceipts = planner.onMessageReceipt((_from, receipt) => {
+      if (receipt.messageId === "disposed-ask") receipts.push(receipt.status);
+    });
 
     const delivered = await planner.send(target.id, {
       messageId: "disposed-ask",
@@ -1344,6 +1441,8 @@ test("queued inbound messages are discarded after shutdown", { concurrency: fals
     await new Promise((resolve) => setTimeout(resolve, 250));
 
     assert.equal(harness.sentMessages.length, 0);
+    assert.deepEqual(receipts, ["receiver_received", "acknowledged", "queued", "expired"]);
+    unsubscribeReceipts();
   } finally {
     await cleanup();
   }
@@ -1799,6 +1898,42 @@ test("failed replies do not clear broker mutual-ask edges", { concurrency: false
     });
     assert.equal(nextAsk.delivered, true);
   } finally {
+    await cleanup();
+  }
+});
+
+test("regular intercom ask timeout reports message id and delivery state", { concurrency: false }, async () => {
+  const previousTimeout = process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
+  process.env.PI_INTERCOM_ASK_TIMEOUT_MS = "50";
+  const { default: piIntercomExtension } = await import("./index.ts");
+  const { planner, cleanup } = await setupClients();
+  const senderHarness = createExtensionHarness("timeout-worker", { sessionId: "session-timeout-worker" });
+  const receiverHarness = createExtensionHarness("timeout-target", { sessionId: "session-timeout-target", hasUI: true });
+
+  try {
+    piIntercomExtension(senderHarness.pi as never);
+    piIntercomExtension(receiverHarness.pi as never);
+    await senderHarness.emitLifecycle("session_start");
+    await receiverHarness.emitLifecycle("session_start");
+    await waitForSessionByName(planner, "timeout-target");
+    const intercomTool = senderHarness.tools.find((tool) => tool.name === "intercom")!;
+
+    const result = await intercomTool.execute("ask-timeout", { action: "ask", to: "timeout-target", message: "Will this time out?" }, new AbortController().signal, undefined, senderHarness.ctx);
+
+    assert.equal(result.details?.error, true);
+    assert.equal(result.details?.deliveryState, "injected");
+    assert.match(result.content[0]?.text ?? "", new RegExp(String(result.details?.messageId)));
+    assert.match(result.content[0]?.text ?? "", /Last known delivery state: injected/);
+    assert.match(result.content[0]?.text ?? "", /not cancellation/);
+    assert.equal(receiverHarness.sentMessages.length, 1);
+  } finally {
+    if (previousTimeout === undefined) {
+      delete process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
+    } else {
+      process.env.PI_INTERCOM_ASK_TIMEOUT_MS = previousTimeout;
+    }
+    await senderHarness.emitLifecycle("session_shutdown");
+    await receiverHarness.emitLifecycle("session_shutdown");
     await cleanup();
   }
 });

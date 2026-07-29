@@ -16,7 +16,7 @@ import {
 } from "./paths.ts";
 import { getAskTimeoutMs } from "../config.ts";
 import { EXTENSION_BUS_FEATURE } from "../types.ts";
-import type { SessionInfo, Message, Attachment, BrokerMessage, SessionRegistration, ExtensionCapability } from "../types.ts";
+import type { SessionInfo, Message, Attachment, BrokerMessage, SessionRegistration, ExtensionCapability, MessageReceipt, MessageReceiptStatus } from "../types.ts";
 import { ExtensionStateManager } from "./extension-state.ts";
 import { assertNoLiveBroker } from "./runtime-claim.ts";
 
@@ -34,6 +34,7 @@ const PRESENCE_HEARTBEAT_MS = 1000;
 const MAX_EXTENSIONS_PER_SESSION = 32;
 const MAX_EXTENSION_MESSAGE_BYTES = 16 * 1024;
 const MAX_EXTENSION_STATE_BYTES = 64 * 1024;
+const MESSAGE_RECEIPT_ROUTE_RETENTION_MS = 60 * 60 * 1000;
 
 function serializedPayloadSize(payload: unknown): number | null {
   try {
@@ -70,6 +71,32 @@ interface AskEdge {
   createdAt: number;
 }
 
+interface MessageReceiptRoute {
+  from: string;
+  to: string;
+  createdAt: number;
+}
+
+function isMessageReceiptStatus(value: unknown): value is MessageReceiptStatus {
+  return value === "receiver_received"
+    || value === "queued"
+    || value === "injected"
+    || value === "acknowledged"
+    || value === "expired"
+    || value === "cancelled";
+}
+
+function isMessageReceipt(value: unknown): value is MessageReceipt {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const receipt = value as Record<string, unknown>;
+  if (typeof receipt.messageId !== "string" || !isMessageReceiptStatus(receipt.status) || typeof receipt.timestamp !== "number") {
+    return false;
+  }
+  return receipt.detail === undefined || typeof receipt.detail === "string";
+}
+
 function isAttachment(value: unknown): value is Attachment {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -101,6 +128,12 @@ function isMessage(value: unknown): value is Message {
 
   if (typeof message.id !== "string" || typeof message.timestamp !== "number") {
     return false;
+  }
+
+  for (const key of ["senderSequence", "brokerReceivedAt", "brokerDeliveredAt", "receiverReceivedAt", "injectedAt"] as const) {
+    if (message[key] !== undefined && typeof message[key] !== "number") {
+      return false;
+    }
   }
 
   if (message.replyTo !== undefined && typeof message.replyTo !== "string") {
@@ -155,6 +188,7 @@ function isSessionRegistration(value: unknown): value is SessionRegistration {
 class IntercomBroker {
   private sessions = new Map<string, ConnectedSession>();
   private askEdges = new Map<string, AskEdge>();
+  private messageReceiptRoutes = new Map<string, MessageReceiptRoute>();
   private connections = new Set<net.Socket>();
   private unregisteredConnections = new Set<net.Socket>();
   private server: net.Server;
@@ -270,6 +304,7 @@ class IntercomBroker {
         if (existing?.socket === socket) {
           this.sessions.delete(sessionId);
           this.clearAskEdgesForSession(sessionId);
+          this.clearMessageReceiptRoutesForSession(sessionId);
           this.broadcast({ type: "session_left", sessionId }, sessionId);
           this.recomputeNamespaceOwners();
           this.scheduleShutdownCheck();
@@ -400,6 +435,7 @@ class IntercomBroker {
         }
         if (previous) {
           this.clearAskEdgesForSession(id);
+          this.clearMessageReceiptRoutesForSession(id);
           previous.socket.end();
         }
         setId(id);
@@ -470,6 +506,7 @@ class IntercomBroker {
         if (existing?.socket === socket) {
           this.sessions.delete(currentId);
           this.clearAskEdgesForSession(currentId);
+          this.clearMessageReceiptRoutesForSession(currentId);
           this.broadcast({ type: "session_left", sessionId: currentId }, currentId);
           this.recomputeNamespaceOwners();
           this.scheduleShutdownCheck();
@@ -543,6 +580,7 @@ class IntercomBroker {
           break;
         }
 
+        const brokerReceivedAt = Date.now();
         this.pruneAskEdges();
         const replyEdge = message.replyTo ? this.askEdges.get(message.replyTo) : undefined;
 
@@ -586,14 +624,20 @@ class IntercomBroker {
             }
             this.askEdges.set(message.id, { from: currentId, to: target.info.id, createdAt: Date.now() });
           }
+          const deliveredMessage: Message = {
+            ...message,
+            brokerReceivedAt,
+            brokerDeliveredAt: Date.now(),
+          };
           writeMessage(target.socket, {
             type: "message",
             from: fromSession.info,
-            message,
+            message: deliveredMessage,
           });
           if (message.replyTo) {
             this.askEdges.delete(message.replyTo);
           }
+          this.messageReceiptRoutes.set(message.id, { from: currentId, to: target.info.id, createdAt: brokerReceivedAt });
           writeMessage(socket, { type: "delivered", messageId: message.id });
           break;
         }
@@ -612,6 +656,27 @@ class IntercomBroker {
           messageId: message.id,
           reason: "Session not found",
         });
+        break;
+      }
+
+      case "message_receipt": {
+        if (!currentId) {
+          throw new Error("Received message_receipt before register");
+        }
+        if (!isMessageReceipt(clientMessage.receipt)) {
+          throw new Error("Invalid message_receipt message");
+        }
+        this.pruneMessageReceiptRoutes();
+        const route = this.messageReceiptRoutes.get(clientMessage.receipt.messageId);
+        const receiver = this.sessions.get(currentId);
+        const sender = route ? this.sessions.get(route.from) : undefined;
+        if (route?.to === currentId && receiver?.socket === socket && sender) {
+          writeMessage(sender.socket, {
+            type: "message_receipt",
+            from: receiver.info,
+            receipt: clientMessage.receipt,
+          });
+        }
         break;
       }
 
@@ -734,6 +799,22 @@ class IntercomBroker {
     for (const [messageId, edge] of this.askEdges) {
       if (edge.from === sessionId || edge.to === sessionId) {
         this.askEdges.delete(messageId);
+      }
+    }
+  }
+
+  private pruneMessageReceiptRoutes(now = Date.now()): void {
+    for (const [messageId, route] of this.messageReceiptRoutes) {
+      if (now - route.createdAt > MESSAGE_RECEIPT_ROUTE_RETENTION_MS) {
+        this.messageReceiptRoutes.delete(messageId);
+      }
+    }
+  }
+
+  private clearMessageReceiptRoutesForSession(sessionId: string): void {
+    for (const [messageId, route] of this.messageReceiptRoutes) {
+      if (route.from === sessionId || route.to === sessionId) {
+        this.messageReceiptRoutes.delete(messageId);
       }
     }
   }
