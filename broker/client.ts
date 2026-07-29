@@ -9,6 +9,7 @@ import type {
   BrokerMessage,
   ClientMessage,
   Message,
+  MessageControl,
   MessageReceipt,
   MessageReceiptStatus,
   SessionInfo,
@@ -21,6 +22,8 @@ interface SendOptions {
   replyTo?: string;
   expectsReply?: boolean;
   messageId?: string;
+  supersedes?: string;
+  retryOf?: string;
 }
 
 interface SendResult {
@@ -45,7 +48,9 @@ function isMessageReceiptStatus(value: unknown): value is MessageReceiptStatus {
     || value === "injected"
     || value === "acknowledged"
     || value === "expired"
-    || value === "cancelled";
+    || value === "cancelled"
+    || value === "superseded"
+    || value === "cancellation_requested";
 }
 
 function isMessageReceipt(value: unknown): value is MessageReceipt {
@@ -57,6 +62,23 @@ function isMessageReceipt(value: unknown): value is MessageReceipt {
     return false;
   }
   return receipt.detail === undefined || typeof receipt.detail === "string";
+}
+
+function isMessageControl(value: unknown): value is MessageControl {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const control = value as Record<string, unknown>;
+  if (typeof control.messageId !== "string" || typeof control.timestamp !== "number") {
+    return false;
+  }
+  if (control.action !== "cancel" && control.action !== "supersede") {
+    return false;
+  }
+  if (control.supersededBy !== undefined && typeof control.supersededBy !== "string") {
+    return false;
+  }
+  return control.detail === undefined || typeof control.detail === "string";
 }
 
 function isAttachment(value: unknown): value is Attachment {
@@ -96,6 +118,14 @@ function isMessage(value: unknown): value is Message {
     if (message[key] !== undefined && typeof message[key] !== "number") {
       return false;
     }
+  }
+
+  if (message.supersedes !== undefined && typeof message.supersedes !== "string") {
+    return false;
+  }
+
+  if (message.retryOf !== undefined && typeof message.retryOf !== "string") {
+    return false;
   }
 
   if (message.replyTo !== undefined && typeof message.replyTo !== "string") {
@@ -451,6 +481,15 @@ export class IntercomClient extends EventEmitter {
         break;
       }
 
+      case "message_control": {
+        if (!isSessionInfo(brokerMessage.from) || !isMessageControl(brokerMessage.control)) {
+          throw new Error("Invalid message_control event");
+        }
+        this.emit("broker_message", brokerMessage as BrokerMessage);
+        this.emit("message_control", brokerMessage.from, brokerMessage.control);
+        break;
+      }
+
       case "session_joined": {
         if (!isSessionInfo(brokerMessage.session)) {
           throw new Error("Invalid session_joined message");
@@ -659,6 +698,8 @@ export class IntercomClient extends EventEmitter {
       id: messageId,
       timestamp: Date.now(),
       senderSequence: this.nextSenderSequence++,
+      supersedes: options.supersedes,
+      retryOf: options.retryOf,
       replyTo: options.replyTo,
       expectsReply: options.expectsReply,
       content: {
@@ -686,6 +727,41 @@ export class IntercomClient extends EventEmitter {
 
       try {
         writeMessage(socket, { type: "send", to, message });
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pendingSends.delete(messageId);
+        reject(toError(error));
+      }
+    });
+  }
+
+  cancelMessage(messageId: string): Promise<SendResult> {
+    let socket: net.Socket;
+    try {
+      socket = this.requireActiveSocket();
+    } catch (error) {
+      return Promise.reject(toError(error));
+    }
+
+    return new Promise((resolve, reject) => {
+      const wrappedResolve = (result: SendResult) => {
+        clearTimeout(timeout);
+        resolve(result);
+      };
+      const wrappedReject = (error: Error) => {
+        clearTimeout(timeout);
+        reject(error);
+      };
+      const timeout = setTimeout(() => {
+        if (this.pendingSends.has(messageId)) {
+          this.pendingSends.delete(messageId);
+          wrappedReject(new Error("Cancel timeout"));
+        }
+      }, 10000);
+      this.pendingSends.set(messageId, { resolve: wrappedResolve, reject: wrappedReject });
+
+      try {
+        writeMessage(socket, { type: "cancel_message", messageId });
       } catch (error) {
         clearTimeout(timeout);
         this.pendingSends.delete(messageId);
@@ -753,5 +829,10 @@ export class IntercomClient extends EventEmitter {
   onMessageReceipt(handler: (from: SessionInfo, receipt: MessageReceipt) => void): () => void {
     this.on("message_receipt", handler);
     return () => this.off("message_receipt", handler);
+  }
+
+  onMessageControl(handler: (from: SessionInfo, control: MessageControl) => void): () => void {
+    this.on("message_control", handler);
+    return () => this.off("message_control", handler);
   }
 }
