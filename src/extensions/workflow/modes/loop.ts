@@ -4,24 +4,37 @@ import type {
   WorkflowConfig,
   WorkflowModeRegistration,
 } from "../state-machine.ts";
-import { loopCompleteValidator } from "../validators.ts";
+import { handoffValidator, loopCompleteValidator } from "../validators.ts";
 
-// Direct build↔review mode for work whose plan already exists in the parent
-// conversation. The engine persists reviewer feedback and completion; no
-// planning or handoff artifact is needed.
-const phases: Phase[] = ["loop"];
+// Direct build↔review mode with a parent-persisted handoff artifact. The handoff
+// lets fresh builder/commentator subagents work from a self-contained document
+// instead of relying on the parent conversation.
+const phases: Phase[] = ["handoff", "loop"];
 
 const prompts: Partial<Record<Phase, (ctx: PromptContext) => string>> = {
-  loop: ({ artifactDir, userPrompt, loopMaxIterations }) =>
-    `You are in the LOOP phase of a LOOP workflow. The user and parent already discussed the plan; do not grill, research, create a plan, or create a handoff artifact.
+  handoff: ({ artifactDir, userPrompt }) =>
+    `You are in the HANDOFF phase of a LOOP workflow.
 
 Original goal:
 ${userPrompt}
 
-The workflow ENGINE owns build→review rounds and persists review feedback. Fresh subagents cannot see this conversation, so synthesize the agreed plan, constraints, acceptance criteria, and relevant workspace context into EVERY delegation prompt.
+Compile a self-contained handoff document so loop-phase sub-agents understand the goal, constraints, acceptance criteria, and relevant workspace context without re-grilling or re-planning.
 
-1. Call the subagent tool with { agent: "builder", task: "...", output: false } (do NOT pass a model parameter). Direct it to implement the agreed work in the workspace only, run relevant checks, and return an inline completion summary with checks run.
-2. Call the subagent tool with { agent: "commentator", task: "...", output: false }. Give it the same agreed context. Require independent validation: inspect the uncommitted diff, verify agreed acceptance criteria and correctness, run relevant checks where feasible, and report evidence. Its review must end with exactly one machine-readable line:
+Call the subagent tool with { agent: "recapper", task: "...", output: false } (do NOT pass a model parameter). Point it at the original goal above and instruct it to use the inherited conversation to produce a concise, self-contained handoff for fresh agents. It must return the complete handoff inline; do not tell it to write any artifact.
+
+Inspect that result, verify it ends with exactly one machine-readable line on its own:
+  WORKFLOW_HANDOFF_STATUS: ready
+Then immediately call write_workflow_artifact with the complete validated handoff as content. Only that parent tool call writes ${artifactDir}/handoff.md and advances the workflow.`,
+  loop: ({ artifactDir, userPrompt, loopMaxIterations }) =>
+    `You are in the LOOP phase of a LOOP workflow. The workflow ENGINE owns build→review rounds and persists review feedback.
+
+Original goal:
+${userPrompt}
+
+Use read to inspect ${artifactDir}/handoff.md. Using that handoff context — not the parent conversation — generate your own delegation prompt.
+
+1. Call the subagent tool with { agent: "builder", task: "...", output: false } (do NOT pass a model parameter). Give it the handoff context. Instruct it to implement the agreed work in the workspace only, run relevant checks, and return an inline completion summary with checks run. If a previous blocking review exists (e.g. ${artifactDir}/loop-review-1.md), direct the builder to read the persisted review and address every issue before returning.
+2. Call the subagent tool with { agent: "commentator", task: "...", output: false }. Give it the handoff context. Require independent validation: inspect the current uncommitted diff, verify the handoff acceptance criteria and correctness, run relevant checks where feasible, and report evidence. Its review must end with exactly one machine-readable line:
    WORKFLOW_REVIEW_STATUS: clean
    OR
    WORKFLOW_REVIEW_STATUS: blocking
@@ -33,10 +46,16 @@ When review is clean, the engine writes ${artifactDir}/loop-complete.md and make
 const config: WorkflowConfig = {
   mode: "loop",
   phases,
-  phaseArtifacts: { loop: "loop-complete.md" },
+  phaseArtifacts: {
+    handoff: "handoff.md",
+    loop: "loop-complete.md",
+  },
   prompts,
   skipRules: [],
-  artifactValidators: { loop: loopCompleteValidator },
+  artifactValidators: {
+    handoff: handoffValidator,
+    loop: loopCompleteValidator,
+  },
   closeValidators: { "loop-complete.md": loopCompleteValidator },
   closeArtifacts: ["loop-complete.md"],
   loopMaxIterations: 3,

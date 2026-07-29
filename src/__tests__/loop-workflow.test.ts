@@ -1,8 +1,13 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loopMode } from "../extensions/workflow/modes/loop.ts";
+
+function writeArtifact(dir: string, file: string, content: string) {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, file), content, "utf8");
+}
 
 async function createHarness() {
   const { __resetWorkflowRegistryForTests, createWorkflowExtension } = await import("../extensions/workflow/adapter.ts");
@@ -66,20 +71,49 @@ describe("loop workflow", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("is a direct, single-phase workflow", async () => {
-    expect(loopMode.config.phases).toEqual(["loop"]);
-    expect(loopMode.config.phaseArtifacts).toEqual({ loop: "loop-complete.md" });
+  it("starts at handoff and asks for recapper", async () => {
+    expect(loopMode.config.phases).toEqual(["handoff", "loop"]);
+    expect(loopMode.config.phaseArtifacts).toEqual({ handoff: "handoff.md", loop: "loop-complete.md" });
     expect(loopMode.config.closeArtifacts).toEqual(["loop-complete.md"]);
 
     const h = await createHarness();
     await start(h);
-    expect(h.sent.at(-1)?.text).toContain("do not grill, research, create a plan, or create a handoff artifact");
-    expect(h.sent.at(-1)?.text).toContain("Fresh subagents cannot see this conversation");
+    expect(h.sent.at(-1)?.text).toContain("HANDOFF phase of a LOOP workflow");
+    expect(h.sent.at(-1)?.text).toContain('agent: "recapper"');
+    expect(h.sent.at(-1)?.text).toContain("WORKFLOW_HANDOFF_STATUS: ready");
+    expect(h.sent.at(-1)?.text).toContain("write_workflow_artifact");
+  });
+
+  it("recapper result by itself does not advance or create artifact", async () => {
+    const h = await createHarness();
+    const dir = await start(h);
+
+    const r = await result(h, "recapper", "recap-1", "concise handoff context\nWORKFLOW_HANDOFF_STATUS: ready");
+    expect(r).toBeUndefined();
+    expect(existsSync(join(dir, "handoff.md"))).toBe(false);
+    expect(h.entries.at(-1)?.data).toMatchObject({ mode: "loop", phase: "handoff" });
+  });
+
+  it("blocks when handoff marker is missing and advances once valid", async () => {
+    const h = await createHarness();
+    const dir = await start(h);
+
+    await h.tools.get("write_workflow_artifact").execute("wf-1", { content: "no marker here" }, undefined, undefined, { ...h.ctx });
+    expect(h.entries.at(-1)?.data).toMatchObject({ mode: "loop", phase: "handoff" });
+
+    await h.tools.get("write_workflow_artifact").execute("wf-2", { content: "handoff\nWORKFLOW_HANDOFF_STATUS: ready" }, undefined, undefined, { ...h.ctx });
+    expect(h.entries.at(-1)?.data).toMatchObject({ mode: "loop", phase: "loop" });
+    expect(readFileSync(join(dir, "handoff.md"), "utf8")).toContain("WORKFLOW_HANDOFF_STATUS: ready");
+    expect(h.sent.at(-1)?.text).toContain("handoff.md");
   });
 
   it("persists a clean review, becomes terminal-ready, then explicitly completes", async () => {
     const h = await createHarness();
     const dir = await start(h);
+    writeArtifact(dir, "handoff.md", "handoff\nWORKFLOW_HANDOFF_STATUS: ready");
+    const tool = h.tools.get("write_workflow_artifact");
+    await tool.execute("wf-handoff", { content: readFileSync(join(dir, "handoff.md"), "utf8") }, undefined, undefined, h.ctx);
+    expect(h.entries.at(-1)?.data).toMatchObject({ mode: "loop", phase: "loop" });
 
     await result(h, "builder", "builder-1", "implemented; tests passed");
     const review = await result(h, "commentator", "review-1", "validated diff and tests\nWORKFLOW_REVIEW_STATUS: clean");
@@ -94,9 +128,11 @@ describe("loop workflow", () => {
     expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"))).toMatchObject({ mode: "loop", phase: "loop", status: "completed" });
   });
 
-  it("resumes a pending review using parent context, not a nonexistent plan artifact", async () => {
+  it("resumes a pending review telling agents to use handoff.md", async () => {
     const h = await createHarness();
     const dir = await start(h);
+    writeArtifact(dir, "handoff.md", "handoff\nWORKFLOW_HANDOFF_STATUS: ready");
+    await h.tools.get("write_workflow_artifact").execute("wf-handoff", { content: readFileSync(join(dir, "handoff.md"), "utf8") }, undefined, undefined, h.ctx);
     await result(h, "builder", "builder-1", "implemented");
     const runId = JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8")).id;
 
@@ -104,13 +140,15 @@ describe("loop workflow", () => {
     createWorkflowExtension(loopMode.config, loopMode)(h.pi);
     await h.commands.get("workflow-loop").handler(`resume ${runId}`, { ...h.ctx, isIdle: () => true });
 
-    expect(h.sent.at(-1)?.text).toContain("parent conversation context");
-    expect(h.sent.at(-1)?.text).not.toContain("plan.md");
+    expect(h.sent.at(-1)?.text).toContain("handoff.md");
+    expect(h.sent.at(-1)?.text).not.toContain("parent conversation context");
   });
 
   it("persists blocking feedback and pauses after three blocking rounds", async () => {
     const h = await createHarness();
     const dir = await start(h);
+    writeArtifact(dir, "handoff.md", "handoff\nWORKFLOW_HANDOFF_STATUS: ready");
+    await h.tools.get("write_workflow_artifact").execute("wf-handoff", { content: readFileSync(join(dir, "handoff.md"), "utf8") }, undefined, undefined, h.ctx);
 
     for (let round = 1; round <= 3; round++) {
       await result(h, "builder", `builder-${round}`, "implemented fixes");

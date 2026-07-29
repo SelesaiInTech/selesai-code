@@ -5,6 +5,11 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis yang dapat dijangkau dari branch `main` Selesai. Tag dari riwayat Pi yang tidak terkait dan tidak di-merge tidak disertakan.
 
+## 0.5.26 — Handoff loop langsung yang tahan lama
+
+- Menambahkan fase `handoff` ke workflow `loop` langsung: recapper bercabang menangkap percakapan yang disepakati ke `handoff.md` yang tahan lama sebelum agent builder dan commentator fresh dimulai.
+- Feedback reviewer yang tersimpan kini memberi ronde builder yang dilanjutkan kembali `handoff` tahan lama dan `loop-review-N.md` terbaru sebagai sumber kebenaran.
+
 ## 0.5.25 — Build rilis bersih
 
 - Membersihkan `dist` sebelum build agar file bundel yang sudah dihapus tidak masuk ke paket npm.

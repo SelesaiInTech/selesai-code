@@ -299,8 +299,8 @@ async function resumeController(
       }
       const ls = controller.loopState;
       continueAgent(pi, ctx, ls.stage === "reviewing"
-        ? `Resume the loop at review round ${ls.reviewRound + 1}: call the subagent tool now with { agent: "commentator", task: "..." } to review the builder's uncommitted diff against the original goal and parent conversation context. End the review with WORKFLOW_REVIEW_STATUS: clean or WORKFLOW_REVIEW_STATUS: blocking.`
-        : `Resume the loop at review round ${ls.reviewRound}: call the subagent tool now with { agent: "builder", task: "..." } to address the feedback in ${sm.snapshot.artifactDir}/${ls.reviewPath ?? "loop-review-<round>.md"}.`);
+        ? `Resume the loop at review round ${ls.reviewRound + 1}: call the subagent tool now with { agent: "commentator", task: "..." }. Have the commentator read ${sm.snapshot.artifactDir}/handoff.md and inspect the current uncommitted diff against the handoff acceptance criteria. End the review with WORKFLOW_REVIEW_STATUS: clean or WORKFLOW_REVIEW_STATUS: blocking.`
+        : `Resume the loop at review round ${ls.reviewRound}: call the subagent tool now with { agent: "builder", task: "..." } to address the feedback in ${sm.snapshot.artifactDir}/${ls.reviewPath ?? "loop-review-<round>.md"}, using ${sm.snapshot.artifactDir}/handoff.md as the source of truth for the goal and acceptance criteria.`);
     } else {
       applyControllerEffect(controller, ctx, current);
     }

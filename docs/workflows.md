@@ -133,11 +133,11 @@ Lifecycle: `plan → reuse → handoff → loop (build ↔ review) → terminal-
 
 ### `loop` — direct build/review loop
 
-Use this after the plan was already agreed in the current conversation. It has one engine-owned `loop` phase: builder changes workspace code, commentator independently validates the diff and relevant checks, then blocking feedback returns to the builder (max 3 blocking rounds). A clean review writes `loop-complete.md`, makes the run terminal-ready, and requires explicit completion.
+Use this after the plan was already agreed in the current conversation. It captures the agreed context into a parent-owned `handoff.md` artifact, then runs an engine-owned `loop` phase: builder changes workspace code, commentator independently validates the diff and relevant checks, then blocking feedback returns to the builder (max 3 blocking rounds). A clean review writes `loop-complete.md`, makes the run terminal-ready, and requires explicit completion.
 
-Fresh subagents do not inherit the parent conversation. Before each delegation, the parent synthesizes the agreed plan, constraints, acceptance criteria, and relevant workspace context into the builder and reviewer prompts.
+Fresh subagents do not inherit the parent conversation. The parent forks a `recapper` subagent once to synthesize a concise, self-contained handoff document directly from the inherited conversation. The parent validates the handoff marker and writes `handoff.md` via `write_workflow_artifact`. After that, every builder and commentator call reads `handoff.md` instead of relying on the parent conversation. Persisted `loop-review-N.md` files feed blocking fixes back to the builder.
 
-Lifecycle: `loop (build ↔ review) → terminal-ready → end_workflow({ mode: "loop" })`
+Lifecycle: `handoff → loop (build ↔ review) → terminal-ready → end_workflow({ mode: "loop" })`
 
 - `/workflow-loop <goal>` — start a direct build/review run
 - `/workflow-loop resume` / `/workflow-loop resume <id-or-artifact-dir-or-workflow.json>` — list or resume a run

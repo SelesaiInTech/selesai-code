@@ -5,6 +5,11 @@ title: Changelog
 
 This history follows release tags reachable from the Selesai `main` branch. Tags from unrelated, unmerged Pi history are excluded.
 
+## 0.5.26 — Durable direct-loop handoffs
+
+- Added a `handoff` phase to direct `loop` workflows: a forked recapper captures the agreed conversation into durable `handoff.md` before fresh builder and commentator agents begin.
+- Persisted reviewer feedback now gives resumed builder rounds the durable handoff and latest `loop-review-N.md` as their source of truth.
+
 ## 0.5.25 — Clean release builds
 
 - Clean `dist` before building so removed bundled files are not included in npm packages.
