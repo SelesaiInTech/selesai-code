@@ -215,6 +215,8 @@ This matters because the agent receiving the message doesn't need to reconstruct
 
 `reply` is receiver-side sugar for replying to an inbound ask. In the turn triggered by an incoming intercom ask, `intercom({ action: "reply", message: "..." })` targets that exact sender and message automatically. If you reply later, it falls back to the single unresolved inbound ask. If multiple asks are pending, use `intercom({ action: "pending" })` to inspect them and then call `reply` with `to` to disambiguate.
 
+The broker keeps a bounded in-memory mailbox for recently disconnected named sessions. If a lightweight CLI sender asks a long-running session something and exits before the answer, the later `reply` is accepted into that mailbox instead of failing with `Session not found`; a process that reconnects with the same name receives the queued reply. This is per-broker runtime state, not durable storage across broker restarts.
+
 Incoming messages now carry diagnostic metadata end to end: stable message ID, sender sequence, sender timestamp, broker receive/delivery timestamps, receiver receive timestamp, and injection timestamp. Receivers emit lifecycle receipts for `receiver_received`, `acknowledged`, `queued`, `injected`, `expired`, `cancelled`, `superseded`, and `cancellation_requested`; duplicate message IDs are acknowledged but injected at most once per receiving session. If an `ask` times out, the timeout names the message ID and last known delivery state. Timeout is not cancellation: the recipient may still have the message queued or actionable unless an explicit cancellation path says otherwise.
 
 Cancellation is explicit: call `intercom({ action: "cancel", messageId })` to request cancellation of a message you originally sent. If the receiver has not injected it yet, it is removed from the queue and reported as `cancelled`; if it is already injected or processed, the receiver reports `cancellation_requested` instead of hiding it. Supersede is also explicit: pass `supersedes: "old-message-id"` on a new `send` or `ask`. The broker only allows same sender → same receiver supersedes, marks the old message `superseded`, and sends the replacement with a new message ID. Retries are never automatic; a retry should be a new authored message, optionally linked with `retryOf`.
@@ -319,11 +321,14 @@ The supervisor can reply with plain JSON or a fenced `json` block. If the reply 
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `action` | string | `"list"`, `"send"`, `"ask"`, `"reply"`, `"pending"`, or `"status"` |
+| `action` | string | `"list"`, `"list-cwd"`, `"send"`, `"ask"`, `"reply"`, `"pending"`, `"status"`, or `"cancel"` |
 | `to` | string | Target session name or ID (for send/ask, or to disambiguate reply) |
 | `message` | string | Message text (for send/ask/reply) |
 | `attachments` | array | Optional `file`, `snippet`, or `context` attachments |
 | `replyTo` | string | Optional message ID for threading or replying to an `ask` |
+| `messageId` | string | Optional explicit message ID for send/ask, or required message ID for `cancel` |
+| `supersedes` | string | Optional previous message ID that this send/ask explicitly replaces |
+| `retryOf` | string | Optional previous message ID that this send/ask explicitly retries |
 
 ### contact_supervisor
 
@@ -352,6 +357,8 @@ Only registered in sessions where `pi-subagents` supplied the required child bri
 **`reply`** — Replies to the current intercom-triggered message if there is one. Otherwise it falls back to the single unresolved inbound ask. If multiple asks are pending, pass `to` or inspect them with `pending` first. Under the hood this is still a normal `send` with the exact `replyTo` value.
 
 **`pending`** — Lists unresolved inbound asks with sender, message ID, elapsed time, and a short preview. Useful when replying after the original triggered turn.
+
+**`cancel`** — Requests cancellation of a message previously sent by the current session. Queued messages are removed before injection; already-injected messages receive a visible cancellation request.
 
 **`status`** — Shows connection status, session ID, and total count of active sessions (including the current session).
 
