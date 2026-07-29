@@ -11,6 +11,9 @@ import { InlineMessageComponent } from "./ui/inline-message.ts";
 import { getAskTimeoutMs, loadConfig, type IntercomConfig } from "./config.ts";
 import type { SessionInfo, Message, Attachment } from "./types.ts";
 import { ReplyTracker } from "./reply-tracker.ts";
+import { resolve as resolvePath } from "node:path";
+import { sameCwd } from "./cwd.ts";
+import { formatContextUsage } from "./format-context.ts";
 
 const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";
 const SUBAGENT_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
@@ -410,7 +413,7 @@ function formatSessionListRow(session: SessionInfo, currentCwd: string, isSelf: 
   const tags = [isSelf ? "self" : session.cwd === currentCwd ? "same cwd" : undefined, session.status]
     .filter((tag): tag is string => Boolean(tag));
   const suffix = tags.length ? ` [${tags.join(", ")}]` : "";
-  return `• ${name} (${shortSessionId(session.id)}) — ${session.cwd} (${session.model})${suffix}`;
+  return `• ${name} (${shortSessionId(session.id)}) — ${session.cwd} (${session.model}${formatContextUsage(session)})${suffix}`;
 }
 function previewText(value: unknown, maxLength = 72): string | undefined {
   if (typeof value !== "string") {
@@ -595,13 +598,33 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
       status: currentStatus(),
     };
   }
+  // Snapshot the live session's context-window usage for presence. getContextUsage()
+  // (stock SDK) reports { tokens, contextWindow, percent }, with tokens/percent null
+  // right after a compaction (before the next assistant response). We emit null in
+  // that case to CLEAR a peer's stale value rather than freeze the old percentage.
+  // Feature-detected so an older runtime without getContextUsage() just omits it.
+  function currentContextUsage(): { contextPct?: number | null; contextTokens?: number | null; contextWindow?: number } {
+    const usage = getLiveContext()?.getContextUsage?.();
+    if (!usage) {
+      return {};
+    }
+    const result: { contextPct?: number | null; contextTokens?: number | null; contextWindow?: number } = {
+      contextPct: typeof usage.percent === "number" && Number.isFinite(usage.percent) ? Math.round(usage.percent) : null,
+      contextTokens: typeof usage.tokens === "number" && Number.isFinite(usage.tokens) ? usage.tokens : null,
+    };
+    if (typeof usage.contextWindow === "number" && usage.contextWindow > 0) {
+      result.contextWindow = usage.contextWindow;
+    }
+    return result;
+  }
+
   function syncPresenceIdentity(sessionId: string): void {
     if (!client || !getLiveContext()) {
       return;
     }
     const identity = buildPresenceIdentity(pi, currentIntercomSessionId ?? sessionId);
     lastPresenceName = identity.name;
-    client.updatePresence({ ...identity, status: currentStatus() });
+    client.updatePresence({ ...identity, status: currentStatus(), ...currentContextUsage() });
   }
   function startNamePoll(): void {
     clearNamePollTimer();
@@ -631,7 +654,8 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
     if (!client || !currentSessionId || !getLiveContext()) {
       return;
     }
-    client.updatePresence({ status: currentStatus() });
+    // context% rides the status heartbeat so peers see live usage at turn boundaries.
+    client.updatePresence({ status: currentStatus(), ...currentContextUsage() });
   }
   function currentSessionTargetMatches(to: string, resolvedTo?: string | null, activeClient?: IntercomClient): boolean {
     const targets = new Set<string>();
@@ -1453,6 +1477,8 @@ sessions share a name.
 
 Usage:
   intercom({ action: "list" })                    → List active sessions
+  intercom({ action: "list-cwd" })                → List sessions in the current working directory
+  intercom({ action: "list-cwd", cwd: "/path" })  → List sessions in a specific directory
   intercom({ action: "send", to: "name-or-id", message: "..." })  → Send message
   intercom({ action: "ask", to: "name-or-id", message: "..." })   → Ask and wait for reply
   intercom({ action: "reply", message: "..." })                      → Reply to the active/single pending ask
@@ -1462,8 +1488,8 @@ Usage:
       "Use to coordinate with other local pi sessions: list peers, send updates, ask for help, or check intercom connectivity.",
 
     parameters: Type.Object({
-      action: StringEnum(["list", "send", "ask", "reply", "pending", "status"] as const, {
-        description: "Action: 'list', 'send', 'ask', 'reply', 'pending', or 'status'",
+      action: StringEnum(["list", "list-cwd", "send", "ask", "reply", "pending", "status"] as const, {
+        description: "Action: 'list', 'list-cwd', 'send', 'ask', 'reply', 'pending', or 'status'",
       }),
       to: Type.Optional(Type.String({
         description: "Target session: name, full session ID, or the short id shown in parentheses by 'list' (a leading ID prefix resolves). For 'send', 'ask', or disambiguating 'reply'.",
@@ -1480,6 +1506,9 @@ Usage:
       replyTo: Type.Optional(Type.String({
         description: "Message ID to reply to (for threading or responding to an 'ask')",
       })),
+      cwd: Type.Optional(Type.String({
+        description: "Working directory filter for 'list-cwd' (absolute, or relative to the current session's cwd; '.' means the current cwd). Defaults to the current session's cwd.",
+      })),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -1495,7 +1524,7 @@ Usage:
 
       syncPresenceIdentity(ctx.sessionManager.getSessionId());
 
-      const { action, to, message, attachments, replyTo } = params;
+      const { action, to, message, attachments, replyTo, cwd } = params;
 
       switch (action) {
         case "list": {
@@ -1516,6 +1545,59 @@ Usage:
             const otherSection = otherSessions.length === 0
               ? "**Other sessions:**\nNo other sessions connected."
               : `**Other sessions:**\n${otherSessions.map(s => formatSessionListRow(s, currentSession.cwd, false)).join("\n")}`;
+
+            return {
+              content: [{ type: "text", text: `${currentSection}\n\n${otherSection}` }],
+              details: {},
+            };
+          } catch (error) {
+            return {
+              content: [{ type: "text", text: `Failed to list sessions: ${getErrorMessage(error)}` }],
+              details: { error: true },
+            };
+          }
+        }
+
+        case "list-cwd": {
+          try {
+            const mySessionId = connectedClient.sessionId;
+            const sessions = await connectedClient.listSessions();
+            const currentSession = sessions.find(s => s.id === mySessionId);
+
+            if (!currentSession) {
+              return {
+                content: [{ type: "text", text: "Current session is missing from intercom session list." }],
+                details: { error: true },
+              };
+            }
+
+            // Default to the current session's cwd; an explicit `cwd` overrides
+            // (relative paths resolved against it, "." meaning the current cwd).
+            const filterCwd = cwd && cwd !== "."
+              ? resolvePath(currentSession.cwd, cwd)
+              : currentSession.cwd;
+
+            const otherSessions = sessions.filter(
+              s => s.id !== mySessionId && sameCwd(s.cwd, filterCwd),
+            );
+
+            // Fail loud: filtering by a directory with no peers while the
+            // session's OWN cwd has some otherwise reads as a misleading empty
+            // result (common when a caller passes a guessed parent cwd).
+            let emptyNote = "No other sessions in this directory.";
+            if (otherSessions.length === 0 && !sameCwd(filterCwd, currentSession.cwd)) {
+              const here = sessions.filter(
+                s => s.id !== mySessionId && sameCwd(s.cwd, currentSession.cwd),
+              ).length;
+              if (here > 0) {
+                emptyNote += ` Your session's cwd is ${currentSession.cwd} (${here} peer${here === 1 ? "" : "s"} there) — call list-cwd without a cwd argument to list them.`;
+              }
+            }
+
+            const currentSection = `**Current session:**\n${formatSessionListRow(currentSession, currentSession.cwd, true)}`;
+            const otherSection = otherSessions.length === 0
+              ? `**Other sessions (cwd: ${filterCwd}):**\n${emptyNote}`
+              : `**Other sessions (cwd: ${filterCwd}):**\n${otherSessions.map(s => formatSessionListRow(s, currentSession.cwd, false)).join("\n")}`;
 
             return {
               content: [{ type: "text", text: `${currentSection}\n\n${otherSection}` }],
