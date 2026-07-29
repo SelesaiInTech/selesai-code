@@ -4,9 +4,11 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 
 ## [Unreleased]
 
-### Fixed
-- Added a bounded in-memory broker mailbox so replies to recently disconnected named CLI senders are queued and delivered when a process reconnects with the same name. Thanks to Luke for issue #63.
-- Added protocol-visible delivery metadata, receiver lifecycle receipts, receiver-side inbound message dedupe, explicit cancel/supersede controls, and clearer ask-timeout receipts for ordered delivery diagnostics. Thanks to Donnie Thomas for issue #65.
+## [0.9.0] - 2026-07-29
+
+### Added
+- Added a bounded in-memory broker mailbox so replies to recently disconnected named CLI senders are queued and delivered when a process reconnects with the same name. Thanks to Luke (`valkyriweb`) for issue #63.
+- Added protocol-visible delivery metadata, receiver lifecycle receipts, receiver-side inbound message dedupe, explicit cancel/supersede controls, and clearer ask-timeout receipts for ordered delivery diagnostics. Thanks to Donnie Thomas (`donnielrt`) for issue #65.
 
 ## [0.8.0] - 2026-07-29
 
