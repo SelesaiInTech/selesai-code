@@ -29,6 +29,8 @@ export interface Message {
   brokerDeliveredAt?: number;
   receiverReceivedAt?: number;
   injectedAt?: number;
+  supersedes?: string;
+  retryOf?: string;
   replyTo?: string;
   expectsReply?: boolean;
   content: {
@@ -44,12 +46,22 @@ export interface Attachment {
   language?: string;
 }
 
-export type MessageReceiptStatus = "receiver_received" | "queued" | "injected" | "acknowledged" | "expired" | "cancelled";
+export type MessageReceiptStatus = "receiver_received" | "queued" | "injected" | "acknowledged" | "expired" | "cancelled" | "superseded" | "cancellation_requested";
 
 export interface MessageReceipt {
   messageId: string;
   status: MessageReceiptStatus;
   timestamp: number;
+  detail?: string;
+}
+
+export type MessageControlAction = "cancel" | "supersede";
+
+export interface MessageControl {
+  messageId: string;
+  action: MessageControlAction;
+  timestamp: number;
+  supersededBy?: string;
   detail?: string;
 }
 
@@ -69,6 +81,7 @@ export type ClientMessage =
   | { type: "list"; requestId: string }
   | { type: "send"; to: string; message: Message }
   | { type: "message_receipt"; receipt: MessageReceipt }
+  | { type: "cancel_message"; messageId: string }
   | { type: "cancel_ask"; messageId: string }
   | { type: "presence"; name?: string; status?: string; model?: string; contextPct?: number | null; contextTokens?: number | null; contextWindow?: number | null }
   | {
@@ -98,6 +111,7 @@ export type BrokerMessage =
   | { type: "delivered"; messageId: string }
   | { type: "delivery_failed"; messageId: string; reason: string }
   | { type: "message_receipt"; from: SessionInfo; receipt: MessageReceipt }
+  | { type: "message_control"; from: SessionInfo; control: MessageControl }
   | { type: "extension_owner"; namespace: string; ownerId?: string; ownerEpoch?: string }
   | {
       type: "extension_message";

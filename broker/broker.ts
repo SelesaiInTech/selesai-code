@@ -16,7 +16,7 @@ import {
 } from "./paths.ts";
 import { getAskTimeoutMs } from "../config.ts";
 import { EXTENSION_BUS_FEATURE } from "../types.ts";
-import type { SessionInfo, Message, Attachment, BrokerMessage, SessionRegistration, ExtensionCapability, MessageReceipt, MessageReceiptStatus } from "../types.ts";
+import type { SessionInfo, Message, Attachment, BrokerMessage, SessionRegistration, ExtensionCapability, MessageControl, MessageReceipt, MessageReceiptStatus } from "../types.ts";
 import { ExtensionStateManager } from "./extension-state.ts";
 import { assertNoLiveBroker } from "./runtime-claim.ts";
 
@@ -83,7 +83,9 @@ function isMessageReceiptStatus(value: unknown): value is MessageReceiptStatus {
     || value === "injected"
     || value === "acknowledged"
     || value === "expired"
-    || value === "cancelled";
+    || value === "cancelled"
+    || value === "superseded"
+    || value === "cancellation_requested";
 }
 
 function isMessageReceipt(value: unknown): value is MessageReceipt {
@@ -134,6 +136,14 @@ function isMessage(value: unknown): value is Message {
     if (message[key] !== undefined && typeof message[key] !== "number") {
       return false;
     }
+  }
+
+  if (message.supersedes !== undefined && typeof message.supersedes !== "string") {
+    return false;
+  }
+
+  if (message.retryOf !== undefined && typeof message.retryOf !== "string") {
+    return false;
   }
 
   if (message.replyTo !== undefined && typeof message.replyTo !== "string") {
@@ -582,6 +592,7 @@ class IntercomBroker {
 
         const brokerReceivedAt = Date.now();
         this.pruneAskEdges();
+        this.pruneMessageReceiptRoutes(brokerReceivedAt);
         const replyEdge = message.replyTo ? this.askEdges.get(message.replyTo) : undefined;
 
         const targets = this.findSessions(clientMessage.to);
@@ -604,6 +615,17 @@ class IntercomBroker {
             break;
           }
           const target = targets[0];
+          if (message.supersedes) {
+            const supersededRoute = this.messageReceiptRoutes.get(message.supersedes);
+            if (!supersededRoute || supersededRoute.from !== currentId || supersededRoute.to !== target.info.id) {
+              writeMessage(socket, {
+                type: "delivery_failed",
+                messageId: message.id,
+                reason: "Supersede target does not match a previous message from this sender to this receiver",
+              });
+              break;
+            }
+          }
           if (replyEdge && (replyEdge.to !== currentId || replyEdge.from !== target.info.id)) {
             writeMessage(socket, {
               type: "delivery_failed",
@@ -629,6 +651,19 @@ class IntercomBroker {
             brokerReceivedAt,
             brokerDeliveredAt: Date.now(),
           };
+          if (message.supersedes) {
+            const control: MessageControl = {
+              action: "supersede",
+              messageId: message.supersedes,
+              supersededBy: message.id,
+              timestamp: Date.now(),
+            };
+            writeMessage(target.socket, {
+              type: "message_control",
+              from: fromSession.info,
+              control,
+            });
+          }
           writeMessage(target.socket, {
             type: "message",
             from: fromSession.info,
@@ -677,6 +712,42 @@ class IntercomBroker {
             receipt: clientMessage.receipt,
           });
         }
+        break;
+      }
+
+      case "cancel_message": {
+        if (!currentId) {
+          throw new Error("Received cancel_message before register");
+        }
+        if (typeof clientMessage.messageId !== "string") {
+          throw new Error("Invalid cancel_message message");
+        }
+        this.pruneMessageReceiptRoutes();
+        const route = this.messageReceiptRoutes.get(clientMessage.messageId);
+        const sender = this.sessions.get(currentId);
+        const receiver = route ? this.sessions.get(route.to) : undefined;
+        if (route?.from !== currentId || sender?.socket !== socket || !receiver) {
+          writeMessage(socket, {
+            type: "delivery_failed",
+            messageId: clientMessage.messageId,
+            reason: "Message cannot be cancelled by this session",
+          });
+          break;
+        }
+        writeMessage(receiver.socket, {
+          type: "message_control",
+          from: sender.info,
+          control: {
+            action: "cancel",
+            messageId: clientMessage.messageId,
+            timestamp: Date.now(),
+          },
+        });
+        const edge = this.askEdges.get(clientMessage.messageId);
+        if (edge?.from === currentId) {
+          this.askEdges.delete(clientMessage.messageId);
+        }
+        writeMessage(socket, { type: "delivered", messageId: clientMessage.messageId });
         break;
       }
 

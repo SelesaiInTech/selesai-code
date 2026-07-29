@@ -1303,6 +1303,164 @@ test("busy interactive sessions keep same-sender queued messages in sequence ord
   }
 });
 
+test("explicit cancel removes a queued inbound message before injection", { concurrency: false }, async () => {
+  const { default: piIntercomExtension } = await import("./index.ts");
+  const { planner, cleanup } = await setupClients();
+  let idle = false;
+  const harness = createExtensionHarness("cancel-worker", {
+    hasUI: true,
+    isIdle: () => idle,
+  });
+
+  try {
+    piIntercomExtension(harness.pi as never);
+    await harness.emitLifecycle("session_start");
+    const worker = await waitForSessionByName(planner, "cancel-worker");
+    const receipts: string[] = [];
+    const unsubscribeReceipts = planner.onMessageReceipt((_from, receipt) => {
+      if (receipt.messageId === "cancel-queued") receipts.push(receipt.status);
+    });
+
+    assert.equal((await planner.send(worker.id, { messageId: "cancel-queued", text: "Cancel this before delivery", expectsReply: true })).delivered, true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(harness.sentMessages.length, 0);
+    assert.equal((await planner.cancelMessage("cancel-queued")).delivered, true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    idle = true;
+    await harness.emitLifecycle("agent_end");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(harness.sentMessages.length, 0);
+    assert.deepEqual(receipts, ["receiver_received", "acknowledged", "queued", "cancelled"]);
+    unsubscribeReceipts();
+  } finally {
+    await harness.emitLifecycle("session_shutdown");
+    await cleanup();
+  }
+});
+
+test("intercom cancel action requests cancellation for a sent message", { concurrency: false }, async () => {
+  const { default: piIntercomExtension } = await import("./index.ts");
+  const { planner, cleanup } = await setupClients();
+  let idle = false;
+  const senderHarness = createExtensionHarness("cancel-sender", { sessionId: "session-cancel-sender" });
+  const receiverHarness = createExtensionHarness("cancel-tool-worker", {
+    hasUI: true,
+    isIdle: () => idle,
+    sessionId: "session-cancel-tool-worker",
+  });
+
+  try {
+    piIntercomExtension(senderHarness.pi as never);
+    piIntercomExtension(receiverHarness.pi as never);
+    await senderHarness.emitLifecycle("session_start");
+    await receiverHarness.emitLifecycle("session_start");
+    await waitForSessionByName(planner, "cancel-tool-worker");
+    const intercomTool = senderHarness.tools.find((tool) => tool.name === "intercom")!;
+
+    const sendResult = await intercomTool.execute("send-before-cancel", { action: "send", to: "cancel-tool-worker", message: "Cancel this through the tool" }, new AbortController().signal, undefined, senderHarness.ctx);
+    const messageId = String(sendResult.details?.messageId);
+    assert.equal(sendResult.details?.delivered, true);
+    assert.notEqual(messageId, "undefined");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(receiverHarness.sentMessages.length, 0);
+
+    const cancelResult = await intercomTool.execute("cancel-message", { action: "cancel", messageId }, new AbortController().signal, undefined, senderHarness.ctx);
+    assert.equal(cancelResult.details?.delivered, true);
+    assert.match(cancelResult.content[0]?.text ?? "", /Cancellation requested/);
+
+    idle = true;
+    await receiverHarness.emitLifecycle("agent_end");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(receiverHarness.sentMessages.length, 0);
+  } finally {
+    await senderHarness.emitLifecycle("session_shutdown");
+    await receiverHarness.emitLifecycle("session_shutdown");
+    await cleanup();
+  }
+});
+
+test("same-sender supersede replaces a queued inbound message", { concurrency: false }, async () => {
+  const { default: piIntercomExtension } = await import("./index.ts");
+  const { planner, cleanup } = await setupClients();
+  let idle = false;
+  const harness = createExtensionHarness("supersede-worker", {
+    hasUI: true,
+    isIdle: () => idle,
+  });
+
+  try {
+    piIntercomExtension(harness.pi as never);
+    await harness.emitLifecycle("session_start");
+    const worker = await waitForSessionByName(planner, "supersede-worker");
+    const receipts = new Map<string, string[]>();
+    const unsubscribeReceipts = planner.onMessageReceipt((_from, receipt) => {
+      const statuses = receipts.get(receipt.messageId) ?? [];
+      statuses.push(receipt.status);
+      receipts.set(receipt.messageId, statuses);
+    });
+
+    assert.equal((await planner.send(worker.id, { messageId: "superseded-message", text: "Old queued message", expectsReply: true })).delivered, true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const replacement = await planner.send(worker.id, { messageId: "replacement-message", text: "Replacement message", supersedes: "superseded-message" });
+    assert.equal(replacement.delivered, true);
+
+    idle = true;
+    await harness.emitLifecycle("agent_end");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(harness.sentMessages.length, 1);
+    assert.doesNotMatch(harness.sentMessages[0]?.message.content ?? "", /Old queued message/);
+    assert.match(harness.sentMessages[0]?.message.content ?? "", /Replacement message/);
+    const details = harness.sentMessages[0]?.message.details as { message?: Message } | undefined;
+    assert.equal(details?.message?.supersedes, "superseded-message");
+    assert.deepEqual(receipts.get("superseded-message"), ["receiver_received", "acknowledged", "queued", "superseded"]);
+    assert.deepEqual(receipts.get("replacement-message"), ["receiver_received", "acknowledged", "queued", "injected"]);
+    unsubscribeReceipts();
+  } finally {
+    await harness.emitLifecycle("session_shutdown");
+    await cleanup();
+  }
+});
+
+test("supersede is scoped to the same sender and receiver", { concurrency: false }, async () => {
+  const { default: piIntercomExtension } = await import("./index.ts");
+  const { planner, orchestrator, cleanup } = await setupClients();
+  let idle = false;
+  const firstHarness = createExtensionHarness("supersede-first", {
+    hasUI: true,
+    isIdle: () => idle,
+  });
+  const secondHarness = createExtensionHarness("supersede-second", {
+    hasUI: true,
+    isIdle: () => idle,
+    sessionId: "session-supersede-second",
+  });
+
+  try {
+    piIntercomExtension(firstHarness.pi as never);
+    piIntercomExtension(secondHarness.pi as never);
+    await firstHarness.emitLifecycle("session_start");
+    await secondHarness.emitLifecycle("session_start");
+    const first = await waitForSessionByName(planner, "supersede-first");
+    const second = await waitForSessionByName(planner, "supersede-second");
+
+    assert.equal((await planner.send(first.id, { messageId: "wrong-target-old", text: "Old target" })).delivered, true);
+    const wrongReceiver = await planner.send(second.id, { messageId: "wrong-target-new", text: "Wrong receiver", supersedes: "wrong-target-old" });
+    assert.equal(wrongReceiver.delivered, false);
+    assert.match(wrongReceiver.reason ?? "", /same sender and receiver|previous message/);
+
+    const wrongSender = await orchestrator.send(first.id, { messageId: "wrong-sender-new", text: "Wrong sender", supersedes: "wrong-target-old" });
+    assert.equal(wrongSender.delivered, false);
+    assert.match(wrongSender.reason ?? "", /same sender and receiver|previous message/);
+  } finally {
+    await firstHarness.emitLifecycle("session_shutdown");
+    await secondHarness.emitLifecycle("session_shutdown");
+    await cleanup();
+  }
+});
+
 test("replied idle-gated asks are discarded before delivery", { concurrency: false }, async () => {
   const { default: piIntercomExtension } = await import("./index.ts");
   const { planner, cleanup } = await setupClients();

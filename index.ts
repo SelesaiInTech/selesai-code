@@ -10,7 +10,7 @@ import { ComposeOverlay, type ComposeResult } from "./ui/compose.ts";
 import { InlineMessageComponent } from "./ui/inline-message.ts";
 import { getAskTimeoutMs, loadConfig, type IntercomConfig } from "./config.ts";
 import { EXTENSION_BUS_FEATURE } from "./types.ts";
-import type { Attachment, BrokerMessage, Message, MessageReceiptStatus, SessionInfo, SessionRegistration } from "./types.ts";
+import type { Attachment, BrokerMessage, Message, MessageControl, MessageReceiptStatus, SessionInfo, SessionRegistration } from "./types.ts";
 import {
   INTERCOM_EXTENSION_REGISTER_EVENT,
   INTERCOM_EXTENSION_REGISTRY_READY_EVENT,
@@ -446,6 +446,8 @@ function formatMessageTimestamp(timestamp: number | undefined): string | undefin
 function formatInboundDeliveryMetadata(message: Message): string {
   const parts = [`id ${message.id}`];
   if (typeof message.senderSequence === "number") parts.push(`seq ${message.senderSequence}`);
+  if (message.supersedes) parts.push(`supersedes ${message.supersedes}`);
+  if (message.retryOf) parts.push(`retry of ${message.retryOf}`);
   const sentAt = formatMessageTimestamp(message.timestamp);
   if (sentAt) parts.push(`sent ${sentAt}`);
   const brokerDeliveredAt = formatMessageTimestamp(message.brokerDeliveredAt);
@@ -539,6 +541,25 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
     } catch {
       // Receipts are diagnostics; message handling should not fail when the sender disconnects.
     }
+  }
+  function handleMessageControl(control: MessageControl): void {
+    const queuedIndex = pendingIdleMessages.findIndex((entry) => entry.message.id === control.messageId);
+    if (control.action === "cancel") {
+      if (queuedIndex >= 0) {
+        pendingIdleMessages.splice(queuedIndex, 1);
+        replyTracker.dismissPendingAsk(control.messageId);
+        emitMessageReceipt(control.messageId, "cancelled", "cancelled before injection");
+      } else {
+        emitMessageReceipt(control.messageId, "cancellation_requested", "message was not queued; it may already be injected or processed");
+      }
+      return;
+    }
+
+    if (queuedIndex >= 0) {
+      pendingIdleMessages.splice(queuedIndex, 1);
+    }
+    replyTracker.dismissPendingAsk(control.messageId);
+    emitMessageReceipt(control.messageId, "superseded", control.supersededBy ? `superseded by ${control.supersededBy}` : undefined);
   }
   function latestDeliveryState(messageId: string | null, fallback: string): string {
     if (!messageId) {
@@ -1040,6 +1061,9 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
             timestamp: message.receipt.timestamp,
             ...(message.receipt.detail ? { detail: message.receipt.detail } : {}),
           });
+          break;
+        case "message_control":
+          handleMessageControl(message.control);
           break;
         case "session_joined":
           for (const namespace of localExtensions.keys()) {
@@ -1760,6 +1784,7 @@ Usage:
   intercom({ action: "list-cwd", cwd: "/path" })  → List sessions in a specific directory
   intercom({ action: "send", to: "name-or-id", message: "..." })  → Send message
   intercom({ action: "ask", to: "name-or-id", message: "..." })   → Ask and wait for reply
+  intercom({ action: "cancel", messageId: "..." })                 → Request cancellation of a sent message
   intercom({ action: "reply", message: "..." })                      → Reply to the active/single pending ask
   intercom({ action: "pending" })                                      → List unresolved inbound asks
   intercom({ action: "status" })                  → Show connection status`,
@@ -1767,8 +1792,8 @@ Usage:
       "Use to coordinate with other local pi sessions: list peers, send updates, ask for help, or check intercom connectivity.",
 
     parameters: Type.Object({
-      action: StringEnum(["list", "list-cwd", "send", "ask", "reply", "pending", "status"] as const, {
-        description: "Action: 'list', 'list-cwd', 'send', 'ask', 'reply', 'pending', or 'status'",
+      action: StringEnum(["list", "list-cwd", "send", "ask", "reply", "pending", "status", "cancel"] as const, {
+        description: "Action: 'list', 'list-cwd', 'send', 'ask', 'reply', 'pending', 'status', or 'cancel'",
       }),
       to: Type.Optional(Type.String({
         description: "Target session: name, full session ID, or the short id shown in parentheses by 'list' (a leading ID prefix resolves). For 'send', 'ask', or disambiguating 'reply'.",
@@ -1784,6 +1809,15 @@ Usage:
       }))),
       replyTo: Type.Optional(Type.String({
         description: "Message ID to reply to (for threading or responding to an 'ask')",
+      })),
+      messageId: Type.Optional(Type.String({
+        description: "Message ID for actions that operate on an existing message, such as 'cancel'.",
+      })),
+      supersedes: Type.Optional(Type.String({
+        description: "Previous message ID this send/ask explicitly supersedes. Only works for the same sender and receiver.",
+      })),
+      retryOf: Type.Optional(Type.String({
+        description: "Previous message ID this send/ask is a user-authored retry of. Retries always send a new message ID.",
       })),
       cwd: Type.Optional(Type.String({
         description: "Working directory filter for 'list-cwd' (absolute, or relative to the current session's cwd; '.' means the current cwd). Defaults to the current session's cwd.",
@@ -1803,7 +1837,7 @@ Usage:
 
       syncPresenceIdentity(ctx.sessionManager.getSessionId());
 
-      const { action, to, message, attachments, replyTo, cwd } = params;
+      const { action, to, message, attachments, replyTo, messageId, supersedes, retryOf, cwd } = params;
 
       switch (action) {
         case "list": {
@@ -1890,6 +1924,34 @@ Usage:
           }
         }
 
+        case "cancel": {
+          if (!messageId) {
+            return {
+              content: [{ type: "text", text: "Missing 'messageId' parameter" }],
+              details: { error: true },
+            };
+          }
+          try {
+            const result = await connectedClient.cancelMessage(messageId);
+            if (!result.delivered) {
+              const errorText = result.reason ?? "Message may not exist or may belong to another sender.";
+              return {
+                content: [{ type: "text", text: `Cancellation for ${messageId} was not delivered: ${errorText}` }],
+                details: { messageId, delivered: false, reason: result.reason },
+              };
+            }
+            return {
+              content: [{ type: "text", text: `Cancellation requested for ${messageId}` }],
+              details: { messageId, delivered: true },
+            };
+          } catch (error) {
+            return {
+              content: [{ type: "text", text: `Failed to cancel message: ${getErrorMessage(error)}` }],
+              details: { error: true, messageId },
+            };
+          }
+        }
+
         case "send": {
           if (!to || !message) {
             return {
@@ -1922,6 +1984,8 @@ Usage:
               text: message,
               attachments,
               replyTo,
+              supersedes,
+              retryOf,
             });
             if (!result.delivered) {
               const errorText = result.reason ?? "Session may not exist or has disconnected.";
@@ -1932,7 +1996,7 @@ Usage:
             }
             pi.appendEntry("intercom_sent", {
               to,
-              message: { text: message, attachments, replyTo },
+              message: { text: message, attachments, replyTo, supersedes, retryOf },
               messageId: result.id,
               timestamp: Date.now(),
             });
@@ -2005,6 +2069,8 @@ Usage:
               attachments,
               replyTo,
               expectsReply: true,
+              supersedes,
+              retryOf,
             });
 
             deliveryState = sendResult.delivered ? "socket_delivered" : "delivery_failed";
@@ -2025,7 +2091,7 @@ Usage:
             }
             pi.appendEntry("intercom_sent", {
               to,
-              message: { text: message, attachments, replyTo },
+              message: { text: message, attachments, replyTo, supersedes, retryOf },
               messageId: sendResult.id,
               timestamp: Date.now(),
             });
