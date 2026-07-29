@@ -2386,6 +2386,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         up: resolvedShortcuts.scrollChatUp,
         down: resolvedShortcuts.scrollChatDown,
       },
+      shouldCaptureKeyboardScroll: () => Reflect.get(tui, "focusedComponent") === currentEditor,
       onCopySelection: (text) => copyTextToClipboard(ctx, text),
       getShowHardwareCursor: () => typeof tui.getShowHardwareCursor === "function" && tui.getShowHardwareCursor(),
       renderCluster: (width, terminalRows) => {

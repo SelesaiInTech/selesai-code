@@ -5,6 +5,10 @@ title: Changelog
 
 This history follows release tags reachable from the Selesai `main` branch. Tags from unrelated, unmerged Pi history are excluded.
 
+## 0.5.27 — Fleet inspector key routing
+
+- Fixed Powerline fixed-editor PageUp/PageDown handling so it scrolls the main chat only while the main editor has focus. Focused custom views, including the subagent fleet inspector, now receive those keys.
+
 ## 0.5.26 — Durable direct-loop handoffs
 
 - Added a `handoff` phase to direct `loop` workflows: a forked recapper captures the agreed conversation into durable `handoff.md` before fresh builder and commentator agents begin.

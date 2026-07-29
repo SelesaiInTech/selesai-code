@@ -1144,6 +1144,42 @@ test("terminal split keyboard scroll supports Pi page aliases and preserves app 
   compositor.dispose();
 });
 
+test("terminal split leaves PgUp/PgDn to a focused custom view", () => {
+  const terminal = new FakeTerminal();
+  let ownsKeyboardScroll = true;
+  let inputListener: ((data: string) => { consume?: boolean; data?: string } | undefined) | null = null;
+  const tui = {
+    terminal,
+    addInputListener(listener: (data: string) => { consume?: boolean; data?: string } | undefined) {
+      inputListener = listener;
+      return () => {
+        inputListener = null;
+      };
+    },
+    requestRender() {},
+    render() {
+      return Array.from({ length: 30 }, (_, index) => `line-${index}`);
+    },
+  };
+
+  const compositor = new TerminalSplitCompositor({
+    tui,
+    terminal,
+    shouldCaptureKeyboardScroll: () => ownsKeyboardScroll,
+    renderCluster: () => ({ lines: ["cluster-a", "cluster-b"], cursor: null }),
+  });
+
+  compositor.install();
+  tui.render();
+
+  assert.deepEqual(inputListener?.("\x1b[5~"), { consume: true });
+  ownsKeyboardScroll = false;
+  assert.equal(inputListener?.("\x1b[5~"), undefined);
+  assert.equal(inputListener?.("\x1b[6~"), undefined);
+
+  compositor.dispose();
+});
+
 test("terminal split keyboard scroll accepts configured shortcuts", () => {
   const terminal = new FakeTerminal();
   const renderRequests: Array<boolean | undefined> = [];

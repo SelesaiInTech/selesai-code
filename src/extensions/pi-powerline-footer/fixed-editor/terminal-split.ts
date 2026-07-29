@@ -21,6 +21,7 @@ interface TerminalSplitCompositorOptions {
   getShowHardwareCursor?: () => boolean;
   mouseScroll?: boolean;
   keyboardScrollShortcuts?: KeyboardScrollShortcuts;
+  shouldCaptureKeyboardScroll?: () => boolean;
   onCopySelection?: (text: string) => void;
 }
 
@@ -318,6 +319,7 @@ export class TerminalSplitCompositor {
   private readonly getShowHardwareCursor: () => boolean;
   private readonly mouseScroll: boolean;
   private readonly keyboardScrollShortcuts: KeyboardScrollShortcuts;
+  private readonly shouldCaptureKeyboardScroll: () => boolean;
   private readonly onCopySelection: ((text: string) => void) | null;
   private extendedKeyboardMode: ExtendedKeyboardMode | null = null;
   private readonly rowsDescriptor: PropertyDescriptor | undefined;
@@ -360,6 +362,7 @@ export class TerminalSplitCompositor {
     this.getShowHardwareCursor = options.getShowHardwareCursor ?? (() => false);
     this.mouseScroll = options.mouseScroll !== false;
     this.keyboardScrollShortcuts = options.keyboardScrollShortcuts ?? DEFAULT_KEYBOARD_SCROLL_SHORTCUTS;
+    this.shouldCaptureKeyboardScroll = options.shouldCaptureKeyboardScroll ?? (() => true);
     this.onCopySelection = options.onCopySelection ?? null;
     this.rowsDescriptor = descriptorForRows(options.terminal);
     this.originalWrite = options.terminal.write.bind(options.terminal);
@@ -602,7 +605,7 @@ export class TerminalSplitCompositor {
   }
 
   private handleInput(data: string): { consume?: boolean; data?: string } | undefined {
-    if (this.disposed || this.hasVisibleOverlay()) return undefined;
+    if (this.disposed || this.hasVisibleOverlay() || !this.shouldCaptureKeyboardScroll()) return undefined;
 
     const mousePackets = this.mouseScroll ? parseSgrMousePackets(data) : null;
     if (mousePackets) {
