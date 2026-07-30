@@ -2318,6 +2318,117 @@ test("broker delivers old-id replies to an already reconnected same-name sender"
   }
 });
 
+test("broker keeps queued mail away from a same-name session in another cwd", { concurrency: false }, async () => {
+  const { planner, orchestrator, cleanup } = await setupClients();
+  const otherProject = new IntercomClient();
+
+  try {
+    const originalPlannerId = planner.sessionId!;
+    const receivedAsk = once(orchestrator, "message") as Promise<[SessionInfo, Message]>;
+    assert.equal((await planner.send(orchestrator.sessionId!, { messageId: "cross-cwd-ask", text: "Answer later?", expectsReply: true })).delivered, true);
+    await receivedAsk;
+    await planner.disconnect();
+
+    assert.equal((await orchestrator.send(originalPlannerId, {
+      messageId: "cross-cwd-answer",
+      text: "Answer for the original project.",
+      replyTo: "cross-cwd-ask",
+    })).delivered, true);
+
+    const received: Message[] = [];
+    otherProject.on("message", (_from: SessionInfo, message: Message) => received.push(message));
+    await otherProject.connect({
+      name: "planner",
+      cwd: path.join(repoDir, "other-project"),
+      model: "test-model",
+      pid: process.pid,
+      startedAt: Date.now(),
+      lastActivity: Date.now(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    assert.deepEqual(received, []);
+  } finally {
+    await otherProject.disconnect().catch(() => undefined);
+    await cleanup();
+  }
+});
+
+test("broker delivers queued mail to a relaunch reporting the same cwd differently", { concurrency: false }, async () => {
+  const { planner, orchestrator, cleanup } = await setupClients();
+  const replacement = new IntercomClient();
+
+  try {
+    const originalPlannerId = planner.sessionId!;
+    const receivedAsk = once(orchestrator, "message") as Promise<[SessionInfo, Message]>;
+    assert.equal((await planner.send(orchestrator.sessionId!, { messageId: "cwd-variant-ask", text: "Answer later?", expectsReply: true })).delivered, true);
+    await receivedAsk;
+    await planner.disconnect();
+
+    assert.equal((await orchestrator.send(originalPlannerId, {
+      messageId: "cwd-variant-answer",
+      text: "Answer for the same project.",
+      replyTo: "cwd-variant-ask",
+    })).delivered, true);
+
+    const queuedReply = once(replacement, "message") as Promise<[SessionInfo, Message]>;
+    await replacement.connect({
+      name: "planner",
+      // Same directory as setupClients(), spelled with a ".." segment and a
+      // trailing separator. Built by concatenation because path.join would
+      // collapse the ".." before the broker ever sees it.
+      cwd: `${repoDir}${path.sep}ui${path.sep}..${path.sep}`,
+      model: "test-model",
+      pid: process.pid,
+      startedAt: Date.now(),
+      lastActivity: Date.now(),
+    });
+
+    const [, message] = await queuedReply;
+    assert.equal(message.id, "cwd-variant-answer");
+    assert.equal(message.content.text, "Answer for the same project.");
+  } finally {
+    await replacement.disconnect().catch(() => undefined);
+    await cleanup();
+  }
+});
+
+test("broker does not reroute an id-addressed message to a same-name session in another cwd", { concurrency: false }, async () => {
+  const { planner, orchestrator, cleanup } = await setupClients();
+  const otherProject = new IntercomClient();
+
+  try {
+    const originalPlannerId = planner.sessionId!;
+    const receivedAsk = once(orchestrator, "message") as Promise<[SessionInfo, Message]>;
+    assert.equal((await planner.send(orchestrator.sessionId!, { messageId: "cross-cwd-live-ask", text: "Answer later?", expectsReply: true })).delivered, true);
+    await receivedAsk;
+    await planner.disconnect();
+
+    const received: Message[] = [];
+    otherProject.on("message", (_from: SessionInfo, message: Message) => received.push(message));
+    await otherProject.connect({
+      name: "planner",
+      cwd: path.join(repoDir, "other-project"),
+      model: "test-model",
+      pid: process.pid,
+      startedAt: Date.now(),
+      lastActivity: Date.now(),
+    });
+
+    assert.equal((await orchestrator.send(originalPlannerId, {
+      messageId: "cross-cwd-live-answer",
+      text: "Answer for the original project.",
+      replyTo: "cross-cwd-live-ask",
+    })).delivered, true);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    assert.deepEqual(received, []);
+  } finally {
+    await otherProject.disconnect().catch(() => undefined);
+    await cleanup();
+  }
+});
+
 test("intercom reply queues mail for a disconnected named sender", { concurrency: false }, async () => {
   const { planner, cleanup } = await setupClients();
   const { default: piIntercomExtension } = await import("./index.ts");

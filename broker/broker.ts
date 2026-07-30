@@ -15,6 +15,7 @@ import {
   type BrokerConnectTarget,
 } from "./paths.ts";
 import { getAskTimeoutMs } from "../config.ts";
+import { sameCwd } from "../cwd.ts";
 import { EXTENSION_BUS_FEATURE } from "../types.ts";
 import type { SessionInfo, Message, Attachment, BrokerMessage, SessionRegistration, ExtensionCapability, MessageControl, MessageReceipt, MessageReceiptStatus } from "../types.ts";
 import { ExtensionStateManager } from "./extension-state.ts";
@@ -1019,14 +1020,17 @@ class IntercomBroker {
   private flushMailboxForSession(session: ConnectedSession, now = Date.now()): void {
     this.pruneMailboxMessages(now);
     const sessionName = session.info.name?.toLowerCase();
-    const uniqueLiveName = sessionName
-      ? Array.from(this.sessions.values()).filter(candidate => candidate.info.name?.toLowerCase() === sessionName).length === 1
-      : false;
+    const uniqueMailboxIdentity = this.findLiveSessionsSharingMailboxIdentity(session.info).length === 1;
 
     for (let index = 0; index < this.mailboxMessages.length;) {
       const entry = this.mailboxMessages[index]!;
       const matchesId = entry.target.id === session.info.id;
-      const matchesUniqueName = Boolean(uniqueLiveName && sessionName && entry.target.name?.toLowerCase() === sessionName);
+      const matchesUniqueName = Boolean(
+        uniqueMailboxIdentity
+        && sessionName
+        && entry.target.name?.toLowerCase() === sessionName
+        && sameCwd(entry.target.cwd, session.info.cwd),
+      );
       if (!matchesId && !matchesUniqueName) {
         index += 1;
         continue;
@@ -1122,12 +1126,26 @@ class IntercomBroker {
   }
 
   private findUniqueLiveSessionForDisconnectedSession(info: SessionInfo): ConnectedSession | null {
+    const matches = this.findLiveSessionsSharingMailboxIdentity(info);
+    return matches.length === 1 ? matches[0]! : null;
+  }
+
+  /**
+   * Mailbox identity is name plus directory, never name alone. A name on its own
+   * is display metadata that unrelated projects reuse, so matching on it would
+   * hand one project's queued mail to a same-named session in another project.
+   * Directories compare through sameCwd so a relaunch that reports the same
+   * directory differently (trailing slash, "."/"..", or a symlink such as macOS
+   * /tmp vs /private/tmp) still matches.
+   */
+  private findLiveSessionsSharingMailboxIdentity(info: SessionInfo): ConnectedSession[] {
     const lowerName = info.name?.toLowerCase();
     if (!lowerName) {
-      return null;
+      return [];
     }
-    const matches = Array.from(this.sessions.values()).filter(session => session.info.name?.toLowerCase() === lowerName);
-    return matches.length === 1 ? matches[0]! : null;
+    return Array.from(this.sessions.values()).filter(session =>
+      session.info.name?.toLowerCase() === lowerName && sameCwd(session.info.cwd, info.cwd)
+    );
   }
 
   private broadcast(msg: BrokerMessage, exclude?: string): void {
