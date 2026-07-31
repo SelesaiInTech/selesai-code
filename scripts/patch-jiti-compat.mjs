@@ -11,14 +11,30 @@
 // Safe to run multiple times and safe to no-op if the target files or
 // patterns are missing (e.g. a future dependency bump changes the shape).
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, join, relative, sep } from "node:path";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const nodeModules = join(__dirname, "..", "node_modules");
+const resolveFromHere = createRequire(import.meta.url).resolve;
+
+function findPackageRoot(entryFile, packageName) {
+  let directory = dirname(entryFile);
+  while (true) {
+    const manifestFile = join(directory, "package.json");
+    if (existsSync(manifestFile)) {
+      const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+      if (manifest.name === packageName) return directory;
+    }
+
+    const parent = dirname(directory);
+    if (parent === directory) {
+      throw new Error(`could not find the ${packageName} package root from ${entryFile}`);
+    }
+    directory = parent;
+  }
+}
 
 function patchTr46() {
-  const file = join(nodeModules, "tr46", "index.js");
+  const file = resolveFromHere("tr46");
   if (!existsSync(file)) {
     console.debug("patch-jiti-compat: tr46/index.js not found, skipping");
     return;
@@ -45,13 +61,14 @@ module.exports[Symbol.iterator] = Set.prototype[Symbol.iterator].bind(module.exp
 `;
 
 function patchCssstyleSetExports() {
+  const packageRoot = findPackageRoot(resolveFromHere("cssstyle"), "cssstyle");
   const files = [
-    join(nodeModules, "cssstyle", "lib", "allExtraProperties.js"),
-    join(nodeModules, "cssstyle", "lib", "generated", "allProperties.js"),
-    join(nodeModules, "cssstyle", "lib", "generated", "implementedProperties.js"),
+    join(packageRoot, "lib", "allExtraProperties.js"),
+    join(packageRoot, "lib", "generated", "allProperties.js"),
+    join(packageRoot, "lib", "generated", "implementedProperties.js"),
   ];
   for (const file of files) {
-    const label = `cssstyle/${file.slice(nodeModules.length + 1)}`;
+    const label = `cssstyle/${relative(packageRoot, file).split(sep).join("/")}`;
     if (!existsSync(file)) {
       console.debug(`patch-jiti-compat: ${label} not found, skipping`);
       continue;
@@ -67,10 +84,15 @@ function patchCssstyleSetExports() {
   }
 }
 
-try {
-  patchTr46();
-  patchCssstyleSetExports();
-} catch (err) {
-  // Never fail the install over a best-effort compat patch.
-  console.warn("patch-jiti-compat: skipped, non-fatal error:", err.message);
+function runBestEffort(label, patch) {
+  try {
+    patch();
+  } catch (err) {
+    // Never fail the install over a best-effort compat patch.
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`patch-jiti-compat: ${label} skipped, non-fatal error: ${message}`);
+  }
 }
+
+runBestEffort("tr46", patchTr46);
+runBestEffort("cssstyle", patchCssstyleSetExports);

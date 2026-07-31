@@ -13,7 +13,7 @@ The format is intentionally simple and release-oriented.
 - None.
 
 ### Fixed
-- None.
+- The issue #34 Pi-loader compatibility patch now resolves hoisted and nested `tr46` and `cssstyle` installations correctly instead of assuming they live inside `pi-web-agent/node_modules`.
 
 ### Breaking
 - None.
