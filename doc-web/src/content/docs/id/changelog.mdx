@@ -5,6 +5,15 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis yang dapat dijangkau dari branch `main` Selesai. Tag dari riwayat Pi yang tidak terkait dan tidak di-merge tidak disertakan.
 
+## 0.5.29 — Fondasi Pi 0.83 dan koordinasi lebih kuat
+
+- Menyinkronkan fondasi coding-agent dan dependency runtime Pi exact dari 0.81.1 ke 0.83.0, termasuk perbaikan provider, katalog model, RPC bash, sesi, pemuatan resource, dan terminal.
+- Menambahkan `selesai auth print-api-key` dan `selesai auth print-bearer-token` untuk mengekspor kredensial terkonfigurasi secara eksplisit ke client eksternal, dengan refresh OAuth dan kontrol masa berlaku minimum.
+- Mengekspos model yang di-scope ke extension serta metadata model/sesi `PI_SESSION_*` ke tool bash yang dapat dipanggil LLM.
+- Memperbarui integrasi llama.cpp dengan katalog model persisten, penghitungan penggunaan streaming, dan batas konteks yang dilaporkan server.
+- Memperbarui Pi Subagents bawaan hingga 0.40.0 dengan steer/stop fleet, capability ceiling, checkpoint, usage budget, dan status runtime yang lebih kaya.
+- Memperbarui Pi Intercom bawaan hingga 0.9.2 dengan identitas stabil, discovery berbasis cwd, queued delivery, diagnostik pengiriman, dan hardening broker lokal.
+
 ## 0.5.28 — Alur pertanyaan lebih cepat
 
 - Jawaban select, multiselect, text, dan custom yang dikomit kini berpindah otomatis; satu pertanyaan yang terjawab langsung dikirim tanpa langkah review yang berlebihan.

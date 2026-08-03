@@ -46,6 +46,17 @@ Selesai stores state in two places:
 
 Sensitive credentials, such as API keys, are handled through token onboarding and provider configuration. Add provider credentials carefully and avoid committing them to version control.
 
+## Export a configured credential
+
+Use the explicit `auth` commands when an external client needs the credential already configured in Selesai:
+
+```sh
+selesai auth print-api-key --provider openai --model gpt-5.5
+selesai auth print-bearer-token --provider openai-codex --model gpt-5.5
+```
+
+These commands print the secret directly to stdout. Avoid terminal logs, shell tracing, command substitution in shared environments, and committed output files. OAuth bearer tokens refresh automatically when their remaining validity is too short.
+
 ## Next steps
 
 - See [Why Selesai](../why-selesai/) for an evidence-backed comparison with Pi.

@@ -26,6 +26,8 @@ The llama.cpp extension is a hidden core extension that lets you manage local ll
 
 - Registers the `/llama` slash command and the `llama.cpp` provider.
 - Reads provider auth from the model registry.
+- Restores the last successful server model catalog across restarts and refreshes it when the server is available.
+- Uses server-reported context limits for output capacity and records streamed token usage.
 - Fails gracefully when the server is unreachable, offering retry or close.
 
 ## What you can configure

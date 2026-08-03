@@ -5,6 +5,15 @@ title: Changelog
 
 This history follows release tags reachable from the Selesai `main` branch. Tags from unrelated, unmerged Pi history are excluded.
 
+## 0.5.29 — Pi 0.83 foundation and stronger coordination
+
+- Synced the coding-agent foundation and exact Pi runtime dependencies from 0.81.1 to 0.83.0, including provider, model-catalog, RPC bash, session, resource-loading, and terminal fixes.
+- Added `selesai auth print-api-key` and `selesai auth print-bearer-token` for explicitly exporting configured credentials to external clients, with OAuth refresh and minimum-validity controls.
+- Exposed scoped models to extensions and `PI_SESSION_*` model/session metadata to LLM-callable bash tools.
+- Updated llama.cpp integration with persisted model catalogs, streaming usage accounting, and server-reported context limits.
+- Updated bundled Pi Subagents through 0.40.0 with fleet steering/stopping, capability ceilings, checkpoints, usage budgets, and richer runtime status.
+- Updated bundled Pi Intercom through 0.9.2 with stable identities, cwd-scoped discovery, queued delivery, delivery diagnostics, and local broker hardening.
+
 ## 0.5.28 — Faster question flow
 
 - Committed select, multi-select, text, and custom answers now advance automatically; a single answered question submits without a redundant review step.

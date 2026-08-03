@@ -45,7 +45,9 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 - Use inline group syntax: `/chain explorer -> (commentator "A" | commentator "B") -> writer "fix"`.
 - Run in the background: append `--bg`. Start from a forked session: append `--fork`.
 - Inspect active runs: `/subagents-fleet` or `subagent({ action: "status" })`.
+- In Fleet inspector, steer the selected live child with `s` or stop its top-level async run with `D` and confirmation.
 - Stop a run: `/subagents-stop <run-id>` or `subagent({ action: "stop", id: "..." })`.
+- Restrict launches with session-scoped `allowedAgents`, add chain approval checkpoints, or cap aggregate usage with `usageBudget`.
 - Ask a child to contact the supervisor: `contact_supervisor({ reason: "need_decision", message: "..." })`.
 
 ## Commands, tools, and shortcuts
@@ -56,7 +58,9 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 | `subagent({ tasks: [...] })` | Run agents in parallel. |
 | `subagent({ chain: [...] })` | Run agents in sequence with `{previous}` output. |
 | `subagent({ action: "status" })` | Show async run status. |
+| `subagent({ action: "steer", id, message, index? })` | Send guidance to a live top-level async child. |
 | `subagent({ action: "stop", id })` | Stop an async run. |
+| `subagent({ action: "approve-checkpoint", id })` / `reject-checkpoint` | Resolve an explicit chain checkpoint. |
 | `/run <agent> [task] [--bg] [--fork]` | Slash form of a single-agent run. |
 | `/chain ...` | Slash form of a sequential chain. |
 | `/parallel ...` | Slash form of a parallel run. |
@@ -86,7 +90,7 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 - Child agents run in the same host environment as the parent; trust boundaries are the same.
 - Spawned children do not receive the bundled `pi-subagents` skill by default, and their tool visibility is controlled by the agent's `tools` frontmatter. A child only gets a child-safe `subagent` tool if its resolved `tools` includes `subagent`.
 - Forked children get filtered context that removes parent-only subagent artifacts.
-- Model and tool budgets, depth limits, and watchdog settings are enforced by the runtime.
+- Model, tool, usage, and spawn budgets; allowed-agent ceilings; depth limits; checkpoints; and watchdog settings are enforced by the runtime.
 - Agent file discovery is ordered; project agents override user agents, and user agents override builtins of the same name.
 - The `pi-subagents` skill shipped with the extension is documentation/prompt guidance, not an independently installed extension entrypoint.
 

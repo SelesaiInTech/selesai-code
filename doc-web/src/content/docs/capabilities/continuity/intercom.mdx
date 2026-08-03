@@ -30,7 +30,8 @@ The `pi-intercom` extension adds direct 1:1 messaging between Selesai sessions o
 - Registers the `/intercom` slash command and the `Alt+M` shortcut to open the session list overlay.
 - Registers the `intercom` tool for agent-driven session discovery, sends, asks, and replies.
 - Registers a native `contact_supervisor` tool when `pi-subagents` supplies child bridge metadata (`SELESAI_SUBAGENT_ORCHESTRATOR_TARGET`, `SELESAI_SUBAGENT_RUN_ID`, `SELESAI_SUBAGENT_CHILD_AGENT`, `SELESAI_SUBAGENT_CHILD_INDEX`).
-- Starts a local broker on demand and publishes presence (name, cwd, model, status) for connected sessions.
+- Starts a local broker on demand and publishes presence (name, cwd, model, status, context usage) for connected sessions.
+- Supports optional restart-stable session IDs, cwd-scoped discovery, and bounded queued delivery for recently disconnected named sessions.
 
 ## What you can configure
 
@@ -51,6 +52,7 @@ The `pi-intercom` extension adds direct 1:1 messaging between Selesai sessions o
 | `/intercom` | Open the session list overlay. |
 | `Alt+M` | Open the session list overlay. |
 | `intercom({ action: "list" })` | List connected local sessions. |
+| `intercom({ action: "list-cwd" })` | List connected sessions in the same working directory. |
 | `intercom({ action: "send", to, message, attachments? })` | Send a message immediately. |
 | `intercom({ action: "ask", to, message })` | Send a message and block until the recipient replies. |
 | `intercom({ action: "reply", message, to? })` | Reply to the current or single pending inbound ask. |
@@ -75,7 +77,8 @@ intercom({
 
 ## Limits and safety
 
-- Same-machine only. The broker uses Unix domain sockets (macOS/Linux) or a named pipe (Windows); there is no network transport.
+- Same-machine only. The broker uses restricted Unix-domain runtime files on macOS/Linux and opt-in authenticated localhost transport on Windows; there is no remote transport.
+- Broker frames are size-bounded, connections are rate-limited, and stable IDs include local trust metadata; stable names are coordination identifiers, not an authentication boundary.
 - Only sessions that have successfully registered with the broker appear in the list.
 - `ask` blocks the calling agent for up to 10 minutes. If no reply arrives, the tool errors.
 - `reply` without `to` only resolves a single pending ask. With multiple pending asks, specify `to` or inspect them first.

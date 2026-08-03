@@ -46,6 +46,17 @@ selesai menyimpan status di dua tempat:
 
 Kredensial sensitif seperti API key ditangani melalui token onboarding dan konfigurasi provider. Tambahkan kredensial provider dengan hati-hati dan hindari meng-*commit*-nya ke version control.
 
+## Ekspor kredensial terkonfigurasi
+
+Gunakan perintah `auth` eksplisit ketika client eksternal memerlukan kredensial yang sudah dikonfigurasi di Selesai:
+
+```sh
+selesai auth print-api-key --provider openai --model gpt-5.5
+selesai auth print-bearer-token --provider openai-codex --model gpt-5.5
+```
+
+Perintah ini mencetak secret langsung ke stdout. Hindari log terminal, shell tracing, command substitution di environment bersama, dan file output yang dikomit. OAuth bearer token di-refresh otomatis jika sisa masa berlakunya terlalu pendek.
+
 ## Langkah selanjutnya
 
 - Lihat [Mengapa Selesai](../why-selesai/) untuk perbandingan dengan Pi yang berbasis bukti.

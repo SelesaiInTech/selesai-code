@@ -45,7 +45,9 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 - Menggunakan sintaks grup inline: `/chain explorer -> (commentator "A" | commentator "B") -> writer "fix"`.
 - Menjalankan di background: tambahkan `--bg`. Memulai dari sesi forked: tambahkan `--fork`.
 - Memeriksa run aktif: `/subagents-fleet` atau `subagent({ action: "status" })`.
+- Di Fleet inspector, arahkan child aktif yang dipilih dengan `s` atau hentikan run async top-level dengan `D` dan konfirmasi.
 - Menghentikan run: `/subagents-stop <run-id>` atau `subagent({ action: "stop", id: "..." })`.
+- Membatasi launch dengan `allowedAgents` scoped sesi, menambahkan checkpoint persetujuan chain, atau membatasi penggunaan agregat dengan `usageBudget`.
 - Meminta child menghubungi supervisor: `contact_supervisor({ reason: "need_decision", message: "..." })`.
 
 ## Perintah, tool, dan shortcut
@@ -56,7 +58,9 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 | `subagent({ tasks: [...] })` | Jalankan agen secara paralel. |
 | `subagent({ chain: [...] })` | Jalankan agen secara berurutan dengan output `{previous}`. |
 | `subagent({ action: "status" })` | Tampilkan status run async. |
+| `subagent({ action: "steer", id, message, index? })` | Kirim arahan ke child async top-level yang aktif. |
 | `subagent({ action: "stop", id })` | Hentikan run async. |
+| `subagent({ action: "approve-checkpoint", id })` / `reject-checkpoint` | Selesaikan checkpoint chain eksplisit. |
 | `/run <agent> [task] [--bg] [--fork]` | Bentuk slash untuk run single-agent. |
 | `/chain ...` | Bentuk slash untuk chain sequential. |
 | `/parallel ...` | Bentuk slash untuk run paralel. |
@@ -86,7 +90,7 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 - Child agent berjalan di environment host yang sama dengan parent; batas kepercayaan sama.
 - Child yang di-spawn tidak menerima skill `pi-subagents` secara default, dan visibilitas tool-nya dikontrol oleh frontmatter `tools` agen. Child hanya mendapat tool `subagent` yang aman untuk child jika `tools` yang resolved-nya mencakup `subagent`.
 - Child forked mendapat konteks yang difilter sehingga menghapus artifact subagent khusus parent.
-- Budget model dan tool, limit kedalaman, dan pengaturan watchdog diberlakukan oleh runtime.
+- Budget model, tool, penggunaan, dan spawn; ceiling agent yang diizinkan; limit kedalaman; checkpoint; serta pengaturan watchdog diberlakukan oleh runtime.
 - Discovery file agen terurut; project agent menggantikan user agent, dan user agent menggantikan builtin dengan nama yang sama.
 - Skill `pi-subagents` yang dikirimkan bersama extension adalah panduan dokumentasi/prompt, bukan entrypoint extension yang diinstal secara terpisah.
 

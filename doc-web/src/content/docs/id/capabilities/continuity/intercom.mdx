@@ -30,7 +30,8 @@ Extension `pi-intercom` menambahkan pesan 1:1 langsung antar sesi Selesai di mes
 - Mendaftarkan slash command `/intercom` dan shortcut `Alt+M` untuk membuka overlay daftar sesi.
 - Mendaftarkan tool `intercom` untuk discovery sesi, kirim, ask, dan reply yang didorong agent.
 - Mendaftarkan tool `contact_supervisor` secara native ketika `pi-subagents` menyediakan child bridge metadata (`SELESAI_SUBAGENT_ORCHESTRATOR_TARGET`, `SELESAI_SUBAGENT_RUN_ID`, `SELESAI_SUBAGENT_CHILD_AGENT`, `SELESAI_SUBAGENT_CHILD_INDEX`).
-- Memulai broker lokal sesuai permintaan dan mempublikasikan presence (name, cwd, model, status) untuk sesi yang terhubung.
+- Memulai broker lokal sesuai permintaan dan mempublikasikan presence (name, cwd, model, status, penggunaan konteks) untuk sesi yang terhubung.
+- Mendukung ID sesi stabil lintas restart secara opsional, discovery berbasis cwd, dan queued delivery terbatas untuk sesi bernama yang baru terputus.
 
 ## Yang dapat dikonfigurasi
 
@@ -51,6 +52,7 @@ Extension `pi-intercom` menambahkan pesan 1:1 langsung antar sesi Selesai di mes
 | `/intercom` | Buka overlay daftar sesi. |
 | `Alt+M` | Buka overlay daftar sesi. |
 | `intercom({ action: "list" })` | Daftar sesi lokal yang terhubung. |
+| `intercom({ action: "list-cwd" })` | Daftar sesi terhubung di working directory yang sama. |
 | `intercom({ action: "send", to, message, attachments? })` | Kirim pesan segera. |
 | `intercom({ action: "ask", to, message })` | Kirim pesan dan tunggu sampai penerima membalas. |
 | `intercom({ action: "reply", message, to? })` | Balas ask inbound saat ini atau tunggal yang tertunda. |
@@ -75,7 +77,8 @@ intercom({
 
 ## Batasan dan keamanan
 
-- Hanya mesin yang sama. Broker menggunakan Unix domain socket (macOS/Linux) atau named pipe (Windows); tidak ada transport jaringan.
+- Hanya mesin yang sama. Broker menggunakan file runtime Unix-domain yang dibatasi di macOS/Linux dan transport localhost terautentikasi yang opt-in di Windows; tidak ada transport remote.
+- Frame broker dibatasi ukurannya, koneksi memiliki rate limit, dan ID stabil menyertakan metadata trust lokal; nama stabil adalah identifier koordinasi, bukan batas autentikasi.
 - Hanya sesi yang berhasil mendaftar ke broker yang muncul di daftar.
 - `ask` memblokir agent pemanggil hingga 10 menit. Jika tidak ada balasan, tool error.
 - `reply` tanpa `to` hanya menyelesaikan satu ask tertunda. Jika ada beberapa ask tertunda, tentukan `to` atau periksa terlebih dahulu.
