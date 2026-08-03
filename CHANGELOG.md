@@ -4,6 +4,8 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-08-03
+
 ### Fixed
 - Avoid relaunching standalone Pi executables as the Node runtime when starting the default broker process. Thanks to ZacharyQin for PR #82 and to jeffutter and awaae001 for confirming the impact.
 
