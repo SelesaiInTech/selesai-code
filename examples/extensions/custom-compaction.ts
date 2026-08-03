@@ -13,9 +13,10 @@
  *   pi --extension examples/extensions/custom-compaction.ts
  */
 
+import { uuidv7 } from "@earendil-works/pi-ai";
 import { complete } from "@earendil-works/pi-ai/compat";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { convertToLlm, serializeConversation } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@selesai/code";
+import { convertToLlm, serializeConversation } from "@selesai/code";
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_before_compact", async (event, ctx) => {
@@ -95,6 +96,8 @@ ${conversationText}
 					headers: auth.headers,
 					maxTokens: 8192,
 					signal,
+					cacheRetention: "none",
+					sessionId: uuidv7(),
 				},
 			);
 

@@ -230,7 +230,7 @@ models: [{
 ```
 
 Use `openrouter` for OpenRouter-style `reasoning: { effort }` controls. Use `together` for Together-style `reasoning: { enabled }` controls; with `supportsReasoningEffort`, it also sends `reasoning_effort`. Use `qwen-chat-template` for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking` and need `preserve_thinking`.
-Use `cacheControlFormat: "anthropic"` for OpenAI-compatible providers that expose Anthropic-style prompt caching via `cache_control` on the system prompt, last tool definition, and last user/assistant text content.
+Use `cacheControlFormat: "anthropic"` for OpenAI-compatible providers that expose Anthropic-style prompt caching via `cache_control` on the system prompt, last tool definition, and last user, assistant, or tool-result text content.
 
 For Anthropic-compatible providers using `api: "anthropic-messages"`, set `compat.forceAdaptiveThinking: true` on models or providers whose upstream model requires adaptive thinking (`thinking.type: "adaptive"` plus `output_config.effort`). Built-in adaptive Claude models set this automatically. Set `compat.allowEmptySignature: true` only for providers that emit empty thinking signatures and expect `signature: ""` on replay.
 
@@ -417,7 +417,7 @@ function streamMyProvider(
         totalTokens: 0,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
-      stopReason: "stop",
+      stopReason: "pending",
       timestamp: Date.now(),
     };
 
@@ -426,12 +426,18 @@ function streamMyProvider(
       stream.push({ type: "start", partial: output });
 
       // Make API request and process response...
-      // Push content events as they arrive...
+      // Push content events as they arrive and set stopReason from the terminal event.
+      if (output.stopReason === "pending") {
+        throw new Error("Provider stream ended without a stop reason");
+      }
+      if (output.stopReason === "error" || output.stopReason === "aborted") {
+        throw new Error(output.errorMessage || "An unknown error occurred");
+      }
 
       // Push done event
       stream.push({
         type: "done",
-        reason: output.stopReason as "stop" | "length" | "toolUse",
+        reason: output.stopReason,
         message: output
       });
       stream.end();
@@ -713,6 +719,8 @@ interface ProviderModelConfig {
     supportsDeveloperRole?: boolean;
     supportsReasoningEffort?: boolean;
     supportsUsageInStreaming?: boolean;
+    supportsStrictMode?: boolean;
+    supportsOpenAIGrammarTools?: boolean; // openai-completions/openai-responses; false falls back to normal function tools
     maxTokensField?: "max_completion_tokens" | "max_tokens";
     requiresToolResultName?: boolean;
     requiresAssistantAfterToolResult?: boolean;
@@ -729,9 +737,10 @@ interface ProviderModelConfig {
     supportsCacheControlOnTools?: boolean;
     forceAdaptiveThinking?: boolean;
     allowEmptySignature?: boolean;
+    supportsStrictTools?: boolean;
   };
 }
 ```
 
 `openrouter` sends `reasoning: { effort }`. `deepseek` sends `thinking: { type: "enabled" | "disabled" }` and `reasoning_effort` when enabled. `together` sends `reasoning: { enabled }` and also `reasoning_effort` when `supportsReasoningEffort` is enabled. `qwen` is for DashScope-style top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking` and need `preserve_thinking`. Use `chat-template` for configurable `chat_template_kwargs`, for example DeepSeek V3.x behind vLLM with `chatTemplateKwargs: { "thinking": { "$var": "thinking.enabled" } }`.
-`cacheControlFormat: "anthropic"` applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user/assistant text content.
+`cacheControlFormat: "anthropic"` applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user, assistant, or tool-result text content.

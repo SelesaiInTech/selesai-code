@@ -18,8 +18,11 @@ Use `/login` in interactive mode, then select a provider:
 - ChatGPT Plus/Pro (Codex)
 - Claude Pro/Max
 - GitHub Copilot
+- xAI (Grok/X subscription)
+- OpenRouter (OAuth-minted API key billed from OpenRouter credits)
+- Radius
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
+Use `/logout` to clear credentials. Tokens are stored in `~/.selesai/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically.
 
 ### OpenAI Codex
 
@@ -34,6 +37,22 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 
 - Press Enter for github.com, or enter your GitHub Enterprise Server domain
 - If you get "model not supported", enable it in VS Code: Copilot Chat → model selector → select model → "Enable"
+
+### xAI (Grok/X subscription)
+
+- Run `/login xai`, then select **Use a subscription**
+- `XAI_API_KEY` remains available through **Use an API key**
+
+### OpenRouter
+
+- Run `/login openrouter`, then select **Sign in with OpenRouter** to open the OpenRouter PKCE authorization flow
+- The authorization creates a user-controlled OpenRouter API key billed from your OpenRouter credits
+- On remote/headless machines (e.g. over SSH) the browser cannot reach the loopback callback; paste the final redirect URL (or the authorization code) into the login prompt instead
+- `OPENROUTER_API_KEY` remains available through **Use an API key**
+
+### Radius
+
+Radius is a dynamic `pi-messages` gateway. `/login radius` stores OAuth tokens in `auth.json`; the gateway catalog is refreshed independently and cached in `models-store.json`. Custom Radius gateways can be declared in `models.json` with `"oauth": "radius"` and a gateway `baseUrl`.
 
 ## API Keys
 
@@ -82,7 +101,7 @@ Reference for environment variables and `auth.json` keys: [`const envMap`](https
 
 #### Auth File
 
-Store credentials in `~/.pi/agent/auth.json`:
+Store credentials in `~/.selesai/agent/auth.json`:
 
 ```json
 {

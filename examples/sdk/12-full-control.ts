@@ -13,7 +13,7 @@ import {
 	type ResourceLoader,
 	SessionManager,
 	SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+} from "@selesai/code";
 
 // Custom auth storage location
 const authStorage = AuthStorage.create("/tmp/my-agent/auth.json");
@@ -45,7 +45,9 @@ const resourceLoader: ResourceLoader = {
 	getAgentsFiles: () => ({ agentsFiles: [] }),
 	getSystemPrompt: () => `You are a minimal assistant.
 Available: read, bash. Be concise.`,
+	getSystemPromptSource: () => undefined,
 	getAppendSystemPrompt: () => [],
+	getAppendSystemPromptSources: () => [],
 	extendResources: () => {},
 	reload: async () => {},
 };

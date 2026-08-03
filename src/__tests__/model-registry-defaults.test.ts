@@ -39,4 +39,29 @@ describe("model registry bundled defaults", () => {
 		expect(model?.name).toBe("GLM-5.2");
 		expect(registry.hasConfiguredAuth(model!)).toBe(true);
 	});
+
+	it("reloads user models while retaining bundled defaults", async () => {
+		const modelsPath = join(dir, "models.json");
+		const config = (id: string) => ({
+			providers: {
+				custom: {
+					baseUrl: "https://example.test/v1",
+					api: "openai-completions",
+					apiKey: "test-key",
+					models: [{ id }],
+				},
+			},
+		});
+		writeFileSync(modelsPath, JSON.stringify(config("first")));
+		const runtime = await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath });
+		const registry = new ModelRegistry(runtime);
+
+		expect(registry.find("custom", "first")?.id).toBe("first");
+		writeFileSync(modelsPath, JSON.stringify(config("second")));
+		await runtime.refresh({ allowNetwork: false });
+
+		expect(registry.find("custom", "first")).toBeUndefined();
+		expect(registry.find("custom", "second")?.id).toBe("second");
+		expect(registry.find("tokenin", "glm-5.2")?.id).toBe("glm-5.2");
+	});
 });

@@ -1,19 +1,25 @@
-import { defineConfig } from "vitest/config";
 import { resolve } from "node:path";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
 	test: {
-		// ponytail: extension tests import .ts via jiti dynamically under
-		// vi.resetModules(), which is slow on first cold load (~8s). Bump the
-		// per-test ceiling so the adapter smoke tests don't time out.
-		testTimeout: 20000,
+		globals: true,
+		environment: "node",
+		testTimeout: 30000,
+		// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
+		env: { PI_OFFLINE: "1" },
+		unstubEnvs: true,
 		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 		silent: "passed-only",
+		server: {
+			deps: {
+				external: [/@silvia-odwyer\/photon-node/],
+			},
+		},
 	},
 	resolve: {
 		alias: {
-			// Self-referencing package — vitest can't resolve @selesai/code
-			// without a node_modules symlink. Point it at the built dist.
+			// Self-reference resolves to the built package in this flattened fork.
 			"@selesai/code": resolve(__dirname, "dist/index.js"),
 		},
 	},

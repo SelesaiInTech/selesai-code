@@ -54,10 +54,9 @@
 		"copy-assets": "shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/ && shx mkdir -p dist/modes/interactive/assets && shx cp src/modes/interactive/assets/*.png dist/modes/interactive/assets/ && shx mkdir -p dist/core/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html/ && shx cp src/core/export-html/vendor/*.js dist/core/export-html/vendor/ && shx mkdir -p dist/defaults && shx cp src/defaults/* dist/defaults/ && shx mkdir -p dist/extensions && shx cp -r src/extensions/. dist/extensions/ && shx mkdir -p dist/themes && shx cp -r src/themes/. dist/themes/ && shx mkdir -p dist/skills && shx cp -r src/skills/. dist/skills/"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "0.81.1",
-		"@earendil-works/pi-ai": "0.81.1",
-		"@earendil-works/pi-tui": "0.81.1",
-		"@mariozechner/clipboard": "^0.3.9",
+		"@earendil-works/pi-agent-core": "0.83.0",
+		"@earendil-works/pi-ai": "0.83.0",
+		"@earendil-works/pi-tui": "0.83.0",
 		"@mozilla/readability": "^0.6.0",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "5.6.2",
@@ -75,7 +74,7 @@
 		"proper-lockfile": "4.1.2",
 		"semver": "7.8.0",
 		"tsx": "^4.20.0",
-		"typebox": "1.1.38",
+		"typebox": "1.3.7",
 		"undici": "8.5.0",
 		"yaml": "2.9.0"
 	},
@@ -91,5 +90,15 @@
 		"shx": "0.4.0",
 		"typescript": "5.9.3",
 		"vitest": "4.1.9"
+	},
+	"overrides": {
+		"protobufjs": "7.6.5",
+		"rimraf": "6.1.2",
+		"gaxios": {
+			"rimraf": "6.1.2"
+		}
+	},
+	"optionalDependencies": {
+		"@mariozechner/clipboard": "0.3.9"
 	}
 }

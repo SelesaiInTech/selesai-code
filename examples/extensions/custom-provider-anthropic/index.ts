@@ -43,7 +43,7 @@ import {
 	type ToolCall,
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@selesai/code";
 
 // =============================================================================
 // OAuth Implementation (copied from packages/ai/src/utils/oauth/anthropic.ts)
@@ -353,7 +353,7 @@ function streamCustomAnthropic(
 				totalTokens: 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
-			stopReason: "stop",
+			stopReason: "pending",
 			timestamp: Date.now(),
 		};
 
@@ -546,8 +546,14 @@ function streamCustomAnthropic(
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
+			if (output.stopReason === "pending") {
+				throw new Error("Anthropic stream ended without a stop reason");
+			}
+			if (output.stopReason === "error" || output.stopReason === "aborted") {
+				throw new Error(output.errorMessage || "An unknown error occurred");
+			}
 
-			stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
+			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
 			for (const block of output.content) delete (block as any).index;

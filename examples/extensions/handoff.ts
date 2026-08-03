@@ -13,9 +13,10 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { uuidv7 } from "@earendil-works/pi-ai";
 import { complete, type Message } from "@earendil-works/pi-ai/compat";
-import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { BorderedLoader, convertToLlm, serializeConversation } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, SessionEntry } from "@selesai/code";
+import { BorderedLoader, convertToLlm, serializeConversation } from "@selesai/code";
 
 const SYSTEM_PROMPT = `You are a context transfer assistant. Given a conversation history and the user's goal for a new thread, generate a focused prompt that:
 
@@ -136,7 +137,14 @@ export default function (pi: ExtensionAPI) {
 					const response = await complete(
 						ctx.model!,
 						{ systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
-						{ apiKey: auth.apiKey, headers: auth.headers, signal: loader.signal },
+						{
+							apiKey: auth.apiKey,
+							headers: auth.headers,
+							env: auth.env,
+							signal: loader.signal,
+							cacheRetention: "none",
+							sessionId: uuidv7(),
+						},
 					);
 
 					if (response.stopReason === "aborted") {

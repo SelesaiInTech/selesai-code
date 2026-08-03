@@ -69,14 +69,26 @@ checkout_ref() {
   fi
 }
 
+ensure_patchable_commit() {
+  local sha="$1"
+  ensure_cache
+  git -C "$CACHE" cat-file -e "$sha^{commit}" 2>/dev/null \
+    || git -C "$CACHE" fetch --depth 2 origin "$sha"
+  if ! git -C "$CACHE" cat-file -e "$sha^" 2>/dev/null; then
+    git -C "$CACHE" fetch --deepen 1 origin
+  fi
+  git -C "$CACHE" cat-file -e "$sha^" 2>/dev/null \
+    || die "cannot load parent for $sha; refusing to emit a full-tree patch"
+}
+
 # Strip 3 path components (packages/coding-agent/) from a git diff/patch so it
 # lands at our root. Strips both a/ and b/ prefixes plus the subtree dir.
 rewrite_patch() {
   # only rewrite the diff control lines that name files; leave hunk bodies alone.
   awk '
     /^diff --git /        { sub(/a\/packages\/coding-agent\//,"a/"); sub(/b\/packages\/coding-agent\//,"b/"); print; next }
-    /^[-][-][-] /         { sub(/^a\/packages\/coding-agent\//,"a/"); print; next }
-    /^[+][+][+] /         { sub(/^b\/packages\/coding-agent\//,"b/"); print; next }
+    /^[-][-][-] /         { sub(/a\/packages\/coding-agent\//,"a/"); print; next }
+    /^[+][+][+] /         { sub(/b\/packages\/coding-agent\//,"b/"); print; next }
     /^rename (from|to) / { sub(/packages\/coding-agent\//,""); print; next }
     /^copy (from|to) /    { sub(/packages\/coding-agent\//,""); print; next }
     { print }
@@ -126,18 +138,18 @@ cmd_log() {
 
 cmd_patch() {
   local sha="${1:-}"; [ -n "$sha" ] || die "usage: patch <sha>"
-  ensure_cache
+  ensure_patchable_commit "$sha"
   git -C "$CACHE" show --format=email --binary "$sha" -- "$SUBPKG" \
     | rewrite_patch
 }
 
 cmd_pick() {
   local sha="${1:-}"; [ -n "$sha" ] || die "usage: pick <sha>"
-  ensure_cache
+  ensure_patchable_commit "$sha"
   echo "=> applying $sha (path-rewritten from $SUBPKG to root)…"
   git -C "$CACHE" show --format=email --binary "$sha" -- "$SUBPKG" \
     | rewrite_patch \
-    | git -C "$REPO_ROOT" apply --index --whitespace=nowarn \
+    | git -C "$REPO_ROOT" apply --3way --index --whitespace=nowarn \
     || die "apply failed; inspect with: ./scripts/upstream.sh patch $sha"
   echo "=> staged. commit message suggestion:"
   echo "   git commit -m \"cherry-pick upstream $sha: $(git -C "$CACHE" log -1 --format=%s "$sha")\""

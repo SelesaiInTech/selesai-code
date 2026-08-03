@@ -1,6 +1,7 @@
+import { uuidv7 } from "@earendil-works/pi-ai";
 import { complete, getModel } from "@earendil-works/pi-ai/compat";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@selesai/code";
+import { DynamicBorder, getMarkdownTheme } from "@selesai/code";
 import { Container, Markdown, matchesKey, Text } from "@earendil-works/pi-tui";
 
 type ContentBlock = {
@@ -192,6 +193,8 @@ export default function (pi: ExtensionAPI) {
 					apiKey: auth.apiKey,
 					headers: auth.headers,
 					reasoningEffort: "high",
+					cacheRetention: "none",
+					sessionId: uuidv7(),
 				},
 			);
 
