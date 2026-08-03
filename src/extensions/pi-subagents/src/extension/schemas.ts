@@ -65,6 +65,18 @@ const JsonSchemaObject = Type.Unsafe({
 	description: "JSON Schema object for strict structured output. Non-object roots are rejected.",
 });
 
+const AcceptanceEvidenceKinds = [
+	"changed-files",
+	"tests-added",
+	"commands-run",
+	"validation-output",
+	"residual-risks",
+	"no-staged-files",
+	"diff-summary",
+	"review-findings",
+	"manual-notes",
+];
+
 const AcceptanceOverride = Type.Unsafe({
 	anyOf: [
 		{ type: "string", enum: ["auto", "attested", "checked", "verified"] },
@@ -77,7 +89,7 @@ const AcceptanceOverride = Type.Unsafe({
 		{ type: "boolean", enum: [false] },
 		{ type: "object", additionalProperties: true },
 	],
-	description: "Optional acceptance policy. For reviewer/read-only calls, omit acceptance. Evidence levels end at verified; require independent review with acceptance.review.required. The value reviewed is an achieved status and is accepted by the schema only for actionable preflight recovery. In the current/default contract, omitted means auto-inferred. With agentContract.version=1, omitted means not requested and acceptance failures are reported separately from execution.",
+	description: `Optional acceptance policy. For reviewer/read-only calls, omit acceptance. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }. Supported evidence kinds: ${AcceptanceEvidenceKinds.join(", ")}. Evidence levels end at verified; use acceptance.review.required for review. Omitted means auto-inferred unless agentContract.version=1.`,
 });
 
 const AgentContractOverride = Type.Object({
@@ -106,6 +118,16 @@ const ToolBudgetOverride = Type.Object({
 	hard: Type.Integer({ minimum: 1 }),
 	block: Type.Optional(ToolBudgetBlock),
 }, { additionalProperties: false, description: "Optional child tool-call budget. soft nudges the child; after hard, block tools (default read/grep/find/ls, or '*' for all tools) are blocked so the child can finalize." });
+
+const UsageBudgetLimitOverride = Type.Object({
+	soft: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+	hard: Type.Number({ exclusiveMinimum: 0 }),
+}, { additionalProperties: false });
+
+const UsageBudgetOverride = Type.Object({
+	tokens: Type.Optional(UsageBudgetLimitOverride),
+	costUsd: Type.Optional(UsageBudgetLimitOverride),
+}, { additionalProperties: false, description: "Optional root-only reported-usage budget. Hard limits prevent future child launches; running children are not stopped." });
 
 const TaskItem = Type.Object({
 	agent: Type.String(), 
@@ -183,6 +205,8 @@ export const DynamicCollectSchema = Type.Object({
 
 // Flattened so chain steps do not need an object-shape anyOf/oneOf union.
 export const ChainItem = Type.Object({
+	checkpoint: Type.Optional(Type.String({ description: "Approval checkpoint name. Pauses the chain without launching a child until approve-checkpoint or reject-checkpoint is called." })),
+	message: Type.Optional(Type.String({ description: "Optional approval message shown while the checkpoint is paused." })),
 	agent: Type.Optional(Type.String({ description: "Sequential step agent name" })),
 	task: Type.Optional(Type.String({
 		description: "Task template with variables: {task}=original request, {previous}=prior step's text response, {chain_dir}=shared folder, {outputs.name}=prior named output. Required for first step, defaults to '{previous}' for subsequent steps."
@@ -217,7 +241,7 @@ export const ChainItem = Type.Object({
 		description: "Create isolated git worktrees for each parallel task."
 	})),
 }, {
-	description: "Chain step: use {agent, task?, ...} for sequential, {parallel: [...]} for static concurrent execution, or {expand, parallel: {...}, collect} for dynamic fanout.",
+	description: "Chain step: use {agent, task?, ...} for sequential, {parallel: [...]} for static concurrent execution, {expand, parallel: {...}, collect} for dynamic fanout, or {checkpoint: name, message?} for an approval pause.",
 	additionalProperties: false,
 });
 
@@ -244,10 +268,10 @@ const SubagentParamsSchema = Type.Object({
 		description: "Optional management/control action. Omit this field entirely for execution/delegation ({agent, task}, {tasks}, or {chain}); use it only for management/control actions."
 	})),
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for action='status', action='interrupt', action='stop', action='resume', action='steer', or action='append-step'."
+		description: "Run id or prefix for action='status', action='interrupt', action='stop', action='resume', action='steer', action='append-step', action='approve-checkpoint', or action='reject-checkpoint'."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for action='interrupt', action='stop', action='resume', action='steer', or action='append-step'. Prefer id for new calls."
+		description: "Target run ID for action='interrupt', action='stop', action='resume', action='steer', action='append-step', action='approve-checkpoint', or action='reject-checkpoint'. Prefer id for new calls."
 	})),
 	dir: Type.Optional(Type.String({
 		description: "Async run directory for action='status', action='stop', action='resume', or action='steer'."
@@ -290,10 +314,11 @@ const SubagentParamsSchema = Type.Object({
 	})),
 	chainDir: Type.Optional(Type.String({ description: "Persistent chain artifact directory; defaults to user-scoped temp storage." })),
 	async: Type.Optional(Type.Boolean({ description: "Run in background (default: false, or per config)" })),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Optional run-level timeout in ms for foreground and async/background runs. Alias of maxRuntimeMs." })),
-	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias of timeoutMs for optional run-level timeout in foreground and async/background runs." })),
+	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Timeout for foreground and async/background runs; foreground defaults to 30m absent call/agent. Alias maxRuntimeMs." })),
+	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias timeoutMs for foreground and async/background runs; foreground defaults to 30m absent call/agent." })),
 	turnBudget: Type.Optional(TurnBudgetOverride),
 	toolBudget: Type.Optional(ToolBudgetOverride),
+	usageBudget: Type.Optional(UsageBudgetOverride),
 	agentScope: Type.Optional(Type.String({ description: "Agent discovery scope: 'user', 'project', or 'both' (default: 'both'; project wins on name collisions)" })),
 	cwd: Type.Optional(Type.String()),
 	artifacts: Type.Optional(Type.Boolean({ description: "Write debug artifacts (default: true)" })),

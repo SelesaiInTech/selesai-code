@@ -33,7 +33,7 @@ describe("subagent capability ceiling", () => {
 	});
 
 	it("rejects malformed policy and disposed updates", () => {
-		assert.throws(() => registerSubagentCapabilityCeiling({ sessionId: "x", source: "x", ceiling: {} }), /allowedTools or denyExtensions/);
+		assert.throws(() => registerSubagentCapabilityCeiling({ sessionId: "x", source: "x", ceiling: {} }), /allowedTools, allowedAgents, or denyExtensions/);
 		const handle = registerSubagentCapabilityCeiling({ sessionId: "disposed", source: "test", ceiling: { denyExtensions: true } });
 		handle.dispose();
 		assert.throws(() => handle.update({ allowedTools: ["read"] }), /disposed/);

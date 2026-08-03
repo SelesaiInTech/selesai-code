@@ -26,7 +26,7 @@ function assistantText(text: string): Message {
 
 test("implementation task with no mutation triggers the completion guard", () => {
 	const result = evaluateCompletionMutationGuard({
-		agent: "worker",
+		agent: "builder",
 		task: "Implement the approved fix",
 		messages: [assistantText("Plan: update the files...")],
 	});
@@ -67,9 +67,9 @@ test("read-only issue drafting tasks do not trigger on suggested fix wording", (
 		attemptedMutation: false,
 		triggered: false,
 	});
-	assert.equal(expectsImplementationMutation("worker", task), false);
+	assert.equal(expectsImplementationMutation("builder", task), false);
 	assert.equal(
-		expectsImplementationMutation("worker", "Draft GitHub issue for a bug. Include suspected cause and suggested fix."),
+		expectsImplementationMutation("builder", "Draft GitHub issue for a bug. Include suspected cause and suggested fix."),
 		false,
 	);
 });
@@ -89,9 +89,9 @@ test("omitted, bash, unknown, write, and MCP tool capabilities stay conservative
 	assert.equal(evaluateCompletionMutationGuard({ ...base, tools: ["read", "grep"], mcpDirectTools: ["github/search"] }).triggered, true);
 });
 
-test("worker with mutating-capable tools still triggers when no mutation is observed", () => {
+test("builder with mutating-capable tools still triggers when no mutation is observed", () => {
 	const result = evaluateCompletionMutationGuard({
-		agent: "worker",
+		agent: "builder",
 		task: "Fix the test implementation",
 		messages: [assistantText("I will edit it next")],
 		tools: ["read", "edit"],
@@ -104,10 +104,10 @@ test("worker with mutating-capable tools still triggers when no mutation is obse
 	});
 });
 
-test("oracle review tasks with bash available do not require mutation", () => {
+test("commentator review tasks with bash available do not require mutation", () => {
 	const task = "Review prep findings and determine what to implement with playbooks instead of before.";
 	const result = evaluateCompletionMutationGuard({
-		agent: "oracle",
+		agent: "commentator",
 		task,
 		messages: [assistantText("Review complete with file-backed findings.")],
 		tools: ["read", "grep", "find", "ls", "bash", "intercom"],
@@ -121,57 +121,57 @@ test("oracle review tasks with bash available do not require mutation", () => {
 });
 
 test("review-only, research, and framework output instructions do not expect mutation", () => {
-	assert.equal(expectsImplementationMutation("worker", "Review only: return findings, do not edit"), false);
-	assert.equal(expectsImplementationMutation("worker", "Do not edit files. Tell me how to fix the bug."), false);
-	assert.equal(expectsImplementationMutation("worker", "Review the diff and suggest fixes only. Do not edit files."), false);
-	assert.equal(expectsImplementationMutation("worker", "Implement this. Do not edit files outside this repo. Do not edit files."), false);
-	assert.equal(expectsImplementationMutation("worker", "Investigate why this failed"), false);
+	assert.equal(expectsImplementationMutation("builder", "Review only: return findings, do not edit"), false);
+	assert.equal(expectsImplementationMutation("builder", "Do not edit files. Tell me how to fix the bug."), false);
+	assert.equal(expectsImplementationMutation("builder", "Review the diff and suggest fixes only. Do not edit files."), false);
+	assert.equal(expectsImplementationMutation("builder", "Implement this. Do not edit files outside this repo. Do not edit files."), false);
+	assert.equal(expectsImplementationMutation("builder", "Investigate why this failed"), false);
 	assert.equal(expectsImplementationMutation("researcher", "Research the API behavior"), false);
 	assert.equal(expectsImplementationMutation("researcher", "Research this and patch the bug"), false);
-	assert.equal(expectsImplementationMutation("reviewer", "Review this and fix any real issues"), false);
-	assert.equal(expectsImplementationMutation("reviewer", "Review this and fix any real issues; regardless of findings, apply changes directly"), true);
-	assert.equal(expectsImplementationMutation("worker", "[Write to: /tmp/result.md]\n\nSummarize findings"), false);
-	assert.equal(expectsImplementationMutation("worker", "Write report"), false);
-	assert.equal(expectsImplementationMutation("worker", "Create a report"), false);
-	assert.equal(expectsImplementationMutation("worker", "Create a summary"), false);
-	assert.equal(expectsImplementationMutation("worker", "Add a report"), false);
-	assert.equal(expectsImplementationMutation("worker", "Update a summary"), false);
-	assert.equal(expectsImplementationMutation("worker", "Write to {chain_dir}"), false);
+	assert.equal(expectsImplementationMutation("commentator", "Review this and fix any real issues"), false);
+	assert.equal(expectsImplementationMutation("commentator", "Review this and fix any real issues; regardless of findings, apply changes directly"), true);
+	assert.equal(expectsImplementationMutation("builder", "[Write to: /tmp/result.md]\n\nSummarize findings"), false);
+	assert.equal(expectsImplementationMutation("builder", "Write report"), false);
+	assert.equal(expectsImplementationMutation("builder", "Create a report"), false);
+	assert.equal(expectsImplementationMutation("builder", "Create a summary"), false);
+	assert.equal(expectsImplementationMutation("builder", "Add a report"), false);
+	assert.equal(expectsImplementationMutation("builder", "Update a summary"), false);
+	assert.equal(expectsImplementationMutation("builder", "Write to {chain_dir}"), false);
 	assert.equal(
-		expectsImplementationMutation("worker", "Do async work\nUpdate progress at: /tmp/progress.md\n**Output:**\nWrite your findings to exactly this path: /tmp/out.md\nThis path is authoritative for this run.\nIgnore any other output filename or output path mentioned elsewhere."),
+		expectsImplementationMutation("builder", "Do async work\nUpdate progress at: /tmp/progress.md\n**Output:**\nWrite your findings to exactly this path: /tmp/out.md\nThis path is authoritative for this run.\nIgnore any other output filename or output path mentioned elsewhere."),
 		false,
 	);
 });
 
-test("worker implementation verbs win over investigative wording and scoped prohibitions", () => {
-	assert.equal(expectsImplementationMutation("worker", "Investigate why the worker did not edit files and fix it"), true);
-	assert.equal(expectsImplementationMutation("worker", "Do not modify tests; implement the fix"), true);
-	assert.equal(expectsImplementationMutation("worker", "Do not modify tests — implement the fix"), true);
-	assert.equal(expectsImplementationMutation("worker", "Research the current code path and patch the bug"), true);
-	assert.equal(expectsImplementationMutation("worker", "Fix the bug where no edits were made"), true);
-	assert.equal(expectsImplementationMutation("worker", "Fix lint"), true);
-	assert.equal(expectsImplementationMutation("worker", "Fix the build"), true);
-	assert.equal(expectsImplementationMutation("worker", "Fix TypeScript errors"), true);
-	assert.equal(expectsImplementationMutation("worker", "Fix CI"), true);
-	assert.equal(expectsImplementationMutation("worker", "Fix the failing test"), true);
-	assert.equal(expectsImplementationMutation("worker", "Patch the cold start test"), true);
-	assert.equal(expectsImplementationMutation("worker", "Implement the fix and return findings."), true);
+test("builder implementation verbs win over investigative wording and scoped prohibitions", () => {
+	assert.equal(expectsImplementationMutation("builder", "Investigate why the worker did not edit files and fix it"), true);
+	assert.equal(expectsImplementationMutation("builder", "Do not modify tests; implement the fix"), true);
+	assert.equal(expectsImplementationMutation("builder", "Do not modify tests — implement the fix"), true);
+	assert.equal(expectsImplementationMutation("builder", "Research the current code path and patch the bug"), true);
+	assert.equal(expectsImplementationMutation("builder", "Fix the bug where no edits were made"), true);
+	assert.equal(expectsImplementationMutation("builder", "Fix lint"), true);
+	assert.equal(expectsImplementationMutation("builder", "Fix the build"), true);
+	assert.equal(expectsImplementationMutation("builder", "Fix TypeScript errors"), true);
+	assert.equal(expectsImplementationMutation("builder", "Fix CI"), true);
+	assert.equal(expectsImplementationMutation("builder", "Fix the failing test"), true);
+	assert.equal(expectsImplementationMutation("builder", "Patch the cold start test"), true);
+	assert.equal(expectsImplementationMutation("builder", "Implement the fix and return findings."), true);
 });
 
 test("non-worker implementation tasks still expect mutation", () => {
 	assert.equal(expectsImplementationMutation("delegate", "Fix the bug where no edits were made"), true);
 	assert.equal(expectsImplementationMutation("delegate", "Apply the suggested fix to src/runs/shared/completion-guard.ts"), true);
-	assert.equal(expectsImplementationMutation("worker", "Draft a GitHub issue, then implement the fix"), true);
+	assert.equal(expectsImplementationMutation("builder", "Draft a GitHub issue, then implement the fix"), true);
 });
 
-test("worker edit intent covers common docs, config, and source tasks", () => {
-	assert.equal(expectsImplementationMutation("worker", "Update README to mention the native tool"), true);
-	assert.equal(expectsImplementationMutation("worker", "Remove share functionality and all Vercel references"), true);
-	assert.equal(expectsImplementationMutation("worker", "Replace the registered command with a render tool"), true);
-	assert.equal(expectsImplementationMutation("worker", "Create completion-guard.ts"), true);
-	assert.equal(expectsImplementationMutation("worker", "Add tests for the completion guard"), true);
-	assert.equal(expectsImplementationMutation("worker", "Implement the approved fixes. Do not edit files outside this repo."), true);
-	assert.equal(expectsImplementationMutation("worker", "Implement the fix. Do not edit unrelated files."), true);
+test("builder edit intent covers common docs, config, and source tasks", () => {
+	assert.equal(expectsImplementationMutation("builder", "Update README to mention the native tool"), true);
+	assert.equal(expectsImplementationMutation("builder", "Remove share functionality and all Vercel references"), true);
+	assert.equal(expectsImplementationMutation("builder", "Replace the registered command with a render tool"), true);
+	assert.equal(expectsImplementationMutation("builder", "Create completion-guard.ts"), true);
+	assert.equal(expectsImplementationMutation("builder", "Add tests for the completion guard"), true);
+	assert.equal(expectsImplementationMutation("builder", "Implement the approved fixes. Do not edit files outside this repo."), true);
+	assert.equal(expectsImplementationMutation("builder", "Implement the fix. Do not edit unrelated files."), true);
 });
 
 test("edit and write tool calls count as mutation attempts", () => {
@@ -195,7 +195,7 @@ test("obvious mutating bash commands count as mutation attempts", () => {
 
 test("implementation task with mutation attempts does not trigger", () => {
 	const result = evaluateCompletionMutationGuard({
-		agent: "worker",
+		agent: "builder",
 		task: "Fix the failing test",
 		messages: [assistantToolCall("edit", { path: "test.ts" })],
 	});
@@ -279,7 +279,7 @@ test("provider checkpoint with a changed commit counts as mutation evidence", ()
 		assert.equal(hasMutationToolCall([message]), true);
 		assert.equal(
 			evaluateCompletionMutationGuard({
-				agent: "worker",
+				agent: "builder",
 				task: "Edit the target source file",
 				messages: [message],
 			}).triggered,
@@ -297,7 +297,7 @@ test("unchanged provider checkpoint does not bypass the completion guard", () =>
 		assert.equal(hasMutationToolCall([message]), false);
 		assert.equal(
 			evaluateCompletionMutationGuard({
-				agent: "worker",
+				agent: "builder",
 				task: "Edit the target source file",
 				messages: [message],
 			}).triggered,
@@ -308,7 +308,7 @@ test("unchanged provider checkpoint does not bypass the completion guard", () =>
 
 test("implementation task with Cursor edit thinking does not trigger", () => {
 	const result = evaluateCompletionMutationGuard({
-		agent: "worker",
+		agent: "builder",
 		task: "Edit docs/BACKEND_ARCHITECTURE.md",
 		messages: [
 			assistantThinking("Cursor edit: docs/BACKEND_ARCHITECTURE.md added 1 line\n"),

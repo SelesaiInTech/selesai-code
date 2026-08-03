@@ -157,14 +157,18 @@ describe("nested event parsing and projection", () => {
 			ts: 200,
 			parentRunId: "root-run",
 			parentStepIndex: 1,
-			child: { ...child("nested-a", "running", 200), currentTool: "read" },
+			child: {
+				...child("nested-a", "running", 200),
+				currentTool: "read",
+				runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", ids: ["ext.ok", "bad/path", "ext.ok"], omitted: 1 },
+			},
 		});
 		writeNestedEvent(route, {
 			type: "subagent.nested.completed",
 			ts: 300,
 			parentRunId: "root-run",
 			parentStepIndex: 1,
-			child: child("nested-a", "complete", 300),
+			child: { ...child("nested-a", "complete", 300), runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", ids: ["ext.ok", "bad/path", "ext.ok"], omitted: 1 } },
 		});
 
 		const registry = projectNestedEvents(route);
@@ -172,6 +176,12 @@ describe("nested event parsing and projection", () => {
 		assert.equal(registry.children[0]?.id, "nested-a");
 		assert.equal(registry.children[0]?.state, "complete");
 		assert.equal(registry.children[0]?.steps?.[0]?.agent, "leaf");
+		assert.deepEqual(registry.children[0]?.runtimeAcknowledgedExtensions, {
+			version: 1,
+			source: "child-runtime",
+			ids: ["ext.ok"],
+			omitted: 1,
+		});
 
 		const job: AsyncJobState = {
 			asyncId: "root-run",
@@ -347,6 +357,24 @@ describe("nested event parsing and projection", () => {
 		assert.equal(summary.processTerminal?.reason, "proof-write-failed");
 		assert.equal(summary.steps?.[0]?.processTerminal?.state, "unknown");
 		assert.equal(summary.steps?.[0]?.processTerminal?.reason, "proof-write-failed");
+	});
+
+	it("sanitizes runtime acknowledged extensions in nested status summaries", () => {
+		const summary = nestedSummaryFromAsyncStatus({
+			runId: "child-run",
+			mode: "single",
+			state: "complete",
+			startedAt: 1,
+			runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", ids: ["/Users/alice/.secret-extension", "ok-ext", "x".repeat(5000)], omitted: 0 } as never,
+			steps: [{
+				agent: "worker",
+				status: "complete",
+				runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", ids: ["C:/Users/alice/secret"], omitted: 0 } as never,
+			}],
+		}, "/tmp/child-run", { id: "child-run", parentRunId: "parent-run", depth: 1, mode: "single", ts: 2 });
+
+		assert.deepEqual(summary.runtimeAcknowledgedExtensions?.ids, ["ok-ext"]);
+		assert.equal(summary.steps?.[0]?.runtimeAcknowledgedExtensions, undefined);
 	});
 
 	it("removes evicted status files without replaying completed children", () => {

@@ -27,7 +27,7 @@ import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult } from "../tui/render.ts";
 import { openSubagentFleet } from "../tui/fleet.ts";
-import { SubagentFleetStatus } from "../tui/fleet-status.ts";
+import { SubagentFleetStatus, resolveFleetViewPlacement } from "../tui/fleet-status.ts";
 import { SubagentParams } from "./schemas.ts";
 import { validateChainInput } from "./chain-validation.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
@@ -144,10 +144,13 @@ function createSlashResultComponent(
 }
 
 class SubagentControlNoticeComponent implements Component {
-	constructor(
-		private readonly details: SubagentControlMessageDetails,
-		private readonly theme: ExtensionContext["ui"]["theme"],
-	) {}
+	private readonly details: SubagentControlMessageDetails;
+	private readonly theme: ExtensionContext["ui"]["theme"];
+
+	constructor(details: SubagentControlMessageDetails, theme: ExtensionContext["ui"]["theme"]) {
+		this.details = details;
+		this.theme = theme;
+	}
 
 	invalidate(): void {}
 
@@ -194,6 +197,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	const asyncByDefault = config.asyncByDefault === true;
 	const fleetViewEnabled = config.fleetView !== false;
+	const fleetViewPlacement = resolveFleetViewPlacement(config.fleetViewPlacement);
 	const asyncWidgetEnabled = config.asyncWidget === true || (!fleetViewEnabled && config.asyncWidget !== false);
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
@@ -237,14 +241,17 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			const ctx = state.lastUiContext;
 			if (!ctx?.hasUI) return;
 			await openSubagentFleet(ctx, state, { initialKey: itemKey });
-		})
+		}, { placement: fleetViewPlacement })
 		: undefined;
 	const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(
 		pi,
 		state,
 		RESULTS_DIR,
 		10 * 60 * 1000,
-		{ notifier: completionNotifier },
+		{
+			notifier: completionNotifier,
+			deliverIntercomResults: config.intercomBridge?.resultDelivery !== false,
+		},
 	);
 
 	const runtimeCleanup = () => {
@@ -383,6 +390,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		events: pi.events,
 		getContext: () => state.lastUiContext,
 		execute: (id, params, signal, onUpdate, ctx) => executor.execute(id, params, signal, onUpdate, ctx),
+		state,
 	});
 
 	function effectiveParallelTaskCount(tasks: Array<{ count?: unknown }> | undefined): number {
@@ -551,6 +559,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		state.lastUiContext = ctx;
 		cleanupSessionArtifacts(ctx);
 		clearPendingForegroundControlNotices(state);
+		state.foregroundControls.clear();
+		state.lastForegroundControlId = null;
 		resetJobs(ctx);
 		restoreActiveJobs(ctx);
 		scheduledRunManager.bindSession(ctx);

@@ -1,6 +1,7 @@
 ---
 name: builder
 description: Implementation agent for normal task handoffs
+aliases: developer, coder, implementer, develop
 thinking: high
 systemPromptMode: replace
 tools: read, grep, find, ls, bash, edit, write, contact_supervisor

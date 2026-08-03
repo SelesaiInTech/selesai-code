@@ -8,7 +8,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@selesai/code";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { ChainClarifyComponent, type ChainClarifyResult, type BehaviorOverride } from "./chain-clarify.ts";
-import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
+import { resolveEffectiveThinking, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import {
 	resolveChainTemplates,
 	createChainDir,
@@ -20,6 +20,7 @@ import {
 	createParallelDirs,
 	suppressProgressForReadOnlyTask,
 	aggregateParallelOutputs,
+	isCheckpointStep,
 	isDynamicParallelStep,
 	isParallelStep,
 	type StepOverrides,
@@ -33,7 +34,13 @@ import {
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { INTERCOM_BRIDGE_MARKER } from "../../intercom/intercom-bridge.ts";
 import { runSync } from "./execution.ts";
-import { beginForegroundChild, finishForegroundChild, updateForegroundChild } from "./foreground-control.ts";
+import {
+	beginForegroundChild,
+	finishForegroundChild,
+	retainForegroundSchedulingOwner,
+	settleForegroundSchedulingOwner,
+	updateForegroundChild,
+} from "./foreground-control.ts";
 import { buildChainSummary } from "../../shared/formatters.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
@@ -64,6 +71,8 @@ import {
 	type ResolvedToolBudget,
 	type SingleResult,
 	type ToolBudgetConfig,
+	type ChainCheckpointState,
+	type UsageBudgetConfig,
 	MAX_CONCURRENCY,
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
@@ -78,6 +87,7 @@ import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import type { ChainOutputMap } from "../../shared/types.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
+import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 
@@ -97,6 +107,8 @@ interface ChainExecutionDetailsInput {
 	dynamicChildren?: Record<number, Array<{ agent: string; label?: string; flatIndex: number; itemKey: string; outputName?: string; structured?: boolean; error?: string }>>;
 	dynamicGroupStatuses?: Record<number, { status: "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "detached"; error?: string; acceptance?: SingleResult["acceptance"] }>;
 	parallelHandoff?: Details["parallelHandoff"];
+	checkpoint?: ChainCheckpointState;
+	usageBudget?: UsageBudgetConfig;
 }
 
 interface ParallelChainRunInput {
@@ -145,7 +157,10 @@ interface ParallelChainRunInput {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
+	usageBudget?: UsageBudgetConfig;
 	onDetachedExit?: (index: number, result: SingleResult) => void;
+	/** Called after an attached child releases its foreground ownership. */
+	onForegroundChildSettled?: () => void;
 	toolBudget?: ResolvedToolBudget;
 	configToolBudget?: ToolBudgetConfig;
 	globalSemaphore?: Semaphore;
@@ -165,6 +180,8 @@ function buildChainExecutionDetails(input: ChainExecutionDetailsInput): Details 
 		outputs: input.outputs,
 		totalChildUsage: sumResultsUsage(input.results),
 		totalCost: sumResultsCost(input.results),
+		usageBudget: usageBudgetState(input.usageBudget, sumResultsCost(input.results)),
+		...(input.checkpoint ? { checkpoint: input.checkpoint } : {}),
 		...(input.parallelHandoff ? { parallelHandoff: input.parallelHandoff } : {}),
 		workflowGraph: buildWorkflowGraphSnapshot({
 			runId: input.runId,
@@ -277,12 +294,29 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 		input.sessionFileForTask?.(task.agent, input.globalTaskIndex + taskIndex, effectiveModels[taskIndex]);
 	}
 
+	const completedResults: SingleResult[] = [];
+	if (input.foregroundControl) retainForegroundSchedulingOwner(input.foregroundControl);
 	const parallelResults = await mapConcurrent(
 		input.step.parallel,
 		concurrency,
 		async (task, taskIndex) => {
+			const childIndex = input.globalTaskIndex + taskIndex;
+			const budgetState = usageBudgetState(input.usageBudget, sumResultsCost(input.results.concat(completedResults)));
+			if (budgetState?.exhausted) {
+				return {
+					index: childIndex,
+					agent: task.agent,
+					task: input.parallelTemplates[taskIndex] ?? "(skipped)",
+					exitCode: 1,
+					messages: [],
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+					error: usageBudgetExceededMessage(budgetState),
+					skipped: true,
+				} as SingleResult;
+			}
 			if (aborted && failFast) {
 				return {
+					index: childIndex,
 					agent: task.agent,
 					task: "(skipped)",
 					exitCode: -1,
@@ -324,12 +358,14 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				: undefined;
 			taskStr = injectSingleOutputInstruction(taskStr, outputPath, taskAgentConfig);
 			const interruptController = new AbortController();
-			const childIndex = input.globalTaskIndex + taskIndex;
 			if (input.foregroundControl) {
+				const thinking = resolveEffectiveThinking(effectiveModel, input.thinkingOverrideForTask?.(task.agent, childIndex, effectiveModel));
 				beginForegroundChild(input.foregroundControl, {
 					index: childIndex,
 					agent: task.agent,
 					description: cleanTask.trim(),
+					...(effectiveModel ? { model: effectiveModel } : {}),
+					...(thinking ? { thinking } : {}),
 					interrupt: () => {
 						if (interruptController.signal.aborted) return false;
 						interruptController.abort();
@@ -342,7 +378,9 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				? createStructuredOutputRuntime(task.outputSchema, path.join(input.chainDir, "structured-output"))
 				: undefined;
 			const agentContract = task.agentContract ?? input.step.agentContract ?? input.agentContract;
-			const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskStr, {
+			let result!: SingleResult;
+			try {
+				result = await runSync(input.ctx.cwd, input.agents, task.agent, taskStr, {
 				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 				capabilityCeiling: input.capabilityCeiling,
 				context: input.contextForAgent?.(task.agent),
@@ -380,9 +418,13 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				timeoutMs: input.timeoutMs,
 				deadlineAt: input.deadlineAt,
 				turnBudget: input.turnBudget,
-				onDetachedExit: input.onDetachedExit
-					? (result) => input.onDetachedExit?.(childIndex, result)
-					: undefined,
+				onDetachedExit: (result) => {
+					try {
+						if (input.foregroundControl) finishForegroundChild(input.foregroundControl, childIndex);
+					} finally {
+						input.onDetachedExit?.(childIndex, result);
+					}
+				},
 				toolBudget: toolBudget.toolBudget,
 				onUpdate: input.onUpdate
 					? (progressUpdate) => {
@@ -416,16 +458,28 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 						});
 					}
 					: undefined,
-			});
-			if (input.foregroundControl) finishForegroundChild(input.foregroundControl, childIndex);
+				});
+			} finally {
+				// Rejected attached attempts still release their parallel child control;
+				// detached receipts transfer ownership to onDetachedExit.
+				if (!result?.detached) {
+					if (input.foregroundControl) finishForegroundChild(input.foregroundControl, childIndex);
+					input.onForegroundChildSettled?.();
+				}
+			}
 
 			if (result.exitCode !== 0 && failFast) {
 				aborted = true;
 			}
 			recordRun(task.agent, cleanTask, result.exitCode, result.progressSummary?.durationMs ?? 0);
+			completedResults.push(result);
 			return result;
 		},
 		input.globalSemaphore,
+		() => {
+			if (input.foregroundControl) settleForegroundSchedulingOwner(input.foregroundControl);
+			input.onForegroundChildSettled?.();
+		},
 	);
 
 	return parallelResults;
@@ -470,7 +524,10 @@ interface ChainExecutionParams {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	onDetachedExit?: (index: number, result: SingleResult) => void;
+	/** Ownership callback used when parallel siblings outlive executeChain rejection. */
+	onForegroundChildSettled?: () => void;
 	toolBudget?: ResolvedToolBudget;
+	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ToolBudgetConfig;
 	/** Global cap on simultaneously-running tasks within this chain. Defaults to DEFAULT_GLOBAL_CONCURRENCY_LIMIT. */
 	globalConcurrencyLimit?: number;
@@ -531,7 +588,9 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	let parallelHandoff: Details["parallelHandoff"];
 
 	const chainAgents: string[] = chainSteps.map((step) =>
-		isParallelStep(step)
+		isCheckpointStep(step)
+			? `checkpoint:${step.checkpoint}`
+			: isParallelStep(step)
 			? `[${step.parallel.map((t) => t.agent).join("+")}]`
 			: isDynamicParallelStep(step)
 				? `expand:${step.parallel.agent}`
@@ -539,7 +598,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	);
 	const totalSteps = chainSteps.length;
 
-	const makeDetailsInput = (overrides: Pick<Partial<ChainExecutionDetailsInput>, "currentStepIndex" | "currentFlatIndex"> = {}): ChainExecutionDetailsInput => ({
+	const makeDetailsInput = (overrides: Pick<Partial<ChainExecutionDetailsInput>, "currentStepIndex" | "currentFlatIndex" | "checkpoint"> = {}): ChainExecutionDetailsInput => ({
 		results,
 		...(includeProgress !== undefined ? { includeProgress } : {}),
 		allProgress,
@@ -553,16 +612,25 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		dynamicChildren,
 		dynamicGroupStatuses,
 		...(parallelHandoff ? { parallelHandoff } : {}),
+		usageBudget: params.usageBudget,
 		...overrides,
 	});
 
+	const usageBudgetError = (stepIndex: number, flatIndex: number): ChainExecutionResult | undefined => {
+		const state = usageBudgetState(params.usageBudget, sumResultsCost(results));
+		if (!state?.exhausted) return undefined;
+		return buildChainExecutionErrorResult(usageBudgetExceededMessage(state), makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: flatIndex }));
+	};
+
 	const firstStep = chainSteps[0]!;
 	const originalTask = params.task
-		?? (isParallelStep(firstStep)
-			? firstStep.parallel[0]!.task!
-			: isDynamicParallelStep(firstStep)
-				? firstStep.parallel.task!
-				: (firstStep as SequentialStep).task!);
+		?? (isCheckpointStep(firstStep)
+			? undefined
+			: isParallelStep(firstStep)
+				? firstStep.parallel[0]!.task!
+				: isDynamicParallelStep(firstStep)
+					? firstStep.parallel.task!
+					: (firstStep as SequentialStep).task!);
 	try {
 		validateChainOutputBindings(chainSteps, { maxItems: params.dynamicFanoutMaxItems });
 	} catch (error) {
@@ -577,7 +645,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	}
 
 	const chainDir = createChainDir(runId, chainDirBase);
-	const hasParallelSteps = chainSteps.some((step) => isParallelStep(step) || isDynamicParallelStep(step));
+	const hasParallelSteps = chainSteps.some((step) => isParallelStep(step) || isDynamicParallelStep(step) || isCheckpointStep(step));
 	let templates: ResolvedTemplates = resolveChainTemplates(chainSteps);
 	const shouldClarify = clarify === true && ctx.hasUI && !hasParallelSteps;
 	let tuiBehaviorOverrides: (BehaviorOverride | undefined)[] | undefined;
@@ -677,8 +745,20 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	let progressCreated = false;
 
 	for (let stepIndex = 0; stepIndex < chainSteps.length; stepIndex++) {
+		const budgetError = usageBudgetError(stepIndex, globalTaskIndex);
+		if (budgetError) return budgetError;
 		const step = chainSteps[stepIndex]!;
 		const stepTemplates = templates[stepIndex]!;
+
+		if (isCheckpointStep(step)) {
+			const checkpoint = { name: step.checkpoint, ...(step.message ? { message: step.message } : {}), status: "pending" as const, stepIndex };
+			return {
+				content: [{ type: "text", text: `Chain paused at checkpoint '${step.checkpoint}'. Approve with subagent({ action: "approve-checkpoint", id: "${runId}" }) or reject with subagent({ action: "reject-checkpoint", id: "${runId}" }).${step.message ? `
+
+${step.message}` : ""}` }],
+				details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex, checkpoint })),
+			};
+		}
 
 		if (isParallelStep(step)) {
 			const parallelTemplates = stepTemplates as string[];
@@ -768,7 +848,9 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					timeoutMs: params.timeoutMs,
 					deadlineAt,
 					turnBudget: params.turnBudget,
+					usageBudget: params.usageBudget,
 					onDetachedExit,
+					onForegroundChildSettled: params.onForegroundChildSettled,
 					toolBudget: params.toolBudget,
 					configToolBudget: params.configToolBudget,
 					globalSemaphore,
@@ -1024,7 +1106,9 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				turnBudget: params.turnBudget,
+				usageBudget: params.usageBudget,
 				onDetachedExit,
+				onForegroundChildSettled: params.onForegroundChildSettled,
 				toolBudget: params.toolBudget,
 				configToolBudget: params.configToolBudget,
 				globalSemaphore,
@@ -1217,10 +1301,13 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const childIndex = globalTaskIndex;
 			const interruptController = new AbortController();
 			if (foregroundControl) {
+				const thinking = resolveEffectiveThinking(effectiveModel, params.thinkingOverrideForTask?.(seqStep.agent, childIndex, effectiveModel));
 				beginForegroundChild(foregroundControl, {
 					index: childIndex,
 					agent: seqStep.agent,
 					description: cleanTask.trim(),
+					...(effectiveModel ? { model: effectiveModel } : {}),
+					...(thinking ? { thinking } : {}),
 					interrupt: () => {
 						if (interruptController.signal.aborted) return false;
 						interruptController.abort();
@@ -1229,28 +1316,30 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				});
 			}
 
-			const structuredRuntime = seqStep.outputSchema
-				? createStructuredOutputRuntime(seqStep.outputSchema, path.join(chainDir, "structured-output"))
-				: undefined;
 			const agentContract = seqStep.agentContract ?? params.agentContract;
-			const toolBudget = resolveChainToolBudget({ stepBudget: seqStep.toolBudget, runBudget: params.toolBudget, agentBudget: agentConfig?.toolBudget, configBudget: params.configToolBudget });
-			if (toolBudget.error) return buildChainExecutionErrorResult(toolBudget.error, {
-				results,
-				includeProgress,
-				allProgress,
-				allArtifactPaths,
-				artifactsDir: params.artifactsDir,
-				chainAgents,
-				chainSteps,
-				totalSteps,
-				currentStepIndex: stepIndex,
-				runId: params.runId,
-				outputs,
-				currentFlatIndex: globalTaskIndex,
-				dynamicChildren,
-				dynamicGroupStatuses,
-			});
-			const r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
+			let r!: SingleResult;
+			try {
+				const structuredRuntime = seqStep.outputSchema
+					? createStructuredOutputRuntime(seqStep.outputSchema, path.join(chainDir, "structured-output"))
+					: undefined;
+				const toolBudget = resolveChainToolBudget({ stepBudget: seqStep.toolBudget, runBudget: params.toolBudget, agentBudget: agentConfig?.toolBudget, configBudget: params.configToolBudget });
+				if (toolBudget.error) return buildChainExecutionErrorResult(toolBudget.error, {
+					results,
+					includeProgress,
+					allProgress,
+					allArtifactPaths,
+					artifactsDir: params.artifactsDir,
+					chainAgents,
+					chainSteps,
+					totalSteps,
+					currentStepIndex: stepIndex,
+					runId: params.runId,
+					outputs,
+					currentFlatIndex: globalTaskIndex,
+					dynamicChildren,
+					dynamicGroupStatuses,
+				});
+				r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 				capabilityCeiling: params.capabilityCeiling,
 				context: params.contextForAgent?.(seqStep.agent),
@@ -1288,9 +1377,13 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				turnBudget: params.turnBudget,
-				onDetachedExit: onDetachedExit
-					? (result) => onDetachedExit(childIndex, result)
-					: undefined,
+				onDetachedExit: (result) => {
+					try {
+						if (foregroundControl) finishForegroundChild(foregroundControl, childIndex);
+					} finally {
+						onDetachedExit?.(childIndex, result);
+					}
+				},
 				toolBudget: toolBudget.toolBudget,
 				onUpdate: onUpdate
 					? (p) => {
@@ -1324,8 +1417,15 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						});
 					}
 					: undefined,
-			});
-			if (foregroundControl) finishForegroundChild(foregroundControl, childIndex);
+				});
+			} finally {
+				// Rejected attempts and early validation returns release the child here.
+				// A detached receipt transfers cleanup ownership to onDetachedExit.
+				if (!r?.detached) {
+					if (foregroundControl) finishForegroundChild(foregroundControl, childIndex);
+					params.onForegroundChildSettled?.();
+				}
+			}
 			recordRun(seqStep.agent, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
 
 			globalTaskIndex++;

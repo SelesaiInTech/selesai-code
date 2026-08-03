@@ -454,6 +454,50 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.match(text, /output: \/tmp\/reviewer_output\.md/);
 	});
 
+	it("shows model and thinking on running compact single and multi rows", () => {
+		const single = renderSubagentResult!({
+			content: [{ type: "text", text: "(running...)" }],
+			details: {
+				mode: "single",
+				results: [{
+					agent: "reviewer",
+					task: "review",
+					exitCode: 0,
+					messages: [],
+					usage: emptyUsage,
+					progress: {
+						index: 0,
+						agent: "reviewer",
+						status: "running",
+						task: "review",
+						model: "openai-codex/gpt-5.5",
+						thinking: "high",
+						recentTools: [],
+						recentOutput: [],
+						toolCount: 1,
+						tokens: 42,
+						durationMs: 3_000,
+					},
+				}],
+			},
+		}, { expanded: false }, theme).render(160).join("\n");
+		assert.match(single, /reviewer \(gpt-5\.5 · thinking high\)/);
+
+		const multi = renderSubagentResult!({
+			content: [{ type: "text", text: "(running...)" }],
+			details: {
+				mode: "parallel",
+				totalSteps: 2,
+				results: [
+					{ agent: "scout", task: "scan", exitCode: 0, messages: [], usage: emptyUsage, model: "anthropic/claude-haiku-4-5", thinking: "low", progress: { index: 0, agent: "scout", status: "running", task: "scan", recentTools: [], recentOutput: [], toolCount: 0, tokens: 0, durationMs: 0 } },
+					{ agent: "worker", task: "fix", exitCode: 0, messages: [], usage: emptyUsage, progress: { index: 1, agent: "worker", status: "running", task: "fix", model: "openai/gpt-5-mini", recentTools: [], recentOutput: [], toolCount: 0, tokens: 0, durationMs: 0 } },
+				],
+			},
+		}, { expanded: false }, theme).render(160).join("\n");
+		assert.match(multi, /Agent 1\/2: scout \(claude-haiku-4-5 · thinking low\)/);
+		assert.match(multi, /Agent 2\/2: worker \(gpt-5-mini\)/);
+	});
+
 	it("keeps running compact result output stable when progress is unchanged", async () => {
 		const result = {
 			content: [{ type: "text" as const, text: "(running...)" }],

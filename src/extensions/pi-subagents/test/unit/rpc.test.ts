@@ -42,12 +42,12 @@ function once(events: FakeEvents, event: string): Promise<unknown> {
 	});
 }
 
-function ctx() {
+function ctx(sessionId = "session-123", sessionFile = "/sessions/parent.jsonl") {
 	return {
 		cwd: "/repo",
 		sessionManager: {
-			getSessionId: () => "session-123",
-			getSessionFile: () => "/sessions/parent.jsonl",
+			getSessionId: () => sessionId,
+			getSessionFile: () => sessionFile,
 		},
 	} as any;
 }
@@ -90,6 +90,14 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal(
 			(reply as { data: { capabilities?: { nonRecoveringSteer?: boolean } } }).data.capabilities?.nonRecoveringSteer,
 			true,
+		);
+		assert.equal(
+			(reply as { data: { capabilities?: { resume?: boolean } } }).data.capabilities?.resume,
+			true,
+		);
+		assert.deepEqual(
+			(reply as { data: { capabilities?: { fleetStatus?: unknown } } }).data.capabilities?.fleetStatus,
+			{ version: 1 },
 		);
 
 		bridge.dispose();
@@ -137,7 +145,149 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal(reply.success, true);
 		assert.deepEqual(executedParams, { action: "status", id: "abc123" });
 		assert.equal((reply as { data: { text?: string } }).data.text, "Run: abc123");
+		assert.deepEqual((reply as { data: { fleet?: unknown } }).data.fleet, {
+			version: 1, entries: [], totalActive: 0, omitted: 0,
+		});
 
+		bridge.dispose();
+	});
+
+	it("projects bounded display-safe active fleet records without internal ids", async () => {
+		const events = new FakeEvents();
+		const state = {
+			currentSessionId: "/sessions/parent.jsonl",
+			foregroundControls: new Map(),
+			asyncJobs: new Map([["async-private-id", {
+				asyncId: "async-private-id", sessionId: "/sessions/parent.jsonl", status: "running", mode: "single",
+				description: ["Review", "\u001b]8;;hostile\u0007", "the diff"].join("\n"),
+				startedAt: 100, steps: [{ agent: "reviewer", label: "opaque label", status: "running", startedAt: 120, model: "anthropic/claude-opus-4-8:high", thinking: "high", tokens: { input: 12, output: 34, total: 46 } }],
+			}]]),
+		} as any;
+		const bridge = registerSubagentRpcBridge({
+			events, getContext: () => ctx("runtime-session-id", "/sessions/parent.jsonl"), state,
+			execute: async () => ({ content: [{ type: "text", text: "Active async runs: 1" }], details: { mode: "management", results: [] } } as any),
+		});
+		const reply = await request(events, "fleet-status", "status");
+		const fleet = (reply as { data: { fleet: { entries: Array<Record<string, unknown>> } } }).data.fleet;
+		assert.equal(fleet.entries.length, 1);
+		assert.equal((fleet as { totalActive?: number }).totalActive, 1);
+		assert.equal((fleet as { omitted?: number }).omitted, 0);
+		assert.deepEqual(fleet.entries[0], {
+			key: "fleet-1", agent: "reviewer", role: "opaque label", model: "anthropic/claude-opus-4-8:high", effort: "high",
+			startedAt: 120, tokens: { input: 12, output: 34, total: 46 }, goal: "Review the diff",
+		});
+		assert.equal(JSON.stringify(fleet).includes("async-private-id"), false);
+		bridge.dispose();
+	});
+
+	it("projects resolved foreground model, effort, split usage, and goal", async () => {
+		const events = new FakeEvents();
+		const state = {
+			currentSessionId: "session-123",
+			foregroundControls: new Map([["private-run", {
+				runId: "private-run",
+				sessionId: "session-123",
+				mode: "single",
+				startedAt: 90,
+				activeChildren: new Map([[0, {
+					index: 0,
+					agent: "worker",
+					description: "Implement the fix",
+					startedAt: 100,
+					updatedAt: 110,
+					model: "openai/gpt-5.6-terra:high",
+					thinking: "high",
+					inputTokens: 321,
+					outputTokens: 45,
+					tokens: 366,
+				}]]),
+			}]]),
+			asyncJobs: new Map(),
+		} as any;
+		state.foregroundControls.set("private-old", {
+			runId: "private-old",
+			sessionId: "old-session",
+			mode: "single",
+			startedAt: 50,
+			currentAgent: "reviewer",
+			description: "Old work",
+		});
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx("session-123", "session-123"),
+			state,
+			execute: async () => ({ content: [], details: { mode: "management", results: [] } } as any),
+		});
+		const reply = await request(events, "foreground-fleet", "status");
+		assert.deepEqual((reply as any).data.fleet, {
+			version: 1,
+			totalActive: 1,
+			omitted: 0,
+			entries: [{
+				key: "fleet-1",
+				agent: "worker",
+				model: "openai/gpt-5.6-terra:high",
+				effort: "high",
+				startedAt: 100,
+				tokens: { input: 321, output: 45, total: 366 },
+				goal: "Implement the fix",
+			}],
+		});
+		assert.equal(JSON.stringify((reply as any).data.fleet).includes("private-run"), false);
+		bridge.dispose();
+	});
+
+	it("uses monotonic opaque keys across removal/insertion and resets them per session", async () => {
+		const events = new FakeEvents();
+		const jobs = new Map<string, any>([
+			["private-a", { asyncId: "private-a", sessionId: "A", status: "running", mode: "single", startedAt: 1, agents: ["alpha"] }],
+			["private-b", { asyncId: "private-b", sessionId: "A", status: "running", mode: "single", startedAt: 2, agents: ["beta"] }],
+			["private-unattributed", { asyncId: "private-unattributed", status: "running", mode: "single", startedAt: 3, agents: ["unknown"] }],
+		]);
+		const state = { currentSessionId: "A", foregroundControls: new Map(), asyncJobs: jobs } as any;
+		let activeSession = "A";
+		const bridge = registerSubagentRpcBridge({ events, getContext: () => ctx(activeSession, activeSession), state, execute: async () => ({ content: [], details: { mode: "management", results: [] } } as any) });
+		const keys = async (id: string) => ((await request(events, id, "status")) as any).data.fleet.entries.map((entry: { key: string }) => entry.key);
+		assert.deepEqual(await keys("keys-a"), ["fleet-1", "fleet-2"]);
+		jobs.delete("private-b"); jobs.set("private-c", { asyncId: "private-c", sessionId: "A", status: "running", mode: "single", startedAt: 3, agents: ["gamma"] });
+		assert.deepEqual(await keys("keys-b"), ["fleet-1", "fleet-3"]);
+		state.currentSessionId = "B";
+		activeSession = "B";
+		assert.deepEqual(await keys("keys-c"), []);
+		jobs.set("private-d", { asyncId: "private-d", sessionId: "B", status: "running", mode: "single", startedAt: 4, agents: ["delta"] });
+		assert.deepEqual(await keys("keys-d"), ["fleet-1"]);
+		bridge.dispose();
+	});
+
+	it("reports bounded overflow and excludes unattributed or foreign-session jobs", async () => {
+		const events = new FakeEvents();
+		const jobs = new Map<string, any>();
+		for (let index = 0; index < 18; index += 1) {
+			jobs.set(`private-${index}`, {
+				asyncId: `private-${index}`,
+				sessionId: "session-123",
+				status: "running",
+				mode: "single",
+				startedAt: index + 1,
+				agents: [`worker-${index}`],
+			});
+		}
+		jobs.set("unattributed", { asyncId: "unattributed", status: "running", mode: "single", startedAt: 20, agents: ["hidden"] });
+		jobs.set("foreign", { asyncId: "foreign", sessionId: "other", status: "running", mode: "single", startedAt: 21, agents: ["hidden"] });
+		const state = { currentSessionId: "session-123", foregroundControls: new Map(), asyncJobs: jobs } as any;
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx("session-123", "session-123"),
+			state,
+			execute: async () => ({ content: [], details: { mode: "management", results: [] } } as any),
+		});
+		const reply = await request(events, "fleet-overflow", "status");
+		const fleet = (reply as any).data.fleet;
+		assert.equal(fleet.entries.length, 16);
+		assert.equal(fleet.totalActive, 18);
+		assert.equal(fleet.omitted, 2);
+		assert.equal(JSON.stringify(fleet).includes("unattributed"), false);
+		assert.equal(JSON.stringify(fleet).includes("foreign"), false);
 		bridge.dispose();
 	});
 
@@ -298,6 +448,75 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
+	it("delegates resume through the existing package-owned revival action", async () => {
+		const events = new FakeEvents();
+		let executedParams: unknown;
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async (_id, params) => {
+				executedParams = params;
+				return {
+					content: [{ type: "text", text: "Revived async subagent from run-1." }],
+					details: { mode: "single", results: [], asyncId: "run-2", asyncDir: "/tmp/run-2" },
+				} as any;
+			},
+		});
+
+		const reply = await request(events, "resume-1", "resume", {
+			id: "run-1",
+			index: 0,
+			message: " Continue with the focused review. ",
+			output: " /tmp/revived-output.md ",
+			outputMode: "file-only",
+		});
+
+		assert.equal(reply.success, true);
+		assert.deepEqual(executedParams, {
+			action: "resume",
+			id: "run-1",
+			index: 0,
+			message: "Continue with the focused review.",
+			output: "/tmp/revived-output.md",
+			outputMode: "file-only",
+		});
+		assert.equal((reply as { data: { details?: { asyncId?: string } } }).data.details?.asyncId, "run-2");
+
+		bridge.dispose();
+	});
+
+	it("rejects targetless or empty RPC resume before executor dispatch", async () => {
+		const events = new FakeEvents();
+		let executeCalls = 0;
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async () => {
+				executeCalls++;
+				return { content: [], details: { mode: "management", results: [] } } as any;
+			},
+		});
+
+		const targetless = await request(events, "resume-no-target", "resume", { message: "continue" });
+		const empty = await request(events, "resume-empty", "resume", { id: "run-1", message: "   " });
+		const inlineOutput = await request(events, "resume-inline", "resume", {
+			id: "run-1",
+			message: "continue",
+			output: "/tmp/output.md",
+			outputMode: "inline",
+		});
+
+		assert.equal(targetless.success, false);
+		assert.equal((targetless as { error: { code: string } }).error.code, "invalid_params");
+		assert.match((targetless as { error: { message: string } }).error.message, /requires id, runId, or dir/);
+		assert.equal(empty.success, false);
+		assert.equal((empty as { error: { code: string } }).error.code, "invalid_params");
+		assert.equal(inlineOutput.success, false);
+		assert.match((inlineOutput as { error: { message: string } }).error.message, /file-only/);
+		assert.equal(executeCalls, 0);
+		bridge.dispose();
+	});
+
 	it("delegates interrupt through the existing executor action", async () => {
 		const events = new FakeEvents();
 		let executedParams: unknown;
@@ -328,7 +547,7 @@ describe("subagent extension RPC bridge", () => {
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId: "run-stop",
-				sessionId: "session-123",
+				sessionId: "/sessions/parent.jsonl",
 				mode: "single",
 				state: "running",
 				pid: 4242,

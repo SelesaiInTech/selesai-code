@@ -51,16 +51,17 @@ function createPlaceholderResult(
 	agent: string,
 	task: string,
 	status: "pending" | "running",
-	index?: number,
+	index: number,
 ): SingleResult {
 	return {
 		agent,
 		task,
+		index,
 		exitCode: 0,
 		messages: EMPTY_MESSAGES,
 		usage: cloneUsage(),
 		progress: {
-			...(index !== undefined ? { index } : {}),
+			index,
 			agent,
 			status,
 			task,
@@ -162,8 +163,9 @@ function buildSingleInitialResult(params: SubagentParamsLike): AgentToolResult<D
 		details: {
 			mode: "single",
 			...(params.context ? { context: params.context } : {}),
-			results: [createPlaceholderResult(agent, task, "running")],
+			results: [createPlaceholderResult(agent, task, "running", 0)],
 			progress: [{
+				index: 0,
 				agent,
 				status: "running",
 				task,

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { buildBuiltinOverrideConfig, discoverAgents, discoverAgentsAll, removeBuiltinAgentOverride } from "../../src/agents/agents.ts";
+import { buildBuiltinOverrideConfig, discoverAgents, discoverAgentsAll, removeBuiltinAgentOverride, saveBuiltinAgentOverride } from "../../src/agents/agents.ts";
 
 let tempHome = "";
 let tempProject = "";
@@ -176,6 +176,22 @@ describe("builtin agent overrides", () => {
 		assert.equal(agents.find((agent) => agent.name === "implementer")?.model, "deepseek-v4-pro");
 		assert.equal(agents.find((agent) => agent.name === "auditor")?.model, "google/gemini-3-pro");
 		assert.equal(agents.find((agent) => agent.name === "architect-copy")?.model, "deepseek-v4-flash");
+	});
+
+	it("overrides builtin and custom agent descriptions from settings", () => {
+		writeJson(path.join(tempHome, ".selesai", "agent", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					commentator: { description: " Priced commentator " },
+					implementer: { description: "Priced implementer" },
+				},
+			},
+		});
+		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: Original implementer\n---\n\nImplement it.\n`);
+
+		const agents = discoverAgents(tempProject, "both").agents;
+		assert.equal(agents.find((agent) => agent.name === "commentator")?.description, "Priced commentator");
+		assert.equal(agents.find((agent) => agent.name === "implementer")?.description, "Priced implementer");
 	});
 
 	it("applies user settings overrides to builtin agents", () => {
@@ -625,6 +641,22 @@ describe("builtin agent overrides", () => {
 		);
 	});
 
+	it("surfaces malformed description override values", () => {
+		const settingsPath = path.join(tempHome, ".selesai", "agent", "settings.json");
+		for (const description of ["", 42]) {
+			writeJson(settingsPath, {
+				subagents: { agentOverrides: { commentator: { description } } },
+			});
+			assert.throws(
+				() => discoverAgents(tempProject, "both"),
+				(error: unknown) => error instanceof Error
+					&& error.message.includes(settingsPath)
+					&& error.message.includes("commentator")
+					&& error.message.includes("description"),
+			);
+		}
+	});
+
 	it("surfaces malformed completion guard override values", () => {
 		const settingsPath = path.join(tempHome, ".selesai", "agent", "settings.json");
 		writeJson(settingsPath, {
@@ -646,9 +678,10 @@ describe("builtin agent overrides", () => {
 		);
 	});
 
-	it("builds false sentinels when an override clears builtin fields", () => {
+	it("builds description changes and false sentinels when an override clears builtin fields", () => {
 		const override = buildBuiltinOverrideConfig(
 			{
+				description: "Base description",
 				model: "openai-codex/gpt-5.4-mini",
 				fallbackModels: ["openai/gpt-5-mini"],
 				thinking: "high",
@@ -665,6 +698,7 @@ describe("builtin agent overrides", () => {
 				completionGuard: false,
 			},
 			{
+				description: "Override description",
 				model: undefined,
 				fallbackModels: undefined,
 				thinking: undefined,
@@ -683,6 +717,7 @@ describe("builtin agent overrides", () => {
 		);
 
 		assert.deepEqual(override, {
+			description: "Override description",
 			model: false,
 			fallbackModels: false,
 			thinking: false,
@@ -695,5 +730,15 @@ describe("builtin agent overrides", () => {
 			subagentOnlyExtensions: false,
 			completionGuard: true,
 		});
+		assert.ok(override);
+		fs.mkdirSync(path.join(tempProject, ".selesai"), { recursive: true });
+		saveBuiltinAgentOverride(tempProject, "commentator", "project", override);
+		assert.equal(discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "commentator")?.description, "Override description");
+
+		const whitespaceDescription = buildBuiltinOverrideConfig(
+			{ description: "Base description" },
+			{ description: "   " } as Parameters<typeof buildBuiltinOverrideConfig>[1],
+		);
+		assert.equal(whitespaceDescription, undefined);
 	});
 });

@@ -109,6 +109,14 @@ describe("async resume lookup", () => {
 			});
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /capabilityCeiling sources/);
 
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				...descriptor,
+				launchContractDigest: "launch-contract-digest",
+			});
+			const valid = resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(valid.launchContractDigest, "launch-contract-digest");
+			assert.equal(valid.recoveryDescriptor?.launchContractDigest, "launch-contract-digest");
+
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, sourceRunId: "another-run" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /different source run/);
 

@@ -340,7 +340,7 @@ describe("skills filesystem fallback", () => {
 		`;
 		execFileSync(
 			process.execPath,
-			["--experimental-transform-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+			["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
 			{
 				cwd: projectRoot,
 				env: {

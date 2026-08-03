@@ -191,12 +191,12 @@ Report active tools.`;
 
 		try {
 			run = await runRealSubagentSession({
-				prompt: "Delegate to a worker and report its exact result.",
+				prompt: "Delegate to a builder and report its exact result.",
 				childText: CHILD_MARKER,
 				respond: routeParentThroughSubagent({
 					childMarker: CHILD_MARKER,
 					subagentArgs: {
-						agent: "worker",
+						agent: "builder",
 						task: "Return the marker from the faux child provider.",
 						context: "fresh",
 						agentScope: "project",

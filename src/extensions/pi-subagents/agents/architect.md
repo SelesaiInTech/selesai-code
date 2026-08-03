@@ -2,6 +2,7 @@
 name: architect
 description: Creates implementation plans from context and requirements
 tools: read, grep, find, ls
+acceptanceRole: read-only
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

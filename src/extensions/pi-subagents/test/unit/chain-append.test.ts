@@ -198,6 +198,12 @@ describe("chain append requests", () => {
 			"reviewer:pending",
 			"auditor:pending",
 		]);
+		// Appended steps must carry their own bounded task description for fleet display.
+		assert.deepEqual(status.steps?.slice(1).map((step) => step.description), [
+			"Use {previous}",
+			"Use {previous}",
+			"Use {previous}",
+		]);
 		assert.deepEqual(status.parallelGroups, [{ start: 2, count: 2, stepIndex: 2 }]);
 		assert.equal(status.workflowGraph?.nodes[1]?.id, "step-1");
 		assert.equal(status.workflowGraph?.nodes[2]?.kind, "parallel-group");

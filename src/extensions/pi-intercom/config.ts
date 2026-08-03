@@ -1,6 +1,23 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { getIntercomDir } from "./broker/paths.js";
+import { getIntercomDirPath } from "./broker/paths.ts";
+
+export const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
+
+export function getAskTimeoutMs(): number {
+  const raw = process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_ASK_TIMEOUT_MS;
+  }
+
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("PI_INTERCOM_ASK_TIMEOUT_MS must be a positive integer number of milliseconds");
+  }
+  return value;
+}
+
+export type InboundTriggerPolicy = "always" | "replies" | "never";
 
 export interface IntercomConfig {
   /** Broker command used to spawn the broker process (e.g. "npx" or "bun") */
@@ -12,8 +29,14 @@ export interface IntercomConfig {
   /** Require confirmation before non-reply sends from interactive sessions */
   confirmSend: boolean;
 
+  /** Controls whether inbound broker messages may automatically trigger a model turn */
+  inboundTrigger: InboundTriggerPolicy;
+
   /** Optional custom status suffix shown after automatic lifecycle status */
   status?: string;
+
+  /** Optional stable intercom session ID for restart-stable addressing */
+  stableId?: string;
   
   /** Enable/disable intercom (default: true) */
   enabled: boolean;
@@ -22,23 +45,27 @@ export interface IntercomConfig {
   replyHint: boolean;
 }
 
-const CONFIG_PATH = join(getIntercomDir(), "config.json");
+export function getConfigPath(intercomDir: string = getIntercomDirPath()): string {
+  return join(intercomDir, "config.json");
+}
 
 const defaults: IntercomConfig = {
   brokerCommand: "npx",
   brokerArgs: ["--no-install", "tsx"],
   confirmSend: false,
+  inboundTrigger: "always",
   enabled: true,
   replyHint: true,
 };
 
 export function loadConfig(): IntercomConfig {
-  if (!existsSync(CONFIG_PATH)) {
+  const configPath = getConfigPath();
+  if (!existsSync(configPath)) {
     return { ...defaults };
   }
   
   try {
-    const raw = readFileSync(CONFIG_PATH, "utf-8");
+    const raw = readFileSync(configPath, "utf-8");
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw new Error("Config must be a JSON object");
@@ -86,6 +113,17 @@ export function loadConfig(): IntercomConfig {
       config.enabled = parsedConfig.enabled;
     }
 
+    if (Object.hasOwn(parsedConfig, "inboundTrigger")) {
+      if (
+        parsedConfig.inboundTrigger !== "always"
+        && parsedConfig.inboundTrigger !== "replies"
+        && parsedConfig.inboundTrigger !== "never"
+      ) {
+        throw new Error(`"inboundTrigger" must be "always", "replies", or "never"`);
+      }
+      config.inboundTrigger = parsedConfig.inboundTrigger;
+    }
+
     if (Object.hasOwn(parsedConfig, "replyHint")) {
       if (typeof parsedConfig.replyHint !== "boolean") {
         throw new Error(`"replyHint" must be a boolean`);
@@ -100,9 +138,20 @@ export function loadConfig(): IntercomConfig {
       config.status = parsedConfig.status;
     }
 
+    if (Object.hasOwn(parsedConfig, "stableId")) {
+      if (typeof parsedConfig.stableId !== "string") {
+        throw new Error(`"stableId" must be a string`);
+      }
+      const stableId = parsedConfig.stableId.trim();
+      if (!stableId) {
+        throw new Error(`"stableId" must not be empty`);
+      }
+      config.stableId = stableId;
+    }
+
     return config;
   } catch (error) {
-    console.error(`Failed to load intercom config at ${CONFIG_PATH}:`, error);
-    return { ...defaults };
+    console.error(`Failed to load intercom config at ${configPath}:`, error);
+    return { ...defaults, inboundTrigger: "never" };
   }
 }

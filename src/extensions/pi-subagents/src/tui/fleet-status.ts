@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "@selesai/code";
-import { Editor, isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { AsyncJobStep, SubagentState } from "../shared/types.ts";
+import { type EditorComponent, isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { formatModelThinking } from "../shared/formatters.ts";
+import type { AsyncJobStep, FleetViewPlacement, SubagentState } from "../shared/types.ts";
 
 export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
 
@@ -14,6 +15,7 @@ type FleetStatusTui = {
 type FleetStatusEntry = {
 	key: string;
 	agent: string;
+	modelThinking?: string;
 	description?: string;
 	startedAt: number;
 	tokens: number;
@@ -22,6 +24,11 @@ type FleetStatusEntry = {
 export interface FleetStatusOptions {
 	refreshMs?: number;
 	maxAgentRows?: number;
+	placement?: FleetViewPlacement;
+}
+
+export function resolveFleetViewPlacement(value: unknown): FleetViewPlacement {
+	return value === "aboveEditor" ? "aboveEditor" : "belowEditor";
 }
 
 export function formatFleetElapsed(ms: number): string {
@@ -48,14 +55,23 @@ function isActiveState(value: string): boolean {
 	return value === "running" || value === "queued" || value === "pending";
 }
 
+function isStaleExtensionContextError(error: unknown): boolean {
+	// Pi currently exposes stale contexts as plain Errors without a stable code or subtype.
+	return error instanceof Error
+		&& (error.message.includes("This extension ctx is stale")
+			|| error.message.includes("Extension context no longer active"));
+}
+
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
 	const entries: FleetStatusEntry[] = [];
 	for (const control of state.foregroundControls.values()) {
 		if (control.activeChildren) {
 			for (const child of [...control.activeChildren.values()].sort((left, right) => left.index - right.index)) {
+				const modelThinking = formatModelThinking(child.model, child.thinking) || undefined;
 				entries.push({
 					key: `foreground-active:${control.runId}:${child.index}`,
 					agent: child.agent,
+					...(modelThinking ? { modelThinking } : {}),
 					description: child.description,
 					startedAt: child.startedAt,
 					tokens: child.tokens ?? 0,
@@ -63,9 +79,11 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 			}
 			continue;
 		}
+		const modelThinking = formatModelThinking(control.model, control.thinking) || undefined;
 		entries.push({
 			key: `foreground-active:${control.runId}:${control.currentIndex ?? 0}`,
 			agent: control.currentAgent ?? control.mode,
+			...(modelThinking ? { modelThinking } : {}),
 			description: control.description,
 			startedAt: control.startedAt,
 			tokens: control.tokens ?? 0,
@@ -96,10 +114,12 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 			if (!isActiveState(step.status)) continue;
 			const index = step.index ?? offset;
 			if (step.status === "pending" && job.mode === "chain" && !job.activeParallelGroup && index !== (job.currentStep ?? 0)) continue;
+			const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
 			entries.push({
 				key: `async:${job.asyncId}:${index}`,
 				agent: step.label ? `${step.label} (${step.agent})` : step.agent,
-				description: job.description,
+				...(modelThinking ? { modelThinking } : {}),
+				description: step.description ?? job.description,
 				startedAt: step.startedAt ?? startedAt,
 				tokens: step.tokens?.total ?? (steps.length === 1 ? job.totalTokens?.total ?? 0 : 0),
 			});
@@ -111,6 +131,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 
 export class SubagentFleetStatus {
 	private ctx: ExtensionContext | undefined;
+	private ui: ExtensionContext["ui"] | undefined;
 	private tui: FleetStatusTui | undefined;
 	private inputUnsubscribe: (() => void) | undefined;
 	private timer: ReturnType<typeof setInterval> | undefined;
@@ -124,6 +145,7 @@ export class SubagentFleetStatus {
 	private readonly openInspector: (itemKey: string) => Promise<void> | void;
 	private readonly refreshMs: number;
 	private readonly maxAgentRows: number;
+	private readonly placement: FleetViewPlacement;
 
 	constructor(
 		state: SubagentState,
@@ -134,19 +156,22 @@ export class SubagentFleetStatus {
 		this.openInspector = openInspector;
 		this.refreshMs = options.refreshMs ?? REFRESH_MS;
 		this.maxAgentRows = options.maxAgentRows ?? MAX_AGENT_ROWS;
+		this.placement = options.placement ?? "belowEditor";
 	}
 
 	setContext(ctx: ExtensionContext): void {
 		if (!ctx.hasUI) return;
-		if (this.ctx?.ui === ctx.ui) {
+		const ui = ctx.ui;
+		if (this.ui === ui) {
 			this.ctx = ctx;
 			this.refresh();
 			return;
 		}
 		this.clearUiRegistration();
 		this.ctx = ctx;
-		if (typeof ctx.ui.onTerminalInput === "function") {
-			this.inputUnsubscribe = ctx.ui.onTerminalInput((data) => this.handleKey(data));
+		this.ui = ui;
+		if (typeof ui.onTerminalInput === "function") {
+			this.inputUnsubscribe = ui.onTerminalInput((data) => this.handleKey(data));
 		}
 		this.timer = setInterval(() => this.refresh(), this.refreshMs);
 		this.timer.unref?.();
@@ -156,6 +181,7 @@ export class SubagentFleetStatus {
 	dispose(): void {
 		this.clearUiRegistration();
 		this.ctx = undefined;
+		this.ui = undefined;
 		this.entries = [];
 		this.active = false;
 		this.selectedKey = "main";
@@ -164,8 +190,8 @@ export class SubagentFleetStatus {
 	}
 
 	refresh(): void {
-		const ctx = this.ctx;
-		if (!ctx?.hasUI) return;
+		const ctx = this.getActiveUiContext();
+		if (!ctx) return;
 		this.entries = collectFleetStatusEntries(this.state);
 		this.clampSelection();
 		if (this.inspectorOpen || this.state.fleetInspectorOpen) {
@@ -204,7 +230,7 @@ export class SubagentFleetStatus {
 						this.tui = undefined;
 					},
 				};
-			}, { placement: "belowEditor" });
+			}, { placement: this.placement });
 			this.widgetRegistered = true;
 			this.lastRenderKey = renderKey;
 			return;
@@ -215,8 +241,8 @@ export class SubagentFleetStatus {
 	}
 
 	handleKey(data: string): { consume?: boolean; data?: string } | undefined {
-		const ctx = this.ctx;
-		if (!ctx?.hasUI || this.entries.length === 0 || isKeyRelease(data)) return undefined;
+		const ctx = this.getActiveUiContext();
+		if (!ctx || this.entries.length === 0 || isKeyRelease(data)) return undefined;
 		if (this.inspectorOpen) return undefined;
 		if (!this.editorHasFocus()) {
 			if (this.active) this.deactivate();
@@ -234,12 +260,12 @@ export class SubagentFleetStatus {
 
 		const roster = this.rosterKeys();
 		const selectedIndex = Math.max(0, roster.indexOf(this.selectedKey));
-		if (matchesKey(data, "down")) {
+		if (matchesKey(data, "down") || matchesKey(data, "j")) {
 			this.selectedKey = roster[Math.min(roster.length - 1, selectedIndex + 1)] ?? "main";
 			this.refresh();
 			return { consume: true };
 		}
-		if (matchesKey(data, "up")) {
+		if (matchesKey(data, "up") || matchesKey(data, "k")) {
 			if (selectedIndex === 0) {
 				this.deactivate();
 				return { consume: true };
@@ -279,7 +305,7 @@ export class SubagentFleetStatus {
 		const roster = this.rosterKeys();
 		const selectedIndex = Math.max(0, roster.indexOf(this.selectedKey));
 		const hint = this.active
-			? "↑↓ select · enter inspect · esc back"
+			? "↑↓/jk select · enter inspect · esc back"
 			: "esc to interrupt · ← for agents · ↓ to manage";
 		const lines = [truncateToWidth(`  ${theme.fg("dim", hint)}`, width), ""];
 		lines.push(truncateToWidth(`  ${this.bullet(0, selectedIndex, theme)} main`, width));
@@ -298,7 +324,8 @@ export class SubagentFleetStatus {
 
 	private renderEntry(rosterIndex: number, selectedIndex: number, entry: FleetStatusEntry, width: number, theme: Theme): string {
 		const description = entry.description?.replace(/\s+/g, " ").trim();
-		const left = `  ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg("muted", entry.agent)}${description ? `  ${description}` : ""}`;
+		const agent = entry.modelThinking ? `${entry.agent} (${entry.modelThinking})` : entry.agent;
+		const left = `  ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg("muted", agent)}${description ? `  ${description}` : ""}`;
 		const elapsed = Date.now() - entry.startedAt;
 		const right = theme.fg("dim", `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(entry.tokens)}`);
 		return rightAlign(left, right, width);
@@ -323,9 +350,16 @@ export class SubagentFleetStatus {
 	}
 
 	private editorHasFocus(): boolean {
-		// pi-tui exposes focus mutation but no focus getter; fail closed if this compatibility seam disappears.
+		// pi-tui exposes focus mutation but no focus getter, so inspect the focused
+		// component structurally. instanceof is unreliable across jiti module boundaries.
 		const focused = (this.tui as unknown as { focusedComponent?: unknown } | undefined)?.focusedComponent;
-		return focused instanceof Editor;
+		if (!focused || typeof focused !== "object") return false;
+		const candidate = focused as Partial<EditorComponent>;
+		return typeof candidate.render === "function"
+			&& typeof candidate.invalidate === "function"
+			&& typeof candidate.handleInput === "function"
+			&& typeof candidate.getText === "function"
+			&& typeof candidate.setText === "function";
 	}
 
 	private getRenderKey(): string {
@@ -337,6 +371,7 @@ export class SubagentFleetStatus {
 			entries: this.entries.map((entry) => [
 				entry.key,
 				entry.agent,
+				entry.modelThinking,
 				entry.description,
 				Math.round((now - entry.startedAt) / 1000),
 				entry.tokens,
@@ -344,19 +379,47 @@ export class SubagentFleetStatus {
 		});
 	}
 
+	private getActiveUiContext(): ExtensionContext | undefined {
+		const ctx = this.ctx;
+		if (!ctx) return undefined;
+		try {
+			return ctx.hasUI ? ctx : undefined;
+		} catch (error) {
+			if (!isStaleExtensionContextError(error)) throw error;
+			this.clearUiRegistration();
+			return undefined;
+		}
+	}
+
 	private clearUiRegistration(): void {
 		if (this.timer) clearInterval(this.timer);
 		this.timer = undefined;
-		this.inputUnsubscribe?.();
+
+		const inputUnsubscribe = this.inputUnsubscribe;
+		const ui = this.ui;
+		const widgetRegistered = this.widgetRegistered;
 		this.inputUnsubscribe = undefined;
-		if (this.ctx?.hasUI && this.widgetRegistered) {
-			try {
-				this.ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
-			} catch {
-				// The previous extension context may already be stale during reload/session replacement.
-			}
-		}
+		this.ctx = undefined;
+		this.ui = undefined;
 		this.widgetRegistered = false;
 		this.tui = undefined;
+
+		const cleanupErrors: unknown[] = [];
+		try {
+			inputUnsubscribe?.();
+		} catch (error) {
+			if (!isStaleExtensionContextError(error)) cleanupErrors.push(error);
+		}
+		if (ui && widgetRegistered) {
+			try {
+				ui.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
+			} catch (error) {
+				if (!isStaleExtensionContextError(error)) cleanupErrors.push(error);
+			}
+		}
+		if (cleanupErrors.length === 1) throw cleanupErrors[0];
+		if (cleanupErrors.length > 1) {
+			throw new AggregateError(cleanupErrors, "Failed to clean up FleetView UI registration");
+		}
 	}
 }

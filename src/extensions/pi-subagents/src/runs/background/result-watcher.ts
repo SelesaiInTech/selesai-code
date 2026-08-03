@@ -8,6 +8,7 @@ import {
 	type NestedRunSummary,
 	type ParallelHandoffReference,
 	type SubagentResultIntercomChild,
+	type SubagentOutputState,
 	type SubagentState,
 } from "../../shared/types.ts";
 import {
@@ -38,15 +39,22 @@ type ResultWatcherDeps = {
 	fs?: ResultWatcherFs;
 	timers?: ResultWatcherTimers;
 	notifier?: Pick<CompletionNotifier, "deliver">;
+	/** External grouped-result transport. Disable when native completion notifications own delivery. */
+	deliverIntercomResults?: boolean;
 };
 
 type ResultFileChild = {
 	agent?: string;
 	output?: string;
+	outputState?: SubagentOutputState;
 	error?: string;
 	success?: boolean;
 	state?: string;
+	interrupted?: boolean;
+	timedOut?: boolean;
 	stopped?: boolean;
+	turnBudgetExceeded?: boolean;
+	processSignal?: string | null;
 	sessionFile?: string;
 	artifactPaths?: { outputPath?: string };
 	intercomTarget?: string;
@@ -108,6 +116,7 @@ export function createResultWatcher(
 	const fsApi = deps.fs ?? fs;
 	const timers = deps.timers ?? { setTimeout, clearTimeout, setInterval, clearInterval };
 	const notifier = deps.notifier ?? { deliver: async () => true };
+	const deliverIntercomResults = deps.deliverIntercomResults !== false;
 	const pendingTriggerTurn = new Map<string, boolean>();
 	const processing = new Set<string>();
 	let deliveryActive = true;
@@ -171,9 +180,9 @@ export function createResultWatcher(
 			const hasResultChildren = Array.isArray(data.results) && data.results.length > 0;
 			const resultChildren: ResultFileChild[] = hasResultChildren
 				? data.results!
-				: [{ agent: data.agent ?? undefined, output: data.summary, success: data.success }];
+				: [{ agent: data.agent ?? undefined, output: data.summary, outputState: "unknown", success: data.success }];
 			const normalizedChildren = attachNestedChildrenToResultChildren(runId, resultChildren.map((result = {}, index): SubagentResultIntercomChild => {
-				const baseOutput = result.output ?? data.summary;
+				const baseOutput = hasResultChildren ? result.output : result.output ?? data.summary;
 				const hasRealOutput = typeof baseOutput === "string" && baseOutput.trim().length > 0;
 				const output = hasRealOutput ? baseOutput : "(no output)";
 				const summary = result.success === false && result.error
@@ -190,7 +199,18 @@ export function createResultWatcher(
 							: undefined;
 				return {
 					agent: result.agent ?? data.agent ?? `step-${index + 1}`,
-					status: resolveSubagentResultStatus({ success: result.success, state: childState }),
+					status: resolveSubagentResultStatus({
+						success: result.success,
+						state: childState,
+						interrupted: result.interrupted,
+						timedOut: result.timedOut,
+						stopped: result.stopped,
+						turnBudgetExceeded: result.turnBudgetExceeded,
+						processSignal: result.processSignal,
+					}),
+					outputState: result.outputState === "present" || result.outputState === "absent" || result.outputState === "unknown"
+						? result.outputState
+						: "unknown",
 					summary,
 					index,
 					artifactPath: result.artifactPaths?.outputPath,
@@ -201,11 +221,12 @@ export function createResultWatcher(
 			}), nestedChildren);
 
 			const intercomTarget = data.intercomTarget?.trim();
-			if (intercomTarget && triggerTurn) {
+			let intercomDelivered = false;
+			if (deliverIntercomResults && intercomTarget && triggerTurn) {
 				const mode = data.mode === "single" || data.mode === "parallel" || data.mode === "chain"
 					? data.mode
 					: resultChildren.length > 1 ? "chain" : "single";
-				const delivered = await deliverSubagentResultIntercomEvent(pi.events, buildSubagentResultIntercomPayload({
+				intercomDelivered = await deliverSubagentResultIntercomEvent(pi.events, buildSubagentResultIntercomPayload({
 					to: intercomTarget,
 					runId,
 					mode,
@@ -216,7 +237,7 @@ export function createResultWatcher(
 					...(data.parallelHandoff ? { parallelHandoff: data.parallelHandoff } : {}),
 				}));
 				if (!ownsSession(data.sessionId, epoch)) return;
-				if (!delivered) console.error(`Subagent async grouped result intercom delivery was not acknowledged for '${resultPath}'.`);
+				if (!intercomDelivered) console.error(`Subagent async grouped result intercom delivery was not acknowledged for '${resultPath}'.`);
 			}
 
 			const accepted = await notifier.deliver({
@@ -224,6 +245,7 @@ export function createResultWatcher(
 				id: data.id ?? runId,
 				runId,
 				triggerTurn,
+				intercomDelivered,
 				...(nestedChildren?.length ? { nestedChildren } : {}),
 				...(Array.isArray(data.results) ? {
 					results: hasResultChildren ? normalizedChildren.map((child, index) => ({
@@ -249,6 +271,7 @@ export function createResultWatcher(
 					...data,
 					runId,
 					triggerTurn,
+					intercomDelivered,
 					...(nestedChildren?.length ? { nestedChildren } : {}),
 					...(Array.isArray(data.results) ? {
 						results: hasResultChildren ? normalizedChildren.map((child, index) => ({

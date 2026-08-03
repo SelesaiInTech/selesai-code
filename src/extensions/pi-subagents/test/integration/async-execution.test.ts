@@ -15,7 +15,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, tryImport } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
-import { deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest } from "../../src/runs/background/control-channel.ts";
+import { deliverCheckpointDecisionRequest, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest } from "../../src/runs/background/control-channel.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
@@ -26,10 +26,35 @@ import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 
+interface LaunchResolvedExtensions {
+	version?: number;
+	source?: string;
+	disableAmbientExtensions?: boolean;
+	runtime?: string[];
+	configured?: string[];
+	effective?: string[];
+}
+
+interface RuntimeAcknowledgedExtensions {
+	version?: number;
+	source?: string;
+	ids?: string[];
+	omitted?: number;
+}
+
+interface UsageBudgetState {
+	version?: number;
+	source?: string;
+	exhausted?: boolean;
+	reason?: string;
+	tokens?: { used?: number; hard?: number; exhausted?: boolean };
+	costUsd?: { used?: number; hard?: number; exhausted?: boolean };
+}
+
 interface AsyncExecutionResult {
 	content: Array<{ text?: string }>;
 	isError?: boolean;
-	details: { asyncId?: string; asyncDir?: string; launchContractDigest?: string };
+	details: { asyncId?: string; asyncDir?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions; usageBudget?: UsageBudgetState; checkpoint?: { name?: string; status?: string } };
 }
 
 interface AsyncResultPayload {
@@ -40,6 +65,8 @@ interface AsyncResultPayload {
 	sessionId?: string;
 	mode?: string;
 	launchContractDigest?: string;
+	launchResolvedExtensions?: LaunchResolvedExtensions;
+	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions;
 	summary?: string;
 	error?: string;
 	timeoutMs?: number;
@@ -51,7 +78,9 @@ interface AsyncResultPayload {
 	wrapUpRequested?: boolean;
 	totalTokens?: { input: number; output: number; total: number };
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
-	results: Array<{ agent?: string; launchContractDigest?: string; output?: string; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string }; capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] }; capabilityAudit?: { effectiveTools?: string[]; removedTools?: string[]; extensionsDenied?: boolean } }>;
+	usageBudget?: UsageBudgetState;
+	checkpoint?: { name?: string; status?: string };
+	results: Array<{ agent?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions; output?: string; outputState?: "present" | "absent" | "unknown"; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string }; capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] }; capabilityAudit?: { effectiveTools?: string[]; removedTools?: string[]; extensionsDenied?: boolean } }>;
 	outputs?: Record<string, { text?: string; structured?: unknown }>;
 	workflowGraph?: { nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; acceptanceStatus?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; acceptanceStatus?: string; error?: string }> }> };
 	parallelHandoff?: { version?: number; path?: string; groupCount?: number; childCount?: number; changedPatches?: number; cleanupState?: string };
@@ -68,6 +97,8 @@ interface AsyncStatusPayload {
 	currentPath?: string;
 	state?: string;
 	launchContractDigest?: string;
+	launchResolvedExtensions?: LaunchResolvedExtensions;
+	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions;
 	error?: string;
 	timeoutMs?: number;
 	deadlineAt?: number;
@@ -78,6 +109,8 @@ interface AsyncStatusPayload {
 	wrapUpRequested?: boolean;
 	totalTokens?: { total: number };
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
+	usageBudget?: UsageBudgetState;
+	checkpoint?: { name?: string; status?: string; message?: string };
 	parallelGroups?: Array<{ start: number; count: number; stepIndex: number }>;
 	parallelHandoff?: { version?: number; path?: string; groupCount?: number; childCount?: number; changedPatches?: number; cleanupState?: string };
 	capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] };
@@ -100,6 +133,8 @@ interface AsyncStatusPayload {
 		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
 		agentContract?: { version: 1 };
 		launchContractDigest?: string;
+		launchResolvedExtensions?: LaunchResolvedExtensions;
+		runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions;
 		execution?: { status?: string; success?: boolean; exitCode?: number };
 		effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean } };
 		acceptance?: { status?: string };
@@ -292,6 +327,19 @@ async function waitForAsyncResultFile(id: string, timeoutMs = 15_000): Promise<s
 	return resultPath;
 }
 
+async function waitForAsyncState(id: string, predicate: (status: AsyncStatusPayload) => boolean, timeoutMs = 10_000): Promise<AsyncStatusPayload> {
+	const statusPath = path.join(ASYNC_DIR, id, "status.json");
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() <= deadline) {
+		if (fs.existsSync(statusPath)) {
+			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+			if (predicate(status)) return status;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	assert.fail(`Timed out waiting for async status: ${statusPath}`);
+}
+
 async function waitForDeferredTurnBudget(id: string, timeoutMs = 10_000): Promise<AsyncStatusPayload> {
 	const statusPath = path.join(ASYNC_DIR, id, "status.json");
 	const deadline = Date.now() + timeoutMs;
@@ -435,6 +483,26 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.output, "你好 from fragmented async JSON");
 	});
 
+	it("persists absent output provenance when async lifecycle text is synthetic", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ jsonl: [mockAssistantMessage("", "tool_use")], stderr: "mock child failure", exitCode: 1 });
+		const id = `async-output-absent-${Date.now().toString(36)}`;
+		launchProtocolTest(id);
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, false);
+		assert.equal(payload.results[0]?.outputState, "absent");
+		assert.match(payload.results[0]?.error ?? "", /mock child failure/);
+	});
+
+	it("persists present output provenance when async failure follows partial output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "usable partial answer", stderr: "mock post-output failure", exitCode: 1 });
+		const id = `async-output-present-${Date.now().toString(36)}`;
+		launchProtocolTest(id);
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, false);
+		assert.equal(payload.results[0]?.outputState, "present");
+		assert.equal(payload.results[0]?.output, "usable partial answer");
+	});
+
 	it("matches preflight launch digest in equivalent foreground and async execution", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const agentName = `contract-worker-${Date.now().toString(36)}`;
 		const task = "Compare the resolved launch inputs.";
@@ -473,12 +541,16 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	});
 
 	it("persists the actual launch digest in async status and result metadata", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		mockPi.onCall({ output: "digest-bound async done" });
+		mockPi.onCall({
+			output: "digest-bound async done",
+			runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", ids: ["ext.async"], omitted: 0 },
+		});
 		const id = `async-launch-digest-${Date.now().toString(36)}`;
+		const privateExtension = path.join(tempDir, "extensions", "private-extension.ts");
 		const launch = executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Exercise launch digest reporting",
-			agentConfig: makeAgent("worker", { completionGuard: false }),
+			agentConfig: makeAgent("worker", { completionGuard: false, extensions: [privateExtension] }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -493,6 +565,140 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.launchContractDigest, launch.details.launchContractDigest);
 		assert.equal(status.launchContractDigest, launch.details.launchContractDigest);
 		assert.equal(status.steps?.[0]?.launchContractDigest, launch.details.launchContractDigest);
+		assert.equal(launch.details.launchResolvedExtensions?.source, "launch-resolved");
+		assert.equal(launch.details.launchResolvedExtensions?.disableAmbientExtensions, true);
+		assert.deepEqual(payload.launchResolvedExtensions, launch.details.launchResolvedExtensions);
+		assert.deepEqual(payload.results[0]?.launchResolvedExtensions, launch.details.launchResolvedExtensions);
+		assert.deepEqual(status.launchResolvedExtensions, launch.details.launchResolvedExtensions);
+		assert.deepEqual(status.steps?.[0]?.launchResolvedExtensions, launch.details.launchResolvedExtensions);
+		const runtimeAck = { version: 1, source: "child-runtime", ids: ["ext.async"], omitted: 0 };
+		assert.deepEqual(payload.runtimeAcknowledgedExtensions, runtimeAck);
+		assert.deepEqual(payload.results[0]?.runtimeAcknowledgedExtensions, runtimeAck);
+		assert.deepEqual(status.runtimeAcknowledgedExtensions, runtimeAck);
+		assert.deepEqual(status.steps?.[0]?.runtimeAcknowledgedExtensions, runtimeAck);
+		assert.ok(!JSON.stringify(launch.details.launchResolvedExtensions).includes(tempDir), "projection should not expose raw extension paths");
+	});
+
+	it("async chain checkpoints pause before the next child until approved", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "analysis done" });
+		mockPi.onCall({ output: "implementation done" });
+		const id = `async-checkpoint-approve-${Date.now().toString(36)}`;
+		const launch = executeAsyncChain(id, {
+			chain: [
+				{ agent: "analyst", task: "Analyze" },
+				{ checkpoint: "review", message: "Approve implementation?" },
+				{ agent: "reporter", task: "Summarize {previous}" },
+			],
+			agents: [makeAgent("analyst"), makeAgent("reporter")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const paused = await waitForAsyncState(id, (status) => status.state === "paused" && status.checkpoint?.name === "review");
+		assert.equal(launch.isError, undefined);
+		assert.equal(paused.steps?.[1]?.status, "paused");
+		assert.equal(mockPi.callCount(), 1);
+
+		deliverCheckpointDecisionRequest({ asyncDir: path.join(ASYNC_DIR, id), decision: "approved" });
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.equal(payload.state, "complete");
+		assert.equal(payload.checkpoint?.status, "approved");
+		assert.equal(payload.results.length, 2);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("foreground checkpoint decisions use current-session control actions", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "analysis done" });
+		const executor = makeAsyncExecutor([makeAgent("analyst"), makeAgent("worker")]);
+		const ctx = makeMinimalCtx(tempDir);
+		ctx.sessionManager.getSessionId = () => "session-foreground-checkpoint";
+		const id = `foreground-checkpoint-${Date.now().toString(36)}`;
+
+		const paused = await executor.execute(id, {
+			chain: [
+				{ agent: "analyst", task: "Analyze" },
+				{ checkpoint: "review", message: "Approve implementation?" },
+				{ agent: "worker", task: "Implement" },
+			],
+		}, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+
+		assert.equal(paused.isError, undefined);
+		assert.equal(paused.details.checkpoint?.status, "pending");
+		assert.equal(mockPi.callCount(), 1);
+		const runId = (paused.details as AsyncExecutionResult["details"] & { runId?: string }).runId;
+		assert.ok(runId);
+
+		const approved = await executor.execute(`${id}-approve`, { action: "approve-checkpoint", id: runId }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+		assert.equal(approved.isError, undefined);
+		assert.equal(approved.details.checkpoint?.name, "review");
+		assert.equal(approved.details.checkpoint?.status, "approved");
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("async chain checkpoint rejection is an explicit terminal state", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "analysis done" });
+		mockPi.onCall({ output: "should not run" });
+		const id = `async-checkpoint-reject-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [
+				{ agent: "analyst", task: "Analyze" },
+				{ checkpoint: "review" },
+				{ agent: "worker", task: "Implement" },
+			],
+			agents: [makeAgent("analyst"), makeAgent("worker")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		await waitForAsyncState(id, (status) => status.state === "paused" && status.checkpoint?.name === "review");
+		deliverCheckpointDecisionRequest({ asyncDir: path.join(ASYNC_DIR, id), decision: "rejected" });
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, false);
+		assert.equal(payload.state, "rejected");
+		assert.equal(payload.checkpoint?.status, "rejected");
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("background parallel groups report usage budget state and block queued children", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "first async result" });
+		const id = `async-usage-budget-${Date.now().toString(36)}`;
+		const launch = executeAsyncChain(id, {
+			chain: [{
+				parallel: [
+					{ agent: "first", task: "First task" },
+					{ agent: "second", task: "Second task" },
+				],
+				concurrency: 1,
+			}],
+			resultMode: "parallel",
+			usageBudget: { tokens: { hard: 10 } },
+			agents: [makeAgent("first"), makeAgent("second")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(launch.details.usageBudget?.exhausted, false);
+		const payload = await readAsyncPayload(id);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(payload.success, false);
+		assert.equal(payload.state, "failed");
+		assert.match(payload.error ?? payload.summary ?? "", /Usage budget exhausted/);
+		assert.equal(payload.results.length, 2);
+		assert.equal(payload.results[1]?.skipped, true);
+		assert.match(payload.results[1]?.error ?? "", /Usage budget exhausted/);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(payload.usageBudget?.exhausted, true);
+		assert.equal(payload.usageBudget?.reason, "tokens");
+		assert.equal(status.usageBudget?.exhausted, true);
+		assert.equal(status.steps?.[0]?.status, "complete");
+		assert.equal(status.steps?.[1]?.status, "failed");
 	});
 
 	it("background fails with protocol_output_limit for an oversized stdout line", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -1349,13 +1555,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (p: string) => p,
-			discoverAgents: () => ({ agents: [makeAgent("worker", { defaultProgress: true })] }),
+			discoverAgents: () => ({ agents: [makeAgent("builder", { defaultProgress: true })] }),
 		});
 
 		const result = await executor.execute(
 			"async-parallel-fields",
 			{
-				tasks: [{ agent: "worker", task: "Do async work", output: "async-top-output.md", reads: ["input.md"] }],
+				tasks: [{ agent: "builder", task: "Do async work", output: "async-top-output.md", reads: ["input.md"] }],
 				async: true,
 				clarify: false,
 			},
@@ -1862,6 +2068,39 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.workflowGraph?.nodes?.[2]?.flatIndex, 3);
 	});
 
+	it("async dynamic fanout blocks queued children when hard reported usage is exhausted", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
+		mockPi.onCall({ matchArgIncludes: "Review src/a.ts", output: "review-a", structuredOutput: { ok: "a" } });
+		const id = `async-dynamic-usage-budget-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [
+				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
+				{
+					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
+					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
+					collect: { as: "reviews" },
+					concurrency: 1,
+				},
+			],
+			usageBudget: { tokens: { hard: 200 } },
+			agents: [makeAgent("producer"), makeAgent("reviewer")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-budget" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = await readAsyncPayload(id);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(mockPi.callCount(), 2);
+		assert.equal(payload.success, false);
+		assert.equal(payload.usageBudget?.exhausted, true);
+		assert.equal(status.steps?.[1]?.status, "complete");
+		assert.equal(status.steps?.[2]?.status, "failed");
+		assert.match(status.steps?.[2]?.error ?? "", /Usage budget exhausted/);
+		assert.equal(payload.results.find((result) => result.agent === "reviewer" && result.skipped)?.skipped, true);
+	});
+
 	it("rejects a shared explicit output before dynamic fanout children start", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ matchArgIncludes: "Produce targets", output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
 		const id = `async-dynamic-explicit-output-${Date.now().toString(36)}`;
@@ -2357,6 +2596,43 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(completed?.lifecycleArtifactVersion, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION);
 		assert.deepEqual(completed?.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
 		assert.match(fs.readFileSync(path.join(asyncDir, "output-0.log"), "utf-8"), /Recovered asynchronously/);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("background runs retry a zero-activity startup exit on the same model", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ exitCode: 1 });
+		mockPi.onCall({ output: "Recovered asynchronously after startup race" });
+		const id = `async-startup-retry-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", {
+				model: "openai/gpt-5-mini:high",
+				fallbackModels: ["anthropic/claude-sonnet-4:low"],
+			}),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels: [
+				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+				{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+			],
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.model, "openai/gpt-5-mini:high");
+		assert.deepEqual(payload.results[0]?.attemptedModels, ["openai/gpt-5-mini:high"]);
+		assert.deepEqual(payload.results[0]?.modelAttempts?.map((attempt) => attempt.success), [false, true]);
+		assert.match(payload.results[0]?.output ?? "", /\[startup-retry\].*Recovered asynchronously after startup race/s);
 		assert.equal(mockPi.callCount(), 2);
 	});
 
@@ -3141,6 +3417,71 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0].model, "github-copilot/gpt-5-mini");
 		assert.deepEqual(payload.results[0].attemptedModels, ["github-copilot/gpt-5-mini"]);
+	});
+
+	it("async executor keeps the last parent session model after continuation drops ctx.model", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Done asynchronously" });
+		const state = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const executor = createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined },
+			state,
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
+			expandTilde: (p: string) => p,
+			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
+		});
+		const initialCtx = makeMinimalCtx(tempDir);
+		initialCtx.sessionManager.getSessionId = () => "session-continued";
+		initialCtx.model = { provider: "deepseek", id: "deepseek-v4-flash" };
+		await executor.execute("prime-parent-model", { action: "list" }, new AbortController().signal, undefined, initialCtx);
+
+		const continuedCtx = makeMinimalCtx(tempDir);
+		continuedCtx.sessionManager.getSessionId = () => "session-continued";
+		const launch = await executor.execute(
+			"continued-async-child",
+			{ agent: "worker", task: "Do work", async: true, acceptance: false },
+			new AbortController().signal,
+			undefined,
+			continuedCtx,
+		) as AsyncExecutionResult;
+		assert.equal(launch.isError, undefined);
+		assert.ok(launch.details.asyncId);
+
+		const payload = await readAsyncPayload(launch.details.asyncId);
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.model, "deepseek/deepseek-v4-flash");
+		const args = readMockPiArgs(mockPi, 0);
+		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
+	});
+
+	it("foreground chains keep the last parent session model after continuation drops ctx.model", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Done foreground" });
+		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
+		const initialCtx = makeMinimalCtx(tempDir);
+		initialCtx.sessionManager.getSessionId = () => "session-continued";
+		initialCtx.model = { provider: "deepseek", id: "deepseek-v4-flash" };
+		await executor.execute("prime-parent-model", { action: "list" }, new AbortController().signal, undefined, initialCtx);
+
+		const continuedCtx = makeMinimalCtx(tempDir);
+		continuedCtx.sessionManager.getSessionId = () => "session-continued";
+		const result = await executor.execute(
+			"continued-foreground-chain",
+			{ chain: [{ agent: "worker", task: "Do work" }], acceptance: false },
+			new AbortController().signal,
+			undefined,
+			continuedCtx,
+		);
+		assert.equal(result.isError, undefined);
+		const args = readMockPiArgs(mockPi, 0);
+		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
 	});
 
 	it("background single runs inherit the parent session model when no model is set", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

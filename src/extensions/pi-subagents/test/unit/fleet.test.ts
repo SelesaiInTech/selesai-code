@@ -368,7 +368,7 @@ describe("native subagent fleet", () => {
 				currentIndex: 1,
 				description: "Review the active task",
 				activeChildren: new Map([
-					[0, { index: 0, agent: "worker", description: "Implement the active task", startedAt: now - 900, updatedAt: now - 100, tokens: 120 }],
+					[0, { index: 0, agent: "worker", description: "Implement the active task", startedAt: now - 900, updatedAt: now - 100, tokens: 120, model: "provider/live-model", thinking: "high" }],
 					[1, { index: 1, agent: "reviewer", description: "Review the active task", startedAt: now - 800, updatedAt: now, tokens: 240 }],
 				]),
 			});
@@ -388,6 +388,7 @@ describe("native subagent fleet", () => {
 				assert.ok(lines.some((line) => line.includes("worker")));
 				assert.ok(lines.some((line) => line.includes("reviewer")));
 				assert.ok(lines.some((line) => line.includes("foreground · live")));
+				assert.ok(lines.some((line) => line.includes("live-model · thinking high")));
 				assert.ok(lines.some((line) => line.includes("Task") && line.includes("Implement the active task")));
 				assert.ok(lines.some((line) => line.includes("Conversation") && line.includes("assistant response")));
 				assert.ok(lines.some((line) => line.includes("Worker live result")));
@@ -442,7 +443,7 @@ describe("native subagent fleet", () => {
 					cwd: baseCwd,
 					sessionId: "session-current",
 					updatedAt: 200,
-					children: [{ agent: "reviewer", index: 0, status: "completed", transcriptPath: recentTranscript }],
+					children: [{ agent: "reviewer", index: 0, status: "completed", transcriptPath: recentTranscript, model: "provider/recent-model", thinking: "xhigh" }],
 				});
 				state.asyncJobs.set(asyncId, {
 					asyncId,
@@ -469,7 +470,11 @@ describe("native subagent fleet", () => {
 						{ initialKey, refreshMs: 60_000, markdownTheme },
 					);
 					try {
-						assert.ok(component.render(100).some((line) => line.includes(expected)), `missing ${expected}`);
+						const lines = component.render(100);
+						assert.ok(lines.some((line) => line.includes(expected)), `missing ${expected}`);
+						if (initialKey.startsWith("foreground-recent:")) {
+							assert.ok(lines.some((line) => line.includes("recent-model · thinking xhigh")));
+						}
 					} finally {
 						component.dispose();
 					}
@@ -506,7 +511,7 @@ describe("native subagent fleet", () => {
 		assert.equal(state.fleetInspectorOpen, false);
 	});
 
-	it("opens the inspector with the FleetView-selected child focused", () => {
+	it("focuses the selected child and renders raw foreground model details", () => {
 		const state = stateForTest();
 		state.foregroundControls.set("run-worker", {
 			runId: "run-worker",
@@ -515,6 +520,8 @@ describe("native subagent fleet", () => {
 			updatedAt: 20,
 			currentAgent: "worker",
 			currentIndex: 0,
+			model: "provider/raw-model",
+			thinking: "medium",
 		});
 		state.foregroundControls.set("run-reviewer", {
 			runId: "run-reviewer",
@@ -524,6 +531,14 @@ describe("native subagent fleet", () => {
 			currentAgent: "reviewer",
 			currentIndex: 0,
 		});
+		state.foregroundRuns!.set("run-recent", {
+			runId: "run-recent",
+			mode: "single",
+			cwd: process.cwd(),
+			sessionId: "session-current",
+			updatedAt: 19,
+			children: [{ agent: "reviewer", index: 0, status: "completed", model: "provider/recent-raw-model", thinking: "xhigh" }],
+		});
 		const component = new SubagentFleetComponent(
 			{ terminal: { rows: 28, columns: 90 }, requestRender() {} } as never,
 			theme as never,
@@ -532,10 +547,147 @@ describe("native subagent fleet", () => {
 			{ initialKey: "foreground-active:run-worker:0", refreshMs: 60_000 },
 		);
 		try {
-			const selectedLine = component.render(90).find((line) => line.includes("›"));
+			const lines = component.render(90);
+			const selectedLine = lines.find((line) => line.includes("›"));
 			assert.ok(selectedLine?.includes("run-work"), `unexpected selected row: ${selectedLine}`);
+			assert.ok(lines.some((line) => line.includes("Model: raw-model · thinking medium")));
 		} finally {
 			component.dispose();
+		}
+
+		const recentComponent = new SubagentFleetComponent(
+			{ terminal: { rows: 28, columns: 90 }, requestRender() {} } as never,
+			theme as never,
+			state,
+			() => {},
+			{ initialKey: "foreground-recent:run-recent:0", refreshMs: 60_000 },
+		);
+		try {
+			assert.ok(recentComponent.render(90).some((line) => line.includes("Model: recent-raw-model · thinking xhigh")));
+		} finally {
+			recentComponent.dispose();
+		}
+	});
+
+	it("steers the selected async child with an inline message", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-steer-"));
+		try {
+			const asyncDir = writeAsyncRun(root, { id: "async-steer", agents: ["worker", "reviewer"] });
+			const state = stateForTest();
+			const calls: Array<{ runId: string; asyncDir: string; index?: number; message: string }> = [];
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{
+					asyncDirRoot: root,
+					resultsDir: path.join(root, "results"),
+					initialKey: "async:async-steer:0",
+					refreshMs: 60_000,
+					actions: {
+						async steer(input) {
+							calls.push(input);
+							return { text: "Steering queued." };
+						},
+						stop() {
+							return { text: "unused" };
+						},
+					},
+				},
+			);
+			try {
+				component.handleInput("s");
+				assert.ok(component.render(100).some((line) => line.includes("Steer message:")));
+				for (const char of "please continue") component.handleInput(char);
+				component.handleInput("\r");
+				await new Promise((resolve) => setImmediate(resolve));
+				assert.deepEqual(calls, [{ runId: "async-steer", asyncDir, index: 0, message: "please continue" }]);
+				assert.ok(component.render(100).some((line) => line.includes("Steering queued.")));
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("confirms stop for the selected async child before calling the action", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-stop-"));
+		try {
+			const asyncDir = writeAsyncRun(root, { id: "async-stop" });
+			const state = stateForTest();
+			const calls: Array<{ runId: string; asyncDir: string; index?: number }> = [];
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{
+					asyncDirRoot: root,
+					resultsDir: path.join(root, "results"),
+					refreshMs: 60_000,
+					actions: {
+						async steer() {
+							return { text: "unused" };
+						},
+						stop(input) {
+							calls.push(input);
+							return { text: "Stop requested." };
+						},
+					},
+				},
+			);
+			try {
+				component.handleInput("D");
+				assert.ok(component.render(100).some((line) => line.includes("Confirm stop for async run async-stop")));
+				component.handleInput("n");
+				assert.deepEqual(calls, []);
+				component.handleInput("D");
+				component.handleInput("y");
+				await new Promise((resolve) => setImmediate(resolve));
+				assert.deepEqual(calls, [{ runId: "async-stop", asyncDir, index: 0 }]);
+				assert.ok(component.render(100).some((line) => line.includes("Stop requested.")));
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("explains unavailable controls for completed async children", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-unavailable-"));
+		try {
+			writeAsyncRun(root, { id: "async-complete", state: "complete" });
+			const state = stateForTest();
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{
+					asyncDirRoot: root,
+					resultsDir: path.join(root, "results"),
+					refreshMs: 60_000,
+					actions: {
+						async steer() {
+							return { text: "unused" };
+						},
+						stop() {
+							return { text: "unused" };
+						},
+					},
+				},
+			);
+			try {
+				component.handleInput("s");
+				assert.ok(component.render(100).some((line) => line.includes("Selected child is complete")));
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 
@@ -552,6 +704,12 @@ describe("native subagent fleet", () => {
 				() => {},
 				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 10 },
 			);
+			let invalidations = 0;
+			const originalInvalidate = component.invalidate.bind(component);
+			component.invalidate = () => {
+				invalidations++;
+				originalInvalidate();
+			};
 			try {
 				assert.ok(component.render(90).some((line) => line.includes("No tracked children")));
 				const initialOutput = Array.from({ length: 40 }, (_, index) => `output line ${index}`).join("\n");
@@ -565,6 +723,7 @@ describe("native subagent fleet", () => {
 				lines = component.render(90);
 				assert.ok(lines.some((line) => line.includes("LATEST LIVE OUTPUT")), "live transcript should keep following new output");
 				assert.ok(renderRequests > 0);
+				assert.ok(invalidations > 0, "live refresh must invalidate cached TUI frames before rendering");
 			} finally {
 				component.dispose();
 			}

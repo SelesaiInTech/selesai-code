@@ -252,6 +252,24 @@ Package skill content.
 		assert.equal(history[1]?.taskHash, taskHash("legacy customer secret"));
 	});
 
+	it("re-sanitizes run history after an external write", () => {
+		recordRun("env-agent", "first secret", 0, 1);
+		const historyPath = path.join(agentDir, "run-history.jsonl");
+		fs.appendFileSync(historyPath, `${JSON.stringify({
+			agent: "env-agent",
+			task: "externally written secret",
+			ts: 2,
+			status: "ok",
+			duration: 2,
+		})}\n`);
+
+		recordRun("env-agent", "second secret", 0, 3);
+
+		const rawHistory = fs.readFileSync(historyPath, "utf-8");
+		assert.doesNotMatch(rawHistory, /first secret|externally written secret|second secret/);
+		assert.equal(loadRunsForAgent("env-agent").length, 3);
+	});
+
 	it("uses the configured agent dir for subagent bridge instruction files", () => {
 		const instructionPath = path.join(agentDir, "extensions", "subagent", "bridge.md");
 		writeFile(instructionPath, "Native bridge for {orchestratorTarget}");

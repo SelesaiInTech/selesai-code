@@ -16,6 +16,7 @@ import {
 	SUBAGENT_STEER_INBOX_ENV,
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
+import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, formatChildToolDiagnostic, MCP_DIRECT_CHILD_TOOLS_ENV, readChildToolDiagnostic, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
@@ -128,6 +129,42 @@ function setSupervisorEnv(): void {
 }
 
 describe("subagent prompt runtime", () => {
+	it("collects runtime extension acknowledgements until terminal serialization", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-runtime-ack-"));
+		try {
+			const outputPath = path.join(dir, "acks.json");
+			process.env[RUNTIME_EXTENSION_ACK_PATH_ENV] = outputPath;
+			const runtimeHandlers = new Map<string, Array<(payload?: unknown) => unknown>>();
+			const extensionHandlers = new Map<string, Array<(payload?: unknown) => unknown>>();
+			const pushHandler = (target: Map<string, Array<(payload?: unknown) => unknown>>, event: string, handler: (payload?: unknown) => unknown): void => {
+				target.set(event, [...(target.get(event) ?? []), handler]);
+			};
+			const emitAll = (target: Map<string, Array<(payload?: unknown) => unknown>>, event: string, payload?: unknown): void => {
+				for (const handler of target.get(event) ?? []) handler(payload);
+			};
+
+			registerSubagentPromptRuntime({
+				events: { on(event: string, handler: (payload?: unknown) => unknown) { pushHandler(extensionHandlers, event, handler); } },
+				on(event: string, handler: (payload?: unknown) => unknown) { pushHandler(runtimeHandlers, event, handler); },
+			} as never);
+
+			emitAll(extensionHandlers, RUNTIME_EXTENSION_ACK_EVENT, { id: "ext.one" });
+			emitAll(extensionHandlers, RUNTIME_EXTENSION_ACK_EVENT, { id: "ext.one" });
+			emitAll(extensionHandlers, RUNTIME_EXTENSION_ACK_EVENT, { id: "bad/path" });
+			runtimeHandlers.get("agent_end")?.[0]?.({});
+			emitAll(extensionHandlers, RUNTIME_EXTENSION_ACK_EVENT, { id: "late" });
+
+			assert.deepEqual(JSON.parse(fs.readFileSync(outputPath, "utf-8")), {
+				version: 1,
+				source: "child-runtime",
+				ids: ["ext.one"],
+				omitted: 0,
+			});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("nudges after the tool budget soft limit and blocks configured tools after hard", () => {
 		const handlers = new Map<string, (payload: { toolName?: string }) => unknown>();
 		const sent: string[] = [];
@@ -299,6 +336,10 @@ describe("subagent prompt runtime", () => {
 	});
 
 	it("registers child watchdog lifecycle handlers only when enabled by env", () => {
+		delete process.env[CHILD_WATCHDOG_CONFIG_ENV];
+		// Clear the ack capture env explicitly: when this test suite itself runs inside a
+		// pi-subagents child, the runner sets it and an extra agent_end handler registers.
+		delete process.env[RUNTIME_EXTENSION_ACK_PATH_ENV];
 		const handlersWithout = new Map<string, unknown[]>();
 		registerSubagentPromptRuntime({
 			on(event: string, handler: unknown) {

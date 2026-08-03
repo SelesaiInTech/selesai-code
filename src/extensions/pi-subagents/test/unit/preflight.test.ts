@@ -153,6 +153,52 @@ Project prompt.
 		}
 	});
 
+	it("resolves agent aliases to the canonical launch contract agent", async () => {
+		const cwd = path.join(tempDir, "repo-alias");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+aliases: shipper, worker-alias
+---
+Project prompt.
+`);
+
+		const result = await resolveSubagentLaunchContract({
+			agent: "shipper",
+			cwd,
+			task: "Implement the change",
+		});
+
+		assert.equal(result.ok, true);
+		assert.equal(result.contract.agent.name, "worker");
+	});
+
+	it("reports alias collisions as ambiguous agents", async () => {
+		const cwd = path.join(tempDir, "repo-alias-collision");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+aliases: shared-alias
+---
+Project prompt.
+`);
+		writeAgent(path.join(cwd, ".selesai", "agents", "reviewer.md"), `---
+name: reviewer
+description: Project reviewer
+aliases: shared-alias
+---
+Review prompt.
+`);
+
+		const result = await resolveSubagentLaunchContract({ agent: "shared-alias", cwd });
+
+		assert.equal(result.ok, false);
+		assert.equal(result.code, "ambiguous_agent");
+		assert.match(result.message, /Ambiguous agent alias 'shared-alias': reviewer, worker|Ambiguous agent alias 'shared-alias': worker, reviewer/);
+	});
+
 	it("changes definition and launch digests when selected agent content changes", async () => {
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });

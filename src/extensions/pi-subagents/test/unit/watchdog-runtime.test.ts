@@ -13,6 +13,8 @@ function cloneConfig(): ResolvedWatchdogConfig {
 		...DEFAULT_WATCHDOG_CONFIG,
 		guidance: { ...DEFAULT_WATCHDOG_CONFIG.guidance },
 		autoFollow: { ...DEFAULT_WATCHDOG_CONFIG.autoFollow },
+		scope: { ...DEFAULT_WATCHDOG_CONFIG.scope },
+		cadence: { ...DEFAULT_WATCHDOG_CONFIG.cadence },
 		main: { ...DEFAULT_WATCHDOG_CONFIG.main },
 		children: {
 			...DEFAULT_WATCHDOG_CONFIG.children,
@@ -36,6 +38,9 @@ function enabledConfig(overrides: Partial<ResolvedWatchdogConfig> = {}): Resolve
 	Object.assign(config, overrides);
 	if (overrides.main) config.main = { ...config.main, ...overrides.main };
 	if (overrides.lsp) config.lsp = { ...config.lsp, ...overrides.lsp };
+	if (overrides.scope) config.scope = { ...config.scope, ...overrides.scope };
+	if (overrides.cadence) config.cadence = { ...config.cadence, ...overrides.cadence };
+	if (overrides.autoFollow) config.autoFollow = { ...config.autoFollow, ...overrides.autoFollow };
 	return config;
 }
 
@@ -500,7 +505,8 @@ describe("main watchdog runtime", () => {
 		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: repo });
 
 		assert.equal(reviewedDelta.length, 24_000);
-		assert.match(reviewedDelta, /^Changed repo paths:/);
+		assert.match(reviewedDelta, /^Current scope:/);
+		assert.match(reviewedDelta, /Changed repo paths:/);
 		assert.match(reviewedDelta, /src\/file\.ts/);
 		assert.match(reviewedDelta, /x+$/);
 	});
@@ -820,6 +826,209 @@ describe("main watchdog runtime", () => {
 		assert.equal(displayed.length, 1);
 		assert.equal(runtime.getSnapshot().lastWarning?.summary, "Runtime concern");
 		assert.equal(runtime.getSnapshot().lastWarning?.state, "displayed");
+	});
+
+	it("prepends current scope to boundary reviews", async () => {
+		let reviewedDelta = "";
+		const runtime = new MainWatchdogRuntime({
+			resolveConfig: () => configResult(enabledConfig()),
+			review: (request) => {
+				reviewedDelta = request.delta;
+				assert.equal(request.hasScope, true);
+				return { stopReason: "stop" };
+			},
+		});
+
+		runtime.handleBeforeAgentStart({ prompt: "Only update docs." }, { cwd: "/tmp/project" });
+		runtime.enqueueDelta("Assistant:\nEdited docs.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+
+		assert.match(reviewedDelta, /^Current scope:/);
+		assert.match(reviewedDelta, /Only update docs\./);
+		assert.match(reviewedDelta, /category 'scope-drift'/);
+	});
+
+	it("runs visible steer corrections at cadence multiples and skips overlapping mid-run reviews", async () => {
+		let releaseReview!: () => void;
+		let reviewCalls = 0;
+		const delivered: unknown[] = [];
+		const firstStarted = new Promise<void>((resolve) => {
+			const runtime = new MainWatchdogRuntime({
+				resolveConfig: () => configResult(enabledConfig({ cadence: { everyNTools: 5 } })),
+				displayWarning: (details, options) => delivered.push({ details, options }),
+				review: async (request) => {
+					reviewCalls++;
+					assert.match(request.delta, /Current scope:/);
+					assert.equal(request.emitWarning({ ...warning(), severity: "blocker", summary: `Cadence blocker ${reviewCalls}` }), true);
+					resolve();
+					await new Promise<void>((done) => { releaseReview = done; });
+					return { stopReason: "stop" };
+				},
+			});
+			runtime.handleBeforeAgentStart({ prompt: "Stay in scope." }, { cwd: "/tmp/project" });
+			runtime.enqueueDelta("Assistant:\nUsing tools.");
+			for (let index = 0; index < 5; index++) runtime.handleToolResult({ cwd: "/tmp/project" });
+			for (let index = 0; index < 5; index++) runtime.handleToolResult({ cwd: "/tmp/project" });
+		});
+
+		await firstStarted;
+		assert.equal(reviewCalls, 1);
+		releaseReview();
+		await tick();
+		assert.equal(delivered.length, 1);
+		assert.deepEqual((delivered[0] as { options?: unknown }).options, { deliverAs: "steer" });
+	});
+
+	it("auto-follows agent-end blockers, respects max attempts, and real prompts reset attempts", async () => {
+		const sent: string[] = [];
+		const runtime = new MainWatchdogRuntime({
+			resolveConfig: () => configResult(enabledConfig({ autoFollow: { blockers: true, maxAttempts: 1, stalemateRepeats: 3 } })),
+			sendUserMessage: (message) => sent.push(message),
+			review: (request) => {
+				assert.equal(request.emitWarning({ ...warning(), severity: "blocker", summary: "Needs fixing" }), true);
+				return { stopReason: "stop" };
+			},
+		});
+
+		runtime.handleBeforeAgentStart({ prompt: "Patch carefully." }, { cwd: "/tmp/project" });
+		runtime.enqueueDelta("Assistant:\nBad patch.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+		assert.equal(sent.length, 1);
+		assert.match(sent[0] ?? "", /Watchdog auto-follow/);
+		assert.equal(runtime.getSnapshot().autoFollowAttempts, 1);
+
+		runtime.handleBeforeAgentStart({ prompt: sent[0] }, { cwd: "/tmp/project" });
+		runtime.enqueueDelta("Assistant:\nStill bad.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+		assert.equal(sent.length, 1);
+
+		runtime.handleBeforeAgentStart({ prompt: "Human says try again with a different edit." }, { cwd: "/tmp/project" });
+		runtime.enqueueDelta("Assistant:\nBad again in a different way.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+		assert.equal(sent.length, 2);
+		assert.equal(runtime.getSnapshot().autoFollowAttempts, 1);
+	});
+
+	it("keeps a racing real prompt authoritative while a queued auto-follow is pending", async () => {
+		const sent: string[] = [];
+		let reviewedDelta = "";
+		let blockerSummary = "First blocker";
+		const runtime = new MainWatchdogRuntime({
+			resolveConfig: () => configResult(enabledConfig({ autoFollow: { blockers: true, maxAttempts: 1, stalemateRepeats: 5 } })),
+			sendUserMessage: (message) => sent.push(message),
+			review: (request) => {
+				reviewedDelta = request.delta;
+				assert.equal(request.emitWarning({ ...warning(), severity: "blocker", summary: blockerSummary }), true);
+				return { stopReason: "stop" };
+			},
+		});
+
+		runtime.handleBeforeAgentStart({ prompt: "Patch carefully." }, { cwd: "/tmp/project" });
+		runtime.enqueueDelta("Assistant:\nBad patch.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+		assert.equal(sent.length, 1);
+		assert.equal(runtime.getSnapshot().autoFollowAttempts, 1);
+
+		// A real user prompt arrives before the queued auto-follow turn starts.
+		blockerSummary = "Second blocker";
+		runtime.handleBeforeAgentStart({ prompt: "Human: also update the docs." }, { cwd: "/tmp/project" });
+		runtime.enqueueDelta("Assistant:\nStill bad.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+		assert.match(reviewedDelta, /also update the docs\./);
+		assert.equal(sent.length, 2, "real prompt resets attempts so a new blocker auto-follows again");
+
+		// The originally queued auto-follow prompt then arrives and stays excluded from scope.
+		blockerSummary = "Third blocker";
+		runtime.handleBeforeAgentStart({ prompt: sent[0] }, { cwd: "/tmp/project" });
+		runtime.enqueueDelta("Assistant:\nStill bad again.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+		assert.doesNotMatch(reviewedDelta, /Watchdog auto-follow: address this blocker/);
+		assert.equal(sent.length, 2, "auto-follow turn must not reset the attempt counter");
+	});
+
+	it("cancels an in-flight cadence review so the agent-end boundary review still runs", async () => {
+		let releaseFirstReview!: () => void;
+		let reviewCalls = 0;
+		let markFirstStarted!: () => void;
+		const firstReviewStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+		const runtime = new MainWatchdogRuntime({
+			resolveConfig: () => configResult(enabledConfig({ cadence: { everyNTools: 5 } })),
+			review: async (request) => {
+				reviewCalls++;
+				if (reviewCalls === 1) {
+					markFirstStarted();
+					await new Promise<void>((done) => { releaseFirstReview = done; });
+				}
+				return { stopReason: "stop" };
+			},
+		});
+
+		runtime.handleBeforeAgentStart({ prompt: "Stay in scope." }, { cwd: "/tmp/project" });
+		runtime.enqueueDelta("Assistant:\nUsing tools.");
+		for (let index = 0; index < 5; index++) runtime.handleToolResult({ cwd: "/tmp/project" });
+		await firstReviewStarted;
+
+		runtime.enqueueDelta("Assistant:\nFinal edits.");
+		const agentEnd = runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+		releaseFirstReview();
+		await agentEnd;
+
+		const snapshot = runtime.getSnapshot();
+		assert.equal(reviewCalls, 2, "boundary review must run even when a cadence review was in flight");
+		assert.equal(snapshot.staleReviews, 1, "superseded cadence review is counted as stale");
+		assert.equal(snapshot.status, "idle");
+	});
+
+	it("stops auto-following repeated blocker identities at stalemate threshold", async () => {
+		const sent: string[] = [];
+		const runtime = new MainWatchdogRuntime({
+			resolveConfig: () => configResult(enabledConfig({ autoFollow: { blockers: true, maxAttempts: 5, stalemateRepeats: 2 } })),
+			sendUserMessage: (message) => sent.push(message),
+			review: (request) => {
+				assert.equal(request.emitWarning({ ...warning(), severity: "blocker", summary: "Same blocker" }), true);
+				return { stopReason: "stop" };
+			},
+		});
+
+		runtime.handleBeforeAgentStart({ prompt: "Patch carefully." }, { cwd: "/tmp/project" });
+		runtime.enqueueDelta("Assistant:\nBad patch.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+		assert.equal(sent.length, 1);
+
+		runtime.handleBeforeAgentStart({ prompt: sent[0] }, { cwd: "/tmp/project" });
+		runtime.enqueueDelta("Assistant:\nStill bad but not identical input.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+
+		const snapshot = runtime.getSnapshot();
+		assert.equal(sent.length, 1);
+		assert.equal(snapshot.autoFollowStalemate, true);
+		assert.equal(snapshot.lastWarning?.state, "stalemate");
+	});
+
+	it("does not auto-follow stale blocker warnings", async () => {
+		let emitWarning!: (candidate: WatchdogWarning) => boolean;
+		let finishReview!: () => void;
+		let started!: () => void;
+		const reviewStarted = new Promise<void>((resolve) => { started = resolve; });
+		const sent: string[] = [];
+		const runtime = new MainWatchdogRuntime({
+			resolveConfig: () => configResult(enabledConfig({ agentEndTimeoutMs: 5 })),
+			sendUserMessage: (message) => sent.push(message),
+			review: async (request) => {
+				emitWarning = request.emitWarning;
+				started();
+				await new Promise<void>((resolve) => { finishReview = resolve; });
+			},
+		});
+
+		runtime.enqueueDelta("Assistant:\nStill working");
+		const end = runtime.handleAgentEnd({ type: "agent_end", messages: [] }, { cwd: "/tmp/project" });
+		await reviewStarted;
+		await end;
+		assert.equal(emitWarning({ ...warning(), severity: "blocker" }), false);
+		finishReview();
+		await tick();
+		assert.equal(sent.length, 0);
 	});
 
 	it("session on/off overrides explicit main enabled settings", () => {

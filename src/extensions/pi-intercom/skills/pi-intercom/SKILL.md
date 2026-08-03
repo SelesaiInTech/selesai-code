@@ -2,15 +2,15 @@
 name: pi-intercom
 description: |
   Streamline session-to-session coordination with pi-intercom. Send messages,
-  delegate tasks, and coordinate work across multiple pi sessions on the same
+  delegate tasks, and coordinate work across multiple Selesai sessions on the same
   machine. Use for planner-worker workflows, cross-session context sharing,
   and real-time collaboration between sessions.
 ---
 
-# Pi Intercom Skill
+# Selesai Intercom Skill
 
-Use this skill when you need to coordinate work across multiple pi sessions
-running on the same machine. Pi-intercom enables direct 1:1 messaging between
+Use this skill when you need to coordinate work across multiple Selesai sessions
+running on the same machine. pi-intercom enables direct 1:1 messaging between
 sessions for delegation, context sharing, and collaborative workflows.
 
 When you are supervising `pi-subagents`, delegated child agents can escalate to
@@ -156,8 +156,8 @@ This works because `reply` resolves the correct sender and message ID automatica
 
 | Type | What it means | How to respond |
 |------|---------------|----------------|
-| `need_decision` | Subagent is blocked and waiting for your answer. Has a 10-minute timeout. | Reply promptly with a clear decision. If you need more context, ask follow-up questions via `reply`. |
-| `interview_request` | Subagent needs multiple structured answers in one blocking exchange. Has a 10-minute timeout. | Reply with plain JSON or a fenced `json` block using the provided `{ "responses": [...] }` shape. |
+| `need_decision` | Subagent is blocked and waiting for your answer. Uses the shared ask timeout: 10 minutes by default, configurable with `PI_INTERCOM_ASK_TIMEOUT_MS`. | Reply promptly with a clear decision. If you need more context, ask follow-up questions via `reply`. |
+| `interview_request` | Subagent needs multiple structured answers in one blocking exchange. Uses the shared ask timeout: 10 minutes by default, configurable with `PI_INTERCOM_ASK_TIMEOUT_MS`. | Reply with plain JSON or a fenced `json` block using the provided `{ "responses": [...] }` shape. |
 | `progress_update` | Subagent is sharing meaningful progress or a plan-changing discovery. Not blocking. | Read and acknowledge. No reply required unless you want to redirect. |
 
 **When a subagent asks:**
@@ -197,7 +197,7 @@ it as a `contact_supervisor` escalation.
 | Action | Behavior | Use When |
 |--------|----------|----------|
 | `send` | Fire-and-forget | You don't need a response |
-| `ask` | Blocks until reply (10 min timeout) | You need an answer to continue |
+| `ask` | Blocks until reply (10 min default, configurable with `PI_INTERCOM_ASK_TIMEOUT_MS`) | You need an answer to continue |
 | `reply` | Responds to the active or pending inbound ask | You were asked something and need to answer naturally |
 | `pending` | Lists unresolved inbound asks | You need to see who is waiting before replying |
 | `list` | Returns all sessions with live status | You need to discover targets or choose an idle peer |
@@ -301,7 +301,7 @@ If neither `cmux` nor `tmux` is available, skip this path and use normal `interc
 
 ### `ask` Limitations
 
-- **10-minute timeout**: If no reply comes within 10 minutes, the ask fails
+- **Configurable timeout**: If no reply arrives before the shared ask timeout, the ask fails. The default is 10 minutes; set `PI_INTERCOM_ASK_TIMEOUT_MS` to a positive millisecond value to change it.
 - **One at a time**: Cannot have multiple pending asks from the same session
 - **Cannot self-target**: A session cannot ask itself
 
@@ -402,11 +402,13 @@ if (!result.delivered) {
   await intercom({ action: "list" });
 }
 ```
+Replies to recently disconnected named senders can be queued by the broker and delivered if that sender reconnects with the same name. New sends still need a known live or recently disconnected target.
 
-**Ask timeout (after 10 minutes)**
+**Ask timeout**
 ```typescript
 // The ask will reject with a timeout error
-// Design your workflow so answers come within 10 minutes
+// Default: 10 minutes
+// Override: set PI_INTERCOM_ASK_TIMEOUT_MS to a positive millisecond value
 // For longer tasks, use send + follow-up ask pattern
 ```
 
@@ -490,7 +492,7 @@ intercom({ action: "send", to: "planner", message: "Task-3 complete. All done." 
 ### Long-Running Task with Checkpoints
 
 ```typescript
-// For tasks that might exceed 10 minutes, use send + periodic asks
+// For tasks that might exceed the ask timeout, use send + periodic asks
 
 // 1. Initial send with full context
 intercom({

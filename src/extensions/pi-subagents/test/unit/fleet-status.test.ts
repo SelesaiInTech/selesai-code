@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { Editor, visibleWidth } from "@earendil-works/pi-tui";
+import { Editor, type EditorComponent, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@selesai/code";
 import type { SubagentState } from "../../src/shared/types.ts";
 import { collectFleetSnapshot } from "../../src/tui/fleet.ts";
@@ -10,6 +10,7 @@ import {
 	collectFleetStatusEntries,
 	formatFleetElapsed,
 	formatFleetTokens,
+	resolveFleetViewPlacement,
 } from "../../src/tui/fleet-status.ts";
 
 function stateForTest(): SubagentState {
@@ -45,6 +46,13 @@ describe("below-editor subagent FleetView", () => {
 		assert.equal(formatFleetTokens(1_250_000), "↓ 1.3M tokens");
 	});
 
+	it("resolves configured FleetView placement with a below-editor fallback", () => {
+		assert.equal(resolveFleetViewPlacement(undefined), "belowEditor");
+		assert.equal(resolveFleetViewPlacement("belowEditor"), "belowEditor");
+		assert.equal(resolveFleetViewPlacement("aboveEditor"), "aboveEditor");
+		assert.equal(resolveFleetViewPlacement("side"), "belowEditor");
+	});
+
 	it("renders main plus active children below the editor and bounds every line", () => {
 		const state = stateForTest();
 		const now = Date.now();
@@ -56,6 +64,7 @@ describe("below-editor subagent FleetView", () => {
 				updatedAt: now,
 				currentAgent: `worker-${index}`,
 				description: index === 0 ? "Inspect\nmodule 0" : `Inspect module ${index}`,
+				...(index === 0 ? { model: "anthropic/fable-5", thinking: "low" } : {}),
 				tokens: index === 0 ? 13_100 : index,
 			});
 		}
@@ -85,13 +94,150 @@ describe("below-editor subagent FleetView", () => {
 			const component = widgetFactory!({ requestRender() {} }, theme);
 			const lines = component.render(80);
 			assert.ok(lines.some((line) => line.includes("⏺ main")));
-			assert.ok(lines.some((line) => line.includes("worker-0") && line.includes("Inspect module 0")));
+			assert.ok(lines.some((line) => line.includes("worker-0 (fable-5 · thinking low)") && line.includes("Inspect module 0")));
 			assert.ok(lines.some((line) => line.includes("11s · ↓ 13.1k tokens")));
 			assert.ok(lines.some((line) => line.includes("↓ 2 more")));
 			for (const line of lines) assert.ok(visibleWidth(line) <= 80, `line exceeded width: ${line}`);
 		} finally {
 			fleet.dispose();
 		}
+	});
+
+	it("registers above the editor when configured", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			currentAgent: "worker",
+		});
+		let placement: string | undefined;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: unknown, options?: { placement?: string }) {
+					if (content) placement = options?.placement;
+				},
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000, placement: "aboveEditor" });
+		try {
+			fleet.setContext(ctx);
+			assert.equal(placement, "aboveEditor");
+		} finally {
+			fleet.dispose();
+		}
+	});
+
+	it("stops refreshing when the captured extension context becomes stale", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			currentAgent: "worker",
+		});
+		let stale = false;
+		let contextReads = 0;
+		let inputUnsubscribes = 0;
+		let widgetRemovals = 0;
+		const ctx = {
+			get hasUI() {
+				contextReads++;
+				if (stale) {
+					throw new Error("This extension ctx is stale after session replacement or reload.");
+				}
+				return true;
+			},
+			ui: {
+				setWidget(_key: string, content: unknown) {
+					if (content === undefined) widgetRemovals++;
+				},
+				onTerminalInput() { return () => { inputUnsubscribes++; }; },
+				getEditorText() { return ""; },
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			stale = true;
+			assert.doesNotThrow(() => fleet.refresh());
+			assert.equal(inputUnsubscribes, 1);
+			assert.equal(widgetRemovals, 1);
+			assert.equal((fleet as unknown as { timer?: unknown }).timer, undefined);
+			const readsAfterStaleRefresh = contextReads;
+			fleet.refresh();
+			assert.equal(contextReads, readsAfterStaleRefresh, "later refreshes must not reuse the stale context");
+		} finally {
+			fleet.dispose();
+		}
+	});
+
+	it("does not swallow unrelated widget cleanup errors", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			currentAgent: "worker",
+		});
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: unknown) {
+					if (content === undefined) throw new Error("widget cleanup failed");
+				},
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		fleet.setContext(ctx);
+		assert.throws(() => fleet.dispose(), /widget cleanup failed/);
+	});
+
+	it("preserves multiple unrelated UI cleanup errors", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			currentAgent: "worker",
+		});
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: unknown) {
+					if (content === undefined) throw new Error("widget cleanup failed");
+				},
+				onTerminalInput() {
+					return () => { throw new Error("input cleanup failed"); };
+				},
+				getEditorText() { return ""; },
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		fleet.setContext(ctx);
+		assert.throws(
+			() => fleet.dispose(),
+			(error: unknown) => error instanceof AggregateError
+				&& error.errors.map(String).join("\n").includes("input cleanup failed")
+				&& error.errors.map(String).join("\n").includes("widget cleanup failed"),
+		);
 	});
 
 	it("keeps widget ownership through invalidation so an empty refresh removes it", () => {
@@ -268,8 +414,8 @@ describe("below-editor subagent FleetView", () => {
 			startedAt: 100,
 			updatedAt: 200,
 			steps: [
-				{ agent: "reviewer", index: 0, status: "running", startedAt: 120, tokens: { input: 4_000, output: 200, total: 4_200 } },
-				{ agent: "worker", index: 1, status: "complete", tokens: { input: 100, output: 20, total: 120 } },
+				{ agent: "reviewer", index: 0, status: "running", description: "Review only authentication", startedAt: 120, model: "openai/gpt-5", thinking: "medium", tokens: { input: 4_000, output: 200, total: 4_200 } },
+				{ agent: "worker", index: 1, status: "running", description: "Implement only billing", startedAt: 121, tokens: { input: 100, output: 20, total: 120 } },
 			],
 		});
 		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
@@ -288,9 +434,10 @@ describe("below-editor subagent FleetView", () => {
 		try {
 			fleet.setContext(ctx);
 			const lines = widgetFactory!({ requestRender() {} }, theme).render(100);
-			assert.ok(lines.some((line) => line.includes("reviewer") && line.includes("Review the authentication changes")));
+			assert.ok(lines.some((line) => line.includes("reviewer (gpt-5 · thinking medium)") && line.includes("Review only authentication")));
+			assert.ok(lines.some((line) => line.includes("worker") && line.includes("Implement only billing")));
+			assert.ok(lines.every((line) => !line.includes("Review the authentication changes")), "per-child descriptions should replace the run-level fallback when present");
 			assert.ok(lines.some((line) => line.includes("↓ 4.2k tokens")));
-			assert.ok(!lines.some((line) => line.includes("worker")), "completed async children should leave the status fleet");
 		} finally {
 			fleet.dispose();
 		}
@@ -331,10 +478,31 @@ describe("below-editor subagent FleetView", () => {
 
 			assert.equal(inputHandler!("\x1b[B"), undefined, "non-empty editor should retain Down");
 			editorText = "";
-			tui.focusedComponent = {} as Editor;
+			tui.focusedComponent = {
+				render() { return []; },
+				invalidate() {},
+				handleInput() {},
+			} as unknown as Editor;
 			assert.equal(inputHandler!("\x1b[B"), undefined, "non-editor focus should retain Down");
+
+			const crossModuleCustomEditor = {
+				render() { return []; },
+				invalidate() {},
+				handleInput() {},
+				getText() { return ""; },
+				setText() {},
+			} satisfies EditorComponent;
+			assert.equal(crossModuleCustomEditor instanceof Editor, false, "regression setup must cross the instanceof boundary");
+			tui.focusedComponent = crossModuleCustomEditor as unknown as Editor;
+			assert.equal(inputHandler!("j"), undefined, "inactive FleetView should retain printable navigation keys");
+			assert.equal(inputHandler!("k"), undefined, "inactive FleetView should retain printable navigation keys");
+			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true }, "custom editors should activate FleetView across jiti boundaries");
+			assert.deepEqual(inputHandler!("j"), { consume: true }, "active FleetView should navigate down with j");
+			assert.ok(component.render(100).some((line) => line.includes("⏺ worker")));
+			assert.deepEqual(inputHandler!("k"), { consume: true }, "active FleetView should navigate up with k");
+			assert.ok(component.render(100).some((line) => line.includes("⏺ main")));
+
 			tui.focusedComponent = Object.create(Editor.prototype) as Editor;
-			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true });
 			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true });
 			assert.ok(component.render(100).some((line) => line.includes("⏺ worker")));
 			assert.deepEqual(inputHandler!("\r"), { consume: true });

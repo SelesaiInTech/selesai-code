@@ -7,6 +7,7 @@ interface MockPiResponse {
 	output?: string;
 	stderr?: string;
 	exitCode?: number;
+	signal?: NodeJS.Signals;
 	delay?: number;
 	waitForPath?: string;
 	keepAliveAfterFinalMessageMs?: number;
@@ -28,6 +29,7 @@ interface MockPiResponse {
 	writeFiles?: Array<{ path: string; content: string }>;
 	/** Writes the structured-output capture file without emitting a structured_output tool event. */
 	structuredOutputCapture?: unknown;
+	runtimeAcknowledgedExtensions?: unknown;
 }
 
 export interface MockPi {

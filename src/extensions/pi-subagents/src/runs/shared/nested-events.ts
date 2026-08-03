@@ -7,6 +7,8 @@ import {
 	TEMP_ROOT_DIR,
 	type AsyncJobState,
 	type AsyncStatus,
+	type LaunchResolvedChildExtensionsV1,
+	type RuntimeAcknowledgedChildExtensionsV1,
 	type NestedRouteInfo,
 	type TurnBudgetState,
 	type NestedRunSummary,
@@ -197,6 +199,55 @@ function sanitizeCost(value: unknown): NestedRunSummary["totalCost"] | undefined
 		: undefined;
 }
 
+function sanitizeLaunchResolvedExtensions(value: unknown): LaunchResolvedChildExtensionsV1 | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const raw = value as Record<string, unknown>;
+	if (raw.version !== 1 || raw.source !== "launch-resolved" || typeof raw.disableAmbientExtensions !== "boolean") return undefined;
+	const stringList = (input: unknown): string[] => Array.isArray(input)
+		? input.filter((item): item is string => typeof item === "string" && /^sha256:[a-f0-9]{16}$/.test(item)).slice(0, 32)
+		: [];
+	const omitted = raw.omitted && typeof raw.omitted === "object" ? raw.omitted as Record<string, unknown> : {};
+	const omittedCount = (key: string): number => Math.max(0, Math.floor(clampNumber(omitted[key]) ?? 0));
+	return {
+		version: 1,
+		source: "launch-resolved",
+		disableAmbientExtensions: raw.disableAmbientExtensions,
+		runtime: stringList(raw.runtime),
+		configured: stringList(raw.configured),
+		effective: stringList(raw.effective),
+		omitted: {
+			runtime: omittedCount("runtime"),
+			configured: omittedCount("configured"),
+			effective: omittedCount("effective"),
+		},
+	};
+}
+
+function sanitizeRuntimeAcknowledgedExtensions(value: unknown): RuntimeAcknowledgedChildExtensionsV1 | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const raw = value as Record<string, unknown>;
+	if (raw.version !== 1 || raw.source !== "child-runtime" || !Array.isArray(raw.ids)) return undefined;
+	const ids: string[] = [];
+	const seen = new Set<string>();
+	for (const item of raw.ids) {
+		if (typeof item !== "string" || item.length === 0 || item.length > 128 || !/^[A-Za-z0-9._:@+-]+$/.test(item) || item.includes("..") || item.includes("/") || item.includes("\\") || seen.has(item)) continue;
+		seen.add(item);
+		ids.push(item);
+	}
+	if (ids.length === 0) return undefined;
+	return {
+		version: 1,
+		source: "child-runtime",
+		ids: ids.slice(0, 32),
+		omitted: Math.max(0, ids.length - 32) + Math.max(0, Math.floor(clampNumber(raw.omitted) ?? 0)),
+	};
+}
+
+function runtimeAcknowledgedEntry(value: unknown): { runtimeAcknowledgedExtensions: RuntimeAcknowledgedChildExtensionsV1 } | Record<string, never> {
+	const sanitized = sanitizeRuntimeAcknowledgedExtensions(value);
+	return sanitized ? { runtimeAcknowledgedExtensions: sanitized } : {};
+}
+
 function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
 	if (!value || typeof value !== "object") return undefined;
 	const raw = value as Record<string, unknown>;
@@ -249,6 +300,8 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		...(sanitizeTurnBudget(raw.turnBudget) ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) } : {}),
 		...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
 		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
+		...(sanitizeLaunchResolvedExtensions(raw.launchResolvedExtensions) ? { launchResolvedExtensions: sanitizeLaunchResolvedExtensions(raw.launchResolvedExtensions) } : {}),
+		...(sanitizeRuntimeAcknowledgedExtensions(raw.runtimeAcknowledgedExtensions) ? { runtimeAcknowledgedExtensions: sanitizeRuntimeAcknowledgedExtensions(raw.runtimeAcknowledgedExtensions) } : {}),
 		...(depth < MAX_DEPTH && Array.isArray(raw.children) ? { children: raw.children.map((child) => sanitizeSummary(child, depth + 1)).filter((child): child is NestedRunSummary => Boolean(child)).slice(0, MAX_CHILDREN) } : {}),
 	};
 }
@@ -306,6 +359,8 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
 		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
 		...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
+		...(sanitizeLaunchResolvedExtensions(raw.launchResolvedExtensions) ? { launchResolvedExtensions: sanitizeLaunchResolvedExtensions(raw.launchResolvedExtensions) } : {}),
+		...(sanitizeRuntimeAcknowledgedExtensions(raw.runtimeAcknowledgedExtensions) ? { runtimeAcknowledgedExtensions: sanitizeRuntimeAcknowledgedExtensions(raw.runtimeAcknowledgedExtensions) } : {}),
 		...(steps && steps.length > 0 ? { steps } : {}),
 		...(depth < MAX_DEPTH && Array.isArray(raw.children) ? { children: raw.children.map((child) => sanitizeSummary(child, depth + 1)).filter((child): child is NestedRunSummary => Boolean(child)).slice(0, MAX_CHILDREN) } : {}),
 	};
@@ -788,32 +843,50 @@ export function writeNestedControlResult(route: NestedRoute, result: Omit<Nested
 	writeRouteRecord(route.eventSink, sanitized.ts, sanitized);
 }
 
-export function readNestedControlResults(route: NestedRoute): NestedControlResultRecord[] {
-	validateRouteShape(route);
-	let entries: string[] = [];
+function readControlResultsFromFile(route: NestedRoute, eventPath: string): NestedControlResultRecord[] {
+	if (!containedPath(route.eventSink, eventPath)) return [];
 	try {
-		entries = fs.readdirSync(route.eventSink).filter((entry) => entry.endsWith(".json") || entry.endsWith(".jsonl")).sort();
+		const stat = fs.statSync(eventPath);
+		if (!stat.isFile() || stat.size > MAX_EVENT_BYTES) return [];
+		const content = fs.readFileSync(eventPath, "utf-8");
+		const lines = content.includes("\n") ? content.split("\n").filter((line) => line.trim()) : [content];
+		return lines.map((line) => parseControlResult(line, route)).filter((result): result is NestedControlResultRecord => Boolean(result));
+	} catch {
+		return [];
+	}
+}
+
+function listNestedEventFiles(route: NestedRoute): string[] {
+	validateRouteShape(route);
+	try {
+		return fs.readdirSync(route.eventSink).filter((entry) => entry.endsWith(".json") || entry.endsWith(".jsonl"));
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		throw error;
 	}
-	const results: NestedControlResultRecord[] = [];
+}
+
+export function snapshotNestedEventFiles(route: NestedRoute): Set<string> {
+	return new Set(listNestedEventFiles(route));
+}
+
+export function findNestedControlResult(route: NestedRoute, requestId: string, targetRunId: string, ignoredFiles: ReadonlySet<string>): NestedControlResultRecord | undefined {
+	const entries = listNestedEventFiles(route)
+		.filter((entry) => !ignoredFiles.has(entry))
+		.sort()
+		.reverse();
 	for (const entry of entries) {
-		const eventPath = path.join(route.eventSink, entry);
-		if (!containedPath(route.eventSink, eventPath)) continue;
-		try {
-			const stat = fs.statSync(eventPath);
-			if (!stat.isFile() || stat.size > MAX_EVENT_BYTES) continue;
-			const content = fs.readFileSync(eventPath, "utf-8");
-			const lines = content.includes("\n") ? content.split("\n").filter((line) => line.trim()) : [content];
-			for (const line of lines) {
-				const result = parseControlResult(line, route);
-				if (result) results.push(result);
-			}
-		} catch {
-			continue;
-		}
+		const result = readControlResultsFromFile(route, path.join(route.eventSink, entry))
+			.find((candidate) => candidate.requestId === requestId && candidate.targetRunId === targetRunId);
+		if (result) return result;
 	}
-	return results;
+	return undefined;
+}
+
+export function readNestedControlResults(route: NestedRoute): NestedControlResultRecord[] {
+	return listNestedEventFiles(route)
+		.sort()
+		.flatMap((entry) => readControlResultsFromFile(route, path.join(route.eventSink, entry)));
 }
 
 export function nestedRouteEnv(route: NestedRoute): Record<string, string> {
@@ -875,6 +948,8 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.sessionId ? { sessionId: status.sessionId } : {}),
 		mode: status.mode ?? fallback.mode,
 		...(status.processTerminal ? { processTerminal: sanitizeProcessTerminal(status.processTerminal, { runId: status.runId || fallback.id, runnerProcessInstanceId: status.processTerminal.runnerProcessInstanceId }, `${asyncDir}/status.json`) } : {}),
+		...(status.launchResolvedExtensions ? { launchResolvedExtensions: status.launchResolvedExtensions } : {}),
+		...runtimeAcknowledgedEntry(status.runtimeAcknowledgedExtensions),
 		...(status.capabilityCeiling ? { capabilityCeiling: status.capabilityCeiling } : {}),
 		...(status.capabilityAudit ? { capabilityAudit: status.capabilityAudit } : {}),
 		state: status.state,
@@ -914,6 +989,8 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 			...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
 			...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
 			...(step.error ? { error: step.error } : {}),
+			...(step.launchResolvedExtensions ? { launchResolvedExtensions: step.launchResolvedExtensions } : {}),
+			...runtimeAcknowledgedEntry(step.runtimeAcknowledgedExtensions),
 			...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
 			...(step.stopped !== undefined ? { stopped: step.stopped } : {}),
 			...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),

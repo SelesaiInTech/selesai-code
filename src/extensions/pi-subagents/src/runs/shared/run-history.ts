@@ -18,6 +18,7 @@ const ROTATE_KEEP = 1000;
 const PRIVATE_DIR_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const REDACTED_TASK = "[redacted]";
+const historyFileStates = new Map<string, { mtimeMs: number; ctimeMs: number; size: number; ino: number; lineCount: number }>();
 
 function getHistoryPath(): string {
 	return path.join(getAgentDir(), "run-history.jsonl");
@@ -30,8 +31,12 @@ function hashTask(task: string): string {
 function hardenHistoryStorage(historyPath: string): void {
 	const historyDir = path.dirname(historyPath);
 	fs.mkdirSync(historyDir, { recursive: true, mode: PRIVATE_DIR_MODE });
-	try { fs.chmodSync(historyDir, PRIVATE_DIR_MODE); } catch {}
-	try { if (fs.existsSync(historyPath)) fs.chmodSync(historyPath, PRIVATE_FILE_MODE); } catch {}
+	try {
+		if ((fs.statSync(historyDir).mode & 0o777) !== PRIVATE_DIR_MODE) fs.chmodSync(historyDir, PRIVATE_DIR_MODE);
+	} catch {}
+	try {
+		if ((fs.statSync(historyPath).mode & 0o777) !== PRIVATE_FILE_MODE) fs.chmodSync(historyPath, PRIVATE_FILE_MODE);
+	} catch {}
 }
 
 function sanitizeHistoryLine(line: string): string | undefined {
@@ -80,11 +85,39 @@ function writePrivateHistory(historyPath: string, lines: string[]): void {
 	try { fs.chmodSync(historyPath, PRIVATE_FILE_MODE); } catch {}
 }
 
-function sanitizeHistoryFile(historyPath: string): void {
-	if (!fs.existsSync(historyPath)) return;
+function rememberHistoryFile(historyPath: string, lineCount: number): void {
+	const stat = fs.statSync(historyPath);
+	historyFileStates.set(historyPath, {
+		mtimeMs: stat.mtimeMs,
+		ctimeMs: stat.ctimeMs,
+		size: stat.size,
+		ino: stat.ino,
+		lineCount,
+	});
+	if (historyFileStates.size > 8) historyFileStates.delete(historyFileStates.keys().next().value!);
+}
+
+function sanitizeHistoryFile(historyPath: string): number {
+	let stat: fs.Stats;
+	try {
+		stat = fs.statSync(historyPath);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+		throw error;
+	}
+	const cached = historyFileStates.get(historyPath);
+	if (cached
+		&& cached.mtimeMs === stat.mtimeMs
+		&& cached.ctimeMs === stat.ctimeMs
+		&& cached.size === stat.size
+		&& cached.ino === stat.ino) {
+		return cached.lineCount;
+	}
 	const raw = fs.readFileSync(historyPath, "utf-8");
 	const { lines, changed } = sanitizeHistoryLines(raw);
 	if (changed) writePrivateHistory(historyPath, lines);
+	rememberHistoryFile(historyPath, lines.length);
+	return lines.length;
 }
 
 function appendPrivateHistoryLine(historyPath: string, line: string): void {
@@ -94,7 +127,6 @@ function appendPrivateHistoryLine(historyPath: string, line: string): void {
 	} finally {
 		fs.closeSync(fd);
 	}
-	try { fs.chmodSync(historyPath, PRIVATE_FILE_MODE); } catch {}
 }
 
 export function recordRun(agent: string, task: string, exitCode: number, durationMs: number): void {
@@ -110,8 +142,11 @@ export function recordRun(agent: string, task: string, exitCode: number, duratio
 		};
 		const historyPath = getHistoryPath();
 		hardenHistoryStorage(historyPath);
-		try { sanitizeHistoryFile(historyPath); } catch {}
+		let lineCount: number | undefined;
+		try { lineCount = sanitizeHistoryFile(historyPath); } catch {}
 		appendPrivateHistoryLine(historyPath, JSON.stringify(entry));
+		if (lineCount === undefined) historyFileStates.delete(historyPath);
+		else rememberHistoryFile(historyPath, lineCount + 1);
 	} catch {
 		// Best-effort — never crash the execution flow for history recording
 	}
@@ -134,9 +169,10 @@ export function loadRunsForAgent(agent: string): RunEntry[] {
 		lines = lines.slice(-ROTATE_KEEP);
 		changed = true;
 	}
-	if (changed) {
-		try { writePrivateHistory(historyPath, lines); } catch {}
-	}
+	try {
+		if (changed) writePrivateHistory(historyPath, lines);
+		rememberHistoryFile(historyPath, lines.length);
+	} catch {}
 
 	return lines
 		.map((line) => { try { return JSON.parse(line) as RunEntry; } catch { return undefined; } })

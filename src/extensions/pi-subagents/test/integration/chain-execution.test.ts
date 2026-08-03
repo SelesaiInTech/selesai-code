@@ -64,7 +64,7 @@ interface TestParallelTask {
 	gateOn?: "execution" | "acceptance";
 }
 
-type TestChainStep = TestSequentialStep | {
+type TestChainStep = { checkpoint: string; message?: string; label?: string; phase?: string } | TestSequentialStep | {
 	parallel: TestParallelTask[];
 	concurrency?: number;
 	failFast?: boolean;
@@ -91,6 +91,7 @@ type TestChainStep = TestSequentialStep | {
 };
 
 interface ChainResultItem {
+	index: number;
 	agent: string;
 	exitCode: number;
 	finalOutput?: string;
@@ -118,6 +119,7 @@ interface ChainExecutionResult {
 		currentStepIndex?: number;
 		outputs?: Record<string, { text: string; structured?: unknown }>;
 		parallelHandoff?: { version: number; path: string; groupCount: number; childCount: number; cleanupState: string };
+		checkpoint?: { name?: string; status?: string; message?: string };
 	};
 }
 
@@ -214,6 +216,27 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 			"utf-8",
 		);
 	}
+
+	it("pauses foreground chains at approval checkpoints without launching the next child", async () => {
+		mockPi.onCall({ output: "analysis done" });
+		mockPi.onCall({ output: "should not run" });
+		const agents = [makeAgent("analyst"), makeAgent("worker")];
+
+		const result = await executeChain!(makeChainParams([
+			{ agent: "analyst", task: "Analyze" },
+			{ checkpoint: "review", message: "Approve implementation?" },
+			{ agent: "worker", task: "Implement" },
+		], agents));
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]!.text, /Chain paused at checkpoint 'review'/);
+		assert.equal(result.details.results.length, 1);
+		assert.equal(result.details.checkpoint?.name, "review");
+		assert.equal(result.details.checkpoint?.status, "pending");
+		assert.equal(result.details.workflowGraph?.nodes[1]?.kind, "checkpoint");
+		assert.equal(result.details.workflowGraph?.nodes[1]?.status, "paused");
+		assert.equal(mockPi.callCount(), 1);
+	});
 
 	it("runs a 2-step chain", async () => {
 		mockPi.onCall({ output: "Analysis complete: found 3 issues" });
@@ -1361,6 +1384,7 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 
 		assert.ok(!result.isError, `should succeed: ${JSON.stringify(result.content)}`);
 		assert.equal(result.details.results.length, 2);
+		assert.deepEqual(result.details.results.map((row) => row.index), [0, 1]);
 	});
 
 	it("aggregates worktree handoffs across foreground chain groups", { skip: process.platform === "win32" ? "worktree paths differ on Windows" : undefined }, async () => {
@@ -1700,6 +1724,7 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 
 		assert.ok(!result.isError);
 		assert.equal(result.details.results.length, 4);
+		assert.deepEqual(result.details.results.map((row) => row.index), [0, 1, 2, 3]);
 		assert.equal(result.details.totalSteps, 3);
 	});
 });

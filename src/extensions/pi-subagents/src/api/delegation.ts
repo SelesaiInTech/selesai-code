@@ -131,6 +131,7 @@ export interface SubagentDelegationStarted {
 }
 
 export interface SubagentDelegationUpdate extends SubagentDelegationStarted {
+	runId?: string;
 	currentTool?: string;
 	currentToolArgs?: string;
 	recentOutput?: string;
@@ -230,6 +231,7 @@ export interface SubagentDelegationV2Started {
 }
 
 export interface SubagentDelegationV2Update extends SubagentDelegationV2Started {
+	runId?: string;
 	currentTool?: string;
 	currentToolArgs?: string;
 	recentOutput?: string;
@@ -266,6 +268,7 @@ export interface SubagentDelegationV2TerminalResponse extends SubagentDelegation
 	model?: string;
 	thinking?: string;
 	exitCode?: number;
+	launchContractDigest?: string;
 	result?: SubagentDelegationV2Value;
 	usage?: SubagentDelegationV2Usage;
 }

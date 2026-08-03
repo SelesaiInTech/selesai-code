@@ -185,6 +185,14 @@ function writeStructuredOutputCapture(response) {
 	fs.writeFileSync(outputPath, JSON.stringify(response.structuredOutputCapture), "utf-8");
 }
 
+function writeRuntimeAcknowledgedExtensions(response) {
+	if (!Object.prototype.hasOwnProperty.call(response, "runtimeAcknowledgedExtensions")) return;
+	const outputPath = process.env.SELESAI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS;
+	if (!outputPath) return;
+	fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+	fs.writeFileSync(outputPath, JSON.stringify(response.runtimeAcknowledgedExtensions), "utf-8");
+}
+
 function writeToolDiagnostic(response) {
 	if (!Array.isArray(response.missingTools) || response.missingTools.length === 0) return;
 	const diagnosticPath = process.env.SELESAI_SUBAGENT_TOOL_DIAGNOSTIC_PATH;
@@ -327,11 +335,10 @@ async function main() {
 	}
 	writeSessionFile(args);
 	writeToolDiagnostic(response);
-	fs.writeFileSync(
-		path.join(queueDir, `call-${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.json`),
-		JSON.stringify({ args, systemPrompts: readSystemPromptRecords(args) }),
-		"utf-8",
-	);
+	const callPath = path.join(queueDir, `call-${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.json`);
+	const callTempPath = `${callPath}.tmp-${process.pid}-${Date.now()}`;
+	fs.writeFileSync(callTempPath, JSON.stringify({ args, systemPrompts: readSystemPromptRecords(args) }), "utf-8");
+	fs.renameSync(callTempPath, callPath);
 
 	if (typeof response.delay === "number" && response.delay > 0) {
 		await new Promise((resolve) => setTimeout(resolve, response.delay));
@@ -346,6 +353,7 @@ async function main() {
 
 	writeDeclaredFiles(response);
 	writeStructuredOutputCapture(response);
+	writeRuntimeAcknowledgedExtensions(response);
 
 	if (Array.isArray(response.steps) && response.steps.length > 0) {
 		for (const step of response.steps) {
@@ -384,6 +392,10 @@ async function main() {
 		await new Promise((resolve) => setTimeout(resolve, response.keepAliveAfterFinalMessageMs));
 	}
 
+	if (typeof response.signal === "string") {
+		process.kill(process.pid, response.signal);
+		return;
+	}
 	exitAfterFlush(typeof response.exitCode === "number" ? response.exitCode : 0);
 }
 

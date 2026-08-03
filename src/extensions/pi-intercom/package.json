@@ -1,6 +1,6 @@
 {
   "name": "pi-intercom",
-  "version": "0.6.0",
+  "version": "0.9.2",
   "license": "MIT",
   "type": "module",
   "main": "index.ts",
@@ -8,13 +8,16 @@
     "index.ts",
     "types.ts",
     "config.ts",
+    "cwd.ts",
+    "extension-api.ts",
+    "format-context.ts",
     "reply-tracker.ts",
     "broker/**/*.ts",
     "ui/**/*.ts",
     "skills/**/*"
   ],
   "scripts": {
-    "test": "tsx --test broker/paths.test.ts broker/spawn.test.ts reply-tracker.test.ts intercom.integration.test.ts test/inline-message.test.ts"
+    "test": "tsx --test broker/client.test.ts broker/extension.test.ts broker/framing.test.ts broker/paths.test.ts broker/runtime-claim.test.ts broker/spawn.test.ts config.test.ts cwd.test.ts format-context.test.ts reply-tracker.test.ts intercom.integration.test.ts test/inline-message.test.ts test/overlay-width.test.ts"
   },
   "keywords": [
     "pi-package"
@@ -28,11 +31,18 @@
     ]
   },
   "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
     "@selesai/code": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "dependencies": {
-    "tsx": "^4.20.0",
-    "typebox": "^1.1.24"
+    "tsx": "^4.20.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@selesai/code": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   }
 }

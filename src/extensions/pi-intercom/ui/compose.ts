@@ -1,8 +1,8 @@
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { KeybindingsManager, Theme } from "@selesai/code";
-import type { IntercomClient } from "../broker/client.js";
-import type { SessionInfo } from "../types.js";
+import type { IntercomClient } from "../broker/client.ts";
+import type { SessionInfo } from "../types.ts";
 
 export interface ComposeResult {
   sent: boolean;
@@ -103,8 +103,12 @@ export class ComposeOverlay implements Component {
   }
 
   render(width: number): string[] {
-    const innerWidth = Math.max(24, Math.min(width - 2, 72));
-    const contentWidth = Math.max(1, innerWidth - 2);
+    const innerWidth = Math.max(1, Math.min(width, 72));
+    if (innerWidth === 1) {
+      return [this.theme.fg("accent", "│")];
+    }
+
+    const contentWidth = Math.max(0, innerWidth - 2);
     const footer = `${this.keybindings.getKeys("tui.select.confirm").join("/")}: Send • ${this.keybindings.getKeys("tui.select.cancel").join("/")}: Close`;
     const border = (text: string) => this.theme.fg("accent", text);
     const row = (text = "") => {

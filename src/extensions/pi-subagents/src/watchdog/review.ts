@@ -201,18 +201,19 @@ function createWatchdogWarnTool(request: WatchdogReviewRequest): AgentTool<typeo
 	};
 }
 
-function buildWatchdogSystemPrompt(ctx: ExtensionContext): string {
+function buildWatchdogSystemPrompt(ctx: ExtensionContext, options: { hasScope?: boolean } = {}): string {
 	return [
 		"You are the main-session subagent watchdog for Pi.",
 		`Working directory: ${ctx.cwd}`,
 		"Review only the supplied parent turn delta. Inspect repository files only when needed to verify a concrete concern.",
+		options.hasScope ? "When the review input includes a Current scope block, treat newer scope prompts as superseding/mutating older prompts and use category='scope-drift' for work that serves no current scope item." : undefined,
 		"You are read-only. You may use read, grep, find, and ls. Do not edit files, run shell commands, spawn agents, or mutate state.",
 		"Emit warnings only by calling watchdog_warn. Freeform assistant text is ignored and must not be used to report warnings.",
 		"Emit only medium/high confidence actionable concerns or blockers: missed user constraints, correctness risks, test gaps that matter, unsafe changes, stale facts, loop risks, or scope drift.",
 		"Do not emit nits, style preferences, low-confidence guesses, informational notes, praise, or summaries.",
 		"If the turn is clean, call no tools and end normally.",
 		"Use severity='blocker' only when the issue should stop acceptance until addressed; otherwise use severity='concern'.",
-	].join("\n");
+	].filter((line): line is string => Boolean(line)).join("\n");
 }
 
 function buildReviewPrompt(request: WatchdogReviewRequest, selection: WatchdogReviewModelSelection): string {
@@ -270,13 +271,13 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 		];
 		const agent = new Agent({
 			initialState: {
-				systemPrompt: buildWatchdogSystemPrompt(ctx),
+				systemPrompt: buildWatchdogSystemPrompt(ctx, { hasScope: request.hasScope }),
 				model: selection.model,
 				thinkingLevel: selection.thinkingLevel,
 				tools,
 			},
 			convertToLlm,
-			streamFunction: streamFn,
+			streamFn,
 			getApiKey: (providerName) => providerName === selection.model.provider ? auth.apiKey : undefined,
 			beforeToolCall: async ({ toolCall }) => WATCHDOG_ALLOWED_TOOL_NAMES.has(toolCall.name)
 				? undefined

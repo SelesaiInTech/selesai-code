@@ -144,6 +144,14 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	}
 
+	async function waitForCallCount(minimum: number, timeoutMs = 10_000): Promise<void> {
+		const deadline = Date.now() + timeoutMs;
+		while (mockPi.callCount() < minimum) {
+			if (Date.now() > deadline) assert.fail(`Timed out waiting for ${minimum} mock pi calls; saw ${mockPi.callCount()}`);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+	}
+
 	async function waitForMissingPath(filePath: string, timeoutMs = 10_000): Promise<void> {
 		const deadline = Date.now() + timeoutMs;
 		while (fs.existsSync(filePath)) {
@@ -152,7 +160,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	}
 
-	function makeExecutor(options: { bridgeMode?: "always" | "off"; agents?: ReturnType<typeof makeAgent>[]; acknowledgeResults?: boolean; kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean } = {}) {
+	function makeExecutor(options: { bridgeMode?: "always" | "off"; resultDelivery?: boolean; agents?: ReturnType<typeof makeAgent>[]; acknowledgeResults?: boolean; kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean } = {}) {
 		const events = createRecordingEventBus({ acknowledgeResults: options.acknowledgeResults ?? true });
 		const state = {
 			baseCwd: tempDir,
@@ -180,7 +188,10 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			},
 			state,
 			config: {
-				intercomBridge: { mode: options.bridgeMode ?? "always" },
+				intercomBridge: {
+					mode: options.bridgeMode ?? "always",
+					...(options.resultDelivery === undefined ? {} : { resultDelivery: options.resultDelivery }),
+				},
 			},
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
@@ -235,6 +246,22 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.match(result.content[0]?.text ?? "", /Legacy foreground output/);
 	});
 
+	it("keeps native foreground output without attempting external grouped delivery when disabled", async () => {
+		mockPi.onCall({ output: "Native foreground output" });
+		const { executor, events } = makeExecutor({ resultDelivery: false });
+
+		const result = await executor.execute(
+			"single-native-delivery",
+			{ agent: "worker", task: "Summarize feature" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);
+		assert.match(result.content[0]?.text ?? "", /Native foreground output/);
+	});
+
 	it("falls back to legacy foreground output when grouped delivery is not acknowledged", async () => {
 		mockPi.onCall({ output: "Unacknowledged foreground output" });
 		const { executor, events } = makeExecutor({ acknowledgeResults: false });
@@ -271,10 +298,143 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal((payload.children ?? []).every((child) => /^subagent-[ab]-[a-f0-9]+-[12]$/.test(child.intercomTarget ?? "")), true);
 		assert.match(String(payload.message ?? ""), /Intercom targets below identify child sessions used while they were running/);
 		assert.match(String(payload.message ?? ""), /Run intercom target: subagent-a-[a-f0-9]+-1/);
-		assert.match(String(payload.message ?? ""), /1\. a — completed/);
-		assert.match(String(payload.message ?? ""), /2\. b — completed/);
+		assert.match(String(payload.message ?? ""), /1\. a — process completed · output present/);
+		assert.match(String(payload.message ?? ""), /2\. b — process completed · output present/);
 		assert.match(result.content[0]?.text ?? "", /Delivered parallel subagent results via intercom\./);
 		assert.equal(result.details?.results?.every((entry) => entry.finalOutput === undefined), true);
+	});
+
+	it("keeps a queued top-level parallel child controlled after an early outer rejection", async () => {
+		mockPi.onCall({ matchArgIncludes: "task-a", output: "early child", delay: 100 });
+		mockPi.onCall({ matchArgIncludes: "task-b", output: "middle child", delay: 400 });
+		mockPi.onCall({ matchArgIncludes: "task-c", output: "too late", delay: 10_000 });
+		const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a"), makeAgent("b"), makeAgent("c")] });
+		let rejected = false;
+		const result = await executor.execute(
+			"parallel-rejection-cleanup",
+			{ concurrency: 2, tasks: [{ agent: "a", task: "task-a" }, { agent: "b", task: "task-b" }, { agent: "c", task: "task-c" }] },
+			new AbortController().signal,
+			(update: { details?: { progress?: Array<{ agent?: string; status?: string }> } }) => {
+				if (!rejected && update.details?.progress?.some((entry) => entry.agent === "a" && entry.status === "completed")) {
+					rejected = true;
+					throw new Error("reject early parallel completion");
+				}
+			},
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(rejected, true);
+		assert.equal(result.isError, true);
+		assert.equal(state.foregroundControls.size, 1, "remaining worker still owns queued scheduling");
+		await waitForCallCount(3);
+		const liveControl = [...state.foregroundControls.values()][0];
+		assert.equal(liveControl?.currentAgent, "c", "later queued child must remain discoverable after launch");
+		assert.ok(liveControl?.interrupt, "later queued child must remain interruptible");
+		assert.equal(liveControl.interrupt(), true);
+		for (let attempt = 0; attempt < 100 && state.foregroundControls.size > 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(state.foregroundControls.size, 0, "control must disappear after workers and children settle");
+	});
+
+	it("keeps a queued chain-parallel child controlled after an early outer rejection", async () => {
+		mockPi.onCall({ matchArgIncludes: "chain-task-a", output: "early chain child", delay: 100 });
+		mockPi.onCall({ matchArgIncludes: "chain-task-b", output: "middle chain child", delay: 400 });
+		mockPi.onCall({ matchArgIncludes: "chain-task-c", output: "too late", delay: 10_000 });
+		const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a"), makeAgent("b"), makeAgent("c")] });
+		let rejected = false;
+		const result = await executor.execute(
+			"chain-parallel-rejection-cleanup",
+			{ chain: [{ concurrency: 2, parallel: [{ agent: "a", task: "chain-task-a" }, { agent: "b", task: "chain-task-b" }, { agent: "c", task: "chain-task-c" }] }] },
+			new AbortController().signal,
+			(update: { details?: { progress?: Array<{ agent?: string; status?: string }> } }) => {
+				if (!rejected && update.details?.progress?.some((entry) => entry.agent === "a" && entry.status === "completed")) {
+					rejected = true;
+					throw new Error("reject early chain completion");
+				}
+			},
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(rejected, true);
+		assert.equal(result.isError, true);
+		assert.equal(state.foregroundControls.size, 1, "remaining chain worker still owns queued scheduling");
+		await waitForCallCount(3);
+		const liveControl = [...state.foregroundControls.values()][0];
+		assert.equal(liveControl?.currentAgent, "c", "later queued chain child must remain discoverable after launch");
+		assert.ok(liveControl?.interrupt, "later queued chain child must remain interruptible");
+		assert.equal(liveControl.interrupt(), true);
+		for (let attempt = 0; attempt < 100 && state.foregroundControls.size > 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(state.foregroundControls.size, 0, "chain control must disappear after workers and children settle");
+	});
+
+	it("cleans a rejected sequential chain child and releases foreground ownership", async () => {
+		mockPi.onCall({ output: "sequential child output" });
+		const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("worker")] });
+		let rejected = false;
+		let ownedControl: { schedulingOwners?: number; activeChildren?: Map<number, unknown> } | undefined;
+		const result = await executor.execute(
+			"chain-sequential-rejection-cleanup",
+			{ chain: [{ agent: "worker", task: "sequential task" }] },
+			new AbortController().signal,
+			(update: { details?: { progress?: Array<{ status?: string }> } }) => {
+				if (rejected || !update.details?.progress?.some((entry) => entry.status === "completed")) return;
+				rejected = true;
+				ownedControl = [...state.foregroundControls.values()][0];
+				throw new Error("reject sequential chain completion");
+			},
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(rejected, true);
+		assert.equal(result.isError, true);
+		assert.ok(ownedControl);
+		assert.equal(ownedControl.schedulingOwners, 0);
+		assert.equal(ownedControl.activeChildren?.size, 0);
+		assert.equal(state.foregroundControls.size, 0);
+	});
+
+	it("cleans a sequential chain child after an early tool-budget validation return", async () => {
+		const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("worker")] });
+		const execution = executor.execute(
+			"chain-sequential-budget-cleanup",
+			{ chain: [{ agent: "worker", task: "invalid budget task", toolBudget: { hard: 0 } }] },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const ownedControl = [...state.foregroundControls.values()][0];
+		assert.ok(ownedControl, "outer scheduling owner should remain visible until execution settles");
+		const result = await execution;
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /toolBudget\.hard must be an integer >= 1/);
+		assert.equal(mockPi.callCount(), 0);
+		assert.equal(ownedControl.schedulingOwners, 0);
+		assert.equal(ownedControl.activeChildren?.size, 0);
+		assert.equal(state.foregroundControls.size, 0);
+	});
+
+	it("cleans an attached single rejection and its temporary structured runtime", async () => {
+		mockPi.onCall({
+			stdoutRaw: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: { ok: true },
+		});
+		const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("worker")] });
+		let structuredDir: string | undefined;
+		const result = await executor.execute(
+			"single-rejection-cleanup",
+			{ agent: "worker", task: "structured task", artifacts: false, outputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] } },
+			new AbortController().signal,
+			(update: { details?: { results?: Array<{ structuredOutputPath?: string }>; progress?: Array<{ status?: string }> } }) => {
+				const outputPath = update.details?.results?.[0]?.structuredOutputPath;
+				if (outputPath) structuredDir = path.dirname(outputPath);
+				if (update.details?.progress?.[0]?.status === "completed") throw new Error("reject attached single completion");
+			},
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, true);
+		assert.equal(state.foregroundControls.size, 0);
+		assert.ok(structuredDir);
+		assert.equal(fs.existsSync(structuredDir), false, "temporary structured runtime must be removed on rejection");
 	});
 
 	it("chain runs emit one grouped event containing all executed children", async () => {
@@ -300,9 +460,9 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(payload.mode, "chain");
 		assert.deepEqual((payload.children ?? []).map((child) => child.agent).sort(), ["a", "b", "c"]);
 		assert.equal((payload.children ?? []).every((child) => /^subagent-[abc]-[a-f0-9]+-[123]$/.test(child.intercomTarget ?? "")), true);
-		assert.match(String(payload.message ?? ""), /1\. a — completed/);
-		assert.match(String(payload.message ?? ""), /2\. b — completed/);
-		assert.match(String(payload.message ?? ""), /3\. c — completed/);
+		assert.match(String(payload.message ?? ""), /1\. a — process completed · output present/);
+		assert.match(String(payload.message ?? ""), /2\. b — process completed · output present/);
+		assert.match(String(payload.message ?? ""), /3\. c — process completed · output present/);
 		assert.match(result.content[0]?.text ?? "", /Delivered chain subagent results via intercom\./);
 		assert.equal(result.details?.results?.every((entry) => entry.finalOutput === undefined), true);
 	});
@@ -631,7 +791,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				lastUpdate: 200,
 				cwd: tempDir,
 				sessionFile,
-				steps: [{ agent: "worker", status: "complete" }],
+				steps: [{ agent: "worker", status: "complete", launchContractDigest: "source-launch-contract-digest" }],
 			}, null, 2), "utf-8");
 			const { executor, events } = makeExecutor();
 
@@ -651,6 +811,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.doesNotMatch(result.content[0]?.text ?? "", /Follow:/);
 			const revivedId = result.details?.asyncId;
 			assert.ok(revivedId, "expected revived async id");
+			assert.equal(result.details?.sourceLaunchContractDigest, "source-launch-contract-digest");
 			const startedEvent = events.emitted.find((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT && (entry.payload as { id?: string }).id === revivedId)?.payload as { goal?: string } | undefined;
 			assert.equal(startedEvent?.goal, "What changed?");
 			const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
@@ -785,7 +946,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		mockPi.onCall({ output: "first child done" });
 		mockPi.onCall({ output: "second child done" });
 		mockPi.onCall({ output: "revived foreground answer" });
-		const { executor } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a"), makeAgent("b")] });
+		const { executor } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a"), makeAgent("b", { model: "anthropic/claude-sonnet-4", thinking: "high" })] });
 
 		const original = await executor.execute(
 			"foreground-resume-original",
@@ -796,6 +957,17 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		);
 		const runId = original.details?.runId;
 		assert.ok(runId, "expected foreground run id");
+
+		const overridden = await executor.execute(
+			"foreground-resume-model-override",
+			{ action: "resume", id: runId, index: 1, message: "Follow up with b", model: "openai/gpt-5" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(overridden.isError, true);
+		assert.match(overridden.content[0]?.text ?? "", /reuses the persisted child model/);
+		assert.equal(mockPi.callCount(), 2, "rejected model override must not spawn a revival");
 
 		const revived = await executor.execute(
 			"foreground-resume",
@@ -808,10 +980,13 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(revived.isError, undefined);
 		assert.match(revived.content[0]?.text ?? "", /Revived foreground subagent from/);
 		assert.match(revived.content[0]?.text ?? "", /Agent: b/);
+		assert.equal(revived.details?.sourceLaunchContractDigest, original.details?.results?.[1]?.launchContractDigest);
+		assert.ok(revived.details?.sourceLaunchContractDigest, "expected foreground source launch contract digest");
 		const reviveArgs = await readMockCallArgs(2);
 		const selectedSession = original.details?.results?.[1]?.sessionFile;
 		assert.ok(selectedSession, "expected selected child session file");
 		assert.equal(reviveArgs[reviveArgs.indexOf("--session") + 1], selectedSession);
+		assert.equal(reviveArgs[reviveArgs.indexOf("--model") + 1], original.details?.results?.[1]?.model);
 		const revivedId = revived.details?.asyncId;
 		assert.ok(revivedId, "expected revived async id");
 		const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
@@ -861,7 +1036,10 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			);
 			assert.equal(blocked.isError, true);
 			assert.match(blocked.content[0]?.text ?? "", new RegExp(`already owned by run '${firstRevivedId}'`));
-			assert.equal(fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length, 2, "contending foreground revival must not spawn Pi");
+			// The original and the first revival each spawn Pi asynchronously, so wait for both markers
+			// before asserting the contending revival added no third spawn.
+			await waitForCallCount(2);
+			assert.equal(mockPi.callCount(), 2, "contending foreground revival must not spawn Pi");
 
 			fs.writeFileSync(releasePath, "release", "utf-8");
 			await waitForFile(path.join(RESULTS_DIR, `${firstRevivedId}.json`));
@@ -1273,9 +1451,10 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			makeMinimalCtx(tempDir),
 		);
 		const fleetText = fleet.content[0]?.text ?? "";
-		assert.match(fleetText, /Detached foreground runs:/);
+		assert.match(fleetText, /Foreground runs:/);
 		assert.ok(fleetText.includes(runId));
-		assert.match(fleetText, /recovery: reply to the supervisor request first/);
+		assert.match(fleetText, /running/);
+		assert.match(fleetText, /contact_supervisor/);
 
 		const resumed = await executor.execute(
 			"foreground-detached-resume",
@@ -1534,7 +1713,28 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const payload = intercomEvents[0]!.payload as { status?: string; summary?: string; message?: string };
 		assert.equal(payload.status, "failed");
 		assert.match(String(payload.summary ?? ""), /1 completed, 1 failed/);
-		assert.match(String(payload.message ?? ""), /Status: failed/);
+		assert.match(String(payload.message ?? ""), /Process status: failed/);
+		assert.match(String(payload.message ?? ""), /Outputs: 2 present \(semantic adequacy unassessed\)/);
+		assert.match(String(payload.message ?? ""), /Inspect that output before retrying/);
 		assert.match(result.content[0]?.text ?? "", /Children: 1 completed, 1 failed/);
+	});
+
+	it("does not treat a synthetic foreground startup error as child output", async () => {
+		mockPi.onCall({ output: "", stderr: "mock startup failure", exitCode: 1 });
+		const { executor, events } = makeExecutor({ agents: [makeAgent("worker")] });
+
+		await executor.execute(
+			"foreground-synthetic-error",
+			{ agent: "worker", task: "synthetic-error-task" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const intercomEvents = events.emitted.filter((entry) => entry.channel === "subagent:result-intercom");
+		assert.equal(intercomEvents.length, 1);
+		const message = String((intercomEvents[0]!.payload as { message?: string }).message ?? "");
+		assert.match(message, /process failed · output absent/);
+		assert.doesNotMatch(message, /Inspect that output before retrying/);
 	});
 });

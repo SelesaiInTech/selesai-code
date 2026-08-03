@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
+import { isUnexplainedProcessSignal } from "../runs/shared/process-signal.ts";
 import {
 	type Details,
 	type IntercomEventBus,
@@ -10,6 +11,7 @@ import {
 	type SubagentResultIntercomChild,
 	type SubagentResultIntercomPayload,
 	type SubagentResultStatus,
+	type SubagentOutputState,
 	type SubagentRunMode,
 	SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT,
 	SUBAGENT_RESULT_INTERCOM_EVENT,
@@ -21,11 +23,17 @@ export function resolveSubagentResultStatus(input: {
 	state?: string;
 	interrupted?: boolean;
 	detached?: boolean;
+	processSignal?: string | null;
+	timedOut?: boolean;
+	stopped?: boolean;
+	turnBudgetExceeded?: boolean;
 }): SubagentResultStatus {
 	if (input.detached) return "detached";
-	if (input.state === "stopped") return "stopped";
+	if (input.stopped || input.state === "stopped") return "stopped";
 	if (input.interrupted || input.state === "paused") return "paused";
-	if (typeof input.success === "boolean") return input.success ? "completed" : "failed";
+	if (input.success === true) return "completed";
+	if (isUnexplainedProcessSignal(input) && input.exitCode !== 0) return "stopped";
+	if (input.success === false) return "failed";
 	if (input.state === "complete") return "completed";
 	if (input.state === "failed") return "failed";
 	if (typeof input.exitCode === "number") return input.exitCode === 0 ? "completed" : "failed";
@@ -55,6 +63,21 @@ function formatStatusCounts(counts: Record<SubagentResultStatus, number>): strin
 		counts.detached ? `${counts.detached} detached` : undefined,
 	].filter((part): part is string => Boolean(part));
 	return parts.length ? parts.join(", ") : "0 results";
+}
+
+function countOutputStates(children: SubagentResultIntercomChild[]): Record<SubagentOutputState, number> {
+	const counts: Record<SubagentOutputState, number> = { present: 0, absent: 0, unknown: 0 };
+	for (const child of children) counts[child.outputState ?? "unknown"] += 1;
+	return counts;
+}
+
+function formatOutputCounts(counts: Record<SubagentOutputState, number>): string {
+	const parts = [
+		counts.present ? `${counts.present} present` : undefined,
+		counts.absent ? `${counts.absent} absent` : undefined,
+		counts.unknown ? `${counts.unknown} unknown` : undefined,
+	].filter((part): part is string => Boolean(part));
+	return parts.length ? parts.join(", ") : "0 outputs";
 }
 
 function resolveGroupedStatus(children: SubagentResultIntercomChild[]): SubagentResultStatus {
@@ -212,14 +235,19 @@ function formatSubagentResultIntercomMessage(input: {
 	parallelHandoff?: ParallelHandoffReference;
 }): string {
 	const counts = countStatuses(input.children);
+	const outputCounts = countOutputStates(input.children);
 	const lines: string[] = [
 		"subagent results",
 		"",
 		`Run: ${input.runId}`,
 		`Mode: ${input.mode}`,
-		`Status: ${input.status}`,
+		`Process status: ${input.status}`,
 		`Children: ${formatStatusCounts(counts)}`,
+		`Outputs: ${formatOutputCounts(outputCounts)} (semantic adequacy unassessed)`,
 	];
+	if (input.children.some((child) => child.status === "failed" && child.outputState === "present")) {
+		lines.push("Recovery: At least one failed process produced output. Inspect that output before retrying; output presence does not establish task completion.");
+	}
 	if (input.mode === "chain" && typeof input.chainSteps === "number") {
 		lines.push(`Chain steps: ${input.chainSteps}`);
 	}
@@ -238,7 +266,7 @@ function formatSubagentResultIntercomMessage(input: {
 	for (let index = 0; index < input.children.length; index++) {
 		const child = input.children[index]!;
 		lines.push("");
-		lines.push(`${index + 1}. ${child.agent} — ${child.status}`);
+		lines.push(`${index + 1}. ${child.agent} — process ${child.status} · output ${child.outputState ?? "unknown"}`);
 		if (child.intercomTarget) lines.push(`${input.source === "async" ? "Previous intercom target" : "Run intercom target"}: ${child.intercomTarget}`);
 		if (child.artifactPath) lines.push(`Output artifact: ${child.artifactPath}`);
 		if (child.sessionPath) lines.push(`Session: ${child.sessionPath}`);
@@ -253,6 +281,7 @@ function formatSubagentResultIntercomMessage(input: {
 export function buildSubagentResultIntercomPayload(input: GroupedResultIntercomMessageInput): SubagentResultIntercomPayload {
 	const children = input.children.map((child) => ({
 		...child,
+		outputState: child.outputState ?? "unknown",
 		summary: child.summary.trim() || "(no output)",
 		children: compactNestedResultChildren(child.children),
 	}));

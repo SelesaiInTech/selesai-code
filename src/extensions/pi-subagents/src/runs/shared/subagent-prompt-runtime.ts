@@ -4,6 +4,7 @@ import type { ExtensionAPI } from "@selesai/code";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
 import { consumeSteerRequestsFromDir, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerRequest } from "../background/control-channel.ts";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
+import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeAcknowledgedExtensionId, writeRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
 import { createStructuredOutputToolParameters, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
 import {
 	CHILD_TOOL_DIAGNOSTIC_PATH_ENV,
@@ -34,7 +35,7 @@ const STRUCTURED_OUTPUT_INSTRUCTIONS = [
 
 export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
 	"You are a child subagent, not the parent orchestrator.",
-	"The parent session owns delegation, orchestration, review fanout, and follow-up worker launches.",
+	"The parent session owns delegation, orchestration, review fanout, and follow-up builder launches.",
 	"Ignore prior parent-only orchestration instructions in inherited conversation history.",
 	"Do not propose or run subagents. Complete only your assigned role-specific task with the tools available to you.",
 	"If you need to edit files, use the available editing tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
@@ -97,6 +98,34 @@ function refreshChildToolDiagnostic(pi: ExtensionAPI): ChildToolDiagnostic | und
 	if (!filePath || !required) return undefined;
 	const available = pi.getAllTools().map((tool) => tool.name);
 	return writeChildToolDiagnostic(filePath, required, available, process.env[SUBAGENT_CHILD_AGENT_ENV]?.trim(), readMcpDirectChildTools());
+}
+
+function registerRuntimeExtensionAcknowledgements(pi: ExtensionAPI): void {
+	const outputPath = process.env[RUNTIME_EXTENSION_ACK_PATH_ENV]?.trim();
+	if (!outputPath) return;
+	const ids: string[] = [];
+	let finalized = false;
+	const acknowledge = (payload: unknown): undefined => {
+		if (finalized || !payload || typeof payload !== "object") return undefined;
+		const id = (payload as { id?: unknown }).id;
+		if (isRuntimeAcknowledgedExtensionId(id)) ids.push(id);
+		return undefined;
+	};
+	const finalize = (): undefined => {
+		if (finalized) return undefined;
+		finalized = true;
+		writeRuntimeAcknowledgedExtensions(outputPath, ids);
+		return undefined;
+	};
+	try {
+		const events = (pi as { events?: { on?: (event: string, handler: (payload: unknown) => unknown) => unknown } }).events;
+		events?.on?.(RUNTIME_EXTENSION_ACK_EVENT, acknowledge);
+		const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event?: unknown, ctx?: unknown) => unknown) => void;
+		onRuntimeEvent("agent_end", finalize);
+		onRuntimeEvent("session_shutdown", finalize);
+	} catch {
+		// Acknowledgement collection is optional observability and must not affect child execution.
+	}
 }
 
 function findSectionEnd(prompt: string, startIndex: number, nextHeaders: string[]): number {
@@ -346,6 +375,7 @@ export function registerSteeringInbox(
 }
 
 export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
+	registerRuntimeExtensionAcknowledgements(pi);
 	registerSteeringInbox(pi);
 	registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV], { allowZero: process.env[TOOL_BUDGET_ZERO_AUTH_ENV] === "1" }));
 	registerChildWatchdog(pi);

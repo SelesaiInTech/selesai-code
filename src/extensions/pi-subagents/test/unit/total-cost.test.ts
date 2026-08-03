@@ -7,6 +7,7 @@ function resultWithUsage(usage: Usage): SingleResult {
 	return {
 		agent: "agent",
 		task: "task",
+		index: 0,
 		exitCode: 0,
 		messages: [],
 		usage,

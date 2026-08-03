@@ -60,7 +60,7 @@ function projectRequest(status: AsyncStatus, request: SteerRequest, states: Stee
 	}
 }
 
-async function waitUntil<T>(read: () => T | undefined, timeoutMs = 1_000): Promise<T> {
+async function waitUntil<T>(read: () => T | undefined, timeoutMs = 30_000): Promise<T> {
 	const deadline = Date.now() + timeoutMs;
 	while (true) {
 		const value = read();

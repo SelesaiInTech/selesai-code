@@ -520,10 +520,10 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 
 		const ctx = createCommandContext({ sessionManager });
 		registerSlashCommands!(pi, createState(process.cwd()));
-		await commands.get("run")!.handler("scout", ctx);
+		await commands.get("run")!.handler("explorer", ctx);
 		await new Promise<void>((resolve) => setImmediate(resolve));
 
-		assert.deepEqual(requestedParams, { agent: "scout", task: "", clarify: false, agentScope: "both" });
+		assert.deepEqual(requestedParams, { agent: "explorer", task: "", clarify: false, agentScope: "both" });
 		assert.equal(requestedCtx, ctx);
 		assert.equal(sent.length, 2);
 		assert.equal((sent[0] as { display?: boolean }).display, true);
@@ -565,7 +565,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		};
 
 		registerSlashCommands!(pi, createState(process.cwd()));
-		await commands.get("run")!.handler("scout inspect this", createCommandContext({
+		await commands.get("run")!.handler("explorer inspect this", createCommandContext({
 			hasUI: true,
 			setStatus: (_key, text) => {
 				log.push(`status:${text ?? "clear"}`);
@@ -615,7 +615,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		};
 
 		registerSlashCommands!(pi, createState(process.cwd()));
-		await commands.get("run")!.handler("scout inspect this", createCommandContext({
+		await commands.get("run")!.handler("explorer inspect this", createCommandContext({
 			hasUI: true,
 			setToolsExpanded: (expanded) => log.push(`expanded:${String(expanded)}`),
 		}));
@@ -655,7 +655,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		};
 
 		registerSlashCommands!(pi, createState(process.cwd()));
-		await commands.get("run")!.handler("scout inspect this", createCommandContext({
+		await commands.get("run")!.handler("explorer inspect this", createCommandContext({
 			hasUI: true,
 			setStatus: (_key, text) => {
 				log.push(`status:${text ?? "clear"}`);
@@ -706,10 +706,10 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		};
 
 		registerSlashCommands!(pi, createState(process.cwd()));
-		await commands.get("parallel")!.handler("scout[output=x.md,outputMode=file-only,reads=a.md+b.md,progress] -- Review", createCommandContext());
+		await commands.get("parallel")!.handler("explorer[output=x.md,outputMode=file-only,reads=a.md+b.md,progress] -- Review", createCommandContext());
 
 		assert.deepEqual(requestedParams, {
-			tasks: [{ agent: "scout", task: "Review", output: "x.md", outputMode: "file-only", reads: ["a.md", "b.md"], progress: true }],
+			tasks: [{ agent: "explorer", task: "Review", output: "x.md", outputMode: "file-only", reads: ["a.md", "b.md"], progress: true }],
 			clarify: false,
 			agentScope: "both",
 		});
@@ -746,7 +746,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		};
 
 		registerSlashCommands!(pi, createState(process.cwd()));
-		const args = Array.from({ length: 9 }, (_, index) => `scout \"task ${index + 1}\"`).join(" -> ");
+		const args = Array.from({ length: 9 }, (_, index) => `explorer \"task ${index + 1}\"`).join(" -> ");
 		await commands.get("parallel")!.handler(args, createCommandContext());
 		await new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -1271,8 +1271,8 @@ describe("subagents-models slash command", { skip: !available ? "slash-commands.
 	});
 
 	it("passes an optional builtin filter", async () => {
-		const { params } = await captureSlashCommandParams("subagents-models", "scout", process.cwd());
-		assert.deepEqual(params, { action: "models", agent: "scout" });
+		const { params } = await captureSlashCommandParams("subagents-models", "explorer", process.cwd());
+		assert.deepEqual(params, { action: "models", agent: "explorer" });
 	});
 
 	it("rejects invalid builtin filters without launching", async () => {
@@ -1294,8 +1294,8 @@ describe("subagents-models slash command", { skip: !available ? "slash-commands.
 			};
 
 			registerSlashCommands!(pi, createState(process.cwd()));
-			const completions = commands.get("subagents-models")!.getArgumentCompletions!("sc") as Array<{ value: string; label: string }>;
-			assert.deepEqual(completions.map((completion) => completion.value), ["scout"]);
+			const completions = commands.get("subagents-models")!.getArgumentCompletions!("ex") as Array<{ value: string; label: string }>;
+			assert.deepEqual(completions.map((completion) => completion.value), ["explorer"]);
 		});
 	});
 });
@@ -1421,7 +1421,7 @@ describe("subagent profiles slash commands", { skip: !available ? "slash-command
 			const profilesDir = path.join(process.env.HOME!, ".selesai", "agent", "profiles", "pi-subagents");
 			fs.mkdirSync(profilesDir, { recursive: true });
 			fs.writeFileSync(path.join(profilesDir, "openai-codex.quota.json"), JSON.stringify({
-				subagents: { agentOverrides: { worker: { model: "gpt-5.4:high" } } },
+				subagents: { agentOverrides: { builder: { model: "gpt-5.4:high" } } },
 			}, null, 2));
 			const sent: unknown[] = [];
 			const commands = new Map<string, RegisteredSlashCommand>();
@@ -1593,7 +1593,7 @@ describe("subagents admin slash command", { skip: !available ? "slash-commands.t
 					notify: (message) => notifications.push(message),
 				}));
 
-				await commands.get("subagents")!.handler("worker model", createCommandContext({
+				await commands.get("subagents")!.handler("builder model", createCommandContext({
 					cwd: root,
 					hasUI: true,
 					modelRegistry: { getAvailable: () => [{ provider: "test", id: "new-model", reasoning: true }] },
@@ -1611,13 +1611,13 @@ describe("subagents admin slash command", { skip: !available ? "slash-commands.t
 	it("reports duplicate names as ambiguous without UI", async () => {
 		await withIsolatedHome(async () => {
 			await withTempProject("pi-subagents-admin-ambiguous-", async (root) => {
-				fs.writeFileSync(path.join(root, ".selesai", "agents", "worker.md"), "---\nname: worker\ndescription: Project worker\n---\n\nWork.\n", "utf-8");
+				fs.writeFileSync(path.join(root, ".selesai", "agents", "builder.md"), "---\nname: builder\ndescription: Project builder\n---\n\nWork.\n", "utf-8");
 				const sent: unknown[] = [];
 				const commands = registerAdmin(sent);
-				await commands.get("subagents")!.handler("worker", createCommandContext({ cwd: root }));
+				await commands.get("subagents")!.handler("builder", createCommandContext({ cwd: root }));
 				assert.equal(sent.length, 1);
 				const content = (sent[0] as { content?: string }).content ?? "";
-				assert.match(content, /Subagent 'worker' is ambiguous/);
+				assert.match(content, /Subagent 'builder' is ambiguous/);
 				assert.match(content, /project:/);
 				assert.match(content, /builtin:/);
 			});
@@ -1729,7 +1729,7 @@ describe("subagents admin slash command", { skip: !available ? "slash-commands.t
 				fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
 				fs.writeFileSync(settingsPath, JSON.stringify({ subagents: { disableThinking: true } }, null, 2), "utf-8");
 				const commands = registerAdmin([]);
-				await commands.get("subagents")!.handler("worker model", createCommandContext({
+				await commands.get("subagents")!.handler("builder model", createCommandContext({
 					cwd: root,
 					hasUI: true,
 					modelRegistry: { getAvailable: () => [{ provider: "test", id: "new-model", reasoning: true }] },
@@ -1738,7 +1738,7 @@ describe("subagents admin slash command", { skip: !available ? "slash-commands.t
 
 				assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, "utf-8")).subagents, {
 					disableThinking: true,
-					agentOverrides: { worker: { model: "test/new-model" } },
+					agentOverrides: { builder: { model: "test/new-model" } },
 				});
 			});
 		});
@@ -2063,12 +2063,72 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 
 		assert.equal(opened, 2);
 		assert.match(rendered, /Subagent fleet/);
-		assert.match(rendered, /inspection only/);
+		assert.match(rendered, /live controls/);
 	});
 
 	it("routes subagents-stop with an id directly to the stop action", async () => {
 		const { params } = await captureSlashCommandParams("subagents-stop", "run-123", process.cwd());
 		assert.deepEqual(params, { action: "stop", id: "run-123" });
+	});
+
+	it("detaches the latest active foreground single run without terminating it", async () => {
+		const commands = new Map<string, RegisteredSlashCommand>();
+		const sent: unknown[] = [];
+		const state = createState(process.cwd());
+		let detached = 0;
+		state.foregroundControls.set("foreground-single", {
+			runId: "foreground-single",
+			mode: "single",
+			startedAt: 1,
+			updatedAt: 2,
+			detach: () => { detached++; return true; },
+		});
+		state.foregroundControls.set("newer-parallel", {
+			runId: "newer-parallel",
+			mode: "parallel",
+			startedAt: 2,
+			updatedAt: 3,
+		});
+		state.lastForegroundControlId = "newer-parallel";
+		registerSlashCommands!({
+			events: createEventBus(),
+			registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		}, state);
+
+		await commands.get("subagents-detach")!.handler("", createCommandContext());
+
+		assert.equal(detached, 1);
+		const content = String((sent[0] as { content?: unknown }).content ?? "");
+		assert.match(content, /Detached foreground run foreground-single without terminating its child/);
+		assert.match(content, /does not daemonize the process or guarantee survival across Pi reload\/restart/);
+	});
+
+	it("reports missing and unsupported foreground detach targets", async () => {
+		const commands = new Map<string, RegisteredSlashCommand>();
+		const notifications: string[] = [];
+		const state = createState(process.cwd());
+		state.foregroundControls.set("parallel-run", {
+			runId: "parallel-run",
+			mode: "parallel",
+			startedAt: 1,
+			updatedAt: 1,
+			detach: () => true,
+		});
+		registerSlashCommands!({
+			events: createEventBus(),
+			registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+			registerShortcut() {},
+			sendMessage() {},
+		}, state);
+		const ctx = createCommandContext({ notify: (message) => notifications.push(message) });
+
+		await commands.get("subagents-detach")!.handler("missing", ctx);
+		await commands.get("subagents-detach")!.handler("parallel", ctx);
+
+		assert.match(notifications[0] ?? "", /No active foreground run found for 'missing'/);
+		assert.match(notifications[1] ?? "", /currently supports single-subagent runs only/);
 	});
 
 	it("prints exact stop commands when subagents-stop has no UI", async () => {
@@ -2162,6 +2222,17 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 					cwd: root,
 					sessionId: "session-test",
 					jobs: [{
+						id: "job-1",
+						name: "early scout",
+						schedule: "+5m",
+						runAt: Date.now() + 300_000,
+						state: "scheduled",
+						createdAt: Date.now(),
+						updatedAt: Date.now(),
+						cwd: root,
+						sessionId: "session-test",
+						params: { agent: "scout", task: "soon", async: true },
+					}, {
 						id: "job-2",
 						name: "delayed worker",
 						schedule: "+10m",
@@ -2200,9 +2271,27 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 				await commands.get("subagents-stop")!.handler("", createCommandContext({
 					cwd: root,
 					hasUI: true,
-					custom: async () => ({
-						confirmed: true,
-						target: { kind: "scheduled", id: "job-2", label: "job-2", detail: "scheduled", actionLabel: "cancel scheduled run" },
+					custom: async (...args: unknown[]) => new Promise((resolve) => {
+						const factory = args[0] as (
+							tui: { requestRender(): void },
+							theme: { fg(key: string, text: string): string; bold(text: string): string },
+							keybindings: unknown,
+							done: (result: unknown) => void,
+						) => { handleInput(data: string): void; render(width: number): string[] };
+						const component = factory(
+							{ requestRender() {} },
+							{ fg(_key, text) { return text; }, bold(text) { return text; } },
+							{},
+							resolve,
+						);
+						assert.match(component.render(84).join("\n"), /↑↓\/jk select/);
+						component.handleInput("j");
+						assert.ok(component.render(84).some((line) => line.startsWith("›") && line.includes("job-2")));
+						component.handleInput("k");
+						assert.ok(component.render(84).some((line) => line.startsWith("›") && line.includes("job-1")));
+						component.handleInput("j");
+						component.handleInput("\r");
+						component.handleInput("y");
 					}),
 				}));
 

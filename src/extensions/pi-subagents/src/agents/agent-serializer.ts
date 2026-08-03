@@ -5,6 +5,8 @@ export const KNOWN_FIELDS = new Set([
 	"name",
 	"package",
 	"description",
+	"alias",
+	"aliases",
 	"tools",
 	"model",
 	"fallbackModels",
@@ -50,6 +52,8 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	lines.push(`name: ${frontmatterNameForConfig(config)}`);
 	if (config.packageName) lines.push(`package: ${config.packageName}`);
 	lines.push(`description: ${config.description}`);
+	const aliasesValue = joinComma(config.aliases);
+	if (aliasesValue || preserve("alias", "aliases")) lines.push(`aliases: ${aliasesValue ?? ""}`);
 
 	const tools = [
 		...(config.tools ?? []),

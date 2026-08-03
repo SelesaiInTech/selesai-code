@@ -30,6 +30,14 @@ export interface ParentModel {
 	id: string;
 }
 
+export function normalizeParentModel(model: unknown): ParentModel | undefined {
+	if (!model || typeof model !== "object") return undefined;
+	const candidate = model as { provider?: unknown; id?: unknown };
+	if (typeof candidate.provider !== "string" || typeof candidate.id !== "string") return undefined;
+	if (!candidate.provider || !candidate.id) return undefined;
+	return { provider: candidate.provider, id: candidate.id };
+}
+
 /**
  * Normalize a model id or provider segment for fuzzy comparison: case-fold,
  * treat dots/underscores as dashes (so `4.5` matches `4-5`), and collapse

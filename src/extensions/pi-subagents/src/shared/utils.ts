@@ -77,8 +77,19 @@ export function resolveConfigDirName(codingAgentModule?: unknown, entryPoint?: s
 		?? DEFAULT_CONFIG_DIR_NAME;
 }
 
+let cachedConfigDirName: { entryPoint: string | undefined; packageRoot: string | undefined; value: string } | undefined;
+
 export function getConfigDirName(): string {
-	return resolveConfigDirName();
+	const entryPoint = process.argv[1];
+	const packageRoot = process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV];
+	if (cachedConfigDirName
+		&& cachedConfigDirName.entryPoint === entryPoint
+		&& cachedConfigDirName.packageRoot === packageRoot) {
+		return cachedConfigDirName.value;
+	}
+	const value = resolveConfigDirName(undefined, entryPoint, packageRoot);
+	cachedConfigDirName = { entryPoint, packageRoot, value };
+	return value;
 }
 
 export function getProjectConfigDir(projectRoot: string): string {
@@ -416,6 +427,49 @@ export function compactForegroundDetails(details: Details): Details {
 	};
 }
 
+/**
+ * Streaming counterparts to compactForegroundResult / compactCompletedProgress.
+ *
+ * The completed-compaction helpers above bail out while a child is still
+ * `running`, so a long or deeply nested fan-out streams full, unbounded progress on
+ * every tick. Pi serializes each streamed `tool_execution_update` as a single
+ * child-stdout line, which the parent reads under `MAX_CHILD_PENDING_LINE_BYTES`;
+ * an unbounded running snapshot can cross that cap and kill the child with
+ * `protocol_output_limit`.
+ *
+ * These bound the STREAMED snapshot only. The final returned result keeps the full
+ * live progress and message transcript, and every live-display consumer already
+ * reads just the last few entries (`recentTools.slice(-3)`, `recentOutput.slice(-5)`).
+ */
+export const MAX_STREAMED_RECENT_TOOLS = 32;
+export const MAX_STREAMED_TOOL_CALLS = 64;
+export const MAX_STREAMED_OUTPUT_LINE_CHARS = 2000;
+
+/** Keep only the most recent tool-history entries in a streamed snapshot. */
+export function boundStreamedRecentTools(recentTools: AgentProgress["recentTools"]): AgentProgress["recentTools"] {
+	return recentTools.slice(-MAX_STREAMED_RECENT_TOOLS).map((tool) => ({ ...tool }));
+}
+
+/** Cap per-line length of recent output so one long line can't inflate a snapshot. */
+export function boundStreamedRecentOutput(recentOutput: string[]): string[] {
+	return recentOutput.map((line) =>
+		line.length > MAX_STREAMED_OUTPUT_LINE_CHARS
+			? `${line.slice(0, MAX_STREAMED_OUTPUT_LINE_CHARS)}… [truncated]`
+			: line,
+	);
+}
+
+/**
+ * Compact tool-call summaries for a streamed snapshot, standing in for the
+ * unbounded `messages` transcript. Prefers an existing `toolCalls` summary, else
+ * derives one from `messages`; bounded to the most recent calls.
+ */
+export function boundStreamedToolCalls(result: Pick<SingleResult, "toolCalls" | "messages">): ToolCallSummary[] | undefined {
+	const summaries = result.toolCalls?.length ? result.toolCalls : extractToolCallSummaries(result.messages);
+	if (!summaries.length) return undefined;
+	return summaries.slice(-MAX_STREAMED_TOOL_CALLS).map((summary) => ({ ...summary }));
+}
+
 export function hasEmptyTerminalAssistantResponse(messages: Message[]): boolean {
 	const lastAssistant = messages.findLast((message) => message.role === "assistant");
 	return lastAssistant?.role === "assistant"
@@ -428,7 +482,7 @@ export function hasEmptyTerminalAssistantResponse(messages: Message[]): boolean 
  * Detect errors in subagent execution from messages (only errors with no subsequent success)
  */
 export function detectSubagentError(messages: Message[]): ErrorInfo {
-	let lastAssistantTextIndex = -1;
+	let recoveryIndex = -1;
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg.role === "assistant") {
@@ -436,13 +490,28 @@ export function detectSubagentError(messages: Message[]): ErrorInfo {
 				(c) => c.type === "text" && "text" in c && typeof c.text === "string" && c.text.trim().length > 0,
 			);
 			if (hasText) {
-				lastAssistantTextIndex = i;
+				recoveryIndex = i;
 				break;
 			}
 		}
 	}
 
-	const scanStart = lastAssistantTextIndex >= 0 ? lastAssistantTextIndex + 1 : 0;
+	const terminalAssistantIndex = messages.findLastIndex((message) => message.role === "assistant");
+	const terminalAssistant = messages[terminalAssistantIndex];
+	const cleanTerminalStop = terminalAssistant?.role === "assistant"
+		&& terminalAssistant.stopReason === "stop"
+		&& !terminalAssistant.errorMessage
+		&& !terminalAssistant.content.some((part) => part.type === "toolCall");
+	if (cleanTerminalStop) {
+		for (let i = terminalAssistantIndex - 1; i >= 0; i--) {
+			const msg = messages[i];
+			if (msg.role !== "toolResult") continue;
+			if (msg.isError !== true) recoveryIndex = Math.max(recoveryIndex, i);
+			break;
+		}
+	}
+
+	const scanStart = recoveryIndex >= 0 ? recoveryIndex + 1 : 0;
 
 	for (let i = messages.length - 1; i >= scanStart; i--) {
 		const msg = messages[i];

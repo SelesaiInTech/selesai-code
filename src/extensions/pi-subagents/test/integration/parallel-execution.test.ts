@@ -227,6 +227,40 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(state.foregroundControls.size, 0);
 	});
 
+	it("exposes stable child indexes for counted top-level parallel results", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [{ type: "tool_execution_start", toolName: "read", args: { path: "a.md" } }], delay: 10 },
+				{ jsonl: [{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Counted A done" }], model: "mock/test-model", stopReason: "stop", usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } } } }] },
+			],
+		});
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [{ type: "tool_execution_start", toolName: "read", args: { path: "b.md" } }], delay: 10 },
+				{ jsonl: [{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Counted B done" }], model: "mock/test-model", stopReason: "stop", usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } } } }] },
+			],
+		});
+		const executor = makeExecutor();
+		const updateIndexes: number[] = [];
+
+		const result = await executor.execute(
+			"counted-parallel-indexes",
+			{ tasks: [{ agent: "echo", task: "Counted inspection", count: 2 }] },
+			new AbortController().signal,
+			(update) => {
+				for (const row of update.details?.results ?? []) updateIndexes.push(row.index);
+			},
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.deepEqual(result.details?.results.map((row: { index: number }) => row.index), [0, 1]);
+		assert.deepEqual([...new Set(result.details?.results.map((row: { index: number }) => row.index))], [0, 1]);
+		assert.ok(updateIndexes.includes(0));
+		assert.ok(updateIndexes.includes(1));
+		assert.ok(updateIndexes.every((index) => Number.isInteger(index)));
+	});
+
 	it("publishes a durable handoff before cleaning foreground parallel worktrees", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
 		git(["init"]);
 		git(["config", "user.email", "test@example.com"]);

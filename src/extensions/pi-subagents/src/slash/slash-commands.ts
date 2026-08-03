@@ -304,6 +304,21 @@ function stopFallbackText(targets: StopSelectorTarget[]): string {
 	return lines.join("\n");
 }
 
+function selectForegroundDetachControl(state: SubagentState, requested: string) {
+	const controls = [...state.foregroundControls.values()];
+	if (requested) {
+		const matches = controls.filter((control) => control.runId === requested || control.runId.startsWith(requested));
+		if (matches.length > 1) throw new Error(`Ambiguous foreground run id prefix '${requested}' matched: ${matches.map((control) => control.runId).join(", ")}. Provide a longer id.`);
+		return matches[0];
+	}
+	const singleControls = controls.filter((control) => control.mode === "single");
+	if (state.lastForegroundControlId) {
+		const latest = state.foregroundControls.get(state.lastForegroundControlId);
+		if (latest?.mode === "single") return latest;
+	}
+	return singleControls.sort((left, right) => right.updatedAt - left.updatedAt)[0];
+}
+
 class SubagentsStopSelector implements Component {
 	readonly width = 84;
 	private selected = 0;
@@ -336,12 +351,12 @@ class SubagentsStopSelector implements Component {
 			}
 			return;
 		}
-		if (matchesKey(data, "up")) {
+		if (matchesKey(data, "up") || matchesKey(data, "k")) {
 			this.selected = Math.max(0, this.selected - 1);
 			this.tui.requestRender();
 			return;
 		}
-		if (matchesKey(data, "down")) {
+		if (matchesKey(data, "down") || matchesKey(data, "j")) {
 			this.selected = Math.min(this.targets.length - 1, this.selected + 1);
 			this.tui.requestRender();
 			return;
@@ -375,7 +390,7 @@ class SubagentsStopSelector implements Component {
 			if (target.kind === "async") lines.push(this.theme.fg("dim", "Stop ends this run; use interrupt for a resumable pause."));
 			lines.push(this.theme.fg("dim", "Enter/Y confirms · N returns · Esc cancels"));
 		} else {
-			lines.push(this.theme.fg("dim", "↑/↓ select · Enter confirm · Esc cancel"));
+			lines.push(this.theme.fg("dim", "↑↓/jk select · Enter confirm · Esc cancel"));
 		}
 		return lines;
 	}
@@ -1283,13 +1298,40 @@ export function registerSlashCommands(
 	});
 
 	pi.registerCommand("subagents-fleet", {
-		description: "Open the live, inspection-only subagent fleet",
+		description: "Open the live subagent fleet inspector",
 		handler: async (_args, ctx) => showFleet(ctx),
 	});
 
 	pi.registerShortcut(Key.ctrlAlt("f"), {
 		description: "Open subagent fleet inspector",
 		handler: async (ctx) => showFleet(ctx),
+	});
+
+	pi.registerCommand("subagents-detach", {
+		description: "Detach the active foreground single-subagent run without terminating it",
+		handler: async (args, ctx) => {
+			const id = args.trim();
+			let control: ReturnType<typeof selectForegroundDetachControl>;
+			try {
+				control = selectForegroundDetachControl(state, id);
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+				return;
+			}
+			if (!control) {
+				ctx.ui.notify(id ? `No active foreground run found for '${id}'.` : "No active foreground single-subagent run to detach.", "info");
+				return;
+			}
+			if (control.mode !== "single") {
+				ctx.ui.notify("/subagents-detach currently supports single-subagent runs only.", "error");
+				return;
+			}
+			if (!control.detach?.()) {
+				ctx.ui.notify(`Foreground run ${control.runId} is not currently detachable.`, "info");
+				return;
+			}
+			sendSlashText(pi, `Detached foreground run ${control.runId} without terminating its child. Use subagent({ action: "status", id: ${JSON.stringify(control.runId)} }) or subagent_wait({ id: ${JSON.stringify(control.runId)} }) to recover the eventual result. This does not daemonize the process or guarantee survival across Pi reload/restart.`);
+		},
 	});
 
 	pi.registerCommand("subagents-stop", {

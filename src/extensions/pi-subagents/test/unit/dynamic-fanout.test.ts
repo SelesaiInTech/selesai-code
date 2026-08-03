@@ -200,6 +200,7 @@ describe("dynamic fanout helpers", () => {
 		const result = (agent: string, structuredOutput: unknown): SingleResult => ({
 			agent,
 			task: "t",
+			index: 0,
 			exitCode: 0,
 			messages: [],
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },

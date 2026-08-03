@@ -65,6 +65,29 @@ describe("config directory resolution", () => {
 		}
 	});
 
+	it("invalidates cached runtime resolution when the package root changes", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-config-cache-"));
+		try {
+			const firstRoot = path.join(tempDir, "first");
+			const secondRoot = path.join(tempDir, "second");
+			for (const [root, configDir] of [[firstRoot, ".first-pi"], [secondRoot, ".second-pi"]] as const) {
+				fs.mkdirSync(root, { recursive: true });
+				fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+					name: "@selesai/code",
+					piConfig: { configDir },
+				}), "utf-8");
+			}
+
+			process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV] = firstRoot;
+			assert.equal(getConfigDirName(), ".first-pi");
+			assert.equal(getConfigDirName(), ".first-pi");
+			process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV] = secondRoot;
+			assert.equal(getConfigDirName(), ".second-pi");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("canonicalizes watcher paths and preserves the original path when native realpath fails", () => {
 		assert.equal(resolveWatchPath("C:\\SHORT~1\\watch", () => "C:\\Long Path\\watch"), "C:\\Long Path\\watch");
 		assert.equal(resolveWatchPath("C:\\SHORT~1\\watch", () => { throw new Error("missing"); }), "C:\\SHORT~1\\watch");

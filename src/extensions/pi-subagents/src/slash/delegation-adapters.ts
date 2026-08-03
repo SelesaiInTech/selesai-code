@@ -69,6 +69,7 @@ interface PromptTemplateDelegationTaskProgress {
 
 export interface PromptTemplateDelegationUpdate {
 	requestId: string;
+	runId?: string;
 	currentTool?: string;
 	currentToolArgs?: string;
 	recentOutput?: string;
@@ -323,6 +324,7 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 			: undefined;
 	return {
 		requestId,
+		...(update.details?.runId ? { runId: update.details.runId } : {}),
 		currentTool: progress?.currentTool,
 		currentToolArgs: progress?.currentToolArgs,
 		recentOutput: safeLastOutput,
@@ -414,6 +416,7 @@ export function toSubagentDelegationUpdate(requestId: string, result: PromptTemp
 	return {
 		version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
 		requestId,
+		...(legacy.runId ? { runId: legacy.runId } : {}),
 		...(legacy.currentTool ? { currentTool: legacy.currentTool } : {}),
 		...(legacy.currentToolArgs ? { currentToolArgs: legacy.currentToolArgs } : {}),
 		...(legacy.recentOutput ? { recentOutput: legacy.recentOutput } : {}),
@@ -437,6 +440,7 @@ export function toSubagentDelegationV2Update(
 		requestId: request.requestId,
 		ownerRunId: request.ownerRunId,
 		nodeId: request.nodeId,
+		...(legacy.runId ? { runId: legacy.runId } : {}),
 		...(legacy.currentTool ? { currentTool: legacy.currentTool } : {}),
 		...(legacy.currentToolArgs ? { currentToolArgs: legacy.currentToolArgs } : {}),
 		...(legacy.recentOutput ? { recentOutput: legacy.recentOutput } : {}),
@@ -553,6 +557,7 @@ export function toSubagentDelegationV2Response(
 		...(child?.model ? { model: child.model } : {}),
 		...(child?.thinking ? { thinking: child.thinking } : {}),
 		...(typeof child?.exitCode === "number" ? { exitCode: child.exitCode } : {}),
+		...(child?.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
 		...(projectedResult ? { result: projectedResult } : {}),
 		...(usage ? {
 			usage: {

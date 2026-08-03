@@ -38,6 +38,9 @@ describe("classifyTaskMutationIntent", () => {
 		assert.equal(classifyTaskMutationIntent("builder", "Do not edit files. Tell me how to fix the bug.").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("builder", "Report on the extraction pipeline. Do not modify project/source files.").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("commentator", "Final correctness review after prior fixes. Inspect all changed files and tests. Do not modify project/source files. Report findings.").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("builder", `Verification-only task. Do not edit product/source/config files.
+   Run a disposable check, delete its temporary harness, and retain only
+   a sanitized report at an explicitly named artifact path.`).kind, "read-only");
 	});
 
 	it("strips repeated prohibition phrases before testing write intent", () => {

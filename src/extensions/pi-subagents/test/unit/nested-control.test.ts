@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import registerFanoutChildSubagentExtension from "../../src/extension/fanout-child.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
-import { createNestedRoute, projectNestedEvents, readNestedControlRequests, readNestedControlResults, writeNestedControlRequest, writeNestedControlResult, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
+import { createNestedRoute, findNestedControlResult, projectNestedEvents, readNestedControlRequests, readNestedControlResults, snapshotNestedEventFiles, writeNestedControlRequest, writeNestedControlResult, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import {
 	SUBAGENT_CHILD_ENV,
 	SUBAGENT_FANOUT_CHILD_ENV,
@@ -129,6 +129,25 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
 }
 
 describe("nested control routing", () => {
+	it("finds a control result without considering files present before its request", () => {
+		const route = createNestedRoute("root-targeted-result");
+		routeRoots.push(path.dirname(route.eventSink));
+		const requestedAt = Date.now();
+		writeNestedControlResult(route, { ts: requestedAt, requestId: "older", targetRunId: "child", ok: true, message: "older result" });
+		writeNestedEvent(route, {
+			type: "subagent.nested.updated",
+			ts: requestedAt + 1,
+			parentRunId: route.rootRunId,
+			child: { id: "child", parentRunId: route.rootRunId, depth: 1, path: [], state: "running" },
+		});
+		const ignoredFiles = snapshotNestedEventFiles(route);
+		writeNestedControlResult(route, { ts: requestedAt - 1, requestId: "target", targetRunId: "child", ok: true, message: "target result" });
+
+		assert.equal(findNestedControlResult(route, "target", "child", ignoredFiles)?.message, "target result");
+		assert.equal(findNestedControlResult(route, "older", "child", ignoredFiles), undefined);
+		assert.equal(readNestedControlResults(route).length, 2);
+	});
+
 	it("routes interrupt to an explicit nested id through the control inbox", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-control-"));
 		try {
