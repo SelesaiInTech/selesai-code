@@ -52,15 +52,13 @@ test("wizard submits typed selections and text without review comments", async (
 			{ id: "note", type: "text", question: "Explain" },
 		],
 	});
-	component().handleInput(ENTER);
-	component().handleInput(TAB);
+	component().handleInput(ENTER); // choice commits and advances
 	component().handleInput(" ");
 	component().handleInput(DOWN);
 	component().handleInput(" ");
-	component().handleInput(TAB);
+	component().handleInput(ENTER); // multi-select commits and advances
 	type(component(), "details");
-	component().handleInput(ESC);
-	component().handleInput(TAB);
+	component().handleInput(ENTER); // text commits and advances to review
 	assert.doesNotMatch(component().render(120).join("\n"), /Optional comment/);
 	component().handleInput(ENTER);
 
@@ -85,12 +83,17 @@ test("wizard preserves skipped, Other, and cancelled outcomes", async () => {
 	other.component().handleInput(DOWN);
 	other.component().handleInput(ENTER);
 	type(other.component(), "custom");
-	other.component().handleInput(ESC);
-	other.component().handleInput(TAB);
-	other.component().handleInput(ENTER);
+	other.component().handleInput(ENTER); // one answered question submits immediately
 	assert.deepEqual((await other.execution).details, {
 		status: "submitted",
 		answers: [{ id: "q1", status: "answered", response: { kind: "selection", values: [], otherText: "custom" } }],
+	});
+
+	const selected = await runWizard({ questions: [{ type: "select", question: "Select", options: [{ value: "x", label: "X" }] }] });
+	selected.component().handleInput(ENTER);
+	assert.deepEqual((await selected.execution).details, {
+		status: "submitted",
+		answers: [{ id: "q1", status: "answered", response: { kind: "selection", values: ["x"] } }],
 	});
 
 	const cancelled = await runWizard({ questions: [{ type: "select", question: "Cancel", options: [{ value: "x", label: "X" }] }] });

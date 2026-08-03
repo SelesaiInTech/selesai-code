@@ -92,6 +92,7 @@ class QuestionComponent extends Container implements Component {
 		private theme: Theme,
 		private keybindings: KeybindingsManager,
 		private onCancel: () => void,
+		private onCommit: () => void,
 		initialResponse?: QuestionResponse,
 	) {
 		super();
@@ -177,6 +178,7 @@ class QuestionComponent extends Container implements Component {
 			if (!multi) this.otherDraft = "";
 			this.updateAnswerText();
 			this.tui.requestRender();
+			if (this.getResponse()) this.onCommit();
 		};
 		list.onEnterFreeform = () => this.showOther();
 		list.onCancel = this.onCancel;
@@ -195,6 +197,7 @@ class QuestionComponent extends Container implements Component {
 			editor.setText(text.trim());
 			this.updateAnswerText();
 			this.tui.requestRender();
+			if (this.getResponse()) this.onCommit();
 		};
 		this.editor = editor;
 		return editor;
@@ -430,7 +433,7 @@ class BatchQuestionComponent extends Container implements Component {
 		} else {
 			const question = this.questions[this.currentPage]!;
 			const state = this.states.get(question.id);
-			this.questionComponent = new QuestionComponent(question, this.tui, this.theme, this.keybindings, this.cancel, state?.response);
+			this.questionComponent = new QuestionComponent(question, this.tui, this.theme, this.keybindings, this.cancel, this.commitCurrent, state?.response);
 			this.questionComponent.focused = this.focusedState;
 			this.content.addChild(this.questionComponent);
 		}
@@ -451,6 +454,16 @@ class BatchQuestionComponent extends Container implements Component {
 		if (this.currentPage < this.questions.length) this.currentPage++;
 		this.showPage();
 	}
+
+	private commitCurrent = (): void => {
+		this.saveCurrent(true);
+		if (this.questions.length === 1) {
+			this.onDone({ status: "submitted", answers: buildQuestionAnswers(this.questions, this.states) });
+			return;
+		}
+		if (this.currentPage < this.questions.length) this.currentPage++;
+		this.showPage();
+	};
 
 	private goPrevious(): void {
 		this.saveCurrent(false);
