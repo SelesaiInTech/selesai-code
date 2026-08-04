@@ -62,7 +62,7 @@ import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
 import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
-import { captureSingleOutputSnapshot, extractChildWrittenOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { captureSingleOutputSnapshot, extractChildWrittenOutput, formatBoundedPersistenceFallback, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	buildModelCandidates,
 	formatModelAttemptNote,
@@ -1282,7 +1282,12 @@ async function runSingleAttempt(
 			reason: "completion_guard",
 		}));
 	}
-		if (options.outputPath && result.exitCode === 0) {
+		// Persist whenever an output path is configured and meaningful child output
+	// exists, not only for successful runs: failed children with output keep a
+	// readable result file and a saved-output reference instead of raw inline
+	// output. Synthetic failures without output (startup errors, empty responses)
+	// stay outputState "absent" and are not promoted to a bogus saved reference.
+	if (options.outputPath && (fullOutput.trim() || result.exitCode === 0)) {
 			const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot);
 			fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
 			result.savedOutputPath = resolvedOutput.savedPath;
@@ -1295,9 +1300,18 @@ async function runSingleAttempt(
 		artifactOutputByResult.set(result, fullOutput);
 		acceptanceOutputByResult.set(result, acceptanceOutput);
 	result.outputMode = options.outputMode ?? "inline";
-	result.finalOutput = options.outputMode === "file-only" && result.savedOutputPath && result.outputReference
-		? result.outputReference.message
-		: fullOutput;
+	const hasSavedReference = result.savedOutputPath && result.outputReference ? true : false;
+	result.finalOutput = hasSavedReference && (options.outputMode === "file-only" || result.exitCode !== 0)
+		? result.outputReference!.message
+		: result.outputSaveError && options.outputPath
+			? formatBoundedPersistenceFallback({
+				error: result.outputSaveError,
+				outputPath: options.outputPath,
+				fullOutput,
+				exitCode: result.exitCode,
+				processError: result.error,
+			})
+			: fullOutput;
 	result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
 	if (options.onUpdate) {
 		const finalText = result.finalOutput || result.error || "(no output)";

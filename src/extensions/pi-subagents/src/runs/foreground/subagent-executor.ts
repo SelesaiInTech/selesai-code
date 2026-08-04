@@ -25,7 +25,6 @@ import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { buildModelCandidates, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelCandidate, type ParentModel } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
-import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
 import { recordRun } from "../shared/run-history.ts";
 import {
 	buildChainInstructions,
@@ -57,7 +56,7 @@ import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
-import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { finalizeSingleOutput, formatBoundedPersistenceFallback, formatSavedOutputReference, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
@@ -521,7 +520,12 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		updatedAt,
 		...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
 		...(input.result.error ? { error: input.result.error } : {}),
-		...(input.result.finalOutput ? { finalOutput: input.result.finalOutput } : {}),
+		// Reference-first remembered state: when an authoritative saved output path
+		// exists, do not retain the full final output in memory; status/transcript
+		// views recover it from `savedOutputPath` via `rememberedForegroundChildOutput`
+		// (runs/background/run-status.ts) and the TUI via `resultOutputForUi`
+		// (tui/render.ts).
+		...(input.result.finalOutput && !input.result.savedOutputPath ? { finalOutput: input.result.finalOutput } : {}),
 		outputState: input.result.outputState,
 		outputMode: input.result.outputMode,
 		savedOutputPath: input.result.savedOutputPath,
@@ -541,10 +545,11 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...(input.result.capabilityAudit ? { capabilityAudit: input.result.capabilityAudit } : {}),
 	};
 	trimRememberedForegroundRuns(state);
-	const output = getSingleResultOutput(input.result).trim();
+	const reference = input.result.outputReference?.message;
+	const output = reference ?? getSingleResultOutput(input.result).trim();
 	const success = terminalStatus === "completed";
 	const summary = !success && input.result.error
-		? `${input.result.error}${output ? `\n\nOutput:\n${output}` : ""}`
+		? `${input.result.error}${output ? `\n\n${output}` : ""}`
 		: output || input.result.error || "Detached child exited without final output.";
 	// A detached callback may outlive its extension runtime. Stale sessions are
 	// intentionally dropped rather than routed through a replacement runtime.
@@ -1435,14 +1440,82 @@ async function resumeAsyncRun(input: {
 }
 
 function resultSummaryForIntercom(result: SingleResult): string {
-	const output = getSingleResultOutput(result);
-	if (result.exitCode !== 0 && result.error) {
-		return output ? `${result.error}\n\nOutput:\n${output}` : result.error;
+	const reference = result.outputReference?.message;
+	if (reference) {
+		return result.exitCode !== 0 && result.error ? `${result.error}\n\n${reference}` : reference;
 	}
-	return output || result.error || "(no output)";
+	if (result.savedOutputPath) {
+		try {
+			const ref = formatSavedOutputReference(result.savedOutputPath, fs.readFileSync(result.savedOutputPath, "utf-8"));
+			return result.exitCode !== 0 && result.error ? `${result.error}\n\n${ref.message}` : ref.message;
+		} catch (error) {
+			const fallback = formatBoundedPersistenceFallback({
+				error: `Failed to read saved output: ${error instanceof Error ? error.message : String(error)}`,
+				outputPath: result.savedOutputPath,
+				fullOutput: getSingleResultOutput(result),
+				exitCode: result.exitCode,
+				processError: result.error,
+			});
+			return result.exitCode !== 0 && result.error ? `${result.error}\n\n${fallback}` : fallback;
+		}
+	}
+	if (result.outputSaveError) {
+		return formatBoundedPersistenceFallback({
+			error: result.outputSaveError,
+			outputPath: result.savedOutputPath,
+			fullOutput: getSingleResultOutput(result),
+			exitCode: result.exitCode,
+			processError: result.error,
+		});
+	}
+	// Legacy / `output: false` child without a durable saved path: bounded fallback
+	// only, never the raw full output.
+	return formatBoundedPersistenceFallback({
+		error: "No saved output path is available for this child.",
+		fullOutput: getSingleResultOutput(result),
+		exitCode: result.exitCode,
+		processError: result.error,
+	});
+}
+
+/**
+ * Compact terminal per-child line for bridge-off foreground parallel content:
+ * status plus either the saved-output reference (default/file-only), the legacy
+ * inline full output when explicitly requested, or the bounded fallback.
+ */
+function formatParallelChildResult(result: SingleResult, index: number): string {
+	const status = resolveSubagentResultStatus({
+		exitCode: result.exitCode,
+		interrupted: result.interrupted,
+		detached: result.detached,
+		processSignal: result.processSignal,
+		timedOut: result.timedOut,
+		stopped: result.stopped,
+		turnBudgetExceeded: result.turnBudgetExceeded,
+	});
+	const header = `=== Task ${index + 1}: ${result.agent} [${status}] ===`;
+	if (result.outputMode === "inline") {
+		const output = getSingleResultOutput(result).trim();
+		return `${header}\n${output || "(no output)"}`;
+	}
+	const reference = result.outputReference?.message;
+	if (reference) {
+		const body = result.exitCode !== 0 && result.error ? `${result.error}\n${reference}` : reference;
+		return `${header}\n${body}`;
+	}
+	return `${header}\n${formatBoundedPersistenceFallback({
+		error: result.outputSaveError ?? "No saved output path is available for this child.",
+		outputPath: result.savedOutputPath,
+		fullOutput: getSingleResultOutput(result),
+		exitCode: result.exitCode,
+		processError: result.error,
+	})}`;
 }
 
 function formatFailedSingleRunOutput(result: SingleResult, displayOutput: string): string {
+	// Reference-first and persistence-failure fallbacks already carry error/status
+	// and must not be re-wrapped as raw "Output:" text.
+	if (result.savedOutputPath || result.outputSaveError) return displayOutput;
 	const error = result.error || "Failed";
 	const output = displayOutput.trim();
 	const lines = [error];
@@ -2287,7 +2360,6 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		}
 		const rawOutput = params.output !== undefined ? params.output : a.output;
 		const effectiveOutput = normalizeSingleOutputOverride(rawOutput, a.output);
-		const effectiveOutputMode = params.outputMode ?? "inline";
 		const normalizedSkills = normalizeSkillInput(params.skill);
 		const skills = normalizedSkills === false ? [] : normalizedSkills;
 		const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, a.maxSubagentDepth);
@@ -2309,7 +2381,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			context: contextPolicy.contextForAgent(params.agent!),
 			skills,
 			output: effectiveOutput,
-			outputMode: effectiveOutputMode,
+			outputMode: params.outputMode,
 			outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
 			modelOverride,
 			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
@@ -2608,6 +2680,19 @@ function resolveSingleRunOutputBaseDir(deps: ExecutorDeps, artifactsDir: string,
 	return deps.config.singleRunOutputBaseDir
 		? path.resolve(deps.expandTilde(deps.config.singleRunOutputBaseDir))
 		: path.join(artifactsDir, "outputs", runId);
+}
+
+/**
+ * Generated per-run durable output path for foreground single runs when the
+ * caller omits `output` (and does not set `output: false`):
+ * `<singleRunOutputBaseDir>/<runId>/result.md`. The base is the configured
+ * `singleRunOutputBaseDir` when present, otherwise `{artifactsDir}/outputs`.
+ */
+function resolveGeneratedSingleOutputPath(deps: ExecutorDeps, artifactsDir: string, runId: string): string {
+	const base = deps.config.singleRunOutputBaseDir
+		? path.resolve(deps.expandTilde(deps.config.singleRunOutputBaseDir))
+		: path.join(artifactsDir, "outputs");
+	return path.join(base, runId, "result.md");
 }
 
 function buildChainWorktreeTaskCwdError(chain: ChainStep[], sharedCwd: string): string | undefined {
@@ -3068,8 +3153,19 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 
 	const behaviors = tasks.map((task, index) => {
 		let behavior = suppressProgressForReadOnlyTask(resolveStepBehavior(agentConfigs[index]!, behaviorOverrides[index]!), taskTexts[index]);
-		if (behaviorOverrides[index]?.output === undefined && typeof behavior.output === "string" && !path.isAbsolute(behavior.output)) {
-			behavior = { ...behavior, output: path.join("parallel-0", `${index}-${task.agent}`, behavior.output) };
+		if (behaviorOverrides[index]?.output === undefined) {
+			if (typeof behavior.output === "string" && !path.isAbsolute(behavior.output)) {
+				behavior = { ...behavior, output: path.join("parallel-0", `${index}-${task.agent}`, behavior.output) };
+			} else if (behavior.output === false && behaviorOverrides[index]?.output !== false && behaviorOverrides[index]?.output !== "false") {
+				// Omitted output: generate a collision-safe per-task durable path in the
+				// existing per-task namespace (parallel-0/<index>-<agent>/result.md).
+				behavior = { ...behavior, output: path.join("parallel-0", `${index}-${task.agent}`, "result.md") };
+			}
+		}
+		// Omitted outputMode resolves to file-only whenever an output path is active;
+		// explicit `outputMode: "inline"` is preserved exactly.
+		if (behaviorOverrides[index]?.outputMode === undefined && typeof behavior.output === "string") {
+			behavior = { ...behavior, outputMode: "file-only" };
 		}
 		return behavior;
 	});
@@ -3235,21 +3331,12 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		const worktreeSuffix = handoff?.suffix ?? "";
 		const ok = results.filter((result) => result.exitCode === 0).length;
 		const downgradeNote = backgroundRequestedWhileClarifying ? " (background requested, but clarify kept this run foreground)" : "";
-		const aggregatedOutput = aggregateParallelOutputs(
-			results.map((result) => ({
-				agent: result.agent,
-				output: result.truncation?.text || getSingleResultOutput(result),
-				exitCode: result.exitCode,
-				error: result.error,
-				timedOut: result.timedOut,
-			})),
-			(i, agent) => `=== Task ${i + 1}: ${agent} ===`,
-		);
+		const perChildResults = results.map((result, i) => formatParallelChildResult(result, i)).join("\n\n");
 
 		const summary = `${ok}/${results.length} succeeded${downgradeNote}`;
 		const fullContent = worktreeSuffix
-			? `${summary}\n\n${aggregatedOutput}\n\n${worktreeSuffix}`
-			: `${summary}\n\n${aggregatedOutput}`;
+			? `${summary}\n\n${perChildResults}\n\n${worktreeSuffix}`
+			: `${summary}\n\n${perChildResults}`;
 
 		return {
 			content: [{ type: "text", text: fullContent }],
@@ -3309,7 +3396,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
 	let effectiveOutput = normalizeSingleOutputOverride(rawOutput, agentConfig.output);
-	const effectiveOutputMode = params.outputMode ?? "inline";
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
 	const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, agentConfig.maxSubagentDepth);
 
@@ -3381,7 +3467,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				context: contextPolicy.contextForAgent(params.agent!),
 				skills: skillOverride === false ? [] : skillOverride,
 				output: effectiveOutput,
-				outputMode: effectiveOutputMode,
+				outputMode: params.outputMode,
 				outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
 				modelOverride,
 				thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
@@ -3410,7 +3496,16 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		task = wrapForkTask(task);
 	}
 	const cleanTask = task;
-	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, effectiveCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
+	// Omitted output resolves to a generated per-run durable path
+	// (`<singleRunOutputBaseDir>/<runId>/result.md`); omitted outputMode resolves to
+	// file-only whenever an output path is active. Explicit paths, `output: false`,
+	// and explicit `outputMode: "inline"` are preserved exactly.
+	const outputPath = typeof effectiveOutput === "string"
+		? resolveSingleOutputPath(effectiveOutput, ctx.cwd, effectiveCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId))
+		: effectiveOutput === false
+			? undefined
+			: resolveGeneratedSingleOutputPath(deps, artifactsDir, runId);
+	const effectiveOutputMode = params.outputMode ?? (outputPath ? "file-only" : "inline");
 	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
 	if (validationError) {
 		return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [] } };
@@ -3549,6 +3644,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		savedPath: r.savedOutputPath,
 		outputReference: r.outputReference,
 		saveError: r.outputSaveError,
+		error: r.error,
 	});
 	if (foregroundControl) {
 		updateForegroundNestedProjection(foregroundControl);

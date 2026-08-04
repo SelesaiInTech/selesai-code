@@ -104,16 +104,14 @@ The extension ships with builtin agents you can use immediately.
 
 | Agent | Use it when you want... |
 |-------|--------------------------|
-| `explorer` | Fast local codebase recon: relevant files, entry points, data flow, risks, and where another agent should start. |
+| `explorer` | Fast local codebase recon: relevant files, entry points, data flow, risks, and where another agent should start. It reads and reports; it does not edit. |
 | `researcher` | Web/docs research with sources: official docs, specs, benchmarks, recent changes, and a concise research brief. |
 | `architect` | A concrete implementation plan from existing context. It should read and plan, not edit code. |
 | `builder` | Implementation work, including approved commentator handoffs. It edits files, validates, and escalates unapproved decisions instead of guessing. |
-| `commentator` | Code review and small fixes. It checks the implementation against the task/plan, tests, edge cases, and simplicity. |
-| `explorer` | A stronger setup pass before planning: gathers code context and writes handoff material such as `context.md` and `meta-prompt.md`. |
-| `commentator` | A second opinion before acting. It challenges assumptions, catches drift, and recommends the safest next move without editing. |
-| `builder` | A lightweight general builder when you want a child agent that behaves close to the parent session. |
+| `commentator` | Adversarial review only: checking direction, diffs, plans, and implemented work against the task/plan, tests, edge cases, and simplicity without editing files. |
+| `recapper` | A clean current-state handoff: a self-contained summary of where a session stands so a later agent can continue from it. |
 
-A simple rule of thumb: use `explorer` before you understand the code, `researcher` before you trust external facts, `architect` before a bigger change, `builder` to implement, `commentator` to check, and `commentator` when the decision itself feels risky.
+A simple rule of thumb: use `explorer` before you understand the code, `researcher` before you trust external facts, `architect` before a bigger change, `builder` to implement, `commentator` to check, and `recapper` when you need a clean current-state handoff.
 
 ## Changing an agent's model
 
@@ -160,7 +158,7 @@ For a persistent override, edit settings. This example pins the commentator ever
 A setup that works well in practice is routing agents by task shape instead of running everything on one model. Four tiers:
 
 1. **Fast workhorse** — the cheapest capable model at low thinking, for recon, lookups, and mechanical edits. Example: `openai-codex/gpt-5.6-luna:low` on `explorer`.
-2. **Standard well-scoped** — a mid-tier model at medium thinking, for most delegations: routine multi-file edits, focused reviews, straightforward implementation. Example: `openai-codex/gpt-5.6-terra:medium` on `builder`, `commentator`, and a lightweight `builder` agent.
+2. **Standard well-scoped** — a mid-tier model at medium thinking, for most delegations: routine multi-file edits, focused reviews, straightforward implementation. Example: `openai-codex/gpt-5.6-terra:medium` on `builder` and `commentator`.
 3. **Deep but bounded** — a top reasoning model at high thinking, only for hard tasks that arrive with explicit goals and completion criteria. These models tend to loop on vague goals, so keep them off open-ended work. Example: `openai-codex/gpt-5.6-sol:high` on `architect` and commentator-style agents.
 4. **Taste and intent** — a model that reads human intent well and makes judgment calls without looping, for ambiguous work: UX and design decisions, product tradeoffs, planning from vague requirements, writing quality. Example: `anthropic/claude-fable-5` at `low` for lighter passes and `medium` for harder ones.
 
@@ -182,7 +180,7 @@ One more interaction worth knowing for tier 4: forked context over an Anthropic 
 
 Use `~/.selesai/agent/settings.json` for a user override or the project config settings file (`.selesai/settings.json` in standard Pi) for a project override. `subagents.defaultModel` applies to builtin, package, user, and project agents that do not set `model` in frontmatter. Per-run model overrides and `agentOverrides.<name>.model` still win, and explicit agent frontmatter still wins over the global default. The same `agentOverrides` block can change `tools`, `skills`, inherited context, prompt text, or disable a builtin. Matching user and project agents also receive override fields that their frontmatter leaves unset, so a shared project config agent can keep the persona while local settings choose the model.
 
-By default, project settings resolve from the nearest parent directory that contains `.pi` or `.agents`, preserving existing nested-project behavior. In monorepos or git worktrees where an incidental nested `.pi` directory should not shadow the repository-level config, set this in the repository root `.selesai/settings.json`:
+By default, project settings resolve from the nearest parent directory that contains a `.selesai` config dir or a legacy `.agents` agent dir, preserving existing nested-project behavior. In monorepos or git worktrees where an incidental nested `.selesai` directory should not shadow the repository-level config, set this in the repository root `.selesai/settings.json`:
 
 ```json
 {
@@ -404,7 +402,7 @@ clarify → architect → builder → fresh commentators → builder
 
 Use the optional prompt shortcuts below when you want the pattern to be repeatable.
 
-Packaged `architect`, `builder`, `commentator`, and `commentator` default to forked context when a launch omits `context`; pass `context: "fresh"` when you intentionally want a fresh child run.
+Packaged `architect` and `recapper` default to forked context when a launch omits `context`; `builder`, `commentator`, `explorer`, and `researcher` default to fresh context. Pass explicit `context: "fresh"` or `context: "fork"` when you intentionally want one context for every child.
 
 Child-safety boundaries are enforced at runtime. Spawned child sessions do not receive the bundled `pi-subagents` skill, and forked child context filtering removes parent-only subagent artifacts (including old hidden orchestration-instruction messages, slash/status/control messages, and prior parent `subagent` tool-call/tool-result history) while preserving ordinary prose and unrelated tool calls/results. By default, children do not register the `subagent` tool and receive boundary instructions that they are not the parent orchestrator and must not propose or run subagents. The explicit exception is an agent whose resolved builtin `tools` includes `subagent`; that child gets a child-safe `subagent` tool for the fanout work the parent assigned, still bounded by `maxSubagentDepth`.
 
@@ -654,8 +652,8 @@ Append `[key=value,...]` to an agent name to override defaults. `/chain` applies
 
 | Key | Example | Description |
 |-----|---------|-------------|
-| `output` | `output=context.md` | Write results to a file. Absolute paths are used as-is. Relative paths in `/run` resolve under `singleRunOutputBaseDir` when configured, otherwise under the run's output artifact directory. Relative paths in `/chain` and `/parallel` live under the chain or parallel run directory. |
-| `outputMode` | `outputMode=file-only` | Return only a concise file reference for saved output instead of the full saved content. Requires `output`; default is `inline`. |
+| `output` | `output=context.md` | Write results to a file. Absolute paths are used as-is. Relative paths in `/run` resolve under `singleRunOutputBaseDir` when configured, otherwise under the run's output artifact directory. Relative paths in `/chain` and `/parallel` live under the chain or parallel run directory. When omitted, a collision-safe per-run path is generated (`<singleRunOutputBaseDir>/<runId>/result.md` for `/run`; `<chainDir>/outputs/<flat-index>-<agent>.md` for chains; `<asyncDir>/outputs/<flat-index>-<agent>.md` for async) unless `output=false`. |
+| `outputMode` | `outputMode=file-only` | Delivery is reference-first by default: completion returns a concise saved-output reference instead of full child content. Omitted `outputMode` resolves to `file-only` whenever an output path is active; explicit `outputMode=inline` keeps the legacy full inline delivery; explicit `outputMode=file-only` still requires an output path. |
 | `reads` | `reads=a.md+b.md` | Read files before executing. `+` separates multiple paths. |
 | `model` | `model=anthropic/claude-sonnet-4` | Override model for this step. |
 | `skills` | `skills=planning+review` | Override available skills. `+` separates multiple skills. |
@@ -703,7 +701,7 @@ A foreground child can detach while it waits for a supervisor reply. Reply first
 
 Headless sessions also auto-drain current-session subagent and registered provider work at `agent_end`, using one absolute timeout and continuing through attention states. This is a final lifecycle safeguard rather than a replacement for explicit orchestration: `subagent_wait` still lets a model react to each result during the turn. Provider, reconciliation, timeout, and malformed-state failures remain visible errors instead of being treated as successful drains.
 
-The `commentator`/`commentator` and `builder` builtins are designed for an explicit decision loop. A typical pattern is to ask `commentator` or its `commentator` alias for diagnosis and a recommended execution prompt, then only run `builder` after the main agent approves that direction.
+The `commentator` and `builder` builtins are designed for an explicit decision loop. A typical pattern is to ask `commentator` for diagnosis and a recommended execution prompt, then only run `builder` after the main agent approves that direction.
 
 ## Clarify and launch UI
 
@@ -735,17 +733,11 @@ Agent locations, lowest to highest priority:
 | Builtin | `~/.selesai/agent/extensions/subagent/agents/` |
 | Installed package | `package.json` `pi-subagents.agents` or `pi.subagents.agents` |
 | User | `~/.selesai/agent/agents/**/*.md` |
-| Project | Project config `agents/**/*.md` (`.pi/agents/**/*.md` in standard Pi) |
+| Project | Project config `agents/**/*.md` (`.selesai/agents/**/*.md` in standard Pi) |
 
 Project discovery also reads legacy `.agents/**/*.md` files. Nested subdirectories are discovered recursively. `.chain.md` files do not define agents. Installed Pi packages can expose agent directories from either `{"pi-subagents":{"agents":["./agents"]}}` or `{"pi":{"subagents":{"agents":["./agents"]}}}` in their package manifest. Package agents load above builtins and below user/project agents. If both `.agents/` and the project config agents directory define the same parsed runtime agent name, the project config directory wins. Use `agentScope: "user" | "project" | "both"` to control discovery; `both` is the default and project definitions win runtime-name collisions.
 
-Builtin agents load at the lowest priority, so a user or project agent with the same name overrides them. They do not pin a provider model; they inherit your current Pi default model unless you set `subagents.defaultModel` or `subagents.agentOverrides.<name>.model`. `commentator` is an advisory commentator that critiques direction and proposes an execution prompt without editing files; `commentator` is the same bundled role under the Claude Code-compatible name. `builder` is the implementation agent for normal tasks and approved commentator handoffs.
-
-The `researcher` builtin uses `web_search`, `fetch_content`, and `get_search_content`; those require [pi-web-access](https://github.com/nicobailon/pi-web-access):
-
-```bash
-pi install npm:pi-web-access
-```
+Builtin agents load at the lowest priority, so a user or project agent with the same name overrides them. They do not pin a provider model; they inherit your current Pi default model unless you set `subagents.defaultModel` or `subagents.agentOverrides.<name>.model`. `commentator` is an advisory reviewer that critiques direction and proposes an execution prompt without editing files. `builder` is the implementation agent for normal tasks and approved commentator handoffs.
 
 ### Builtin overrides
 
@@ -870,7 +862,7 @@ Important fields:
 | `completionGuard` | Set `false` only for non-implementation agents that may mention implementation words while using mutation-capable tools such as `bash`. |
 | `interactive` | Parsed for compatibility but not enforced in v1. |
 | `maxSubagentDepth` | Tightens nested delegation for this agent's children. |
-| `memory` | Opt-in role-specific persistent memory. `memory: { scope: "project" \| "user", path: "<name>" }` injects the first lines of a `MEMORY.md` from a dedicated `agent-memory/` directory into the child system prompt. Agents with write tools (`edit`/`write`/`bash`) get a read-write block; read-only agents get a read-only fallback. Project scope resolves under `<project>/.pi/agent-memory/`, user scope under `~/.selesai/agent/agent-memory/`. Paths are validated against traversal and symlink escape. |
+| `memory` | Opt-in role-specific persistent memory. `memory: { scope: "project" \| "user", path: "<name>" }` injects the first lines of a `MEMORY.md` from a dedicated `agent-memory/` directory into the child system prompt. Agents with write tools (`edit`/`write`/`bash`) get a read-write block; read-only agents get a read-only fallback. Project scope resolves under `<project>/.selesai/agent-memory/`, user scope under `~/.selesai/agent/agent-memory/`. Paths are validated against traversal and symlink escape. |
 
 Agent-local `skillPath` candidates never enter Pi's parent/global skills catalog. Pair `inheritSkills: false` with explicit `skills` and `skillPath` when a child should receive only its selected private skills.
 
@@ -886,7 +878,7 @@ memory:
 
 On each run, the first 200 lines of `MEMORY.md` in the resolved memory directory are injected into the child system prompt so the agent can recall accumulated role notes such as threat-model entries, release gotchas, or verified commands. Agents that have write tools (`edit`, `write`, or `bash`, or no `tools` allowlist at all) are told they may append concise dated entries to the file. Agents without write tools receive a read-only memory block and are not instructed to edit it, so a read-only commentator can still recall prior notes without being granted write capability. The memory directory is never created eagerly; the agent's own `write` tool creates it (and `MEMORY.md`) on the first persist. Memory paths are validated against `.`/`..` traversal and symlink escape, and an unsafe or unresolvable scope is silently skipped rather than breaking the run.
 
-Project-scoped memory resolves under `<project>/.pi/agent-memory/<path>` and travels with the repo. User-scoped memory resolves under `~/.selesai/agent/agent-memory/<path>` and is shared across projects for that agent.
+Project-scoped memory resolves under `<project>/.selesai/agent-memory/<path>` and travels with the repo. User-scoped memory resolves under `~/.selesai/agent/agent-memory/<path>` and is shared across projects for that agent.
 
 ### Tool and extension selection
 
@@ -930,7 +922,7 @@ Chains are reusable workflows stored separately from agent files. Use `.chain.md
 |-------|------|
 | Installed package | `package.json` `pi-subagents.chains` or `pi.subagents.chains` |
 | User | `~/.selesai/agent/chains/**/*.chain.md`, `~/.selesai/agent/chains/**/*.chain.json` |
-| Project | Project config `chains/**/*.chain.md`, `chains/**/*.chain.json` (`.pi/chains/...` in standard Pi) |
+| Project | Project config `chains/**/*.chain.md`, `chains/**/*.chain.json` (`.selesai/chains/...` in standard Pi) |
 
 Nested subdirectories are discovered recursively. Installed Pi packages can expose chain directories from either `{"pi-subagents":{"chains":["./chains"]}}` or `{"pi":{"subagents":{"chains":["./chains"]}}}` in their package manifest. Package chains load below user/project chains. If both `.chain.md` and `.chain.json` define the same parsed runtime chain name in the same scope, `.chain.json` wins. If user and project scopes define the same parsed runtime chain name, the project chain wins. Chains support the same optional `package` frontmatter as agents; `name: review-flow` plus `package: code-analysis` runs as `code-analysis.review-flow`.
 
@@ -1036,7 +1028,7 @@ Skills are `SKILL.md` files made available to an agent. The prompt includes skil
 
 Discovery uses project-first precedence:
 
-1. Project config `skills/{name}/SKILL.md` (`.pi/skills/{name}/SKILL.md` in standard Pi)
+1. Project config `skills/{name}/SKILL.md` (`.selesai/skills/{name}/SKILL.md` in standard Pi)
 2. Project packages and project settings packages via `package.json -> pi.skills`
 3. Current task cwd package via `package.json -> pi.skills`
 4. Project config `settings.json -> skills`
@@ -1377,6 +1369,7 @@ Agent definitions are not loaded into context by default. Management actions let
 ```ts
 { action: "list" }
 { action: "list", agentScope: "project" }
+{ action: "list", task: "Inspect the authentication flow and report findings only" }
 { action: "get", agent: "explorer" }
 { action: "models" }
 { action: "models", agent: "commentator" }
@@ -1429,6 +1422,8 @@ Agent definitions are not loaded into context by default. Management actions let
 { action: "reset", agent: "commentator" }
 ```
 
+`list` accepts an optional advisory `task` (the sole management-field exception): with a non-empty task it appends a text-only "Task-aware advisory routing" block that deterministically recommends one canonical executable agent for the task (implementation needs a writer role with write tools; read-only needs a read-only role without known write tools) or explains why none is safe. It only recommends and never launches: no agent is started, no params are changed, and executor selection is untouched. To proceed, make a separate explicit execution call with the recommended canonical agent name, e.g. `{ agent: "builder", task: "..." }`. `agentScope` narrows discovery for the recommendation exactly as it does for the rest of `list`.
+
 `create` uses `config.scope`, not `agentScope`. `config.name` is the local frontmatter name; optional `config.package` registers the runtime name as `{package}.{name}` and is saved as separate `name` and `package` frontmatter. `config.aliases` accepts a comma-separated string, string array, or `false` to clear aliases; aliases resolve to the canonical agent name for execution and are shown by `list`/`get`. `update` and `delete` use the runtime name and `agentScope` only when the same runtime name exists in multiple scopes. To clear optional string fields, including `package`, set them to `false` or `""`.
 
 `eject` copies a bundled builtin or package agent verbatim into the user or project agent dir (default `user`) as an editable custom file that shadows the original, so you can customize a builtin without hunting package files. `disable` writes a reversible `agentOverrides.<name>.disabled: true` entry to the user or project settings file (default `user`); the agent stays on disk but is hidden from runtime discovery and `list`. `enable` removes that `disabled` field while preserving any other override fields on the same entry. `reset` deletes the scope's custom agent file and/or settings override entry, restoring the bundled default; it refuses if no bundled default exists (use `delete` for purely custom agents). All four accept `agentScope: "user" | "project"` and operate in one scope at a time; project overrides still win over user ones, so a project-scope disable survives a user-scope `enable` until you target the project scope.
@@ -1438,12 +1433,12 @@ Agent definitions are not loaded into context by default. Management actions let
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `agent` | string | - | Agent name or alias for single mode, or target for management actions. Execution records use the canonical agent name. |
-| `task` | string | - | Task string for single mode. |
+| `task` | string | - | Task for single mode, or an optional advisory intent for `action: "list"` (appends a task-aware recommendation to list output; never launches). |
 | `action` | string | - | `list`, `get`, `create`, `update`, `delete`, `status`, `interrupt`, `stop`, `resume`, `steer`, `append-step`, `approve-checkpoint`, `reject-checkpoint`, or `doctor`. |
 | `chainName` | string | - | Chain name for management actions. |
 | `config` | object/string | - | Agent or chain config for create/update. |
 | `output` | `string \| false` | agent default | Override single-agent output file. |
-| `outputMode` | `"inline" \| "file-only"` | `inline` | Return saved output inline or as a concise saved-file reference. `file-only` requires an `output` path. |
+| `outputMode` | `"inline" \| "file-only"` | mode-dependent | Delivery of saved output. Explicit `"inline"` keeps legacy full inline output; explicit `"file-only"` returns a concise saved-file reference and requires an `output` path. Omitted, it resolves to `file-only` whenever an output path is active and `inline` otherwise. |
 | `skill` | `string \| string[] \| false` | agent default | Override skills or disable all. |
 | `model` | string | agent default | Override model. |
 | `outputSchema` | object | - | Require schema-valid structured output for a direct single-agent run. |
@@ -1452,7 +1447,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `concurrency` | number | config or `4` | Top-level parallel concurrency. |
 | `worktree` | boolean | false | Create isolated git worktrees for parallel tasks. |
 | `chain` | array | - | Sequential, checkpoint, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, `acceptance`, `agentContract`, and v1-only `gateOn` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. With `action: "append-step"`, pass exactly one step to append to a running async chain. |
-| `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every child. When omitted, each agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `architect`, `builder`, `commentator`, and `commentator` default to `fork`. |
+| `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every child. When omitted, each agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `architect` and `recapper` default to `fork`; `builder`, `commentator`, `explorer`, and `researcher` default to `fresh`. |
 | `chainDir` | string | temp chain dir | Persistent directory for chain artifacts. Relative chain `output`, `reads`, and `progress` paths live under this directory. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
 | `lines` | number | `80` | Maximum transcript lines for `action: "status", view: "transcript"`; capped at 500. |
@@ -1479,9 +1474,9 @@ As a conservative orchestration policy, do not set `turnBudget`, a hard `toolBud
 
 Bound writer work with a narrow task and an outer `timeoutMs` or `maxRuntimeMs` that leaves enough margin for the slice. An elapsed timeout is not a mutation-safe boundary and may still signal a child during tool work. Before the deadline, use `steer` or an attention notice to request a checkpoint after the current tool returns, including changed files, build/test state, remaining work, and commit or PR state.
 
-`context: "fork"` fails fast when the parent session is not persisted, the current leaf is missing, or the branched child session cannot be created. When the inherited transcript contains signed Anthropic `thinking` / `redacted_thinking` blocks, `pi-subagents` strips those provider-private blocks from the forked child session. It forces thinking `off` only when the child’s effective primary or fallback model resolves through the model registry to the Anthropic provider or `anthropic-messages` API; unresolved models are treated conservatively. The result reports every affected child, including on failed runs. Use `context: "fresh"` when an Anthropic child needs thinking. Forking never silently downgrades to `fresh`. In multi-agent runs that omit `context`, each agent/task/step follows its own `defaultContext`, so a fresh-default explorer can run fresh beside a fork-default builder. Pass explicit `context: "fork"` or `context: "fresh"` when you intentionally want one context for every child.
+`context: "fork"` fails fast when the parent session is not persisted, the current leaf is missing, or the branched child session cannot be created. When the inherited transcript contains signed Anthropic `thinking` / `redacted_thinking` blocks, `pi-subagents` strips those provider-private blocks from the forked child session. It forces thinking `off` only when the child’s effective primary or fallback model resolves through the model registry to the Anthropic provider or `anthropic-messages` API; unresolved models are treated conservatively. The result reports every affected child, including on failed runs. Use `context: "fresh"` when an Anthropic child needs thinking. Forking never silently downgrades to `fresh`. In multi-agent runs that omit `context`, each agent/task/step follows its own `defaultContext`, so a fresh-default explorer can run fresh beside a fork-default architect. Pass explicit `context: "fork"` or `context: "fresh"` when you intentionally want one context for every child.
 
-Use `outputMode: "file-only"` when a saved output may be large and the parent only needs a pointer. The returned text is a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` Failed runs and save errors still return normal inline output for debugging. In chains, relative `output` paths are resolved inside the chain artifact directory, not the caller's CWD; later `{previous}` steps receive the same compact reference when the prior step used file-only mode. To persist chain outputs outside the temp artifact area, pass a persistent `chainDir` or use an absolute `output` path. A child with only read-only tools does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Children with mutation-capable tools retain the direct-write instruction.
+Delegated results are reference-first by default. Every child gets a durable saved output unless the caller explicitly uses `output: false`: omitted `output` uses a generated per-run path, omitted `outputMode` resolves to `file-only`, and completion returns a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` Inspect full output through the saved path, async status/transcript, or resume. Explicit `outputMode: "inline"` restores legacy full inline delivery; `output: false` disables durable result persistence (follow-up visibility falls back to bounded excerpts). Failed runs with a successfully persisted result return the error/status plus the saved-output reference; when persistence or read-back fails, only a bounded excerpt (first 80 lines / 4 KiB) is returned together with the error, never raw unbounded output. Generated output files persist even with `artifacts: false`; debug `_input`, `_output`, metadata, and transcript artifacts remain opt-in. In chains, relative `output` paths are resolved inside the chain artifact directory, not the caller's CWD; later `{previous}` steps receive the same compact reference when the prior step used file-only mode. To persist chain outputs outside the temp artifact area, pass a persistent `chainDir` or use an absolute `output` path. A child with only read-only tools does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Children with mutation-capable tools retain the direct-write instruction.
 
 Sequential and parallel chain tasks accept `agent`, `task`, `phase`, `label`, `as`, `outputSchema`, `cwd`, `output`, `outputMode`, `reads`, `progress`, `skill`, `model`, `toolBudget`, `acceptance`, `agentContract`, and v1-only `gateOn`. Parallel tasks also accept `count`. Parallel step groups accept `parallel`, `concurrency`, `failFast`, and `worktree`. If `outputSchema` is present, the child must call `structured_output` with schema-valid JSON; prose-only completion or invalid JSON fails the step. Validated structured values are preserved on the step result, and `as` also exposes a compact text representation through `{outputs.name}`.
 
@@ -1896,7 +1891,7 @@ The result watcher emits `subagent:async-complete`; `src/extension/index.ts` reg
 
 `pi-subagents` works standalone through natural language, the `subagent` tool, slash commands, and the packaged prompt shortcuts listed near the top of this README. It also includes a native prompt-workflow adapter for reusable subagent prompt templates, so you do not need `pi-prompt-template-model` for the common subagent workflow path.
 
-Create a prompt in `.pi/prompts/` or `~/.selesai/agent/prompts/`:
+Create a prompt in `.selesai/prompts/` or `~/.selesai/agent/prompts/`:
 
 ```md
 ---

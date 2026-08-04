@@ -17,6 +17,7 @@ import {
 	type SubagentDelegationV2Response,
 } from "../../src/api/delegation.ts";
 import { parseSubagentDelegationRequest } from "../../src/slash/delegation-request.ts";
+import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
 import {
 	registerPromptTemplateDelegationBridge,
 	type PromptTemplateBridgeEvents,
@@ -506,6 +507,29 @@ describe("public subagent delegation contract", () => {
 		rejectExecution?.(new Error("aborted"));
 		await tick();
 		assert.deepEqual(responses, []);
+	});
+
+	it("resolves an omitted v1 outputMode to explicit inline so response.output stays populated", () => {
+		const minimal: SubagentDelegationRequest = {
+			version: 1,
+			requestId: "adapter-default-1",
+			agent: "reviewer",
+			task: "Review evidence",
+			context: "fresh",
+			cwd: "/repo",
+		};
+		// Omitted outputMode on a strict v1 request keeps the legacy full-text
+		// contract: explicit inline, so `SubagentDelegationResponse.output` stays
+		// populated instead of degrading to the reference-first file-only default.
+		const params = toSubagentDelegationExecutionParams(minimal);
+		assert.equal(params.outputMode, "inline");
+		assert.equal(params.output, undefined);
+
+		// Explicit v1 modes are forwarded exactly; v2 stays unaffected (output: false).
+		assert.equal(toSubagentDelegationExecutionParams(request).outputMode, "file-only");
+		const inline = toSubagentDelegationExecutionParams({ ...request, outputMode: "inline" });
+		assert.equal(inline.outputMode, "inline");
+		assert.equal(toSubagentDelegationExecutionParams({ ...request, outputMode: undefined }).outputMode, "inline");
 	});
 
 	it("runs one v1 request through the existing executor and returns structured metadata", async () => {

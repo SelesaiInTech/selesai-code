@@ -5,7 +5,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import type { AgentConfig } from "../agents/agents.ts";
+import type { AgentConfig, AgentSource } from "../agents/agents.ts";
 import type { FSWatcher } from "node:fs";
 import type { ExtensionContext } from "@selesai/code";
 import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
@@ -912,12 +912,51 @@ export interface SpawnBudgetSnapshot {
 	grantHistory: SpawnBudgetGrant[];
 }
 
+// ============================================================================
+// Runtime catalog (action:list machine metadata)
+// ============================================================================
+
+/** Machine-readable catalog entry for one visible runtime agent. */
+export interface CatalogAgentMetadata {
+	name: string;
+	source: AgentSource;
+	description: string;
+	/** false for capability-ceiling-restricted agents (still visible, not launchable). */
+	executable: boolean;
+	/** Present only when the agent is capability-ceiling-restricted. */
+	restrictionSources?: string[];
+	aliases?: string[];
+	/** Normalized to explicit "fresh" when the agent has no defaultContext. */
+	defaultContext: "fresh" | "fork";
+	acceptanceRole?: AcceptanceRole;
+	/** Effective declared tools: normal tools plus mcp:-prefixed direct MCP tools. */
+	tools?: string[];
+}
+
+/** Machine-readable catalog entry for one visible chain. */
+export interface CatalogChainMetadata {
+	name: string;
+	source: AgentSource;
+	description: string;
+}
+
+/** Versioned action:list catalog mirroring the human list output. */
+export interface CatalogMetadataV1 {
+	version: 1;
+	agents: CatalogAgentMetadata[];
+	chains: CatalogChainMetadata[];
+	/** Present only when a capability ceiling restricted visible agents. */
+	capabilityCeilingSources?: string[];
+}
+
 export interface Details {
 	mode: SubagentRunMode | "management";
 	runId?: string;
 	/** Run-level context summary. "mixed" when children resolved to different modes. */
 	context?: "fresh" | "fork" | "mixed";
 	results: SingleResult[];
+	/** Runtime-resolved human+machine catalog for { action: "list" } results. */
+	catalog?: CatalogMetadataV1;
 	controlEvents?: ControlEvent[];
 	steering?: SteerActionResult;
 	asyncId?: string;

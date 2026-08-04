@@ -2,6 +2,7 @@
  * Rendering functions for subagent results
  */
 
+import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { getMarkdownTheme, keyText, type ExtensionContext } from "@selesai/code";
@@ -26,6 +27,27 @@ import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, form
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
 
 type Theme = ExtensionContext["ui"]["theme"];
+
+/**
+ * UI-side output projection: completed terminal results strip `finalOutput`/
+ * `truncation` when an authoritative saved output path exists (see
+ * compactForegroundResult). The UI recovers the full text from that path so
+ * widgets keep showing output without reintroducing it into model-facing
+ * details.
+ */
+function resultOutputForUi(r: Details["results"][number]): string {
+	const output = r.truncation?.text || getSingleResultOutput(r);
+	if (output) return output;
+	if (r.savedOutputPath) {
+		try {
+			const content = fs.readFileSync(r.savedOutputPath, "utf-8").trim();
+			return content || output;
+		} catch {
+			return output;
+		}
+	}
+	return output;
+}
 
 function liveDetailKeyText(): string {
 	return keyText("app.tools.expand");
@@ -1308,7 +1330,7 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 }
 
 function renderSingleCompact(d: Details, r: Details["results"][number], theme: Theme, frame?: number): Component {
-	const output = r.truncation?.text || getSingleResultOutput(r);
+	const output = resultOutputForUi(r);
 	const progress = r.progress || r.progressSummary;
 	const isRunning = r.progress?.status === "running";
 	const contextBadge = contextModeBadge(theme, r.context ?? d.context);
@@ -1418,7 +1440,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 			c.addChild(new Text(truncLine(theme.fg("dim", `  ◦ ${pendingLabel}: ${agentName} · pending`), width), 0, 0));
 			continue;
 		}
-		const output = getSingleResultOutput(r);
+		const output = resultOutputForUi(r);
 		const progressFromArray = d.progress?.find((p) => p.index === i) || d.progress?.find((p) => p.agent === r.agent && p.status === "running");
 		const rProg = r.progress || progressFromArray || r.progressSummary;
 		const rRunning = rProg && "status" in rProg && rProg.status === "running";
@@ -1500,7 +1522,7 @@ export function renderSubagentResult(
 					? theme.fg("success", "ok")
 					: theme.fg("error", "failed");
 		const contextBadge = contextModeBadge(theme, r.context ?? d.context);
-		const output = r.truncation?.text || getSingleResultOutput(r);
+		const output = resultOutputForUi(r);
 
 		const progressInfo = isRunning && r.progress
 			? ` | ${r.progress.toolCount} tools, ${formatTokens(r.progress.tokens)} tok, ${formatDuration(r.progress.durationMs)}`
@@ -1600,7 +1622,7 @@ export function renderSubagentResult(
 	const hasEmptyWithoutTarget = d.results.some((r) =>
 		r.exitCode === 0
 		&& r.progress?.status !== "running"
-		&& hasEmptyTextOutputWithoutOutputTarget(r.task, getSingleResultOutput(r)),
+		&& hasEmptyTextOutputWithoutOutputTarget(r.task, resultOutputForUi(r)),
 	);
 	const hasWorkflowFailure = workflowGraphHasStatus(d, ["failed"]);
 	const hasWorkflowStop = d.results.some((r) => r.stopped && r.progress?.status !== "running") || workflowGraphHasStatus(d, ["stopped"]);
@@ -1658,7 +1680,7 @@ export function renderSubagentResult(
 					const isComplete = result && result.exitCode === 0 && result.progress?.status !== "running";
 					const isEmptyWithoutTarget = Boolean(result)
 						&& Boolean(isComplete)
-						&& hasEmptyTextOutputWithoutOutputTarget(result.task, getSingleResultOutput(result));
+						&& hasEmptyTextOutputWithoutOutputTarget(result.task, resultOutputForUi(result));
 					const isCurrent = i === (d.currentStepIndex ?? d.results.length);
 					const stepIcon = isFailed
 						? theme.fg("error", "failed")
@@ -1729,7 +1751,7 @@ export function renderSubagentResult(
 		const rRunning = rProg?.status === "running";
 		const stepNumber = typeof rProg?.index === "number" ? rProg.index + 1 : i + 1;
 
-		const resultOutput = getSingleResultOutput(r);
+		const resultOutput = resultOutputForUi(r);
 		const statusIcon = rRunning
 			? theme.fg("warning", "running")
 			: r.exitCode !== 0

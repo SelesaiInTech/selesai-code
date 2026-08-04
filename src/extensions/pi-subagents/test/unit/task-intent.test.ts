@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { classifyTaskMutationIntent, expectsImplementationMutation, taskMayMutate } from "../../src/runs/shared/task-intent.ts";
+import { classifyTaskMutationIntent, expectsImplementationMutation, resolveAgentRoutingRole, taskMayMutate } from "../../src/runs/shared/task-intent.ts";
 
 describe("classifyTaskMutationIntent", () => {
 	it("keeps write imperatives despite investigative wording", () => {
@@ -66,6 +66,28 @@ describe("classifyTaskMutationIntent", () => {
 	it("expectsImplementationMutation mirrors the classifier", () => {
 		assert.equal(expectsImplementationMutation("builder", "Do not modify tests; implement the fix"), true);
 		assert.equal(expectsImplementationMutation("builder", "Review the diff and suggest fixes only. Do not edit files."), false);
+	});
+});
+
+describe("resolveAgentRoutingRole", () => {
+	it("lets a declared acceptanceRole override name heuristics", () => {
+		assert.equal(resolveAgentRoutingRole("commentator", "writer"), "writer");
+		assert.equal(resolveAgentRoutingRole("builder", "read-only"), "read-only");
+		assert.equal(resolveAgentRoutingRole("custom-agent", "writer"), "writer");
+		assert.equal(resolveAgentRoutingRole("custom-agent", "read-only"), "read-only");
+	});
+
+	it("infers writer for builder-named agents and read-only for reviewer-style names", () => {
+		assert.equal(resolveAgentRoutingRole("builder"), "writer");
+		assert.equal(resolveAgentRoutingRole("package.builder"), "writer");
+		for (const name of ["architect", "commentator", "explorer", "recapper", "researcher", "analyst"]) {
+			assert.equal(resolveAgentRoutingRole(name), "read-only", name);
+		}
+	});
+
+	it("returns undefined for names without an established role", () => {
+		assert.equal(resolveAgentRoutingRole("custom-agent"), undefined);
+		assert.equal(resolveAgentRoutingRole("reviewer"), undefined);
 	});
 });
 

@@ -374,7 +374,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 
 		assert.equal(result.isError, undefined);
-		assert.match(result.content[0]?.text ?? "", /single alias finished/);
+		assert.match(result.content[0]?.text ?? "", /Output saved to: /);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /single alias finished/);
 	});
 
 	it("admits a zero run-level tool budget only for marked v2 delegated execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -412,7 +413,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			ctx,
 		);
 		assert.equal(v2Delegated.isError, undefined);
-		const env = JSON.parse(v2Delegated.content[0]?.text ?? "{}") as Record<string, string>;
+		// Reference-first delegated completion: the full echoed env snapshot is
+		// persisted to the generated result file; the content is the reference.
+		const delegatedOutputsDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs");
+		const delegatedRunDirs = fs.readdirSync(delegatedOutputsDir);
+		assert.equal(delegatedRunDirs.length, 1);
+		const persistedEnv = fs.readFileSync(path.join(delegatedOutputsDir, delegatedRunDirs[0]!, "result.md"), "utf-8");
+		const env = JSON.parse(persistedEnv) as Record<string, string>;
 		assert.deepEqual(JSON.parse(env[TOOL_BUDGET_ENV] ?? "null"), zeroBudget);
 		assert.equal(env[TOOL_BUDGET_ZERO_AUTH_ENV], "1");
 		assert.equal(mockPi.callCount(), 1);
@@ -1248,7 +1255,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 			const result = await executor.execute(
 				"single-schema-file-only-missing-path",
-				{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, outputMode: "file-only", acceptance: false, artifacts: false },
+				{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, outputMode: "file-only", output: false, acceptance: false, artifacts: false },
 				new AbortController().signal,
 				undefined,
 				makeMinimalCtx(tempDir),
@@ -1314,8 +1321,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const text = result.content[0]?.text ?? "";
 		assert.equal(result.isError, true);
 		assert.match(text, /completed without making edits/);
-		assert.match(text, /Output:\nOracle review:\n- finding one\n- finding two/);
-		assert.match(text, /Output artifact: /);
+		// Reference-first failure: error/status plus the saved-output reference;
+		// the full output stays readable in the persisted result file.
+		assert.match(text, /Output saved to: /);
+		assert.doesNotMatch(text, /Output:\nOracle review:/);
+		const outputsDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs");
+		const runDirs = fs.readdirSync(outputsDir);
+		assert.equal(runDirs.length, 1);
+		assert.equal(fs.readFileSync(path.join(outputsDir, runDirs[0]!, "result.md"), "utf-8"), "Oracle review:\n- finding one\n- finding two");
 	});
 
 	it("fails future-tense implementation summaries when no mutation attempt occurred", async () => {
@@ -1399,7 +1412,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.equal(result.details?.results[0]?.agent, "worker");
-		assert.match(result.content[0]?.text ?? "", /Implemented/);
+		assert.match(result.content[0]?.text ?? "", /Output saved to: /);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /^Implemented$/);
 	});
 
 	it("returns error for unknown agent", async () => {
@@ -2296,7 +2310,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.equal(result.details?.artifacts, undefined);
-		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
+		// Generated durable output persists even with artifacts:false; per-child
+		// debug artifacts (_input/_output/_meta/_transcript) remain opt-in.
+		const defaultOutputsDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs");
+		const defaultRunDirs = fs.readdirSync(defaultOutputsDir);
+		assert.equal(defaultRunDirs.length, 1);
+		const defaultRunDir = path.join(defaultOutputsDir, defaultRunDirs[0]!);
+		assert.equal(fs.readFileSync(path.join(defaultRunDir, "result.md"), "utf-8"), "plain result");
+		assert.deepEqual(fs.readdirSync(defaultRunDir), ["result.md"]);
 	});
 
 	it("routes foreground artifacts to the configured session directory", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -2702,7 +2723,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 
 		assert.equal(result.isError, undefined);
-		assert.match(result.content[0]?.text ?? "", /agent foreground default finished/);
+		assert.match(result.content[0]?.text ?? "", /Output saved to: /);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /agent foreground default finished/);
 		assert.equal(result.details?.asyncId, undefined);
 	});
 
@@ -2731,7 +2753,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 
 		assert.equal(result.isError, undefined);
-		assert.match(result.content[0]?.text ?? "", /explicit foreground finished/);
+		assert.match(result.content[0]?.text ?? "", /Output saved to: /);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /explicit foreground finished/);
 		assert.equal(result.details?.asyncId, undefined);
 	});
 

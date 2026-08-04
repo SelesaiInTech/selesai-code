@@ -6,12 +6,12 @@ This file is a detailed reference loaded from `skills/pi-subagents/SKILL.md`.
 
 Agent files can live in:
 - `~/.selesai/agent/agents/**/*.md` — user scope
-- `.pi/agents/**/*.md` — canonical project scope
-- legacy `.agents/**/*.md` — still read for compatibility, but `.pi/agents/` wins on conflicts
+- `.selesai/agents/**/*.md` — canonical project scope
+- legacy `.agents/**/*.md` — still read for compatibility, but `.selesai/agents/` wins on conflicts
 
 Chains live in:
 - `~/.selesai/agent/chains/**/*.chain.md` and `~/.selesai/agent/chains/**/*.chain.json` — user scope
-- `.pi/chains/**/*.chain.md` and `.pi/chains/**/*.chain.json` — project scope
+- `.selesai/chains/**/*.chain.md` and `.selesai/chains/**/*.chain.json` — project scope
 
 Discovery is recursive. `.chain.md` files do not define agents. Use `.chain.md` for simple saved chains and `.chain.json` for dynamic fanout or inline schema objects. Agents and chains can set optional frontmatter/package metadata; `name: explorer` plus `package: code-analysis` registers as runtime name `code-analysis.explorer` while serialization keeps `name` and `package` separate.
 
@@ -20,7 +20,7 @@ Precedence is by parsed runtime name:
 2. user scope
 3. builtin agents
 
-Project settings resolve from the nearest parent directory containing `.pi` or `.agents` by default. In monorepos or git worktrees where an incidental nested `.pi` directory should not shadow the repository config, set `subagents.projectRootResolution: "git-root"` in the repository root `.selesai/settings.json`; a nested project can opt back with `"nearest"` in its own settings.
+Project settings resolve from the nearest parent directory containing a `.selesai` config dir or a legacy `.agents` agent dir by default. In monorepos or git worktrees where an incidental nested `.selesai` directory should not shadow the repository config, set `subagents.projectRootResolution: "git-root"` in the repository root `.selesai/settings.json`; a nested project can opt back with `"nearest"` in its own settings.
 
 ## Running Subagents
 
@@ -88,7 +88,7 @@ subagent({
 })
 ```
 
-Avoid duplicate output paths in parallel tasks. Concurrent children should not write to the same file. For large saved outputs, set `outputMode: "file-only"` together with an `output` path. The parent result then contains only a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` instead of the full saved content. Do not use `output: false` for this; `output: false` means no file output. In chains, relative `output` paths are chain-artifact paths under `{chain_dir}`, not project CWD paths; use an absolute `output` path or a persistent `chainDir` when a saved artifact must outlive the temp chain directory. Read-only children return the complete artifact in their final response and the runtime persists it, so missing write tools are not a supervisor blocker. Mutation-capable children still receive direct-write instructions. Failed runs and save errors still return inline details for debugging.
+Avoid duplicate output paths in parallel tasks. Concurrent children should not write to the same file. Delivery is reference-first by default: every child gets a durable saved output unless `output: false`, omitted `output` uses a generated per-run path, omitted `outputMode` resolves to `file-only`, and the parent result contains only a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` Inspect full output through the saved path, async status/transcript, or resume. Explicit `outputMode: "inline"` keeps the legacy full inline delivery; `output: false` disables durable result persistence (follow-up visibility falls back to bounded excerpts). Failed runs with a persisted result return the error/status plus the saved-output reference; persistence or read-back failures return only a bounded excerpt (first 80 lines / 4 KiB) together with the error, never raw unbounded output. Do not use `output: false` to get a file-only return; use file-only mode with an output path. In chains, relative `output` paths are chain-artifact paths under `{chain_dir}`, not project CWD paths; use an absolute `output` path or a persistent `chainDir` when a saved artifact must outlive the temp chain directory. Read-only children return the complete artifact in their final response and the runtime persists it, so missing write tools are not a supervisor blocker. Mutation-capable children still receive direct-write instructions.
 
 ### Chain execution
 
@@ -137,7 +137,7 @@ subagent({
 })
 ```
 
-File-only output mode also works for async single runs, top-level parallel task items, sequential chain steps, and chain parallel task items. In chains, `{previous}` receives the compact saved-file reference when the prior step used file-only mode. Relative chain output paths are resolved under `{chain_dir}`; pass a persistent `chainDir` or an absolute `output` path when a later human or process needs a stable path outside the temp chain run.
+File-only output mode also works for async single runs, top-level parallel task items, sequential chain steps, and chain parallel task items. In chains, `{previous}` receives the compact saved-file reference when the prior step used file-only mode. Relative chain output paths are resolved under `{chain_dir}`; pass a persistent `chainDir` or an absolute `output` path when a later human or process needs a stable path outside the temp chain run. Async completion delivery is reference-first: the completion notification and grouped intercom payload carry per-child saved-output references (or `output-<index>.log` references) plus process status, never full child output. Inspect full output through the saved path, `{ action: "status", id, view: "transcript" }`, or resume.
 
 For review fanout where the parent continues a local audit:
 
@@ -353,20 +353,20 @@ worktree, first confirm dependencies were linked, installed, or provisioned by
 ## The commentator Workflow
 
 The intended commentator loop is:
-1. the main agent forks to `commentator`
+1. the main agent launches `commentator` (fresh context by default; pass `context: "fork"` only when a branched advisory thread that inherits the parent session history is intended)
 2. `commentator` reviews direction, drift, assumptions, and risks
 3. `commentator` can coordinate back through `contact_supervisor` when the bridge injects it
 4. the main agent decides what direction to approve
 5. only then should `builder` implement
 
 ```typescript
-// Advisory review in a branched thread. commentator defaults to forked context.
+// Advisory review. commentator defaults to fresh context; fork explicitly when a branched advisory thread is intended.
 subagent({
   agent: "commentator",
   task: "Review my current direction, challenge assumptions, and propose the best next move."
 })
 
-// Implementation only after explicit approval. builder defaults to forked context.
+// Implementation only after explicit approval. builder defaults to fresh context; pass context: "fork" when inherited parent context is intentionally required.
 subagent({
   agent: "builder",
   task: "Implement the approved approach: ..."
@@ -374,8 +374,9 @@ subagent({
 ```
 
 `commentator` is not a fresh-context commentator in the Cognition article sense. It is
-a forked advisory thread that inherits the parent session history and uses that
-history as a baseline contract.
+an advisory thread that reviews direction, drift, and risks against the task/plan.
+Pass `context: "fork"` when the review should inherit the parent session history and
+use that history as a baseline contract; otherwise fresh context is the default.
 
 Use `commentator` as a smart-friend escalation when the parent needs help with trajectory rather than diff inspection: architectural boundaries, model capability routing, merge conflicts, commentator disagreement, context drift after long work, a builder about to invent a pattern, or fixes that require product/scope tradeoffs. Ask broad questions when the right concern is unclear, and let `commentator` point out missing context or files the parent should inspect before asking again. Keep `commentator` advisory unless it has been explicitly assigned the single writer role.
 

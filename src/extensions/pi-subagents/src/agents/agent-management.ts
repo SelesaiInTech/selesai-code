@@ -28,13 +28,14 @@ import { discoverAvailableSkills, resolveSkills } from "./skills.ts";
 import {
 	buildProactiveSkillSubagentRecommendationLines,
 } from "./proactive-skills.ts";
+import { formatTaskAwareAgentRecommendation, recommendTaskAwareAgent } from "./task-aware-routing.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 import { toModelInfo } from "../shared/model-info.ts";
 import { resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-fallback.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
-import type { AcceptanceInput, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, CatalogAgentMetadata, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
 import { getProjectConfigDir } from "../shared/utils.ts";
 import { capabilityCeilingAgentRestrictionSources, isAgentAllowedByCapabilityCeiling, resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
 
@@ -48,10 +49,12 @@ interface ManagementParams {
 	chainName?: string;
 	agentScope?: string;
 	config?: unknown;
+	/** Optional advisory intent for action:'list' only; never launches work. */
+	task?: string;
 }
 
-function result(text: string, isError = false): AgentToolResult<Details> {
-	return { content: [{ type: "text", text }], isError, details: { mode: "management", results: [] } };
+function result(text: string, isError = false, extraDetails: Partial<Details> = {}): AgentToolResult<Details> {
+	return { content: [{ type: "text", text }], isError, details: { mode: "management", results: [], ...extraDetails } };
 }
 
 function parseCsv(value: string): string[] {
@@ -585,8 +588,13 @@ function renamePath(
 	return { filePath };
 }
 
+/** Effective declared tools: normal tools plus mcp:-prefixed direct MCP tools. */
+function effectiveAgentTools(agent: AgentConfig): string[] {
+	return [...(agent.tools ?? []), ...(agent.mcpDirectTools ?? []).map((t) => `mcp:${t}`)];
+}
+
 function formatAgentDetail(agent: AgentConfig): string {
-	const tools = [...(agent.tools ?? []), ...(agent.mcpDirectTools ?? []).map((t) => `mcp:${t}`)];
+	const tools = effectiveAgentTools(agent);
 	const lines: string[] = [`Agent: ${agent.name} (${agent.source})`, `Path: ${agent.filePath}`, `Description: ${agent.description}`];
 	if (agent.packageName) {
 		lines.push(`Local name: ${frontmatterNameForConfig(agent)}`);
@@ -672,6 +680,33 @@ function formatChainDetail(chain: ChainConfig): string {
 	return lines.join("\n");
 }
 
+function formatCatalogAgentLine(agent: AgentConfig): string {
+	const parts: string[] = [agent.source, `context: ${agent.defaultContext ?? "fresh"}`];
+	if (agent.acceptanceRole) parts.push(`role: ${agent.acceptanceRole}`);
+	if (agent.aliases?.length) parts.push(`aliases: ${agent.aliases.join(", ")}`);
+	const tools = effectiveAgentTools(agent);
+	if (tools.length) parts.push(`tools: ${tools.join(", ")}`);
+	return `- ${agent.name} (${parts.join(", ")}): ${agent.description}`;
+}
+
+function catalogAgentMetadata(
+	agent: AgentConfig,
+	executable: boolean,
+	restrictionSources: string[] | undefined,
+): CatalogAgentMetadata {
+	return {
+		name: agent.name,
+		source: agent.source,
+		description: agent.description,
+		executable,
+		...(restrictionSources?.length ? { restrictionSources } : {}),
+		...(agent.aliases?.length ? { aliases: [...agent.aliases] } : {}),
+		defaultContext: agent.defaultContext ?? "fresh",
+		...(agent.acceptanceRole ? { acceptanceRole: agent.acceptanceRole } : {}),
+		tools: effectiveAgentTools(agent),
+	};
+}
+
 export function handleList(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
 	const scope = normalizeListScope(params.agentScope) ?? "both";
 	const d = discoverAgentsAll(ctx.cwd);
@@ -690,23 +725,35 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 		config: ctx.config?.proactiveSkillSubagents,
 		discoverAvailableSkills: () => discoverAvailableSkills(ctx.cwd),
 	});
+	const taskAdvice = params.task?.trim()
+		? formatTaskAwareAgentRecommendation(recommendTaskAwareAgent({ task: params.task, agents, capabilityCeiling }))
+		: [];
 	const lines = [
 		"Executable agents:",
-		...(agents.length
-			? agents.map((a) => `- ${a.name} (${a.source}${a.defaultContext ? `, context: ${a.defaultContext}` : ""}${a.aliases?.length ? `, aliases: ${a.aliases.join(", ")}` : ""}): ${a.description}`)
-			: ["- (none)"]),
+		...(agents.length ? agents.map(formatCatalogAgentLine) : ["- (none)"]),
 		...(restrictedAgents.length ? [
 			"",
 			`Restricted agents (not executable in this session${restrictedSources?.length ? `; capability ceiling: ${restrictedSources.join(", ")}` : ""}):`,
-			...restrictedAgents.map((a) => `- ${a.name} (${a.source}${a.aliases?.length ? `, aliases: ${a.aliases.join(", ")}` : ""}): ${a.description}`),
+			...restrictedAgents.map(formatCatalogAgentLine),
 		] : []),
 		"",
 		"Chains:",
 		...(chains.length ? chains.map((c) => `- ${c.name} (${c.source}): ${c.description}`) : ["- (none)"]),
 		...(proactiveSuggestions.length ? ["", ...proactiveSuggestions] : []),
+		...(taskAdvice.length ? ["", ...taskAdvice] : []),
 		...(diagnostics.length ? ["", "Chain diagnostics:", ...diagnostics.map((entry) => `- ${entry.filePath}: ${entry.error}`)] : []),
 	];
-	return result(lines.join("\n"));
+	return result(lines.join("\n"), false, {
+		catalog: {
+			version: 1,
+			agents: [
+				...agents.map((a) => catalogAgentMetadata(a, true, undefined)),
+				...restrictedAgents.map((a) => catalogAgentMetadata(a, false, restrictedSources)),
+			],
+			chains: chains.map((c) => ({ name: c.name, source: c.source, description: c.description })),
+			...(restrictedSources?.length ? { capabilityCeilingSources: restrictedSources } : {}),
+		},
+	});
 }
 
 function formatModelSource(agent: AgentConfig, currentModel: ParentModel | undefined): string {

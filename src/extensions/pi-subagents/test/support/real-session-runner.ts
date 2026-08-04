@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -47,6 +47,21 @@ export function subagentCall(args: Record<string, unknown>, id = "call-subagent-
 	return fauxToolCall("subagent", args, { id });
 }
 
+function resolvedSubagentResultText(resultText: string): string {
+	// Reference-first completion: the tool result carries "Output saved to:
+	// <path> (…)". Resolve the durable file so the scripted parent can relay the
+	// exact child output.
+	if (!resultText.includes("Output saved to: ")) return resultText;
+	const rest = resultText.split("Output saved to: ")[1];
+	if (!rest) return resultText;
+	const outputPath = rest.split(" (")[0];
+	try {
+		return readFileSync(outputPath, "utf-8");
+	} catch {
+		return resultText;
+	}
+}
+
 export function routeParentThroughSubagent(input: {
 	childMarker: string;
 	subagentArgs: Record<string, unknown>;
@@ -56,7 +71,8 @@ export function routeParentThroughSubagent(input: {
 		if (!isParent) return "Unexpected non-parent model call.";
 		const resultText = latestSubagentToolResultText(context.messages as Array<{ role?: string; toolName?: string; content?: unknown }>);
 		if (resultText !== undefined) {
-			return `Parent relays: ${resultText.includes(input.childMarker) ? input.childMarker : "CHILD_MISSING"}`;
+			const resolved = resolvedSubagentResultText(resultText);
+			return `Parent relays: ${resolved.includes(input.childMarker) ? input.childMarker : "CHILD_MISSING"}`;
 		}
 		return subagentCall(input.subagentArgs);
 	};

@@ -194,6 +194,18 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.doesNotMatch(description, /orchestration\./);
 	});
 
+	it("documents list task as an optional advisory intent and keeps action a free string", () => {
+		const taskSchema = (SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined)?.task;
+		assert.ok(taskSchema, "task schema should exist");
+		const description = String(taskSchema?.description ?? "");
+		assert.match(description, /action:'list'/);
+		assert.match(description, /never launches/);
+		assert.match(description, /explicitly call subagent/);
+		const actionSchema = SubagentParams?.properties?.action;
+		assert.equal(actionSchema?.type, "string");
+		assert.equal(actionSchema?.enum, undefined);
+	});
+
 	it("includes foreground timeout aliases and turn budget", () => {
 		const timeoutSchema = SubagentParams?.properties?.timeoutMs;
 		const maxRuntimeSchema = SubagentParams?.properties?.maxRuntimeMs;

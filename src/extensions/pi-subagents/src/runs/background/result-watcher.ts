@@ -20,6 +20,7 @@ import {
 } from "../../intercom/result-intercom.ts";
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
+import { formatBoundedPersistenceFallback, formatSavedOutputReference } from "../shared/single-output.ts";
 import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
@@ -46,10 +47,14 @@ type ResultWatcherDeps = {
 type ResultFileChild = {
 	agent?: string;
 	output?: string;
+	/** Authoritative durable output location: explicit/generated saved path or async output log. */
+	outputPath?: string;
+	savedOutputPath?: string;
 	outputState?: SubagentOutputState;
 	error?: string;
 	success?: boolean;
 	state?: string;
+	exitCode?: number | null;
 	interrupted?: boolean;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -90,6 +95,57 @@ function errorCode(error: unknown): string | undefined {
 
 function isNotFound(error: unknown): boolean {
 	return errorCode(error) === "ENOENT";
+}
+
+/**
+ * Resolve the authoritative output location for one async child: explicit/generated
+ * saved output path first, else the persisted per-child output log
+ * (`asyncDir/output-<flat-index>.log`). Legacy result files without saved-path
+ * fields fall back to the output log when the run directory is known.
+ */
+function childOutputPath(data: ResultFileData, result: ResultFileChild | undefined, index: number): string | undefined {
+	if (typeof result?.outputPath === "string" && result.outputPath.trim()) return result.outputPath;
+	if (typeof result?.savedOutputPath === "string" && result.savedOutputPath.trim()) return result.savedOutputPath;
+	if (typeof data.asyncDir === "string" && data.asyncDir.trim()) return path.join(data.asyncDir, `output-${index}.log`);
+	return undefined;
+}
+
+/**
+ * Reference-only child summary for async delivery: the saved-output reference
+ * (or output-log reference) plus process error/status for failed children. Never
+ * emits `results[].output` or the run `summary` as parent-facing text; when the
+ * output location is absent or unreadable, a bounded fallback is used instead.
+ */
+function buildChildReferenceSummary(fsApi: ResultWatcherFs, input: {
+	outputPath: string | undefined;
+	outputText: string;
+	exitCode: number;
+	error?: string;
+}): string {
+	const statusError = input.exitCode !== 0 && input.error ? input.error : undefined;
+	if (input.outputPath) {
+		try {
+			const content = fsApi.readFileSync(input.outputPath, "utf-8");
+			const ref = formatSavedOutputReference(input.outputPath, content);
+			return statusError ? `${statusError}\n\n${ref.message}` : ref.message;
+		} catch (error) {
+			const fallback = formatBoundedPersistenceFallback({
+				error: `Failed to read saved output: ${error instanceof Error ? error.message : String(error)}`,
+				outputPath: input.outputPath,
+				fullOutput: input.outputText,
+				exitCode: input.exitCode,
+				processError: input.error,
+			});
+			return statusError ? `${statusError}\n\n${fallback}` : fallback;
+		}
+	}
+	const fallback = formatBoundedPersistenceFallback({
+		error: "No saved output path is available for this child.",
+		fullOutput: input.outputText,
+		exitCode: input.exitCode,
+		processError: input.error,
+	});
+	return statusError ? `${statusError}\n\n${fallback}` : fallback;
 }
 
 function shouldPoll(error: unknown): boolean {
@@ -180,14 +236,16 @@ export function createResultWatcher(
 			const hasResultChildren = Array.isArray(data.results) && data.results.length > 0;
 			const resultChildren: ResultFileChild[] = hasResultChildren
 				? data.results!
-				: [{ agent: data.agent ?? undefined, output: data.summary, outputState: "unknown", success: data.success }];
+				: [{ agent: data.agent ?? undefined, outputPath: childOutputPath(data, undefined, 0), outputState: "unknown", success: data.success }];
 			const normalizedChildren = attachNestedChildrenToResultChildren(runId, resultChildren.map((result = {}, index): SubagentResultIntercomChild => {
 				const baseOutput = hasResultChildren ? result.output : result.output ?? data.summary;
-				const hasRealOutput = typeof baseOutput === "string" && baseOutput.trim().length > 0;
-				const output = hasRealOutput ? baseOutput : "(no output)";
-				const summary = result.success === false && result.error
-					? `${result.error}${hasRealOutput ? `\n\nOutput:\n${baseOutput}` : ""}`
-					: output;
+				const outputText = typeof baseOutput === "string" ? baseOutput : "";
+				const summary = buildChildReferenceSummary(fsApi, {
+					outputPath: childOutputPath(data, result, index),
+					outputText,
+					exitCode: result.success === false ? 1 : result.success === true ? 0 : typeof result.exitCode === "number" ? result.exitCode : data.success === false ? 1 : 0,
+					error: result.error ?? (result.success === false ? (typeof data.error === "string" ? data.error : undefined) : undefined),
+				});
 				const sessionPath = result.sessionFile ?? (resultChildren.length === 1 ? data.sessionFile : undefined);
 				const childNestedChildren = sanitizeNestedResultChildren(result.children, resultPath, `results[${index}].children`);
 				const childState = result.state === "paused" || result.state === "stopped"

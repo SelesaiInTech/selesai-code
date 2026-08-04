@@ -80,7 +80,7 @@ interface AsyncResultPayload {
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
 	usageBudget?: UsageBudgetState;
 	checkpoint?: { name?: string; status?: string };
-	results: Array<{ agent?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions; output?: string; outputState?: "present" | "absent" | "unknown"; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string }; capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] }; capabilityAudit?: { effectiveTools?: string[]; removedTools?: string[]; extensionsDenied?: boolean } }>;
+	results: Array<{ agent?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions; output?: string; outputPath?: string; outputState?: "present" | "absent" | "unknown"; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string }; capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] }; capabilityAudit?: { effectiveTools?: string[]; removedTools?: string[]; extensionsDenied?: boolean } }>;
 	outputs?: Record<string, { text?: string; structured?: unknown }>;
 	workflowGraph?: { nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; acceptanceStatus?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; acceptanceStatus?: string; error?: string }> }> };
 	parallelHandoff?: { version?: number; path?: string; groupCount?: number; childCount?: number; changedPatches?: number; cleanupState?: string };
@@ -453,6 +453,18 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		return JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 	}
 
+	/**
+	 * Reference-first async child assertion: the result payload carries the
+	 * saved-output reference; the full text is read from the durable output path.
+	 */
+	function assertAsyncChildOutput(payload: AsyncResultPayload, index: number, expected: string): void {
+		const child = payload.results[index];
+		assert.ok(child, `expected async child ${index}`);
+		assert.match(child.output ?? "", /Output saved to: /);
+		assert.ok(child.outputPath, `expected a durable output path for child ${index}`);
+		assert.equal(fs.readFileSync(child.outputPath, "utf-8"), expected);
+	}
+
 	function launchProtocolTest(id: string): void {
 		executeAsyncSingle(id, {
 			agent: "worker",
@@ -480,7 +492,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		launchProtocolTest(id);
 		const payload = await readAsyncPayload(id);
 		assert.equal(payload.success, true);
-		assert.equal(payload.results[0]?.output, "你好 from fragmented async JSON");
+		assertAsyncChildOutput(payload, 0, "你好 from fragmented async JSON");
 	});
 
 	it("persists absent output provenance when async lifecycle text is synthetic", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -500,7 +512,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = await readAsyncPayload(id);
 		assert.equal(payload.success, false);
 		assert.equal(payload.results[0]?.outputState, "present");
-		assert.equal(payload.results[0]?.output, "usable partial answer");
+		assertAsyncChildOutput(payload, 0, "usable partial answer");
 	});
 
 	it("matches preflight launch digest in equivalent foreground and async execution", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -512,11 +524,14 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Contract comparison worker\n---\n`, "utf-8");
 		const discovered = discoverAgents(tempDir).agents.find((agent) => agent.name === agentName);
 		assert.ok(discovered, "expected temporary agent definition to be discovered");
-		const preflight = await resolveSubagentLaunchContract({ agent: agentName, cwd: tempDir, task, turnBudget, runId: "contract-preflight" });
+		// Stable explicit output keeps the preflight launch contract equivalent to
+		// both execution paths (generated per-run paths would differ by design).
+		const contractOutputPath = path.join(tempDir, "contract-output.md");
+		const preflight = await resolveSubagentLaunchContract({ agent: agentName, cwd: tempDir, task, turnBudget, runId: "contract-preflight", output: contractOutputPath });
 		assert.equal(preflight.ok, true);
 
 		mockPi.onCall({ output: "foreground contract comparison" });
-		const foreground = await runSync(tempDir, [discovered], agentName, task, { runId: "contract-foreground", acceptance: false, turnBudget });
+		const foreground = await runSync(tempDir, [discovered], agentName, task, { runId: "contract-foreground", acceptance: false, turnBudget, outputPath: contractOutputPath });
 		assert.equal(foreground.exitCode, 0);
 		assert.equal(foreground.launchContractDigest, preflight.contract.launchContractDigest);
 
@@ -525,6 +540,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const launch = executeAsyncSingle(asyncId, {
 			agent: agentName,
 			task,
+			output: contractOutputPath,
+			outputMode: "inline",
 			agentConfig: discovered,
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
@@ -829,7 +846,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		launchProtocolTest(id);
 		const payload = await readAsyncPayload(id);
 		assert.equal(payload.success, true);
-		assert.equal(payload.results[0]?.output, "settled async response");
+		assertAsyncChildOutput(payload, 0, "settled async response");
 		assert.ok(Date.now() - startedAt >= 1200, "background runner must not terminate during the retry delay");
 	});
 
@@ -841,7 +858,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = await readAsyncPayload(id);
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0]?.error, undefined);
-		assert.equal(payload.results[0]?.output, "settled async without a terminal assistant stop");
+		assertAsyncChildOutput(payload, 0, "settled async without a terminal assistant stop");
 		assert.ok(Date.now() - startedAt < 4000, "agent_settled should trigger bounded child cleanup");
 	});
 
@@ -872,7 +889,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(call.args.at(-1) ?? "", /\{outputs\.name\}/);
 		const payload = await readAsyncPayload(id);
 		assert.equal(payload.success, true);
-		assert.equal(payload.results[0]?.output, "OK");
+		assertAsyncChildOutput(payload, 0, "OK");
 	});
 
 	it("spawns the async runner with node when process.execPath is not node", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -903,7 +920,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const resultPath = await waitForAsyncResultFile(id, 30_000);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			assert.equal(payload.success, true);
-			assert.equal(payload.results[0]?.output, "non-node exec async done");
+			assertAsyncChildOutput(payload, 0, "non-node exec async done");
 		} finally {
 			process.execPath = originalExecPath;
 		}
@@ -937,7 +954,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const resultPath = await waitForAsyncResultFile(id, 10_000);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			assert.equal(payload.success, true);
-			assert.equal(payload.results[0]?.output, "stale node exec async done");
+			assertAsyncChildOutput(payload, 0, "stale node exec async done");
 		} finally {
 			process.execPath = originalExecPath;
 		}
@@ -1178,8 +1195,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.turnBudget?.turnCount, 2);
 		assert.equal(payload.results[0]?.wrapUpRequested, true);
 		assert.equal(payload.results[0]?.turnBudget?.turnCount, 2);
-		assert.match(payload.results[0]?.output ?? "", /Turn budget wrap-up was requested after 1 assistant turn/);
-		assert.match(payload.results[0]?.output ?? "", /final wrapped output/);
+		// Reference-first delivery: the saved-output reference replaces inline prose;
+		// the wrap-up note and raw output stay visible through status/result fields
+		// and the persisted result file.
+		assert.match(payload.results[0]?.output ?? "", /Output saved to: /);
+		assertAsyncChildOutput(payload, 0, "final wrapped output");
 		assert.equal(status.wrapUpRequested, true);
 		assert.equal(status.turnBudgetExceeded, undefined);
 		assert.equal(status.steps?.[0]?.wrapUpRequested, true);
@@ -1218,8 +1238,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.turnBudget?.turnCount, 3);
 		assert.equal(payload.turnBudget?.exceededAtTurn, 3);
 		assert.equal(payload.results[0]?.turnBudgetExceeded, true);
-		assert.match(payload.results[0]?.output ?? "", /Partial output before turn-budget abort:/);
-		assert.match(payload.results[0]?.output ?? "", /safe assistant boundary after tool work/);
+		assert.match(payload.error ?? "", /Subagent exceeded turn budget|turn budget/i);
+		assert.match(payload.results[0]?.output ?? "", /Output saved to: /);
+		assertAsyncChildOutput(payload, 0, "safe assistant boundary after tool work");
 		assert.equal(status.state, "failed");
 		assert.equal(status.turnBudgetExceeded, true);
 		assert.equal(status.steps?.[0]?.turnBudgetExceeded, true);
@@ -1272,7 +1293,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.turnBudget?.outcome, "exceeded");
 		assert.equal(payload.turnBudget?.turnCount, 2);
 		assert.equal(payload.results[0]?.turnBudgetExceeded, true);
-		assert.match(payload.results[0]?.output ?? "", /safe assistant boundary reached/);
+		assert.match(payload.results[0]?.output ?? "", /Output saved to: /);
+		assertAsyncChildOutput(payload, 0, "safe assistant boundary reached");
 		assert.equal(status.state, "failed");
 		assert.equal(status.turnBudgetExceeded, true);
 		assert.equal(status.steps?.[0]?.turnBudget?.outcome, "exceeded");
@@ -1632,8 +1654,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(launch.isError, undefined);
 			const payload = await readAsyncPayload(launch.details?.asyncId as string);
 			assert.equal(payload.success, true);
-			assert.equal(payload.results[0]?.output?.split("\n\nOutput saved to:")[0], "first async report");
-			assert.equal(payload.results[1]?.output?.split("\n\nOutput saved to:")[0], "second async report");
+			assertAsyncChildOutput(payload, 0, "first async report");
+			assertAsyncChildOutput(payload, 1, "second async report");
 			const outputDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", launch.details?.asyncId as string);
 			const authoritativePaths = [
 				path.join(outputDir, "parallel-0", "0-worker", "context.md"),
@@ -1934,13 +1956,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.success, true);
-		assert.deepEqual(payload.results.map((entry) => entry.output), [
-			"Scout A async findings",
-			"Scout B async findings",
-			"Async funnel synthesis",
-			"Async reviewer A done",
-			"Async reviewer B done",
-		]);
+		// Reference-first chain delivery: every child result carries the saved-output
+		// reference; full text is read from each durable output path.
+		assertAsyncChildOutput(payload, 0, "Scout A async findings");
+		assertAsyncChildOutput(payload, 1, "Scout B async findings");
+		assertAsyncChildOutput(payload, 2, "Async funnel synthesis");
+		assertAsyncChildOutput(payload, 3, "Async reviewer A done");
+		assertAsyncChildOutput(payload, 4, "Async reviewer B done");
 		assert.deepEqual(status.steps?.map((step) => step.status), ["complete", "complete", "complete", "complete", "complete"]);
 		assert.deepEqual(status.parallelGroups, [
 			{ start: 0, count: 2, stepIndex: 0 },
@@ -1948,11 +1970,14 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		]);
 		const funnelTask = readMockPiArgsMatching(mockPi, "Synthesize:").at(-1) ?? "";
 		assert.match(funnelTask, /=== Parallel Task 1 \(scout-a\) ===/);
-		assert.match(funnelTask, /Scout A async findings/);
 		assert.match(funnelTask, /=== Parallel Task 2 \(scout-b\) ===/);
-		assert.match(funnelTask, /Scout B async findings/);
-		assert.match(readMockPiArgsMatching(mockPi, "Review funnel A:").at(-1) ?? "", /Review funnel A:\nAsync funnel synthesis/);
-		assert.match(readMockPiArgsMatching(mockPi, "Review funnel B:").at(-1) ?? "", /Review funnel B:\nAsync funnel synthesis/);
+		// Chain handoff stays reference-first: the funnel consumes the saved-output
+		// references and reads the named paths instead of re-inlined child prose.
+		assert.match(funnelTask, /Output saved to: /);
+		assert.doesNotMatch(funnelTask, /Scout A async findings/);
+		assert.doesNotMatch(funnelTask, /Scout B async findings/);
+		assert.match(readMockPiArgsMatching(mockPi, "Review funnel A:").at(-1) ?? "", /Review funnel A:\nOutput saved to: /);
+		assert.match(readMockPiArgsMatching(mockPi, "Review funnel B:").at(-1) ?? "", /Review funnel B:\nOutput saved to: /);
 		assert.equal(payload.workflowGraph?.nodes?.[0]?.kind, "parallel-group");
 		assert.equal(payload.workflowGraph?.nodes?.[0]?.status, "completed");
 		assert.equal(payload.workflowGraph?.nodes?.[1]?.kind, "step");
@@ -2343,7 +2368,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const expectedConsumerTarget = `subagent-consumer-${id}-4`;
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[3]?.intercomTarget, expectedConsumerTarget);
-		assert.deepEqual(JSON.parse(payload.results[3]?.output ?? "{}"), { SELESAI_SUBAGENT_INTERCOM_SESSION_NAME: expectedConsumerTarget });
+		const consumerChild = payload.results[3];
+		assert.ok(consumerChild?.outputPath, "expected a durable output path for the consumer child");
+		assert.match(consumerChild.output ?? "", /Output saved to: /);
+		assert.deepEqual(JSON.parse(fs.readFileSync(consumerChild.outputPath, "utf-8")), { SELESAI_SUBAGENT_INTERCOM_SESSION_NAME: expectedConsumerTarget });
 	});
 
 	it("async dynamic pre-spawn failures persist failed graph status and error", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -2635,7 +2663,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.model, "openai/gpt-5-mini:high");
 		assert.deepEqual(payload.results[0]?.attemptedModels, ["openai/gpt-5-mini:high"]);
 		assert.deepEqual(payload.results[0]?.modelAttempts?.map((attempt) => attempt.success), [false, true]);
-		assert.match(payload.results[0]?.output ?? "", /\[startup-retry\].*Recovered asynchronously after startup race/s);
+		assertAsyncChildOutput(payload, 0, "Recovered asynchronously after startup race");
 		assert.equal(mockPi.callCount(), 2);
 	});
 
@@ -2682,7 +2710,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"));
 		assert.equal(payload.success, true);
 		assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini:high", "anthropic/claude-sonnet-4:low"]);
-		assert.match(payload.results[0].output ?? "", /Recovered after stream failure/);
+		assertAsyncChildOutput(payload, 0, "Recovered after stream failure");
 		assert.equal(mockPi.callCount(), 2);
 	});
 
@@ -2823,7 +2851,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0]?.model, "anthropic/claude-sonnet-4");
-		assert.match(payload.results[0]?.output ?? "", /Recovered asynchronously from empty output/);
+		assertAsyncChildOutput(payload, 0, "Recovered asynchronously from empty output");
 		assert.match(payload.results[0]?.modelAttempts?.[0]?.error ?? "", /no output/i);
 		assert.deepEqual(payload.results[0]?.modelAttempts?.map((attempt) => attempt.success), [false, true]);
 		assert.equal(mockPi.callCount(), 2);
@@ -2963,7 +2991,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.exitCode, 0);
 		assert.equal(payload.results[0]?.success, true);
 		assert.equal(payload.results[0]?.error, undefined);
-		assert.equal(payload.results[0]?.output, "Recovered asynchronously");
+		assertAsyncChildOutput(payload, 0, "Recovered asynchronously");
 		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(statusPayload.state, "complete");
 		assert.equal(statusPayload.steps?.[0]?.status, "complete");
@@ -3367,7 +3395,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.success, true);
 		assert.equal(payload.exitCode, 0);
 		assert.equal(payload.results[0].success, true);
-		assert.equal(payload.results[0].output, "cold start test after patch");
+		assertAsyncChildOutput(payload, 0, "cold start test after patch");
 
 		const eventsPath = path.join(ASYNC_DIR, id, "events.jsonl");
 		const eventsText = fs.readFileSync(eventsPath, "utf-8");
@@ -4073,7 +4101,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			assert.ok(elapsed < 6000, `unconfigured watchdog status should not delay async final drain, took ${elapsed}ms`);
 			assert.equal(payload.success, true);
-			assert.equal(payload.results[0]?.output, "async-done-without-watchdog-config");
+			assertAsyncChildOutput(payload, 0, "async-done-without-watchdog-config");
 			assert.equal((payload.results[0] as { watchdog?: unknown }).watchdog, undefined);
 		});
 	});
@@ -4108,7 +4136,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.ok(elapsed >= 1200, `watchdog settlement should delay async final drain, took ${elapsed}ms`);
 			assert.ok(elapsed < 9000, `settled watchdog should still allow async cleanup, took ${elapsed}ms`);
 			assert.equal(payload.success, true);
-			assert.equal(payload.results[0]?.output, "async-done-before-watchdog");
+			assertAsyncChildOutput(payload, 0, "async-done-before-watchdog");
 			assert.equal((payload.results[0] as { watchdog?: { phase?: string } }).watchdog?.phase, "idle");
 		});
 	});
@@ -4139,7 +4167,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			assert.ok(elapsed < 6000, `watchdog tail fallback should not hang async final drain, took ${elapsed}ms`);
 			assert.equal(payload.success, true);
-			assert.equal(payload.results[0]?.output, "async-done-before-watchdog-timeout");
+			assertAsyncChildOutput(payload, 0, "async-done-before-watchdog-timeout");
 			const watchdog = (payload.results[0] as { watchdog?: { phase?: string; timedOut?: boolean } }).watchdog;
 			assert.equal(watchdog?.phase, "stale");
 			assert.equal(watchdog?.timedOut, true);
@@ -4190,7 +4218,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.success, true);
 		assert.equal(payload.exitCode, 0);
 		assert.equal(payload.results[0].success, true);
-		assert.equal(payload.results[0].output, "async-done-before-drain");
+		assertAsyncChildOutput(payload, 0, "async-done-before-drain");
 	});
 
 	it("background forced drain after empty terminal assistant output is cleanup success", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -4226,7 +4254,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.success, true);
 		assert.equal(payload.exitCode, 0);
 		assert.equal(payload.results[0].success, true);
-		assert.equal(payload.results[0].output, "");
+		assert.match(payload.results[0].output ?? "", /Output saved to: /);
 	});
 
 	it("background final-drain cleanup preserves explicit assistant errors", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -4599,7 +4627,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const resultPath = await waitForAsyncResultFile(id, 10_000);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			assert.equal(payload.success, true);
-			assert.equal(payload.results[0]?.output, "Done after noisy stream");
+			assertAsyncChildOutput(payload, 0, "Done after noisy stream");
 
 			const eventsText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
 			assert.doesNotMatch(eventsText, /"type":"message_update"/);
@@ -4678,7 +4706,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(payload.success, true);
-		assert.equal(payload.results[0].output, "Done streaming");
+		assertAsyncChildOutput(payload, 0, "Done streaming");
 
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
 		assert.deepEqual(status.steps[0].recentTools.map((tool: { tool: string; args: string }) => ({ tool: tool.tool, args: tool.args })), [{ tool: "bash", args: "ls" }]);

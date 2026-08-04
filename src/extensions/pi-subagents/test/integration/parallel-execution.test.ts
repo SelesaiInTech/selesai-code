@@ -287,7 +287,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 			groups: Array<{ children: Array<{ agent: string; summary: string; patch: { path: string } }>; cleanup: { state: string; tasks: Array<{ path: string; worktreeRemoved: boolean; branchRemoved: boolean }> } }>;
 		};
 		assert.equal(handoff.groups[0]!.children[0]!.agent, "echo");
-		assert.equal(handoff.groups[0]!.children[0]!.summary, "Worktree task complete");
+		// Reference-first handoff: the summary carries the saved-output reference.
+		assert.match(handoff.groups[0]!.children[0]!.summary, /Output saved to: /);
+		assert.doesNotMatch(handoff.groups[0]!.children[0]!.summary, /Worktree task complete/);
 		assert.equal(fs.existsSync(handoff.groups[0]!.children[0]!.patch.path), true);
 		assert.ok(result.details?.runId);
 		assert.ok(handoff.groups[0]!.children[0]!.patch.path.includes(`${path.sep}worktree-diffs${path.sep}${result.details.runId}${path.sep}`));
@@ -351,7 +353,8 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 			assert.equal(result.isError, undefined);
 			assert.equal(result.details?.mode, "parallel");
-			assert.match(result.content[0]?.text ?? "", new RegExp(`${action} alias finished`));
+			assert.match(result.content[0]?.text ?? "", /Output saved to: /);
+			assert.doesNotMatch(result.content[0]?.text ?? "", new RegExp(`${action} alias finished`));
 		}
 	});
 
@@ -465,7 +468,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(result.details?.results?.[0]?.timedOut, true);
 		assert.equal(result.details?.results?.[0]?.error, "Subagent timed out after 300ms.");
 		assert.equal(result.details?.results?.[1]?.exitCode, 0);
-		assert.equal(result.details?.results?.[1]?.finalOutput, "fast done");
+		assert.equal(result.details?.results?.[1]?.finalOutput, undefined);
+		assert.ok(result.details?.results?.[1]?.savedOutputPath);
+		assert.equal(fs.readFileSync(result.details?.results?.[1]?.savedOutputPath as string, "utf-8"), "fast done");
 		assert.match(result.content[0]?.text ?? "", /1\/2 succeeded/);
 		assert.match(result.content[0]?.text ?? "", /TIMED OUT: Subagent timed out after 300ms\./);
 	});
@@ -490,8 +495,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.match(text, /Output saved to:/);
 		assert.match(text, /2 lines/);
 		assert.doesNotMatch(text, /Parallel full report/);
-		assert.match(result.details?.results?.[0]?.finalOutput ?? "", /Output saved to:/);
-		assert.doesNotMatch(result.details?.results?.[0]?.finalOutput ?? "", /Parallel full report/);
+		assert.equal(result.details?.results?.[0]?.finalOutput, undefined);
+		assert.match(result.details?.results?.[0]?.outputReference?.message ?? "", /Output saved to:/);
+		assert.doesNotMatch(result.details?.results?.[0]?.outputReference?.message ?? "", /Parallel full report/);
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "Parallel full report\nwith details");
 	});
 
@@ -500,7 +506,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 		const result = await executor.execute(
 			"parallel-file-only-missing-output",
-			{ tasks: [{ agent: "echo", task: "Write report", outputMode: "file-only" }] },
+			{ tasks: [{ agent: "echo", task: "Write report", output: false, outputMode: "file-only" }] },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -604,7 +610,8 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 Inspect
 
-## Acceptance Contract`));
+---\n**Output:**`));
+		assert.match(taskArg, /## Acceptance Contract/);
 	});
 
 	it("top-level parallel defaultProgress uses isolated run storage", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

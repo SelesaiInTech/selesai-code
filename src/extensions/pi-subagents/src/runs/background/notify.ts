@@ -192,6 +192,32 @@ function completionBatchKey(result: CompletionNotification): string {
 	return cwd ? `cwd:${cwd}` : "unknown";
 }
 
+/**
+ * Reference-first notification preview: compact child summaries built by the
+ * result watcher from each child's authoritative output path/log. Never uses
+ * `results[].output` or the run-level `summary` as parent-facing text; the run
+ * summary remains only a defensive fallback for legacy payloads without results.
+ */
+function buildReferenceFirstPreview(result: CompletionNotification): string {
+	const children = Array.isArray(result.results) ? result.results : [];
+	if (children.length === 0) {
+		return typeof result.summary === "string" ? result.summary : "";
+	}
+	if (children.length === 1) {
+		const childSummary = typeof children[0]?.summary === "string" && children[0].summary.trim()
+			? children[0].summary
+			: "(no output)";
+		return childSummary;
+	}
+	return children.map((child, index) => {
+		const agentLabel = typeof child?.agent === "string" ? child.agent : `step-${index + 1}`;
+		const childSummary = typeof child?.summary === "string" && child.summary.trim()
+			? child.summary
+			: "(no output)";
+		return `${index + 1}. ${agentLabel}\n${childSummary}`;
+	}).join("\n\n");
+}
+
 export function buildCompletionDetails(result: CompletionNotification): SubagentNotifyDetails {
 	const agent = result.agent ?? "unknown";
 	const summary = typeof result.summary === "string" ? result.summary : "";
@@ -229,7 +255,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		status,
 		...(result.source ? { source: result.source } : {}),
 		...(taskInfo ? { taskInfo } : {}),
-		resultPreview: summary,
+		resultPreview: buildReferenceFirstPreview(result),
 		...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
 		...(handoffPath ? { handoffPath } : {}),
 		...(session ? { sessionLabel: session.label, sessionValue: session.value } : {}),

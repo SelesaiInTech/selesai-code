@@ -1476,7 +1476,11 @@ async function runSingleStep(
 
 	const rawOutput = finalResult?.finalOutput ?? "";
 	const outputForPersistence = stripAcceptanceReport(rawOutput);
-	const resolvedOutput = step.outputPath && finalResult?.exitCode === 0
+	// Persist whenever an output path is configured and meaningful output exists,
+	// not only for successful runs: failed children keep a readable result file
+	// and a saved-output reference instead of raw inline output. Synthetic
+	// failures without output stay "absent" and are not promoted to a reference.
+	const resolvedOutput = step.outputPath && (outputForPersistence.trim() || (finalResult?.exitCode ?? 1) === 0)
 		? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot)
 		: { fullOutput: outputForPersistence };
 	const output = stripAcceptanceReport(resolvedOutput.fullOutput);
@@ -1515,6 +1519,9 @@ async function runSingleStep(
 		savedPath: resolvedOutput.savedPath,
 		outputReference,
 		saveError: resolvedOutput.saveError,
+		error: finalResult?.error
+			?? (finalResult?.stopped ? ctx.stopMessage ?? "Subagent stopped by user." : undefined)
+			?? (finalResult?.timedOut ? ctx.timeoutMessage ?? "Subagent timed out." : undefined),
 	});
 	outputForSummary = finalizedOutput.displayOutput;
 	const acceptance = step.effectiveAcceptance && !finalResult?.stopped && !finalResult?.turnBudgetExceeded && !ctx.timeoutSignal?.aborted && !ctx.stopSignal?.aborted && !ctx.skipAcceptance?.()
@@ -1596,6 +1603,10 @@ async function runSingleStep(
 		context: step.context,
 		...(step.agentContract ? { agentContract: step.agentContract } : {}),
 		launchContractDigest: actualLaunchContractDigest,
+		// Authoritative durable output location for parent-facing delivery: the
+		// explicit/generated saved output path when present, otherwise the async
+		// per-child output log (`asyncDir/output-<flat-index>.log`).
+		outputPath: step.outputPath ?? ctx.outputFile,
 		output: outputForSummary,
 		outputState,
 		exitCode: effectiveFinalExitCode,
@@ -3388,6 +3399,7 @@ async function runSubagent(
 					launchResolvedExtensions: pr.launchResolvedExtensions,
 					runtimeAcknowledgedExtensions: pr.runtimeAcknowledgedExtensions,
 					output: pr.output,
+					outputPath: pr.outputPath,
 					outputState: pr.outputState,
 					error: pr.error,
 					protocolError: pr.protocolError,
@@ -3797,6 +3809,7 @@ async function runSubagent(
 						launchContractDigest: pr.launchContractDigest,
 						launchResolvedExtensions: pr.launchResolvedExtensions,
 						output: pr.output,
+						outputPath: pr.outputPath,
 						outputState: pr.outputState,
 						error: pr.error,
 						protocolError: pr.protocolError,
@@ -3984,6 +3997,7 @@ async function runSubagent(
 				launchResolvedExtensions: singleResult.launchResolvedExtensions,
 				runtimeAcknowledgedExtensions: singleResult.runtimeAcknowledgedExtensions,
 				output: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
+				outputPath: singleResult.outputPath,
 				outputState: singleResult.outputState,
 				error: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error,
 				protocolError: singleResult.protocolError,
@@ -4311,6 +4325,7 @@ async function runSubagent(
 			results: results.map((r) => ({
 				agent: r.agent,
 				context: r.context,
+				outputPath: r.outputPath,
 				output: r.output,
 				outputState: r.outputState,
 				error: r.error,

@@ -6,7 +6,7 @@ import { afterEach, describe, it } from "node:test";
 import { handleManagementAction } from "../../src/agents/agent-management.ts";
 import { serializeAgent } from "../../src/agents/agent-serializer.ts";
 import { parseChain, serializeChain } from "../../src/agents/chain-serializer.ts";
-import { discoverAgents, discoverAgentsAll, type AgentConfig } from "../../src/agents/agents.ts";
+import { BUILTIN_AGENT_NAMES, discoverAgents, discoverAgentsAll, type AgentConfig } from "../../src/agents/agents.ts";
 import { parseFrontmatter } from "../../src/agents/frontmatter.ts";
 import { buildPiArgs } from "../../src/runs/shared/pi-args.ts";
 import { THINKING_LEVELS } from "../../src/shared/model-info.ts";
@@ -357,14 +357,54 @@ Do work
 		assert.equal(worker?.defaultContext, "fork");
 	});
 
-	it("loads packaged architect and recapper with fork defaultContext", () => {
+	it("loads builtin agents with the authoritative six-agent defaultContext map", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-default-context-"));
 		tempDirs.push(dir);
 		const agents = discoverAgentsAll(dir).builtin;
 
-		for (const name of ["architect", "recapper"]) {
+		const expected: Record<string, "fresh" | "fork"> = {
+			architect: "fork",
+			recapper: "fork",
+			builder: "fresh",
+			commentator: "fresh",
+			explorer: "fresh",
+			researcher: "fresh",
+		};
+		assert.deepEqual(
+			agents.map((agent) => agent.name).sort(),
+			[...BUILTIN_AGENT_NAMES].sort(),
+		);
+		for (const [name, context] of Object.entries(expected)) {
 			const agent = agents.find((candidate) => candidate.name === name);
-			assert.equal(agent?.defaultContext, "fork", `${name} should default to fork context`);
+			assert.equal(agent?.defaultContext, context, `${name} should default to ${context} context`);
+		}
+	});
+});
+
+describe("bundled agent descriptions and acceptance roles", () => {
+	it("survives discovery with declared descriptions and acceptance roles", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-bundled-catalog-roles-"));
+		tempDirs.push(dir);
+		const agents = discoverAgentsAll(dir).builtin;
+
+		const expected: Record<string, { description: string; acceptanceRole: "read-only" | "writer" }> = {
+			architect: { description: "Read-only architecture and implementation planning", acceptanceRole: "read-only" },
+			builder: { description: "Mutation-capable scoped implementation", acceptanceRole: "writer" },
+			commentator: { description: "Read-only evidence-based review", acceptanceRole: "read-only" },
+			explorer: { description: "Read-only local codebase reconnaissance", acceptanceRole: "read-only" },
+			recapper: { description: "Read-only handoff and context synthesis", acceptanceRole: "read-only" },
+			researcher: { description: "Read-only external and code-first research", acceptanceRole: "read-only" },
+		};
+
+		assert.deepEqual(
+			agents.map((agent) => agent.name).sort(),
+			[...BUILTIN_AGENT_NAMES].sort(),
+		);
+		for (const [name, expectedEntry] of Object.entries(expected)) {
+			const agent = agents.find((candidate) => candidate.name === name);
+			assert.ok(agent, `bundled agent ${name} not discovered`);
+			assert.equal(agent.description, expectedEntry.description, `${name} description`);
+			assert.equal(agent.acceptanceRole, expectedEntry.acceptanceRole, `${name} acceptanceRole`);
 		}
 	});
 });
@@ -1331,7 +1371,7 @@ Do work
 		}
 	});
 
-	it("builder includes the child-facing supervisor tool", () => {
+	it("builder builtin tools exclude the bridge-injected supervisor tool", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-supervisor-tool-"));
 		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-supervisor-tool-home-"));
 		tempDirs.push(dir);
@@ -1344,7 +1384,31 @@ Do work
 			process.env.USERPROFILE = homeDir;
 			const agent = discoverAgentsAll(dir).builtin.find((candidate) => candidate.name === "builder");
 			assert.ok(agent, "builder builtin should be discovered");
-			assert.deepEqual(agent?.tools, ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"]);
+			assert.deepEqual(agent?.tools, ["read", "grep", "find", "ls", "bash", "edit", "write"]);
+			assert.equal(agent?.tools?.includes("contact_supervisor"), false);
+		} finally {
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+		}
+	});
+
+	it("researcher builtin routes grep.app tools into mcpDirectTools", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-researcher-tools-"));
+		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-researcher-tools-home-"));
+		tempDirs.push(dir);
+		tempDirs.push(homeDir);
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+
+		try {
+			process.env.HOME = homeDir;
+			process.env.USERPROFILE = homeDir;
+			const agent = discoverAgentsAll(dir).builtin.find((candidate) => candidate.name === "researcher");
+			assert.ok(agent, "researcher builtin should be discovered");
+			assert.deepEqual(agent?.tools, ["read", "web_explore"]);
+			assert.deepEqual(agent?.mcpDirectTools, ["grep_app_search", "grep_app_fetch"]);
 		} finally {
 			if (previousHome === undefined) delete process.env.HOME;
 			else process.env.HOME = previousHome;

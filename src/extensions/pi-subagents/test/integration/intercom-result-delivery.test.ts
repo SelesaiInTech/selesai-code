@@ -227,10 +227,13 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.match(result.content[0]?.text ?? "", /Delivered single subagent result via intercom\./);
 		assert.doesNotMatch(result.content[0]?.text ?? "", /Full child output from worker/);
 		assert.equal(result.details?.results?.[0]?.finalOutput, undefined);
-		assert.match(String(payload.message ?? ""), /Full child output from worker/);
+		// Reference-first intercom delivery: the child summary is the saved-output
+		// reference (error/status first for failed children), never raw child prose.
+		assert.match(String(payload.message ?? ""), /Output saved to: /);
+		assert.doesNotMatch(String(payload.message ?? ""), /Full child output from worker/);
 	});
 
-	it("falls back to legacy foreground output when the bridge is inactive", async () => {
+	it("returns the native saved-output receipt when the bridge is inactive", async () => {
 		mockPi.onCall({ output: "Legacy foreground output" });
 		const { executor, events } = makeExecutor({ bridgeMode: "off" });
 
@@ -243,10 +246,14 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		);
 
 		assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);
-		assert.match(result.content[0]?.text ?? "", /Legacy foreground output/);
+		assert.match(result.content[0]?.text ?? "", /Output saved to: /);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /Legacy foreground output/);
+		const runId = result.details?.runId;
+		assert.ok(runId);
+		assert.equal(fs.readFileSync(path.join(tempDir, ".pi-subagents", "artifacts", "outputs", runId, "result.md"), "utf-8"), "Legacy foreground output");
 	});
 
-	it("keeps native foreground output without attempting external grouped delivery when disabled", async () => {
+	it("keeps the native saved-output receipt without attempting external grouped delivery when disabled", async () => {
 		mockPi.onCall({ output: "Native foreground output" });
 		const { executor, events } = makeExecutor({ resultDelivery: false });
 
@@ -259,10 +266,11 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		);
 
 		assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);
-		assert.match(result.content[0]?.text ?? "", /Native foreground output/);
+		assert.match(result.content[0]?.text ?? "", /Output saved to: /);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /Native foreground output/);
 	});
 
-	it("falls back to legacy foreground output when grouped delivery is not acknowledged", async () => {
+	it("falls back to the compact native saved-output receipt when grouped delivery is not acknowledged", async () => {
 		mockPi.onCall({ output: "Unacknowledged foreground output" });
 		const { executor, events } = makeExecutor({ acknowledgeResults: false });
 
@@ -275,7 +283,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		);
 
 		assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), true);
-		assert.match(result.content[0]?.text ?? "", /Unacknowledged foreground output/);
+		assert.match(result.content[0]?.text ?? "", /Output saved to: /);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /Unacknowledged foreground output/);
 	});
 
 	it("top-level parallel runs emit one grouped event containing all children", async () => {
@@ -1250,7 +1259,10 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const payload = completion.payload as { success?: boolean; summary?: string };
 		assert.equal(payload.success, false);
 		assert.match(payload.summary ?? "", /Acceptance rejected/);
-		assert.match(payload.summary ?? "", /final answer with rejected acceptance evidence/);
+		// Reference-first foreground completion: the recovery summary carries the
+		// saved-output reference (with error/status), never raw child prose.
+		assert.match(payload.summary ?? "", /Output saved to: /);
+		assert.doesNotMatch(payload.summary ?? "", /final answer with rejected acceptance evidence/);
 
 		const status = await executor.execute(
 			"foreground-detached-failed-status",

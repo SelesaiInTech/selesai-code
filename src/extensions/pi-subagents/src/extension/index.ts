@@ -51,7 +51,7 @@ import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/
 import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
-import { buildSubagentToolDescription } from "./tool-description.ts";
+import { buildSubagentToolDescription, SUBAGENT_PARENT_ROUTING_GUIDANCE } from "./tool-description.ts";
 import {
 	type Details,
 	type SubagentState,
@@ -405,6 +405,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		name: "subagent",
 		label: "Subagent",
 		description: buildSubagentToolDescription(config),
+		// Always-visible active-tool path: rendered into the main system prompt by
+		// buildSystemPrompt (default and custom-prompt branches). Parent-only; the
+		// child-safe fanout registration must not receive this guidance.
+		promptGuidelines: [SUBAGENT_PARENT_ROUTING_GUIDANCE],
 		parameters: SubagentParams,
 
 		prepareArguments(args) {

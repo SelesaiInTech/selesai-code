@@ -53,7 +53,7 @@ describe("agent management config parsing", () => {
 		);
 
 		assert.equal(result.isError, false);
-		assert.match(readText(result), /- scout \(project\): Project scout override/);
+		assert.match(readText(result), /- scout \(project, context: fresh\): Project scout override/);
 		assert.doesNotMatch(readText(result), /- scout \(builtin/);
 	});
 
@@ -722,6 +722,126 @@ Drive the failing test first.
 		assert.match(content, /inheritSkills: false/);
 	});
 
+	it("exposes a rich human and machine catalog for a custom project agent and chain", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const created = handleCreate(
+			{
+				config: {
+					name: "Catalog Writer",
+					description: "Scoped catalog writer",
+					scope: "project",
+					aliases: "catw",
+					acceptanceRole: "writer",
+					defaultContext: "fork",
+					tools: "read, grep, find, ls, bash, edit, write, mcp:fixture_search",
+					systemPrompt: "Implement scoped changes.",
+				},
+			},
+			ctx,
+		);
+		assert.equal(created.isError, false);
+
+		const chainCreated = handleCreate(
+			{ config: { name: "Review Flow", description: "Catalog review flow", scope: "project", steps: [{ agent: "catalog-writer", task: "Inspect" }] } },
+			ctx,
+		);
+		assert.equal(chainCreated.isError, false);
+
+		const listed = handleManagementAction("list", {}, ctx);
+		assert.equal(listed.isError, false);
+		const text = readText(listed);
+		assert.match(text, /Executable agents:/);
+		assert.match(
+			text,
+			/- catalog-writer \(project, context: fork, role: writer, aliases: catw, tools: read, grep, find, ls, bash, edit, write, mcp:fixture_search\): Scoped catalog writer/,
+		);
+		assert.match(text, /Chains:\n- review-flow \(project\): Catalog review flow/);
+
+		const details = (listed as { details: { catalog: unknown } }).details.catalog as {
+			version: number;
+			agents: Array<{
+				name: string;
+				source: string;
+				description: string;
+				executable: boolean;
+				aliases?: string[];
+				defaultContext: string;
+				acceptanceRole?: string;
+				tools?: string[];
+			}>;
+			chains: Array<{ name: string; source: string; description: string }>;
+		};
+		assert.equal(details.version, 1);
+		const entry = details.agents.find((agent) => agent.name === "catalog-writer");
+		assert.ok(entry, "catalog must include the custom project agent");
+		assert.equal(entry.source, "project");
+		assert.equal(entry.description, "Scoped catalog writer");
+		assert.equal(entry.executable, true);
+		assert.deepEqual(entry.aliases, ["catw"]);
+		assert.equal(entry.defaultContext, "fork");
+		assert.equal(entry.acceptanceRole, "writer");
+		assert.deepEqual(entry.tools, ["read", "grep", "find", "ls", "bash", "edit", "write", "mcp:fixture_search"]);
+		assert.deepEqual(details.chains, [{ name: "review-flow", source: "project", description: "Catalog review flow" }]);
+	});
+
+	it("normalizes unset defaultContext to fresh in the machine catalog", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const created = handleCreate(
+			{ config: { name: "No Context", description: "No explicit context", scope: "project", systemPrompt: "Work" } },
+			ctx,
+		);
+		assert.equal(created.isError, false);
+
+		const listed = handleManagementAction("list", {}, ctx);
+		const details = (listed as { details: { catalog: unknown } }).details.catalog as {
+			agents: Array<{ name: string; defaultContext: string }>;
+		};
+		const entry = details.agents.find((agent) => agent.name === "no-context");
+		assert.ok(entry);
+		assert.equal(entry.defaultContext, "fresh");
+		assert.match(readText(listed), /- no-context \(project, context: fresh\)/);
+	});
+
+	it("omits disabled agents from both human text and machine catalog metadata", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const created = handleCreate(
+			{ config: { name: "Hidden Writer", description: "Should stay hidden", scope: "project", systemPrompt: "Work" } },
+			ctx,
+		);
+		assert.equal(created.isError, false);
+
+		const disabled = handleManagementAction("disable", { agent: "hidden-writer" }, ctx);
+		assert.equal(disabled.isError, false);
+
+		const listed = handleManagementAction("list", {}, ctx);
+		assert.equal(listed.isError, false);
+		assert.doesNotMatch(readText(listed), /hidden-writer/);
+		const details = (listed as { details: { catalog: unknown } }).details.catalog as {
+			agents: Array<{ name: string }>;
+		};
+		assert.equal(details.agents.some((agent) => agent.name === "hidden-writer"), false);
+	});
+
+	it("returns (none) text and an empty versioned catalog when no agents are discovered", () => {
+		fs.mkdirSync(path.join(tempDir, "agent-home"), { recursive: true });
+		fs.writeFileSync(
+			path.join(tempDir, "agent-home", "settings.json"),
+			JSON.stringify({ subagents: { disableBuiltins: true } }, null, 2),
+			"utf-8",
+		);
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const listed = handleManagementAction("list", {}, ctx);
+		assert.equal(listed.isError, false);
+		const text = readText(listed);
+		assert.match(text, /Executable agents:\n- \(none\)/);
+		assert.match(text, /Chains:\n- \(none\)/);
+		assert.deepEqual((listed as { details: { catalog: unknown } }).details.catalog, {
+			version: 1,
+			agents: [],
+			chains: [],
+		});
+	});
+
 	it("lists proactive skill subagent suggestions from repeated configured skill use", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 		fs.mkdirSync(path.join(tempDir, ".selesai", "agents"), { recursive: true });
@@ -772,6 +892,46 @@ Inspect cleanup.
 
 		const listed = handleManagementAction("list", {}, ctx);
 		assert.doesNotMatch(readText(listed), /Proactive skill subagent suggestions:/);
+	});
+
+	it("appends explicit-only task-aware advisory routing to list output when task is provided", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		handleCreate(
+			{ config: { name: "Code Reviewer", description: "Reviews without editing", scope: "project", acceptanceRole: "read-only", tools: "read, grep, find, ls", systemPrompt: "Review." } },
+			ctx,
+		);
+		handleCreate(
+			{ config: { name: "Fixer", description: "Implements changes", scope: "project", acceptanceRole: "writer", tools: "read, grep, bash, edit, write", systemPrompt: "Fix." } },
+			ctx,
+		);
+
+		const implementation = handleManagementAction("list", { task: "Implement the fix" }, ctx);
+		assert.equal(implementation.isError, false);
+		assert.deepEqual((implementation as { details: { results: unknown[] } }).details.results, []);
+		const implementationText = readText(implementation);
+		assert.match(implementationText, /Task-aware advisory routing:/);
+		assert.match(implementationText, /- Intent: implementation/);
+		assert.match(implementationText, /- Recommended: fixer \(project\)/);
+		assert.match(implementationText, /- Advisory only: no subagent was launched\. To proceed, explicitly call subagent with this canonical agent name and the task\./);
+
+		const review = handleManagementAction("list", { task: "Review only; do not edit files" }, ctx);
+		assert.equal(review.isError, false);
+		const reviewText = readText(review);
+		assert.match(reviewText, /- Intent: read-only/);
+		assert.match(reviewText, /- Recommended: code-reviewer \(project\)/);
+
+		const vague = handleManagementAction("list", { task: "Look into this" }, ctx);
+		assert.equal(vague.isError, false);
+		const vagueText = readText(vague);
+		assert.match(vagueText, /- Intent: unknown/);
+		assert.match(vagueText, /- Recommendation: none/);
+		assert.match(vagueText, /Clarify whether the task is read-only analysis\/review or implementation allowed to edit files\./);
+
+		for (const noTaskParams of [{}, { task: "   " }]) {
+			const noTask = handleManagementAction("list", noTaskParams, ctx);
+			assert.equal(noTask.isError, false);
+			assert.doesNotMatch(readText(noTask), /Task-aware advisory routing:/);
+		}
 	});
 
 });

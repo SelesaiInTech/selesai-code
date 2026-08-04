@@ -27,6 +27,8 @@ Read the matching reference file before acting. Paths are relative to this `SKIL
 
 Selesai default: use Fable-style parent orchestration for complex work (multiple moving parts, unclear acceptance, cross-cutting code, meaningful user impact, expensive validation, or broad review surface). Lightweight one-off delegation stays lightweight.
 
+Routing rule: keep tiny targeted reads and simple answers with the parent. For broad local investigation, external research, or mutation work, call `{ action: "list" }`, choose an executable entry from its runtime metadata, then delegate. Treat list output—not hardcoded role names—as the agent-selection authority.
+
 For broad or uncertain requests, read more than one reference. For complex work, start with `references/prompting-and-roles.md` and `references/execution-controls.md`, then consult `references/constraints-and-recipes.md` before launching or reviewing child work.
 
 ## Always-on constraints

@@ -686,9 +686,19 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const isFirstProgressAgent = behavior.progress && !progressPrecreated && !progressInstructionCreated;
 		if (behavior.progress) progressInstructionCreated = true;
 		const progressInstructions = buildChainInstructions({ ...behavior, output: false, reads: false }, progressDir, isFirstProgressAgent);
-		const outputPath = resolveSingleOutputPath(behavior.output, ctx.cwd, instructionCwd, outputBaseDir);
+		const explicitOutput = typeof behavior.output === "string" ? behavior.output : undefined;
+		// Omitted output generates a collision-safe per-child durable path
+		// `<asyncDir>/outputs/<flat-index>-<agent>.md`; omitted outputMode resolves
+		// to file-only whenever an output path is active. Explicit paths,
+		// `output: false`, and explicit `outputMode: "inline"` are preserved.
+		const outputPath = explicitOutput
+			? resolveSingleOutputPath(explicitOutput, ctx.cwd, instructionCwd, outputBaseDir)
+			: behavior.output === false && s.output !== false && s.output !== "false" && flatIndex !== undefined
+				? path.join(asyncDir, "outputs", `${flatIndex}-${s.agent}.md`)
+				: undefined;
 		if (!namespaceOutputPath) systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, a);
-		const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Async step (${s.agent})`);
+		const effectiveOutputMode = s.outputMode ?? (outputPath ? "file-only" : "inline");
+		const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Async step (${s.agent})`);
 		if (validationError) throw new AsyncStartValidationError(validationError);
 		let taskTemplate = s.task ?? "{previous}";
 		taskTemplate = taskTemplate.replace(/\{task\}/g, originalTask ?? "");
@@ -751,7 +761,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			skills: resolvedSkills.map((r) => r.name),
 			outputPath,
 			...(namespaceOutputPath ? { namespaceOutputPath: true } : {}),
-			outputMode: behavior.outputMode,
+			outputMode: effectiveOutputMode,
 			sessionFile,
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
 			waitToolEnabled: params.waitToolEnabled,
@@ -1228,9 +1238,17 @@ export function executeAsyncSingle(
 	}
 
 	const effectiveOutput = normalizeSingleOutputOverride(params.output, agentConfig.output);
-	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, runnerCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined));
+	// Omitted output resolves to a generated per-run durable path
+	// `<asyncDir>/outputs/0-<agent>.md`; omitted outputMode resolves to file-only
+	// whenever an output path is active. Explicit paths, `output: false`, and
+	// explicit `outputMode: "inline"` are preserved exactly.
+	const outputPath = typeof effectiveOutput === "string"
+		? resolveSingleOutputPath(effectiveOutput, ctx.cwd, runnerCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined))
+		: effectiveOutput === false
+			? undefined
+			: path.join(asyncDir, "outputs", `0-${agent}.md`);
 	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, agentConfig);
-	const outputMode = params.outputMode ?? "inline";
+	const outputMode = params.outputMode ?? (outputPath ? "file-only" : "inline");
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
 	if (validationError) return formatAsyncStartError("single", validationError);
 	const taskWithOutputInstruction = injectSingleOutputInstruction(task, outputPath, agentConfig);

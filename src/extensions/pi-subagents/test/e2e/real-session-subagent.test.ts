@@ -13,6 +13,7 @@
 
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { tryImport } from "../support/helpers.ts";
@@ -23,6 +24,17 @@ const piAi = await tryImport<unknown>("@earendil-works/pi-ai");
 const available = Boolean(piCodingAgent && piAi);
 
 const CHILD_MARKER = "CHILD_REAL_SESSION_OK";
+
+/**
+ * Reference-first tool results: completion content carries "Output saved to:
+ * <path> (…)". Read the durable file to inspect the full child output.
+ */
+function readSavedOutput(text: string): string {
+	const rest = text.split("Output saved to: ")[1];
+	assert.ok(rest, `expected a saved-output reference in: ${text.slice(0, 160)}`);
+	const outputPath = rest.split(" (")[0]!;
+	return fs.readFileSync(outputPath, "utf-8");
+}
 // Env vars the runner must clear so a parent that was itself spawned as a
 // subagent child can still launch fresh children. The values are deliberately
 // bogus sentinels (nonexistent paths) so a leaked value would break spawning.
@@ -122,10 +134,14 @@ Use the available tools.`;
 		const chainDetails = JSON.stringify((toolMessages[1] as { details?: unknown } | undefined)?.details);
 		const structuredDetails = JSON.stringify((toolMessages[2] as { details?: unknown } | undefined)?.details);
 		assert.equal(results.length, 4);
-		assert.match(results[0] ?? "", /ACTIVE_TOOLS:[^\n]*fixture_search/);
-		assert.match(results[0] ?? "", /ACTIVE_TOOLS:[^\n]*read/);
-		assert.match(chainDetails, /ACTIVE_TOOLS:[^\n]*fixture_search/);
-		assert.match(chainDetails, /ACTIVE_TOOLS:[^\n]*read/);
+		const directOutput = readSavedOutput(results[0] ?? "");
+		assert.match(directOutput, /ACTIVE_TOOLS:[^\n]*fixture_search/);
+		assert.match(directOutput, /ACTIVE_TOOLS:[^\n]*read/);
+		const chainFirstChild = (toolMessages[1] as { details?: { results?: Array<{ savedOutputPath?: string }> } } | undefined)?.details?.results?.[0];
+		assert.ok(chainFirstChild?.savedOutputPath, "chain details should carry the saved output path");
+		const chainOutput = fs.readFileSync(chainFirstChild.savedOutputPath, "utf-8");
+		assert.match(chainOutput, /ACTIVE_TOOLS:[^\n]*fixture_search/);
+		assert.match(chainOutput, /ACTIVE_TOOLS:[^\n]*read/);
 		assert.match(structuredDetails, /STRUCTURED_OUTPUT_OK/);
 		assert.match(results[3] ?? "", /requested unavailable child tools: missing_search/);
 		assert.match(results[3] ?? "", /subagentOnlyExtensions/);
@@ -172,7 +188,8 @@ Report active tools.`;
 
 		const results = subagentToolResults(run.parentSession);
 		assert.equal(results.length, 1);
-		assert.match(results[0] ?? "", /ACTIVE_TOOLS:[^\n]*fixture_async_search/);
+		const asyncOutput = readSavedOutput(results[0] ?? "");
+		assert.match(asyncOutput, /ACTIVE_TOOLS:[^\n]*fixture_async_search/);
 		assert.doesNotMatch(results[0] ?? "", /requested unavailable child tools/);
 	});
 
@@ -206,7 +223,7 @@ Report active tools.`;
 
 			const toolResults = subagentToolResults(run.parentSession);
 			assert.equal(toolResults.length, 1);
-			assert.match(toolResults[0]!, new RegExp(CHILD_MARKER));
+			assert.match(readSavedOutput(toolResults[0]!), new RegExp(CHILD_MARKER));
 			assert.match(run.responseText, new RegExp(CHILD_MARKER));
 			assert.doesNotMatch(run.responseText, /CHILD_MISSING/);
 			assert.ok(run.modelCalls >= 2, `expected parent tool-call and final turns, got ${run.modelCalls}`);
@@ -218,5 +235,93 @@ Report active tools.`;
 				else process.env[key] = value;
 			}
 		}
+	});
+
+	function latestSubagentToolResultText(messages: Array<{ role?: string; toolName?: string; content?: unknown }>): string | undefined {
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const message = messages[i]!;
+			if (message.role === "toolResult" && message.toolName === "subagent") {
+				return Array.isArray(message.content)
+					? message.content
+						.map((part) => part && typeof part === "object" && (part as { type?: unknown }).type === "text"
+							? String((part as { text?: unknown }).text ?? "")
+							: "")
+						.join("")
+					: "";
+			}
+		}
+		return undefined;
+	}
+
+	it("lists then delegates to a non-bundled discovered writer in a broad-mutation request", async () => {
+		const { runRealSubagentSession, subagentCall, subagentToolResults } = await import("../support/real-session-runner.ts");
+		const writerAgent = `---
+name: fixture-writer
+description: Scoped mutation-capable fixture writer
+aliases: fw
+tools: read, grep, find, ls, bash, edit, write
+acceptanceRole: writer
+defaultContext: fork
+completionGuard: false
+---
+Implement the scoped fixture change and return the marker.`;
+
+		run = await runRealSubagentSession({
+			prompt: "Implement the fixture change across the codebase.",
+			childText: CHILD_MARKER,
+			projectFiles: {
+				".selesai/agents/fixture-writer.md": writerAgent,
+			},
+			respond(context) {
+				const messages = context.messages as Array<{ role?: string; toolName?: string; content?: unknown; details?: unknown }>;
+				const subagentResults = messages.filter((message) => message.role === "toolResult" && message.toolName === "subagent");
+				if (subagentResults.length === 0) {
+					return subagentCall({ action: "list", agentScope: "project" }, "call-list-writer");
+				}
+				if (subagentResults.length === 1) {
+					const listText = latestSubagentToolResultText(messages) ?? "";
+					assert.match(
+						listText,
+						/- fixture-writer \(project, context: fork, role: writer, aliases: fw, tools: read, grep, find, ls, bash, edit, write\)/,
+						"catalog must expose the custom writer with its runtime metadata",
+					);
+					const listedDetails = JSON.stringify(subagentResults.at(-1)?.details ?? {});
+					assert.match(listedDetails, /"catalog"/);
+					assert.match(listedDetails, /"fixture-writer"/);
+					assert.match(listedDetails, /"acceptanceRole":"writer"/);
+					return subagentCall(
+						{ agent: "fixture-writer", task: "Implement the change and return the marker.", context: "fresh", agentScope: "project" },
+						"call-fixture-writer",
+					);
+				}
+				return "Broad mutation work complete.";
+			},
+			timeoutMs: 60_000,
+		});
+
+		const results = subagentToolResults(run.parentSession);
+		assert.equal(results.length, 2);
+		assert.match(results[0] ?? "", /fixture-writer \(project, context: fork, role: writer/);
+		assert.match(readSavedOutput(results[1] ?? ""), new RegExp(CHILD_MARKER));
+	});
+
+	it("keeps tiny targeted reads local without a subagent call", async () => {
+		const { runRealSubagentSession, subagentToolResults } = await import("../support/real-session-runner.ts");
+		run = await runRealSubagentSession({
+			prompt: "What does the README say about subagents?",
+			childText: CHILD_MARKER,
+			projectFiles: {
+				"README.md": "Subagents are delegated workers.",
+			},
+			respond() {
+				return "The README says: Subagents are delegated workers.";
+			},
+			timeoutMs: 60_000,
+		});
+
+		const results = subagentToolResults(run.parentSession);
+		assert.equal(results.length, 0);
+		assert.match(run.responseText, /Subagents are delegated workers/);
+		assert.ok(run.modelCalls >= 1, `expected at least one parent turn, got ${run.modelCalls}`);
 	});
 });

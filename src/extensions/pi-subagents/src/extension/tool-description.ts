@@ -6,13 +6,27 @@ import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 const CUSTOM_TOOL_DESCRIPTION_FILE = "subagent-tool-description.md";
 const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
 
+/**
+ * Generic parent-only delegation routing contract. Deliberately contains no
+ * bundled agent names: agents are selected from runtime catalog metadata only.
+ * Attached to the parent `subagent` tool as promptGuidelines and embedded in
+ * the mandatory safety guidance so custom descriptions cannot remove it.
+ */
+export const SUBAGENT_PARENT_ROUTING_GUIDANCE = `PARENT-ONLY SUBAGENT ROUTING:
+• Before any execution, call { action: "list" } and select only an executable entry using its current role, context, and tool metadata.
+• Keep tiny targeted reads and simple answers local with the parent.
+• Send broad local investigation, external research, and mutation/implementation work to a capable delegated agent.
+• The parent remains the decision-maker and normally the sole writer.`;
+
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and only run executable/non-disabled agents or chains.
 • Keep execution and management separate: omit action for SINGLE/PARALLEL/CHAIN execution; use action only for list/get/models/create/update/delete/status/grant-spawn-budget/interrupt/stop/resume/steer/append-step/approve-checkpoint/reject-checkpoint/doctor.
 • Async/background runs: launch with async:true only when work can proceed independently. Do not sleep or poll status just to wait. In an interactive session, normally return control and let Pi wake you; do not call subagent_wait merely to wait. Override that default and call subagent_wait when the current request is run-to-completion — for example, the user asked you to report results back before continuing or a skill must finish in one turn. Headless sessions auto-drain current-session work at agent_end; use subagent_wait when this turn must receive results before it ends.
 • Child-safety boundary: ordinary child subagents are not orchestrators and must not run subagents. Only explicitly configured fanout children may use the child-safe subagent tool, still bounded by depth/session limits.
 • Writing/review safety: keep one writer for the same cwd/worktree. Use fresh-context read-only reviewers/validators for independent review, then have the parent synthesize and apply fixes as the sole writer unless an isolated worktree was intentionally requested.
-• Artifacts/status essentials: chain outputs live under {chain_dir}; async runs expose asyncId/asyncDir with status.json, events.jsonl, output logs, and status via { action: "status", id }. Include output paths and residual risks when reporting results.`;
+• Artifacts/status essentials: chain outputs live under {chain_dir}; async runs expose asyncId/asyncDir with status.json, events.jsonl, output logs, and status via { action: "status", id }. Normal delegated results are reference-first: completion returns saved-output references plus lifecycle/status information, not child prose — inspect full output through the saved output path, async status/transcript, or resume. Include output paths and residual risks when reporting results.
+
+${SUBAGENT_PARENT_ROUTING_GUIDANCE}`;
 
 export const FULL_SUBAGENT_TOOL_DESCRIPTION = `To delegate work, call with { agent, task }, { tasks }, or { chain }; omit action. Use action only for management/control actions listed below.
 
@@ -37,8 +51,9 @@ CHAIN EXAMPLES (quick reference for the nested schema):
 • Parallel fan-out: { chain: [{parallel: [{agent:"agent-a", task:"Check part of {task}", count: 3}]}] }
 • Mixed: { chain: [{agent:"agent-a", task:"Research {task}"}, {checkpoint:"review", message:"Approve implementation?"}, {parallel: [{agent:"agent-b", task:"Review {previous}", count: 2}]}, {agent:"agent-c", task:"Summarize {previous}"}] }
 
-MANAGEMENT (use action field, omit agent/task/chain/tasks):
+MANAGEMENT (use action field; omit agent/chain/tasks — the sole field exception is list's optional advisory task):
 • { action: "list" } - discover executable agents/chains
+• { action: "list", task: "..." } - same, plus optional task-aware advisory routing: recommends one canonical agent (implementation or read-only) for the task, or explains why none is safe. It only recommends and never launches; to proceed, explicitly call subagent with the recommended canonical agent name and the task.
 • { action: "get", agent: "name" } - full detail; packaged agents use dotted runtime names like "package.agent"
 • { action: "models", agent?: "name" } - show the runtime-loaded builtin subagent model mapping, optionally filtered to one builtin
 • { action: "watchdog.status" | "watchdog.check" | "watchdog.recommend-model" } - inspect the opt-in subagent watchdog and its strong complementary model recommendation
@@ -47,10 +62,10 @@ MANAGEMENT (use action field, omit agent/task/chain/tasks):
 • acceptanceRole affects inferred acceptance only, never tool access. Explicit task mutation/no-edit intent wins; omission preserves name heuristics. Update with false or an empty string to clear it.
 • { action: "update", agent: "code-analysis.custom-agent", config: { package: "analysis", ... } } - merge
 • { action: "delete", agent: "code-analysis.custom-agent" }
-• { action: "eject", agent: "commentator", agentScope?: "user" | "project" } - copy a bundled/package agent to user/project scope as an editable custom file that shadows the original (default scope: user)
-• { action: "disable", agent: "commentator", agentScope?: "user" | "project" } - hide any agent from runtime discovery via a reversible settings override (default scope: user)
-• { action: "enable", agent: "commentator", agentScope?: "user" | "project" } - remove a disabled override and restore discovery
-• { action: "reset", agent: "commentator", agentScope?: "user" | "project" } - delete the scope's custom agent file and/or settings override, restoring the bundled default
+• { action: "eject", agent: "agent-name", agentScope?: "user" | "project" } - copy a bundled/package agent to user/project scope as an editable custom file that shadows the original (default scope: user)
+• { action: "disable", agent: "agent-name", agentScope?: "user" | "project" } - hide any agent from runtime discovery via a reversible settings override (default scope: user)
+• { action: "enable", agent: "agent-name", agentScope?: "user" | "project" } - remove a disabled override and restore discovery
+• { action: "reset", agent: "agent-name", agentScope?: "user" | "project" } - delete the scope's custom agent file and/or settings override, restoring the bundled default
 • { action: "grant-spawn-budget", additional: 10 } - add bounded capacity from the root interactive parent after native user confirmation; grants are rejected while children are active and cumulative grants cannot exceed the original configured cap
 • Use chainName for chain operations; packaged chains also use dotted runtime names
 
@@ -88,7 +103,8 @@ EXECUTE:
 • If list shows proactive skill subagent suggestions, use a small fresh-context fanout only when the task is broad enough.
 
 MANAGE / CONTROL:
-• Use action without execution fields: list, get, models, create, update, delete, eject, disable, enable, reset, grant-spawn-budget, doctor, watchdog.status, watchdog.check, watchdog.recommend-model, watchdog.configure.
+• Use action without execution fields (list may add an optional advisory task): list, get, models, create, update, delete, eject, disable, enable, reset, grant-spawn-budget, doctor, watchdog.status, watchdog.check, watchdog.recommend-model, watchdog.configure.
+• { action: "list", task: "..." } optionally appends task-aware advisory routing that recommends a canonical agent but never launches; execute the recommended agent explicitly in a separate call.
 • Agent acceptanceRole (read-only or writer) affects inferred acceptance only, never tools. Explicit task intent wins; omission keeps name heuristics. Update with false or an empty string to clear it.
 • Async control actions: status, interrupt, stop, resume, steer, append-step, approve-checkpoint, reject-checkpoint. Use stop with an id for current-session top-level async runs. Use status view:"fleet" for active-run overview, view:"transcript" to tail child output, steer for acknowledged top-level live async guidance, and resume for paused/completed/failed revival or a routed nested follow-up. Stopped runs are non-resumable. Steering delivery means Pi accepted the correlated user input, not model compliance; use index for a specific child.
 • Opt-in schedule actions: schedule, schedule-list, schedule-status, schedule-cancel. Schedule only explicit delayed runs the user asked for.
@@ -98,6 +114,7 @@ ASYNC / WAIT:
 • Status and artifacts live under asyncId/asyncDir with status.json, events.jsonl, output logs, session files, and { action:"status", id:"..." }.
 
 SAFETY:
+• Parent-only routing: call { action: "list" } before any execution and select only an executable entry using its current role, context, and tool metadata. Keep tiny targeted reads and simple answers local; send broad local investigation, external research, and mutation/implementation work to a capable delegated agent. The parent remains the decision-maker and normally the sole writer.
 • Ordinary child subagents are not orchestrators and must not run subagents. Only explicit fanout children may use child-safe subagent, still bounded by depth/session limits.
 • Keep one writer per cwd/worktree. Use fresh read-only review/validation fanout, then synthesize and apply fixes from the parent unless isolated worktrees were intentionally requested.`;
 

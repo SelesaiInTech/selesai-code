@@ -262,7 +262,7 @@ const ControlOverrides = Type.Object({
 
 const SubagentParamsSchema = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Agent name (SINGLE mode) or target for management get/update/delete" })),
-	task: Type.Optional(Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" })),
+	task: Type.Optional(Type.String({ description: "Task for SINGLE-mode execution, or an optional advisory intent for action:'list' (list only appends a task-aware recommendation and never launches work; explicitly call subagent with the recommended canonical agent name and the task to execute)" })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({
 		description: "Optional management/control action. Omit this field entirely for execution/delegation ({agent, task}, {tasks}, or {chain}); use it only for management/control actions."

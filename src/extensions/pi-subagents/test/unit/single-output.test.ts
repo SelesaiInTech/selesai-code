@@ -6,8 +6,10 @@ import * as path from "node:path";
 import type { Message, Usage } from "@earendil-works/pi-ai";
 import {
 	captureSingleOutputSnapshot,
+	CONTEXT_FALLBACK_LIMIT,
 	extractChildWrittenOutput,
 	finalizeSingleOutput,
+	formatBoundedPersistenceFallback,
 	formatSavedOutputReference,
 	injectOutputPathSystemPrompt,
 	injectSingleOutputInstruction,
@@ -269,6 +271,49 @@ describe("validateFileOnlyOutputMode", () => {
 	});
 });
 
+describe("CONTEXT_FALLBACK_LIMIT and formatBoundedPersistenceFallback", () => {
+	it("exports the fixed internal 80-line/4-KiB context fallback cap", () => {
+		assert.equal(CONTEXT_FALLBACK_LIMIT.lines, 80);
+		assert.equal(CONTEXT_FALLBACK_LIMIT.bytes, 4096);
+	});
+
+	it("includes error, process status, intended path, and a bounded slice", () => {
+		const fallback = formatBoundedPersistenceFallback({
+			error: "EACCES: permission denied",
+			outputPath: "/tmp/report.md",
+			fullOutput: "line one\nline two",
+			exitCode: 1,
+			processError: "boom",
+		});
+		assert.match(fallback, /\[Full output unavailable\] EACCES: permission denied/);
+		assert.match(fallback, /Process status: boom/);
+		assert.match(fallback, /Intended output path: \/tmp\/report\.md/);
+		assert.match(fallback, /Full output is unavailable; showing a bounded excerpt \(first 80 lines \/ 4 KiB\)\./);
+		assert.match(fallback, /line one\nline two/);
+		assert.doesNotMatch(fallback, /Output saved to:/);
+	});
+
+	it("never returns unbounded output when the source exceeds the cap", () => {
+		const longOutput = Array.from({ length: 500 }, (_, i) => `line ${i} ${`x`.repeat(50)}`).join("\n");
+		const fallback = formatBoundedPersistenceFallback({
+			error: "disk full",
+			fullOutput: longOutput,
+			exitCode: 0,
+		});
+		const body = fallback.split("\n").filter((line) => /^line \d+/.test(line)).length;
+		assert.ok(body <= 80, `fallback kept ${body} lines, expected at most 80`);
+		assert.ok(Buffer.byteLength(fallback, "utf-8") <= 12 * 1024, "fallback header plus 4-KiB slice stays bounded");
+		assert.doesNotMatch(fallback, /line 400/);
+	});
+
+	it("states completed status for exit code 0 and failed status otherwise", () => {
+		const completed = formatBoundedPersistenceFallback({ error: "read failed", fullOutput: "x", exitCode: 0 });
+		assert.match(completed, /Process status: completed/);
+		const failed = formatBoundedPersistenceFallback({ error: "read failed", fullOutput: "x", exitCode: 2 });
+		assert.match(failed, /Process status: failed \(exit 2\)/);
+	});
+});
+
 describe("finalizeSingleOutput", () => {
 	it("formats saved-path messaging around the already-resolved output", () => {
 		const result = finalizeSingleOutput({
@@ -298,13 +343,58 @@ describe("finalizeSingleOutput", () => {
 		assert.match(result.displayOutput, /3 lines/);
 	});
 
-	it("does not add save messaging on failed runs", () => {
+	it("returns error/status plus the saved-output reference on failed runs with a persisted result", () => {
 		const result = finalizeSingleOutput({
 			fullOutput: "full output",
 			truncatedOutput: "truncated output",
 			outputPath: "/tmp/review.md",
 			savedPath: "/tmp/review.md",
 			exitCode: 1,
+			error: "exploded",
+		});
+
+		assert.match(result.displayOutput, /^exploded\n\nOutput saved to: \/tmp\/review\.md/);
+		assert.doesNotMatch(result.displayOutput, /truncated output/);
+		assert.equal(result.savedPath, "/tmp/review.md");
+		assert.ok(result.outputReference);
+	});
+
+	it("returns only the bounded persistence-failure fallback when saving failed", () => {
+		const result = finalizeSingleOutput({
+			fullOutput: "full output text",
+			truncatedOutput: "truncated output",
+			outputPath: "/tmp/review.md",
+			exitCode: 0,
+			saveError: "EACCES: permission denied",
+		});
+
+		assert.match(result.displayOutput, /\[Full output unavailable\]/);
+		assert.match(result.displayOutput, /Intended output path: \/tmp\/review\.md/);
+		assert.match(result.displayOutput, /full output text/);
+		assert.doesNotMatch(result.displayOutput, /Output saved to:/);
+		assert.equal(result.savedPath, undefined);
+		assert.equal(result.saveError, "EACCES: permission denied");
+	});
+
+	it("returns only the bounded persistence-failure fallback on failed runs with a save error", () => {
+		const result = finalizeSingleOutput({
+			fullOutput: "partial child output",
+			outputPath: "/tmp/review.md",
+			exitCode: 1,
+			saveError: "Failed to read changed output file: boom",
+			error: "step failed",
+		});
+
+		assert.match(result.displayOutput, /\[Full output unavailable\] Failed to read changed output file: boom/);
+		assert.match(result.displayOutput, /Process status: step failed/);
+		assert.doesNotMatch(result.displayOutput, /Output saved to:/);
+	});
+
+	it("keeps the legacy full inline output for successful inline runs without a saved path", () => {
+		const result = finalizeSingleOutput({
+			fullOutput: "legacy inline output",
+			truncatedOutput: "truncated output",
+			exitCode: 0,
 		});
 
 		assert.equal(result.displayOutput, "truncated output");

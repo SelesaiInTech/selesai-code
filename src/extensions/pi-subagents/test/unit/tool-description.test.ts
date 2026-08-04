@@ -9,8 +9,10 @@ import {
 	buildSubagentToolDescription,
 	COMPACT_SUBAGENT_TOOL_DESCRIPTION,
 	FULL_SUBAGENT_TOOL_DESCRIPTION,
+	SUBAGENT_PARENT_ROUTING_GUIDANCE,
 	SUBAGENT_SAFETY_GUIDANCE,
 } from "../../src/extension/tool-description.ts";
+import { BUILTIN_AGENT_NAMES } from "../../src/agents/agents.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -31,8 +33,11 @@ describe("registered subagent tool description", () => {
 	it("keeps full mode safe and free of hardcoded builtin agent names", () => {
 		const description = buildSubagentToolDescription();
 
-		for (const builtinName of ["scout", "worker", "planner"]) {
+		for (const builtinName of BUILTIN_AGENT_NAMES) {
 			assert.doesNotMatch(description, new RegExp(`\\b${builtinName}\\b`));
+		}
+		for (const legacyName of ["scout", "worker", "planner"]) {
+			assert.doesNotMatch(description, new RegExp(`\\b${legacyName}\\b`));
 		}
 		assert.match(description, /^To delegate work, call with \{ agent, task \}, \{ tasks \}, or \{ chain \}; omit action\./i);
 		assert.match(description, /Use action only for management\/control actions listed below/i);
@@ -50,6 +55,11 @@ describe("registered subagent tool description", () => {
 		assert.doesNotMatch(description, /only for foreground runs/i);
 		assert.doesNotMatch(description, /omit for async\/background runs/i);
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
+		assert.match(description, /PARENT-ONLY SUBAGENT ROUTING/);
+		assert.match(description, /call \{ action: "list" \} and select only an executable entry using its current role, context, and tool metadata/i);
+		assert.match(description, /Keep tiny targeted reads and simple answers local/i);
+		assert.match(description, /broad local investigation, external research, and mutation\/implementation work/i);
+		assert.match(description, /parent remains the decision-maker and normally the sole writer/i);
 		assert.match(description, /Do not sleep or poll status just to wait/i);
 		assert.match(description, /use subagent_wait/i);
 		assert.match(description, /interactive session.*normally return control/i);
@@ -62,6 +72,10 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /action: "steer"/);
 		assert.match(description, /schedule-list/);
 		assert.match(description, /action: "eject"/);
+		assert.match(description, /action: "eject", agent: "agent-name"/);
+		assert.match(description, /action: "disable", agent: "agent-name"/);
+		assert.match(description, /action: "enable", agent: "agent-name"/);
+		assert.match(description, /action: "reset", agent: "agent-name"/);
 		assert.match(description, /action: "disable"/);
 		assert.match(description, /action: "grant-spawn-budget"/);
 		assert.match(description, /root interactive parent/i);
@@ -97,6 +111,14 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /PARALLEL/);
 		assert.match(description, /CHAIN/);
 		assert.match(description, /action without execution fields/i);
+		assert.match(description, /Parent-only routing/);
+		assert.match(description, /select only an executable entry using its current role, context, and tool metadata/i);
+		assert.match(description, /Keep tiny targeted reads and simple answers local/i);
+		assert.match(description, /broad local investigation, external research, and mutation\/implementation work/i);
+		assert.match(description, /parent remains the decision-maker and normally the sole writer/i);
+		for (const builtinName of BUILTIN_AGENT_NAMES) {
+			assert.doesNotMatch(description, new RegExp(`\\b${builtinName}\\b`));
+		}
 		assert.match(description, /subagent_wait/i);
 		assert.match(description, /interactive session.*normally return control/i);
 		assert.match(description, /Non-interactive runs.*auto-drain current-session work at agent_end/i);
@@ -127,6 +149,15 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /count:/);
 	});
 
+	it("documents task-aware list advice as explicit-only in both modes", () => {
+		for (const description of [FULL_SUBAGENT_TOOL_DESCRIPTION, COMPACT_SUBAGENT_TOOL_DESCRIPTION]) {
+			assert.match(description, /\{ action: "list", task: "\.\.\." \}/);
+			assert.match(description, /advisory/i);
+			assert.match(description, /never launches/i);
+			assert.match(description, /explicitly call subagent|execute the recommended agent explicitly/i);
+		}
+	});
+
 	it("renders a custom project description with placeholders and mandatory safety guidance", () => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-project-"));
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-agent-"));
@@ -148,6 +179,8 @@ describe("registered subagent tool description", () => {
 		assert.match(description, new RegExp(escapeRegex(agentDir)));
 		assert.match(description, new RegExp(escapeRegex(projectConfigDir)));
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
+		assert.match(description, /PARENT-ONLY SUBAGENT ROUTING/);
+		assert.match(description, /select only an executable entry using its current role, context, and tool metadata/i);
 		assert.equal(warnings.length, 0);
 	});
 
@@ -213,7 +246,7 @@ describe("registered subagent tool description", () => {
 		assert.ok(warnings.some((message) => message.includes("Ignoring invalid toolDescriptionMode")));
 	});
 
-	function readRegisteredDescription(agentDir: string): string {
+	function readRegisteredTool(agentDir: string): { description: string; promptGuidelines?: string[] } {
 		const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
@@ -234,7 +267,10 @@ describe("registered subagent tool description", () => {
 			});
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
-			process.stdout.write(JSON.stringify(registeredTool.description));
+			process.stdout.write(JSON.stringify({
+				description: registeredTool.description,
+				promptGuidelines: registeredTool.promptGuidelines ?? null,
+			}));
 		`;
 		const output = execFileSync(
 			process.execPath,
@@ -248,7 +284,7 @@ describe("registered subagent tool description", () => {
 			],
 			{ cwd: projectRoot, env: parentToolEnv(agentDir), encoding: "utf-8" },
 		);
-		return JSON.parse(output) as string;
+		return JSON.parse(output) as { description: string; promptGuidelines?: string[] };
 	}
 
 	function writeExtensionConfig(agentDir: string, config: Record<string, unknown>): void {
@@ -259,25 +295,40 @@ describe("registered subagent tool description", () => {
 
 	it("registers full, compact, custom, and fallback descriptions from extension config", () => {
 		const defaultAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-default-"));
-		assert.equal(readRegisteredDescription(defaultAgentDir), FULL_SUBAGENT_TOOL_DESCRIPTION);
+		assert.equal(readRegisteredTool(defaultAgentDir).description, FULL_SUBAGENT_TOOL_DESCRIPTION);
 
 		const compactAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-compact-"));
 		writeExtensionConfig(compactAgentDir, { toolDescriptionMode: "compact" });
-		assert.equal(readRegisteredDescription(compactAgentDir), COMPACT_SUBAGENT_TOOL_DESCRIPTION);
+		assert.equal(readRegisteredTool(compactAgentDir).description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
 
 		const customAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-custom-"));
 		writeExtensionConfig(customAgentDir, { toolDescriptionMode: "custom" });
 		fs.writeFileSync(path.join(customAgentDir, "subagent-tool-description.md"), "Registered custom description.", "utf-8");
-		const customDescription = readRegisteredDescription(customAgentDir);
+		const customDescription = readRegisteredTool(customAgentDir).description;
 		assert.match(customDescription, /Registered custom description/);
 		assert.match(customDescription, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
 
 		const missingCustomAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-missing-"));
 		writeExtensionConfig(missingCustomAgentDir, { toolDescriptionMode: "custom" });
-		assert.equal(readRegisteredDescription(missingCustomAgentDir), FULL_SUBAGENT_TOOL_DESCRIPTION);
+		assert.equal(readRegisteredTool(missingCustomAgentDir).description, FULL_SUBAGENT_TOOL_DESCRIPTION);
 
 		const invalidAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-invalid-"));
 		writeExtensionConfig(invalidAgentDir, { toolDescriptionMode: "tiny" });
-		assert.equal(readRegisteredDescription(invalidAgentDir), FULL_SUBAGENT_TOOL_DESCRIPTION);
+		assert.equal(readRegisteredTool(invalidAgentDir).description, FULL_SUBAGENT_TOOL_DESCRIPTION);
+	});
+
+	it("registers parent-only routing guidance as promptGuidelines on the parent tool", () => {
+		const defaultAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-guidelines-"));
+		const registered = readRegisteredTool(defaultAgentDir);
+
+		assert.ok(Array.isArray(registered.promptGuidelines), "parent subagent tool must expose promptGuidelines");
+		assert.equal(registered.promptGuidelines!.length, 1);
+		assert.equal(registered.promptGuidelines![0], SUBAGENT_PARENT_ROUTING_GUIDANCE);
+		assert.doesNotMatch(SUBAGENT_PARENT_ROUTING_GUIDANCE, new RegExp(BUILTIN_AGENT_NAMES.join("|")));
+		assert.match(SUBAGENT_PARENT_ROUTING_GUIDANCE, /\{ action: "list" \}/);
+		assert.match(SUBAGENT_PARENT_ROUTING_GUIDANCE, /executable entry/i);
+		assert.match(SUBAGENT_PARENT_ROUTING_GUIDANCE, /tiny targeted reads and simple answers local/i);
+		assert.match(SUBAGENT_PARENT_ROUTING_GUIDANCE, /broad local investigation, external research, and mutation\/implementation work/i);
+		assert.match(SUBAGENT_PARENT_ROUTING_GUIDANCE, /decision-maker and normally the sole writer/i);
 	});
 });

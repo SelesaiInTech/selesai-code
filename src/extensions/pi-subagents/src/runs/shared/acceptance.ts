@@ -22,7 +22,7 @@ import type {
 	SubagentRunMode,
 } from "../../shared/types.ts";
 import { isAgentContractV1 } from "./agent-contract.ts";
-import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
+import { classifyTaskMutationIntent, resolveAgentRoutingRole, taskMayMutate } from "./task-intent.ts";
 
 const LEVEL_RANK: Record<Exclude<AcceptanceLevel, "auto">, number> = {
 	none: 0,
@@ -82,7 +82,6 @@ function inferLevel(input: {
 	dynamic?: boolean;
 	dynamicGroup?: boolean;
 }): { level: Exclude<AcceptanceLevel, "auto">; reasons: string[]; criteria: string[]; evidence: AcceptanceEvidenceKind[]; review?: { agent?: string; required?: boolean } } {
-	const agent = input.agentName.toLowerCase();
 	const task = input.task?.toLowerCase() ?? "";
 	const reasons: string[] = [];
 	// Declared roles replace name heuristics, so use the full writer grammar to detect explicit mutation independently of the actual agent name.
@@ -94,11 +93,10 @@ function inferLevel(input: {
 		&& !/\b(?:do not|don't|must not)\s+patch\b/.test(task)
 		&& /\bpatch\s+(?:(?:\.{0,2}[\\/])?(?:[\w.-]+[\\/])+[\w.-]+|[\w.-]+\.[a-z0-9]+\b|(?:the\s+)?parser\b)/.test(task);
 	const taskMayWrite = readOnlyTask ? false : taskMayMutate(input.task ?? "") || intent.kind === "implementation" || rolePatchTask;
-	const readOnlyAgent = input.acceptanceRole === "read-only"
-		|| (input.acceptanceRole === undefined && /\b(?:architect|commentator|explorer|recapper|researcher|analyst)\b/.test(agent));
+	const routingRole = resolveAgentRoutingRole(input.agentName, input.acceptanceRole);
+	const readOnlyAgent = routingRole === "read-only";
 	const writeTask = taskMayWrite
-		|| (input.acceptanceRole === "writer" && !readOnlyTask)
-		|| (input.acceptanceRole === undefined && /\bbuilder\b/.test(agent) && !readOnlyTask);
+		|| (routingRole === "writer" && !readOnlyTask);
 	const inferredReadOnly = readOnlyTask || (input.acceptanceRole === "read-only" && !taskMayWrite);
 	const roleResolvesReadOnly = input.acceptanceRole !== undefined && inferredReadOnly;
 	const keywordRiskReadOnly = input.acceptanceRole === undefined ? intent.kind === "read-only" : inferredReadOnly;

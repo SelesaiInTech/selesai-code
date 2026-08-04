@@ -91,6 +91,34 @@ import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-bu
 import type { ContextMode } from "../shared/context-mode.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 
+/**
+ * Resolve a chain step's output path and effective output mode.
+ *
+ * Explicit `output` paths pass through unchanged (absolute as-is, relative under
+ * the chain dir). Omitted output generates a collision-safe per-child durable
+ * path `<chainDir>/outputs/<flat-index>-<agent>.md` unless the caller explicitly
+ * used `output: false`. Omitted `outputMode` resolves to `file-only` when an
+ * output path is active; explicit `outputMode: "inline"` is preserved exactly.
+ */
+function resolveChainStepOutput(input: {
+	behaviorOutput: string | false;
+	rawOutput: string | false | undefined;
+	rawOutputMode: "inline" | "file-only" | undefined;
+	chainDir: string;
+	flatIndex: number;
+	agent: string;
+}): { outputPath?: string; outputMode: "inline" | "file-only" } {
+	const explicit = typeof input.behaviorOutput === "string" ? input.behaviorOutput : undefined;
+	let outputPath: string | undefined;
+	if (explicit) {
+		outputPath = path.isAbsolute(explicit) ? explicit : path.join(input.chainDir, explicit);
+	} else if (input.behaviorOutput === false && input.rawOutput !== false && input.rawOutput !== "false") {
+		outputPath = path.join(input.chainDir, "outputs", `${input.flatIndex}-${input.agent}.md`);
+	}
+	return { outputPath, outputMode: input.rawOutputMode ?? (outputPath ? "file-only" : "inline") };
+}
+
+
 interface ChainExecutionDetailsInput {
 	results: SingleResult[];
 	includeProgress?: boolean;
@@ -353,9 +381,16 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				? input.worktreeSetup.worktrees[taskIndex]!.agentCwd
 				: resolveChildCwd(input.cwd ?? input.ctx.cwd, task.cwd);
 
-			const outputPath = typeof behavior.output === "string"
-				? (path.isAbsolute(behavior.output) ? behavior.output : path.join(input.chainDir, behavior.output))
-				: undefined;
+			const resolvedTaskOutput = resolveChainStepOutput({
+				behaviorOutput: behavior.output,
+				rawOutput: task.output,
+				rawOutputMode: task.outputMode,
+				chainDir: input.chainDir,
+				flatIndex: childIndex,
+				agent: task.agent,
+			});
+			const outputPath = resolvedTaskOutput.outputPath;
+			const effectiveOutputMode = resolvedTaskOutput.outputMode;
 			taskStr = injectSingleOutputInstruction(taskStr, outputPath, taskAgentConfig);
 			const interruptController = new AbortController();
 			if (input.foregroundControl) {
@@ -399,7 +434,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				artifactsDir: input.artifactConfig.enabled ? input.artifactsDir : undefined,
 				artifactConfig: input.artifactConfig,
 				outputPath,
-				outputMode: behavior.outputMode,
+				outputMode: effectiveOutputMode,
 				maxSubagentDepth,
 				controlConfig: input.controlConfig,
 				onControlEvent: input.onControlEvent,
@@ -793,10 +828,16 @@ ${step.message}` : ""}` }],
 					.map((behavior, taskIndex) => suppressProgressForReadOnlyTask(behavior, parallelTemplates[taskIndex] ?? step.parallel[taskIndex]?.task, originalTask));
 				for (let taskIndex = 0; taskIndex < step.parallel.length; taskIndex++) {
 					const behavior = parallelBehaviors[taskIndex]!;
-					const outputPath = typeof behavior.output === "string"
-						? (path.isAbsolute(behavior.output) ? behavior.output : path.join(chainDir, behavior.output))
-						: undefined;
-					const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Parallel chain step ${stepIndex + 1} task ${taskIndex + 1} (${step.parallel[taskIndex]!.agent})`);
+					const task = step.parallel[taskIndex]!;
+					const resolvedOutput = resolveChainStepOutput({
+						behaviorOutput: behavior.output,
+						rawOutput: task.output,
+						rawOutputMode: task.outputMode,
+						chainDir,
+						flatIndex: globalTaskIndex + taskIndex,
+						agent: task.agent,
+					});
+					const validationError = validateFileOnlyOutputMode(resolvedOutput.outputMode, resolvedOutput.outputPath, `Parallel chain step ${stepIndex + 1} task ${taskIndex + 1} (${task.agent})`);
 					if (validationError) return buildChainExecutionErrorResult(validationError, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex + taskIndex }));
 				}
 				progressCreated = ensureParallelProgressFile(chainDir, progressCreated, parallelBehaviors);
@@ -1049,10 +1090,16 @@ ${step.message}` : ""}` }],
 
 			for (let taskIndex = 0; taskIndex < dynamicParallelStep.parallel.length; taskIndex++) {
 				const behavior = parallelBehaviors[taskIndex]!;
-				const outputPath = typeof behavior.output === "string"
-					? (path.isAbsolute(behavior.output) ? behavior.output : path.join(chainDir, behavior.output))
-					: undefined;
-				const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Dynamic chain step ${stepIndex + 1} item ${taskIndex + 1} (${dynamicParallelStep.parallel[taskIndex]!.agent})`);
+				const task = dynamicParallelStep.parallel[taskIndex]!;
+				const resolvedOutput = resolveChainStepOutput({
+					behaviorOutput: behavior.output,
+					rawOutput: task.output,
+					rawOutputMode: task.outputMode,
+					chainDir,
+					flatIndex: globalTaskIndex + taskIndex,
+					agent: task.agent,
+				});
+				const validationError = validateFileOnlyOutputMode(resolvedOutput.outputMode, resolvedOutput.outputPath, `Dynamic chain step ${stepIndex + 1} item ${taskIndex + 1} (${task.agent})`);
 				if (validationError) {
 					dynamicGroupStatuses[stepIndex] = { status: "failed", error: validationError };
 					return buildChainExecutionErrorResult(validationError, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex + taskIndex }));
@@ -1289,11 +1336,18 @@ ${step.message}` : ""}` }],
 				{ scope: modelScope },
 			);
 
-			const outputPath = typeof behavior.output === "string"
-				? (path.isAbsolute(behavior.output) ? behavior.output : path.join(chainDir, behavior.output))
-				: undefined;
+			const resolvedStepOutput = resolveChainStepOutput({
+				behaviorOutput: behavior.output,
+				rawOutput: stepOverride.output,
+				rawOutputMode: seqStep.outputMode,
+				chainDir,
+				flatIndex: globalTaskIndex,
+				agent: seqStep.agent,
+			});
+			const outputPath = resolvedStepOutput.outputPath;
+			const effectiveOutputMode = resolvedStepOutput.outputMode;
 			stepTask = injectSingleOutputInstruction(stepTask, outputPath, agentConfig);
-			const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Chain step ${stepIndex + 1} (${seqStep.agent})`);
+			const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Chain step ${stepIndex + 1} (${seqStep.agent})`);
 			if (validationError) {
 				return buildChainExecutionErrorResult(validationError, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex }));
 			}
@@ -1339,7 +1393,7 @@ ${step.message}` : ""}` }],
 					dynamicChildren,
 					dynamicGroupStatuses,
 				});
-				r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
+			r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 				capabilityCeiling: params.capabilityCeiling,
 				context: params.contextForAgent?.(seqStep.agent),
@@ -1358,7 +1412,7 @@ ${step.message}` : ""}` }],
 				artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 				artifactConfig,
 				outputPath,
-				outputMode: behavior.outputMode,
+				outputMode: effectiveOutputMode,
 				maxSubagentDepth,
 				controlConfig,
 				onControlEvent,

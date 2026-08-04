@@ -7,7 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { formatToolCall } from "./formatters.ts";
-import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
+import type { AgentProgress, AsyncStatus, ChainOutputMap, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
 
 // ============================================================================
 // File System Utilities
@@ -414,12 +414,40 @@ export function compactForegroundResult(result: SingleResult): SingleResult {
 		messages: undefined,
 		progress: undefined,
 		toolCalls: toolCalls.length ? toolCalls : undefined,
+		// Reference-first terminal details: once an authoritative saved output path
+		// exists, drop the raw final output and truncation marker from the model-
+		// visible projection; consumers recover the file from `savedOutputPath`.
+		// Explicit `outputMode: "inline"` is the sole legacy full-text opt-out and
+		// keeps its final output in the terminal projection (e.g. delegation v1
+		// `response.output` stays populated).
+		finalOutput: result.savedOutputPath && result.outputMode !== "inline" ? undefined : result.finalOutput,
+		truncation: result.savedOutputPath && result.outputMode !== "inline" ? undefined : result.truncation,
 	};
+}
+
+/**
+ * Strip chain `details.outputs` text/structured payloads from the terminal
+ * projection while retaining the output names and step metadata. Chain output
+ * bindings themselves remain reference-first in the completion content and
+ * `{outputs.name}` interpolation (see outputEntryFromResult).
+ */
+function compactChainOutputs(outputs: ChainOutputMap | undefined): ChainOutputMap | undefined {
+	if (!outputs) return undefined;
+	const compact: ChainOutputMap = {};
+	for (const [name, entry] of Object.entries(outputs)) {
+		compact[name] = {
+			agent: entry.agent,
+			stepIndex: entry.stepIndex,
+			text: "",
+		};
+	}
+	return compact;
 }
 
 export function compactForegroundDetails(details: Details): Details {
 	return {
 		...details,
+		outputs: compactChainOutputs(details.outputs),
 		results: details.results.map(compactForegroundResult),
 		progress: details.progress
 			? details.progress.map(compactCompletedProgress)

@@ -375,7 +375,11 @@ export function toSubagentDelegationExecutionParams(request: SubagentDelegationR
 		toolBudget: request.toolBudget,
 		skill: request.skill,
 		output: request.output,
-		outputMode: request.outputMode,
+		// v1 has no default for outputMode: preserve the legacy full-text contract by
+		// resolving an omitted outputMode to explicit inline (response.output stays
+		// populated). The model-facing tool's mode-dependent reference-first default
+		// (omitted outputMode -> file-only) is intentionally NOT applied here.
+		outputMode: request.outputMode ?? "inline",
 		outputSchema: request.outputSchema,
 		agentContract: request.agentContract,
 		acceptance: request.acceptance,

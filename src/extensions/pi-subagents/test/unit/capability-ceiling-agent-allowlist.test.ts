@@ -58,6 +58,40 @@ describe("capability ceiling agent allowlist", () => {
 			assert.match(text, /- commentator /);
 			assert.match(text, /Restricted agents \(not executable in this session; capability ceiling: plan-mode\):/);
 			assert.match(text, /- builder /);
+
+			const catalog = (result as { details: { catalog?: unknown } }).details.catalog as
+				| undefined
+				| {
+					version: number;
+					agents: Array<{ name: string; executable: boolean; restrictionSources?: string[]; defaultContext: string }>;
+					capabilityCeilingSources?: string[];
+				};
+			assert.ok(catalog, "list result must include machine catalog metadata");
+			assert.equal(catalog.version, 1);
+			assert.deepEqual(catalog.capabilityCeilingSources, ["plan-mode"]);
+			const commentator = catalog.agents.find((entry) => entry.name === "commentator");
+			const builder = catalog.agents.find((entry) => entry.name === "builder");
+			assert.equal(commentator?.executable, true);
+			assert.equal(commentator?.restrictionSources, undefined);
+			assert.equal(commentator?.defaultContext, "fresh");
+			assert.equal(builder?.executable, false);
+			assert.deepEqual(builder?.restrictionSources, ["plan-mode"]);
+		} finally {
+			handle.dispose();
+		}
+	});
+
+	it("never recommends a capability-restricted writer for implementation list task advice", () => {
+		const sessionId = `allowlist-advice-${Date.now()}-${Math.random()}`;
+		const handle = registerSubagentCapabilityCeiling({ sessionId, source: "plan-mode", ceiling: { allowedAgents: ["commentator"] } });
+		try {
+			const result = handleList({ task: "Implement the fix" }, { cwd: process.cwd(), currentSessionId: sessionId, modelRegistry: { getAvailable: () => [] } });
+			assert.equal(result.isError, false);
+			const text = result.content[0]?.text ?? "";
+			assert.match(text, /Task-aware advisory routing:/);
+			assert.match(text, /- Intent: implementation/);
+			assert.match(text, /- Recommendation: none/);
+			assert.doesNotMatch(text, /- Recommended: /);
 		} finally {
 			handle.dispose();
 		}

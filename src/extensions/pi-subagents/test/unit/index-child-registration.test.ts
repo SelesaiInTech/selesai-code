@@ -599,14 +599,19 @@ describe("subagent extension child mode", () => {
 			};
 			registerFanoutChildSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
+			if (registeredTool.promptGuidelines !== undefined) {
+				throw new Error("child-safe fanout tool must not carry parent-only routing promptGuidelines");
+			}
 			const ctx = {
 				cwd: process.cwd(),
 				hasUI: false,
 				sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; } },
 				modelRegistry: { getAvailable() { return []; } },
 			};
-			const list = await registeredTool.execute("list-check", { action: "list" }, new AbortController().signal, undefined, ctx);
+			const list = await registeredTool.execute("list-check", { action: "list", task: "Review only; do not edit files" }, new AbortController().signal, undefined, ctx);
 			if (list.isError) throw new Error("list should be allowed: " + JSON.stringify(list.content));
+			const listText = list.content?.[0]?.text ?? "";
+			if (!listText.includes("Task-aware advisory routing:")) throw new Error("list task advice missing in child mode: " + listText.slice(0, 200));
 			const create = await registeredTool.execute("create-check", { action: "create", config: { name: "x" } }, new AbortController().signal, undefined, ctx);
 			if (!create.isError) throw new Error("create should be blocked");
 			const text = create.content?.[0]?.text ?? "";

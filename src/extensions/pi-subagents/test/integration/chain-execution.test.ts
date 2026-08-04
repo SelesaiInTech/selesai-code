@@ -367,8 +367,9 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.doesNotMatch(firstTaskArg, /\[Write to:|Write your findings to exactly this path/);
 		assert.ok(result.details.results[0]?.savedOutputPath);
 		assert.equal(fs.readFileSync(result.details.results[0].savedOutputPath, "utf-8"), "full chain output\nwith details");
-		assert.match(result.details.results[0]?.finalOutput ?? "", /Output saved to:/);
-		assert.doesNotMatch(result.details.results[0]?.finalOutput ?? "", /full chain output/);
+		assert.equal(result.details.results[0]?.finalOutput, undefined);
+		assert.match(result.details.results[0]?.outputReference?.message ?? "", /Output saved to:/);
+		assert.doesNotMatch(result.details.results[0]?.outputReference?.message ?? "", /full chain output/);
 		const secondTaskArg = readCallArgs(1).at(-1) ?? "";
 		assert.match(secondTaskArg, /Output saved to:/);
 		assert.match(secondTaskArg, /2 lines/);
@@ -404,7 +405,8 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		);
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
-		assert.match(result.details.results[0]?.finalOutput ?? "", /Output saved to:/);
+		assert.equal(result.details.results[0]?.finalOutput, undefined);
+		assert.match(result.details.results[0]?.outputReference?.message ?? "", /Output saved to:/);
 		assert.equal(result.details.results[0]?.acceptance?.status, "checked");
 		assert.ok(result.details.results[0]?.acceptance?.childReport);
 
@@ -630,10 +632,13 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		assert.ok(!result.isError);
 		const step2Task = result.details.results[1].task;
+		// Reference-first handoff: {previous} carries the saved-output reference and
+		// the step reads the named path instead of re-inlined prose.
 		assert.ok(
-			step2Task.includes("MARKER_ABC_123"),
-			`step 2 task should contain step 1 output via {previous}: ${step2Task.slice(0, 200)}`,
+			step2Task.includes("Output saved to:"),
+			`step 2 task should contain the saved-output reference via {previous}: ${step2Task.slice(0, 200)}`,
 		);
+		assert.doesNotMatch(step2Task, /MARKER_ABC_123/);
 	});
 
 	it("passes named sequential outputs through {outputs.name}", async () => {
@@ -652,7 +657,8 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		);
 
 		assert.ok(!result.isError);
-		assert.match(readCallArgs(1).at(-1) ?? "", /CTX_123/);
+		assert.match(readCallArgs(1).at(-1) ?? "", /Output saved to: /);
+		assert.doesNotMatch(readCallArgs(1).at(-1) ?? "", /CTX_123/);
 		assert.equal(result.details.workflowGraph?.nodes[0]?.outputName, "contextOutput");
 	});
 
@@ -692,9 +698,10 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.match(readCallArgs(1).at(-1) ?? "", /Review src\/a\.ts/);
 		assert.match(readCallArgs(2).at(-1) ?? "", /Review src\/b\.ts/);
 		assert.match(readCallArgs(3).at(-1) ?? "", /"key":"src\/a\.ts"/);
-		const collected = result.details.outputs?.reviews?.structured as Array<{ key: string; structured: unknown }>;
-		assert.deepEqual(collected.map((item) => item.key), ["src/a.ts", "src/b.ts"]);
-		assert.deepEqual(collected.map((item) => item.structured), [{ ok: "a" }, { ok: "b" }]);
+		// Terminal details strip chain outputs text/structured; bindings remain
+		// reference-first via {outputs.name} and the workflow graph keeps item keys.
+		assert.equal(result.details.outputs?.reviews?.text, "");
+		assert.equal(result.details.outputs?.reviews?.structured, undefined);
 		const dynamicNode = result.details.workflowGraph?.nodes[1];
 		assert.equal(dynamicNode?.kind, "dynamic-parallel-group");
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.itemKey), ["src/a.ts", "src/b.ts"]);
@@ -868,7 +875,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-						parallel: { agent: "reviewer", task: "Review {item.path}", outputMode: "file-only" },
+						parallel: { agent: "reviewer", task: "Review {item.path}", output: false, outputMode: "file-only" },
 						collect: { as: "reviews" },
 					},
 				],
@@ -906,7 +913,8 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		assert.equal(mockPi.callCount(), 2);
-		assert.deepEqual(result.details.outputs?.reviews?.structured, []);
+		assert.equal(result.details.outputs?.reviews?.text, "");
+		assert.equal(result.details.outputs?.reviews?.structured, undefined);
 		assert.equal(result.details.workflowGraph?.nodes[1]?.status, "completed");
 		assert.deepEqual(result.details.workflowGraph?.nodes[1]?.children, []);
 	});
@@ -1123,7 +1131,9 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.equal(result.details.results.length, 2);
 		assert.equal(result.details.results[0]?.acceptance?.status, "rejected");
 		assert.equal(result.details.results[0]?.exitCode, 0);
-		assert.match(result.details.results[1]?.finalOutput ?? "", /Step 2 ran/);
+		assert.equal(result.details.results[1]?.finalOutput, undefined);
+		assert.ok(result.details.results[1]?.savedOutputPath);
+		assert.equal(fs.readFileSync(result.details.results[1]!.savedOutputPath!, "utf-8"), "Step 2 ran");
 	});
 
 	it("agent contract v1 chain can gate progression on acceptance", async () => {
@@ -1195,7 +1205,8 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		);
 
 		const finalTaskArg = readCallArgs(chainLength - 1).at(-1) ?? "";
-		assert.match(finalTaskArg, /step-38-output/);
+		assert.match(finalTaskArg, /Output saved to: /);
+		assert.doesNotMatch(finalTaskArg, /step-38-output/);
 		assert.doesNotMatch(finalTaskArg, /step-37-output/);
 		assert.match(result.content[0]?.text ?? "", /40 steps/);
 	});
@@ -1284,7 +1295,9 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 			);
 
 			assert.ok(!result.isError);
-			assert.deepEqual(JSON.parse(result.details.results[0].finalOutput ?? "{}"), {
+			const depthChild = result.details.results[0];
+			assert.ok(depthChild.savedOutputPath);
+			assert.deepEqual(JSON.parse(fs.readFileSync(depthChild.savedOutputPath, "utf-8")), {
 				SELESAI_SUBAGENT_DEPTH: "1",
 				SELESAI_SUBAGENT_MAX_DEPTH: "1",
 			});
@@ -1474,8 +1487,9 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 
 		assert.ok(!result.isError);
 		const finalTask = readCallArgs(2).at(-1) ?? "";
-		assert.match(finalTask, /Alpha named output/);
-		assert.match(finalTask, /Beta named output/);
+		assert.match(finalTask, /Output saved to: /);
+		assert.doesNotMatch(finalTask, /Alpha named output/);
+		assert.doesNotMatch(finalTask, /Beta named output/);
 	});
 
 	it("funnels an initial parallel step through one agent, then fans the funnel output back out", async () => {
@@ -1512,13 +1526,14 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 		assert.equal(result.details.totalSteps, 3);
 		const funnelTask = readCallArgsMatching("Synthesize:").at(-1) ?? "";
 		assert.match(funnelTask, /=== Parallel Task 1 \(scout-a\) ===/);
-		assert.match(funnelTask, /Scout A findings/);
 		assert.match(funnelTask, /=== Parallel Task 2 \(scout-b\) ===/);
-		assert.match(funnelTask, /Scout B findings/);
+		assert.match(funnelTask, /Output saved to: /);
+		assert.doesNotMatch(funnelTask, /Scout A findings/);
+		assert.doesNotMatch(funnelTask, /Scout B findings/);
 		const fanoutTaskA = readCallArgsMatching("Review funnel A:").at(-1) ?? "";
 		const fanoutTaskB = readCallArgsMatching("Review funnel B:").at(-1) ?? "";
-		assert.match(fanoutTaskA, /Review funnel A:\nFunnel synthesis/);
-		assert.match(fanoutTaskB, /Review funnel B:\nFunnel synthesis/);
+		assert.match(fanoutTaskA, /Review funnel A:\nOutput saved to: /);
+		assert.match(fanoutTaskB, /Review funnel B:\nOutput saved to: /);
 		assert.equal(result.details.workflowGraph?.nodes[0]?.kind, "parallel-group");
 		assert.equal(result.details.workflowGraph?.nodes[1]?.kind, "step");
 		assert.equal(result.details.workflowGraph?.nodes[2]?.kind, "parallel-group");
@@ -1560,7 +1575,7 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 			makeChainParams(
 				[{
 					parallel: [
-						{ agent: "reviewer-a", task: "Review A", outputMode: "file-only" },
+						{ agent: "reviewer-a", task: "Review A", output: false, outputMode: "file-only" },
 						{ agent: "reviewer-b", task: "Review B", output: "b.md" },
 					],
 				}],

@@ -6,6 +6,14 @@ import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
 import { formatAgentsForPrompt, type AgentPersona } from "./agents.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
+/**
+ * Generic delegation-routing threshold for main sessions. The text is
+ * self-conditioning ("when a delegation/subagent tool is available"), so
+ * sessions without such a tool are unaffected.
+ */
+const DELEGATION_ROUTING_GUIDELINE =
+	"When a delegation/subagent tool is available: keep tiny targeted reads and simple answers local; send broad local investigation, external research, and mutation/implementation work to a capable delegated agent, inspecting the delegation catalog/list before selecting; the parent remains the decision-maker and normally the sole writer.";
+
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
 	customPrompt?: string;
@@ -73,6 +81,18 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 			prompt += formatAgentsForPrompt(agents);
 		}
 
+		// Render active-tool guidelines (e.g., mandatory delegation contracts) in
+		// custom-prompt sessions too, without requiring the read tool. The caller's
+		// custom prompt text stays unchanged; a clearly delimited section is appended
+		// only when non-empty guidelines exist.
+		const activeGuidelines = (promptGuidelines ?? [])
+			.map((guideline) => guideline.trim())
+			.filter((guideline) => guideline.length > 0)
+			.filter((guideline, index, all) => all.indexOf(guideline) === index);
+		if (activeGuidelines.length > 0) {
+			prompt += `\n\nActive tool guidelines:\n${activeGuidelines.map((guideline) => `- ${guideline}`).join("\n")}`;
+		}
+
 		prompt += `\nCurrent working directory: ${promptCwd}`;
 
 		return prompt;
@@ -120,6 +140,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	}
 
 	// Always include these
+	addGuideline(DELEGATION_ROUTING_GUIDELINE);
 	addGuideline("Be concise in your responses");
 	addGuideline("Show file paths clearly when working with files");
 

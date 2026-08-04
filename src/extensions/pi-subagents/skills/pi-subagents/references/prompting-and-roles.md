@@ -11,7 +11,7 @@ Parent extensions may register a session-scoped, out-of-band ceiling through `pi
 - **Complex work orchestration**: use Fable mode as the default parent-agent loop for complex work. Complex means the task has multiple moving parts, unclear acceptance, cross-cutting code, meaningful user-visible impact, expensive or irreversible validation, broad review surface, or the user asks for orchestration. Lightweight one-off delegation can stay lightweight.
 - **Advisory review**: use fresh-context `commentator` agents for adversarial code review, or fork to `commentator` when inherited decisions and drift matter
 - **Implementation handoff**: have `commentator` advise, then `builder` implement only after an approved direction
-- **Recon and planning**: use `explorer` or `explorer`, then `architect`
+- **Recon and planning**: use `explorer`, then `architect`
 - **Parallel exploration**: run multiple non-conflicting tasks concurrently
 - **Regular skill specialists**: when discovery shows proactive skill subagent suggestions and the current work is broad enough, launch a small fresh-context fanout that asks one subagent per relevant regularly used skill to apply that skill's perspective to the task
 - **Long-running work**: launch async/background runs and inspect them later. For mutation-capable work, bound the delivery slice and elapsed runtime, then request checkpoints after active tool work returns. Reserve hard turn and tool-call caps for explicitly read-only children.
@@ -179,17 +179,16 @@ and user/project agents override builtins with the same name.
 
 | Agent | Purpose | Model | Typical output / role |
 |-------|---------|-------|------------------------|
-| `explorer` | Fast codebase recon | inherits default | Writes `context.md` handoff material |
-| `architect` | Creates implementation plans | inherits default | Writes `plan.md` |
+| `architect` | Creates implementation plans | inherits default | Read-only planning; returns the complete plan in its final response |
 | `builder` | Implementation and approved commentator handoffs | inherits default | Single-writer implementation with decision escalation |
-| `commentator` | Review specialist | inherits default | Default recipes are review-only; tools include edit/write when a fix pass is explicit |
-| `explorer` | Requirements/codebase handoff builder | inherits default | Writes structured context files |
-| `researcher` | Web research brief generator | inherits default | Writes `research.md` |
-| `builder` | Lightweight generic builder | inherits default | No fixed output; generic delegated work |
-| `commentator` | Decision-consistency advisory review | inherits default | Advisory review, intercom coordination |
-| `commentator` | Claude Code-compatible alias for `commentator` | inherits default | Same advisory role as `commentator` |
+| `commentator` | Review specialist | inherits default | Review-only findings in its final response; no edit/write tools |
+| `explorer` | Fast codebase recon | inherits default | Read-only recon findings in its final response |
+| `recapper` | Current-state handoff specialist | inherits default | Fork-context handoff; returns a self-contained handoff in its final response |
+| `researcher` | Sourced research brief generator | inherits default | Read-only brief in its final response |
 
-Builtin `builder` and `builder` use strict tool allowlists and do not inherit ambient parent extension tools. To give a child an extension tool, name it in `tools` and load its provider via `extensions`, a path-like `tools` entry, or `subagentOnlyExtensions`. Custom agents without an `extensions` field follow `subagents.defaultExtensions` when set.
+Only `architect` and `recapper` resolve to forked context when a launch omits `context`; `builder`, `commentator`, `explorer`, and `researcher` default to fresh context. Read-only builtins return their output in the final response; output files are written only when the caller configures output persistence.
+
+Explicit `tools` is an allowlist, but ambient extension discovery remains possible unless `extensions`, `subagentOnlyExtensions`, or a capability ceiling constrains it; naming a tool alone does not load its provider. To give a child an extension tool, name it in `tools` and load its provider via `extensions`, a path-like `tools` entry, or `subagentOnlyExtensions`. Custom agents without an `extensions` field follow `subagents.defaultExtensions` when set.
 
 Builtin agents inherit the current Pi default model unless a run, user setting, project setting, or `subagents.defaultModel` overrides `model`. Set `subagents.defaultModel` when subagents should use a different default model than the parent session. Override builtin defaults before copying full agent files when a small tweak is enough.
 
@@ -266,7 +265,7 @@ agent with the same name only when you want a substantially different agent.
 When several providers are available, route agents by task shape instead of one model for everything:
 
 1. **Fast workhorse** — cheapest capable model at low thinking for recon, lookups, and mechanical edits (for example on `explorer`).
-2. **Standard well-scoped** — mid-tier model at medium thinking for most delegations: routine multi-file edits, focused reviews, straightforward implementation (for example on `builder`, `commentator`, `builder`).
+2. **Standard well-scoped** — mid-tier model at medium thinking for most delegations: routine multi-file edits, focused reviews, straightforward implementation (for example on `builder` and `commentator`).
 3. **Deep but bounded** — top reasoning model at high thinking only for hard tasks that arrive with explicit goals and completion criteria; these models loop on vague goals (for example on `architect` and commentator-style agents).
 4. **Taste and intent** — a model that reads human intent well for ambiguous work: UX/design judgment, product tradeoffs, planning from vague requirements, writing quality.
 

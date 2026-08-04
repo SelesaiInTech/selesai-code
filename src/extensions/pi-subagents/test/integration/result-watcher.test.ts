@@ -341,7 +341,11 @@ describe("result watcher", () => {
 				assert.notEqual(state.watcherRestartTimer, null);
 
 				fs.writeFileSync(childSessionPath, "", "utf-8");
-				fs.writeFileSync(path.join(resultsDir, "async-fallback.json"), JSON.stringify({
+				const childOutputA = path.join(resultsDir, "child-a.md");
+			const childOutputB = path.join(resultsDir, "child-b.md");
+			fs.writeFileSync(childOutputA, "Result from a", "utf-8");
+			fs.writeFileSync(childOutputB, "Result from b", "utf-8");
+			fs.writeFileSync(path.join(resultsDir, "async-fallback.json"), JSON.stringify({
 					id: "async-fallback",
 					runId: "run-fallback",
 					agent: "parallel:a+b",
@@ -350,8 +354,8 @@ describe("result watcher", () => {
 					state: "complete",
 					summary: "Combined summary",
 					results: [
-						{ agent: "a", output: "Result from a", success: true, sessionFile: childSessionPath, intercomTarget: "subagent-a-run-fallback-1" },
-						{ agent: "b", output: "Result from b", success: false, error: "B failed", intercomTarget: "subagent-b-run-fallback-2" },
+						{ agent: "a", output: "Result from a", outputPath: childOutputA, success: true, sessionFile: childSessionPath, intercomTarget: "subagent-a-run-fallback-1" },
+						{ agent: "b", output: "Result from b", outputPath: childOutputB, success: false, error: "B failed", intercomTarget: "subagent-b-run-fallback-2" },
 					],
 					sessionId: "session-1",
 					intercomTarget: "subagent-chat-main",
@@ -377,8 +381,12 @@ describe("result watcher", () => {
 			assert.equal(completion?.results?.[0]?.sessionPath, childSessionPath);
 			assert.equal(payload.children?.[1]?.status, "failed");
 			assert.equal(completion?.results?.[1]?.status, "failed");
-			assert.equal(payload.children?.[1]?.summary, "B failed\n\nOutput:\nResult from b");
-			assert.equal(completion?.results?.[1]?.summary, "B failed\n\nOutput:\nResult from b");
+			// Reference-only async delivery: child summaries are built from the
+			// authoritative output path (error/status first for failed children).
+			assert.match(payload.children?.[1]?.summary ?? "", /^B failed\n\nOutput saved to: .*child-b\.md/);
+			assert.match(completion?.results?.[1]?.summary ?? "", /^B failed\n\nOutput saved to: /);
+			assert.match(payload.children?.[0]?.summary ?? "", /^Output saved to: .*child-a\.md/);
+			assert.doesNotMatch(payload.children?.[1]?.summary ?? "", /Result from b/);
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
@@ -1058,6 +1066,74 @@ describe("result watcher", () => {
 			assert.deepEqual(delivered, [{ intercomDelivered: true }]);
 			const completion = emitted.find((entry) => entry.event === "subagent:async-complete")?.data as { intercomDelivered?: boolean } | undefined;
 			assert.equal(completion?.intercomDelivered, true);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("uses a bounded fallback when a child output path is absent or unreadable", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-fallback-"));
+		try {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const listeners = new Map<string, Set<(payload: unknown) => void>>();
+			const pi = {
+				events: {
+					on(event: string, handler: (payload: unknown) => void) {
+						const set = listeners.get(event) ?? new Set();
+						set.add(handler);
+						listeners.set(event, set);
+						return () => set.delete(handler);
+					},
+					emit(event: string, data: unknown) {
+						emitted.push({ event, data });
+						for (const handler of listeners.get(event) ?? []) handler(data);
+					},
+				},
+			};
+			const state = createState();
+			state.currentSessionId = "session-1";
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+			const missingOutputPath = path.join(resultsDir, "missing-child.md");
+			const unreadablePath = path.join(resultsDir, "unreadable-child.md");
+			fs.writeFileSync(unreadablePath, "unreadable child output", "utf-8");
+			fs.chmodSync(unreadablePath, 0o000);
+			try {
+				fs.writeFileSync(path.join(resultsDir, "fallback.json"), JSON.stringify({
+					id: "fallback",
+					runId: "run-fallback",
+					agent: "parallel:a+b",
+					mode: "parallel",
+					success: false,
+					state: "failed",
+					summary: "run summary that must never leak",
+					results: [
+						{ agent: "a", outputPath: missingOutputPath, output: "internal a", success: false, error: "A exploded" },
+						{ agent: "b", outputPath: unreadablePath, output: "internal b", success: false, error: "B exploded" },
+					],
+					sessionId: "session-1",
+				}), "utf-8");
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			} finally {
+				fs.chmodSync(unreadablePath, 0o644);
+				watcher.stopResultWatcher();
+			}
+			const completion = emitted.find((entry) => entry.event === "subagent:async-complete")?.data as { results?: Array<{ summary?: string }> } | undefined;
+			assert.ok(completion, "expected an async completion");
+			const summaryA = completion.results?.[0]?.summary ?? "";
+			const summaryB = completion.results?.[1]?.summary ?? "";
+			assert.match(summaryA, /\[Full output unavailable\]/);
+			assert.match(summaryA, /Failed to read saved output: ENOENT/);
+			assert.match(summaryA, /missing-child\.md/);
+			assert.match(summaryB, /\[Full output unavailable\]/);
+			assert.match(summaryB, /Failed to read saved output: EACCES: permission denied/);
+			assert.match(summaryB, /unreadable-child\.md/);
+			// Only a bounded excerpt of the internal text is exposed, never the raw
+			// full output shape or the run summary.
+			assert.match(summaryA, /internal a/);
+			assert.match(summaryB, /internal b/);
+			assert.doesNotMatch(summaryA, /Output:\ninternal a/);
+			assert.doesNotMatch(summaryA + summaryB, /run summary that must never leak/);
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}

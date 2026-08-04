@@ -485,4 +485,33 @@ describe("completion formatting helpers", () => {
 		assert.equal(details.agent, "unknown");
 		assert.equal(details.status, "completed");
 	});
+
+	it("buildCompletionDetails prefers compact child summaries over the run summary", () => {
+		const details = buildCompletionDetails({
+			id: "x",
+			agent: "worker",
+			success: true,
+			summary: "alpha:\nfull child prose that must not leak",
+			timestamp: 1,
+			results: [
+				{ agent: "alpha", status: "completed", summary: "Output saved to: /tmp/alpha.md (12 B, 1 line). Read this file if needed." },
+				{ agent: "beta", status: "failed", summary: "boom\n\nOutput saved to: /tmp/beta.md (5 B, 1 line). Read this file if needed." },
+			],
+		});
+		assert.match(details.resultPreview, /1\. alpha\nOutput saved to: \/tmp\/alpha\.md/);
+		assert.match(details.resultPreview, /2\. beta\nboom\n\nOutput saved to: \/tmp\/beta\.md/);
+		assert.doesNotMatch(details.resultPreview, /full child prose that must not leak/);
+	});
+
+	it("buildCompletionDetails uses the single child summary without an index prefix", () => {
+		const details = buildCompletionDetails({
+			id: "x",
+			agent: "worker",
+			success: true,
+			summary: "ignored run summary",
+			timestamp: 1,
+			results: [{ agent: "worker", status: "completed", summary: "Output saved to: /tmp/out.md (8 B, 1 line). Read this file if needed." }],
+		});
+		assert.equal(details.resultPreview, "Output saved to: /tmp/out.md (8 B, 1 line). Read this file if needed.");
+	});
 });

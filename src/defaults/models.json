@@ -17,15 +17,32 @@
           "input": ["text"],
           "contextWindow": 1000000,
           "cost": {
-            "input": 0.14,
-            "output": 0.28,
-            "cacheRead": 0.0028,
+            "input": 0.15,
+            "output": 0.3,
+            "cacheRead": 0.003,
             "cacheWrite": 0
           },
           "compat": {
             "supportsDeveloperRole": false,
             "requiresReasoningContentOnAssistantMessages": true,
             "thinkingFormat": "deepseek"
+          }
+        },
+        {
+          "id": "kimi-k3",
+          "name": "Kimi K3",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 262128,
+          "cost": {
+            "input": 3,
+            "output": 15,
+            "cacheRead": 1.5,
+            "cacheWrite": 0
+          },
+          "compat": {
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": false
           }
         },
         {
@@ -38,23 +55,6 @@
             "input": 0.95,
             "output": 4,
             "cacheRead": 0.2375,
-            "cacheWrite": 0
-          },
-          "compat": {
-            "supportsDeveloperRole": false,
-            "supportsReasoningEffort": false
-          }
-        },
-        {
-          "id": "kimi-k2.6",
-          "name": "Kimi K2.6",
-          "reasoning": true,
-          "input": ["text", "image"],
-          "contextWindow": 262128,
-          "cost": {
-            "input": 0.69,
-            "output": 3.22,
-            "cacheRead": 0.1725,
             "cacheWrite": 0
           },
           "compat": {
@@ -97,22 +97,6 @@
           }
         },
         {
-          "id": "qwen3.6-35b-fast",
-          "name": "Qwen3.6 35B Fast",
-          "reasoning": false,
-          "input": ["text", "image"],
-          "contextWindow": 131056,
-          "cost": {
-            "input": 0.29,
-            "output": 1.15,
-            "cacheRead": 0.0725,
-            "cacheWrite": 0
-          },
-          "compat": {
-            "supportsReasoningEffort": false
-          }
-        },
-        {
           "id": "glm-5.2",
           "name": "GLM-5.2",
           "reasoning": true,
@@ -126,22 +110,6 @@
           },
           "compat": {
             "supportsDeveloperRole": false,
-            "supportsReasoningEffort": true
-          }
-        },
-        {
-          "id": "glm-5.2-fast",
-          "name": "GLM-5.2 Fast",
-          "reasoning": false,
-          "input": ["text"],
-          "contextWindow": 1000000,
-          "cost": {
-            "input": 1.45,
-            "output": 4.5,
-            "cacheRead": 0.3625,
-            "cacheWrite": 0
-          },
-          "compat": {
             "supportsReasoningEffort": true
           }
         }
