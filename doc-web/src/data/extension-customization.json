@@ -581,25 +581,6 @@
       "noConfig": false
     },
     {
-      "slug": "caveman",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Caveman has no config file or environment variable. State is stored per session-branch and defaults to on when no history exists.",
-        "id": "Caveman tidak memiliki file konfigurasi atau variabel lingkungan. State disimpan per cabang sesi dan default aktif bila tidak ada riwayat."
-      },
-      "sourcePaths": ["src/extensions/caveman/index.js", "src/extensions/caveman/caveman-instructions.cjs"],
-      "scopes": [],
-      "settings": [],
-      "envVars": [],
-      "controls": [
-        { "name": "/caveman", "description": { "en": "Toggle Caveman mode.", "id": "Toggle mode Caveman." } },
-        { "name": "/caveman on|off|enable|disable|status", "description": { "en": "Explicitly set or report Caveman mode.", "id": "Atur atau laporkan mode Caveman secara eksplisit." } },
-        { "name": "/skill:caveman", "description": { "en": "Invoke Caveman via skill syntax.", "id": "Panggil Caveman melalui sintaks skill." } },
-        { "name": "stop caveman / normal mode", "description": { "en": "Whole-message natural-language deactivation phrases.", "id": "Frasa deaktivasi bahasa alami seluruh pesan." } }
-      ],
-      "noConfig": true
-    },
-    {
       "slug": "inline-skills",
       "distribution": "bundled",
       "overview": {

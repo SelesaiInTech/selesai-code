@@ -6,7 +6,7 @@ acceptanceRole: read-only
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
-skill: ponytail, caveman, planger
+skill: ponytail, planger
 defaultContext: fork
 ---
 

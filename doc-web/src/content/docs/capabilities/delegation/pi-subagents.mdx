@@ -48,6 +48,8 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 - In Fleet inspector, steer the selected live child with `s` or stop its top-level async run with `D` and confirmation.
 - Stop a run: `/subagents-stop <run-id>` or `subagent({ action: "stop", id: "..." })`.
 - Restrict launches with session-scoped `allowedAgents`, add chain approval checkpoints, or cap aggregate usage with `usageBudget`.
+- Discover the runtime delegation catalog: `subagent({ action: "list" })` shows executable and capability-restricted agents with source, aliases, role, context, tools, and description, and returns the same catalog as versioned machine metadata in `details.catalog`.
+- Get task-aware routing advice: `subagent({ action: "list", task: "..." })` appends a recommendation for one canonical agent (implementation or read-only) for that task, or explains why none is safe. It is advisory only and never launches work — execute the recommended agent explicitly.
 - Ask a child to contact the supervisor: `contact_supervisor({ reason: "need_decision", message: "..." })`.
 
 ## Commands, tools, and shortcuts
@@ -57,6 +59,8 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 | `subagent({ agent, task, async?, context?, model?, ... })` | Run one agent. |
 | `subagent({ tasks: [...] })` | Run agents in parallel. |
 | `subagent({ chain: [...] })` | Run agents in sequence with `{previous}` output. |
+| `subagent({ action: "list" })` | Show the runtime delegation catalog: executable/restricted agents (source, aliases, role, context, tools, description), chains, and versioned machine metadata. |
+| `subagent({ action: "list", task? })` | Same catalog, plus optional task-aware routing advice; only recommends and never launches. |
 | `subagent({ action: "status" })` | Show async run status. |
 | `subagent({ action: "steer", id, message, index? })` | Send guidance to a live top-level async child. |
 | `subagent({ action: "stop", id })` | Stop an async run. |
@@ -91,6 +95,8 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 - Spawned children do not receive the bundled `pi-subagents` skill by default, and their tool visibility is controlled by the agent's `tools` frontmatter. A child only gets a child-safe `subagent` tool if its resolved `tools` includes `subagent`.
 - Forked children get filtered context that removes parent-only subagent artifacts.
 - Model, tool, usage, and spawn budgets; allowed-agent ceilings; depth limits; checkpoints; and watchdog settings are enforced by the runtime.
+- Normal delegated results are reference-first: completion returns saved-output references plus status/lifecycle information; inspect full output through the saved output path, async status/transcript, or `resume`. `outputMode: "inline"` restores legacy inline delivery, and `output: false` disables durable output persistence.
+- Task-aware routing advice is advisory and heuristic: it never launches or schedules work, and launch-time preflight remains the enforcement point.
 - Agent file discovery is ordered; project agents override user agents, and user agents override builtins of the same name.
 - The `pi-subagents` skill shipped with the extension is documentation/prompt guidance, not an independently installed extension entrypoint.
 

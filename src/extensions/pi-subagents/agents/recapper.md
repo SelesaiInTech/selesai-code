@@ -5,7 +5,7 @@ tools: read, grep, find, ls
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
-skill: ponytail, caveman
+skill: ponytail
 defaultContext: fork
 acceptanceRole: read-only
 ---

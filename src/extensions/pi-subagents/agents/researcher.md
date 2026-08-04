@@ -7,7 +7,7 @@ systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
 defaultContext: fresh
-skill: ponytail, caveman
+skill: ponytail
 acceptanceRole: read-only
 ---
 

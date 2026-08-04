@@ -5,6 +5,14 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis yang dapat dijangkau dari branch `main` Selesai. Tag dari riwayat Pi yang tidak terkait dan tidak di-merge tidak disertakan.
 
+## 0.6.1 — Katalog delegasi, advisory routing, dan hasil reference-first
+
+- Menambahkan katalog delegasi runtime: `subagent({ action: "list" })` kini menampilkan agen yang executable dan yang dibatasi capability ceiling beserta source, alias, peran, konteks, tool, dan deskripsi, plus katalog yang sama sebagai metadata mesin ber-version (`details.catalog`).
+- Menambahkan advisory routing berbasis tugas: berikan `task` opsional pada `action: "list"` untuk mendapatkan rekomendasi satu agen kanonik (implementation atau read-only), atau panduan ketika intent tidak jelas atau tidak ada kandidat yang aman. Saran tidak pernah meluncurkan pekerjaan — eksekusi tetap panggilan eksplisit terpisah.
+- Menjadikan hasil delegasi reference-first secara default: penyelesaian mengembalikan referensi output tersimpan plus status/informasi lifecycle, bukan prosa child; output penuh tersedia melalui path output tersimpan, status/transkrip async, atau `resume`. `outputMode: "inline"` memulihkan pengiriman inline lama, `output: false` menonaktifkan persistensi output tahan lama, dan artifact debug per-child tetap opt-in.
+- Menambahkan panduan delegasi yang selalu terlihat: system prompt default maupun custom kini memuat kontrak delegasi (periksa katalog sebelum memilih; pertahankan pembacaan kecil secara lokal; delegasikan investigasi lokal yang luas, pekerjaan eksternal, dan mutasi; parent tetap pengambil keputusan dan penulis tunggal).
+- Mengoreksi dokumentasi dan kontrak subagent bawaan: enam peran builtin dengan default konteks fresh/fork yang akurat, path discovery `.selesai`, instruksi builder yang dapat dieksekusi, serta peran read-only/writer yang dideklarasikan.
+
 ## 0.5.29 — Fondasi Pi 0.83 dan koordinasi lebih kuat
 
 - Menyinkronkan fondasi coding-agent dan dependency runtime Pi exact dari 0.81.1 ke 0.83.0, termasuk perbaikan provider, katalog model, RPC bash, sesi, pemuatan resource, dan terminal.

@@ -28,7 +28,6 @@ const REQUIRED_HEADINGS_ID = [
 // Explicit mapping from src/extensions/package.json pi.extensions entries to the
 // relative MDX path under doc-web/src/content/docs/capabilities/ (and id/capabilities/).
 const BUNDLED_EXTENSION_GUIDES = {
-  "./caveman/index.js": "skills/caveman",
   "./copy-turn.ts": "continuity/copy-turn",
   "./context-compaction-reminder.ts": "continuity/context-reminder",
   "./pi-intercom/index.ts": "continuity/intercom",

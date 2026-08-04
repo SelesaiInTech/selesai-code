@@ -5,7 +5,6 @@
 	"description": "Built-in extensions shipped with @selesai/code, loaded via additionalExtensionPaths at boot.",
 	"pi": {
 		"extensions": [
-			"./caveman/index.js",
 			"./copy-turn.ts",
 			"./context-compaction-reminder.ts",
 			"./pi-intercom/index.ts",

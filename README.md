@@ -124,7 +124,7 @@ Selesai also bundles small extensions that solve common coding-agent failures:
 
 Skills are shipped with Selesai and loaded at boot. They include:
 
-- `ponytail` and `caveman` for minimal and compressed communication modes
+- `ponytail` for minimal implementation mode and review helpers
 - `grill-me` for requirement and design stress-testing
 - `planger` and `implanger` for decomposed planning and execution
 - `handoff` and `handoff-text` for session continuity

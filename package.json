@@ -1,6 +1,6 @@
 {
 	"name": "@selesai/code",
-	"version": "0.5.29",
+	"version": "0.6.1",
 	"description": "Maintained, extension-first Pi coding agent with built-in workflows, subagents, web research, questions, skills, and an enhanced terminal UI.",
 	"type": "module",
 	"repository": {
@@ -57,7 +57,7 @@
 		"@earendil-works/pi-agent-core": "0.83.0",
 		"@earendil-works/pi-ai": "0.83.0",
 		"@earendil-works/pi-tui": "0.83.0",
-		"@mozilla/readability": "^0.6.0",
+		"@mozilla/readability": "^0.6.1",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "5.6.2",
 		"cheerio": "^1.1.0",

@@ -7,7 +7,6 @@ extension documentation accurate. It is not published as user-facing content.
 
 | Slug | Bundled | Manifest entry | Runtime surface | EN guide | ID guide | Source focus |
 |------|---------|----------------|-----------------|----------|----------|--------------|
-| caveman | bundled | `./caveman/index.js` | skill-backed | skills/caveman.mdx | id/skills/caveman.mdx | extension + skill |
 | copy-turn | bundled | `./copy-turn.ts` | command | continuity/copy-turn.mdx | id/continuity/copy-turn.mdx | copy-turn.ts |
 | context-compaction-reminder | bundled | `./context-compaction-reminder.ts` | automatic | continuity/context-reminder.mdx | id/continuity/context-reminder.mdx | source + test |
 | pi-intercom | bundled | `./pi-intercom/index.ts` | mixed | continuity/intercom.mdx | id/continuity/intercom.mdx | README/config/index |
@@ -27,16 +26,6 @@ extension documentation accurate. It is not published as user-facing content.
 | pi-rewind-hook | optional | (not in manifest) | automatic | continuity/rewind.mdx | id/continuity/rewind.mdx | README + source |
 
 ## Extension-by-extension maintenance fact sheets
-
-### caveman
-
-- **Startup behavior**: Loaded automatically at boot via `./caveman/index.js`.
-- **Prerequisites**: Bundled; interactive TUI session for status bar and notifications.
-- **Config / settings / env**: No dedicated config file. State is controlled via `/caveman` and stored in a `caveman-mode` custom session entry. Default-on when no history exists.
-- **Commands / tools / shortcuts**: `/caveman` toggle; `/caveman on`/`enable`; `/caveman off`/`disable`; `/caveman status`; `/skill:caveman`; natural-language deactivation phrases `stop caveman` / `normal mode`.
-- **Persistence scope**: Per-session-branch via custom session entries.
-- **Test / source evidence**: `src/extensions/caveman/`, `src/skills/caveman/`.
-- **Limits / failure behavior**: Deactivation phrases only work as a full user message; status is not shared across new sessions without history.
 
 ### copy-turn
 

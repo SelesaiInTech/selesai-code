@@ -298,23 +298,6 @@ export const capabilities: Capability[] = [
     runtimeSurface: "skill-backed",
   },
   {
-    slug: "caveman",
-    category: "skills-and-productivity",
-    en: { displayName: "Caveman communication", benefit: "Abbreviated, focused response style invoked via `/skill:caveman`." },
-    id: { displayName: "Komunikasi Caveman", benefit: "Gaya responsi yang dipersingkat dan fokus, dipanggil via `/skill:caveman`." },
-    sourcePaths: ["src/extensions/caveman/", "src/skills/caveman/", "README.md"],
-    sourceLinks: [
-      links("Caveman extension", "src/extensions/caveman/"),
-      links("Caveman skill", "src/skills/caveman/"),
-      links("README mention", "README.md"),
-    ],
-    guideRoute: "capabilities/skills/caveman",
-    piComparison: "bundled",
-    distribution: "bundled",
-    manifestEntry: "./caveman/index.js",
-    runtimeSurface: "skill-backed",
-  },
-  {
     slug: "rtk",
     category: "skills-and-productivity",
     en: { displayName: "RTK integration", benefit: "Rewrite compatible shell commands to reduce noisy output and token burn when `rtk` is installed." },

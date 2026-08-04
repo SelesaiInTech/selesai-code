@@ -48,6 +48,8 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 - Di Fleet inspector, arahkan child aktif yang dipilih dengan `s` atau hentikan run async top-level dengan `D` dan konfirmasi.
 - Menghentikan run: `/subagents-stop <run-id>` atau `subagent({ action: "stop", id: "..." })`.
 - Membatasi launch dengan `allowedAgents` scoped sesi, menambahkan checkpoint persetujuan chain, atau membatasi penggunaan agregat dengan `usageBudget`.
+- Menemukan katalog delegasi runtime: `subagent({ action: "list" })` menampilkan agen yang executable dan yang dibatasi capability ceiling beserta source, alias, peran, konteks, tool, dan deskripsi, serta mengembalikan katalog yang sama sebagai metadata mesin ber-version di `details.catalog`.
+- Mendapatkan saran routing berbasis tugas: `subagent({ action: "list", task: "..." })` menambahkan rekomendasi satu agen kanonik (implementation atau read-only) untuk tugas tersebut, atau menjelaskan mengapa tidak ada yang aman. Ini hanya saran dan tidak pernah meluncurkan pekerjaan — jalankan agen yang direkomendasikan secara eksplisit.
 - Meminta child menghubungi supervisor: `contact_supervisor({ reason: "need_decision", message: "..." })`.
 
 ## Perintah, tool, dan shortcut
@@ -57,6 +59,8 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 | `subagent({ agent, task, async?, context?, model?, ... })` | Jalankan satu agen. |
 | `subagent({ tasks: [...] })` | Jalankan agen secara paralel. |
 | `subagent({ chain: [...] })` | Jalankan agen secara berurutan dengan output `{previous}`. |
+| `subagent({ action: "list" })` | Tampilkan katalog delegasi runtime: agen executable/terbatas (source, alias, peran, konteks, tool, deskripsi), chain, dan metadata mesin ber-version. |
+| `subagent({ action: "list", task? })` | Katalog yang sama, plus saran routing berbasis tugas opsional; hanya merekomendasikan dan tidak pernah meluncurkan. |
 | `subagent({ action: "status" })` | Tampilkan status run async. |
 | `subagent({ action: "steer", id, message, index? })` | Kirim arahan ke child async top-level yang aktif. |
 | `subagent({ action: "stop", id })` | Hentikan run async. |
@@ -91,6 +95,8 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 - Child yang di-spawn tidak menerima skill `pi-subagents` secara default, dan visibilitas tool-nya dikontrol oleh frontmatter `tools` agen. Child hanya mendapat tool `subagent` yang aman untuk child jika `tools` yang resolved-nya mencakup `subagent`.
 - Child forked mendapat konteks yang difilter sehingga menghapus artifact subagent khusus parent.
 - Budget model, tool, penggunaan, dan spawn; ceiling agent yang diizinkan; limit kedalaman; checkpoint; serta pengaturan watchdog diberlakukan oleh runtime.
+- Hasil delegasi normal bersifat reference-first: penyelesaian mengembalikan referensi output tersimpan plus status/informasi lifecycle; periksa output penuh melalui path output tersimpan, status/transkrip async, atau `resume`. `outputMode: "inline"` memulihkan pengiriman inline lama, dan `output: false` menonaktifkan persistensi output tahan lama.
+- Saran routing berbasis tugas bersifat advisori dan heuristik: tidak pernah meluncurkan atau menjadwalkan pekerjaan, dan preflight saat launch tetap menjadi titik penegakan.
 - Discovery file agen terurut; project agent menggantikan user agent, dan user agent menggantikan builtin dengan nama yang sama.
 - Skill `pi-subagents` yang dikirimkan bersama extension adalah panduan dokumentasi/prompt, bukan entrypoint extension yang diinstal secara terpisah.
 

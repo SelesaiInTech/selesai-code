@@ -7,7 +7,7 @@ systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
 defaultContext: fresh
-skill: ponytail, caveman, planger
+skill: ponytail, planger
 completionGuard: false
 acceptanceRole: read-only
 ---
