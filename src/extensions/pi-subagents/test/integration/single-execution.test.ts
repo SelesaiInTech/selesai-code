@@ -1305,7 +1305,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const result = await executor.execute(
 			"failed-single-output",
-			{ agent: "oracle", task: "Implement the approved file changes" },
+			{ agent: "oracle", task: "Implement the approved file changes", artifacts: true },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -2283,6 +2283,22 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(!JSON.stringify(result.launchResolvedExtensions).includes(tempDir), "projection should not expose raw extension paths");
 	});
 
+	it("does not write debug artifacts by default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "plain result" });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.execute(
+			"default-no-artifacts",
+			{ agent: "echo", task: "Run without debug artifacts", runId: "default-no-artifacts" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.artifacts, undefined);
+		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
+	});
+
 	it("routes foreground artifacts to the configured session directory", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "session artifact result" });
 		const sessionFile = path.join(tempDir, "sessions", "parent-session", "session.jsonl");
@@ -2292,7 +2308,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const result = await executor.execute(
 			"session-artifact-dir",
-			{ agent: "echo", task: "Write session-scoped artifacts", runId: "session-artifacts" },
+			{ agent: "echo", task: "Write session-scoped artifacts", runId: "session-artifacts", artifacts: true },
 			new AbortController().signal,
 			undefined,
 			ctx,

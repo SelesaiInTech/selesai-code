@@ -107,6 +107,7 @@ Project prompt.
 					{ provider: "test", id: "fallback", fullId: "test/fallback" },
 				],
 				capabilityCeiling: ceiling,
+				artifacts: true,
 			});
 
 			assert.equal(result.ok, true);
@@ -143,6 +144,7 @@ Project prompt.
 					{ provider: "test", id: "fallback", fullId: "test/fallback" },
 				],
 				capabilityCeiling: ceiling,
+				artifacts: true,
 			});
 			assert.equal(repeated.ok, true);
 			assert.equal(repeated.contract.digest, result.contract.digest);

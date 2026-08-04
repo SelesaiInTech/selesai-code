@@ -284,7 +284,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		diagnostics.push({ code: "denied_required_tool", severity: "error", message });
 		return { ok: false, code: "denied_required_tool", message, diagnostics };
 	}
-	const artifactsEnabled = input.artifacts !== false;
+	const artifactsEnabled = input.artifacts === true;
 	const artifactsDir = artifactsEnabled ? getArtifactsDir(input.parentSessionFile ?? null, effectiveCwd, input.artifactDir ?? "project") : undefined;
 	const artifactPaths = artifactsDir ? getArtifactPaths(artifactsDir, runId, agent.name, 0) : undefined;
 	const outputPath = resolveSingleOutputPath(behavior.output, effectiveCwd, effectiveCwd, artifactsDir ? path.join(artifactsDir, "outputs", runId) : undefined);

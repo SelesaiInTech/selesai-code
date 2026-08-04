@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Made per-child debug artifacts opt-in with `artifacts: true` instead of writing prompt, output, transcript, and metadata copies for every run by default.
+
 ## [0.40.0] - 2026-08-01
 
 ### Added

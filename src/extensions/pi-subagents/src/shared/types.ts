@@ -1645,7 +1645,7 @@ export const DEFAULT_MAX_OUTPUT: Required<MaxOutputConfig> = {
 };
 
 export const DEFAULT_ARTIFACT_CONFIG: ArtifactConfig = {
-	enabled: true,
+	enabled: false,
 	dir: "project",
 	includeInput: true,
 	includeOutput: true,

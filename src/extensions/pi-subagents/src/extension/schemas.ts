@@ -321,7 +321,7 @@ const SubagentParamsSchema = Type.Object({
 	usageBudget: Type.Optional(UsageBudgetOverride),
 	agentScope: Type.Optional(Type.String({ description: "Agent discovery scope: 'user', 'project', or 'both' (default: 'both'; project wins on name collisions)" })),
 	cwd: Type.Optional(Type.String()),
-	artifacts: Type.Optional(Type.Boolean({ description: "Write debug artifacts (default: true)" })),
+	artifacts: Type.Optional(Type.Boolean({ description: "Write debug artifacts (default: false)" })),
 	includeProgress: Type.Optional(Type.Boolean({ description: "Include full progress in result (default: false)" })),
 	share: Type.Optional(Type.Boolean({ description: "Upload session to GitHub Gist for sharing (default: false)" })),
 	sessionDir: Type.Optional(

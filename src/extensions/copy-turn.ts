@@ -39,7 +39,12 @@ function resultOf(message: AnyMessage): string {
 }
 
 function hashFor(m: AnyMessage): string {
-  return createHash("sha1").update(JSON.stringify(cleanMessage(m))).digest("hex").slice(0, HASH_LEN);
+  // Hash the stable copy identity (role + cleaned copy result) only, so the hash
+  // shown at display time (computed from the transient message) still matches the
+  // one /cp recomputes from the persisted message, whose metadata may have changed.
+  const role = m.role ?? "message";
+  const text = resultOf(m);
+  return createHash("sha1").update(JSON.stringify([role, text])).digest("hex").slice(0, HASH_LEN);
 }
 
 function addMarker(m: AnyMessage): AnyMessage {

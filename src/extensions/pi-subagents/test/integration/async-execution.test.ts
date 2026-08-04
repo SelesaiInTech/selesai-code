@@ -721,7 +721,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const launch = await executor.execute(
 			"async-session-artifact-dir",
-			{ agent: "worker", task: "Write async session artifacts", async: true, runId: "async-session-artifacts", acceptance: false },
+			{ agent: "worker", task: "Write async session artifacts", async: true, runId: "async-session-artifacts", acceptance: false, artifacts: true },
 			new AbortController().signal,
 			undefined,
 			ctx,
@@ -1564,6 +1564,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				tasks: [{ agent: "builder", task: "Do async work", output: "async-top-output.md", reads: ["input.md"] }],
 				async: true,
 				clarify: false,
+				artifacts: true,
 			},
 			new AbortController().signal,
 			undefined,
@@ -1622,7 +1623,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			];
 			const launch = await executor.execute(
 				`async-inherited-output-${outputOverride === true ? "true" : "omitted"}`,
-				{ tasks, async: true, clarify: false },
+				{ tasks, async: true, clarify: false, artifacts: true },
 				new AbortController().signal,
 				undefined,
 				makeMinimalCtx(tempDir),
@@ -1694,6 +1695,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				],
 				async: true,
 				clarify: false,
+				artifacts: true,
 			},
 			new AbortController().signal,
 			undefined,
@@ -2428,6 +2430,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 					async: true,
 					clarify: false,
 					worktree: true,
+					artifacts: true,
 				},
 				new AbortController().signal,
 				undefined,
