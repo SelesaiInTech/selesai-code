@@ -5,6 +5,10 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis yang dapat dijangkau dari branch `main` Selesai. Tag dari riwayat Pi yang tidak terkait dan tidak di-merge tidak disertakan.
 
+## 0.6.3 — Perbaikan instalasi: pin Readability ke 0.6.0 yang terbit
+
+- Memperbaiki instalasi package: manifest root dan `pi-web-agent` bawaan mendeklarasikan `@mozilla/readability` `^0.6.1`, tetapi registry npm tidak menerbitkan 0.6.1 (terbaru adalah 0.6.0), sehingga instalasi baru 0.6.2 gagal dengan `ETARGET`. Kedua manifest kini mendeklarasikan `^0.6.0` dan lockfile root me-resolve rilis 0.6.0 yang terbit, sehingga instalasi bersih kembali berhasil.
+
 ## 0.6.2 — Output terminal reference-first dan seeding skill/pengaturan yang aman
 
 - Menjadikan output terminal foreground reference-first untuk hasil delegasi: renderer tidak lagi membaca ulang atau meng-inline ulang file output child yang tersimpan; hasil file-only yang settled menampilkan referensi output tersimpan, hasil legacy yang hanya memiliki path mendapat referensi sintetis tanpa menyentuh file, dan hasil `outputMode: "inline"` tetap menampilkan teks lengkapnya.

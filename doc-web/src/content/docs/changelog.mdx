@@ -5,6 +5,10 @@ title: Changelog
 
 This history follows release tags reachable from the Selesai `main` branch. Tags from unrelated, unmerged Pi history are excluded.
 
+## 0.6.3 — Install repair: pin Readability to the published 0.6.0
+
+- Repaired package install: the root and bundled `pi-web-agent` manifests declared `@mozilla/readability` `^0.6.1`, but the npm registry publishes no 0.6.1 (latest is 0.6.0), so fresh installs of 0.6.2 failed with `ETARGET`. Both manifests now declare `^0.6.0` and the root lockfile resolves the published 0.6.0 release, so clean installs succeed again.
+
 ## 0.6.2 — Reference-first terminal output and safe skill/settings seeding
 
 - Made foreground terminal output reference-first for delegated results: the renderer never re-reads or re-inlines saved child output files; settled file-only results show the saved-output reference, legacy path-only results get a synthesized reference without touching the file, and `outputMode: "inline"` results keep their full text.
