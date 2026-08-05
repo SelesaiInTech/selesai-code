@@ -669,7 +669,7 @@ export function markFirstRunComplete(agentDir: string = getAgentDir()): void {
 }
 
 // =============================================================================
-// Agent Dir Bootstrap (first-run seeding)
+// Agent Dir Bootstrap (first-run seeding and settings migration)
 // =============================================================================
 
 /** Subdirectories created under the agent dir on first run. */
@@ -716,6 +716,101 @@ export function seedDefaultConfigFile(
 		// chmod is best-effort (no-op on platforms that don't support it).
 	}
 	return destPath;
+}
+
+/**
+ * Insert a top-level key into the root object of a JSON document without
+ * touching any other bytes: the user's formatting, unknown keys, and trailing
+ * whitespace survive verbatim. Returns the new document text, or undefined
+ * when the root value is not a JSON object.
+ */
+function injectRootObjectKey(raw: string, key: string, value: unknown): string | undefined {
+	let inString = false;
+	let escaped = false;
+	let depth = 0;
+	let rootOpen = -1;
+	let rootClose = -1;
+	for (let i = 0; i < raw.length; i++) {
+		const ch = raw[i]!;
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (ch === "\\") escaped = true;
+			else if (ch === '"') inString = false;
+			continue;
+		}
+		if (ch === '"') {
+			inString = true;
+			continue;
+		}
+		if (ch === "{" || ch === "[") {
+			if (depth === 0) rootOpen = i;
+			depth++;
+			continue;
+		}
+		if (ch === "}" || ch === "]") {
+			depth--;
+			if (depth < 0) return undefined;
+			if (depth === 0 && ch === "}") {
+				rootClose = i;
+				break;
+			}
+		}
+	}
+	if (rootOpen === -1 || rootClose === -1 || raw[rootOpen] !== "{") return undefined;
+
+	const keyJson = `${JSON.stringify(key)}: ${JSON.stringify(value)}`;
+	let lastContentIndex = -1;
+	for (let i = rootClose - 1; i > rootOpen; i--) {
+		if (!/\s/.test(raw[i]!)) {
+			lastContentIndex = i;
+			break;
+		}
+	}
+	if (lastContentIndex === -1) {
+		// Empty root object: inject right after the opening brace.
+		return `${raw.slice(0, rootOpen + 1)}${keyJson}${raw.slice(rootOpen + 1)}`;
+	}
+	// Append after the last content token, before the original whitespace run.
+	return `${raw.slice(0, lastContentIndex + 1)}, ${keyJson}${raw.slice(lastContentIndex + 1)}`;
+}
+
+/**
+ * Add bundled subagent defaults to an existing user settings file when that
+ * top-level setting is absent. The file is modified with a minimal textual
+ * insertion, so unrelated settings (including their formatting and unknown
+ * keys) are preserved byte-for-byte. Invalid or non-object JSON, or a user
+ * file that already configures `subagents`, is left untouched.
+ */
+export function seedMissingSubagentSettings(
+	destPath: string,
+	bundledDefaultsDir: string = getBundledDefaultsDir(),
+): boolean {
+	if (!existsSync(destPath)) return false;
+
+	try {
+		const raw = readFileSync(destPath, "utf-8");
+		const settings = JSON.parse(raw) as unknown;
+		const defaults = JSON.parse(readFileSync(join(bundledDefaultsDir, "settings.json"), "utf-8")) as unknown;
+		if (
+			typeof settings !== "object" ||
+			settings === null ||
+			Array.isArray(settings) ||
+			Object.hasOwn(settings, "subagents") ||
+			typeof defaults !== "object" ||
+			defaults === null ||
+			Array.isArray(defaults) ||
+			!Object.hasOwn(defaults, "subagents")
+		) {
+			return false;
+		}
+
+		const injected = injectRootObjectKey(raw, "subagents", (defaults as Record<string, unknown>).subagents);
+		if (injected === undefined) return false;
+		writeFileSync(destPath, injected);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -796,7 +891,11 @@ export function seedDefaultExtensions(
 
 /**
  * Seed bundled built-in skills into the user's agent dir/skills.
- * Skips existing files (user edits survive). Never overwrites.
+ * Ownership rule: bundled files are installed only when missing, so a new
+ * release can supply new bundled skills, but existing user files are never
+ * overwritten — user-authored edits survive. User-only skills stay. The
+ * authoritative bundled copy still loads directly from the package at boot
+ * (additionalSkillPaths), so a stale user copy never loses functionality.
  * Returns the list of destination paths that were written.
  */
 export function seedDefaultSkills(
@@ -819,14 +918,17 @@ export function seedDefaultThemes(
 }
 
 /**
- * Run full first-run bootstrap for the agent dir: ensure directories and seed
- * settings.json from bundled defaults. Idempotent — safe on every startup.
+ * Run bootstrap for the agent dir: ensure directories, seed a missing
+ * settings.json, and add missing bundled subagent defaults. Idempotent — safe
+ * on every startup.
  * Bundled models load package-locally; copying them would expose internal
  * providers as user config. Bundled extensions also stay package-local.
  */
 export function bootstrapAgentDir(agentDir: string = getAgentDir()): void {
 	ensureAgentDir(agentDir);
-	seedDefaultConfigFile(join(agentDir, "settings.json"), "settings.json");
+	const settingsPath = join(agentDir, "settings.json");
+	seedDefaultConfigFile(settingsPath, "settings.json");
+	seedMissingSubagentSettings(settingsPath);
 	seedDefaultExtensions(agentDir);
 	seedDefaultSkills(agentDir);
 	seedDefaultThemes(agentDir);

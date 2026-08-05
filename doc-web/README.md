@@ -21,13 +21,9 @@ This runs content validation, `astro check`, a full static build, and a built-li
 
 The repository includes a GitHub Actions workflow (`.github/workflows/deploy-pages.yml`) that builds and deploys to GitHub Pages on pushes to `main`.
 
-Before the workflow can publish, you must:
+Before publishing, set this repository's GitHub Pages source to **Deploy from a branch**: `gh-pages` / **(root)**. The workflow builds `doc-web` and force-pushes its static output to that branch on every push to `main`.
 
-1. Create a GitHub repository for `selesai-docs`.
-2. Enable GitHub Pages with the **GitHub Actions** source.
-3. Push the repository to the remote.
-
-Until those steps are done, the workflow will not run successfully because there is no remote or Pages environment.
+Published site: <https://selesaiintech.github.io/selesai-code/>.
 
 ## License
 

@@ -5,6 +5,13 @@ title: Changelog
 
 This history follows release tags reachable from the Selesai `main` branch. Tags from unrelated, unmerged Pi history are excluded.
 
+## 0.6.2 — Reference-first terminal output and safe skill/settings seeding
+
+- Made foreground terminal output reference-first for delegated results: the renderer never re-reads or re-inlines saved child output files; settled file-only results show the saved-output reference, legacy path-only results get a synthesized reference without touching the file, and `outputMode: "inline"` results keep their full text.
+- Made bundled skill and settings seeding safe: first-run bootstrap adds a missing top-level `subagents` key to an existing user `settings.json` without reformatting it or touching unrelated settings, never overrides user-configured `subagents`, and installs newly bundled skills (including `pi-subagents`) without overwriting user-edited skill files.
+- Shipped the delegation skill as a top-level bundled skill: `pi-subagents` now loads from the package at boot and seeds into the agent dir on first run, so parent-orchestration guidance is available without relying on the extension's internal copy.
+- Aligned the bundled web-agent manifest's `@mozilla/readability` range to `^0.6.1`, matching the version resolved in the root package.
+
 ## 0.6.1 — Delegation catalog, advisory routing, and reference-first results
 
 - Added a runtime delegation catalog: `subagent({ action: "list" })` now shows executable and capability-restricted agents with source, aliases, role, context, tools, and description, plus the same catalog as versioned machine metadata (`details.catalog`).
@@ -48,7 +55,7 @@ This history follows release tags reachable from the Selesai `main` branch. Tags
 
 ## 0.5.23 — Documentation site and workflow fix
 
-- Launched the Selesai documentation site at [GitHub Pages](https://selesaiintech.github.io/selesai-docs/), with English and Indonesian capability guides, local search, accessible navigation, and content/link validation.
+- Launched the Selesai documentation site at [GitHub Pages](https://selesaiintech.github.io/selesai-code/), with English and Indonesian capability guides, local search, accessible navigation, and content/link validation.
 - Fixed workflows so they read review output sent through Intercom.
 
 ## 0.5.22 — Inline skills and question flow

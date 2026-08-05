@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import { keyText } from "@selesai/code";
 
@@ -851,5 +854,229 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.match(text, /chain · step 1\/3/);
 		assert.match(text, /Step 1: scout/);
 		assert.doesNotMatch(text, /parallel group:/);
+	});
+
+	it("keeps settled expanded file-only results reference-first without re-inlining saved child prose", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-render-"));
+		try {
+			const outputPath = path.join(tempDir, "child-output.md");
+			const childProse = Array.from({ length: 40 }, (_, index) => `SENSITIVE FULL CHILD OUTPUT line ${index + 1}`).join("\n");
+			fs.writeFileSync(outputPath, childProse, "utf-8");
+			const bytes = Buffer.byteLength(childProse, "utf-8");
+			const referenceMessage = `Output saved to: ${outputPath} (${bytes} B, 40 lines). Read this file if needed.`;
+			const widget = renderSubagentResult!({
+				content: [{ type: "text", text: "done" }],
+				details: {
+					mode: "single",
+					results: [{
+						agent: "writer",
+						task: "Write the report",
+						exitCode: 0,
+						messages: [],
+						usage: emptyUsage,
+						outputMode: "file-only",
+						savedOutputPath: outputPath,
+						outputReference: { path: outputPath, bytes, lines: 40, message: referenceMessage },
+						sessionFile: path.join(tempDir, "session.jsonl"),
+						artifactPaths: { outputPath, dir: tempDir },
+				}],
+				},
+			}, { expanded: true }, theme);
+
+			const text = widget.render(200).join("\n");
+			assert.doesNotMatch(text, /SENSITIVE FULL CHILD OUTPUT/);
+			assert.match(text, /Output saved to:/);
+			assert.match(text, new RegExp(outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			assert.match(text, /Session:/);
+			assert.match(text, /Artifacts:/);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps explicit inline output and live progress rendering in expanded results", () => {
+		const inline = renderSubagentResult!({
+			content: [{ type: "text", text: "done" }],
+			details: {
+				mode: "single",
+				results: [{
+					agent: "writer",
+					task: "Inline task",
+					exitCode: 0,
+					messages: [],
+					usage: emptyUsage,
+					outputMode: "inline",
+					finalOutput: "FULL INLINE RESULT TEXT",
+				}],
+			},
+		}, { expanded: true }, theme).render(200).join("\n");
+		assert.match(inline, /FULL INLINE RESULT TEXT/);
+
+		const running = renderSubagentResult!({
+			content: [{ type: "text", text: "running" }],
+			details: {
+				mode: "single",
+				results: [{
+					agent: "reviewer",
+					task: "review",
+					exitCode: 0,
+					messages: [],
+					usage: emptyUsage,
+					progress: { index: 0, agent: "reviewer", status: "running", task: "review", recentTools: [], recentOutput: [], toolCount: 1, tokens: 42, durationMs: 3_000 },
+				}],
+			},
+		}, { expanded: true }, theme).render(200).join("\n");
+		assert.match(running, /running/);
+		assert.match(running, /for live detail/);
+	});
+
+	it("synthesizes a path-only output reference for legacy savedOutputPath results without reading the file", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-render-"));
+		try {
+			const outputPath = path.join(tempDir, "legacy-child-output.md");
+			// The file does not exist on disk: the renderer must never read it.
+			const widget = renderSubagentResult!({
+				content: [{ type: "text", text: "done" }],
+				details: {
+					mode: "single",
+					results: [{
+						agent: "writer",
+						task: "Write the report",
+						exitCode: 0,
+						messages: [],
+						usage: emptyUsage,
+						savedOutputPath: outputPath,
+					}],
+				},
+			}, { expanded: true }, theme);
+
+			const text = widget.render(200).join("\n");
+			assert.match(text, new RegExp(`Output saved to: ${outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+			assert.match(text, /Read this file if needed/);
+			assert.doesNotMatch(text, /\(\d+ B, \d+ lines\)/);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps foreign savedOutputPath results reference-first even when they carry inline text", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-render-"));
+		try {
+			const outputPath = path.join(tempDir, "foreign-child-output.md");
+			const widget = renderSubagentResult!({
+				content: [{ type: "text", text: "done" }],
+				details: {
+					mode: "single",
+					results: [{
+						agent: "writer",
+						task: "Write the report",
+						exitCode: 0,
+						messages: [],
+						usage: emptyUsage,
+						savedOutputPath: outputPath,
+						finalOutput: "SENSITIVE FOREIGN CHILD PROSE that must not be inlined",
+					}],
+				},
+			}, { expanded: true }, theme);
+
+			const text = widget.render(200).join("\n");
+			assert.doesNotMatch(text, /SENSITIVE FOREIGN CHILD PROSE/);
+			assert.match(text, new RegExp(`Output saved to: ${outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps compact file-only results reference-first with the saved-output reference", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-render-"));
+		try {
+			const outputPath = path.join(tempDir, "child-output.md");
+			const childProse = Array.from({ length: 40 }, (_, index) => `SENSITIVE FULL CHILD OUTPUT line ${index + 1}`).join("\n");
+			fs.writeFileSync(outputPath, childProse, "utf-8");
+			const bytes = Buffer.byteLength(childProse, "utf-8");
+			const referenceMessage = `Output saved to: ${outputPath} (${bytes} B, 40 lines). Read this file if needed.`;
+			const widget = renderSubagentResult!({
+				content: [{ type: "text", text: "done" }],
+				details: {
+					mode: "single",
+					results: [{
+						agent: "writer",
+						task: "Write the report",
+						exitCode: 0,
+						messages: [],
+						usage: emptyUsage,
+						outputMode: "file-only",
+						savedOutputPath: outputPath,
+						outputReference: { path: outputPath, bytes, lines: 40, message: referenceMessage },
+					}],
+				},
+			}, { expanded: false }, theme);
+
+			const text = widget.render(200).join("\n");
+			assert.doesNotMatch(text, /SENSITIVE FULL CHILD OUTPUT/);
+			assert.match(text, /Output saved to:/);
+			assert.doesNotMatch(text, /no text output/);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps compact multi file-only results reference-first and success-marked", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-render-"));
+		try {
+			const outputPathA = path.join(tempDir, "a.md");
+			const outputPathB = path.join(tempDir, "b.md");
+			fs.writeFileSync(outputPathA, "SENSITIVE CHILD OUTPUT A", "utf-8");
+			fs.writeFileSync(outputPathB, "SENSITIVE CHILD OUTPUT B", "utf-8");
+			const refA = { path: outputPathA, bytes: 24, lines: 1, message: `Output saved to: ${outputPathA} (24 B, 1 line). Read this file if needed.` };
+			const refB = { path: outputPathB, bytes: 24, lines: 1, message: `Output saved to: ${outputPathB} (24 B, 1 line). Read this file if needed.` };
+			const widget = renderSubagentResult!({
+				content: [{ type: "text", text: "done" }],
+				details: {
+					mode: "parallel",
+					totalSteps: 2,
+					results: [
+						{ agent: "scout", task: "scan", exitCode: 0, messages: [], usage: emptyUsage, outputMode: "file-only", savedOutputPath: outputPathA, outputReference: refA },
+						{ agent: "reviewer", task: "review", exitCode: 0, messages: [], usage: emptyUsage, outputMode: "file-only", savedOutputPath: outputPathB, outputReference: refB },
+					],
+				},
+			}, { expanded: false }, theme);
+
+			const text = widget.render(200).join("\n");
+			assert.doesNotMatch(text, /SENSITIVE CHILD OUTPUT/);
+			assert.doesNotMatch(text, /no text output/);
+			assert.match(text, /^✓ parallel/);
+			assert.match(text, /Agent 1\/2: scout/);
+			assert.match(text, /Agent 2\/2: reviewer/);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("marks legacy compact multi savedOutputPath results as done without inlining child prose", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-render-"));
+		try {
+			const outputPath = path.join(tempDir, "legacy.md");
+			const widget = renderSubagentResult!({
+				content: [{ type: "text", text: "done" }],
+				details: {
+					mode: "parallel",
+					totalSteps: 2,
+					results: [
+						{ agent: "scout", task: "scan", exitCode: 0, messages: [], usage: emptyUsage, savedOutputPath: outputPath, finalOutput: "LEGACY SENSITIVE PROSE" },
+						{ agent: "writer", task: "Write the report", exitCode: 0, messages: [], usage: emptyUsage, savedOutputPath: outputPath, finalOutput: "MORE LEGACY SENSITIVE PROSE" },
+					],
+				},
+			}, { expanded: false }, theme);
+
+			const text = widget.render(200).join("\n");
+			assert.doesNotMatch(text, /LEGACY SENSITIVE PROSE|MORE LEGACY SENSITIVE PROSE/);
+			assert.doesNotMatch(text, /no text output/);
+			assert.match(text, /^✓ parallel/);
+			assert.match(text, /Agent 1\/2: scout/);
+			assert.match(text, /Agent 2\/2: writer/);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
 	});
 });

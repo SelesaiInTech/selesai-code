@@ -2,7 +2,6 @@
  * Rendering functions for subagent results
  */
 
-import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { getMarkdownTheme, keyText, type ExtensionContext } from "@selesai/code";
@@ -31,22 +30,27 @@ type Theme = ExtensionContext["ui"]["theme"];
 /**
  * UI-side output projection: completed terminal results strip `finalOutput`/
  * `truncation` when an authoritative saved output path exists (see
- * compactForegroundResult). The UI recovers the full text from that path so
- * widgets keep showing output without reintroducing it into model-facing
- * details.
+ * compactForegroundResult). The terminal renderer stays reference-first: it
+ * never re-reads the saved child output file. Settled file-only results show
+ * the saved-output reference (path/size/lines) instead of re-inlining child
+ * prose; explicit `outputMode: "inline"` results keep their full text via
+ * `finalOutput`. Legacy/foreign result data may carry `savedOutputPath` without
+ * an `outputReference`; a path-only reference is synthesized so the saved file
+ * stays discoverable without reading it.
  */
+function formatPathOnlyOutputReference(savedOutputPath: string): string {
+	return `Output saved to: ${path.resolve(savedOutputPath)}. Read this file if needed.`;
+}
+
 function resultOutputForUi(r: Details["results"][number]): string {
-	const output = r.truncation?.text || getSingleResultOutput(r);
-	if (output) return output;
-	if (r.savedOutputPath) {
-		try {
-			const content = fs.readFileSync(r.savedOutputPath, "utf-8").trim();
-			return content || output;
-		} catch {
-			return output;
-		}
-	}
-	return output;
+	// Explicit `outputMode: "inline"` is the sole legacy full-text opt-out:
+	// keep the inline text even when a saved output path also exists.
+	if (r.outputMode === "inline") return r.truncation?.text || getSingleResultOutput(r) || "";
+	// Settled file-backed results are reference-first: never re-read or re-inline
+	// the saved child output, even when foreign/legacy data still carries a text
+	// projection. Synthesize a path-only reference when none was persisted.
+	if (r.savedOutputPath) return r.outputReference?.message || formatPathOnlyOutputReference(r.savedOutputPath);
+	return r.truncation?.text || getSingleResultOutput(r) || "";
 }
 
 function liveDetailKeyText(): string {

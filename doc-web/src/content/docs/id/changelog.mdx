@@ -5,6 +5,13 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis yang dapat dijangkau dari branch `main` Selesai. Tag dari riwayat Pi yang tidak terkait dan tidak di-merge tidak disertakan.
 
+## 0.6.2 — Output terminal reference-first dan seeding skill/pengaturan yang aman
+
+- Menjadikan output terminal foreground reference-first untuk hasil delegasi: renderer tidak lagi membaca ulang atau meng-inline ulang file output child yang tersimpan; hasil file-only yang settled menampilkan referensi output tersimpan, hasil legacy yang hanya memiliki path mendapat referensi sintetis tanpa menyentuh file, dan hasil `outputMode: "inline"` tetap menampilkan teks lengkapnya.
+- Menjadikan seeding skill dan pengaturan bawaan aman: bootstrap saat first run menambahkan kunci `subagents` tingkat-atas yang hilang ke `settings.json` pengguna yang sudah ada tanpa mengubah format atau menyentuh pengaturan lain, tidak pernah menimpa `subagents` yang dikonfigurasi pengguna, dan menginstal skill bawaan baru (termasuk `pi-subagents`) tanpa menimpa file skill yang diedit pengguna.
+- Mengirimkan skill delegasi sebagai skill bawaan tingkat-atas: `pi-subagents` kini dimuat dari package saat boot dan di-seed ke direktori agent saat first run, sehingga panduan orkestrasi parent tersedia tanpa bergantung pada salinan internal extension.
+- Menyelaraskan rentang `@mozilla/readability` pada manifest web-agent bawaan ke `^0.6.1`, sesuai dengan versi yang di-resolve di package root.
+
 ## 0.6.1 — Katalog delegasi, advisory routing, dan hasil reference-first
 
 - Menambahkan katalog delegasi runtime: `subagent({ action: "list" })` kini menampilkan agen yang executable dan yang dibatasi capability ceiling beserta source, alias, peran, konteks, tool, dan deskripsi, plus katalog yang sama sebagai metadata mesin ber-version (`details.catalog`).
@@ -48,7 +55,7 @@ Riwayat ini mengikuti tag rilis yang dapat dijangkau dari branch `main` Selesai.
 
 ## 0.5.23 — Situs dokumentasi dan perbaikan workflow
 
-- Meluncurkan situs dokumentasi Selesai di [GitHub Pages](https://selesaiintech.github.io/selesai-docs/) dengan panduan kemampuan berbahasa Inggris dan Indonesia, pencarian lokal, navigasi aksesibel, serta validasi konten dan tautan.
+- Meluncurkan situs dokumentasi Selesai di [GitHub Pages](https://selesaiintech.github.io/selesai-code/) dengan panduan kemampuan berbahasa Inggris dan Indonesia, pencarian lokal, navigasi aksesibel, serta validasi konten dan tautan.
 - Memperbaiki workflow agar membaca output review yang dikirim melalui Intercom.
 
 ## 0.5.22 — Inline skill dan alur pertanyaan

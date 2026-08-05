@@ -98,6 +98,6 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 - Normal delegated results are reference-first: completion returns saved-output references plus status/lifecycle information; inspect full output through the saved output path, async status/transcript, or `resume`. `outputMode: "inline"` restores legacy inline delivery, and `output: false` disables durable output persistence.
 - Task-aware routing advice is advisory and heuristic: it never launches or schedules work, and launch-time preflight remains the enforcement point.
 - Agent file discovery is ordered; project agents override user agents, and user agents override builtins of the same name.
-- The `pi-subagents` skill shipped with the extension is documentation/prompt guidance, not an independently installed extension entrypoint.
+- The `pi-subagents` skill is documentation/prompt guidance, not an independently installed extension entrypoint. It ships both inside the extension and as a top-level bundled skill (`src/skills/pi-subagents/`) that loads from the package at boot and seeds into the agent dir on first run.
 
 <SourceEvidence slug="pi-subagents" />

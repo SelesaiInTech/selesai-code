@@ -9,6 +9,7 @@ import {
 	markFirstRunComplete,
 	seedDefaultConfigFile,
 	seedDefaultExtensions,
+	seedMissingSubagentSettings,
 	seedDefaultSkills,
 } from "../config.js";
 
@@ -43,6 +44,59 @@ describe("agent dir bootstrap", () => {
 		writeFileSync(dest, '{"theme":"user"}');
 		expect(seedDefaultConfigFile(dest, "settings.json", bundled)).toBeUndefined();
 		expect(JSON.parse(readFileSync(dest, "utf-8")).theme).toBe("user");
+	});
+
+	it("adds bundled subagent settings to existing user settings without overwriting them", () => {
+		writeFileSync(
+			join(bundled, "settings.json"),
+			JSON.stringify({ subagents: { defaultModel: "bundled", agentOverrides: { builder: { model: "fast" } } } }),
+		);
+		const dest = join(dir, "settings.json");
+		writeFileSync(dest, JSON.stringify({ theme: "user" }));
+
+		expect(seedMissingSubagentSettings(dest, bundled)).toBe(true);
+		expect(JSON.parse(readFileSync(dest, "utf-8"))).toEqual({
+			theme: "user",
+			subagents: { defaultModel: "bundled", agentOverrides: { builder: { model: "fast" } } },
+		});
+	});
+
+	it("preserves configured subagent settings", () => {
+		writeFileSync(join(bundled, "settings.json"), JSON.stringify({ subagents: { defaultModel: "bundled" } }));
+		const dest = join(dir, "settings.json");
+		writeFileSync(dest, JSON.stringify({ subagents: { defaultModel: "user" } }));
+
+		expect(seedMissingSubagentSettings(dest, bundled)).toBe(false);
+		expect(JSON.parse(readFileSync(dest, "utf-8"))).toEqual({ subagents: { defaultModel: "user" } });
+	});
+
+	it("supplies missing subagent defaults without reformatting unrelated user settings", () => {
+		writeFileSync(join(bundled, "settings.json"), JSON.stringify({ subagents: { defaultModel: "bundled" } }));
+		const dest = join(dir, "settings.json");
+		const userRaw = '{\n  "theme": "user",\n  "customPlugin": { "enabled": true },\n  "unknownFutureKey": [1, 2, 3]\n}';
+		writeFileSync(dest, userRaw);
+
+		expect(seedMissingSubagentSettings(dest, bundled)).toBe(true);
+		expect(readFileSync(dest, "utf-8")).toBe(
+			'{\n  "theme": "user",\n  "customPlugin": { "enabled": true },\n  "unknownFutureKey": [1, 2, 3], "subagents": {"defaultModel":"bundled"}\n}',
+		);
+		// every original user byte survives verbatim; only the new key was added
+		expect(JSON.parse(readFileSync(dest, "utf-8"))).toEqual({
+			theme: "user",
+			customPlugin: { enabled: true },
+			unknownFutureKey: [1, 2, 3],
+			subagents: { defaultModel: "bundled" },
+		});
+	});
+
+	it("leaves invalid user settings untouched", () => {
+		writeFileSync(join(bundled, "settings.json"), JSON.stringify({ subagents: { defaultModel: "bundled" } }));
+		const dest = join(dir, "settings.json");
+		const brokenRaw = '{\n  "theme": "user",\n';
+		writeFileSync(dest, brokenRaw);
+
+		expect(seedMissingSubagentSettings(dest, bundled)).toBe(false);
+		expect(readFileSync(dest, "utf-8")).toBe(brokenRaw);
 	});
 
 	it("bootstrapAgentDir is a safe no-op when bundled dirs are empty", () => {
@@ -97,6 +151,25 @@ describe("agent dir bootstrap", () => {
 		expect(seedDefaultSkills(dir, join(bundled, "skills"))).toEqual([]);
 		expect(readFileSync(join(dir, "skills", "grill-me", "SKILL.md"), "utf-8")).toBe(
 			"---\ndescription: User Grill\n---\n",
+		);
+	});
+
+	it("installs new bundled skills while preserving user-edited skills", () => {
+		mkdirSync(join(bundled, "skills", "grill-me"), { recursive: true });
+		mkdirSync(join(dir, "skills", "grill-me"), { recursive: true });
+		writeFileSync(join(bundled, "skills", "grill-me", "SKILL.md"), "---\ndescription: Grill\n---\n");
+		writeFileSync(join(dir, "skills", "grill-me", "SKILL.md"), "---\ndescription: User Grill\n---\n");
+		// a later release adds a brand-new bundled skill
+		mkdirSync(join(bundled, "skills", "pi-subagents"), { recursive: true });
+		writeFileSync(join(bundled, "skills", "pi-subagents", "SKILL.md"), "---\ndescription: Delegate\n---\n");
+
+		const written = seedDefaultSkills(dir, join(bundled, "skills"));
+		expect(written).toEqual([join(dir, "skills", "pi-subagents", "SKILL.md")]);
+		expect(readFileSync(join(dir, "skills", "grill-me", "SKILL.md"), "utf-8")).toBe(
+			"---\ndescription: User Grill\n---\n",
+		);
+		expect(readFileSync(join(dir, "skills", "pi-subagents", "SKILL.md"), "utf-8")).toBe(
+			"---\ndescription: Delegate\n---\n",
 		);
 	});
 

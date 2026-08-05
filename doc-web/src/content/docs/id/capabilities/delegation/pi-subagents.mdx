@@ -98,6 +98,6 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 - Hasil delegasi normal bersifat reference-first: penyelesaian mengembalikan referensi output tersimpan plus status/informasi lifecycle; periksa output penuh melalui path output tersimpan, status/transkrip async, atau `resume`. `outputMode: "inline"` memulihkan pengiriman inline lama, dan `output: false` menonaktifkan persistensi output tahan lama.
 - Saran routing berbasis tugas bersifat advisori dan heuristik: tidak pernah meluncurkan atau menjadwalkan pekerjaan, dan preflight saat launch tetap menjadi titik penegakan.
 - Discovery file agen terurut; project agent menggantikan user agent, dan user agent menggantikan builtin dengan nama yang sama.
-- Skill `pi-subagents` yang dikirimkan bersama extension adalah panduan dokumentasi/prompt, bukan entrypoint extension yang diinstal secara terpisah.
+- Skill `pi-subagents` adalah panduan dokumentasi/prompt, bukan entrypoint extension yang diinstal secara terpisah. Skill ini dikirim baik di dalam extension maupun sebagai skill bawaan tingkat-atas (`src/skills/pi-subagents/`) yang dimuat dari package saat boot dan di-seed ke direktori agent saat first run.
 
 <SourceEvidence slug="pi-subagents" />
