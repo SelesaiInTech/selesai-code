@@ -1,5 +1,3 @@
-import type { AcceptanceRole } from "../../shared/types.ts";
-
 /**
  * Shared task mutation-intent classifier.
  *
@@ -138,31 +136,12 @@ function taskHasReadOnlyDeliverable(taskText: string): boolean {
 }
 
 function isReviewerStyleAgent(agent: string): boolean {
-	return /\b(?:architect|commentator|explorer|recapper|researcher)\b/i.test(agent);
-}
-
-/**
- * Resolve an agent's acceptance routing role: a declared `acceptanceRole`
- * always wins; otherwise the established name heuristics apply (builder-named
- * agents are writers; architect/commentator/explorer/recapper/researcher/
- * analyst-named agents are read-only). This is the single shared source of
- * truth for acceptance inference and task-aware advisory routing so the two
- * cannot drift. Alias values are never role signals.
- */
-export function resolveAgentRoutingRole(
-	agentName: string,
-	acceptanceRole?: AcceptanceRole,
-): "writer" | "read-only" | undefined {
-	if (acceptanceRole !== undefined) return acceptanceRole;
-	const agent = agentName.toLowerCase();
-	if (/\bbuilder\b/.test(agent)) return "writer";
-	if (/\b(?:architect|commentator|explorer|recapper|researcher|analyst)\b/.test(agent)) return "read-only";
-	return undefined;
+	return /\b(?:commentator|advisor|reviewer|oracle)\b/i.test(agent);
 }
 
 function hasImplementationIntent(agent: string, taskText: string): boolean {
 	if (isReviewerStyleAgent(agent)) return REVIEWER_REQUIRED_EDIT_PATTERNS.some((pattern) => pattern.test(taskText));
-	if (agent === "builder") return WORKER_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
+	if (agent === "worker" || agent === "builder") return WORKER_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
 	return GENERAL_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
 }
 

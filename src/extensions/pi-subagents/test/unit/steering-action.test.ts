@@ -43,7 +43,7 @@ function runningStatus(runId: string, mode: AsyncStatus["mode"] = "single", coun
 		cwd: os.tmpdir(),
 		startedAt: Date.now(),
 		lastUpdate: Date.now(),
-		steps: Array.from({ length: count }, (_, index) => ({ agent: `worker-${index}`, status: "running" as const, startedAt: Date.now() })),
+		steps: Array.from({ length: count }, (_, index) => ({ agent: `builder-${index}`, status: "running" as const, startedAt: Date.now() })),
 		steering: createSteeringStatus(),
 	};
 }
@@ -83,7 +83,7 @@ function recoveryDescriptor(runId: string): SteeringRecoveryDescriptor {
 	return {
 		version: 1,
 		sourceRunId: runId,
-		agent: "worker-0",
+		agent: "builder-0",
 		cwd: os.tmpdir(),
 		systemPromptMode: "replace",
 		inheritProjectContext: false,

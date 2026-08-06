@@ -18,7 +18,7 @@ import type { ResolvedTurnBudget } from "../shared/types.ts";
 import type { ResolvedMcpDirectToolSelection } from "../runs/shared/mcp-direct-tool-allowlist.ts";
 import { resolveStepBehavior } from "../shared/settings.ts";
 import { agentDefinitionDigest, AGENT_DEFINITION_PROJECTION_VERSION, launchBindingDigest } from "../shared/launch-contract.ts";
-import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR } from "../shared/types.ts";
+import { DIRS, TEMP_ROOT_DIR } from "../shared/types.ts";
 import { processTerminalCandidatePath, processTerminalPath } from "../runs/background/process-terminal.ts";
 import { nestedResultsPath } from "../runs/shared/nested-events.ts";
 
@@ -284,7 +284,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		diagnostics.push({ code: "denied_required_tool", severity: "error", message });
 		return { ok: false, code: "denied_required_tool", message, diagnostics };
 	}
-	const artifactsEnabled = input.artifacts === true;
+	const artifactsEnabled = input.artifacts !== false;
 	const artifactsDir = artifactsEnabled ? getArtifactsDir(input.parentSessionFile ?? null, effectiveCwd, input.artifactDir ?? "project") : undefined;
 	const artifactPaths = artifactsDir ? getArtifactPaths(artifactsDir, runId, agent.name, 0) : undefined;
 	const outputPath = resolveSingleOutputPath(behavior.output, effectiveCwd, effectiveCwd, artifactsDir ? path.join(artifactsDir, "outputs", runId) : undefined);
@@ -292,10 +292,10 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const sessionDir = sessionRoot ? path.join(sessionRoot, "run-0") : undefined;
 	const lifecycleAsyncDir = input.nestedRootRunId
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", input.nestedRootRunId, runId)
-		: path.join(ASYNC_DIR, runId);
+		: path.join(DIRS.async, runId);
 	const lifecycleResultPath = input.nestedRootRunId
 		? nestedResultsPath(input.nestedRootRunId, runId)
-		: path.join(RESULTS_DIR, `${runId}.json`);
+		: path.join(DIRS.results, `${runId}.json`);
 	if (!sessionDir) diagnostics.push({ code: "host_required", severity: "host-required", message: "No sessionRoot/sessionDir was supplied; exact child session paths require the Pi host session-root policy." });
 	if (input.availableModels === undefined && (input.model || agent.model || input.parentModel)) {
 		diagnostics.push({ code: "host_required", severity: "host-required", message: "No availableModels snapshot was supplied; model resolution may differ from the active Pi host registry." });

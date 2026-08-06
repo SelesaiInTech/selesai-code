@@ -28,16 +28,16 @@ function agent(name: string): AgentConfig {
 
 describe("capability ceiling agent allowlist", () => {
 	it("parses, round-trips, and intersects allowedAgents", () => {
-		const parsed = parseSubagentCapabilityCeiling({ version: 1, allowedAgents: ["worker", "reviewer", "worker"], denyExtensions: false, sources: ["plan"] });
-		assert.deepEqual(parsed.allowedAgents, ["reviewer", "worker"]);
+		const parsed = parseSubagentCapabilityCeiling({ version: 1, allowedAgents: ["builder", "commentator", "builder"], denyExtensions: false, sources: ["plan"] });
+		assert.deepEqual(parsed.allowedAgents, ["builder", "commentator"]);
 		assert.deepEqual(decodeSubagentCapabilityCeiling(encodeSubagentCapabilityCeiling(parsed)), parsed);
 
 		assert.deepEqual(intersectSubagentCapabilityCeilings(
-			{ version: 1, allowedAgents: ["worker", "reviewer"], denyExtensions: false, sources: ["outer"] },
-			{ version: 1, allowedAgents: ["reviewer", "scout"], denyExtensions: true, sources: ["inner"] },
+			{ version: 1, allowedAgents: ["builder", "commentator"], denyExtensions: false, sources: ["outer"] },
+			{ version: 1, allowedAgents: ["commentator", "explorer"], denyExtensions: true, sources: ["inner"] },
 		), {
 			version: 1,
-			allowedAgents: ["reviewer"],
+			allowedAgents: ["commentator"],
 			denyExtensions: true,
 			sources: ["inner", "outer"],
 		});
@@ -58,40 +58,6 @@ describe("capability ceiling agent allowlist", () => {
 			assert.match(text, /- commentator /);
 			assert.match(text, /Restricted agents \(not executable in this session; capability ceiling: plan-mode\):/);
 			assert.match(text, /- builder /);
-
-			const catalog = (result as { details: { catalog?: unknown } }).details.catalog as
-				| undefined
-				| {
-					version: number;
-					agents: Array<{ name: string; executable: boolean; restrictionSources?: string[]; defaultContext: string }>;
-					capabilityCeilingSources?: string[];
-				};
-			assert.ok(catalog, "list result must include machine catalog metadata");
-			assert.equal(catalog.version, 1);
-			assert.deepEqual(catalog.capabilityCeilingSources, ["plan-mode"]);
-			const commentator = catalog.agents.find((entry) => entry.name === "commentator");
-			const builder = catalog.agents.find((entry) => entry.name === "builder");
-			assert.equal(commentator?.executable, true);
-			assert.equal(commentator?.restrictionSources, undefined);
-			assert.equal(commentator?.defaultContext, "fresh");
-			assert.equal(builder?.executable, false);
-			assert.deepEqual(builder?.restrictionSources, ["plan-mode"]);
-		} finally {
-			handle.dispose();
-		}
-	});
-
-	it("never recommends a capability-restricted writer for implementation list task advice", () => {
-		const sessionId = `allowlist-advice-${Date.now()}-${Math.random()}`;
-		const handle = registerSubagentCapabilityCeiling({ sessionId, source: "plan-mode", ceiling: { allowedAgents: ["commentator"] } });
-		try {
-			const result = handleList({ task: "Implement the fix" }, { cwd: process.cwd(), currentSessionId: sessionId, modelRegistry: { getAvailable: () => [] } });
-			assert.equal(result.isError, false);
-			const text = result.content[0]?.text ?? "";
-			assert.match(text, /Task-aware advisory routing:/);
-			assert.match(text, /- Intent: implementation/);
-			assert.match(text, /- Recommendation: none/);
-			assert.doesNotMatch(text, /- Recommended: /);
 		} finally {
 			handle.dispose();
 		}

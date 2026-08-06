@@ -27,8 +27,8 @@ describe("async status helpers", () => {
 				currentStep: 1,
 				outputFile,
 				steps: [
-					{ agent: "scout", status: "complete", durationMs: 10, description: "Inspect auth only" },
-					{ agent: "worker", status: "running", durationMs: 20, description: "Patch billing only" },
+					{ agent: "explorer", status: "complete", durationMs: 10, description: "Inspect auth only" },
+					{ agent: "builder", status: "running", durationMs: 20, description: "Patch billing only" },
 				],
 			});
 			createAsyncDir(root, "run-b", {
@@ -37,7 +37,7 @@ describe("async status helpers", () => {
 				state: "complete",
 				startedAt: 50,
 				lastUpdate: 75,
-				steps: [{ agent: "reviewer", status: "complete" }],
+				steps: [{ agent: "commentator", status: "complete" }],
 			});
 
 			const runs = listAsyncRuns(root, { states: ["queued", "running"] });
@@ -45,7 +45,7 @@ describe("async status helpers", () => {
 			assert.equal(runs[0]?.id, "run-a");
 			assert.equal(runs[0]?.cwd, "/repo-a");
 			assert.equal(runs[0]?.steps.length, 2);
-			assert.equal(runs[0]?.steps[1]?.agent, "worker");
+			assert.equal(runs[0]?.steps[1]?.agent, "builder");
 			assert.equal(runs[0]?.steps[1]?.status, "running");
 			assert.equal(runs[0]?.steps[0]?.description, "Inspect auth only");
 			assert.equal(runs[0]?.steps[1]?.description, "Patch billing only");
@@ -65,7 +65,7 @@ describe("async status helpers", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				steps: [{
-					agent: "worker",
+					agent: "builder",
 					status: "complete",
 					agentContract: { version: 1 },
 					execution: { status: "completed", success: true, exitCode: 0 },
@@ -100,7 +100,7 @@ describe("async status helpers", () => {
 				lastUpdate: 200,
 				capabilityCeiling: ceiling,
 				capabilityAudit: audit,
-				steps: [{ agent: "worker", status: "complete", capabilityCeiling: ceiling, capabilityAudit: audit }],
+				steps: [{ agent: "builder", status: "complete", capabilityCeiling: ceiling, capabilityAudit: audit }],
 			});
 
 			const runs = listAsyncRuns(root, { states: ["complete"] });
@@ -123,8 +123,8 @@ describe("async status helpers", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				steps: [
-					{ agent: "scout", context: "fresh", status: "running" },
-					{ agent: "worker", context: "fork", status: "running" },
+					{ agent: "explorer", context: "fresh", status: "running" },
+					{ agent: "builder", context: "fork", status: "running" },
 				],
 			});
 
@@ -133,8 +133,8 @@ describe("async status helpers", () => {
 			assert.deepEqual(runs[0]?.steps.map((step) => step.context), ["fresh", "fork"]);
 			const text = formatAsyncRunList(runs);
 			assert.match(text, /run-context \| running .* \| parallel \[mixed\]/);
-			assert.match(text, /1\. scout \[fresh\] \| running/);
-			assert.match(text, /2\. worker \[fork\] \| running/);
+			assert.match(text, /1\. explorer \[fresh\] \| running/);
+			assert.match(text, /2\. builder \[fork\] \| running/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -150,16 +150,16 @@ describe("async status helpers", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				steps: [
-					{ agent: "reviewer", status: "running", model: "openai-codex/gpt-5.5:high" },
-					{ agent: "scout", status: "running", model: "anthropic/claude-haiku-4-5", thinking: "low" },
+					{ agent: "commentator", status: "running", model: "openai-codex/gpt-5.5:high" },
+					{ agent: "explorer", status: "running", model: "anthropic/claude-haiku-4-5", thinking: "low" },
 					{ agent: "local", status: "running", model: "ollama/qwen2.5-coder:7b" },
 					{ agent: "fallback", status: "running", model: "anthropic/claude-sonnet-4-5:low", thinking: "high" },
 				],
 			});
 
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
-			assert.match(text, /1\. reviewer \| running \| gpt-5\.5 · thinking high/);
-			assert.match(text, /2\. scout \| running \| claude-haiku-4-5 · thinking low/);
+			assert.match(text, /1\. commentator \| running \| gpt-5\.5 · thinking high/);
+			assert.match(text, /2\. explorer \| running \| claude-haiku-4-5 · thinking low/);
 			assert.match(text, /3\. local \| running \| qwen2\.5-coder:7b(?! · thinking)/);
 			assert.match(text, /4\. fallback \| running \| claude-sonnet-4-5 · thinking low/);
 			assert.doesNotMatch(text, /openai-codex\/gpt-5\.5/);
@@ -181,7 +181,7 @@ describe("async status helpers", () => {
 				lastActivityAt,
 				startedAt: Date.now() - 70_000,
 				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running", activityState: "needs_attention", lastActivityAt }],
+				steps: [{ agent: "builder", status: "running", activityState: "needs_attention", lastActivityAt }],
 			});
 
 			const runs = listAsyncRuns(root, { states: ["running"] });
@@ -206,7 +206,7 @@ describe("async status helpers", () => {
 				wrapUpRequested: true,
 				turnBudget: { maxTurns: 2, graceTurns: 1, turnCount: 3, outcome: "termination-deferred", wrapUpRequestedAtTurn: 2, terminationDeferredAtTurn: 3 },
 				steps: [{
-					agent: "worker",
+					agent: "builder",
 					status: "running",
 					wrapUpRequested: true,
 					turnBudget: { maxTurns: 2, graceTurns: 1, turnCount: 3, outcome: "termination-deferred", wrapUpRequestedAtTurn: 2, terminationDeferredAtTurn: 3 },
@@ -232,13 +232,13 @@ describe("async status helpers", () => {
 				lastActivityAt: now - 90_000,
 				startedAt: now - 120_000,
 				lastUpdate: now,
-				steps: [{ agent: "worker", status: "running", lastActivityAt: now - 90_000 }],
+				steps: [{ agent: "builder", status: "running", lastActivityAt: now - 90_000 }],
 			});
 
 			const runs = listAsyncRuns(root, { states: ["running"] });
 			assert.equal(runs[0]?.activityState, undefined);
 			assert.equal(runs[0]?.steps[0]?.activityState, undefined);
-			assert.match(formatAsyncRunList(runs, "Active async runs"), /worker \| running \| active/);
+			assert.match(formatAsyncRunList(runs, "Active async runs"), /builder \| running \| active/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -283,7 +283,7 @@ describe("async status helpers", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				endedAt: 200,
-				steps: [{ agent: "worker", status: "complete" }],
+				steps: [{ agent: "builder", status: "complete" }],
 			});
 
 			const runs = listAsyncRuns(root, { states: ["paused"] });
@@ -293,7 +293,7 @@ describe("async status helpers", () => {
 
 			const text = formatAsyncRunList(runs, "Paused async runs");
 			assert.match(text, /run-paused \| paused/);
-			assert.match(text, /worker \| complete/);
+			assert.match(text, /builder \| complete/);
 			assert.doesNotMatch(text, /paused\/paused/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -324,7 +324,7 @@ describe("async status helpers", () => {
 				mode: "single",
 				state: "running",
 				startedAt: 100,
-				steps: [{ agent: "worker", status: "running" }],
+				steps: [{ agent: "builder", status: "running" }],
 			});
 
 			assert.throws(
@@ -347,7 +347,7 @@ describe("async status helpers", () => {
 				pid: 12345,
 				startedAt: 100,
 				lastUpdate: 100,
-				steps: [{ agent: "scout", status: "running", startedAt: 100 }],
+				steps: [{ agent: "explorer", status: "running", startedAt: 100 }],
 			});
 
 			const active = listAsyncRuns(root, {
@@ -380,9 +380,9 @@ describe("async status helpers", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
-					{ agent: "scout", status: "running", durationMs: 12_000 },
-					{ agent: "reviewer", status: "running", durationMs: 11_000 },
-					{ agent: "worker", status: "pending" },
+					{ agent: "explorer", status: "running", durationMs: 12_000 },
+					{ agent: "commentator", status: "running", durationMs: 11_000 },
+					{ agent: "builder", status: "pending" },
 				],
 			});
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
@@ -407,9 +407,9 @@ describe("async status helpers", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
-					{ agent: "scout", status: "failed" },
-					{ agent: "reviewer", status: "failed" },
-					{ agent: "worker", status: "paused" },
+					{ agent: "explorer", status: "failed" },
+					{ agent: "commentator", status: "failed" },
+					{ agent: "builder", status: "paused" },
 				],
 			});
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["failed"] }));
@@ -433,9 +433,9 @@ describe("async status helpers", () => {
 				chainStepCount: 2,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
-					{ agent: "scout", status: "running", durationMs: 12_000 },
-					{ agent: "reviewer", status: "running", durationMs: 11_000 },
-					{ agent: "worker", status: "pending" },
+					{ agent: "explorer", status: "running", durationMs: 12_000 },
+					{ agent: "commentator", status: "running", durationMs: 11_000 },
+					{ agent: "builder", status: "pending" },
 					{ agent: "writer", status: "pending" },
 				],
 			});
@@ -459,9 +459,9 @@ describe("async status helpers", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
-					{ agent: "scout", status: "complete", durationMs: 12_000 },
-					{ agent: "reviewer", status: "running", durationMs: 11_000 },
-					{ agent: "worker", status: "pending" },
+					{ agent: "explorer", status: "complete", durationMs: 12_000 },
+					{ agent: "commentator", status: "running", durationMs: 11_000 },
+					{ agent: "builder", status: "pending" },
 				],
 			});
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
@@ -485,7 +485,7 @@ describe("async status helpers", () => {
 				chainStepCount: 2,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 4 }, null, "bad"],
 				steps: [
-					{ agent: "scout", status: "running", durationMs: 12_000 },
+					{ agent: "explorer", status: "running", durationMs: 12_000 },
 					{ agent: "writer", status: "pending" },
 				],
 			});
@@ -510,8 +510,8 @@ describe("async status helpers", () => {
 				chainStepCount: 1,
 				parallelGroups: "bad",
 				steps: [
-					{ agent: "scout", status: "running" },
-					{ agent: "reviewer", status: "pending" },
+					{ agent: "explorer", status: "running" },
+					{ agent: "commentator", status: "pending" },
 				],
 			});
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
@@ -533,8 +533,8 @@ describe("async status helpers", () => {
 				lastUpdate: 300,
 				currentStep: 0,
 				steps: [
-					{ agent: "scout", status: "running", durationMs: 12_000 },
-					{ agent: "reviewer", status: "pending" },
+					{ agent: "explorer", status: "running", durationMs: 12_000 },
+					{ agent: "commentator", status: "pending" },
 				],
 			});
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
@@ -558,7 +558,7 @@ describe("async status helpers", () => {
 					state: "complete",
 					startedAt: 100,
 					lastUpdate: 200,
-					steps: [{ agent: "reviewer", status: "complete" }],
+					steps: [{ agent: "commentator", status: "complete" }],
 				});
 			}
 

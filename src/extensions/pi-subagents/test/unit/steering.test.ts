@@ -116,7 +116,7 @@ describe("steering lifecycle ledger", () => {
 
 	it("reconstructs the original agent contract without leaking changed current fields", () => {
 		const current = {
-			name: "worker",
+			name: "builder",
 			description: "current",
 			model: "current/model",
 			fallbackModels: ["current/fallback"],
@@ -141,7 +141,7 @@ describe("steering lifecycle ledger", () => {
 		const recovered = applySteeringRecoveryAgentConfig(current, {
 			version: 1,
 			sourceRunId: "source",
-			agent: "worker",
+			agent: "builder",
 			cwd: "/original",
 			model: "original/model",
 			tools: ["read"],

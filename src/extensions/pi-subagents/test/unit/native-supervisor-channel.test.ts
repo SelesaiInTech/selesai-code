@@ -49,7 +49,7 @@ function makeState(sessionId: string | null, ctx: unknown): SubagentState {
 }
 
 function writeRequest(input: { sessionId: string; runId: string; agent?: string; index?: number; message?: string; createdAt?: number; expiresAt?: number }): string {
-	const agent = input.agent ?? "worker";
+	const agent = input.agent ?? "builder";
 	const index = input.index ?? 0;
 	const channelDir = resolveSupervisorChannelDir(input.runId, agent, index);
 	createdChannels.push(channelDir);
@@ -72,16 +72,16 @@ function writeRequest(input: { sessionId: string; runId: string; agent?: string;
 	return requestId;
 }
 
-function requestFile(runId: string, requestId: string, agent = "worker", index = 0): string {
+function requestFile(runId: string, requestId: string, agent = "builder", index = 0): string {
 	return path.join(resolveSupervisorChannelDir(runId, agent, index), "requests", `${requestId}.json`);
 }
 
-function replyFile(runId: string, requestId: string, agent = "worker", index = 0): string {
+function replyFile(runId: string, requestId: string, agent = "builder", index = 0): string {
 	return path.join(resolveSupervisorChannelDir(runId, agent, index), "replies", `${requestId}.json`);
 }
 
 function makeEmptyChannel(runId: string): string {
-	const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
+	const channelDir = resolveSupervisorChannelDir(runId, "builder", 0);
 	createdChannels.push(channelDir);
 	ensureSupervisorChannelDir(channelDir);
 	return channelDir;
@@ -211,7 +211,7 @@ describe("native supervisor channel", () => {
 	it("emits foreground detach only after displaying a pending supervisor request", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
-		const requestId = writeRequest({ sessionId: currentSessionId, runId, agent: "worker", index: 2 });
+		const requestId = writeRequest({ sessionId: currentSessionId, runId, agent: "builder", index: 2 });
 		const log: string[] = [];
 		const emitted: Array<{ channel: string; payload: { requestId?: string; runId?: string; agent?: string; childIndex?: number } }> = [];
 		const ctx = {
@@ -242,7 +242,7 @@ describe("native supervisor channel", () => {
 			assert.deepEqual(log, ["send", "emit"]);
 			assert.deepEqual(emitted, [{
 				channel: INTERCOM_DETACH_REQUEST_EVENT,
-				payload: { requestId, runId, agent: "worker", childIndex: 2 },
+				payload: { requestId, runId, agent: "builder", childIndex: 2 },
 			}]);
 			assert.equal(channel.pending.has(requestId), true);
 		} finally {
@@ -271,7 +271,7 @@ describe("native supervisor channel", () => {
 			cwd: process.cwd(),
 			sessionId: currentSessionId,
 			updatedAt: 1,
-			children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 1 }],
+			children: [{ agent: "builder", index: 0, status: "detached", updatedAt: 1 }],
 		}]]);
 		const pi = {
 			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
@@ -398,7 +398,7 @@ describe("native supervisor channel", () => {
 			mode: "single",
 			cwd: process.cwd(),
 			updatedAt: Date.now(),
-			children: [{ agent: "worker", index: 0, status: "completed", updatedAt: Date.now() }],
+			children: [{ agent: "builder", index: 0, status: "completed", updatedAt: Date.now() }],
 		}]]);
 		const pi = {
 			getAllTools: () => [],
@@ -464,13 +464,13 @@ describe("native supervisor channel", () => {
 
 	it("removes the request file when a child supervisor ask is cancelled", async () => {
 		const runId = `run-${randomUUID()}`;
-		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
+		const channelDir = resolveSupervisorChannelDir(runId, "builder", 0);
 		createdChannels.push(channelDir);
 		process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
 		process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
 		process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
 		process.env[SUBAGENT_RUN_ID_ENV] = runId;
-		process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
+		process.env[SUBAGENT_CHILD_AGENT_ENV] = "builder";
 		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
 		const registeredTools = new Map<string, { execute: (_id: string, params: { reason: string; message?: string }, signal?: AbortSignal) => Promise<unknown> | unknown }>();
 		const pi = {

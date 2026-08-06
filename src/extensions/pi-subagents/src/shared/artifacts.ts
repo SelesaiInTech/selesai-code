@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
+import { CHAIN_RUNS_DIR, TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
 import { getAgentDir } from "./utils.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
 const PROJECT_ARTIFACT_ROOT = ".pi-subagents";
@@ -15,6 +15,21 @@ export function getProjectArtifactsDir(cwd: string): string {
 
 export function getProjectChainRunsDir(cwd: string): string {
 	return path.join(getProjectSubagentsDir(cwd), "chain-runs");
+}
+
+export function getChainRunsDir(
+	projectCwd: string,
+	dirPreference: ArtifactDirPreference = "project",
+): string {
+	switch (dirPreference) {
+		case "project":
+			return getProjectChainRunsDir(projectCwd);
+		case "session":
+		case "temp":
+			return CHAIN_RUNS_DIR;
+		default:
+			throw new Error(`Unsupported artifactDir ${JSON.stringify(dirPreference)}; expected "project", "session", or "temp".`);
+	}
 }
 
 export function getArtifactsDir(
@@ -61,6 +76,7 @@ export function ensureArtifactsDir(dir: string): void {
 }
 
 export function writeArtifact(filePath: string, content: string): void {
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	fs.writeFileSync(filePath, content, "utf-8");
 }
 
@@ -78,6 +94,7 @@ export function formatOutputArtifactContent(input: {
 }
 
 export function writeMetadata(filePath: string, metadata: object): void {
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), "utf-8");
 }
 

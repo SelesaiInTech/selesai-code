@@ -7,7 +7,7 @@ name: review-chain
 description: Review chain
 ---
 
-## reviewer
+## commentator
 output: report.md
 outputMode: file-only
 
@@ -28,7 +28,7 @@ name: review-chain
 description: Review chain
 ---
 
-## reviewer
+## commentator
 phase: Review
 label: correctness pass
 as: correctnessFindings
@@ -54,7 +54,7 @@ name: review-chain
 description: Review chain
 ---
 
-## reviewer
+## commentator
 toolBudget: {"soft":3,"hard":5,"block":["read","grep"]}
 
 Review the diff
@@ -71,12 +71,12 @@ name: review-chain
 description: Review chain
 ---
 
-## reviewer
+## commentator
 toolBudget: {"soft":6,"hard":5}
 
 Review the diff
 `, "project", "/tmp/review-chain.md"),
-			/toolBudget for step 'reviewer'\.soft must be <= toolBudget for step 'reviewer'\.hard/,
+			/toolBudget for step 'commentator'\.soft must be <= toolBudget for step 'commentator'\.hard/,
 		);
 	});
 
@@ -87,7 +87,7 @@ name: review-chain
 description: Review chain
 ---
 
-## reviewer
+## commentator
 outputSchema: {"type":"object"}
 
 Review the diff
@@ -102,10 +102,10 @@ Review the diff
 				name: "bad-dynamic-review",
 				description: "Bad dynamic targets",
 				chain: [
-					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-						parallel: [{ agent: "reviewer", task: "Review" }],
+						parallel: [{ agent: "commentator", task: "Review" }],
 						collect: { as: "reviews" },
 					},
 				],
@@ -124,10 +124,10 @@ Review the diff
 			package: "code-analysis",
 			description: "Review dynamic targets",
 			chain: [
-				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+				{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "commentator", task: "Review {target.path}", outputSchema: { type: "object" } },
 					collect: { as: "reviews" },
 				},
 			],
@@ -146,10 +146,10 @@ Review the diff
 			name: "dynamic-review",
 			description: "Review dynamic targets",
 			chain: [
-				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" }, toolBudget: { hard: 4 } },
+				{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" }, toolBudget: { hard: 4 } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" }, toolBudget: { soft: 3, hard: 5 } },
+					parallel: { agent: "commentator", task: "Review {target.path}", outputSchema: { type: "object" }, toolBudget: { soft: 3, hard: 5 } },
 					collect: { as: "reviews" },
 				},
 			],
@@ -164,7 +164,7 @@ Review the diff
 			() => parseJsonChain(JSON.stringify({
 				name: "bad-tool-budget",
 				description: "Bad tool budget",
-				chain: [{ agent: "worker", toolBudget: { hard: 0 } }],
+				chain: [{ agent: "builder", toolBudget: { hard: 0 } }],
 			}), "project", "/tmp/bad-tool-budget.chain.json"),
 			/step 1 toolBudget\.hard must be an integer >= 1/,
 		);
@@ -173,8 +173,8 @@ Review the diff
 				name: "bad-dynamic-tool-budget",
 				description: "Bad dynamic tool budget",
 				chain: [
-					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
-					{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "worker", toolBudget: { hard: 3, block: [] } }, collect: { as: "reviews" } },
+					{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "builder", toolBudget: { hard: 3, block: [] } }, collect: { as: "reviews" } },
 				],
 			}), "project", "/tmp/bad-dynamic-tool-budget.chain.json"),
 			/step 2 dynamic template toolBudget\.block must contain at least one tool name/,
@@ -186,10 +186,10 @@ Review the diff
 			name: "dynamic-review",
 			description: "Review dynamic targets",
 			chain: [
-				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+				{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "commentator", task: "Review {target.path}", outputSchema: { type: "object" } },
 					collect: { as: "reviews" },
 				},
 			],
@@ -206,10 +206,10 @@ Review the diff
 			name: "accepted-chain",
 			description: "Chain with acceptance gates",
 			chain: [
-				{ agent: "worker", task: "Fix bug", acceptance: { level: "checked", evidence: ["changed-files", "commands-run"] } },
+				{ agent: "builder", task: "Fix bug", acceptance: { level: "checked", evidence: ["changed-files", "commands-run"] } },
 				{
 					parallel: [
-						{ agent: "reviewer", task: "Review", acceptance: "attested" },
+						{ agent: "commentator", task: "Review", acceptance: "attested" },
 					],
 				},
 			],
@@ -221,7 +221,7 @@ Review the diff
 			() => parseJsonChain(JSON.stringify({
 				name: "bad-acceptance",
 				description: "Bad acceptance",
-				chain: [{ agent: "worker", acceptance: { level: "none" } }],
+				chain: [{ agent: "builder", acceptance: { level: "none" } }],
 			}), "project", "/tmp/bad-acceptance.chain.json"),
 			/step 1 acceptance\.reason is required/,
 		);

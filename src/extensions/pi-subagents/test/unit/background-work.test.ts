@@ -49,7 +49,7 @@ function writeStatus(root: string, id: string, state: string, sessionId = "sessi
 		startedAt: now,
 		lastUpdate: now,
 		pid: 999999,
-		steps: [{ agent: "worker", status: state }],
+		steps: [{ agent: "builder", status: state }],
 	}));
 }
 

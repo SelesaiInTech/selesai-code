@@ -6,18 +6,21 @@ import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunT
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
-import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SteeringStatus, type SubagentState } from "../../shared/types.ts";
+import { DIRS, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SteeringStatus, type SubagentState } from "../../shared/types.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { readProcessTerminal, sanitizeProcessTerminal } from "./process-terminal.ts";
+import { formatWaitSubscriptions } from "./wait-subscriptions.ts";
 import { resolveAsyncRunLocation } from "./async-resume.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegistryForRoot, type NestedRunResolutionScope } from "../shared/nested-events.ts";
+import { readMissionBinding } from "../../missions/lifecycle.ts";
+import { formatWorkflowJsonPreview } from "../../workflows/scripted-workflow.ts";
 
 interface RunStatusParams {
-	action?: "status";
+	action?: string;
 	id?: string;
 	runId?: string;
 	dir?: string;
@@ -65,6 +68,7 @@ function formatResumeGuidance(runId: string | undefined, children: Array<{ agent
 function stepLineLabel(status: AsyncStatus, index: number): string {
 	const steps = status.steps ?? [];
 	if (status.mode === "parallel") return `Agent ${index + 1}/${steps.length || 1}`;
+	if (status.mode === "workflow") return `Workflow child ${steps[index]?.workflowKey ?? index + 1}`;
 	if (status.mode === "chain") {
 		const chainStepCount = status.chainStepCount ?? (steps.length || 1);
 		const groups = normalizeParallelGroups(status.parallelGroups, steps.length, chainStepCount);
@@ -208,8 +212,8 @@ function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): stri
 }
 
 export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDeps = {}): AgentToolResult<Details> {
-	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
-	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
+	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
+	const resultsDir = deps.resultsDir ?? DIRS.results;
 	const currentSessionId = deps.state?.currentSessionId ?? undefined;
 	if (params.view && params.view !== "fleet" && params.view !== "transcript") {
 		return {
@@ -239,8 +243,9 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 					details: { mode: "single", results: [] },
 				};
 			}
+			const waitSubscriptions = deps.state ? formatWaitSubscriptions(deps.state, deps.now?.() ?? Date.now()) : undefined;
 			return {
-				content: [{ type: "text", text: formatAsyncRunList(runs) }],
+				content: [{ type: "text", text: [formatAsyncRunList(runs), waitSubscriptions].filter(Boolean).join("\n\n") }],
 				details: { mode: "single", results: [] },
 			};
 		} catch (error) {
@@ -366,9 +371,18 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			const steeringText = formatSteeringSummary(status);
 			const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
 				?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
+			let missionId: string | undefined;
+			try {
+				missionId = readMissionBinding(asyncDir)?.missionId;
+			} catch (error) {
+				nestedWarning = `${nestedWarning ? `${nestedWarning}; ` : ""}Mission binding unavailable: ${error instanceof Error ? error.message : String(error)}`;
+			}
 
+			const workflowReturnPreview = status.workflow?.value !== undefined ? formatWorkflowJsonPreview(status.workflow.value, 240) : undefined;
+			const workflowEmitPreview = status.workflow?.emits.length ? formatWorkflowJsonPreview(status.workflow.emits.at(-1), 240) : undefined;
 			const lines = [
 				`Run: ${status.runId}`,
+				missionId ? `Mission: ${missionId}` : undefined,
 				`State: ${status.state}`,
 				processTerminal ? `Process terminal: ${processTerminal.state}${processTerminal.reason ? ` (${processTerminal.reason})` : ""}` : undefined,
 				status.capabilityCeiling ? `Capability ceiling: ${status.capabilityCeiling.allowedTools === undefined ? "names unrestricted" : status.capabilityCeiling.allowedTools.length === 0 ? "none" : status.capabilityCeiling.allowedTools.join(", ")}\nExtensions denied: ${status.capabilityCeiling.denyExtensions ? "yes" : "no"} (sources: ${status.capabilityCeiling.sources.join(", ")})` : undefined,
@@ -377,6 +391,9 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				statusActivityText ? `Activity: ${statusActivityText}` : undefined,
 				steeringText ? `Steering: ${steeringText}` : undefined,
 				`Mode: ${status.mode}`,
+				status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}${status.workflowKey ? ` (${status.workflowKey})` : ""}` : undefined,
+				status.mode === "workflow" && workflowReturnPreview !== undefined ? `Return: ${workflowReturnPreview}` : undefined,
+				status.mode === "workflow" && workflowEmitPreview !== undefined ? `Latest emit: ${workflowEmitPreview}` : undefined,
 				`Progress: ${progressLabel}`,
 				status.pendingAppends ? `Pending appends: ${status.pendingAppends}` : undefined,
 				`Started: ${started}`,
@@ -400,12 +417,19 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				const display = step.label ? `${step.label} (${step.agent})` : step.agent;
 				const phase = step.phase ? `[${step.phase}] ` : "";
 				lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`);
+				if (step.runner?.type === "external-cli") {
+					lines.push(`  Runner: external-cli (${step.runner.command}${step.runner.args.length ? ` ${step.runner.args.join(" ")}` : ""})`);
+					if (step.externalProcess?.pid !== undefined) lines.push(`  Process: ${step.externalProcess.pid}`);
+					if (step.externalProcess) lines.push(`  Stdout: ${step.externalProcess.stdoutPath}`, `  Stderr: ${step.externalProcess.stderrPath}`);
+				}
 				lines.push(...formatNestedRunStatusLines(step.children, { indent: "  ", commandHints: true, maxLines: 20 }));
 				const stepOutputPath = path.join(asyncDir, `output-${index}.log`);
 				if (stepOutputPath !== outputPath && fs.existsSync(stepOutputPath)) lines.push(`  Output: ${stepOutputPath}`);
-				if (step.status === "running") {
+				if (step.status === "running" && step.runner?.type !== "external-cli") {
 					lines.push(`  Intercom target: ${resolveSubagentIntercomTarget(status.runId, step.agent, index)} (if registered)`);
 					lines.push(`  Steer: subagent({ action: "steer", id: "${status.runId}", index: ${index}, message: "..." })`);
+				} else if (step.status === "running" && step.runner?.type === "external-cli") {
+					lines.push("  Steer: unavailable; one-shot external CLI runners do not accept live messages.");
 				}
 			}
 			const attached = new Set((status.steps ?? []).flatMap((step) => step.children?.map((child) => child.id) ?? []));
@@ -413,9 +437,12 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			lines.push(...formatNestedRunStatusLines(unattached, { indent: "", commandHints: true, maxLines: 20 }));
 			if (nestedWarning) lines.push(`Warning: ${nestedWarning}`);
 			if (status.sessionFile) lines.push(`Session: ${status.sessionFile}`);
-			if (status.state === "running") lines.push(`Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`);
+			const allExternal = (status.steps?.length ?? 0) > 0 && status.steps!.every((step) => step.runner?.type === "external-cli");
+			if (status.state === "running" && !allExternal) lines.push(`Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`);
 			if (status.state !== "running") {
-				lines.push(formatCheckpointGuidance(status.runId, status.checkpoint) ?? formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile, { stopped: status.state === "stopped" || status.stopped === true }));
+				lines.push(allExternal
+					? "Resume: unavailable; one-shot external CLI runners do not persist sessions."
+					: formatCheckpointGuidance(status.runId, status.checkpoint) ?? formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile, { stopped: status.state === "stopped" || status.stopped === true }));
 			}
 			if (fs.existsSync(logPath)) lines.push(`Log: ${logPath}`);
 			if (fs.existsSync(eventsPath)) lines.push(`Events: ${eventsPath}`);

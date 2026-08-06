@@ -96,7 +96,7 @@ describe("path.join vs template string concatenation", () => {
 
 	it("parallel subdir naming should use path.join", () => {
 		// settings.ts:302,306 pattern: `${subdir}/${task.output}`
-		const subdir = "parallel-0/0-_code-reviewer";
+		const subdir = "parallel-0/0-_code-commentator";
 		const output = "review.md";
 
 		const templateResult = `${subdir}/${output}`;
@@ -104,10 +104,10 @@ describe("path.join vs template string concatenation", () => {
 
 		// Both produce forward slashes here (subdir itself uses /).
 		// But if subdir comes from path.join on Windows, it would have backslashes.
-		const windowsSubdir = path.join("parallel-0", "0-_code-reviewer");
+		const windowsSubdir = path.join("parallel-0", "0-_code-commentator");
 		const windowsJoin = path.join(windowsSubdir, output);
 		// Consistent: all native separators
-		assert.equal(windowsJoin, path.join("parallel-0", "0-_code-reviewer", output));
+		assert.equal(windowsJoin, path.join("parallel-0", "0-_code-commentator", output));
 	});
 });
 

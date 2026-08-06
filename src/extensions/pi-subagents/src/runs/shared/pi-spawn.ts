@@ -71,6 +71,11 @@ function normalizePath(filePath: string): string {
 	return path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
 }
 
+function isStandalonePiExecutable(execPath: string): boolean {
+	const executableName = execPath.split(/[\\/]/).pop();
+	return /^(?:pi|selesai)(?:\.exe)?$/i.test(executableName ?? "");
+}
+
 export function resolvePiCliScript(
 	deps: PiSpawnDeps = {},
 ): string | undefined {
@@ -99,11 +104,10 @@ export function resolvePiCliScript(
 		const resolvePackageJson =
 			deps.resolvePackageJson ??
 			(() => {
-				const root = deps.piPackageRoot ?? resolvePiPackageRoot();
-				if (root) return path.join(root, "package.json");
-				const packageRoot = deps.resolvePackageEntry
-					? findPiPackageRootFromEntry(deps.resolvePackageEntry())
-					: resolveInstalledPiPackageRoot();
+				const packageRoot = deps.piPackageRoot
+					?? (deps.resolvePackageEntry ? findPiPackageRootFromEntry(deps.resolvePackageEntry()) : resolvePiPackageRoot())
+					?? resolveInstalledPiPackageRoot();
+				if (packageRoot) return path.join(packageRoot, "package.json");
 				if (!packageRoot)
 					throw new Error(
 						`Could not resolve ${PI_CODING_AGENT_PACKAGE} package root`,
@@ -142,10 +146,15 @@ export function getPiSpawnCommand(
 		return { command: piBinary, args };
 	}
 
+	const execPath = deps.execPath ?? process.execPath;
+	if (isStandalonePiExecutable(execPath)) {
+		return { command: execPath, args };
+	}
+
 	const piCliPath = resolvePiCliScript(deps);
 	if (piCliPath) {
 		return {
-			command: deps.execPath ?? process.execPath,
+			command: execPath,
 			args: [piCliPath, ...args],
 		};
 	}

@@ -87,7 +87,7 @@ describe("watchdog settings", () => {
 					children: {
 						autoFollow: { maxAttempts: 4 },
 						overrides: {
-							worker: { enabled: true, model: "anthropic/claude-test" },
+							builder: { enabled: true, model: "anthropic/claude-test" },
 						},
 					},
 					guidance: { systemPromptPath: "/tmp/user-watchdog.md" },
@@ -105,8 +105,8 @@ describe("watchdog settings", () => {
 					children: {
 						autoFollow: { blockers: false },
 						overrides: {
-							worker: { thinking: "medium" },
-							reviewer: { enabled: false },
+							builder: { thinking: "medium" },
+							commentator: { enabled: false },
 						},
 					},
 				},
@@ -118,7 +118,7 @@ describe("watchdog settings", () => {
 				autoFollow: { maxAttempts: null },
 				children: {
 					overrides: {
-						worker: { enabled: false },
+						builder: { enabled: false },
 					},
 				},
 			},
@@ -133,12 +133,12 @@ describe("watchdog settings", () => {
 		assert.deepEqual(result.config.cadence, { everyNTools: 10 });
 		assert.deepEqual(result.config.lsp, { enabled: false, timeoutMs: 1500, maxFiles: 4, maxDiagnostics: 7 });
 		assert.deepEqual(result.config.children.autoFollow, { blockers: false, maxAttempts: 4, stalemateRepeats: 3 });
-		assert.deepEqual(result.config.children.overrides.worker, {
+		assert.deepEqual(result.config.children.overrides.builder, {
 			enabled: false,
 			model: "anthropic/claude-test",
 			thinking: "medium",
 		});
-		assert.deepEqual(result.config.children.overrides.reviewer, { enabled: false });
+		assert.deepEqual(result.config.children.overrides.commentator, { enabled: false });
 	});
 
 	it("returns exact validation errors at the watchdog boundary", () => {
@@ -166,7 +166,7 @@ describe("watchdog settings", () => {
 		writeJson(userSettingsPath(), {
 			subagents: {
 				watchdog: {
-					children: { overrides: { worker: { mode: "fast" } } },
+					children: { overrides: { builder: { mode: "fast" } } },
 				},
 			},
 		});
@@ -174,7 +174,7 @@ describe("watchdog settings", () => {
 		assert.throws(
 			() => resolveWatchdogConfigStrict(tempProject),
 			(error: unknown) => error instanceof Error
-				&& error.message === `Watchdog settings in '${userSettingsPath()}' have unknown field 'subagents.watchdog.children.overrides.worker.mode'.`,
+				&& error.message === `Watchdog settings in '${userSettingsPath()}' have unknown field 'subagents.watchdog.children.overrides.builder.mode'.`,
 		);
 	});
 

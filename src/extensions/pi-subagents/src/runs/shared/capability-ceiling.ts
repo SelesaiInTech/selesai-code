@@ -1,5 +1,4 @@
 import { Buffer } from "node:buffer";
-import "../../shared/env.ts";
 
 export const SUBAGENT_CAPABILITY_CEILING_VERSION = 1 as const;
 export const SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY = "pi-subagents.capability-ceiling.v1";

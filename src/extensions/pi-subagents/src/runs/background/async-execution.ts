@@ -40,11 +40,11 @@ import {
 	type ResolvedControlConfig,
 	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
+	type ToolBudgetConfig,
 	type SubagentRunMode,
 	type SteeringRecoveryDescriptor,
 	type UsageBudgetConfig,
-	ASYNC_DIR,
-	RESULTS_DIR,
+	DIRS,
 	SUBAGENT_ASYNC_STARTED_EVENT,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 	TEMP_ROOT_DIR,
@@ -61,6 +61,7 @@ import { finalizeProcessTerminal, readProcessTerminal } from "./process-terminal
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
+import { resolvePermissionRules, type PermissionConfig } from "../shared/permissions.ts";
 
 const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();
@@ -117,6 +118,7 @@ interface AsyncExecutionContext {
 	currentSessionId: string;
 	/** Parent session id used by permission-system ask forwarding. */
 	parentSessionId?: string;
+	permissions?: PermissionConfig;
 	currentModelProvider?: string;
 	currentModel?: ParentModel;
 	/** Optional model-scope enforcement resolved from subagent settings. */
@@ -166,6 +168,8 @@ interface AsyncChainParams {
 	/** Global cap on simultaneously-running subagent tasks within the async run. */
 	globalConcurrencyLimit?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	parentWorkflowRunId?: string;
+	workflowKey?: string;
 }
 
 interface AsyncSingleParams {
@@ -206,11 +210,14 @@ interface AsyncSingleParams {
 	acceptance?: AcceptanceInput;
 	timeoutMs?: number;
 	absoluteDeadlineAt?: number;
-	turnBudget?: ResolvedTurnBudget;
-	toolBudget?: ResolvedToolBudget;
+	turnBudget?: { maxTurns: number; graceTurns?: number };
+	toolBudget?: ResolvedToolBudget | ToolBudgetConfig;
 	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ResolvedToolBudget;
+	allowZeroToolBudget?: boolean;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	parentWorkflowRunId?: string;
+	workflowKey?: string;
 }
 
 interface AsyncExecutionResult {
@@ -373,18 +380,12 @@ function waitForRunnerStartup(startupPath: string, expectedState: RunnerStartupS
 }
 
 function writeRunnerStartupControl(filePath: string, payload: { action: "ack" | "proceed"; token: string }): void {
-	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
-	try {
-		fs.writeFileSync(tempPath, JSON.stringify(payload), { encoding: "utf-8", mode: 0o600 });
-		fs.renameSync(tempPath, filePath);
-	} catch (error) {
-		try {
-			fs.rmSync(tempPath, { force: true });
-		} catch {
-			// Preserve the startup-control write error.
-		}
-		throw error;
-	}
+	// Delegate to the shared atomic JSON writer (temp file + rename, retrying
+	// transient Windows EPERM/EBUSY/EACCES locks and cleaning up the temp file
+	// on failure), so the startup handshake gets the same locking resilience as
+	// every other async control/result file. This is exercised by
+	// test/unit/atomic-json.test.ts.
+	writePrivateAtomicJson(filePath, payload);
 }
 
 function runnerIsAlive(pid: number): boolean {
@@ -430,9 +431,10 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 	fs.writeFileSync(cfgPath, JSON.stringify(launchConfig));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveAsyncRunnerNodeCommand();
-	const startupPath = typeof (launchConfig as { revivalLease?: unknown; asyncDir?: unknown }).revivalLease === "object"
-		&& typeof (launchConfig as { asyncDir?: unknown }).asyncDir === "string"
-		? path.join((launchConfig as { asyncDir: string }).asyncDir, "runner-startup.json")
+	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; revivalLease?: unknown };
+	const launchAsyncDir = typeof launchForStartup.asyncDir === "string" ? launchForStartup.asyncDir : undefined;
+	const startupPath = typeof launchForStartup.revivalLease === "object" && launchAsyncDir
+		? path.join(launchAsyncDir, "runner-startup.json")
 		: undefined;
 	const startupAckPath = startupPath ? path.join(path.dirname(startupPath), "runner-startup-ack.json") : undefined;
 	const startupProceedPath = startupPath ? path.join(path.dirname(startupPath), "runner-startup-proceed.json") : undefined;
@@ -520,7 +522,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 		proc.unref();
 		if (startupPath && startupAckPath && startupProceedPath) {
 			const ready = waitForRunnerStartup(startupPath, "ready", RUNNER_STARTUP_TIMEOUT_MS);
-			if (!ready.ok) {
+			if (ready.ok === false) {
 				terminateRunnerBeforeProceed(proc.pid);
 				return { error: ready.error };
 			}
@@ -531,7 +533,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 				return { error: `Failed to acknowledge async runner startup: ${error instanceof Error ? error.message : String(error)}` };
 			}
 			const acknowledged = waitForRunnerStartup(startupPath, "acknowledged", RUNNER_STARTUP_TIMEOUT_MS, ready.token);
-			if (!acknowledged.ok) {
+			if (acknowledged.ok === false) {
 				terminateRunnerBeforeProceed(proc.pid);
 				return { error: acknowledged.error };
 			}
@@ -643,6 +645,16 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	};
 	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior, flatIndex?: number, parallelOutputNamespace?: { stepIndex: number; taskIndex?: number }) => {
 		const a = agents.find((x) => x.name === s.agent)!;
+		const externalRunner = a.runner?.type === "external-cli";
+		if (externalRunner) {
+			const unsupported: string[] = [];
+			if (s.model !== undefined) unsupported.push("model override");
+			if (s.outputSchema !== undefined) unsupported.push("structured output");
+			if (s.acceptance !== undefined || params.agentContract !== undefined || s.agentContract !== undefined) unsupported.push("acceptance/agent contract");
+			if (s.toolBudget !== undefined || params.toolBudget !== undefined || a.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
+			if (params.contextForAgent?.(s.agent) === "fork") unsupported.push("fork context");
+			if (unsupported.length > 0) throw new AsyncStartValidationError(`Agent '${a.name}' uses runner.type='external-cli' and does not support: ${unsupported.join(", ")}.`);
+		}
 		try {
 			assertAgentAllowedByCapabilityCeiling(a.name, intersectSubagentCapabilityCeilings(params.capabilityCeiling, decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV])));
 		} catch (error) {
@@ -658,7 +670,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		if (inheritedRelativeParallelOutput && parallelOutputNamespace.taskIndex !== undefined) {
 			behavior = {
 				...behavior,
-				output: path.join(`parallel-${parallelOutputNamespace.stepIndex}`, `${parallelOutputNamespace.taskIndex}-${s.agent}`, behavior.output),
+				output: path.join(`parallel-${parallelOutputNamespace.stepIndex}`, `${parallelOutputNamespace.taskIndex}-${s.agent}`, behavior.output as string),
 			};
 		}
 		const namespaceOutputPath = Boolean(inheritedRelativeParallelOutput && parallelOutputNamespace.taskIndex === undefined);
@@ -686,19 +698,9 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const isFirstProgressAgent = behavior.progress && !progressPrecreated && !progressInstructionCreated;
 		if (behavior.progress) progressInstructionCreated = true;
 		const progressInstructions = buildChainInstructions({ ...behavior, output: false, reads: false }, progressDir, isFirstProgressAgent);
-		const explicitOutput = typeof behavior.output === "string" ? behavior.output : undefined;
-		// Omitted output generates a collision-safe per-child durable path
-		// `<asyncDir>/outputs/<flat-index>-<agent>.md`; omitted outputMode resolves
-		// to file-only whenever an output path is active. Explicit paths,
-		// `output: false`, and explicit `outputMode: "inline"` are preserved.
-		const outputPath = explicitOutput
-			? resolveSingleOutputPath(explicitOutput, ctx.cwd, instructionCwd, outputBaseDir)
-			: behavior.output === false && s.output !== false && s.output !== "false" && flatIndex !== undefined
-				? path.join(asyncDir, "outputs", `${flatIndex}-${s.agent}.md`)
-				: undefined;
+		const outputPath = resolveSingleOutputPath(behavior.output, ctx.cwd, instructionCwd, outputBaseDir);
 		if (!namespaceOutputPath) systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, a);
-		const effectiveOutputMode = s.outputMode ?? (outputPath ? "file-only" : "inline");
-		const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Async step (${s.agent})`);
+		const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Async step (${s.agent})`);
 		if (validationError) throw new AsyncStartValidationError(validationError);
 		let taskTemplate = s.task ?? "{previous}";
 		taskTemplate = taskTemplate.replace(/\{task\}/g, originalTask ?? "");
@@ -706,7 +708,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const taskText = `${readInstructions.prefix}${taskTemplate}${progressInstructions.suffix}`;
 		const task = namespaceOutputPath ? taskText : injectSingleOutputInstruction(taskText, outputPath, a);
 
-		const primaryModel = resolveEffectiveSubagentModel(
+		const primaryModel = externalRunner ? undefined : resolveEffectiveSubagentModel(
 			s.model,
 			a.model,
 			ctx.currentModel,
@@ -715,8 +717,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			{ scope: ctx.modelScope },
 		);
 		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
-		const effectiveThinking = thinkingOverride ?? a.thinking;
-		const model = applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
+		const effectiveThinking = externalRunner ? undefined : thinkingOverride ?? a.thinking;
+		const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
 		const agentContract = s.agentContract ?? params.agentContract;
 		const toolPlan = resolvePiLaunchToolPlan({
 			tools: a.tools,
@@ -730,12 +732,18 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 			agentName: a.name,
 		});
-		const launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
+		const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
+		const permissionRules = resolvePermissionRules(ctx.permissions, a.permissions);
+		if (externalRunner && permissionRules) {
+			throw new AsyncStartValidationError(`Agent '${a.name}' uses runner.type='external-cli', which cannot enforce native Pi child permission rules.`);
+		}
 		return {
 			parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+			permissionRules,
 			...(params.capabilityCeiling ? { capabilityCeiling: params.capabilityCeiling } : {}),
 			agent: s.agent,
 			task,
+			...(a.runner ? { runner: a.runner } : {}),
 			...(params.contextForAgent ? { context: params.contextForAgent(s.agent) } : {}),
 			...(agentContract ? { agentContract } : {}),
 			phase: s.phase,
@@ -746,7 +754,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			model,
 			thinking: resolveEffectiveThinking(model, effectiveThinking),
 			launchResolvedExtensions,
-			modelCandidates: buildModelCandidates(primaryModel, a.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope }).map((candidate) =>
+			modelCandidates: externalRunner ? undefined : buildModelCandidates(primaryModel, a.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope }).map((candidate) =>
 				applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined),
 			),
 			tools: a.tools,
@@ -761,7 +769,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			skills: resolvedSkills.map((r) => r.name),
 			outputPath,
 			...(namespaceOutputPath ? { namespaceOutputPath: true } : {}),
-			outputMode: effectiveOutputMode,
+			outputMode: behavior.outputMode,
 			sessionFile,
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
 			waitToolEnabled: params.waitToolEnabled,
@@ -899,7 +907,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				seen.set(task.outputPath, { index, agent: task.agent });
 			}
 		}
-		return { steps, runnerCwd, workflowGraph, eventChain: graphChain, ...(originalTask !== undefined ? { originalTask } : {}) };
+		return { steps: steps as RunnerStep[], runnerCwd, workflowGraph, eventChain: graphChain, ...(originalTask !== undefined ? { originalTask } : {}) };
 	} catch (error) {
 		if (error instanceof UnavailableSubagentSkillError || error instanceof AsyncStartValidationError) return { error: error.message };
 		throw error;
@@ -940,7 +948,7 @@ export function executeAsyncChain(
 	const nestedAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
 	const asyncDir = inheritedNestedRoute
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
-		: path.join(ASYNC_DIR, id);
+		: path.join(DIRS.async, id);
 	try {
 		fs.mkdirSync(asyncDir, { recursive: true });
 	} catch (error) {
@@ -991,7 +999,7 @@ export function executeAsyncChain(
 	const initialUsageBudget = usageBudgetState(params.usageBudget, undefined);
 	let childTargetIndex = 0;
 	const childIntercomTargets = childIntercomTarget ? steps.flatMap((step) => {
-		if (!("parallel" in step) && step.importAsyncRoot) {
+		if (!("parallel" in step) && "importAsyncRoot" in step && step.importAsyncRoot) {
 			childTargetIndex++;
 			return [undefined];
 		}
@@ -1002,7 +1010,7 @@ export function executeAsyncChain(
 			}
 			return step.parallel.map((task) => childIntercomTarget(task.agent, childTargetIndex++));
 		}
-		return [childIntercomTarget(step.agent, childTargetIndex++)];
+		return "agent" in step ? [childIntercomTarget(step.agent, childTargetIndex++)] : [undefined];
 	}) : undefined;
 
 	let spawnResult: { pid?: number; error?: string } = {};
@@ -1011,7 +1019,7 @@ export function executeAsyncChain(
 			{
 				id,
 				steps,
-				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(RESULTS_DIR, `${id}.json`),
+				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(DIRS.results, `${id}.json`),
 				cwd: runnerCwd,
 				placeholder: "{previous}",
 				maxOutput,
@@ -1039,6 +1047,8 @@ export function executeAsyncChain(
 				deadlineAt,
 				globalConcurrencyLimit: params.globalConcurrencyLimit,
 				workflowGraph,
+				...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}),
+				...(params.workflowKey ? { workflowKey: params.workflowKey } : {}),
 				nestedRoute: nestedRoute ?? inheritedNestedRoute,
 				nestedSelf: inheritedNestedRoute && nestedAddress ? {
 					parentRunId: nestedAddress.parentRunId,
@@ -1062,6 +1072,9 @@ export function executeAsyncChain(
 
 	if (spawnResult.pid) {
 		const eventFirstStep = eventChain[0];
+		if (!eventFirstStep) {
+			return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': event chain has no steps`);
+		}
 		const firstAgents = isParallelStep(eventFirstStep)
 			? eventFirstStep.parallel.map((t) => t.agent)
 			: isDynamicParallelStep(eventFirstStep)
@@ -1150,6 +1163,8 @@ export function executeAsyncChain(
 			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}),
 			...(capabilityCeiling ? { capabilityCeiling } : {}),
+			...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}),
+			...(params.workflowKey ? { workflowKey: params.workflowKey } : {}),
 			nestedRoute,
 		});
 	}
@@ -1162,7 +1177,7 @@ export function executeAsyncChain(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async ${resultMode}: ${chainDesc} [${id}]`, ctx.interactive === true) }],
-		details: { mode: resultMode, runId: id, results: [], asyncId: id, asyncDir, workflowGraph, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) },
+		details: { mode: resultMode, runId: id, results: [], asyncId: id, asyncDir, workflowGraph, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}), ...(params.workflowKey ? { workflowKey: params.workflowKey } : {}), ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) },
 	};
 }
 
@@ -1194,6 +1209,20 @@ export function executeAsyncSingle(
 		nestedRoute,
 	} = params;
 	const task = params.task ?? "";
+	const externalRunner = agentConfig.runner?.type === "external-cli";
+	const permissionRules = resolvePermissionRules(ctx.permissions, agentConfig.permissions);
+	if (externalRunner) {
+		const unsupported: string[] = [];
+		if (params.modelOverride !== undefined) unsupported.push("model override");
+		if (params.thinkingOverride !== undefined) unsupported.push("thinking override");
+		if (params.structuredOutputSchema !== undefined) unsupported.push("structured output");
+		if (params.acceptance !== undefined || params.agentContract !== undefined) unsupported.push("acceptance/agent contract");
+		if (params.toolBudget !== undefined || agentConfig.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
+		if (params.context === "fork") unsupported.push("fork context");
+		if ((params.skills?.length ?? 0) > 0) unsupported.push("skills");
+		if (permissionRules) unsupported.push("native Pi child permissions");
+		if (unsupported.length > 0) return formatAsyncStartError("single", `Agent '${agentConfig.name}' uses runner.type='external-cli' and does not support: ${unsupported.join(", ")}.`);
+	}
 	const capabilityCeiling = intersectSubagentCapabilityCeilings(params.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(ctx.currentSessionId), decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]));
 	try {
 		assertAgentAllowedByCapabilityCeiling(agentConfig.name, capabilityCeiling);
@@ -1225,7 +1254,7 @@ export function executeAsyncSingle(
 	const nestedAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
 	const asyncDir = inheritedNestedRoute
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
-		: path.join(ASYNC_DIR, id);
+		: path.join(DIRS.async, id);
 	try {
 		fs.mkdirSync(asyncDir, { recursive: true });
 	} catch (error) {
@@ -1238,28 +1267,20 @@ export function executeAsyncSingle(
 	}
 
 	const effectiveOutput = normalizeSingleOutputOverride(params.output, agentConfig.output);
-	// Omitted output resolves to a generated per-run durable path
-	// `<asyncDir>/outputs/0-<agent>.md`; omitted outputMode resolves to file-only
-	// whenever an output path is active. Explicit paths, `output: false`, and
-	// explicit `outputMode: "inline"` are preserved exactly.
-	const outputPath = typeof effectiveOutput === "string"
-		? resolveSingleOutputPath(effectiveOutput, ctx.cwd, runnerCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined))
-		: effectiveOutput === false
-			? undefined
-			: path.join(asyncDir, "outputs", `0-${agent}.md`);
+	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, runnerCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined));
 	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, agentConfig);
-	const outputMode = params.outputMode ?? (outputPath ? "file-only" : "inline");
+	const outputMode = params.outputMode ?? "inline";
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
 	if (validationError) return formatAsyncStartError("single", validationError);
 	const taskWithOutputInstruction = injectSingleOutputInstruction(task, outputPath, agentConfig);
-	const primaryModel = resolveSubagentModelOverride(
+	const primaryModel = externalRunner ? undefined : resolveSubagentModelOverride(
 		params.modelOverride ?? agentConfig.model,
 		ctx.currentModel,
 		availableModels,
 		ctx.currentModelProvider,
 	);
-	const effectiveThinking = params.thinkingOverride ?? agentConfig.thinking;
-	const model = applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
+	const effectiveThinking = externalRunner ? undefined : params.thinkingOverride ?? agentConfig.thinking;
+	const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
 	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
 	const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget");
 	if (resolvedToolBudget.error) return formatAsyncStartError("single", resolvedToolBudget.error);
@@ -1274,9 +1295,11 @@ export function executeAsyncSingle(
 	const structuredOutput = params.structuredOutputSchema
 		? createStructuredOutputRuntime(params.structuredOutputSchema, path.join(asyncDir, "structured-output"))
 		: undefined;
-	const modelCandidates = buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope }).map((candidate) =>
-		applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined),
-	);
+	const modelCandidates = buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
+		.flatMap((candidate) => {
+			const resolved = applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined);
+			return resolved ? [resolved] : [];
+		});
 	const effectiveSystemPrompt = appendTurnBudgetSystemPrompt(systemPrompt, params.turnBudget);
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agentConfig.tools,
@@ -1290,7 +1313,7 @@ export function executeAsyncSingle(
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 		agentName: agentConfig.name,
 	});
-	const launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
+	const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
 	const launchContractDigest = launchBindingDigest({
 		definitionDigest: agentDefinitionDigest(agentConfig),
 		task,
@@ -1349,7 +1372,7 @@ export function executeAsyncSingle(
 		...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
 		...(controlConfig ? { controlConfig } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
-		...(params.turnBudget ? { initialTurnBudget: params.turnBudget } : {}),
+		...(initialTurnBudget ? { initialTurnBudget } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
 		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
 		...(maxOutput ? { maxOutput } : {}),
@@ -1359,10 +1382,12 @@ export function executeAsyncSingle(
 		artifactConfig,
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
 	};
-	try {
-		writePrivateAtomicJson(path.join(asyncDir, "recovery-descriptor.json"), recoveryDescriptor);
-	} catch (error) {
-		return formatAsyncStartError("single", `Failed to persist async recovery descriptor for '${id}': ${error instanceof Error ? error.message : String(error)}`);
+	if (!externalRunner) {
+		try {
+			writePrivateAtomicJson(path.join(asyncDir, "recovery-descriptor.json"), recoveryDescriptor);
+		} catch (error) {
+			return formatAsyncStartError("single", `Failed to persist async recovery descriptor for '${id}': ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 	let spawnResult: { pid?: number; error?: string } = {};
 	try {
@@ -1372,9 +1397,11 @@ export function executeAsyncSingle(
 				steps: [
 					{
 						parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+						permissionRules,
 						...(capabilityCeiling ? { capabilityCeiling } : {}),
 						agent,
 						task: taskWithOutputInstruction,
+						...(agentConfig.runner ? { runner: agentConfig.runner } : {}),
 						...(params.context ? { context: params.context } : {}),
 						cwd: runnerCwd,
 						model,
@@ -1392,7 +1419,7 @@ export function executeAsyncSingle(
 						skills: resolvedSkills.map((r) => r.name),
 						outputPath,
 						outputMode,
-						sessionFile,
+						...(!externalRunner && sessionFile ? { sessionFile } : {}),
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
 						waitToolEnabled: params.waitToolEnabled,
 						...(params.agentContract ? { agentContract: params.agentContract } : {}),
@@ -1406,7 +1433,7 @@ export function executeAsyncSingle(
 						...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
 					},
 				],
-				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(RESULTS_DIR, `${id}.json`),
+				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(DIRS.results, `${id}.json`),
 				cwd: runnerCwd,
 				placeholder: "{previous}",
 				maxOutput,
@@ -1433,6 +1460,8 @@ export function executeAsyncSingle(
 				resultMode: "single",
 				launchContractDigest,
 				launchResolvedExtensions,
+				...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}),
+				...(params.workflowKey ? { workflowKey: params.workflowKey } : {}),
 				...(params.revivalLease ? { revivalLease: params.revivalLease } : {}),
 				nestedRoute: nestedRoute ?? inheritedNestedRoute,
 				nestedSelf: inheritedNestedRoute && nestedAddress ? {
@@ -1505,6 +1534,8 @@ export function executeAsyncSingle(
 			asyncDir,
 			launchContractDigest,
 			launchResolvedExtensions,
+			...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}),
+			...(params.workflowKey ? { workflowKey: params.workflowKey } : {}),
 			...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
 			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}),
@@ -1515,6 +1546,6 @@ export function executeAsyncSingle(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`, ctx.interactive === true) }],
-		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, launchContractDigest, launchResolvedExtensions, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) },
+		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, launchContractDigest, launchResolvedExtensions, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: resolvedToolBudget.budget ?? params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) } as Details,
 	};
 }

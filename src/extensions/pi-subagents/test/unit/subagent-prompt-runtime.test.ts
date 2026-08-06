@@ -19,6 +19,7 @@ import {
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { PERMISSION_POLICY_ENV } from "../../src/runs/shared/permissions.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, formatChildToolDiagnostic, MCP_DIRECT_CHILD_TOOLS_ENV, readChildToolDiagnostic, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
@@ -26,6 +27,7 @@ import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
 	SUBAGENT_INTERCOM_SESSION_NAME_ENV,
+	registerPermissionGate,
 	registerSteeringInbox,
 	rewriteSubagentPrompt,
 	stripInheritedSkills,
@@ -44,7 +46,9 @@ const envSnapshot = {
 	SELESAI_SUBAGENT_STEER_ACK_DIR: process.env.SELESAI_SUBAGENT_STEER_ACK_DIR,
 	SELESAI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: process.env.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE,
 	SELESAI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
+	SELESAI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS: process.env.SELESAI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS,
 	SELESAI_SUBAGENT_TOOL_BUDGET: process.env.SELESAI_SUBAGENT_TOOL_BUDGET,
+	SELESAI_SUBAGENT_PERMISSION_POLICY: process.env.SELESAI_SUBAGENT_PERMISSION_POLICY,
 	SELESAI_SUBAGENT_REQUIRED_TOOLS: process.env.SELESAI_SUBAGENT_REQUIRED_TOOLS,
 	SELESAI_SUBAGENT_MCP_DIRECT_TOOLS: process.env.SELESAI_SUBAGENT_MCP_DIRECT_TOOLS,
 	SELESAI_SUBAGENT_TOOL_DIAGNOSTIC_PATH: process.env.SELESAI_SUBAGENT_TOOL_DIAGNOSTIC_PATH,
@@ -57,7 +61,7 @@ const envSnapshot = {
 	SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG: process.env.SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG,
 };
 
-const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
+const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>explorer to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
 
 const BASE_PROMPT = [
 	"You are a subagent.",
@@ -95,8 +99,12 @@ afterEach(() => {
 	else process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = envSnapshot.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
 	if (envSnapshot.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA === undefined) delete process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
 	else process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = envSnapshot.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA;
+	if (envSnapshot.SELESAI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS === undefined) delete process.env[RUNTIME_EXTENSION_ACK_PATH_ENV];
+	else process.env[RUNTIME_EXTENSION_ACK_PATH_ENV] = envSnapshot.SELESAI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS;
 	if (envSnapshot.SELESAI_SUBAGENT_TOOL_BUDGET === undefined) delete process.env[TOOL_BUDGET_ENV];
 	else process.env[TOOL_BUDGET_ENV] = envSnapshot.SELESAI_SUBAGENT_TOOL_BUDGET;
+	if (envSnapshot.SELESAI_SUBAGENT_PERMISSION_POLICY === undefined) delete process.env[PERMISSION_POLICY_ENV];
+	else process.env[PERMISSION_POLICY_ENV] = envSnapshot.SELESAI_SUBAGENT_PERMISSION_POLICY;
 	if (envSnapshot.SELESAI_SUBAGENT_REQUIRED_TOOLS === undefined) delete process.env[REQUIRED_CHILD_TOOLS_ENV];
 	else process.env[REQUIRED_CHILD_TOOLS_ENV] = envSnapshot.SELESAI_SUBAGENT_REQUIRED_TOOLS;
 	if (envSnapshot.SELESAI_SUBAGENT_MCP_DIRECT_TOOLS === undefined) delete process.env[MCP_DIRECT_CHILD_TOOLS_ENV];
@@ -124,11 +132,38 @@ function setSupervisorEnv(): void {
 	process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
 	process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = path.join(os.tmpdir(), "subagent-supervisor-runtime-test");
 	process.env[SUBAGENT_RUN_ID_ENV] = "run-123";
-	process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
+	process.env[SUBAGENT_CHILD_AGENT_ENV] = "builder";
 	process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
 }
 
 describe("subagent prompt runtime", () => {
+	it("registers no permission hook by default and routes ask only to the watchdog arbiter", async () => {
+		const handlers: Array<(event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown> = [];
+		const pi = { on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown) { if (event === "tool_call") handlers.push(handler); } };
+		delete process.env[PERMISSION_POLICY_ENV];
+		registerPermissionGate(pi as never);
+		assert.equal(handlers.length, 0);
+
+		process.env[PERMISSION_POLICY_ENV] = JSON.stringify({ write: "deny" });
+		registerPermissionGate(pi as never);
+		assert.equal(handlers.length, 1);
+		assert.equal(await handlers[0]!({ toolName: "bash", input: { command: "rm -rf /" } }), undefined);
+		assert.equal(await handlers[0]!({ toolName: "contact_supervisor", input: {} }), undefined);
+		assert.deepEqual(await handlers[0]!({ toolName: "write", input: {} }), {
+			block: true,
+			reason: "Blocked by pi-subagents permission rule: 'write' is denied.",
+		});
+
+		process.env[PERMISSION_POLICY_ENV] = JSON.stringify({ write: "ask" });
+		const askHandlers: Array<(event: { toolName?: string; input?: unknown }, ctx: unknown) => unknown> = [];
+		const requests: Array<{ toolName: string; args: unknown }> = [];
+		registerPermissionGate({ on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: unknown) => unknown) { if (event === "tool_call") askHandlers.push(handler); } } as never, async (request) => {
+			requests.push({ toolName: request.toolName, args: request.args });
+			return { approved: true, reason: "approved by watchdog", source: "watchdog" };
+		});
+		assert.equal(await askHandlers[0]!({ toolName: "write", input: { path: "out.txt" } }, { signal: undefined }), undefined);
+		assert.deepEqual(requests, [{ toolName: "write", args: { path: "out.txt" } }]);
+	});
 	it("collects runtime extension acknowledgements until terminal serialization", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-runtime-ack-"));
 		try {
@@ -351,7 +386,7 @@ describe("subagent prompt runtime", () => {
 		process.env[CHILD_WATCHDOG_CONFIG_ENV] = JSON.stringify({
 			enabled: true,
 			runId: "run-1",
-			agent: "worker",
+			agent: "builder",
 			childIndex: 0,
 			watchdogTailTimeoutMs: 1000,
 			agentEndTimeoutMs: 500,
@@ -551,7 +586,7 @@ describe("subagent prompt runtime", () => {
 
 		assert.ok(rewritten.includes("<name>safe-bash</name>"));
 		assert.ok(!rewritten.includes("<name>pi-subagents</name>"));
-		assert.ok(!rewritten.includes("delegate to subagents"));
+		assert.ok(!rewritten.includes("explorer to subagents"));
 	});
 
 	it("strips explicit pi-subagents skill injection from child prompts", () => {
@@ -584,13 +619,13 @@ describe("subagent prompt runtime", () => {
 			role: "assistant",
 			content: [
 				{ type: "text", text: "I will inspect the repo." },
-				{ type: "toolCall", name: "subagent", input: { agent: "worker" } },
+				{ type: "toolCall", name: "subagent", input: { agent: "builder" } },
 				{ type: "toolCall", name: "read", input: { path: "README.md" } },
 			],
 		};
 		const pureSubagentCall = {
 			role: "assistant",
-			content: [{ type: "toolCall", name: "subagent", input: { agent: "reviewer" } }],
+			content: [{ type: "toolCall", name: "subagent", input: { agent: "commentator" } }],
 		};
 
 		assert.deepEqual(
@@ -612,7 +647,7 @@ describe("subagent prompt runtime", () => {
 	it("preserves live nested subagent calls and results in fanout child context", () => {
 		const user = { role: "user", content: "Task" };
 		const subagentResult = { role: "toolResult", toolName: "subagent", content: "OK" };
-		const subagentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "delegate" } }] };
+		const subagentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "explorer" } }] };
 		const instruction = { role: "custom", customType: "subagent-orchestration-instructions", content: "Subagent orchestration is enabled." };
 		process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
 
@@ -649,7 +684,7 @@ describe("subagent prompt runtime", () => {
 			const registered: string[] = [];
 			process.env[REQUIRED_CHILD_TOOLS_ENV] = JSON.stringify(["read", "grep", "find", "ls", "bash", "edit", "write", "intercom"]);
 			process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = diagnosticPath;
-			process.env[SUBAGENT_CHILD_AGENT_ENV] = "scout";
+			process.env[SUBAGENT_CHILD_AGENT_ENV] = "explorer";
 
 			registerSubagentPromptRuntime({
 				on(event: string, handler: (payload?: unknown) => unknown) {
@@ -728,7 +763,7 @@ describe("subagent prompt runtime", () => {
 			const available = ["read"];
 			process.env[REQUIRED_CHILD_TOOLS_ENV] = JSON.stringify(["read", "fixture_search"]);
 			process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = diagnosticPath;
-			process.env[SUBAGENT_CHILD_AGENT_ENV] = "extension-worker";
+			process.env[SUBAGENT_CHILD_AGENT_ENV] = "extension-builder";
 
 			registerSubagentPromptRuntime({
 				on(event: string, handler: (payload?: unknown) => unknown) {
@@ -744,7 +779,7 @@ describe("subagent prompt runtime", () => {
 
 			handlers.get("agent_start")?.({});
 			assert.deepEqual(readChildToolDiagnostic(diagnosticPath), {
-				agent: "extension-worker",
+				agent: "extension-builder",
 				required: ["read", "fixture_search"],
 				available: ["read"],
 				missing: ["fixture_search"],
@@ -766,7 +801,7 @@ describe("subagent prompt runtime", () => {
 			process.env[REQUIRED_CHILD_TOOLS_ENV] = JSON.stringify(["read", "fixture_search"]);
 			process.env[MCP_DIRECT_CHILD_TOOLS_ENV] = "not-json";
 			process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = diagnosticPath;
-			process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
+			process.env[SUBAGENT_CHILD_AGENT_ENV] = "builder";
 
 			registerSubagentPromptRuntime({
 				on(event: string, handler: (payload?: unknown) => unknown) {
@@ -778,7 +813,7 @@ describe("subagent prompt runtime", () => {
 
 			assert.doesNotThrow(() => handlers.get("agent_start")?.({}));
 			assert.deepEqual(readChildToolDiagnostic(diagnosticPath), {
-				agent: "worker",
+				agent: "builder",
 				required: ["read", "fixture_search"],
 				available: ["read"],
 				missing: ["fixture_search"],
@@ -796,7 +831,7 @@ describe("subagent prompt runtime", () => {
 			process.env[REQUIRED_CHILD_TOOLS_ENV] = JSON.stringify(["read", "rust_symbols_workspace_symbols", "fixture_search"]);
 			process.env[MCP_DIRECT_CHILD_TOOLS_ENV] = JSON.stringify(["rust_symbols_workspace_symbols"]);
 			process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = diagnosticPath;
-			process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
+			process.env[SUBAGENT_CHILD_AGENT_ENV] = "builder";
 
 			registerSubagentPromptRuntime({
 				on(event: string, handler: (payload?: unknown) => unknown) {
@@ -809,7 +844,7 @@ describe("subagent prompt runtime", () => {
 			handlers.get("agent_start")?.({});
 			const diagnostic = readChildToolDiagnostic(diagnosticPath);
 			assert.deepEqual(diagnostic, {
-				agent: "worker",
+				agent: "builder",
 				required: ["read", "rust_symbols_workspace_symbols", "fixture_search"],
 				available: ["read"],
 				missing: ["rust_symbols_workspace_symbols", "fixture_search"],
@@ -826,7 +861,7 @@ describe("subagent prompt runtime", () => {
 	it("sets the child intercom session name from env during agent startup", async () => {
 		let sessionName: string | undefined;
 		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;
-		process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV] = "subagent-worker-78f659a3";
+		process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV] = "subagent-builder-78f659a3";
 
 		registerSubagentPromptRuntime({
 			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
@@ -840,7 +875,7 @@ describe("subagent prompt runtime", () => {
 
 		await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
 
-		assert.equal(sessionName, "subagent-worker-78f659a3");
+		assert.equal(sessionName, "subagent-builder-78f659a3");
 	});
 
 	it("rewrites the final child-visible prompt through before_agent_start", async () => {
@@ -889,12 +924,12 @@ describe("subagent prompt runtime", () => {
 			},
 		} as { on(event: string, handler: (payload: { messages: unknown[] }) => { messages: unknown[] } | undefined): void });
 
-		const priorParentTurn = { role: "user", content: "Earlier we said planner → worker → reviewers → worker." };
+		const priorParentTurn = { role: "user", content: "Earlier we said architect → builder → reviewers → builder." };
 		const currentTask = { role: "user", content: "Now implement only the assigned fix." };
 		const instruction = { role: "custom", customType: "subagent-orchestration-instructions", content: "Subagent orchestration is enabled." };
 		const slashResult = { role: "custom", customType: "subagent-slash-result", content: "## Orchestration" };
 		const subagentResult = { role: "toolResult", toolName: "subagent", content: "subagent results" };
-		const subagentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "worker" } }] };
+		const subagentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "builder" } }] };
 		const watchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>parent-only</subagent_watchdog>" };
 		const childWatchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>child-visible</subagent_watchdog>", details: { source: "child" } };
 		const otherCustom = { role: "custom", customType: "other", content: "keep" };

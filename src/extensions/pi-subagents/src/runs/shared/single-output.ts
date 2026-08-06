@@ -1,18 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import type { MaxOutputConfig, OutputMode, SavedOutputReference } from "../../shared/types.ts";
-import { truncateOutput } from "../../shared/types.ts";
+import type { OutputMode, SavedOutputReference } from "../../shared/types.ts";
 import { hasMutationToolCapability } from "./completion-guard.ts";
-
-/**
- * Fixed internal context-fallback cap used when persisted output is unavailable
- * (persistence/read failure, `output: false`, or legacy results without a saved
- * path). Deliberately not exposed as a public parameter; reuse `truncateOutput()`
- * so the excerpt is bounded by both lines and bytes and never falls back to
- * unbounded output.
- */
-export const CONTEXT_FALLBACK_LIMIT: Required<MaxOutputConfig> = { bytes: 4096, lines: 80 };
 
 export interface SingleOutputSnapshot {
 	exists: boolean;
@@ -135,34 +125,6 @@ function formatByteSize(bytes: number): string {
 	return `${value.toFixed(1)} ${units[unitIndex]}`;
 }
 
-/**
- * Bounded fallback for deliveries where the durable full output cannot be
- * referenced: persistence/write errors, unreadable saved paths, or no saved
- * path at all (legacy/`output: false`). Contains process status, the intended
- * output path, the concrete error, and a bounded 80-line/4-KiB excerpt of the
- * available output. Never claims a full artifact exists.
- */
-export function formatBoundedPersistenceFallback(input: {
-	error: string;
-	outputPath?: string;
-	fullOutput: string;
-	exitCode: number;
-	processError?: string;
-}): string {
-	const status = input.processError?.trim()
-		? `Process status: ${input.processError}`
-		: `Process status: ${input.exitCode === 0 ? "completed" : `failed (exit ${input.exitCode})`}`;
-	const bounded = truncateOutput(input.fullOutput, CONTEXT_FALLBACK_LIMIT);
-	const lines = [
-		`[Full output unavailable] ${input.error}`,
-		status,
-		...(input.outputPath ? [`Intended output path: ${input.outputPath}`] : []),
-		"Full output is unavailable; showing a bounded excerpt (first 80 lines / 4 KiB).",
-		bounded.text,
-	];
-	return lines.join("\n");
-}
-
 export function formatSavedOutputReference(savedPath: string, fullOutput: string): SavedOutputReference {
 	const absolutePath = path.resolve(savedPath);
 	const bytes = Buffer.byteLength(fullOutput, "utf-8");
@@ -255,35 +217,19 @@ export function finalizeSingleOutput(params: {
 	savedPath?: string;
 	outputReference?: SavedOutputReference;
 	saveError?: string;
-	error?: string;
 }): { displayOutput: string; savedPath?: string; outputReference?: SavedOutputReference; saveError?: string } {
-	if (params.savedPath) {
+	let displayOutput = params.truncatedOutput || params.fullOutput;
+	if (params.exitCode === 0 && params.savedPath) {
 		const outputReference = params.outputReference ?? formatSavedOutputReference(params.savedPath, params.fullOutput);
-		if (params.exitCode === 0 && params.outputMode === "file-only") {
+		if (params.outputMode === "file-only") {
 			return { displayOutput: outputReference.message, savedPath: params.savedPath, outputReference };
 		}
-		if (params.exitCode !== 0) {
-			// Failed runs with a successfully persisted result surface the error/status
-			// plus the saved-output reference, never raw child output.
-			const status = params.error?.trim() || `Subagent failed with exit code ${params.exitCode}`;
-			return { displayOutput: `${status}\n\n${outputReference.message}`, savedPath: params.savedPath, outputReference };
-		}
-		const displayOutput = `${params.truncatedOutput || params.fullOutput}\n\n${outputReference.message}`;
+		displayOutput += `\n\n${outputReference.message}`;
 		return { displayOutput, savedPath: params.savedPath, outputReference };
 	}
-	if (params.saveError && params.outputPath) {
-		// Persistence/read failure: only the bounded fallback is delivered. It must
-		// not claim a full artifact exists.
-		return {
-			displayOutput: formatBoundedPersistenceFallback({
-				error: params.saveError,
-				outputPath: params.outputPath,
-				fullOutput: params.fullOutput,
-				exitCode: params.exitCode,
-				processError: params.error,
-			}),
-			saveError: params.saveError,
-		};
+	if (params.exitCode === 0 && params.saveError && params.outputPath) {
+		displayOutput += `\n\nOutput file error: ${params.outputPath}\n${params.saveError}`;
+		return { displayOutput, saveError: params.saveError };
 	}
-	return { displayOutput: params.truncatedOutput || params.fullOutput };
+	return { displayOutput };
 }

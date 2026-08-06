@@ -53,18 +53,6 @@ function assistantToolCall(toolName: string): Record<string, unknown> {
 	};
 }
 
-function emptyTerminalAssistant(): Record<string, unknown> {
-	return {
-		role: "assistant",
-		content: [],
-		api: "test",
-		provider: "test",
-		model: "test",
-		stopReason: "stop",
-		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
-	};
-}
-
 describe("detectSubagentError", { skip: !available ? "utils not importable" : undefined }, () => {
 	// ---- Basic detection (must still work) ----
 
@@ -209,42 +197,6 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 			"tool-call assistant message without text is not a recovery");
 	});
 
-	it("accepts a successful tool recovery followed by a clean empty terminal stop", () => {
-		const messages = [
-			toolResult("bash", "error: process exited with code 1", true),
-			assistantToolCall("edit"),
-			toolResult("edit", "Updated src/file.ts"),
-			emptyTerminalAssistant(),
-		];
-		const result = detectSubagentError(messages);
-		assert.equal(result.hasError, false,
-			"later successful work plus a clean terminal stop recovers the earlier tool error");
-	});
-
-	it("keeps the final failed tool result despite a clean empty terminal stop", () => {
-		const messages = [
-			toolResult("edit", "Updated src/file.ts"),
-			assistantToolCall("bash"),
-			toolResult("bash", "error: process exited with code 2", true),
-			emptyTerminalAssistant(),
-		];
-		const result = detectSubagentError(messages);
-		assert.equal(result.hasError, true,
-			"a clean terminal stop alone cannot recover the final failed tool result");
-		assert.equal(result.exitCode, 2);
-	});
-
-	it("does not recover an earlier tool error after an unsuccessful terminal stop", () => {
-		const messages = [
-			toolResult("bash", "error: process exited with code 1", true),
-			toolResult("edit", "Updated src/file.ts"),
-			{ ...emptyTerminalAssistant(), errorMessage: "provider transport failed" },
-		];
-		const result = detectSubagentError(messages);
-		assert.equal(result.hasError, true,
-			"the terminal assistant stop must itself be clean");
-	});
-
 	it("does not treat empty/whitespace assistant message as recovery", () => {
 		const messages = [
 			toolResult("read", "EISDIR: illegal operation on a directory", true),
@@ -280,7 +232,7 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 	// ---- Real-world regression test ----
 
 	it("real-world: 19-read review run with trailing EISDIR", () => {
-		// Simulate the actual _impl-reviewer run that produced a false positive
+		// Simulate the actual _impl-commentator run that produced a false positive
 		const readResults = Array.from({ length: 18 }, (_, i) =>
 			toolResult("read", `contents of file ${i + 1}`),
 		);

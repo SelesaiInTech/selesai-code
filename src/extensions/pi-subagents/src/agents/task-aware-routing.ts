@@ -13,8 +13,15 @@
 
 import type { AgentConfig, AgentSource } from "./agents.ts";
 import { agentHasWriteTools } from "./agent-memory.ts";
-import { classifyTaskMutationIntent, resolveAgentRoutingRole } from "../runs/shared/task-intent.ts";
+import { classifyTaskMutationIntent } from "../runs/shared/task-intent.ts";
 import { isAgentAllowedByCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
+
+function resolveAgentRoutingRole(name: string, acceptanceRole: AgentConfig["acceptanceRole"]): "writer" | "read-only" | undefined {
+	if (acceptanceRole === "writer" || acceptanceRole === "read-only") return acceptanceRole;
+	if (/^(?:builder|developer|coder|implementer|develop)$/i.test(name)) return "writer";
+	if (/^(?:architect|commentator|explorer|researcher|recapper)$/i.test(name)) return "read-only";
+	return undefined;
+}
 
 /** Core tools that make an implementation agent able to write (matches agent-memory). */
 const WRITER_TOOLS = new Set(["edit", "write", "bash"]);

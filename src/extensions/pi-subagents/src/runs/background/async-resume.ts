@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, RESULTS_DIR, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor } from "../../shared/types.ts";
+import { DIRS, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor } from "../../shared/types.ts";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
@@ -381,8 +381,8 @@ function validateResumeSessionFile(runId: string, sessionFile: string): string {
 }
 
 export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncResumeDeps = {}, options: AsyncResumeOptions = {}): AsyncResumeTarget {
-	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
-	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
+	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
+	const resultsDir = deps.resultsDir ?? DIRS.results;
 	const requireSessionFile = options.requireSessionFile ?? true;
 	const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
 	if (!location.asyncDir && !location.resultPath) {
@@ -394,7 +394,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		: undefined;
 	const status = reconciliation?.status ?? null;
 	validateStatusForResume(status, location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json");
-	const recoveryDescriptor = readAsyncRecoveryDescriptor(location.asyncDir);
+	const recoveryDescriptor = readAsyncRecoveryDescriptor(location.asyncDir ?? undefined);
 	const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
 	const runId = status?.runId ?? result?.runId ?? result?.id ?? location.resolvedId ?? (location.asyncDir ? path.basename(location.asyncDir) : "unknown");
 	if (options.sessionId && ((status && status.sessionId !== options.sessionId) || (result && result.sessionId !== options.sessionId))) {
@@ -508,13 +508,13 @@ export function applySteeringRecoveryAgentConfig(agentConfig: AgentConfig, descr
 		extensions: descriptor.extensions ? [...descriptor.extensions] : undefined,
 		subagentOnlyExtensions: descriptor.subagentOnlyExtensions ? [...descriptor.subagentOnlyExtensions] : undefined,
 		mcpDirectTools: descriptor.mcpDirectTools ? [...descriptor.mcpDirectTools] : undefined,
-		systemPrompt: descriptor.systemPrompt,
+		systemPrompt: descriptor.systemPrompt ?? agentConfig.systemPrompt,
 		systemPromptMode: descriptor.systemPromptMode,
 		inheritProjectContext: descriptor.inheritProjectContext,
 		inheritSkills: descriptor.inheritSkills,
 		skills: descriptor.skills ? [...descriptor.skills] : undefined,
 		skillPath: descriptor.skillPath ? [...descriptor.skillPath] : undefined,
-		filePath: descriptor.agentFilePath,
+		filePath: descriptor.agentFilePath as string,
 		completionGuard: descriptor.completionGuard,
 		memory: descriptor.memory ? { ...descriptor.memory } : undefined,
 		output: descriptor.outputPath,

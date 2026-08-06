@@ -17,6 +17,7 @@ interface MockPiResponse {
 	stdoutBase64Chunks?: string[];
 	steps?: Array<{
 		delay?: number;
+		waitForPath?: string;
 		jsonl?: unknown[];
 		stdoutRaw?: string;
 		stdoutBase64Chunks?: string[];
@@ -68,7 +69,8 @@ function listQueueFiles(queueDir: string, prefix: string): string[] {
 
 export function createMockPi(): MockPi {
 	const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-mock-cli-"));
-	const queueDir = path.join(rootDir, "queue");
+	let queueGeneration = 0;
+	let queueDir = path.join(rootDir, `queue-${queueGeneration}`);
 	const binDir = path.join(rootDir, "bin");
 	const piPackageDir = path.join(rootDir, "pi-package");
 	const cliScriptPath = path.join(piPackageDir, "dist", "cli.mjs");
@@ -143,12 +145,10 @@ export function createMockPi(): MockPi {
 		},
 		reset() {
 			nextSequence = 0;
+			queueGeneration += 1;
+			queueDir = path.join(rootDir, `queue-${queueGeneration}`);
 			ensureDir(queueDir);
-			for (const entry of fs.readdirSync(queueDir)) {
-				try {
-					fs.rmSync(path.join(queueDir, entry), { recursive: true, force: true });
-				} catch {}
-			}
+			if (installed) process.env.MOCK_PI_QUEUE_DIR = queueDir;
 		},
 		callCount() {
 			return listQueueFiles(queueDir, CALL_PREFIX).length;

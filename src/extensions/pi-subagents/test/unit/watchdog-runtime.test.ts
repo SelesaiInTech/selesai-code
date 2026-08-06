@@ -337,7 +337,7 @@ describe("main watchdog runtime", () => {
 		assert.equal(runtime.getSnapshot().lastWarning, undefined);
 	});
 
-	it("bounds review input before calling the reviewer", async () => {
+	it("bounds review input before calling the commentator", async () => {
 		let reviewedDelta = "";
 		const runtime = new MainWatchdogRuntime({
 			resolveConfig: () => configResult(enabledConfig()),

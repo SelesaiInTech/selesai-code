@@ -18,14 +18,15 @@ This file is a detailed reference loaded from `skills/pi-subagents/SKILL.md`.
   ask wait state at a time.
 - **Keep conversational authority clear.** Advisory subagents should not silently
   become second decision-makers.
+- **Respect the fixed authority policy.** `authorityPolicy` is a small `auto` / `confirm` / `forbid` map for supported operational actions. Worktree discard, destructive cleanup, and spawn-budget grants default to confirmation; stop, steer, and schedule creation remain automatic. Use `worktree.discard` with the durable `handoffPath`; confirm-required actions refuse safely without an interactive UI and retained paths include manual Git recovery commands.
 
-Runtime config can change orchestration behavior. `intercomBridge.resultDelivery: false` disables only external acknowledged grouped-result delivery when native parent notifications own completion; supervisor asks/progress stay active, and enabled transport failures are still reported. `asyncByDefault` and `forceTopLevelAsync` affect whether launches detach; `waitTool` can make direct `subagent_wait()` calls return immediately while headless auto-drain remains active, and its effective value is propagated to child runtimes; `globalConcurrencyLimit` bounds concurrent fanout, while a positive `maxSubagentSpawnsPerSession` optionally caps cumulative launches (`0` or unset is unlimited). Status and doctor report the budget; static work preflights declared capacity; only the settled root interactive parent can use `grant-spawn-budget` after native confirmation, with total grants bounded by the original cap. Compaction does not reset usage or grants; `singleRunOutputBaseDir` and `worktreeBaseDir` route outputs and worktrees; `completionBatch` groups async notifications. `artifactDir` is `project` (default), `session`, or `temp` and chooses where subagent artifacts are stored. Set `asyncWidget: false` to hide the above-editor background-run widget when a companion footer or dashboard owns that space (fleet inspector remains available). Artifact capture is off by default; set per-run `artifacts: true` when debug files are needed. Async status and result artifacts are versioned with fields such as `lifecycleArtifactVersion`, `workflowGraph`, `steps`, `results`, `totalTokens`, `totalCost`, `turnCount`, `toolCount`, and nested `children`. Child protocol failures expose a structured `protocolError`; `protocol_output_limit` means a child emitted a JSONL line above the 4 MiB live-parser cap. Prefer these artifacts and `status` views over scraping terminal output.
+Runtime config can change orchestration behavior. `intercomBridge.resultDelivery: false` disables only external acknowledged grouped-result delivery when native parent notifications own completion; supervisor asks/progress stay active, and enabled transport failures are still reported. `asyncByDefault` and `forceTopLevelAsync` affect whether launches detach; `waitTool` can make direct `subagent_wait()` calls return immediately while headless auto-drain remains active, and its effective value is propagated to child runtimes; `globalConcurrencyLimit` bounds concurrent fanout, while a positive `maxSubagentSpawnsPerSession` optionally caps cumulative launches (`0` or unset is unlimited). Status and doctor report the budget; static work preflights declared capacity; only the settled root interactive parent can use `grant-spawn-budget` after native confirmation, with total grants bounded by the original cap. Compaction does not reset usage or grants; `singleRunOutputBaseDir` and `worktreeBaseDir` route outputs and worktrees; `completionBatch` groups async notifications. `artifactDir` is `project` (default), `session`, or `temp` and chooses where subagent artifacts are stored. Set `asyncWidget: false` to hide the above-editor background-run widget when a companion footer or dashboard owns that space (fleet inspector remains available). Artifact capture is off by default; set per-run `artifacts: true` when debug files are needed, and per-run `artifacts: false` disables capture for that launch. Authority policy (`authorityPolicy`) is enforced at the settled root parent before confirm-required actions such as worktree discard, destructive cleanup, and spawn-budget grants. Async status and result artifacts are versioned with fields such as `lifecycleArtifactVersion`, `workflowGraph`, `steps`, `results`, `totalTokens`, `totalCost`, `turnCount`, `toolCount`, and nested `children`. Child protocol failures expose a structured `protocolError`; `protocol_output_limit` means a child emitted a JSONL line above the 4 MiB live-parser cap. Prefer these artifacts and `status` views over scraping terminal output.
 
 ## Best Practices
 
 ### Prefer async orchestration
 
-Launch every subagent asynchronously by default. Use `async: true` for explorers, researchers, builders, commentators, validators, commentator checks, one-off builders, chains, and parallel groups unless you intentionally need a foreground/blocking run. The parent should keep moving: inspect code while explorers run, prepare validation while a builder implements, do a local diff pass while commentators review, and synthesize or verify while a fix builder applies accepted feedback. Async is the default orchestration posture; foreground runs are the explicit opt-out.
+Launch every subagent asynchronously by default. Use `async: true` for explorers, researchers, builders, commentators, validators, commentator checks, one-off builders, and scripted workflows unless you intentionally need a foreground/blocking run. When two or more child lanes, monitors, or dependent steps should move together, launch them as one `workflowScript` with stable keys instead of separate tool calls; use direct single-child launches only for truly isolated work. The parent should keep moving: inspect code while explorers run, prepare validation while a builder implements, do a local diff pass while commentators review, and synthesize or verify while a fix builder applies accepted feedback. Async is the default orchestration posture; foreground runs are the explicit opt-out.
 
 ### Use subagent_wait() to block until async runs finish
 
@@ -40,13 +41,13 @@ Providers are discovered through the versioned `pi-subagents/background-work` re
 
 For non-interactive fleet orchestration, `subagent_wait()` can keep N builders in flight: launch N, wait for the next completion, react to the result, launch a replacement if needed, then wait again. Use `subagent_wait({ all: true })` only when you intentionally want to drain the fleet to zero. If the turn ends first, headless `agent_end` auto-drain still waits for exact current-session work. In an interactive session, return to the user instead of holding the turn open just to await completion.
 
-If config or `PI_SUBAGENT_WAIT_TOOL_ENABLED` disables blocking behavior, direct `subagent_wait` calls return immediately. Headless `agent_end` auto-drain remains active as a lifecycle safeguard and surfaces provider, reconciliation, or timeout failures.
+If config or `SELESAI_SUBAGENT_WAIT_TOOL_ENABLED` disables blocking behavior, direct `subagent_wait` calls return immediately. Headless `agent_end` auto-drain remains active as a lifecycle safeguard and surfaces provider, reconciliation, or timeout failures.
 
 ### Keep writes single-threaded by default
 
-A strong pattern is one main decision-maker plus advisory/research/review/validation subagents around it. Use `commentator` for advice and `builder` for the actual write path. Parallelize reading, review, validation, and synthesis support, not normal writes, unless you deliberately isolate writers with worktrees. A child that writes should report what changed, what was left undone, commands run with exit codes, validation evidence, surprises, and any decisions that need parent approval.
+A strong pattern is one main decision-maker plus commentatory/research/review/validation subagents around it. Use `commentator` for advice and `builder` for the actual write path. Parallelize reading, review, validation, and synthesis support, not normal writes, unless you deliberately isolate writers with worktrees. A child that writes should report what changed, what was left undone, commands run with exit codes, validation evidence, surprises, and any decisions that need parent approval.
 
-### Use fork for branched advisory or execution threads
+### Use fork for branched commentatory or execution threads
 
 Forked runs are useful when the child should reason in a separate thread while
 still inheriting the parent’s accumulated context. They are especially useful for
@@ -66,7 +67,7 @@ it should use `contact_supervisor` and wait for the reply instead of deciding al
 
 ### Intervene only on clear control signals
 
-Use subagent control proactively when a delegated run emits `needs_attention`, or when a human asks you to regain control. Do not interrupt just because a child has briefly produced no output. Silence can be normal during long tool calls, test runs, or model reasoning.
+Use subagent control proactively when a explorerd run emits `needs_attention`, or when a human asks you to regain control. Do not interrupt just because a child has briefly produced no output. Silence can be normal during long tool calls, test runs, or model reasoning.
 
 ### Name sessions meaningfully
 
@@ -76,14 +77,12 @@ Use `/name` so intercom targeting stays stable.
 
 ### Recon → Plan → Implement
 
-```typescript
-subagent({
-  chain: [
-    { agent: "explorer", task: "Map the auth flow and summarize relevant files" },
-    { agent: "architect", task: "Plan the migration from {previous}" },
-    { agent: "builder", task: "Implement the approved plan from {previous}" }
-  ]
-})
+```js
+subagent({ workflowScript: `
+  const recon = await runs.run("recon", { agent: "explorer", task: "Map the auth flow and summarize relevant files" });
+  const plan = await runs.run("plan", { agent: "architect", task: "Plan the migration from: " + recon.output });
+  return (await runs.run("implement", { agent: "builder", task: "Implement the approved plan from: " + plan.output })).output;
+` })
 ```
 
 ### Fable mode for complex work
@@ -112,7 +111,7 @@ When the user approves launching a subagent to carry out a plan or workflow, tre
 - `/parallel-review` maps to: launch fresh-context `commentator` agents with distinct review angles; synthesize the feedback before applying anything.
 - `/review-loop` maps to: keep the parent in charge of builder → fresh commentators → synthesized fix builder cycles until no fixes worth doing now remain, an unapproved decision appears, or the review-round cap is reached.
 - `/parallel-research` maps to: combine local `explorer` context with external `researcher` evidence when current docs, ecosystem behavior, or API details matter.
-- `/parallel-context-build` maps to: run a chain-mode parallel group of `explorer` agents with distinct temp output paths, then synthesize their context and meta-prompt sections.
+- `/parallel-context-build` maps to: use `workflowScript` with `runs.all` for distinct `explorer` lanes, then synthesize their context and meta-prompt sections.
 - `/parallel-handoff-plan` maps to: run external `researcher` plus local/strategy `explorer` passes, then a synthesis `explorer` that writes an implementation handoff plan and implementation-ready meta-prompt.
 - `/parallel-cleanup` maps to: use review-only cleanup passes after implementation, especially for simplicity, verbosity, and redundant tests.
 
@@ -162,17 +161,15 @@ subagent({
 
 Example review pass after implementation:
 
-```typescript
-subagent({
-  tasks: [
-    { agent: "commentator", task: "Review the current diff for correctness and regressions. Inspect changed files directly; do not rely on the builder's reasoning.", output: false },
-    { agent: "commentator", task: "Review the current diff for tests and validation quality against the validation contract. Inspect changed files directly.", output: false },
-    { agent: "commentator", task: "Review the current diff for simplicity and maintainability. Inspect changed files directly.", output: false }
-  ],
-  concurrency: 3,
-  context: "fresh",
-  async: true
-})
+```js
+subagent({ workflowScript: `
+  const reviews = await runs.all([
+    { key: "correctness", agent: "commentator", task: "Review the current diff for correctness and regressions. Inspect changed files directly; do not rely on the builder's reasoning.", output: false },
+    { key: "tests", agent: "commentator", task: "Review the current diff for tests and validation quality against the validation contract. Inspect changed files directly.", output: false },
+    { key: "simplicity", agent: "commentator", task: "Review the current diff for simplicity and maintainability. Inspect changed files directly.", output: false }
+  ]);
+  return { correctness: reviews.correctness.output, tests: reviews.tests.output, simplicity: reviews.simplicity.output };
+` })
 ```
 
 Example fix builder after parallel reviews:
@@ -195,22 +192,14 @@ For explicit review-loop requests, repeat builder → fresh-commentator → synt
 
 ### Parallel non-conflicting analysis
 
-```typescript
-subagent({
-  tasks: [
-    { agent: "explorer", task: "Audit frontend auth flow" },
-    { agent: "researcher", task: "Research current retry/backoff best practices" }
-  ]
-})
+```js
+subagent({ workflowScript: `
+  return await runs.all([
+    { key: "frontend", agent: "explorer", task: "Audit frontend auth flow" },
+    { key: "research", agent: "researcher", task: "Research current retry/backoff best practices" }
+  ]);
+` })
 ```
-
-### Saved chain
-
-```text
-/run-chain review-chain -- review this branch
-```
-
-Use saved `.chain.md` or `.chain.json` workflows when the user wants a repeatable multi-agent flow without rewriting the chain each time. Prefer `.chain.json` for dynamic fanout or inline `outputSchema` objects; `.chain.md` remains the simple sequential/static authoring format.
 
 ## Error Handling
 
@@ -241,9 +230,9 @@ subagent({ action: "doctor" })
 // Resolve the current outbound ask before starting another one.
 ```
 
-**Parallel output-path conflict**
+**Workflow lane output-path conflict**
 ```typescript
-// Give each parallel task a distinct output path, or disable output for tasks that do not need it.
+// Give each runs.all lane a distinct key and prompt, or use output: false for lanes that do not need it.
 ```
 
 **Worktree launch fails**

@@ -45,7 +45,7 @@ describe("agent management config parsing", () => {
 	it("hides lower-priority agents shadowed by project agents in list output", () => {
 		const agentsDir = path.join(tempDir, ".selesai", "agents");
 		fs.mkdirSync(agentsDir, { recursive: true });
-		fs.writeFileSync(path.join(agentsDir, "scout.md"), "---\nname: scout\ndescription: Project scout override\n---\n\nProject scout agent.\n");
+		fs.writeFileSync(path.join(agentsDir, "explorer.md"), "---\nname: explorer\ndescription: Project explorer override\n---\n\nProject explorer agent.\n");
 
 		const result = handleList(
 			{ agentScope: "project" },
@@ -53,8 +53,8 @@ describe("agent management config parsing", () => {
 		);
 
 		assert.equal(result.isError, false);
-		assert.match(readText(result), /- scout \(project, context: fresh\): Project scout override/);
-		assert.doesNotMatch(readText(result), /- scout \(builtin/);
+		assert.match(readText(result), /- explorer \(project\): Project explorer override/);
+		assert.doesNotMatch(readText(result), /- explorer \(builtin/);
 	});
 
 	it("gets only the effective agent detail and respects explicit scope", () => {
@@ -65,26 +65,26 @@ describe("agent management config parsing", () => {
 		fs.mkdirSync(userAgentsDir, { recursive: true });
 		fs.mkdirSync(path.join(packageDir, "agents"), { recursive: true });
 		fs.mkdirSync(path.join(packageDir, "chains"), { recursive: true });
-		fs.writeFileSync(path.join(projectAgentsDir, "worker.md"), "---\nname: worker\ndescription: Project worker override\n---\n\nProject worker.\n");
-		fs.writeFileSync(path.join(userAgentsDir, "worker.md"), "---\nname: worker\ndescription: User worker override\n---\n\nUser worker.\n");
+		fs.writeFileSync(path.join(projectAgentsDir, "builder.md"), "---\nname: builder\ndescription: Project builder override\n---\n\nProject builder.\n");
+		fs.writeFileSync(path.join(userAgentsDir, "builder.md"), "---\nname: builder\ndescription: User builder override\n---\n\nUser builder.\n");
 		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"], chains: ["chains"] } }));
-		fs.writeFileSync(path.join(packageDir, "agents", "worker.md"), "---\nname: worker\ndescription: Package worker override\n---\n\nPackage worker.\n");
+		fs.writeFileSync(path.join(packageDir, "agents", "builder.md"), "---\nname: builder\ndescription: Package builder override\n---\n\nPackage builder.\n");
 		fs.writeFileSync(path.join(packageDir, "chains", "package-flow.chain.json"), JSON.stringify({
 			name: "package-flow",
 			description: "Package flow",
-			chain: [{ agent: "worker", task: "Package task" }],
+			chain: [{ agent: "builder", task: "Package task" }],
 		}), "utf-8");
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 
-		const effective = readText(handleManagementAction("get", { agent: "worker" }, ctx));
-		assert.match(effective, /Agent: worker \(project\)/);
-		assert.match(effective, /Description: Project worker override/);
-		assert.doesNotMatch(effective, /User worker override|Package worker override|Implementation agent for normal tasks/);
+		const effective = readText(handleManagementAction("get", { agent: "builder" }, ctx));
+		assert.match(effective, /Agent: builder \(project\)/);
+		assert.match(effective, /Description: Project builder override/);
+		assert.doesNotMatch(effective, /User builder override|Package builder override|Implementation agent for normal tasks/);
 
-		const userScoped = readText(handleManagementAction("get", { agent: "worker", agentScope: "user" }, ctx));
-		assert.match(userScoped, /Agent: worker \(user\)/);
-		assert.match(userScoped, /Description: User worker override/);
-		assert.doesNotMatch(userScoped, /Project worker override|Implementation agent for normal tasks/);
+		const userScoped = readText(handleManagementAction("get", { agent: "builder", agentScope: "user" }, ctx));
+		assert.match(userScoped, /Agent: builder \(user\)/);
+		assert.match(userScoped, /Description: User builder override/);
+		assert.doesNotMatch(userScoped, /Project builder override|Implementation agent for normal tasks/);
 
 		const userChainsDir = path.join(tempDir, "agent-home", "chains");
 		const projectChainsDir = path.join(tempDir, ".selesai", "chains");
@@ -93,12 +93,12 @@ describe("agent management config parsing", () => {
 		fs.writeFileSync(path.join(userChainsDir, "shared-flow.chain.json"), JSON.stringify({
 			name: "shared-flow",
 			description: "User shared flow",
-			chain: [{ agent: "worker", task: "User flow" }],
+			chain: [{ agent: "builder", task: "User flow" }],
 		}), "utf-8");
 		fs.writeFileSync(path.join(projectChainsDir, "shared-flow.chain.json"), JSON.stringify({
 			name: "shared-flow",
 			description: "Project shared flow",
-			chain: [{ agent: "worker", task: "Project flow" }],
+			chain: [{ agent: "builder", task: "Project flow" }],
 		}), "utf-8");
 
 		const userChain = readText(handleManagementAction("get", { chainName: "shared-flow", agentScope: "user" }, ctx));
@@ -120,7 +120,7 @@ describe("agent management config parsing", () => {
 
 	it("surfaces JSON parse errors for update config strings", () => {
 		const result = handleUpdate(
-			{ agent: "reviewer", config: '{"description":' },
+			{ agent: "commentator", config: '{"description":' },
 			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
 		);
 
@@ -213,8 +213,8 @@ describe("agent management config parsing", () => {
 	it("creates and updates packaged chains while preserving packaged step names", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 		fs.mkdirSync(path.join(tempDir, ".selesai", "agents"), { recursive: true });
-		fs.writeFileSync(path.join(tempDir, ".selesai", "agents", "code-analysis.scout.md"), `---
-name: scout
+		fs.writeFileSync(path.join(tempDir, ".selesai", "agents", "code-analysis.explorer.md"), `---
+name: explorer
 package: code-analysis
 description: Fast recon
 ---
@@ -223,7 +223,7 @@ Inspect
 `, "utf-8");
 
 		const created = handleCreate(
-			{ config: { name: "Review Flow", package: "Code Analysis", description: "Review flow", scope: "project", steps: [{ agent: "code-analysis.scout", task: "Inspect", toolBudget: { soft: 3, hard: 5, block: ["read"] } }] } },
+			{ config: { name: "Review Flow", package: "Code Analysis", description: "Review flow", scope: "project", steps: [{ agent: "code-analysis.explorer", task: "Inspect", toolBudget: { soft: 3, hard: 5, block: ["read"] } }] } },
 			ctx,
 		);
 		assert.equal(created.isError, false);
@@ -232,7 +232,7 @@ Inspect
 		let content = fs.readFileSync(filePath, "utf-8");
 		assert.match(content, /^name: review-flow$/m);
 		assert.match(content, /^package: code-analysis$/m);
-		assert.match(content, /^## code-analysis\.scout$/m);
+		assert.match(content, /^## code-analysis\.explorer$/m);
 		assert.match(content, /^toolBudget: \{"soft":3,"hard":5,"block":\["read"\]\}$/m);
 
 		const updated = handleUpdate(
@@ -252,35 +252,35 @@ Inspect
 		const result = handleCreate(
 			{
 				config: {
-					name: "background-reviewer",
+					name: "background-commentator",
 					description: "Review in the background",
 					scope: "project",
 					async: false,
 					timeoutMs: 120_000,
 					turnBudget: { maxTurns: 8, graceTurns: 2 },
-					acceptance: { level: "none", reason: "lightweight reviewer" },
+					acceptance: { level: "none", reason: "lightweight commentator" },
 				},
 			},
 			ctx,
 		);
 
 		assert.equal(result.isError, false);
-		const filePath = path.join(tempDir, ".selesai", "agents", "background-reviewer.md");
+		const filePath = path.join(tempDir, ".selesai", "agents", "background-commentator.md");
 		let content = fs.readFileSync(filePath, "utf-8");
 		assert.match(content, /^async: false$/m);
 		assert.match(content, /^timeoutMs: 120000$/m);
 		assert.match(content, /^turnBudget: \{"maxTurns":8,"graceTurns":2\}$/m);
-		assert.match(content, /^acceptance: \{"level":"none","reason":"lightweight reviewer"\}$/m);
+		assert.match(content, /^acceptance: \{"level":"none","reason":"lightweight commentator"\}$/m);
 
-		const got = handleManagementAction("get", { agent: "background-reviewer" }, ctx);
+		const got = handleManagementAction("get", { agent: "background-commentator" }, ctx);
 		assert.equal(got.isError, false);
 		assert.match(readText(got), /Async: false/);
 		assert.match(readText(got), /Timeout: 120000ms/);
 		assert.match(readText(got), /Turn budget: \{"maxTurns":8,"graceTurns":2\}/);
-		assert.match(readText(got), /Acceptance: \{"level":"none","reason":"lightweight reviewer"\}/);
+		assert.match(readText(got), /Acceptance: \{"level":"none","reason":"lightweight commentator"\}/);
 
 		const updated = handleUpdate(
-			{ agent: "background-reviewer", config: { async: true, timeoutMs: false, turnBudget: false, acceptance: "" } },
+			{ agent: "background-commentator", config: { async: true, timeoutMs: false, turnBudget: false, acceptance: "" } },
 			ctx,
 		);
 		assert.equal(updated.isError, false);
@@ -291,7 +291,7 @@ Inspect
 		assert.doesNotMatch(content, /^acceptance:/m);
 
 		const deprecatedFalse = handleUpdate(
-			{ agent: "background-reviewer", config: { acceptance: false } },
+			{ agent: "background-commentator", config: { acceptance: false } },
 			ctx,
 		);
 		assert.equal(deprecatedFalse.isError, false);
@@ -333,21 +333,21 @@ Inspect
 	it("creates and updates agents with tool budgets", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 		const result = handleCreate(
-			{ config: { name: "budgeted-reviewer", description: "Review with a budget", scope: "project", toolBudget: { soft: 4, hard: 7, block: ["read", "grep"] } } },
+			{ config: { name: "budgeted-commentator", description: "Review with a budget", scope: "project", toolBudget: { soft: 4, hard: 7, block: ["read", "grep"] } } },
 			ctx,
 		);
 
 		assert.equal(result.isError, false);
-		const filePath = path.join(tempDir, ".selesai", "agents", "budgeted-reviewer.md");
+		const filePath = path.join(tempDir, ".selesai", "agents", "budgeted-commentator.md");
 		let content = fs.readFileSync(filePath, "utf-8");
 		assert.match(content, /^toolBudget: \{"soft":4,"hard":7,"block":\["read","grep"\]\}$/m);
 
-		const got = handleManagementAction("get", { agent: "budgeted-reviewer" }, ctx);
+		const got = handleManagementAction("get", { agent: "budgeted-commentator" }, ctx);
 		assert.equal(got.isError, false);
 		assert.match(readText(got), /Tool budget: \{"soft":4,"hard":7,"block":\["read","grep"\]\}/);
 
 		const updated = handleUpdate(
-			{ agent: "budgeted-reviewer", config: { toolBudget: { hard: 3, block: "*" } } },
+			{ agent: "budgeted-commentator", config: { toolBudget: { hard: 3, block: "*" } } },
 			ctx,
 		);
 		assert.equal(updated.isError, false);
@@ -365,7 +365,7 @@ Inspect
 		assert.match(readText(agentResult), /config\.toolBudget\.soft must be <= config\.toolBudget\.hard/);
 
 		const chainResult = handleCreate(
-			{ config: { name: "bad-chain-budget", description: "Bad budget", scope: "project", steps: [{ agent: "reviewer", toolBudget: { hard: 2, block: [] } }] } },
+			{ config: { name: "bad-chain-budget", description: "Bad budget", scope: "project", steps: [{ agent: "commentator", toolBudget: { hard: 2, block: [] } }] } },
 			ctx,
 		);
 		assert.equal(chainResult.isError, true);
@@ -572,10 +572,10 @@ Drive the failing test first.
 			name: "dynamic-review",
 			description: "Review dynamic targets",
 			chain: [
-				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+				{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "commentator", task: "Review {target.path}", outputSchema: { type: "object" } },
 					collect: { as: "reviews" },
 				},
 			],
@@ -598,7 +598,7 @@ Drive the failing test first.
 		fs.writeFileSync(chainPath, JSON.stringify({
 			name: "dynamic-review",
 			description: "Review dynamic targets",
-			chain: [{ agent: "scout", task: "Return targets" }],
+			chain: [{ agent: "explorer", task: "Return targets" }],
 		}), "utf-8");
 
 		const updated = handleUpdate({ chainName: "dynamic-review", config: { name: "Review Flow", package: "Code Analysis" } }, ctx);
@@ -611,7 +611,7 @@ Drive the failing test first.
 		const parsed = JSON.parse(content) as { name?: string; package?: string; chain?: Array<{ agent?: string }> };
 		assert.equal(parsed.name, "review-flow");
 		assert.equal(parsed.package, "code-analysis");
-		assert.equal(parsed.chain?.[0]?.agent, "scout");
+		assert.equal(parsed.chain?.[0]?.agent, "explorer");
 	});
 
 	it("gets dynamic JSON chain details and lists invalid chain diagnostics", () => {
@@ -621,10 +621,10 @@ Drive the failing test first.
 			name: "dynamic-review",
 			description: "Review dynamic targets",
 			chain: [
-				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+				{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "commentator", task: "Review {target.path}", outputSchema: { type: "object" } },
 					collect: { as: "reviews" },
 				},
 			],
@@ -635,7 +635,7 @@ Drive the failing test first.
 		assert.equal(got.isError, false);
 		assert.match(readText(got), /Dynamic fanout -> reviews/);
 		assert.match(readText(got), /Expand: targets\/items/);
-		assert.match(readText(got), /Agent: reviewer/);
+		assert.match(readText(got), /Agent: commentator/);
 
 		const listed = handleManagementAction("list", {}, ctx);
 		assert.equal(listed.isError, false);
@@ -708,138 +708,18 @@ Drive the failing test first.
 		assert.match(readText(result), /Builtin agent 'not-a-builtin' not found/);
 	});
 
-	it("creates delegate with its builtin prompt defaults", () => {
+	it("creates explorer with its builtin prompt defaults", () => {
 		const result = handleCreate(
-			{ config: { name: "delegate", description: "Delegate helper", scope: "project" } },
+			{ config: { name: "explorer", description: "Delegate helper", scope: "project" } },
 			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
 		);
 
 		assert.equal(result.isError, false);
-		const filePath = path.join(tempDir, ".selesai", "agents", "delegate.md");
+		const filePath = path.join(tempDir, ".selesai", "agents", "explorer.md");
 		const content = fs.readFileSync(filePath, "utf-8");
-		assert.match(content, /systemPromptMode: append/);
-		assert.match(content, /inheritProjectContext: true/);
+		assert.match(content, /systemPromptMode: replace/);
+		assert.match(content, /inheritProjectContext: false/);
 		assert.match(content, /inheritSkills: false/);
-	});
-
-	it("exposes a rich human and machine catalog for a custom project agent and chain", () => {
-		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		const created = handleCreate(
-			{
-				config: {
-					name: "Catalog Writer",
-					description: "Scoped catalog writer",
-					scope: "project",
-					aliases: "catw",
-					acceptanceRole: "writer",
-					defaultContext: "fork",
-					tools: "read, grep, find, ls, bash, edit, write, mcp:fixture_search",
-					systemPrompt: "Implement scoped changes.",
-				},
-			},
-			ctx,
-		);
-		assert.equal(created.isError, false);
-
-		const chainCreated = handleCreate(
-			{ config: { name: "Review Flow", description: "Catalog review flow", scope: "project", steps: [{ agent: "catalog-writer", task: "Inspect" }] } },
-			ctx,
-		);
-		assert.equal(chainCreated.isError, false);
-
-		const listed = handleManagementAction("list", {}, ctx);
-		assert.equal(listed.isError, false);
-		const text = readText(listed);
-		assert.match(text, /Executable agents:/);
-		assert.match(
-			text,
-			/- catalog-writer \(project, context: fork, role: writer, aliases: catw, tools: read, grep, find, ls, bash, edit, write, mcp:fixture_search\): Scoped catalog writer/,
-		);
-		assert.match(text, /Chains:\n- review-flow \(project\): Catalog review flow/);
-
-		const details = (listed as { details: { catalog: unknown } }).details.catalog as {
-			version: number;
-			agents: Array<{
-				name: string;
-				source: string;
-				description: string;
-				executable: boolean;
-				aliases?: string[];
-				defaultContext: string;
-				acceptanceRole?: string;
-				tools?: string[];
-			}>;
-			chains: Array<{ name: string; source: string; description: string }>;
-		};
-		assert.equal(details.version, 1);
-		const entry = details.agents.find((agent) => agent.name === "catalog-writer");
-		assert.ok(entry, "catalog must include the custom project agent");
-		assert.equal(entry.source, "project");
-		assert.equal(entry.description, "Scoped catalog writer");
-		assert.equal(entry.executable, true);
-		assert.deepEqual(entry.aliases, ["catw"]);
-		assert.equal(entry.defaultContext, "fork");
-		assert.equal(entry.acceptanceRole, "writer");
-		assert.deepEqual(entry.tools, ["read", "grep", "find", "ls", "bash", "edit", "write", "mcp:fixture_search"]);
-		assert.deepEqual(details.chains, [{ name: "review-flow", source: "project", description: "Catalog review flow" }]);
-	});
-
-	it("normalizes unset defaultContext to fresh in the machine catalog", () => {
-		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		const created = handleCreate(
-			{ config: { name: "No Context", description: "No explicit context", scope: "project", systemPrompt: "Work" } },
-			ctx,
-		);
-		assert.equal(created.isError, false);
-
-		const listed = handleManagementAction("list", {}, ctx);
-		const details = (listed as { details: { catalog: unknown } }).details.catalog as {
-			agents: Array<{ name: string; defaultContext: string }>;
-		};
-		const entry = details.agents.find((agent) => agent.name === "no-context");
-		assert.ok(entry);
-		assert.equal(entry.defaultContext, "fresh");
-		assert.match(readText(listed), /- no-context \(project, context: fresh\)/);
-	});
-
-	it("omits disabled agents from both human text and machine catalog metadata", () => {
-		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		const created = handleCreate(
-			{ config: { name: "Hidden Writer", description: "Should stay hidden", scope: "project", systemPrompt: "Work" } },
-			ctx,
-		);
-		assert.equal(created.isError, false);
-
-		const disabled = handleManagementAction("disable", { agent: "hidden-writer" }, ctx);
-		assert.equal(disabled.isError, false);
-
-		const listed = handleManagementAction("list", {}, ctx);
-		assert.equal(listed.isError, false);
-		assert.doesNotMatch(readText(listed), /hidden-writer/);
-		const details = (listed as { details: { catalog: unknown } }).details.catalog as {
-			agents: Array<{ name: string }>;
-		};
-		assert.equal(details.agents.some((agent) => agent.name === "hidden-writer"), false);
-	});
-
-	it("returns (none) text and an empty versioned catalog when no agents are discovered", () => {
-		fs.mkdirSync(path.join(tempDir, "agent-home"), { recursive: true });
-		fs.writeFileSync(
-			path.join(tempDir, "agent-home", "settings.json"),
-			JSON.stringify({ subagents: { disableBuiltins: true } }, null, 2),
-			"utf-8",
-		);
-		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		const listed = handleManagementAction("list", {}, ctx);
-		assert.equal(listed.isError, false);
-		const text = readText(listed);
-		assert.match(text, /Executable agents:\n- \(none\)/);
-		assert.match(text, /Chains:\n- \(none\)/);
-		assert.deepEqual((listed as { details: { catalog: unknown } }).details.catalog, {
-			version: 1,
-			agents: [],
-			chains: [],
-		});
 	});
 
 	it("lists proactive skill subagent suggestions from repeated configured skill use", () => {
@@ -892,46 +772,6 @@ Inspect cleanup.
 
 		const listed = handleManagementAction("list", {}, ctx);
 		assert.doesNotMatch(readText(listed), /Proactive skill subagent suggestions:/);
-	});
-
-	it("appends explicit-only task-aware advisory routing to list output when task is provided", () => {
-		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		handleCreate(
-			{ config: { name: "Code Reviewer", description: "Reviews without editing", scope: "project", acceptanceRole: "read-only", tools: "read, grep, find, ls", systemPrompt: "Review." } },
-			ctx,
-		);
-		handleCreate(
-			{ config: { name: "Fixer", description: "Implements changes", scope: "project", acceptanceRole: "writer", tools: "read, grep, bash, edit, write", systemPrompt: "Fix." } },
-			ctx,
-		);
-
-		const implementation = handleManagementAction("list", { task: "Implement the fix" }, ctx);
-		assert.equal(implementation.isError, false);
-		assert.deepEqual((implementation as { details: { results: unknown[] } }).details.results, []);
-		const implementationText = readText(implementation);
-		assert.match(implementationText, /Task-aware advisory routing:/);
-		assert.match(implementationText, /- Intent: implementation/);
-		assert.match(implementationText, /- Recommended: fixer \(project\)/);
-		assert.match(implementationText, /- Advisory only: no subagent was launched\. To proceed, explicitly call subagent with this canonical agent name and the task\./);
-
-		const review = handleManagementAction("list", { task: "Review only; do not edit files" }, ctx);
-		assert.equal(review.isError, false);
-		const reviewText = readText(review);
-		assert.match(reviewText, /- Intent: read-only/);
-		assert.match(reviewText, /- Recommended: code-reviewer \(project\)/);
-
-		const vague = handleManagementAction("list", { task: "Look into this" }, ctx);
-		assert.equal(vague.isError, false);
-		const vagueText = readText(vague);
-		assert.match(vagueText, /- Intent: unknown/);
-		assert.match(vagueText, /- Recommendation: none/);
-		assert.match(vagueText, /Clarify whether the task is read-only analysis\/review or implementation allowed to edit files\./);
-
-		for (const noTaskParams of [{}, { task: "   " }]) {
-			const noTask = handleManagementAction("list", noTaskParams, ctx);
-			assert.equal(noTask.isError, false);
-			assert.doesNotMatch(readText(noTask), /Task-aware advisory routing:/);
-		}
 	});
 
 });

@@ -158,7 +158,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 			const outputPath = path.join(tempDir, "report.md");
 			conflictingReportsCall(outputPath, "satisfied", "not-satisfied");
 
-			const result = await runSync!(tempDir, makeAgentConfigs(["worker"]), "worker", "Write the findings report.", {
+			const result = await runSync!(tempDir, makeAgentConfigs(["builder"]), "builder", "Write the findings report.", {
 				runId: "acceptance-file-only",
 				outputPath,
 				outputMode: "file-only",
@@ -179,7 +179,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 				writeFiles: [{ path: outputPath, content: fileReport }],
 			});
 
-			const result = await runSync!(tempDir, makeAgentConfigs(["worker"]), "worker", "Write the findings report.", {
+			const result = await runSync!(tempDir, makeAgentConfigs(["builder"]), "builder", "Write the findings report.", {
 				runId: "acceptance-foreground-saved-receipt",
 				outputPath,
 				outputMode: "file-only",
@@ -203,7 +203,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 			const artifactsDir = path.join(tempDir, "report-only-artifacts");
 			mockPi.onCall({ output: acceptanceReport("satisfied", "report-only evidence") });
 
-			const result = await runSync!(tempDir, [makeAgent("worker", { completionGuard: false })], "worker", "Implement and report the fix.", {
+			const result = await runSync!(tempDir, [makeAgent("builder", { completionGuard: false })], "builder", "Implement and report the fix.", {
 				runId: "acceptance-report-only",
 				acceptance: { level: "checked", criteria: ["Report the findings"] },
 				artifactsDir,
@@ -225,7 +225,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 			const artifactsDir = path.join(tempDir, "rejected-artifacts");
 			conflictingReportsCall(outputPath, "satisfied", "not-satisfied");
 
-			const result = await runSync!(tempDir, makeAgentConfigs(["worker"]), "worker", "Write the findings report.", {
+			const result = await runSync!(tempDir, makeAgentConfigs(["builder"]), "builder", "Write the findings report.", {
 				runId: "acceptance-inline-text-first",
 				outputPath,
 				acceptance: { level: "checked", criteria: ["Report the findings"] },
@@ -248,7 +248,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 			const outputPath = path.join(tempDir, "report.md");
 			conflictingReportsCall(outputPath, "not-satisfied", "satisfied");
 
-			const result = await runSync!(tempDir, makeAgentConfigs(["worker"]), "worker", "Write the findings report.", {
+			const result = await runSync!(tempDir, makeAgentConfigs(["builder"]), "builder", "Write the findings report.", {
 				runId: "acceptance-inline-file-fallback-only",
 				outputPath,
 				acceptance: { level: "checked", criteria: ["Report the findings"] },
@@ -281,7 +281,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 				],
 			});
 
-			const result = await runSync!(tempDir, makeAgentConfigs(["worker"]), "worker", "Write the findings report.", {
+			const result = await runSync!(tempDir, makeAgentConfigs(["builder"]), "builder", "Write the findings report.", {
 				runId: "acceptance-failed-write",
 				outputPath,
 				outputMode: "file-only",
@@ -304,7 +304,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 				writeFiles: [{ path: outputPath, content: malformedReport }],
 			});
 
-			const result = await runSync!(tempDir, makeAgentConfigs(["worker"]), "worker", "Write the findings report.", {
+			const result = await runSync!(tempDir, makeAgentConfigs(["builder"]), "builder", "Write the findings report.", {
 				runId: "acceptance-malformed-file-report",
 				outputPath,
 				outputMode: "file-only",
@@ -313,16 +313,16 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 
 			assert.equal(result.acceptance?.status, "rejected");
 			assert.equal(result.exitCode, 1);
-			assert.match(result.error ?? "", /Empty or unterminated acceptance-report fence.*configured output/);
+			assert.match(result.error ?? "", /Failed to parse acceptance-report: Expected property name.*configured output/);
 		});
 	});
 
 	describe("background runner", { skip: isAsyncAvailable && !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
 		function runAsyncSingle(id: string, outputPath: string, outputMode: "inline" | "file-only", artifactConfig = DISABLED_ARTIFACTS) {
 			executeAsyncSingle!(id, {
-				agent: "worker",
+				agent: "builder",
 				task: "Write the findings report.",
-				agentConfig: makeAgent("worker", { completionGuard: false }),
+				agentConfig: makeAgent("builder", { completionGuard: false }),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-file-report" },
 				artifactConfig,
 				artifactsDir: path.join(tempDir, ".pi-subagents", "artifacts"),
@@ -350,7 +350,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 
 		it("file-only mode persists async acceptance metadata when final assistant text is only a receipt", async () => {
 			const outputPath = path.join(tempDir, "saved-review.md");
-			const fileReport = `# Review\n${acceptanceReport("satisfied", "saved reviewer verdict")}`;
+			const fileReport = `# Review\n${acceptanceReport("satisfied", "saved commentator verdict")}`;
 			mockPi.onCall({
 				jsonl: [...events.completedWrite(outputPath, fileReport), events.assistantMessage("Output saved to the configured file.")],
 				writeFiles: [{ path: outputPath, content: fileReport }],
@@ -361,12 +361,12 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 			const payload = await waitForAsyncResult(id);
 			assert.equal(payload.success, true);
 			assert.equal(payload.results[0]?.acceptance?.status, "checked");
-			assert.equal(payload.results[0]?.acceptance?.childReport?.criteriaSatisfied?.[0]?.evidence, "saved reviewer verdict");
+			assert.equal(payload.results[0]?.acceptance?.childReport?.criteriaSatisfied?.[0]?.evidence, "saved commentator verdict");
 			const metadataPath = payload.results[0]?.artifactPaths?.metadataPath;
 			assert.ok(metadataPath);
 			const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as { acceptance?: AcceptanceSummary };
 			assert.equal(metadata.acceptance?.status, "checked");
-			assert.equal(metadata.acceptance?.childReport?.criteriaSatisfied?.[0]?.evidence, "saved reviewer verdict");
+			assert.equal(metadata.acceptance?.childReport?.criteriaSatisfied?.[0]?.evidence, "saved commentator verdict");
 		});
 
 		it("inline mode accepts from the text report and strips fences from the resolved file output", async () => {
@@ -405,7 +405,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 				tempArtifactsDir: tempDir,
 				getSubagentSessionRoot: () => tempDir,
 				expandTilde: (p: string) => p,
-				discoverAgents: () => ({ agents: [makeAgent("worker", { completionGuard: false })] }),
+				discoverAgents: () => ({ agents: [makeAgent("builder", { completionGuard: false })] }),
 			});
 
 			const acceptance = { level: "checked", criteria: ["Report the findings"] };
@@ -413,8 +413,8 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 				"acceptance-parallel-files",
 				{
 					tasks: [
-						{ agent: "worker", task: "Alpha task: write the report.", output: alphaPath, outputMode: "file-only", acceptance },
-						{ agent: "worker", task: "Beta task: write the report.", output: betaPath, outputMode: "file-only", acceptance },
+						{ agent: "builder", task: "Alpha task: write the report.", output: alphaPath, outputMode: "file-only", acceptance },
+						{ agent: "builder", task: "Beta task: write the report.", output: betaPath, outputMode: "file-only", acceptance },
 					],
 					async: true,
 					clarify: false,

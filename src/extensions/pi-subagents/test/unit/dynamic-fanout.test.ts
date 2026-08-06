@@ -16,7 +16,7 @@ const outputs: ChainOutputMap = {
 	targets: {
 		text: "{\"items\":[{\"path\":\"src/a.ts\"},{\"path\":\"src/b.ts\"}]}",
 		structured: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] },
-		agent: "scout",
+		agent: "explorer",
 		stepIndex: 0,
 	},
 };
@@ -26,7 +26,7 @@ describe("dynamic fanout helpers", () => {
 		assert.deepEqual(resolveJsonPointer({ items: [1, 2] }, "/items/1", "path"), 2);
 		const step: ChainStep = {
 			expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-			parallel: { agent: "reviewer", task: "Review {target.path}", label: "Review {target.path}" },
+			parallel: { agent: "commentator", task: "Review {target.path}", label: "Review {target.path}" },
 			collect: { as: "reviews" },
 		};
 		const materialized = materializeDynamicParallelStep(step, outputs, 1);
@@ -38,7 +38,7 @@ describe("dynamic fanout helpers", () => {
 	it("rejects missing structured sources, over-limit arrays, duplicate keys, colliding ids, and bad templates", () => {
 		const base: ChainStep = {
 			expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-			parallel: { agent: "reviewer", task: "Review {target.path}" },
+			parallel: { agent: "commentator", task: "Review {target.path}" },
 			collect: { as: "reviews" },
 		};
 		assert.throws(
@@ -46,7 +46,7 @@ describe("dynamic fanout helpers", () => {
 			/exceeding maxItems/,
 		);
 		assert.throws(
-			() => materializeDynamicParallelStep(base, { targets: { text: "plain", agent: "scout", stepIndex: 0 } }, 1),
+			() => materializeDynamicParallelStep(base, { targets: { text: "plain", agent: "explorer", stepIndex: 0 } }, 1),
 			/requires structured output/,
 		);
 		assert.throws(
@@ -58,15 +58,15 @@ describe("dynamic fanout helpers", () => {
 			/colliding item id/,
 		);
 		assert.throws(
-			() => materializeDynamicParallelStep({ ...base, parallel: { agent: "reviewer", task: "Review {other.path}" } }, outputs, 1),
+			() => materializeDynamicParallelStep({ ...base, parallel: { agent: "commentator", task: "Review {other.path}" } }, outputs, 1),
 			/Unsupported template reference/,
 		);
 		assert.throws(
-			() => materializeDynamicParallelStep({ ...base, parallel: { agent: "reviewer", task: "Review {target[path]}" } }, outputs, 1),
+			() => materializeDynamicParallelStep({ ...base, parallel: { agent: "commentator", task: "Review {target[path]}" } }, outputs, 1),
 			/Invalid item reference/,
 		);
 		assert.throws(
-			() => materializeDynamicParallelStep({ ...base, parallel: { agent: "reviewer", task: "Review {target.path" } }, outputs, 1),
+			() => materializeDynamicParallelStep({ ...base, parallel: { agent: "commentator", task: "Review {target.path" } }, outputs, 1),
 			/Invalid item reference/,
 		);
 	});
@@ -74,13 +74,13 @@ describe("dynamic fanout helpers", () => {
 	it("allows config maxItems defaults and handles empty arrays deterministically", () => {
 		const base: ChainStep = {
 			expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path" },
-			parallel: { agent: "reviewer", task: "Review {target.path}" },
+			parallel: { agent: "commentator", task: "Review {target.path}" },
 			collect: { as: "reviews" },
 		};
 		const materialized = materializeDynamicParallelStep(base, outputs, 1, { maxItems: 4 });
 		assert.equal(materialized.parallel.length, 2);
 		assert.doesNotThrow(() => validateChainOutputBindings([
-			{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+			{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 			base,
 		], { maxItems: 4 }));
 		const empty = materializeDynamicParallelStep(base, { targets: { ...outputs.targets, structured: { items: [] } } }, 1, { maxItems: 4 });
@@ -95,29 +95,29 @@ describe("dynamic fanout helpers", () => {
 		const malformed = [
 			{
 				expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-				parallel: [{ agent: "reviewer", task: "Review" }],
+				parallel: [{ agent: "commentator", task: "Review" }],
 				collect: { as: "reviews" },
 			},
 			{
 				expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-				parallel: { agent: "reviewer", task: "Review {item.path}" },
+				parallel: { agent: "commentator", task: "Review {item.path}" },
 			},
 			{
 				expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-				parallel: { agent: "reviewer", task: "Review {item.path}" },
+				parallel: { agent: "commentator", task: "Review {item.path}" },
 				collect: { as: "reviews" },
 				when: "later",
 			},
 			{
 				expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-				parallel: { agent: "reviewer", task: "Review {item.path}", as: "child" },
+				parallel: { agent: "commentator", task: "Review {item.path}", as: "child" },
 				collect: { as: "reviews" },
 			},
 		] as ChainStep[];
 
 		for (const step of malformed) {
 			assert.throws(
-				() => validateChainOutputBindings([{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } }, step]),
+				() => validateChainOutputBindings([{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } }, step]),
 				ChainOutputValidationError,
 			);
 		}
@@ -129,7 +129,7 @@ describe("dynamic fanout helpers", () => {
 		// (allowRunnerFields) without leaking into the user-facing dynamic field whitelist.
 		const runnerStep = {
 			expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-			parallel: { agent: "reviewer", task: "Review {item.path}", parentSessionId: "session-parent" },
+			parallel: { agent: "commentator", task: "Review {item.path}", parentSessionId: "session-parent" },
 			collect: { as: "reviews" },
 		} as unknown as Parameters<typeof validateDynamicStepShape>[0];
 		assert.doesNotThrow(() => validateDynamicStepShape(runnerStep, 1, { allowRunnerFields: true }));
@@ -142,7 +142,7 @@ describe("dynamic fanout helpers", () => {
 	it("accepts toolBudget on dynamic parallel templates", () => {
 		const step = {
 			expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-			parallel: { agent: "reviewer", task: "Review {item.path}", toolBudget: { hard: 3 } },
+			parallel: { agent: "commentator", task: "Review {item.path}", toolBudget: { hard: 3 } },
 			collect: { as: "reviews" },
 		} as unknown as Parameters<typeof validateDynamicStepShape>[0];
 
@@ -151,10 +151,10 @@ describe("dynamic fanout helpers", () => {
 
 	it("validates source ordering and collect name collisions", () => {
 		const chain: ChainStep[] = [
-			{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+			{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 			{
 				expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-				parallel: { agent: "reviewer", task: "Review {item.path}" },
+				parallel: { agent: "commentator", task: "Review {item.path}" },
 				collect: { as: "targets" },
 			},
 		];
@@ -167,24 +167,24 @@ describe("dynamic fanout helpers", () => {
 
 	it("validates appended steps against prior and reserved output names", () => {
 		assert.doesNotThrow(() => validateChainOutputBindingsWithContext([
-			{ agent: "worker", task: "Use {outputs.targets}", as: "summary" },
+			{ agent: "builder", task: "Use {outputs.targets}", as: "summary" },
 		], {}, { priorOutputNames: ["targets"], startStepIndex: 2 }));
 		assert.throws(
 			() => validateChainOutputBindingsWithContext([
-				{ agent: "worker", task: "Use {outputs.missing}" },
+				{ agent: "builder", task: "Use {outputs.missing}" },
 			], {}, { priorOutputNames: ["targets"], startStepIndex: 2 }),
 			/Unknown chain output reference '\{outputs\.missing\}' at step 3/,
 		);
 		assert.throws(
 			() => validateChainOutputBindingsWithContext([
-				{ agent: "worker", task: "Use {previous}", as: "targets" },
+				{ agent: "builder", task: "Use {previous}", as: "targets" },
 			], {}, { priorOutputNames: ["targets"], startStepIndex: 2 }),
 			/Duplicate chain output name 'targets'/,
 		);
 		assert.doesNotThrow(() => validateChainOutputBindingsWithContext([
 			{
 				expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-				parallel: { agent: "reviewer", task: "Review {item.path}" },
+				parallel: { agent: "commentator", task: "Review {item.path}" },
 				collect: { as: "reviews" },
 			},
 		], {}, { priorOutputNames: ["targets"], startStepIndex: 2 }));
@@ -193,7 +193,7 @@ describe("dynamic fanout helpers", () => {
 	it("collects ordered child result records and validates aggregate schema", async () => {
 		const step: ChainStep = {
 			expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-			parallel: { agent: "reviewer", task: "Review {item.path}" },
+			parallel: { agent: "commentator", task: "Review {item.path}" },
 			collect: { as: "reviews" },
 		};
 		const materialized = materializeDynamicParallelStep(step, outputs, 1);
@@ -207,8 +207,8 @@ describe("dynamic fanout helpers", () => {
 			finalOutput: "ok",
 			structuredOutput,
 		});
-		const timedOut = { ...result("reviewer", { ok: "b" }), exitCode: 1, error: "Subagent timed out after 300ms.", timedOut: true };
-		const collected = collectDynamicResults(step, materialized.items, [result("reviewer", { ok: "a" }), timedOut]);
+		const timedOut = { ...result("commentator", { ok: "b" }), exitCode: 1, error: "Subagent timed out after 300ms.", timedOut: true };
+		const collected = collectDynamicResults(step, materialized.items, [result("commentator", { ok: "a" }), timedOut]);
 		assert.deepEqual(collected.map((item) => item.key), ["src/a.ts", "src/b.ts"]);
 		assert.deepEqual(collected.map((item) => item.structured), [{ ok: "a" }, { ok: "b" }]);
 		assert.equal(collected[1]?.timedOut, true);

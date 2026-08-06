@@ -125,8 +125,23 @@ function getGlobalNpmRoot(): string | null {
 	const offline = process.env.PI_OFFLINE?.toLowerCase();
 	if (offline === "1" || offline === "true" || offline === "yes") return null;
 	if (cachedGlobalNpmRoot !== null) return cachedGlobalNpmRoot;
+
+	const windowsGlobalRoot = process.platform === "win32" && process.env.APPDATA
+		? path.join(process.env.APPDATA, "npm", "node_modules")
+		: undefined;
+	if (windowsGlobalRoot) {
+		try {
+			if (fs.statSync(windowsGlobalRoot).isDirectory()) {
+				cachedGlobalNpmRoot = fs.realpathSync(windowsGlobalRoot);
+				return cachedGlobalNpmRoot;
+			}
+		} catch {
+			// Fall through if the directory disappears while resolving it.
+		}
+	}
+
 	try {
-		cachedGlobalNpmRoot = execSync("npm root -g", { encoding: "utf-8", timeout: 5000 }).trim();
+		cachedGlobalNpmRoot = fs.realpathSync(execSync("npm root -g", { encoding: "utf-8", timeout: 5000 }).trim());
 		return cachedGlobalNpmRoot;
 	} catch {
 		// Global npm root is optional in constrained environments.
@@ -410,15 +425,17 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 		const resolvedFile = path.resolve(filePath);
 		if (!fs.existsSync(resolvedFile)) return;
 		const source = inferSkillSource(resolvedFile, cwd, agentDir, sourceHint);
+		const description = maybeReadSkillDescription(resolvedFile);
 		const existingIndex = seen.get(resolvedFile);
 		if (existingIndex !== undefined) {
 			const existing = entries[existingIndex];
 			if (existing && (SOURCE_PRIORITY[source] ?? 0) > (SOURCE_PRIORITY[existing.source] ?? 0)) {
+				const { description: _description, ...existingWithoutDescription } = existing;
 				entries[existingIndex] = {
-					...existing,
+					...existingWithoutDescription,
 					name,
 					source,
-					description: maybeReadSkillDescription(resolvedFile),
+					...(description !== undefined ? { description } : {}),
 				};
 			}
 			return;
@@ -428,7 +445,7 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 			name,
 			filePath: resolvedFile,
 			source,
-			description: maybeReadSkillDescription(resolvedFile),
+			...(description !== undefined ? { description } : {}),
 			order: order++,
 		});
 	};
@@ -592,7 +609,7 @@ function readSkill(
 			name: skillName,
 			path: skillPath,
 			content,
-			description,
+			...(description !== undefined ? { description } : {}),
 			source,
 		};
 
@@ -733,7 +750,7 @@ export function discoverAvailableSkills(cwd: string): Array<{
 		.map((s) => ({
 			name: s.name,
 			source: s.source,
-			description: s.description,
+			...(s.description !== undefined ? { description: s.description } : {}),
 		}))
 		.sort((a, b) => a.name.localeCompare(b.name));
 }

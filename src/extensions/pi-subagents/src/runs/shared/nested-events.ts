@@ -2,8 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-	ASYNC_DIR,
-	RESULTS_DIR,
+	DIRS,
 	TEMP_ROOT_DIR,
 	type AsyncJobState,
 	type AsyncStatus,
@@ -30,6 +29,7 @@ import {
 } from "./pi-args.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { sanitizeProcessTerminal } from "../background/process-terminal.ts";
+import { THINKING_LEVELS } from "../../shared/model-info.ts";
 
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");
 const ROUTE_FILE = "route.json";
@@ -281,9 +281,13 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 	const status = raw.status === "pending" || raw.status === "running" || raw.status === "complete" || raw.status === "completed" || raw.status === "failed" || raw.status === "paused" || raw.status === "stopped"
 		? raw.status
 		: "pending";
+	const model = stringValue(raw.model);
+	const thinking = THINKING_LEVELS.find((level) => level === raw.thinking);
 	return {
 		agent,
 		status,
+		...(model ? { model } : {}),
+		...(thinking ? { thinking } : {}),
 		...(stringValue(raw.sessionFile, 2048) ? { sessionFile: stringValue(raw.sessionFile, 2048) } : {}),
 		...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention" ? { activityState: raw.activityState } : {}),
 		...(clampNumber(raw.lastActivityAt) !== undefined ? { lastActivityAt: clampNumber(raw.lastActivityAt) } : {}),
@@ -324,6 +328,8 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		depth: Math.min(Math.max(0, clampNumber(raw.depth) ?? 0), MAX_DEPTH),
 		path: pathParts,
 		state: sanitizeState(raw.state, "running"),
+		...(stringValue(raw.model) ? { model: stringValue(raw.model) } : {}),
+		...(THINKING_LEVELS.find((level) => level === raw.thinking) ? { thinking: THINKING_LEVELS.find((level) => level === raw.thinking) } : {}),
 		...(stringValue(raw.asyncDir, 2048) ? { asyncDir: stringValue(raw.asyncDir, 2048) } : {}),
 		...(clampNumber(raw.pid) !== undefined && clampNumber(raw.pid)! > 0 && Number.isInteger(clampNumber(raw.pid)) ? { pid: clampNumber(raw.pid) } : {}),
 		...(stringValue(raw.sessionId, 256) ? { sessionId: stringValue(raw.sessionId, 256) } : {}),
@@ -415,6 +421,36 @@ function terminal(state: NestedRunState): boolean {
 	return state === "complete" || state === "failed" || state === "paused" || state === "stopped";
 }
 
+function mergeBoundedChildren(existing: NestedRunSummary[] | undefined, incoming: NestedRunSummary[] | undefined): NestedRunSummary[] | undefined {
+	if (incoming === undefined) return existing?.slice(0, MAX_CHILDREN);
+	const incomingById = new Map(incoming.map((child) => [child.id, child]));
+	const merged = (existing ?? []).map((child) => incomingById.get(child.id) ?? child);
+	for (const child of incoming) {
+		if (!existing?.some((prior) => prior.id === child.id)) merged.push(child);
+	}
+	return merged.slice(0, MAX_CHILDREN);
+}
+
+function mergeStepSummary(existing: NestedStepSummary | undefined, incoming: NestedStepSummary): NestedStepSummary {
+	if (!existing || existing.agent !== incoming.agent) return { ...incoming, ...(incoming.children ? { children: incoming.children.slice(0, MAX_CHILDREN) } : {}) };
+	const metadata = { ...existing } as Partial<NestedStepSummary>;
+	delete metadata.status;
+	delete metadata.activityState;
+	delete metadata.lastActivityAt;
+	delete metadata.currentTool;
+	delete metadata.currentToolStartedAt;
+	delete metadata.currentPath;
+	delete metadata.turnCount;
+	delete metadata.toolCount;
+	delete metadata.children;
+	const children = mergeBoundedChildren(existing.children, incoming.children);
+	return {
+		...metadata,
+		...incoming,
+		...(children ? { children } : {}),
+	};
+}
+
 function mergeSummary(existing: NestedRunSummary | undefined, event: NestedEventRecord): NestedRunSummary {
 	const incomingState = event.type === "subagent.nested.completed" && event.child.state === "running" ? "complete" : event.child.state;
 	const incoming = { ...event.child, state: incomingState, lastUpdate: event.child.lastUpdate ?? event.ts };
@@ -424,7 +460,21 @@ function mergeSummary(existing: NestedRunSummary | undefined, event: NestedEvent
 	if (incomingUpdate < existingUpdate) return existing;
 	if (terminal(existing.state) && !terminal(incoming.state)) return existing;
 	if (terminal(existing.state) && terminal(incoming.state) && incomingUpdate === existingUpdate) return existing;
-	return { ...existing, ...incoming, state: incoming.state, lastUpdate: Math.max(existingUpdate, incomingUpdate) };
+	const existingSteps = existing.steps ?? [];
+	const incomingSteps = incoming.steps;
+	const steps = incomingSteps === undefined
+		? existing.steps
+		: Array.from({ length: Math.min(MAX_STEPS, Math.max(existingSteps.length, incomingSteps.length)) }, (_, index) =>
+			incomingSteps[index] ? mergeStepSummary(existingSteps[index], incomingSteps[index]!) : existingSteps[index]!).filter((step): step is NestedStepSummary => Boolean(step));
+	const children = mergeBoundedChildren(existing.children, incoming.children);
+	return {
+		...existing,
+		...incoming,
+		...(steps ? { steps } : {}),
+		...(children ? { children } : {}),
+		state: incoming.state,
+		lastUpdate: Math.max(existingUpdate, incomingUpdate),
+	};
 }
 
 function attachChild(children: NestedRunSummary[], event: NestedEventRecord): NestedRunSummary[] {
@@ -947,6 +997,8 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.pid ? { pid: status.pid } : {}),
 		...(status.sessionId ? { sessionId: status.sessionId } : {}),
 		mode: status.mode ?? fallback.mode,
+		...(status.steps?.length === 1 && status.steps[0]?.model ? { model: status.steps[0].model } : {}),
+		...(status.steps?.length === 1 && status.steps[0]?.thinking ? { thinking: status.steps[0].thinking } : {}),
 		...(status.processTerminal ? { processTerminal: sanitizeProcessTerminal(status.processTerminal, { runId: status.runId || fallback.id, runnerProcessInstanceId: status.processTerminal.runnerProcessInstanceId }, `${asyncDir}/status.json`) } : {}),
 		...(status.launchResolvedExtensions ? { launchResolvedExtensions: status.launchResolvedExtensions } : {}),
 		...runtimeAcknowledgedEntry(status.runtimeAcknowledgedExtensions),
@@ -978,6 +1030,8 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.steps?.length ? { steps: status.steps.map((step, index) => ({
 			agent: step.agent,
 			status: step.status,
+			...(step.model ? { model: step.model } : {}),
+			...(step.thinking ? { thinking: step.thinking } : {}),
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 			...(step.activityState ? { activityState: step.activityState } : {}),
 			...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),
@@ -1012,11 +1066,11 @@ export function nestedArtifactEnv(rootRunId: string, parentRunId: string): Recor
 
 export function isTopLevelAsyncDir(asyncDir: string): boolean {
 	const resolved = path.resolve(asyncDir);
-	return containedPath(ASYNC_DIR, resolved) && !containedPath(path.join(TEMP_ROOT_DIR, "nested-subagent-runs"), resolved);
+	return containedPath(DIRS.async, resolved) && !containedPath(path.join(TEMP_ROOT_DIR, "nested-subagent-runs"), resolved);
 }
 
 export function nestedResultsPath(rootRunId: string, id: string): string {
 	assertSafeId("rootRunId", rootRunId);
 	assertSafeId("id", id);
-	return path.join(RESULTS_DIR, "nested", rootRunId, `${id}.json`);
+	return path.join(DIRS.results, "nested", rootRunId, `${id}.json`);
 }

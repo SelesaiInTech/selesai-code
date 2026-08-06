@@ -46,11 +46,10 @@ import {
 	type BackgroundWorkSnapshot,
 	type RegisteredBackgroundWorkItem,
 } from "../../api/background-work.ts";
-import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import { formatAsyncRunList, listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import {
-	ASYNC_DIR,
+	DIRS,
 	INTERCOM_DETACH_REQUEST_EVENT,
-	RESULTS_DIR,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
 	SUBAGENT_CONTROL_EVENT,
@@ -60,7 +59,7 @@ import {
 	type ForegroundResumeRun,
 	type SubagentState,
 } from "../../shared/types.ts";
-import { formatDuration } from "../../shared/formatters.ts";
+import { formatDuration, shortenPath } from "../../shared/formatters.ts";
 export { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, type ResolvedWaitToolConfig } from "./wait-config.ts";
 
 /** States that mean a run is still in flight (not yet resolved). */
@@ -73,6 +72,8 @@ const DEFAULT_POLL_INTERVAL_MS = 1000;
 export interface SubagentWaitParams {
 	/** Optional run id/prefix to wait for. When omitted, waits across every active run in this session. */
 	id?: string;
+	/** Arm a durable exact-run wake subscription and return immediately. Requires id. */
+	nonBlocking?: boolean;
 	/**
 	 * When true, block until EVERY active run in this session (or matching `id`)
 	 * is terminal. Default false: return as soon as the first run finishes, so a
@@ -106,6 +107,8 @@ export interface SubagentWaitDeps {
 	stopOnAttention?: boolean;
 	/** Internal auto-drain mode surfaces failed terminal subagent runs as errors. */
 	failOnFailedRuns?: boolean;
+	/** Arm a durable exact-target wait subscription in a long-lived interactive runtime. */
+	subscribe?: (input: { targetKind: "async" | "foreground"; runId: string; requestedId: string; timeoutMs: number }) => { token: string; expiresAt: number };
 	/** Injectable provider protocol surfaces for deterministic tests. */
 	backgroundWork?: {
 		snapshot(sessionId: string, nowMs: number): BackgroundWorkSnapshot;
@@ -253,8 +256,8 @@ function backgroundWorkForSession(deps: SubagentWaitDeps, nowMs: number): Backgr
 
 /** Queued/running runs from this session, including runs that need attention. */
 function activeRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
-	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
-	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
+	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
+	const resultsDir = deps.resultsDir ?? DIRS.results;
 	const runs = listAsyncRuns(asyncDirRoot, {
 		states: [...ACTIVE_STATES],
 		sessionId: deps.state.currentSessionId ?? undefined,
@@ -273,8 +276,8 @@ function attentionRunsForSession(params: SubagentWaitParams, deps: SubagentWaitD
 
 /** All runs (any state) for this session, for the final summary. */
 function allRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
-	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
-	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
+	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
+	const resultsDir = deps.resultsDir ?? DIRS.results;
 	const runs = listAsyncRuns(asyncDirRoot, {
 		sessionId: deps.state.currentSessionId ?? undefined,
 		resultsDir,
@@ -289,7 +292,8 @@ function summarizeTerminalRuns(runs: AsyncRunSummary[], providerFinishedCount = 
 	if (runs.length === 0 && providerFinishedCount === 0) return "";
 	const counts = { complete: 0, failed: 0, paused: 0 } as Record<string, number>;
 	for (const run of runs) {
-		if (run.state in counts) counts[run.state] += 1;
+		const count = counts[run.state];
+		if (count !== undefined) counts[run.state] = count + 1;
 	}
 	const parts: string[] = [];
 	if (counts.complete) parts.push(`${counts.complete} complete`);
@@ -305,6 +309,25 @@ function result(text: string, isError = false): AgentToolResult<Details> {
 		...(isError ? { isError: true } : {}),
 		details: { mode: "management", results: [] },
 	};
+}
+
+/** Build the live status shown while async work keeps subagent_wait blocked. */
+function asyncWaitUpdate(runs: AsyncRunSummary[], providerCount: number, elapsedMs: number): AgentToolResult<Details> {
+	const activity = runs.flatMap((run) => {
+		const activeSteps = run.steps.filter((step) => step.status === "pending" || step.status === "running");
+		if (activeSteps.length === 0) {
+			return [`${run.id}: ${run.state}`];
+		}
+		return activeSteps.map((step) => {
+			const current = step.currentTool ?? (step.status === "pending" ? "queued" : "thinking…");
+			return `${step.agent}: ${current}${step.currentPath ? ` ${shortenPath(step.currentPath)}` : ""}`;
+		});
+	});
+	const headline = [
+		`Waiting ${formatDuration(elapsedMs)} for ${runs.length} async run(s) and ${providerCount} provider item(s).`,
+		...activity,
+	].join(" · ");
+	return result([headline, runs.length > 0 ? formatAsyncRunList(runs) : ""].filter(Boolean).join("\n"));
 }
 
 const TRANSCRIPT_TAIL_BYTES = 128 * 1024;
@@ -466,6 +489,12 @@ export async function waitForSubagents(
 	const timeoutMs = params.timeoutMs !== undefined && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_TIMEOUT_MS;
 	const startedAt = now();
 	const waitForAll = params.id ? true : params.all === true;
+	if (params.nonBlocking && !params.id) {
+		return result("Non-blocking wait subscriptions require id so the registration can bind one exact run identity.", true);
+	}
+	if (params.nonBlocking && params.all) {
+		return result("nonBlocking cannot be combined with all; subscribe to one exact run id.", true);
+	}
 
 	let active: AsyncRunSummary[];
 	let foreground: ForegroundResumeRun[];
@@ -489,6 +518,17 @@ export async function waitForSubagents(
 			return result(`Ambiguous subagent run id prefix "${params.id}" matched ${matches.length} active runs: ${matches.map((candidate) => candidate.id).join(", ")}. Pass a longer id.`, true);
 		}
 		const selected = matches[0];
+		if (selected && params.nonBlocking) {
+			if (!deps.subscribe) {
+				return result("Non-blocking wait subscriptions require a long-lived interactive subagent runtime; this runtime can only use blocking subagent_wait calls.", true);
+			}
+			try {
+				const registration = deps.subscribe({ targetKind: selected.kind, runId: selected.id, requestedId: params.id, timeoutMs });
+				return result(`Armed wait subscription ${registration.token} for exact ${selected.kind} run ${selected.id}. Returning immediately; this session will be woken on completion, failure, attention, reconciliation failure, or timeout. Inspect armed subscriptions with subagent({ action: "status" }).`);
+			} catch (error) {
+				return result(error instanceof Error ? error.message : String(error), true);
+			}
+		}
 		if (selected?.kind === "foreground") {
 			return waitForDetachedForegroundRun(selected.run, signal, deps, startedAt, now, pollIntervalMs, timeoutMs);
 		}
@@ -528,6 +568,7 @@ export async function waitForSubagents(
 			...activeInitialRuns.map((run) => `${run.id} (${run.state})`),
 			...activeInitialProviderItems.map((item) => `${item.provider}/${item.id}`),
 		].join(", ");
+		deps.onUpdate?.(asyncWaitUpdate(activeInitialRuns, activeInitialProviderItems.length, now() - startedAt));
 		if (signal?.aborted) {
 			return result(`Wait aborted after ${formatDuration(now() - startedAt)}. Still active: ${stillActive}.`, true);
 		}

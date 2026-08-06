@@ -1,4 +1,5 @@
 import type { Usage } from "../../shared/types.ts";
+import { formatProcessSignalError } from "./process-signal.ts";
 
 /**
  * Retry delays for child processes that exit before any model or tool activity.
@@ -9,6 +10,8 @@ export const SUBAGENT_STARTUP_RETRY_DELAYS_MS = [250, 750, 1500] as const;
 
 /** A genuine startup race should fail well before a model request can complete. */
 export const MAX_SUBAGENT_STARTUP_FAILURE_DURATION_MS = 2000;
+
+const SIGKILL_PROCESS_SIGNAL_ERROR = formatProcessSignalError("SIGKILL");
 
 export interface SubagentStartupFailureEvidence {
 	exitCode: number | null | undefined;
@@ -46,7 +49,7 @@ export function isRetryableSubagentStartupFailure(evidence: SubagentStartupFailu
 	return evidence.exitCode !== undefined
 		&& evidence.exitCode !== null
 		&& evidence.exitCode !== 0
-		&& !evidence.error?.trim()
+		&& (!evidence.error?.trim() || evidence.error === SIGKILL_PROCESS_SIGNAL_ERROR)
 		&& !evidence.finalOutput?.trim()
 		&& evidence.messageCount === 0
 		&& evidence.toolCount === 0
@@ -54,7 +57,7 @@ export function isRetryableSubagentStartupFailure(evidence: SubagentStartupFailu
 		&& evidence.durationMs >= 0
 		&& evidence.durationMs <= MAX_SUBAGENT_STARTUP_FAILURE_DURATION_MS
 		&& evidence.protocolError === undefined
-		&& (evidence.processSignal === undefined || evidence.processSignal === null)
+		&& (evidence.processSignal === undefined || evidence.processSignal === null || evidence.processSignal === "SIGKILL")
 		&& evidence.observedMutationAttempt !== true
 		&& evidence.detached !== true
 		&& evidence.interrupted !== true

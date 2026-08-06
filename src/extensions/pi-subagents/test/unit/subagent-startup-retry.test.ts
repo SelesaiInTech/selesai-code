@@ -35,13 +35,25 @@ describe("subagent startup retry", () => {
 		assert.equal(isRetryableSubagentStartupFailure(startupFailure()), true);
 	});
 
+	it("retries only the canonical zero-activity SIGKILL startup failure", () => {
+		assert.equal(
+			isRetryableSubagentStartupFailure(startupFailure({
+				processSignal: "SIGKILL",
+				error: "Subagent process terminated by signal SIGKILL.",
+			})),
+			true,
+		);
+		assert.equal(isRetryableSubagentStartupFailure(startupFailure({ processSignal: "SIGKILL" })), true);
+		assert.equal(isRetryableSubagentStartupFailure(startupFailure({ processSignal: "SIGTERM" })), false);
+		assert.equal(isRetryableSubagentStartupFailure(startupFailure({ processSignal: "SIGKILL", error: "authentication failed" })), false);
+	});
+
 	it("rejects successful, long-running, and diagnosed exits", () => {
 		assert.equal(isRetryableSubagentStartupFailure(startupFailure({ exitCode: 0 })), false);
 		assert.equal(isRetryableSubagentStartupFailure(startupFailure({ durationMs: MAX_SUBAGENT_STARTUP_FAILURE_DURATION_MS + 1 })), false);
 		assert.equal(isRetryableSubagentStartupFailure(startupFailure({ error: "authentication failed" })), false);
 		assert.equal(isRetryableSubagentStartupFailure(startupFailure({ finalOutput: "partial response" })), false);
 		assert.equal(isRetryableSubagentStartupFailure(startupFailure({ protocolError: { code: "protocol_output_limit" } })), false);
-		assert.equal(isRetryableSubagentStartupFailure(startupFailure({ processSignal: "SIGKILL" })), false);
 	});
 
 	it("rejects any model, tool, usage, mutation, or lifecycle activity", () => {

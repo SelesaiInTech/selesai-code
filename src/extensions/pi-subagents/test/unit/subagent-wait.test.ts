@@ -20,7 +20,7 @@ function writeStatus(asyncRoot: string, runId: string, state: string, extra: obj
 			state,
 			startedAt: nowMs,
 			lastUpdate: nowMs,
-			steps: [{ agent: "worker", status: state }],
+			steps: [{ agent: "builder", status: state }],
 			...extra,
 		}),
 		"utf-8",
@@ -138,6 +138,39 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("streams active async run status while waiting", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-progress-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-live", "running", {
+				sessionId: "sess-1",
+				pid: 999999,
+				steps: [{
+					agent: "builder",
+					status: "running",
+					currentTool: "edit",
+					currentPath: "src/render.ts",
+					turnCount: 2,
+					toolCount: 4,
+				}],
+			});
+			const updates: string[] = [];
+			const result = await waitForSubagents({}, undefined, baseDeps(root, state, {
+				onUpdate: (update) => updates.push(textOf(update)),
+				sleep: async () => writeStatus(asyncRoot, "run-live", "complete", { sessionId: "sess-1" }),
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.equal(updates.length, 1);
+			assert.match(updates[0]!, /Waiting .* for 1 async run/);
+			assert.match(updates[0]!.split("\n")[0]!, /builder: edit .*src\/render\.ts/);
+			assert.match(updates[0]!, /run-live/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("surfaces failed terminal runs as errors only for internal auto-drain", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-drain-failure-"));
 		try {
@@ -216,7 +249,7 @@ describe("subagent_wait tool", () => {
 			writeStatus(asyncRoot, "run-step-blocked", "running", {
 				sessionId: "sess-1",
 				pid: 999999,
-				steps: [{ agent: "worker", status: "running", activityState: "needs_attention" }],
+				steps: [{ agent: "builder", status: "running", activityState: "needs_attention" }],
 			});
 
 			let polls = 0;
@@ -310,7 +343,7 @@ describe("subagent_wait tool", () => {
 					cwd: root,
 					sessionId: "sess-1",
 					updatedAt: 1,
-					children: [{ agent: "reviewer", index: 0, status: "detached", updatedAt: 1 }],
+					children: [{ agent: "commentator", index: 0, status: "detached", updatedAt: 1 }],
 				}],
 				["foreground-other", {
 					runId: "foreground-other",
@@ -318,7 +351,7 @@ describe("subagent_wait tool", () => {
 					cwd: root,
 					sessionId: "sess-2",
 					updatedAt: 1,
-					children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 1 }],
+					children: [{ agent: "builder", index: 0, status: "detached", updatedAt: 1 }],
 				}],
 			]);
 			let polls = 0;
@@ -326,7 +359,7 @@ describe("subagent_wait tool", () => {
 				sleep: async () => {
 					polls += 1;
 					state.foregroundRuns!.get("foreground-alpha")!.children[0] = {
-						agent: "reviewer",
+						agent: "commentator",
 						index: 0,
 						status: "completed",
 						finalOutput: "Recovered review",
@@ -394,7 +427,7 @@ describe("subagent_wait tool", () => {
 				cwd: root,
 				sessionId: "sess-1",
 				updatedAt: 1,
-				children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 1 }],
+				children: [{ agent: "builder", index: 0, status: "detached", updatedAt: 1 }],
 			}]]);
 			const handlers = new Map<string, Array<(data: unknown) => void>>();
 			const events = {
@@ -447,14 +480,14 @@ describe("subagent_wait tool", () => {
 				cwd: root,
 				sessionId: "sess-1",
 				updatedAt: ts,
-				children: [{ agent: "worker", index: 0, status: "detached", transcriptPath, updatedAt: ts }],
+				children: [{ agent: "builder", index: 0, status: "detached", transcriptPath, updatedAt: ts }],
 			}]]);
 			const updates: string[] = [];
 			const result = await waitForSubagents({ id: "foreground-live" }, undefined, baseDeps(root, state, {
 				onUpdate: (update) => updates.push(textOf(update)),
 				sleep: async () => {
 					state.foregroundRuns!.get("foreground-live")!.children[0] = {
-						agent: "worker",
+						agent: "builder",
 						index: 0,
 						status: "completed",
 						finalOutput: "Implemented the renderer fix.",
@@ -467,7 +500,7 @@ describe("subagent_wait tool", () => {
 			assert.equal(result.isError, undefined);
 			assert.equal(updates.length, 1);
 			assert.match(updates[0]!, /Waiting for detached foreground run "foreground-live"/);
-			assert.match(updates[0]!, /worker · working after supervisor handoff/);
+			assert.match(updates[0]!, /builder · working after supervisor handoff/);
 			assert.match(updates[0]!, /current: edit: \{ path: src\/render\.ts \}/);
 			assert.match(updates[0]!, /assistant: I found the relevant renderer path\./);
 			assert.doesNotMatch(updates[0]!, /large delegated task/);
@@ -487,7 +520,7 @@ describe("subagent_wait tool", () => {
 					cwd: root,
 					sessionId: "sess-1",
 					updatedAt: 1,
-					children: [{ agent: "reviewer", index: 0, status: "detached", updatedAt: 1 }],
+					children: [{ agent: "commentator", index: 0, status: "detached", updatedAt: 1 }],
 				}]]);
 				const result = await waitForSubagents({ id: "foreground-still", timeoutMs: 5000 }, undefined, baseDeps(root, state, {
 					sleep: async () => {
@@ -516,7 +549,7 @@ describe("subagent_wait tool", () => {
 				cwd: root,
 				sessionId: "sess-1",
 				updatedAt: 1,
-				children: [{ agent: "reviewer", index: 0, status: "detached", updatedAt: 1 }],
+				children: [{ agent: "commentator", index: 0, status: "detached", updatedAt: 1 }],
 			}]]);
 
 			const result = await waitForSubagents({ id: "shared" }, undefined, baseDeps(root, state));

@@ -7,7 +7,7 @@ describe("workflow graph snapshots", () => {
 		const graph = buildWorkflowGraphSnapshot({
 			runId: "run-1",
 			steps: [
-				{ agent: "scout", task: "Scan", phase: "Research", label: "Find context", as: "context" },
+				{ agent: "explorer", task: "Scan", phase: "Research", label: "Find context", as: "context" },
 				{ agent: "writer", task: "Use {outputs.context}", phase: "Synthesis", outputSchema: { type: "object" } },
 			],
 			results: [{ exitCode: 0 }, { exitCode: 1, error: "bad output" }],
@@ -25,9 +25,9 @@ describe("workflow graph snapshots", () => {
 		]);
 	});
 
-	it("maps a long alternating worker and reviewer chain without losing indexes", () => {
+	it("maps a long alternating builder and commentator chain without losing indexes", () => {
 		const steps = Array.from({ length: 40 }, (_, index) => ({
-			agent: index % 2 === 0 ? "worker" : "reviewer",
+			agent: index % 2 === 0 ? "builder" : "commentator",
 			task: index === 0 ? "Start" : "{previous}",
 		}));
 		const results = steps.map(() => ({ exitCode: 0 }));
@@ -43,10 +43,10 @@ describe("workflow graph snapshots", () => {
 		assert.equal(graph.nodes[0]?.id, "step-0");
 		assert.equal(graph.nodes[0]?.flatIndex, 0);
 		assert.equal(graph.nodes[37]?.id, "step-37");
-		assert.equal(graph.nodes[37]?.agent, "reviewer");
+		assert.equal(graph.nodes[37]?.agent, "commentator");
 		assert.equal(graph.nodes[37]?.flatIndex, 37);
 		assert.equal(graph.nodes[39]?.id, "step-39");
-		assert.equal(graph.nodes[39]?.agent, "reviewer");
+		assert.equal(graph.nodes[39]?.agent, "commentator");
 		assert.equal(graph.nodes[39]?.flatIndex, 39);
 		assert.equal(graph.currentNodeId, "step-37");
 	});
@@ -58,7 +58,7 @@ describe("workflow graph snapshots", () => {
 				{ agent: "setup", task: "Setup" },
 				{
 					parallel: [
-						{ agent: "reviewer", label: "Correctness", phase: "Review", as: "correctness" },
+						{ agent: "commentator", label: "Correctness", phase: "Review", as: "correctness" },
 						{ agent: "security", label: "Security", phase: "Review", as: "security" },
 					],
 				},
@@ -107,7 +107,7 @@ describe("workflow graph snapshots", () => {
 	it("uses dynamic group status overrides for empty or aggregate-failure fanout states", () => {
 		const steps = [{
 			expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-			parallel: { agent: "reviewer", task: "Review {item}" },
+			parallel: { agent: "commentator", task: "Review {item}" },
 			collect: { as: "reviews" },
 		}];
 
@@ -123,7 +123,7 @@ describe("workflow graph snapshots", () => {
 		const collectFailure = buildWorkflowGraphSnapshot({
 			runId: "run-dynamic-collect-fail",
 			steps,
-			dynamicChildren: { 0: [{ agent: "reviewer", flatIndex: 0, itemKey: "a" }] },
+			dynamicChildren: { 0: [{ agent: "commentator", flatIndex: 0, itemKey: "a" }] },
 			results: [{ exitCode: 0 }],
 			dynamicGroupStatuses: { 0: { status: "failed", error: "Collected output validation failed" } },
 		});

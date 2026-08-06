@@ -26,7 +26,7 @@ const expectedHostPeerRanges = {
 const expectedHostDevVersions = {
 	"@earendil-works/pi-agent-core": "0.81.0",
 	"@earendil-works/pi-ai": "0.81.0",
-	"@selesai/code": "0.81.0",
+	"@selesai/code": "0.6.3",
 	"@earendil-works/pi-tui": "0.81.0",
 } satisfies Record<(typeof hostPeerPackages)[number], string>;
 
@@ -56,23 +56,40 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.deepEqual(packageJson.exports, {
 		".": "./index.ts",
 		"./background-work": "./src/api/background-work.ts",
+		"./external-runs": "./src/api/external-runs.ts",
 		"./capability-ceiling": "./src/api/capability-ceiling.ts",
 		"./delegation": "./src/api/delegation.ts",
 		"./preflight": "./src/api/preflight.ts",
+		"./control-channel": "./src/api/control-channel.ts",
+		"./intercom-bridge": "./src/api/intercom-bridge.ts",
+		"./pi-args": "./src/api/pi-args.ts",
+		"./shared-types": "./src/api/shared-types.ts",
 	});
 	const backgroundWork = await import("pi-subagents/background-work");
 	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
 	assert.equal(backgroundWork.BACKGROUND_WORK_REGISTRY_KEY, "pi-subagents.background-work.v1");
+	const externalRuns = await import("pi-subagents/external-runs");
+	assert.equal(externalRuns.EXTERNAL_RUN_REGISTRY_VERSION, 1);
+	assert.equal(typeof externalRuns.registerExternalRunProvider, "function");
 	const capability = await import("pi-subagents/capability-ceiling");
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_VERSION, 1);
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY, "pi-subagents.capability-ceiling.v1");
 	const delegation = await import("pi-subagents/delegation");
-	assert.equal(delegation.SUBAGENT_DELEGATION_PROTOCOL_VERSION, 1);
-	assert.equal(delegation.SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION, 2);
 	assert.equal(delegation.SUBAGENT_DELEGATION_REQUEST_EVENT, "prompt-template:subagent:request");
 	const preflight = await import("pi-subagents/preflight");
 	assert.equal(preflight.SUBAGENT_LAUNCH_CONTRACT_VERSION, 2);
 	assert.equal(typeof preflight.resolveSubagentLaunchContract, "function");
+	const controlChannel = await import("pi-subagents/control-channel");
+	assert.equal(typeof controlChannel.requestAsyncStop, "function");
+	const intercomBridge = await import("pi-subagents/intercom-bridge");
+	assert.equal(typeof intercomBridge.resolveIntercomSessionTarget, "function");
+	const piArgs = await import("pi-subagents/pi-args");
+	assert.equal(typeof piArgs.resolvePiLaunchToolPlan, "function");
+	assert.equal("buildPiArgs" in piArgs, false);
+	const sharedTypes = await import("pi-subagents/shared-types");
+	assert.equal(typeof sharedTypes.wrapForkTask, "function");
+	assert.equal(typeof sharedTypes.DEFAULT_FORK_PREAMBLE, "string");
+	assert.equal("TEMP_ROOT_DIR" in sharedTypes, false);
 });
 
 test("direct @earendil-works runtime imports are declared for CI installs", () => {

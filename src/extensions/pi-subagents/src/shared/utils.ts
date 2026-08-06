@@ -7,7 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { formatToolCall } from "./formatters.ts";
-import type { AgentProgress, AsyncStatus, ChainOutputMap, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
+import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
 
 // ============================================================================
 // File System Utilities
@@ -15,10 +15,6 @@ import type { AgentProgress, AsyncStatus, ChainOutputMap, Details, DisplayItem, 
 
 const DEFAULT_CONFIG_DIR_NAME = ".selesai";
 const PI_CODING_AGENT_PACKAGE_NAME = "@selesai/code";
-
-function stripThinkingTagsFromText(text: string): string {
-	return text.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/^<think>[\s\S]*$/, "");
-}
 export const SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV = "SELESAI_SUBAGENTS_SELESAI_PACKAGE_ROOT";
 
 export function resolveWatchPath(
@@ -260,7 +256,8 @@ export function findLatestSessionFile(sessionDir: string): string | null {
 			};
 		})
 		.sort((a, b) => b.mtime - a.mtime);
-	return files.length > 0 ? files[0].path : null;
+	const latest = files[0];
+	return latest ? latest.path : null;
 }
 
 /**
@@ -284,7 +281,7 @@ export function getFinalOutput(messages: Message[]): string {
 	const validTextParts: string[] = [];
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (msg.role !== "assistant") continue;
+		if (!msg || msg.role !== "assistant") continue;
 		const hasAssistantError = ("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0)
 			|| ("stopReason" in msg && msg.stopReason === "error");
 		if (hasAssistantError) continue;
@@ -294,7 +291,7 @@ export function getFinalOutput(messages: Message[]): string {
 			.join("\n");
 		for (let j = msg.content.length - 1; j >= 0; j--) {
 			const part = msg.content[j];
-			if (part.type !== "text" || part.text.trim().length === 0) continue;
+			if (!part || part.type !== "text" || part.text.trim().length === 0) continue;
 			validTextParts.push(part.text);
 			if (/```acceptance[-_]report\s*\n[\s\S]*?```/i.test(part.text)) return messageText;
 			for (const match of part.text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
@@ -414,40 +411,12 @@ export function compactForegroundResult(result: SingleResult): SingleResult {
 		messages: undefined,
 		progress: undefined,
 		toolCalls: toolCalls.length ? toolCalls : undefined,
-		// Reference-first terminal details: once an authoritative saved output path
-		// exists, drop the raw final output and truncation marker from the model-
-		// visible projection; consumers recover the file from `savedOutputPath`.
-		// Explicit `outputMode: "inline"` is the sole legacy full-text opt-out and
-		// keeps its final output in the terminal projection (e.g. delegation v1
-		// `response.output` stays populated).
-		finalOutput: result.savedOutputPath && result.outputMode !== "inline" ? undefined : result.finalOutput,
-		truncation: result.savedOutputPath && result.outputMode !== "inline" ? undefined : result.truncation,
 	};
-}
-
-/**
- * Strip chain `details.outputs` text/structured payloads from the terminal
- * projection while retaining the output names and step metadata. Chain output
- * bindings themselves remain reference-first in the completion content and
- * `{outputs.name}` interpolation (see outputEntryFromResult).
- */
-function compactChainOutputs(outputs: ChainOutputMap | undefined): ChainOutputMap | undefined {
-	if (!outputs) return undefined;
-	const compact: ChainOutputMap = {};
-	for (const [name, entry] of Object.entries(outputs)) {
-		compact[name] = {
-			agent: entry.agent,
-			stepIndex: entry.stepIndex,
-			text: "",
-		};
-	}
-	return compact;
 }
 
 export function compactForegroundDetails(details: Details): Details {
 	return {
 		...details,
-		outputs: compactChainOutputs(details.outputs),
 		results: details.results.map(compactForegroundResult),
 		progress: details.progress
 			? details.progress.map(compactCompletedProgress)
@@ -510,40 +479,25 @@ export function hasEmptyTerminalAssistantResponse(messages: Message[]): boolean 
  * Detect errors in subagent execution from messages (only errors with no subsequent success)
  */
 export function detectSubagentError(messages: Message[]): ErrorInfo {
-	let recoveryIndex = -1;
+	let lastAssistantTextIndex = -1;
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (msg.role === "assistant") {
+		if (msg?.role === "assistant") {
 			const hasText = Array.isArray(msg.content) && msg.content.some(
 				(c) => c.type === "text" && "text" in c && typeof c.text === "string" && c.text.trim().length > 0,
 			);
 			if (hasText) {
-				recoveryIndex = i;
+				lastAssistantTextIndex = i;
 				break;
 			}
 		}
 	}
 
-	const terminalAssistantIndex = messages.findLastIndex((message) => message.role === "assistant");
-	const terminalAssistant = messages[terminalAssistantIndex];
-	const cleanTerminalStop = terminalAssistant?.role === "assistant"
-		&& terminalAssistant.stopReason === "stop"
-		&& !terminalAssistant.errorMessage
-		&& !terminalAssistant.content.some((part) => part.type === "toolCall");
-	if (cleanTerminalStop) {
-		for (let i = terminalAssistantIndex - 1; i >= 0; i--) {
-			const msg = messages[i];
-			if (msg.role !== "toolResult") continue;
-			if (msg.isError !== true) recoveryIndex = Math.max(recoveryIndex, i);
-			break;
-		}
-	}
-
-	const scanStart = recoveryIndex >= 0 ? recoveryIndex + 1 : 0;
+	const scanStart = lastAssistantTextIndex >= 0 ? lastAssistantTextIndex + 1 : 0;
 
 	for (let i = messages.length - 1; i >= scanStart; i--) {
 		const msg = messages[i];
-		if (msg.role !== "toolResult") continue;
+		if (!msg || msg.role !== "toolResult") continue;
 		const toolName = "toolName" in msg && typeof msg.toolName === "string" ? msg.toolName : undefined;
 		const isError = "isError" in msg && msg.isError === true;
 
@@ -552,9 +506,10 @@ export function detectSubagentError(messages: Message[]): ErrorInfo {
 		const text = msg.content.find((c) => c.type === "text");
 		const details = text && "text" in text ? text.text : undefined;
 		const exitMatch = details?.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
+		const exitCodeText = exitMatch?.[1];
 		return {
 			hasError: true,
-			exitCode: exitMatch ? parseInt(exitMatch[1], 10) : 1,
+			exitCode: exitCodeText ? parseInt(exitCodeText, 10) : 1,
 			errorType: toolName || "tool",
 			details: details?.slice(0, 200),
 		};
@@ -626,8 +581,8 @@ export function extractToolArgsPreview(args: Record<string, unknown>): string {
  */
 export function extractTextFromContent(content: unknown): string {
 	if (!content) return "";
-	// Selesai normalizes providers that embed <think> blocks in text output.
-	if (typeof content === "string") return stripThinkingTagsFromText(content);
+	// Handle string content directly
+	if (typeof content === "string") return content;
 	// Handle array content
 	if (!Array.isArray(content)) return "";
 	const texts: string[] = [];
@@ -635,11 +590,7 @@ export function extractTextFromContent(content: unknown): string {
 		if (part && typeof part === "object") {
 			// Handle { type: "text", text: "..." }
 			if ("type" in part && part.type === "text" && "text" in part) {
-				const text = stripThinkingTagsFromText(String(part.text));
-				if (text) texts.push(text);
-			}
-			else if ("type" in part && part.type === "thinking") {
-				continue;
+				texts.push(String(part.text));
 			}
 			// Handle { type: "tool_result", content: "..." }
 			else if ("type" in part && part.type === "tool_result" && "content" in part) {
@@ -648,8 +599,7 @@ export function extractTextFromContent(content: unknown): string {
 			}
 			// Handle { text: "..." } without type
 			else if ("text" in part) {
-				const text = stripThinkingTagsFromText(String(part.text));
-				if (text) texts.push(text);
+				texts.push(String(part.text));
 			}
 		}
 	}

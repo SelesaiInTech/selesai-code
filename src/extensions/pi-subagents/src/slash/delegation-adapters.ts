@@ -1,52 +1,25 @@
 import {
-	SUBAGENT_DELEGATION_PROTOCOL_VERSION,
-	SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
-	type SubagentDelegationAcceptanceResult,
-	type SubagentDelegationEffectsResult,
-	type SubagentDelegationExecutionResult,
 	type SubagentDelegationRequest,
 	type SubagentDelegationResponse,
-	type SubagentDelegationReviewResult,
 	type SubagentDelegationStatus,
+	type SubagentDelegationThinking,
 	type SubagentDelegationUpdate,
-	type SubagentDelegationV2Request,
-	type SubagentDelegationV2Response,
-	type SubagentDelegationV2Thinking,
-	type SubagentDelegationV2Value,
-	type SubagentDelegationV2Update,
+	type SubagentDelegationValue,
 } from "../api/delegation.ts";
 import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, TurnBudgetConfig, Usage } from "../shared/types.ts";
-import { isAgentContractV1 } from "../runs/shared/agent-contract.ts";
 import { cloneJsonWithinByteLimit } from "./delegation-json.ts";
-
-export interface PromptTemplateDelegationTask {
-	agent: string;
-	task: string;
-	model?: string;
-	cwd?: string;
-}
-
-export interface PromptTemplateDelegationParallelResult {
-	agent: string;
-	messages: unknown[];
-	isError: boolean;
-	errorText?: string;
-}
 
 export interface PromptTemplateDelegationRequest {
 	requestId: string;
 	agent: string;
 	task: string;
-	tasks?: PromptTemplateDelegationTask[];
 	context: "fresh" | "fork";
 	model: string;
 	cwd: string;
-	worktree?: boolean;
 }
 
 export interface PromptTemplateDelegationResponse extends PromptTemplateDelegationRequest {
 	messages: unknown[];
-	parallelResults?: PromptTemplateDelegationParallelResult[];
 	contentText?: string;
 	isError: boolean;
 	errorText?: string;
@@ -82,11 +55,17 @@ export interface PromptTemplateDelegationUpdate {
 	taskProgress?: PromptTemplateDelegationTaskProgress[];
 }
 
+interface DelegationAcceptanceSnapshot {
+	status: string;
+	evidenceStatus?: string;
+	explicit?: boolean;
+}
+
 export interface PromptTemplateBridgeResult {
 	isError?: boolean;
 	content?: unknown;
 	details?: {
-		mode?: "single" | "parallel" | "chain" | "management";
+		mode?: "single" | "parallel" | "chain" | "workflow" | "management";
 		runId?: string;
 		timedOut?: boolean;
 		stopped?: boolean;
@@ -110,7 +89,7 @@ export interface PromptTemplateBridgeResult {
 			sessionFile?: string;
 			agentContract?: AgentContract;
 			execution?: ExecutionProjection;
-			acceptance?: SubagentDelegationAcceptanceResult;
+			acceptance?: DelegationAcceptanceSnapshot;
 			review?: ReviewProjection;
 			effects?: EffectsProjection;
 			usage?: Usage;
@@ -137,14 +116,12 @@ export interface PromptTemplateBridgeResult {
 export interface DelegatedSubagentExecutionParams {
 	agent?: string;
 	task?: string;
-	tasks?: PromptTemplateDelegationTask[];
 	context: "fresh" | "fork";
 	model?: string;
 	cwd: string;
-	worktree?: boolean;
 	timeoutMs?: number;
 	turnBudget?: TurnBudgetConfig;
-	/** Internal-only strict turn-boundary enforcement for versioned foreground delegation. */
+	/** Internal-only strict turn-boundary enforcement for structured foreground delegation. */
 	enforceHardTurnLimit?: boolean;
 	toolBudget?: ToolBudgetConfig;
 	skill?: string | string[] | boolean;
@@ -155,60 +132,31 @@ export interface DelegatedSubagentExecutionParams {
 	acceptance?: AcceptanceInput;
 	artifacts?: boolean;
 	/** Internal-only thinking override accepted by executeDelegated. */
-	delegatedThinkingOverride?: SubagentDelegationV2Thinking;
-	/** Internal-only V2 capability accepted and stripped by executeDelegated. */
+	delegatedThinkingOverride?: SubagentDelegationThinking;
+	/** Internal-only capability accepted and stripped by executeDelegated. */
 	delegatedAllowZeroToolBudget?: true;
 	async: false;
 	foregroundOnly: true;
 	clarify: false;
 }
 
-function parseDelegationTasks(tasks: unknown): PromptTemplateDelegationTask[] {
-	if (!Array.isArray(tasks)) return [];
-	const parsed: PromptTemplateDelegationTask[] = [];
-	for (const item of tasks) {
-		if (!item || typeof item !== "object") return [];
-		const value = item as Partial<PromptTemplateDelegationTask>;
-		if (typeof value.agent !== "string" || !value.agent.trim()) return [];
-		if (typeof value.task !== "string" || !value.task.trim()) return [];
-		const model = typeof value.model === "string" && value.model.trim().length > 0 ? value.model : undefined;
-		const cwd = typeof value.cwd === "string" && value.cwd.trim().length > 0 ? value.cwd : undefined;
-		parsed.push({
-			agent: value.agent,
-			task: value.task,
-			...(model ? { model } : {}),
-			...(cwd ? { cwd } : {}),
-		});
-	}
-	return parsed;
-}
-
 export function parsePromptTemplateRequest(data: unknown): PromptTemplateDelegationRequest | undefined {
 	if (!data || typeof data !== "object") return undefined;
-	const value = data as Partial<PromptTemplateDelegationRequest> & { tasks?: unknown };
+	const value = data as Partial<PromptTemplateDelegationRequest> & { tasks?: unknown; worktree?: unknown };
+	if (value.tasks !== undefined || value.worktree !== undefined) return undefined;
 	if (typeof value.requestId !== "string" || !value.requestId) return undefined;
+	if (typeof value.agent !== "string" || !value.agent) return undefined;
+	if (typeof value.task !== "string" || !value.task) return undefined;
 	if (typeof value.model !== "string" || !value.model) return undefined;
 	if (typeof value.cwd !== "string" || !value.cwd) return undefined;
 	if (value.context !== "fresh" && value.context !== "fork") return undefined;
-	const tasks = parseDelegationTasks(value.tasks);
-	const worktree = value.worktree === true ? true : undefined;
-	const hasSingle =
-		typeof value.agent === "string" &&
-		value.agent.length > 0 &&
-		typeof value.task === "string" &&
-		value.task.length > 0;
-	if (!hasSingle && tasks.length === 0) return undefined;
-
-	const fallbackTask = tasks[0];
 	return {
 		requestId: value.requestId,
-		agent: hasSingle ? value.agent! : fallbackTask!.agent,
-		task: hasSingle ? value.task! : fallbackTask!.task,
-		...(tasks.length > 0 ? { tasks } : {}),
+		agent: value.agent,
+		task: value.task,
 		context: value.context,
 		model: value.model,
 		cwd: value.cwd,
-		...(worktree ? { worktree } : {}),
 	};
 }
 
@@ -303,7 +251,7 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 				: undefined;
 		return {
 			index: entry.index,
-			agent: entry.agent ?? "builder",
+			agent: entry.agent ?? "explorer",
 			status: entry.status,
 			currentTool: entry.currentTool,
 			currentToolArgs: entry.currentToolArgs,
@@ -339,17 +287,6 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 }
 
 export function toLegacyExecutionParams(request: PromptTemplateDelegationRequest): DelegatedSubagentExecutionParams {
-	if (request.tasks && request.tasks.length > 0) {
-		return {
-			tasks: request.tasks,
-			context: request.context,
-			cwd: request.cwd,
-			worktree: request.worktree,
-			async: false,
-			foregroundOnly: true,
-			clarify: false,
-		};
-	}
 	return {
 		agent: request.agent,
 		task: request.task,
@@ -374,34 +311,6 @@ export function toSubagentDelegationExecutionParams(request: SubagentDelegationR
 		enforceHardTurnLimit: true,
 		toolBudget: request.toolBudget,
 		skill: request.skill,
-		output: request.output,
-		// v1 has no default for outputMode: preserve the legacy full-text contract by
-		// resolving an omitted outputMode to explicit inline (response.output stays
-		// populated). The model-facing tool's mode-dependent reference-first default
-		// (omitted outputMode -> file-only) is intentionally NOT applied here.
-		outputMode: request.outputMode ?? "inline",
-		outputSchema: request.outputSchema,
-		agentContract: request.agentContract,
-		acceptance: request.acceptance,
-		artifacts: request.artifacts,
-		async: false,
-		foregroundOnly: true,
-		clarify: false,
-	};
-}
-
-export function toSubagentDelegationV2ExecutionParams(request: SubagentDelegationV2Request): DelegatedSubagentExecutionParams {
-	return {
-		agent: request.agent,
-		task: request.task,
-		context: request.context,
-		cwd: request.cwd,
-		model: request.model,
-		timeoutMs: request.timeoutMs,
-		turnBudget: request.turnBudget,
-		enforceHardTurnLimit: true,
-		toolBudget: request.toolBudget,
-		skill: request.skill,
 		output: false,
 		...(request.result.kind === "structured" ? { outputSchema: request.result.schema } : {}),
 		acceptance: false,
@@ -414,33 +323,13 @@ export function toSubagentDelegationV2ExecutionParams(request: SubagentDelegatio
 	};
 }
 
-export function toSubagentDelegationUpdate(requestId: string, result: PromptTemplateBridgeResult): SubagentDelegationUpdate | undefined {
-	const legacy = toDelegationUpdate(requestId, result);
-	if (!legacy) return undefined;
-	return {
-		version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
-		requestId,
-		...(legacy.runId ? { runId: legacy.runId } : {}),
-		...(legacy.currentTool ? { currentTool: legacy.currentTool } : {}),
-		...(legacy.currentToolArgs ? { currentToolArgs: legacy.currentToolArgs } : {}),
-		...(legacy.recentOutput ? { recentOutput: legacy.recentOutput } : {}),
-		...(legacy.recentOutputLines ? { recentOutputLines: legacy.recentOutputLines } : {}),
-		...(legacy.recentTools ? { recentTools: legacy.recentTools } : {}),
-		...(legacy.model ? { model: legacy.model } : {}),
-		...(typeof legacy.toolCount === "number" ? { toolCount: legacy.toolCount } : {}),
-		...(typeof legacy.durationMs === "number" ? { durationMs: legacy.durationMs } : {}),
-		...(typeof legacy.tokens === "number" ? { tokens: legacy.tokens } : {}),
-	};
-}
-
-export function toSubagentDelegationV2Update(
-	request: SubagentDelegationV2Request,
+export function toSubagentDelegationUpdate(
+	request: SubagentDelegationRequest,
 	result: PromptTemplateBridgeResult,
-): SubagentDelegationV2Update | undefined {
+): SubagentDelegationUpdate | undefined {
 	const legacy = toDelegationUpdate(request.requestId, result);
 	if (!legacy) return undefined;
 	return {
-		version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
 		requestId: request.requestId,
 		ownerRunId: request.ownerRunId,
 		nodeId: request.nodeId,
@@ -468,66 +357,30 @@ function resolveSubagentDelegationStatus(
 	if (child?.structuredOutputFailed) return "structured_output_failed";
 	if (child?.turnBudgetExceeded) return "turn_budget_exhausted";
 	if (child?.toolBudgetBlocked) return "tool_budget_exhausted";
-	if (!isAgentContractV1(child.agentContract) && child?.acceptance?.status === "rejected" && child.acceptance.explicit) return "acceptance_failed";
+	if (child?.acceptance?.status === "rejected" && child.acceptance.explicit) return "acceptance_failed";
 	if (result.details?.stopped || child?.stopped || child?.interrupted) return "interrupted";
 	if (result.isError || child?.error || (typeof child?.exitCode === "number" && child.exitCode !== 0)) return "failed";
 	return "completed";
 }
 
+const MAX_RESULT_BYTES = 1024 * 1024;
+
 export function toSubagentDelegationResponse(
-	requestId: string,
+	request: SubagentDelegationRequest,
 	result: PromptTemplateBridgeResult,
 	aborted: boolean,
 ): SubagentDelegationResponse {
 	const child = result.details?.results?.[0];
 	const progress = child?.progressSummary ?? result.details?.progress?.[0];
-	const warnings = [child?.skillsWarning, child?.outputSaveError, child?.transcriptError]
-		.filter((warning): warning is string => typeof warning === "string" && warning.length > 0);
-	const status = resolveSubagentDelegationStatus(result, aborted);
-	const fallbackError = status === "failed" ? firstTextContent(result.content) : undefined;
-	return {
-		version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
-		requestId,
-		status,
-		...(child?.error || fallbackError ? { error: child?.error ?? fallbackError } : {}),
-		...(result.details?.runId ? { runId: result.details.runId } : {}),
-		...(child ? { childIndex: 0 } : {}),
-		...(child?.agent ? { agent: child.agent } : {}),
-		...(child?.model ? { model: child.model } : {}),
-		...(typeof child?.exitCode === "number" ? { exitCode: child.exitCode } : {}),
-		...(child?.execution ? { execution: child.execution as SubagentDelegationExecutionResult } : {}),
-		...(child?.finalOutput ? { output: child.finalOutput } : {}),
-		...(child?.savedOutputPath ? { outputPath: child.savedOutputPath } : {}),
-		...(child?.sessionFile ? { sessionFile: child.sessionFile } : {}),
-		...(child?.acceptance ? { acceptance: { status: child.acceptance.status, evidenceStatus: child.acceptance.evidenceStatus, explicit: child.acceptance.explicit } } : {}),
-		...(child?.review ? { review: child.review as SubagentDelegationReviewResult } : {}),
-		...(child?.effects ? { effects: child.effects as SubagentDelegationEffectsResult } : {}),
-		...(typeof child?.usage?.turns === "number" ? { turns: child.usage.turns } : {}),
-		...(typeof progress?.toolCount === "number" ? { toolCount: progress.toolCount } : {}),
-		...(typeof progress?.durationMs === "number" ? { durationMs: progress.durationMs } : {}),
-		...(typeof progress?.tokens === "number" ? { tokens: progress.tokens } : {}),
-		...(warnings.length > 0 ? { warnings } : {}),
-	};
-}
-
-const MAX_V2_RESULT_BYTES = 1024 * 1024;
-
-export function toSubagentDelegationV2Response(
-	request: SubagentDelegationV2Request,
-	result: PromptTemplateBridgeResult,
-	aborted: boolean,
-): SubagentDelegationV2Response {
-	const child = result.details?.results?.[0];
-	const progress = child?.progressSummary ?? result.details?.progress?.[0];
 	let status = resolveSubagentDelegationStatus(result, aborted);
 	let error = child?.error ?? (status === "failed" ? firstTextContent(result.content) : undefined);
-	let projectedResult: SubagentDelegationV2Value | undefined;
+	let projectedResult: SubagentDelegationValue | undefined;
 	if (status === "completed") {
 		if (request.result.kind === "text") {
 			if (typeof child?.finalOutput !== "string") {
 				status = "failed";
 				error = "Delegated subagent did not capture a text result.";
-			} else if (Buffer.byteLength(child.finalOutput, "utf8") > MAX_V2_RESULT_BYTES) {
+			} else if (Buffer.byteLength(child.finalOutput, "utf8") > MAX_RESULT_BYTES) {
 				status = "failed";
 				error = "Delegated text result exceeds 1 MiB when UTF-8 encoded.";
 			} else {
@@ -537,8 +390,8 @@ export function toSubagentDelegationV2Response(
 			status = "failed";
 			error = "Delegated subagent did not capture the requested structured result.";
 		} else {
-			const inspected = cloneJsonWithinByteLimit(child.structuredOutput, MAX_V2_RESULT_BYTES);
-			if (!inspected.ok) {
+			const inspected = cloneJsonWithinByteLimit(child.structuredOutput, MAX_RESULT_BYTES);
+			if (inspected.ok === false) {
 				status = "failed";
 				error = inspected.reason === "too_large"
 					? "Delegated structured result exceeds 1 MiB when encoded."
@@ -549,8 +402,8 @@ export function toSubagentDelegationV2Response(
 		}
 	}
 	const usage = child?.usage;
+	const childLaunchContractDigest = (child as { launchContractDigest?: string } | undefined)?.launchContractDigest;
 	return {
-		version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
 		requestId: request.requestId,
 		ownerRunId: request.ownerRunId,
 		nodeId: request.nodeId,
@@ -561,7 +414,7 @@ export function toSubagentDelegationV2Response(
 		...(child?.model ? { model: child.model } : {}),
 		...(child?.thinking ? { thinking: child.thinking } : {}),
 		...(typeof child?.exitCode === "number" ? { exitCode: child.exitCode } : {}),
-		...(child?.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
+		...(childLaunchContractDigest ? { launchContractDigest: childLaunchContractDigest } : {}),
 		...(projectedResult ? { result: projectedResult } : {}),
 		...(usage ? {
 			usage: {
@@ -584,28 +437,9 @@ export function toPromptTemplateResponse(
 ): PromptTemplateDelegationResponse {
 	const contentText = firstTextContent(result.content);
 	const messages = buildDelegationMessages(result.details?.results?.[0] ?? {}, contentText);
-	const parallelResults = request.tasks?.map<PromptTemplateDelegationParallelResult>((task, index) => {
-		const step = result.details?.results?.[index];
-		if (!step) {
-			return {
-				agent: task.agent,
-				messages: [],
-				isError: true,
-				errorText: "Missing result for delegated parallel task.",
-			};
-		}
-		const exitCode = typeof step.exitCode === "number" ? step.exitCode : undefined;
-		return {
-			agent: step.agent ?? task.agent,
-			messages: buildDelegationMessages(step),
-			isError: (exitCode !== undefined && exitCode !== 0) || !!step.error,
-			errorText: step.error || undefined,
-		};
-	});
 	return {
 		...request,
 		messages,
-		...(parallelResults ? { parallelResults } : {}),
 		...(contentText ? { contentText } : {}),
 		isError: result.isError === true,
 		errorText: result.isError ? contentText : undefined,

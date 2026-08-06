@@ -117,7 +117,7 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 		);
 	});
 
-	it("inherits the parent session model when the agent config sets model: false (delegate)", () => {
+	it("inherits the parent session model when the agent config sets model: false (explorer)", () => {
 		assert.equal(
 			resolveSubagentModelOverride(false, parentModel, availableModels),
 			"deepseek/deepseek-v4-flash",

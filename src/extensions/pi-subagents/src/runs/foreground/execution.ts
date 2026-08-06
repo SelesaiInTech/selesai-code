@@ -55,6 +55,7 @@ import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
+import { resolvePermissionRules } from "../shared/permissions.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
@@ -62,7 +63,7 @@ import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
 import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
-import { captureSingleOutputSnapshot, extractChildWrittenOutput, formatBoundedPersistenceFallback, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { captureSingleOutputSnapshot, extractChildWrittenOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	buildModelCandidates,
 	formatModelAttemptNote,
@@ -92,7 +93,7 @@ import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudget
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
-import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
 	acceptChildWatchdogEvent,
 	childWatchdogIsActive,
@@ -302,8 +303,12 @@ async function runSingleAttempt(
 			childIndex: options.index ?? 0,
 		})
 		: undefined;
+	const permissionRules = resolvePermissionRules(options.permissions, agent.permissions);
+	const permissionAuditPath = permissionRules && options.artifactsDir
+		? path.join(options.artifactsDir, "permission-audit", `${options.runId}-${options.index ?? 0}.jsonl`)
+		: undefined;
 	const { args, env: sharedEnv, tempDir, toolDiagnosticPath, runtimeAcknowledgedExtensionsPath, capabilityAudit } = buildPiArgs({
-		baseArgs: ["--offline", "--mode", "json", "-p"],
+		baseArgs: ["--mode", "json", "-p"],
 		task,
 		sessionEnabled: shared.sessionEnabled,
 		sessionDir: options.sessionDir,
@@ -334,6 +339,8 @@ async function runSingleAttempt(
 		structuredOutput: options.structuredOutput,
 		toolBudget: options.toolBudget,
 		allowZeroToolBudget: options.allowZeroToolBudget,
+		permissionRules,
+		permissionAuditPath,
 		childWatchdog,
 		waitToolEnabled: options.waitToolEnabled,
 		capabilityCeiling: options.capabilityCeiling,
@@ -1031,7 +1038,11 @@ async function runSingleAttempt(
 				protocolHardKillTimer.unref?.();
 			}
 		};
-		const stdoutReader = createBoundedLineReader({ onLine: processLine, onLimit: failProtocol });
+		const stdoutReader = createBoundedLineReader({
+			oversizedLineProjector: PI_AGGREGATE_EVENT_PROJECTOR,
+			onLine: processLine,
+			onLimit: failProtocol,
+		});
 		const stderrReader = createBoundedLineReader({
 			stream: "stderr",
 			maxPendingLineBytes: MAX_CHILD_STDERR_BYTES,
@@ -1229,6 +1240,7 @@ async function runSingleAttempt(
 
 	const acceptanceOutput = getFinalOutput(result.messages ?? []);
 	let fullOutput = stripAcceptanceReport(acceptanceOutput);
+	if (!fullOutput.trim() && result.structuredOutput !== undefined) fullOutput = JSON.stringify(result.structuredOutput, null, 2);
 	result.outputState = fullOutput.trim() || result.structuredOutput !== undefined ? "present" : "absent";
 	if (result.timedOut) {
 		const timeoutMessage = formatTimeoutMessage(options.timeoutMs ?? 0);
@@ -1282,12 +1294,7 @@ async function runSingleAttempt(
 			reason: "completion_guard",
 		}));
 	}
-		// Persist whenever an output path is configured and meaningful child output
-	// exists, not only for successful runs: failed children with output keep a
-	// readable result file and a saved-output reference instead of raw inline
-	// output. Synthetic failures without output (startup errors, empty responses)
-	// stay outputState "absent" and are not promoted to a bogus saved reference.
-	if (options.outputPath && (fullOutput.trim() || result.exitCode === 0)) {
+		if (options.outputPath && result.exitCode === 0) {
 			const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot);
 			fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
 			result.savedOutputPath = resolvedOutput.savedPath;
@@ -1300,18 +1307,9 @@ async function runSingleAttempt(
 		artifactOutputByResult.set(result, fullOutput);
 		acceptanceOutputByResult.set(result, acceptanceOutput);
 	result.outputMode = options.outputMode ?? "inline";
-	const hasSavedReference = result.savedOutputPath && result.outputReference ? true : false;
-	result.finalOutput = hasSavedReference && (options.outputMode === "file-only" || result.exitCode !== 0)
-		? result.outputReference!.message
-		: result.outputSaveError && options.outputPath
-			? formatBoundedPersistenceFallback({
-				error: result.outputSaveError,
-				outputPath: options.outputPath,
-				fullOutput,
-				exitCode: result.exitCode,
-				processError: result.error,
-			})
-			: fullOutput;
+	result.finalOutput = options.outputMode === "file-only" && result.savedOutputPath && result.outputReference
+		? result.outputReference.message
+		: fullOutput;
 	result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
 	if (options.onUpdate) {
 		const finalText = result.finalOutput || result.error || "(no output)";
@@ -1360,6 +1358,7 @@ async function runSyncCompletion(
 		assertAgentAllowedByCapabilityCeiling(agent.name, options.capabilityCeiling);
 	} catch (error) {
 		return withRunContext({
+			index: options.index ?? 0,
 			agent: agent.name,
 			task,
 			exitCode: 1,

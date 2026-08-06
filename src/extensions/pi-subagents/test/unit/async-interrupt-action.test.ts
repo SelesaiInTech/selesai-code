@@ -43,7 +43,7 @@ function createRunningAsync(state: SubagentState, runId: string, options: { trac
 		cwd: os.tmpdir(),
 		startedAt: 100,
 		lastUpdate: Date.now(),
-		steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+		steps: [{ agent: "builder", status: "running", startedAt: 100 }],
 	});
 	if (options.track !== false) {
 		state.asyncJobs.set(runId, {
@@ -51,7 +51,7 @@ function createRunningAsync(state: SubagentState, runId: string, options: { trac
 			asyncDir,
 			status: "running",
 			pid: 12345,
-			agents: ["worker"],
+			agents: ["builder"],
 			updatedAt: 100,
 		});
 	}
@@ -195,6 +195,28 @@ describe("async interrupt action", () => {
 			assert.match(text(result), new RegExp(`Interrupt requested for async run ${runId}`));
 			assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), true);
 			assert.deepEqual(kills, [{ pid: 12345, signal: 0 }, { pid: 12345, signal: process.platform === "win32" ? "SIGBREAK" : "SIGUSR2" }]);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("rejects interrupt for a running external CLI run without writing a pause request", async () => {
+		const state = createState();
+		const runId = `interrupt-external-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false });
+		const statusPath = path.join(asyncDir, "status.json");
+		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+		status.steps[0].runner = { type: "external-cli" };
+		fs.writeFileSync(statusPath, JSON.stringify(status), "utf-8");
+		try {
+			const result = await executorWithKill(state, () => {
+				throw new Error("external interrupt should not signal the runner");
+			}).execute("interrupt", { action: "interrupt", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /Interrupt is unsupported for one-shot external CLI async run/);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), false);
+			assert.equal(JSON.parse(fs.readFileSync(statusPath, "utf-8")).state, "running");
 		} finally {
 			cleanup(runId, asyncDir);
 		}

@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-	clearPendingForegroundControlNotices,
-	handleSubagentControlNotice,
-} from "../../src/extension/control-notices.ts";
+import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
 import type { ControlEvent, SubagentState } from "../../src/shared/types.ts";
 
 function makeState(): SubagentState {
@@ -13,7 +10,6 @@ function makeState(): SubagentState {
 		asyncJobs: new Map(),
 		foregroundControls: new Map(),
 		lastForegroundControlId: null,
-		pendingForegroundControlNotices: new Map(),
 		cleanupTimers: new Map(),
 		lastUiContext: null,
 		poller: null,
@@ -30,9 +26,9 @@ function needsAttentionEvent(overrides: Partial<ControlEvent> = {}): ControlEven
 		to: "needs_attention",
 		ts: 1,
 		runId: "run-1",
-		agent: "worker",
+		agent: "builder",
 		index: 0,
-		message: "worker needs attention",
+		message: "builder needs attention",
 		reason: "idle",
 		...overrides,
 	};
@@ -50,10 +46,6 @@ function makeRecorder() {
 	};
 }
 
-function wait(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 describe("subagent control notice delivery", () => {
 	it("delivers async needs-attention notices immediately", () => {
 		const state = makeState();
@@ -64,98 +56,40 @@ describe("subagent control notice delivery", () => {
 			state,
 			visibleControlNotices: new Set(),
 			details: { source: "async", event: needsAttentionEvent() },
-			foregroundDelayMs: 20,
 		});
 
 		assert.equal(recorder.sent.length, 1);
 		assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
 	});
 
-	it("queues foreground needs-attention notices until the same step is still actionable", async () => {
+	it("does not queue a foreground notice that Pi could flush after completion", () => {
 		const state = makeState();
 		state.foregroundControls.set("run-1", {
 			runId: "run-1",
-			mode: "chain",
+			mode: "parallel",
 			startedAt: 0,
 			updatedAt: 0,
-			currentAgent: "worker",
+			currentAgent: "builder",
 			currentIndex: 0,
 			currentActivityState: "needs_attention",
 		});
-		const recorder = makeRecorder();
+		const queued: Array<{ message: unknown; options: unknown }> = [];
+		const visible: Array<{ message: unknown; options: unknown }> = [];
+		const pi = {
+			sendMessage(message: unknown, options: unknown) {
+				queued.push({ message, options });
+			},
+		};
 
 		handleSubagentControlNotice({
-			pi: recorder.pi,
+			pi,
 			state,
 			visibleControlNotices: new Set(),
 			details: { source: "foreground", event: needsAttentionEvent() },
-			foregroundDelayMs: 10,
 		});
-
-		assert.equal(recorder.sent.length, 0);
-		await wait(25);
-		assert.equal(recorder.sent.length, 1);
-		assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: false });
-	});
-
-	it("drops queued foreground notices when the run finishes before delivery", async () => {
-		const state = makeState();
-		state.foregroundControls.set("run-1", {
-			runId: "run-1",
-			mode: "chain",
-			startedAt: 0,
-			updatedAt: 0,
-			currentAgent: "worker",
-			currentIndex: 0,
-			currentActivityState: "needs_attention",
-		});
-		const recorder = makeRecorder();
-
-		handleSubagentControlNotice({
-			pi: recorder.pi,
-			state,
-			visibleControlNotices: new Set(),
-			details: { source: "foreground", event: needsAttentionEvent() },
-			foregroundDelayMs: 20,
-		});
-		clearPendingForegroundControlNotices(state, "run-1");
 		state.foregroundControls.delete("run-1");
+		visible.push(...queued);
 
-		await wait(35);
-		assert.equal(recorder.sent.length, 0);
-	});
-
-	it("drops queued foreground notices after the chain advances to another step", async () => {
-		const state = makeState();
-		state.foregroundControls.set("run-1", {
-			runId: "run-1",
-			mode: "chain",
-			startedAt: 0,
-			updatedAt: 0,
-			currentAgent: "worker",
-			currentIndex: 0,
-			currentActivityState: "needs_attention",
-		});
-		const recorder = makeRecorder();
-
-		handleSubagentControlNotice({
-			pi: recorder.pi,
-			state,
-			visibleControlNotices: new Set(),
-			details: { source: "foreground", event: needsAttentionEvent() },
-			foregroundDelayMs: 10,
-		});
-		state.foregroundControls.set("run-1", {
-			runId: "run-1",
-			mode: "chain",
-			startedAt: 0,
-			updatedAt: 0,
-			currentAgent: "writer",
-			currentIndex: 1,
-			currentActivityState: undefined,
-		});
-
-		await wait(25);
-		assert.equal(recorder.sent.length, 0);
+		assert.deepEqual(visible, []);
 	});
 });

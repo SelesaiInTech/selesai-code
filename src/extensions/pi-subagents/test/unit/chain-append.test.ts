@@ -44,13 +44,13 @@ describe("chain append requests", () => {
 				startedAt: 100,
 				lastUpdate: 100,
 				chainStepCount: 1,
-				steps: [{ agent: "scout", status: "running" }],
+				steps: [{ agent: "explorer", status: "running" }],
 			});
 
 			const result = enqueueChainAppendRequest({
 				asyncDir,
 				runId: "run-a",
-				steps: [runnerStep("worker")],
+				steps: [runnerStep("builder")],
 				now: 200,
 			});
 
@@ -80,15 +80,15 @@ describe("chain append requests", () => {
 				mode: "chain",
 				state: "running",
 				startedAt: 100,
-				steps: [{ agent: "scout", status: "running" }],
+				steps: [{ agent: "explorer", status: "running" }],
 			});
 			enqueueChainAppendRequest({
 				asyncDir,
 				runId: "run-pending",
 				steps: [{
 					parallel: [
-						{ ...runnerStep("worker"), outputName: "draft" },
-						{ ...runnerStep("reviewer"), outputName: "review" },
+						{ ...runnerStep("builder"), outputName: "draft" },
+						{ ...runnerStep("commentator"), outputName: "review" },
 					],
 				}],
 				now: 200,
@@ -113,10 +113,10 @@ describe("chain append requests", () => {
 				mode: "chain",
 				state: "complete",
 				startedAt: 100,
-				steps: [{ agent: "scout", status: "complete" }],
+				steps: [{ agent: "explorer", status: "complete" }],
 			});
 			assert.throws(
-				() => enqueueChainAppendRequest({ asyncDir: completeDir, runId: "complete", steps: [runnerStep("worker")] }),
+				() => enqueueChainAppendRequest({ asyncDir: completeDir, runId: "complete", steps: [runnerStep("builder")] }),
 				/only running chain runs/,
 			);
 
@@ -126,10 +126,10 @@ describe("chain append requests", () => {
 				mode: "parallel",
 				state: "running",
 				startedAt: 100,
-				steps: [{ agent: "scout", status: "running" }],
+				steps: [{ agent: "explorer", status: "running" }],
 			});
 			assert.throws(
-				() => enqueueChainAppendRequest({ asyncDir: parallelDir, runId: "parallel", steps: [runnerStep("worker")] }),
+				() => enqueueChainAppendRequest({ asyncDir: parallelDir, runId: "parallel", steps: [runnerStep("builder")] }),
 				/only active chain runs/,
 			);
 
@@ -139,10 +139,10 @@ describe("chain append requests", () => {
 				mode: "chain",
 				state: "running",
 				startedAt: 100,
-				steps: [{ agent: "scout", status: "complete" }],
+				steps: [{ agent: "explorer", status: "complete" }],
 			});
 			assert.throws(
-				() => enqueueChainAppendRequest({ asyncDir: drainedDir, runId: "drained", steps: [runnerStep("worker")] }),
+				() => enqueueChainAppendRequest({ asyncDir: drainedDir, runId: "drained", steps: [runnerStep("builder")] }),
 				/no running or pending chain steps left/,
 			);
 		} finally {
@@ -158,7 +158,7 @@ describe("chain append requests", () => {
 			startedAt: 100,
 			currentStep: 0,
 			chainStepCount: 1,
-			steps: [{ agent: "scout", status: "complete" }],
+			steps: [{ agent: "explorer", status: "complete" }],
 			parallelGroups: [],
 			workflowGraph: {
 				runId: "run-graph",
@@ -167,8 +167,8 @@ describe("chain append requests", () => {
 				nodes: [{
 					id: "step-0",
 					kind: "step",
-					agent: "scout",
-					label: "scout",
+					agent: "explorer",
+					label: "explorer",
 					status: "completed",
 					flatIndex: 0,
 					stepIndex: 0,
@@ -176,10 +176,10 @@ describe("chain append requests", () => {
 			},
 		};
 		const appended: RunnerStep[] = [
-			runnerStep("worker"),
+			runnerStep("builder"),
 			{
 				parallel: [
-					runnerStep("reviewer"),
+					runnerStep("commentator"),
 					runnerStep("auditor"),
 				],
 				concurrency: 2,
@@ -193,9 +193,9 @@ describe("chain append requests", () => {
 		assert.equal(status.pendingAppends, 0);
 		assert.equal(status.lastUpdate, 300);
 		assert.deepEqual(status.steps?.map((step) => `${step.agent}:${step.status}`), [
-			"scout:complete",
-			"worker:pending",
-			"reviewer:pending",
+			"explorer:complete",
+			"builder:pending",
+			"commentator:pending",
 			"auditor:pending",
 		]);
 		// Appended steps must carry their own bounded task description for fleet display.

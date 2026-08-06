@@ -44,16 +44,16 @@ describe("SELESAI_SUBAGENT_EXTRA_AGENT_DIRS discovery", () => {
 
 	it("discovers agents from the env-provided dirs as a 'user' source", () => {
 		const bundledDir = path.join(tempDir, "store", "agents");
-		const bundledAgent = writeAgent(bundledDir, "bundled-reviewer");
+		const bundledAgent = writeAgent(bundledDir, "bundled-commentator");
 		process.env[EXTRA_AGENT_DIRS_ENV] = bundledDir;
 
 		const scoped = discoverAgents(cwd, "user");
-		const found = scoped.agents.find((agent) => agent.name === "bundled-reviewer");
+		const found = scoped.agents.find((agent) => agent.name === "bundled-commentator");
 		assert.ok(found, "expected bundled agent under 'user' scope");
 		assert.equal(found?.filePath, bundledAgent);
 
 		const all = discoverAgentsAll(cwd);
-		assert.ok(all.user.find((agent) => agent.name === "bundled-reviewer" && agent.filePath === bundledAgent));
+		assert.ok(all.user.find((agent) => agent.name === "bundled-commentator" && agent.filePath === bundledAgent));
 	});
 
 	it("scans every directory listed (PATH-style delimiter)", () => {

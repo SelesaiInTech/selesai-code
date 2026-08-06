@@ -1,8 +1,13 @@
+export type ResolvedRunnerConfig = import("../../shared/types.ts").AgentRunnerConfig;
+
 export interface RunnerSubagentStep {
 	/** Session id of the direct parent session for permission-system ask forwarding. */
 	parentSessionId?: string;
+	/** Resolved opt-in rules for native Pi child tool calls. */
+	permissionRules?: import("./permissions.ts").PermissionRules;
 	agent: string;
 	task: string;
+	runner?: ResolvedRunnerConfig;
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	importAsyncRoot?: {
@@ -86,6 +91,8 @@ export interface DynamicRunnerGroup {
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
 	agentContract?: import("../../shared/types.ts").AgentContract;
 	gateOn?: import("../../shared/types.ts").ChainGateLayer;
+	capabilityCeiling?: import("./capability-ceiling.ts").ResolvedSubagentCapabilityCeiling;
+	capabilityAudit?: import("./capability-ceiling.ts").SubagentCapabilityAudit;
 }
 
 export type RunnerStep = RunnerSubagentStep | ParallelStepGroup | DynamicRunnerGroup | RunnerCheckpointStep;
@@ -178,15 +185,17 @@ export async function mapConcurrent<T, R>(
 		try {
 			while (next < items.length) {
 				const i = next++;
+				if (!(i in items)) throw new Error(`Missing parallel item at index ${i}`);
+				const item = items[i] as T;
 				if (globalSemaphore) {
 					await globalSemaphore.acquire();
 					try {
-						results[i] = await fn(items[i], i);
+						results[i] = await fn(item, i);
 					} finally {
 						globalSemaphore.release();
 					}
 				} else {
-					results[i] = await fn(items[i], i);
+					results[i] = await fn(item, i);
 				}
 			}
 		} finally {

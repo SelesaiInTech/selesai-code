@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type ChainCheckpointState } from "../../shared/types.ts";
+import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type ChainCheckpointState } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
@@ -108,12 +108,17 @@ export interface AsyncRunSummary {
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
+	parentWorkflowRunId?: string;
+	workflowKey?: string;
+	workflow?: Details["workflow"];
 }
 
 interface AsyncRunListOptions {
 	states?: Array<AsyncRunSummary["state"]>;
 	sessionId?: string;
 	limit?: number;
+	/** Limits status-file reads after candidates are ordered by status mtime. */
+	entryLimit?: number;
 	resultsDir?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
@@ -321,6 +326,9 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		...(status.runtimeAcknowledgedExtensions ? { runtimeAcknowledgedExtensions: status.runtimeAcknowledgedExtensions } : {}),
 		...(status.capabilityCeiling ? { capabilityCeiling: status.capabilityCeiling } : {}),
 		...(status.capabilityAudit ? { capabilityAudit: status.capabilityAudit } : {}),
+		...(status.parentWorkflowRunId ? { parentWorkflowRunId: status.parentWorkflowRunId } : {}),
+		...(status.workflowKey ? { workflowKey: status.workflowKey } : {}),
+		...(status.workflow ? { workflow: status.workflow } : {}),
 		...(status.sessionDir ? { sessionDir: status.sessionDir } : {}),
 		...(status.outputFile ? { outputFile: status.outputFile } : {}),
 		...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
@@ -343,6 +351,7 @@ function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
 			case "stopped": return 2;
 			case "paused": return 2;
 			case "complete": return 3;
+			default: return 4;
 		}
 	};
 	return [...runs].sort((a, b) => {
@@ -375,6 +384,25 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		throw new Error(`Failed to list async runs in '${asyncDirRoot}': ${getErrorMessage(error)}`, {
 			cause: error instanceof Error ? error : undefined,
 		});
+	}
+
+	if (options.entryLimit !== undefined) {
+		const limit = Math.max(0, Math.floor(options.entryLimit));
+		entries = entries
+			.map((entry) => {
+				try {
+					return { entry, mtimeMs: fs.statSync(path.join(asyncDirRoot, entry, "status.json")).mtimeMs };
+				} catch (error) {
+					if (isNotFoundError(error)) return undefined;
+					throw new Error(`Failed to inspect async status file for '${entry}': ${getErrorMessage(error)}`, {
+						cause: error instanceof Error ? error : undefined,
+					});
+				}
+			})
+			.filter((candidate): candidate is { entry: string; mtimeMs: number } => candidate !== undefined)
+			.sort((left, right) => right.mtimeMs - left.mtimeMs)
+			.slice(0, limit)
+			.map((candidate) => candidate.entry);
 	}
 
 	const allowedStates = options.states ? new Set(options.states) : undefined;

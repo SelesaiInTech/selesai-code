@@ -170,12 +170,13 @@ function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCom
 	if (items.length === 0) return true;
 	const details = items.map((item) => item.details);
 	const content = details.length === 1 ? formatSingleCompletion(details[0]!) : formatGroupedCompletion(details);
+	const display = details.some((detail) => detail.source === "foreground" || detail.status !== "completed");
 	try {
 		pi.sendMessage(
 			{
 				customType: "subagent-notify",
 				content,
-				display: true,
+				display,
 			},
 			{ triggerTurn: items.some((item) => item.triggerTurn) },
 		);
@@ -190,32 +191,6 @@ function completionBatchKey(result: CompletionNotification): string {
 	if (sessionId) return `session:${sessionId}`;
 	const cwd = typeof result.cwd === "string" ? result.cwd.trim() : "";
 	return cwd ? `cwd:${cwd}` : "unknown";
-}
-
-/**
- * Reference-first notification preview: compact child summaries built by the
- * result watcher from each child's authoritative output path/log. Never uses
- * `results[].output` or the run-level `summary` as parent-facing text; the run
- * summary remains only a defensive fallback for legacy payloads without results.
- */
-function buildReferenceFirstPreview(result: CompletionNotification): string {
-	const children = Array.isArray(result.results) ? result.results : [];
-	if (children.length === 0) {
-		return typeof result.summary === "string" ? result.summary : "";
-	}
-	if (children.length === 1) {
-		const childSummary = typeof children[0]?.summary === "string" && children[0].summary.trim()
-			? children[0].summary
-			: "(no output)";
-		return childSummary;
-	}
-	return children.map((child, index) => {
-		const agentLabel = typeof child?.agent === "string" ? child.agent : `step-${index + 1}`;
-		const childSummary = typeof child?.summary === "string" && child.summary.trim()
-			? child.summary
-			: "(no output)";
-		return `${index + 1}. ${agentLabel}\n${childSummary}`;
-	}).join("\n\n");
 }
 
 export function buildCompletionDetails(result: CompletionNotification): SubagentNotifyDetails {
@@ -255,7 +230,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		status,
 		...(result.source ? { source: result.source } : {}),
 		...(taskInfo ? { taskInfo } : {}),
-		resultPreview: buildReferenceFirstPreview(result),
+		resultPreview: summary,
 		...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
 		...(handoffPath ? { handoffPath } : {}),
 		...(session ? { sessionLabel: session.label, sessionValue: session.value } : {}),

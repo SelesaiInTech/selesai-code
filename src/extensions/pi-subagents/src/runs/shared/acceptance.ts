@@ -22,7 +22,7 @@ import type {
 	SubagentRunMode,
 } from "../../shared/types.ts";
 import { isAgentContractV1 } from "./agent-contract.ts";
-import { classifyTaskMutationIntent, resolveAgentRoutingRole, taskMayMutate } from "./task-intent.ts";
+import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
 
 const LEVEL_RANK: Record<Exclude<AcceptanceLevel, "auto">, number> = {
 	none: 0,
@@ -50,7 +50,7 @@ const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "criteria", "evidence", "verify
 const ACCEPTANCE_GATE_KEYS = new Set(["id", "must", "evidence", "severity"]);
 const ACCEPTANCE_VERIFY_KEYS = new Set(["id", "command", "timeoutMs", "cwd", "env", "allowFailure"]);
 const ACCEPTANCE_REVIEW_KEYS = new Set(["agent", "focus", "required"]);
-const EXPLICIT_REVIEWED_UNAVAILABLE = "is an achieved status, not a requestable acceptance level. For a read-only reviewer call, omit acceptance. To require independent review of a writer result, use acceptance.review.required and orchestrate the reviewer separately.";
+const EXPLICIT_REVIEWED_UNAVAILABLE = "is an achieved status, not a requestable acceptance level. For a read-only commentator call, omit acceptance. To require independent review of a writer result, use acceptance.review.required and orchestrate the commentator separately.";
 
 function normalizeLevel(level: AcceptanceLevel | undefined): Exclude<AcceptanceLevel, "auto"> | "auto" {
 	return level ?? "auto";
@@ -82,21 +82,25 @@ function inferLevel(input: {
 	dynamic?: boolean;
 	dynamicGroup?: boolean;
 }): { level: Exclude<AcceptanceLevel, "auto">; reasons: string[]; criteria: string[]; evidence: AcceptanceEvidenceKind[]; review?: { agent?: string; required?: boolean } } {
+	const agent = input.agentName.toLowerCase();
 	const task = input.task?.toLowerCase() ?? "";
 	const reasons: string[] = [];
 	// Declared roles replace name heuristics, so use the full writer grammar to detect explicit mutation independently of the actual agent name.
-	const intent = classifyTaskMutationIntent(input.acceptanceRole ? "builder" : input.agentName, input.task ?? "");
-	const readOnlyTask = intent.kind === "read-only"
-		|| (intent.kind === "unknown" && /\b(?:read[- ]only|review[- ]only|no edits|without edits|inspect|summari[sz]e)\b/.test(task));
+	const intent = classifyTaskMutationIntent(input.acceptanceRole ? "worker" : input.agentName, input.task ?? "");
+	const taskMutation = taskMayMutate(input.task ?? "");
+	const reviewerStyleAgent = /\b(?:commentator|reviewer|oracle|advisor)\b/.test(agent);
+	const readOnlyTask = (intent.kind === "read-only" && (!taskMutation || reviewerStyleAgent))
+		|| (intent.kind === "unknown" && !taskMutation && /\b(?:read[- ]only|review[- ]only|no edits|without edits|inspect|summari[sz]e)\b/.test(task));
 	const rolePatchTask = input.acceptanceRole !== undefined
 		&& intent.kind !== "read-only"
 		&& !/\b(?:do not|don't|must not)\s+patch\b/.test(task)
 		&& /\bpatch\s+(?:(?:\.{0,2}[\\/])?(?:[\w.-]+[\\/])+[\w.-]+|[\w.-]+\.[a-z0-9]+\b|(?:the\s+)?parser\b)/.test(task);
-	const taskMayWrite = readOnlyTask ? false : taskMayMutate(input.task ?? "") || intent.kind === "implementation" || rolePatchTask;
-	const routingRole = resolveAgentRoutingRole(input.agentName, input.acceptanceRole);
-	const readOnlyAgent = routingRole === "read-only";
+	const taskMayWrite = readOnlyTask ? false : taskMutation || intent.kind === "implementation" || rolePatchTask;
+	const readOnlyAgent = input.acceptanceRole === "read-only"
+		|| (input.acceptanceRole === undefined && /\b(?:commentator|architect|explorer|recapper|researcher|reviewer|oracle|scout|context-builder|analyst)\b/.test(agent));
 	const writeTask = taskMayWrite
-		|| (routingRole === "writer" && !readOnlyTask);
+		|| (input.acceptanceRole === "writer" && !readOnlyTask)
+		|| (input.acceptanceRole === undefined && /\b(?:builder|worker)\b/.test(agent) && !readOnlyTask);
 	const inferredReadOnly = readOnlyTask || (input.acceptanceRole === "read-only" && !taskMayWrite);
 	const roleResolvesReadOnly = input.acceptanceRole !== undefined && inferredReadOnly;
 	const keywordRiskReadOnly = input.acceptanceRole === undefined ? intent.kind === "read-only" : inferredReadOnly;
@@ -117,7 +121,7 @@ function inferLevel(input: {
 		};
 	}
 	if (writeTask && !readOnlyTask) {
-		reasons.push(input.acceptanceRole === "writer" && !taskMayWrite ? "declared writer acceptance role" : "write-capable worker/task");
+		reasons.push(input.acceptanceRole === "writer" && !taskMayWrite ? "declared writer acceptance role" : "write-capable builder/task");
 		return {
 			level: "checked",
 			reasons,
@@ -126,7 +130,7 @@ function inferLevel(input: {
 		};
 	}
 	if (readOnlyAgent || readOnlyTask) {
-		reasons.push(input.acceptanceRole === "read-only" && !readOnlyTask ? "declared read-only acceptance role" : readOnlyAgent ? "read-only/reviewer-style agent" : "read-only task wording");
+		reasons.push(input.acceptanceRole === "read-only" && !readOnlyTask ? "declared read-only acceptance role" : readOnlyAgent ? "read-only/commentator-style agent" : "read-only task wording");
 		return {
 			level: "attested",
 			reasons,
@@ -167,6 +171,7 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 		if (input === "reviewed") errors.push(`${pathLabel} ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
 		else if (!VALID_LEVELS.has(input as AcceptanceLevel)) errors.push(`${pathLabel} has invalid level '${input}'.`);
 		else if (input === "none") errors.push(`${pathLabel} level "none" requires a reason; use { level: "none", reason: "..." }.`);
+		else if (input === "verified") errors.push(`${pathLabel} level "verified" requires object form with at least one verify command.`);
 		return errors;
 	}
 	if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -230,7 +235,11 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	} else if (value.evidence !== undefined) {
 		errors.push(`${pathLabel}.evidence must be an array. ${ACCEPTANCE_EVIDENCE_HELP}`);
 	}
-	if (value.verify !== undefined && !Array.isArray(value.verify)) errors.push(`${pathLabel}.verify must be an array.`);
+	if (value.level === "verified" && (!Array.isArray(value.verify) || value.verify.length === 0)) {
+		errors.push(`${pathLabel}.verify must contain at least one command when level is verified.`);
+	} else if (value.verify !== undefined && !Array.isArray(value.verify)) {
+		errors.push(`${pathLabel}.verify must be an array.`);
+	}
 	if (Array.isArray(value.verify)) {
 		for (const [index, command] of value.verify.entries()) {
 			if (!command || typeof command !== "object" || Array.isArray(command)) {
@@ -309,7 +318,7 @@ export function validateExecutionAcceptance(input: {
 }
 
 function normalizeCriteria(criteria: Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined, evidence: AcceptanceEvidenceKind[]): ResolvedAcceptanceGate[] {
-	return (criteria ?? []).map((criterion, index) => {
+	return (criteria ?? []).map((criterion, index): ResolvedAcceptanceGate => {
 		if (typeof criterion === "string") {
 			return { id: `criterion-${index + 1}`, must: criterion, evidence, severity: "required" };
 		}
@@ -403,7 +412,7 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, opt
 		lines.push("", "Runtime verification commands configured by parent:");
 		for (const command of acceptance.verify) lines.push(`- ${command.id}: ${command.command}`);
 	}
-	if (acceptance.review && acceptance.review !== false) {
+	if (acceptance.review) {
 		lines.push("", `Review gate: ${acceptance.review.required === false ? "optional" : "required"}${acceptance.review.agent ? ` by ${acceptance.review.agent}` : ""}.`);
 		if (acceptance.review.focus) lines.push(`Review focus: ${acceptance.review.focus}`);
 	}
@@ -648,6 +657,21 @@ function parseAcceptanceReportBody(body: string): { report?: AcceptanceReport; e
 	return validateAcceptanceReport(parseReportJson(body));
 }
 
+function parseUnterminatedAcceptanceReportFence(output: string): { report?: AcceptanceReport; error?: string } {
+	const opener = /```acceptance[-_]report\b[^\n]*\n/gi.exec(output);
+	if (!opener) return {};
+	const bodyStart = opener.index + opener[0].length;
+	if (output.indexOf("```", bodyStart) !== -1) return {};
+	try {
+		const validation = validateAcceptanceReport(JSON.parse(output.slice(bodyStart).trim()) as unknown);
+		return validation.report
+			? { report: validation.report }
+			: { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}` };
+	} catch (error) {
+		return { error: `Failed to parse acceptance-report: ${error instanceof Error ? error.message : String(error)}` };
+	}
+}
+
 function parseGenericJsonAcceptanceReportBody(body: string): { report?: AcceptanceReport; error?: string } {
 	const parsed = parseReportJson(body);
 	const normalized = normalizeAcceptanceReportValue(parsed);
@@ -679,6 +703,8 @@ export function parseAcceptanceReport(output: string): { report?: AcceptanceRepo
 	}
 	if (parseErrors.length > 0) return { error: `Failed to parse acceptance-report: ${parseErrors.join("; ")}` };
 	if (explicitFencePresent) {
+		const recovered = parseUnterminatedAcceptanceReportFence(output);
+		if (recovered.report || recovered.error) return recovered;
 		return { error: "Failed to parse acceptance-report: Empty or unterminated acceptance-report fence." };
 	}
 	for (const body of fencedBlocks(output, "(?:json|jsonc|json5)")) {
@@ -901,7 +927,7 @@ function reportEvidenceStatus(report: AcceptanceReport, kind: AcceptanceEvidence
 }
 
 function checkNoStagedFiles(cwd: string): AcceptanceRuntimeCheck {
-	const result = spawnSync("git", ["status", "--short"], { cwd, encoding: "utf-8" });
+	const result = spawnSync("git", ["status", "--short"], { cwd, encoding: "utf-8", windowsHide: true });
 	if (result.status !== 0) {
 		return { id: "no-staged-files", status: "not-applicable", message: "git status unavailable; no staged-files check skipped" };
 	}
@@ -940,7 +966,7 @@ function uniqueStrings(items: Array<string | undefined>): string[] {
 }
 
 export function aggregateAcceptanceReport(input: {
-	results: Array<Pick<SingleResult, "agent" | "acceptance" | "error" | "exitCode">>;
+	results: Array<Pick<SingleResult, "agent" | "acceptance" | "error"> & { exitCode: number | null }>;
 	notes?: string;
 }): AcceptanceReport {
 	const childReports = input.results.map((result) => result.acceptance?.childReport).filter((report): report is AcceptanceReport => Boolean(report));
@@ -950,7 +976,7 @@ export function aggregateAcceptanceReport(input: {
 		criteriaSatisfied: [
 			{ id: "criterion-1", status: successfulChildren ? "satisfied" : "not-satisfied", evidence: successfulChildren ? `All ${input.results.length} dynamic child run(s) completed without child or acceptance blockers.` : "Dynamic fanout produced no accepted child evidence." },
 			{ id: "criterion-2", status: successfulChildren ? "satisfied" : "not-satisfied", evidence: successfulChildren ? "Collected child acceptance evidence for aggregate review." : "Dynamic fanout produced no aggregate review evidence." },
-			...input.results.map((result, index) => ({
+			...input.results.map((result, index): { id?: string; status: "satisfied" | "not-satisfied" | "not-applicable"; evidence: string } => ({
 				id: `child-${index + 1}`,
 				status: result.exitCode === 0 && result.acceptance?.status !== "rejected" ? "satisfied" : "not-satisfied",
 				evidence: `${result.agent}: acceptance ${result.acceptance?.status ?? "unreported"}${result.error ? ` (${result.error})` : ""}`,
@@ -1146,7 +1172,7 @@ export async function evaluateAcceptance(input: {
 		ledger.evidenceStatus = ledger.status;
 	}
 
-	if (acceptance.review && acceptance.review !== false) {
+	if (acceptance.review) {
 		if (input.reviewResult?.status === "reviewed") {
 			ledger.reviewResult = input.reviewResult;
 			ledger.status = "reviewed";

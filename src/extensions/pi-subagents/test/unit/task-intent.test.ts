@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { classifyTaskMutationIntent, expectsImplementationMutation, resolveAgentRoutingRole, taskMayMutate } from "../../src/runs/shared/task-intent.ts";
+import { classifyTaskMutationIntent, expectsImplementationMutation, taskMayMutate } from "../../src/runs/shared/task-intent.ts";
 
 describe("classifyTaskMutationIntent", () => {
 	it("keeps write imperatives despite investigative wording", () => {
@@ -38,9 +38,7 @@ describe("classifyTaskMutationIntent", () => {
 		assert.equal(classifyTaskMutationIntent("builder", "Do not edit files. Tell me how to fix the bug.").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("builder", "Report on the extraction pipeline. Do not modify project/source files.").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("commentator", "Final correctness review after prior fixes. Inspect all changed files and tests. Do not modify project/source files. Report findings.").kind, "read-only");
-		assert.equal(classifyTaskMutationIntent("builder", `Verification-only task. Do not edit product/source/config files.
-   Run a disposable check, delete its temporary harness, and retain only
-   a sanitized report at an explicitly named artifact path.`).kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("builder", "Verification-only task. Do not edit product/source/config files.\n   Run a disposable check, delete its temporary harness, and retain only\n   a sanitized report at an explicitly named artifact path.").kind, "read-only");
 	});
 
 	it("strips repeated prohibition phrases before testing write intent", () => {
@@ -66,28 +64,6 @@ describe("classifyTaskMutationIntent", () => {
 	it("expectsImplementationMutation mirrors the classifier", () => {
 		assert.equal(expectsImplementationMutation("builder", "Do not modify tests; implement the fix"), true);
 		assert.equal(expectsImplementationMutation("builder", "Review the diff and suggest fixes only. Do not edit files."), false);
-	});
-});
-
-describe("resolveAgentRoutingRole", () => {
-	it("lets a declared acceptanceRole override name heuristics", () => {
-		assert.equal(resolveAgentRoutingRole("commentator", "writer"), "writer");
-		assert.equal(resolveAgentRoutingRole("builder", "read-only"), "read-only");
-		assert.equal(resolveAgentRoutingRole("custom-agent", "writer"), "writer");
-		assert.equal(resolveAgentRoutingRole("custom-agent", "read-only"), "read-only");
-	});
-
-	it("infers writer for builder-named agents and read-only for reviewer-style names", () => {
-		assert.equal(resolveAgentRoutingRole("builder"), "writer");
-		assert.equal(resolveAgentRoutingRole("package.builder"), "writer");
-		for (const name of ["architect", "commentator", "explorer", "recapper", "researcher", "analyst"]) {
-			assert.equal(resolveAgentRoutingRole(name), "read-only", name);
-		}
-	});
-
-	it("returns undefined for names without an established role", () => {
-		assert.equal(resolveAgentRoutingRole("custom-agent"), undefined);
-		assert.equal(resolveAgentRoutingRole("reviewer"), undefined);
 	});
 });
 

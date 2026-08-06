@@ -5,7 +5,7 @@ import { getMarkdownTheme, type ExtensionContext } from "@selesai/code";
 import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../shared/formatters.ts";
-import { RESULTS_DIR, type AsyncJobState, type Details, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
+import { DIRS, type AsyncJobState, type Details, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { formatAsyncRunTranscript } from "../runs/background/fleet-view.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "../runs/background/async-status.ts";
@@ -14,9 +14,11 @@ import { stopAsyncRun } from "../runs/foreground/async-stop-action.ts";
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
 import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
+import { handleHerdrInspectorAction } from "../inspectors/herdr/actions.ts";
 
 const REFRESH_MS = 750;
 const MAX_RECENT_ASYNC_RUNS = 20;
+const MAX_FLEET_HISTORY_CANDIDATES = 100;
 const TRANSCRIPT_LINES = 200;
 
 type Theme = ExtensionContext["ui"]["theme"];
@@ -45,6 +47,7 @@ export interface FleetActionResult {
 export interface FleetActionHandlers {
 	steer(input: { runId: string; asyncDir: string; index?: number; message: string }): Promise<FleetActionResult>;
 	stop(input: { runId: string; asyncDir: string; index?: number }): Promise<FleetActionResult> | FleetActionResult;
+	inspect?(input: { runId: string; asyncDir: string; index?: number }): Promise<FleetActionResult>;
 }
 
 export interface FleetViewOptions {
@@ -104,7 +107,7 @@ function trackedJobSummary(job: AsyncJobState): AsyncRunSummary {
 
 function asyncItems(run: AsyncRunSummary, description?: string): FleetItem[] {
 	const updatedAt = run.lastUpdate ?? run.endedAt ?? run.startedAt;
-	if (run.steps.length === 0) {
+	if (run.steps.length === 0 || run.mode === "workflow") {
 		return [{ key: `async:${run.id}`, kind: "async", runId: run.id, agent: run.mode, state: run.state, updatedAt, run, ...(description ? { description } : {}) }];
 	}
 	return run.steps.map((step) => ({
@@ -119,6 +122,14 @@ function asyncItems(run: AsyncRunSummary, description?: string): FleetItem[] {
 		step,
 		...(description ? { description } : {}),
 	}));
+}
+
+function orderFleetAsyncRuns(runs: AsyncRunSummary[], terminalLimit: number): AsyncRunSummary[] {
+	const updatedAt = (run: AsyncRunSummary) => run.lastUpdate ?? run.endedAt ?? run.startedAt;
+	const byNewest = (left: AsyncRunSummary, right: AsyncRunSummary) => updatedAt(right) - updatedAt(left);
+	const active = runs.filter((run) => run.state === "queued" || run.state === "running").sort(byNewest);
+	const terminal = runs.filter((run) => run.state !== "queued" && run.state !== "running").sort(byNewest);
+	return [...active, ...terminal.slice(0, terminalLimit)];
 }
 
 export function collectFleetSnapshot(
@@ -163,30 +174,35 @@ export function collectFleetSnapshot(
 	try {
 		let runs: AsyncRunSummary[];
 		const descriptions = new Map<string, string>();
-		if (options.asyncDirRoot !== undefined) {
-			runs = listAsyncRuns(options.asyncDirRoot, {
-				...(state.currentSessionId ? { sessionId: state.currentSessionId } : {}),
-				limit: options.limit ?? MAX_RECENT_ASYNC_RUNS,
-				resultsDir: options.resultsDir ?? RESULTS_DIR,
-				reconcile: false,
-			});
-		} else {
-			const tracked = [...(state.fleetJobs ?? state.asyncJobs).values()]
-				.filter((job) => belongsToCurrentSession(job.sessionId, state.currentSessionId));
-			const byUpdate = (left: AsyncJobState, right: AsyncJobState) => (right.updatedAt ?? right.startedAt ?? 0) - (left.updatedAt ?? left.startedAt ?? 0);
-			const active = tracked.filter((job) => job.status === "queued" || job.status === "running").sort(byUpdate);
-			const recent = tracked.filter((job) => job.status !== "queued" && job.status !== "running").sort(byUpdate).slice(0, options.limit ?? MAX_RECENT_ASYNC_RUNS);
-			runs = [];
-			for (const job of [...active, ...recent]) {
-				try {
-					runs.push(trackedJobSummary(job));
-					if (job.description) descriptions.set(job.asyncId, job.description);
-				} catch (cause) {
-					error = `Failed to inspect async run '${job.asyncId}': ${cause instanceof Error ? cause.message : String(cause)}`;
-				}
+		const tracked = [...(state.fleetJobs ?? state.asyncJobs).values()]
+			.filter((job) => belongsToCurrentSession(job.sessionId, state.currentSessionId));
+		const byUpdate = (left: AsyncJobState, right: AsyncJobState) => (right.updatedAt ?? right.startedAt ?? 0) - (left.updatedAt ?? left.startedAt ?? 0);
+		const active = tracked.filter((job) => job.status === "queued" || job.status === "running").sort(byUpdate);
+		const recent = tracked.filter((job) => job.status !== "queued" && job.status !== "running").sort(byUpdate).slice(0, options.limit ?? MAX_RECENT_ASYNC_RUNS);
+		const trackedRuns: AsyncRunSummary[] = [];
+		for (const job of [...active, ...recent]) {
+			try {
+				trackedRuns.push(trackedJobSummary(job));
+				if (job.description) descriptions.set(job.asyncId, job.description);
+			} catch (cause) {
+				error = `Failed to inspect async run '${job.asyncId}': ${cause instanceof Error ? cause.message : String(cause)}`;
 			}
 		}
-		for (const run of runs) items.push(...asyncItems(run, descriptions.get(run.id)));
+		if (options.asyncDirRoot !== undefined) {
+			const trackedIds = new Set(trackedRuns.map((run) => run.id));
+			const history = listAsyncRuns(options.asyncDirRoot, {
+				...(state.currentSessionId ? { sessionId: state.currentSessionId } : {}),
+				entryLimit: MAX_FLEET_HISTORY_CANDIDATES,
+				resultsDir: options.resultsDir ?? DIRS.results,
+				reconcile: false,
+			}).filter((run) => !trackedIds.has(run.id));
+			runs = [...trackedRuns, ...history];
+		} else {
+			runs = trackedRuns;
+		}
+		for (const run of orderFleetAsyncRuns(runs, options.limit ?? MAX_RECENT_ASYNC_RUNS)) {
+			items.push(...asyncItems(run, descriptions.get(run.id)));
+		}
 	} catch (cause) {
 		error = cause instanceof Error ? cause.message : String(cause);
 	}
@@ -390,7 +406,7 @@ function itemStats(item: FleetItem): string[] {
 		tokens = item.child.tokens;
 		tools = item.child.toolCount;
 	} else {
-		model = item.step?.model;
+		model = formatModelThinking(item.step?.model, item.step?.thinking) || undefined;
 		tokens = item.step?.tokens?.total ?? (item.index === undefined ? item.run.totalTokens?.total : undefined);
 		tools = item.step?.toolCount ?? (item.index === undefined ? item.run.toolCount : undefined);
 		const terminalRun = item.state !== "queued" && item.state !== "running" && item.state !== "pending";
@@ -662,6 +678,12 @@ export class SubagentFleetComponent implements Component {
 			}
 			return;
 		}
+		if (data === "H") {
+			const target = this.selectedAsyncAction();
+			if ("reason" in target || !this.options.actions?.inspect) this.setActionNotice({ text: "reason" in target ? target.reason : "Herdr inspector controls are unavailable in this context.", isError: true });
+			else this.runAction(() => this.options.actions!.inspect!({ runId: target.item.runId, asyncDir: target.item.run.asyncDir, ...(target.item.index !== undefined ? { index: target.item.index } : {}) }));
+			return;
+		}
 		if (data === "D") {
 			const target = this.selectedAsyncAction();
 			if ("reason" in target || !this.options.actions) this.setActionNotice({ text: "reason" in target ? target.reason : "Fleet controls are unavailable in this context.", isError: true });
@@ -792,7 +814,7 @@ export class SubagentFleetComponent implements Component {
 		}
 		lines.push(this.theme.fg("border", `├${"─".repeat(rosterWidth)}┴${"─".repeat(detailWidth)}┤`));
 		const position = this.snapshot.items.length ? `${this.selected + 1}/${this.snapshot.items.length}` : "0/0";
-		const footer = ` ↑↓/jk agent · s steer · D stop · x/Ctrl+O tools · r refresh · Esc close · ${position}`;
+		const footer = ` ↑↓/jk agent · H Herdr · s steer · D stop · x/Ctrl+O tools · r refresh · Esc close · ${position}`;
 		lines.push(this.theme.fg("border", "│") + fit(this.theme.fg("dim", footer), innerWidth) + this.theme.fg("border", "│"));
 		lines.push(this.theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
 		return lines.map((line) => truncateToWidth(line, width));
@@ -819,13 +841,27 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 			runId: input.runId,
 			...(input.index !== undefined ? { index: input.index } : {}),
 			message: input.message,
-			location: { asyncDir: input.asyncDir, resolvedId: input.runId },
+			location: { asyncDir: input.asyncDir, resolvedId: input.runId } as Parameters<typeof steerAsyncRun>[0]["location"],
 		}), `Failed to steer async run ${input.runId}.`),
 		stop: (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(stopAsyncRun(state, input.runId, undefined, { asyncDir: input.asyncDir, resolvedId: input.runId }), `Failed to stop async run ${input.runId}.`),
+		inspect: async (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(await handleHerdrInspectorAction("inspector.open", {
+			id: input.runId,
+			dir: input.asyncDir,
+			...(input.index !== undefined ? { index: input.index } : {}),
+		}, {
+			state,
+			cwd: state.baseCwd,
+			...(state.authorityPolicy ? { authorityPolicy: state.authorityPolicy } : {}),
+			...(state.missionStoreConfig ? { missions: state.missionStoreConfig } : {}),
+		}), `Failed to open Herdr inspector for async run ${input.runId}.`),
 	} satisfies FleetActionHandlers;
 	try {
 		await ctx.ui.custom<undefined>(
 			(tui, theme, _keybindings, done) => new SubagentFleetComponent(tui, theme, state, done, { ...options, actions }),
+			{
+				overlay: true,
+				overlayOptions: { anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 },
+			},
 		);
 	} finally {
 		state.fleetInspectorOpen = wasOpen;

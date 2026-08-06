@@ -68,7 +68,7 @@ describe("acceptance gates", () => {
 		});
 
 		assert.equal(resolved.level, "attested");
-		assert.deepEqual(resolved.inferredReason, ["read-only/reviewer-style agent"]);
+		assert.deepEqual(resolved.inferredReason, ["read-only/commentator-style agent"]);
 		assert.deepEqual(resolved.criteria.map((criterion) => criterion.must), ["Return concrete findings with file paths and severity when applicable"]);
 	});
 
@@ -316,13 +316,29 @@ describe("acceptance gates", () => {
 		for (const malformedOutput of [
 			"```acceptance-report\n{bad-json\n```",
 			"```acceptance-report\n```",
-			"```acceptance-report\n{\"criteriaSatisfied\": []}",
+			"```acceptance-report\n{\"changedFiles\": false}",
 			"ACCEPTANCE_REPORT: { not json",
 			"ACCEPTANCE_REPORT: no object",
 		]) {
 			const malformed = parseAcceptanceReport(malformedOutput);
 			assert.equal(malformed.report, undefined);
 			assert.match(malformed.error ?? "", /Failed to parse acceptance-report/, malformedOutput);
+		}
+	});
+
+	it("recovers a valid report from an unterminated explicit fence only", () => {
+		const recovered = parseAcceptanceReport(`done\n\`\`\`acceptance-report\n${JSON.stringify(reportData())}`);
+		assert.deepEqual(recovered.report?.changedFiles, ["src/file.ts"]);
+		assert.equal(recovered.error, undefined);
+
+		for (const invalid of [
+			"```acceptance-report\n{ not json",
+			`\`\`\`acceptance-report\n${JSON.stringify(reportData())}\ntrailing prose`,
+			`\`\`\`acceptance-report\n${JSON.stringify({ changedFiles: false })}`,
+		]) {
+			const parsed = parseAcceptanceReport(invalid);
+			assert.equal(parsed.report, undefined);
+			assert.match(parsed.error ?? "", /Failed to parse acceptance-report/);
 		}
 	});
 
@@ -901,7 +917,7 @@ describe("acceptance gates", () => {
 			const malformedReports = [
 				"```acceptance-report\n{ not json\n```",
 				"```acceptance-report\n```",
-				"```acceptance-report\n{\"criteriaSatisfied\": []}",
+				"```acceptance-report\n{\"changedFiles\": false}",
 				"ACCEPTANCE_REPORT: { not json",
 			];
 
@@ -1014,7 +1030,7 @@ describe("acceptance gates", () => {
 			"Update dependencies",
 		];
 		for (const task of tasks) {
-			const resolved = resolveEffectiveAcceptance({ agentName: "builder", task, async: true });
+			const resolved = resolveEffectiveAcceptance({ agentName: "explorer", task, async: true });
 			assert.equal(resolved.level, "checked", task);
 			assert.equal(resolved.review && resolved.review !== false ? resolved.review.required : undefined, true, task);
 		}
@@ -1033,6 +1049,11 @@ describe("acceptance gates", () => {
 	it("validates invalid disable and verify shapes", () => {
 		assert.deepEqual(validateAcceptanceInput({ level: "none" }), ["acceptance.reason is required when level is none."]);
 		assert.deepEqual(validateAcceptanceInput("none"), ["acceptance level \"none\" requires a reason; use { level: \"none\", reason: \"...\" }."]);
+		assert.deepEqual(validateAcceptanceInput("verified"), ["acceptance level \"verified\" requires object form with at least one verify command."]);
+		for (const input of [{ level: "verified" }, { level: "verified", verify: [] }]) {
+			assert.deepEqual(validateAcceptanceInput(input), ["acceptance.verify must contain at least one command when level is verified."]);
+		}
+		assert.deepEqual(validateAcceptanceInput({ level: "verified", verify: [{ id: "tests", command: "npm test" }] }), []);
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "missing-command" }] }), ["acceptance.verify[0].command is required."]);
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "fractional", command: "npm test", timeoutMs: 1.5 }] }), ["acceptance.verify[0].timeoutMs must be an integer >= 1."]);
 		assert.deepEqual(validateAcceptanceInput(false), []);

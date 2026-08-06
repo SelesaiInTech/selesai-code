@@ -9,6 +9,7 @@ import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts"
 import { SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, MCP_DIRECT_CHILD_TOOLS_ENV, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
+import { PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV } from "../../src/runs/shared/permissions.ts";
 import {
 	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_PARENT_CHILD_INDEX_ENV,
@@ -255,7 +256,7 @@ describe("buildPiArgs session wiring", () => {
 			childWatchdog: {
 				enabled: true,
 				runId: "run-1",
-				agent: "worker",
+				agent: "builder",
 				childIndex: 2,
 				watchdogTailTimeoutMs: 1234,
 				agentEndTimeoutMs: 500,
@@ -271,7 +272,7 @@ describe("buildPiArgs session wiring", () => {
 		assert.deepEqual(JSON.parse(encoded ?? "{}"), {
 			enabled: true,
 			runId: "run-1",
-			agent: "worker",
+			agent: "builder",
 			childIndex: 2,
 			watchdogTailTimeoutMs: 1234,
 			agentEndTimeoutMs: 500,
@@ -411,7 +412,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			baseArgs: ["-p"],
 			task: "hello",
 			sessionEnabled: false,
-			systemPrompt: "You are a worker",
+			systemPrompt: "You are a builder",
 			inheritProjectContext: false,
 			inheritSkills: false,
 		});
@@ -425,7 +426,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			baseArgs: ["-p"],
 			task: "hello",
 			sessionEnabled: false,
-			systemPrompt: "You are a worker",
+			systemPrompt: "You are a builder",
 			systemPromptMode: "replace",
 			inheritProjectContext: false,
 			inheritSkills: false,
@@ -527,21 +528,21 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			sessionEnabled: false,
 			inheritProjectContext: true,
 			inheritSkills: true,
-			intercomSessionName: "subagent-worker-78f659a3",
+			intercomSessionName: "subagent-builder-78f659a3",
 			orchestratorIntercomTarget: "subagent-chat-parent",
 			parentSessionId: "session-parent-123",
 			runId: "78f659a3",
-			childAgentName: "worker",
+			childAgentName: "builder",
 			childIndex: 2,
 		});
 
-		assert.equal(env.SELESAI_SUBAGENT_INTERCOM_SESSION_NAME, "subagent-worker-78f659a3");
-		assert.equal(env[PI_INTERCOM_STABLE_ID_ENV], "subagent-worker-78f659a3");
+		assert.equal(env.SELESAI_SUBAGENT_INTERCOM_SESSION_NAME, "subagent-builder-78f659a3");
+		assert.equal(env[PI_INTERCOM_STABLE_ID_ENV], "subagent-builder-78f659a3");
 		assert.equal(env[PI_INTERCOM_SESSION_ID_ENV], undefined);
 		assert.equal(env.SELESAI_SUBAGENT_ORCHESTRATOR_TARGET, "subagent-chat-parent");
 		assert.equal(env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV], "session-parent-123");
 		assert.equal(env.SELESAI_SUBAGENT_RUN_ID, "78f659a3");
-		assert.equal(env.SELESAI_SUBAGENT_CHILD_AGENT, "worker");
+		assert.equal(env.SELESAI_SUBAGENT_CHILD_AGENT, "builder");
 		assert.equal(env.SELESAI_SUBAGENT_CHILD_INDEX, "2");
 		assert.equal(typeof env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV], "string");
 		assert.match(env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] ?? "", /supervisor-channels/);
@@ -562,6 +563,26 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(env[PI_INTERCOM_SESSION_ID_ENV], undefined);
 	});
 
+	it("creates a private permission audit path without enabling the supervisor channel", () => {
+		const { env, tempDir } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: true,
+			inheritSkills: true,
+			parentSessionId: "session-parent-123",
+			runId: "permission-run",
+			childAgentName: "builder",
+			childIndex: 3,
+			permissionRules: { write: "ask" },
+		});
+
+		assert.equal(env.SELESAI_SUBAGENT_ORCHESTRATOR_TARGET, undefined);
+		assert.equal(env[PERMISSION_POLICY_ENV], JSON.stringify({ write: "ask" }));
+		assert.equal(env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV], undefined);
+		assert.equal(env[PERMISSION_AUDIT_PATH_ENV], path.join(tempDir!, "permission-audit.jsonl"));
+	});
+
 	it("does not create a supervisor channel without an exact parent session id", () => {
 		const { env } = buildPiArgs({
 			baseArgs: ["-p"],
@@ -571,7 +592,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			inheritSkills: true,
 			orchestratorIntercomTarget: "subagent-chat-parent",
 			runId: "78f659a3",
-			childAgentName: "worker",
+			childAgentName: "builder",
 			childIndex: 2,
 		});
 

@@ -80,9 +80,9 @@ afterEach(() => {
 
 describe("parseMemoryFrontmatter", () => {
 	it("parses a project scope block", () => {
-		assert.deepEqual(parseMemoryFrontmatter("scope: project\npath: security-reviewer"), {
+		assert.deepEqual(parseMemoryFrontmatter("scope: project\npath: security-commentator"), {
 			scope: "project",
-			path: "security-reviewer",
+			path: "security-commentator",
 		});
 	});
 
@@ -94,9 +94,9 @@ describe("parseMemoryFrontmatter", () => {
 	});
 
 	it("parses an inline object memory block", () => {
-		assert.deepEqual(parseMemoryFrontmatter('{ scope: "project", path: "security-reviewer" }'), {
+		assert.deepEqual(parseMemoryFrontmatter('{ scope: "project", path: "security-commentator" }'), {
 			scope: "project",
-			path: "security-reviewer",
+			path: "security-commentator",
 		});
 	});
 
@@ -138,8 +138,8 @@ describe("agentHasWriteTools", () => {
 describe("resolveMemoryDir", () => {
 	it("resolves a simple and nested path under the root", () => {
 		const root = mkdtemp("pi-subagents-mem-root-");
-		assert.deepEqual(resolveMemoryDir(root, "reviewer"), { dir: path.join(root, "reviewer") });
-		assert.deepEqual(resolveMemoryDir(root, "team/reviewer"), { dir: path.join(root, "team", "reviewer") });
+		assert.deepEqual(resolveMemoryDir(root, "commentator"), { dir: path.join(root, "commentator") });
+		assert.deepEqual(resolveMemoryDir(root, "team/commentator"), { dir: path.join(root, "team", "commentator") });
 	});
 
 	it("rejects empty paths", () => {
@@ -157,9 +157,9 @@ describe("resolveMemoryDir", () => {
 
 	it("rejects absolute and Windows drive-like paths", () => {
 		const root = mkdtemp("pi-subagents-mem-root-");
-		assert.ok("error" in resolveMemoryDir(root, "/tmp/reviewer"));
-		assert.ok("error" in resolveMemoryDir(root, "C:\\Users\\reviewer"));
-		assert.ok("error" in resolveMemoryDir(root, "C:reviewer"));
+		assert.ok("error" in resolveMemoryDir(root, "/tmp/commentator"));
+		assert.ok("error" in resolveMemoryDir(root, "C:\\Users\\commentator"));
+		assert.ok("error" in resolveMemoryDir(root, "C:commentator"));
 		assert.ok("error" in resolveMemoryDir(root, "team:C"));
 	});
 
@@ -245,9 +245,9 @@ describe("buildAgentMemoryInjection", () => {
 
 	it("injects a read-write block with contents for a project scope", () => {
 		const project = mkProject();
-		const memoryDir = path.join(project, ".selesai", AGENT_MEMORY_DIR_NAME, "security-reviewer");
+		const memoryDir = path.join(project, ".selesai", AGENT_MEMORY_DIR_NAME, "security-commentator");
 		writeMemoryFile(memoryDir, "Threat: token leakage in logs.\nGotcha: retry on 429.");
-		const agent = makeAgent({ memory: { scope: "project", path: "security-reviewer" }, tools: ["read", "edit"] });
+		const agent = makeAgent({ memory: { scope: "project", path: "security-commentator" }, tools: ["read", "edit"] });
 		const injection = buildAgentMemoryInjection(agent, project);
 		const memoryFile = path.join(memoryDir, AGENT_MEMORY_FILE);
 		assert.match(injection, /# Persistent agent memory/);
@@ -271,9 +271,9 @@ describe("buildAgentMemoryInjection", () => {
 
 	it("injects a read-only block for agents without write tools", () => {
 		const project = mkProject();
-		const memoryDir = path.join(project, ".selesai", AGENT_MEMORY_DIR_NAME, "scout");
+		const memoryDir = path.join(project, ".selesai", AGENT_MEMORY_DIR_NAME, "explorer");
 		writeMemoryFile(memoryDir, "Known flake: async timeout test.");
-		const agent = makeAgent({ memory: { scope: "project", path: "scout" }, tools: ["read", "grep", "find", "ls"] });
+		const agent = makeAgent({ memory: { scope: "project", path: "explorer" }, tools: ["read", "grep", "find", "ls"] });
 		const injection = buildAgentMemoryInjection(agent, project);
 		assert.match(injection, /read-only, role-specific memory scope/);
 		assert.match(injection, /Do not attempt to edit or create the memory file/);
@@ -285,7 +285,7 @@ describe("buildAgentMemoryInjection", () => {
 
 	it("injects nothing for a read-only agent with no memory file yet", () => {
 		const project = mkProject();
-		const agent = makeAgent({ memory: { scope: "project", path: "empty-scout" }, tools: ["read"] });
+		const agent = makeAgent({ memory: { scope: "project", path: "empty-explorer" }, tools: ["read"] });
 		assert.equal(buildAgentMemoryInjection(agent, project), "");
 	});
 
@@ -349,19 +349,19 @@ describe("buildAgentMemoryInjection", () => {
 describe("agent memory frontmatter round-trip", () => {
 	it("parses memory frontmatter during discovery and keeps it out of extraFields", () => {
 		const project = mkProject();
-		fs.writeFileSync(path.join(project, ".selesai", "agents", "security-reviewer.md"), `---
-name: security-reviewer
-description: Recurring security reviewer
+		fs.writeFileSync(path.join(project, ".selesai", "agents", "security-commentator.md"), `---
+name: security-commentator
+description: Recurring security commentator
 tools: read, grep, bash, edit
-memory: { scope: project, path: security-reviewer }
+memory: { scope: project, path: security-commentator }
 ---
 
 Review for threats.
 `, "utf-8");
 
-		const agent = discoverAgents(project, "project").agents.find((a) => a.name === "security-reviewer");
+		const agent = discoverAgents(project, "project").agents.find((a) => a.name === "security-commentator");
 		assert.ok(agent, "agent should be discovered");
-		assert.deepEqual(agent?.memory, { scope: "project", path: "security-reviewer" });
+		assert.deepEqual(agent?.memory, { scope: "project", path: "security-commentator" });
 		assert.equal(agent?.extraFields?.memory, undefined, "memory must not leak into extraFields");
 	});
 
@@ -395,23 +395,23 @@ Still loads.
 describe("agent memory in management detail", () => {
 	it("surfaces the memory scope in the get action", () => {
 		const project = mkProject();
-		fs.writeFileSync(path.join(project, ".selesai", "agents", "security-reviewer.md"), `---
-name: security-reviewer
-description: Recurring security reviewer
+		fs.writeFileSync(path.join(project, ".selesai", "agents", "security-commentator.md"), `---
+name: security-commentator
+description: Recurring security commentator
 memory:
   scope: project
-  path: security-reviewer
+  path: security-commentator
 ---
 
 Review for threats.
 `, "utf-8");
 
-		const res = handleManagementAction("get", { agent: "security-reviewer" }, {
+		const res = handleManagementAction("get", { agent: "security-commentator" }, {
 			cwd: project,
 			modelRegistry: { getAvailable: () => [] },
 		});
 		assert.equal(res.isError, false);
-		assert.match(res.content[0]?.text ?? "", /Memory: project scope, path: security-reviewer/);
+		assert.match(res.content[0]?.text ?? "", /Memory: project scope, path: security-commentator/);
 	});
 });
 

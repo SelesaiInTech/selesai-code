@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@selesai/code";
+import type { ExtensionAPI, ExtensionContext } from "@selesai/code";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
+import { decodePermissionRules, permissionDecision, PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV } from "./permissions.ts";
 import { consumeSteerRequestsFromDir, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerRequest } from "../background/control-channel.ts";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeAcknowledgedExtensionId, writeRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
@@ -18,6 +19,8 @@ import type { JsonSchemaObject, ResolvedToolBudget, SubagentState } from "../../
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
 import { registerChildWatchdog } from "../../watchdog/register-child.ts";
+import { CHILD_WATCHDOG_CONFIG_ENV } from "../../watchdog/child-status.ts";
+import { requestWatchdogPermission, type WatchdogPermissionRequest, type WatchdogPermissionResult } from "../../watchdog/permission-arbiter.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
 import { resolveWaitToolConfig } from "../background/wait-config.ts";
 import { registerWaitTool } from "../background/wait-tool.ts";
@@ -45,7 +48,7 @@ export const CHILD_FANOUT_BOUNDARY_INSTRUCTIONS = [
 	"You are a child subagent with explicit fanout responsibility for this assigned task.",
 	"The parent session owns final orchestration, acceptance, and follow-up implementation launches.",
 	"You may use the `subagent` tool only for the fanout work explicitly requested in this task.",
-	"Do not broaden yourself into general parent orchestration. Do not launch follow-up workers unless the task explicitly asks for that.",
+	"Do not broaden yourself into general parent orchestration. Do not launch follow-up builders unless the task explicitly asks for that.",
 	"The maxSubagentDepth cap still applies and may block further fanout.",
 	"If you need to edit files, use the available editing tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
 ].join("\n");
@@ -241,6 +244,31 @@ export function formatSteerMessage(request: SteerRequest): string {
 	].join("\n");
 }
 
+export function registerPermissionGate(
+	pi: ExtensionAPI,
+	requestPermission: (request: WatchdogPermissionRequest) => Promise<WatchdogPermissionResult> = requestWatchdogPermission,
+): void {
+	const rules = decodePermissionRules(process.env[PERMISSION_POLICY_ENV]);
+	if (!rules) return;
+	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: ExtensionContext) => unknown) => void;
+	onRuntimeEvent("tool_call", async (event, ctx) => {
+		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
+		const decision = permissionDecision(rules, toolName);
+		if (decision === "allow") return undefined;
+		if (decision === "deny") return { block: true, reason: `Blocked by pi-subagents permission rule: '${toolName}' is denied.` };
+		const result = await requestPermission({
+			ctx,
+			toolName,
+			args: event.input ?? {},
+			rawWatchdogConfig: process.env[CHILD_WATCHDOG_CONFIG_ENV],
+			auditPath: process.env[PERMISSION_AUDIT_PATH_ENV],
+			...(ctx.signal ? { signal: ctx.signal } : {}),
+		});
+		if (result.approved) return undefined;
+		return { block: true, reason: `Blocked by pi-subagents permission rule: ${result.reason}` };
+	});
+}
+
 function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undefined): void {
 	if (!budget) return;
 	let toolCount = 0;
@@ -360,7 +388,7 @@ export function registerSteeringInbox(
 		return undefined;
 	};
 
-	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown) => unknown) => void;
+	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx?: unknown) => unknown) => void;
 	// Register input before the watcher so an accepted extension input cannot race request dispatch.
 	onRuntimeEvent("input", onInput);
 	onRuntimeEvent("session_start", () => start());
@@ -377,6 +405,7 @@ export function registerSteeringInbox(
 export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	registerRuntimeExtensionAcknowledgements(pi);
 	registerSteeringInbox(pi);
+	registerPermissionGate(pi);
 	registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV], { allowZero: process.env[TOOL_BUDGET_ZERO_AUTH_ENV] === "1" }));
 	registerChildWatchdog(pi);
 	const waitToolEnabled = resolveWaitToolConfig().enabled;
@@ -408,7 +437,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		nativeSupervisorFallbackRegistered = true;
 		registerNativeSupervisorClient(pi);
 	};
-	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown) => unknown) => void;
+	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx?: unknown) => unknown) => void;
 	onRuntimeEvent("session_start", (_event: unknown, ctx: unknown) => {
 		const sessionManager = (ctx as { sessionManager?: Parameters<typeof resolveCurrentSessionId>[0] } | undefined)?.sessionManager;
 		waitState.currentSessionId = sessionManager ? resolveCurrentSessionId(sessionManager) : null;
@@ -455,13 +484,15 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		});
 	}
 
-	onRuntimeEvent("context", (event: { messages: unknown[] }) => {
+	onRuntimeEvent("context", (event: unknown) => {
+		if (!event || typeof event !== "object" || !("messages" in event) || !Array.isArray(event.messages)) return undefined;
 		const messages = stripParentOnlySubagentMessages(event.messages);
 		if (messages === event.messages) return undefined;
 		return { messages };
 	});
 
-	onRuntimeEvent("before_agent_start", async (event: { systemPrompt: string }) => {
+	onRuntimeEvent("before_agent_start", async (event: unknown) => {
+		if (!event || typeof event !== "object" || !("systemPrompt" in event) || typeof event.systemPrompt !== "string") return undefined;
 		registerNativeSupervisorFallbackOnce();
 		const intercomSessionName = process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV]?.trim();
 		if (intercomSessionName && typeof pi.setSessionName === "function") {

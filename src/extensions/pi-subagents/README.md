@@ -4,21 +4,21 @@
 
 # pi-subagents
 
-`pi-subagents` lets Selesai delegate work to focused child agents. Use it for code review, scouting, implementation, parallel audits, saved workflows, background jobs, and anything else that benefits from a second or third set of model eyes.
+`pi-subagents` lets Selesai explorer work to focused child agents. Use it for code review, explorering, implementation, parallel audits, saved workflows, background jobs, and anything else that benefits from a second or third set of model eyes.
 
 <https://github.com/user-attachments/assets/702554ec-faaf-4635-80aa-fb5d6e292fd1>
 
 ## Installation
 
 ```bash
-pi install npm:pi-subagents
+selesai install npm:pi-subagents
 ```
 
 That is the only required step. You can add optional pieces later.
 
 ## Try this first
 
-You do not need to create agents, write config, or learn slash commands. After installing, ask Pi for delegation in plain language:
+You do not need to create agents, write config, or learn slash commands. After installing, ask Selesai for delegation in plain language:
 
 ```text
 Use commentator to review this diff.
@@ -38,13 +38,28 @@ Run parallel commentators: one for correctness, one for tests, and one for unnec
 
 That is enough to start.
 
+## External CLI agent profiles
+
+Agent profiles can opt into a local one-shot command instead of a Selesai child. External runners add no install dependency, but the configured executable must exist at runtime. They are async-only, receive one combined system/task prompt over stdin, and use argv arrays without a shell:
+
+```yaml
+runner:
+  type: external-cli
+  command: node
+  args: ["./scripts/local-commentator.mjs"]
+  promptDelivery: stdin
+async: true
+```
+
+External CLI runners support status artifacts, stdout/stderr logs, timeout, and stop. Full stdout and stderr are written to log files, while the in-memory final stdout response and stderr error are limited to their last 64 KiB. Foreground/clarify, steer/resume/interrupt-as-pause, Selesai models/tools/extensions, skills, structured output, nested subagents, and fallback models are intentionally unsupported.
+
 ## What happens
 
-Pi is the parent session. A subagent is a focused child Pi session with its own job.
+Selesai is the parent session. A subagent is a focused child Selesai session with its own job.
 
-When you ask for a subagent, Pi starts the child, gives it the task, and brings the result back. Foreground runs stream in the conversation. Background runs keep working and can be checked later.
+When you ask for a subagent, Selesai starts the child, gives it the task, and brings the result back. Foreground runs stream in the conversation. Background runs keep working and can be checked later.
 
-Installing the extension does not start an automatic commentator in the background. It gives Pi a delegation tool. If you want every implementation reviewed, say that in your prompt or put it in your project instructions:
+Installing the extension does not start an automatic commentator in the background. It gives Selesai a delegation tool. If you want every implementation reviewed, say that in your prompt or put it in your project instructions:
 
 ```text
 When you finish implementing, run a commentator subagent before summarizing.
@@ -78,7 +93,7 @@ Run a review loop on this change until commentators stop finding fixes worth doi
 Use explorer to understand the auth flow, then have architect turn that into an implementation plan.
 ```
 
-Those are ordinary Pi requests. Pi decides whether to call `subagent`, which agent to use, and whether a chain or parallel run makes sense.
+Those are ordinary Selesai requests. Selesai decides whether to call `subagent`, which agent to use, and how to express composed work with `workflowScript`.
 
 ## Common workflows
 
@@ -91,7 +106,7 @@ Those are ordinary Pi requests. Pi decides whether to call `subagent`, which age
 | Implement then review | “Implement this, then review it.” |
 | Review until clean | “Run a review loop on this change with a max of 3 rounds.” |
 | Execute a plan carefully | “Have builder implement this approved plan, then run commentators and apply the feedback.” |
-| explorer before planning | “Use explorer to inspect the auth flow before planning.” |
+| Explorer before planning | “Use explorer to inspect the auth flow before planning.” |
 | Run in the background | “Run this in the background.” |
 | Browse agents | “Show me the available subagents.” |
 | Use a saved workflow | “Run the review chain on this branch.” |
@@ -104,18 +119,18 @@ The extension ships with builtin agents you can use immediately.
 
 | Agent | Use it when you want... |
 |-------|--------------------------|
-| `explorer` | Fast local codebase recon: relevant files, entry points, data flow, risks, and where another agent should start. It reads and reports; it does not edit. |
-| `researcher` | Web/docs research with sources: official docs, specs, benchmarks, recent changes, and a concise research brief. |
-| `architect` | A concrete implementation plan from existing context. It should read and plan, not edit code. |
-| `builder` | Implementation work, including approved commentator handoffs. It edits files, validates, and escalates unapproved decisions instead of guessing. |
-| `commentator` | Adversarial review only: checking direction, diffs, plans, and implemented work against the task/plan, tests, edge cases, and simplicity without editing files. |
-| `recapper` | A clean current-state handoff: a self-contained summary of where a session stands so a later agent can continue from it. |
+| `explorer` | Fast read-only local codebase reconnaissance: relevant files, entry points, data flow, and risks. |
+| `researcher` | Read-only web/docs research with sources. |
+| `architect` | Read-only architecture and implementation planning from inspected context. |
+| `builder` | Mutation-capable scoped implementation with validation and decision escalation. |
+| `commentator` | Read-only evidence-based review of directions, plans, diffs, and implementations. |
+| `recapper` | Read-only handoff and context synthesis for a later agent. |
 
-A simple rule of thumb: use `explorer` before you understand the code, `researcher` before you trust external facts, `architect` before a bigger change, `builder` to implement, `commentator` to check, and `recapper` when you need a clean current-state handoff.
+A simple rule of thumb: use `explorer` before you understand the code, `researcher` before trusting external facts, `architect` before a bigger change, `builder` to implement, `commentator` to review, and `recapper` for a clean handoff.
 
 ## Changing an agent's model
 
-Builtin agents inherit your current Pi default model by default. This keeps new installs from depending on a provider you may not have configured. If you want every subagent without its own model to use a different default, set `subagents.defaultModel`. If you want a role to use a specific model, set an override instead of copying the bundled agent file.
+Builtin agents inherit your current Selesai default model by default. This keeps new installs from depending on a provider you may not have configured. If you want every subagent without its own model to use a different default, set `subagents.defaultModel`. If you want a role to use a specific model, set an override instead of copying the bundled agent file.
 
 ```json
 {
@@ -158,7 +173,7 @@ For a persistent override, edit settings. This example pins the commentator ever
 A setup that works well in practice is routing agents by task shape instead of running everything on one model. Four tiers:
 
 1. **Fast workhorse** — the cheapest capable model at low thinking, for recon, lookups, and mechanical edits. Example: `openai-codex/gpt-5.6-luna:low` on `explorer`.
-2. **Standard well-scoped** — a mid-tier model at medium thinking, for most delegations: routine multi-file edits, focused reviews, straightforward implementation. Example: `openai-codex/gpt-5.6-terra:medium` on `builder` and `commentator`.
+2. **Standard well-scoped** — a mid-tier model at medium thinking, for most delegations: routine multi-file edits, focused reviews, straightforward implementation. Example: `openai-codex/gpt-5.6-terra:medium` on `builder`, `commentator`, and a lightweight `explorer` agent.
 3. **Deep but bounded** — a top reasoning model at high thinking, only for hard tasks that arrive with explicit goals and completion criteria. These models tend to loop on vague goals, so keep them off open-ended work. Example: `openai-codex/gpt-5.6-sol:high` on `architect` and commentator-style agents.
 4. **Taste and intent** — a model that reads human intent well and makes judgment calls without looping, for ambiguous work: UX and design decisions, product tradeoffs, planning from vague requirements, writing quality. Example: `anthropic/claude-fable-5` at `low` for lighter passes and `medium` for harder ones.
 
@@ -178,9 +193,9 @@ fallbackModels: openai-codex/gpt-5.5:high
 
 One more interaction worth knowing for tier 4: forked context over an Anthropic parent transcript with signed thinking blocks forces the child's thinking off, so intent-tier agents work best with fresh context.
 
-Use `~/.selesai/agent/settings.json` for a user override or the project config settings file (`.selesai/settings.json` in standard Pi) for a project override. `subagents.defaultModel` applies to builtin, package, user, and project agents that do not set `model` in frontmatter. Per-run model overrides and `agentOverrides.<name>.model` still win, and explicit agent frontmatter still wins over the global default. The same `agentOverrides` block can change `tools`, `skills`, inherited context, prompt text, or disable a builtin. Matching user and project agents also receive override fields that their frontmatter leaves unset, so a shared project config agent can keep the persona while local settings choose the model.
+Use `~/.selesai/agent/settings.json` for a user override or the project config settings file (`.selesai/settings.json` in standard Selesai) for a project override. `subagents.defaultModel` applies to builtin, package, user, and project agents that do not set `model` in frontmatter. Per-run model overrides and `agentOverrides.<name>.model` still win, and explicit agent frontmatter still wins over the global default. The same `agentOverrides` block can change `tools`, `skills`, inherited context, prompt text, or disable a builtin. Matching user and project agents also receive override fields that their frontmatter leaves unset, so a shared project config agent can keep the persona while local settings choose the model.
 
-By default, project settings resolve from the nearest parent directory that contains a `.selesai` config dir or a legacy `.agents` agent dir, preserving existing nested-project behavior. In monorepos or git worktrees where an incidental nested `.selesai` directory should not shadow the repository-level config, set this in the repository root `.selesai/settings.json`:
+By default, project settings resolve from the nearest parent directory that contains `.selesai` or `.agents`, preserving existing nested-project behavior. In monorepos or git worktrees where an incidental nested `.selesai` directory should not shadow the repository-level config, set this in the repository root `.selesai/settings.json`:
 
 ```json
 {
@@ -190,7 +205,7 @@ By default, project settings resolve from the nearest parent directory that cont
 }
 ```
 
-`"git-root"` keeps package discovery, project agents, chains, and `agentOverrides` anchored to the git worktree root when that root also has Pi project config. A nested project can still opt back into nearest-root behavior by setting `"projectRootResolution": "nearest"` in its own `.selesai/settings.json`.
+`"git-root"` keeps package discovery, project agents, chains, and `agentOverrides` anchored to the git worktree root when that root also has Selesai project config. A nested project can still opt back into nearest-root behavior by setting `"projectRootResolution": "nearest"` in its own `.selesai/settings.json`.
 
 Set `subagents.defaultThinking` to give builtin, package, user, and project agents without a `thinking` value a shared thinking level, independent of the parent session's default. Project settings win over user settings. Explicit frontmatter, `agentOverrides.<name>.thinking`, and per-run thinking overrides still win; `thinking: false` remains an explicit opt-out:
 
@@ -207,7 +222,7 @@ Set `subagents.defaultThinking` to give builtin, package, user, and project agen
 
 If your provider rejects model IDs with thinking suffixes, set `subagents.disableThinking: true` in user or project settings. That clears bundled builtin thinking defaults in one place; an explicit higher-precedence `agentOverrides.<name>.thinking` value can opt a role back in. Existing custom-agent frontmatter remains authoritative.
 
-Set `subagents.defaultExtensions` to give builtin, package, user, and project agents without an `extensions` field a shared extension allowlist. Absent preserves Pi's normal ambient extension discovery. Present as an empty array, the default sets `extensions: []` for agents that do not explicitly define it, disabling ambient extension loading. Present as a non-empty array, the default supplies that allowlist to agents that do not explicitly define one. Project settings win over user settings. Use `agentOverrides.<name>.extensions` for per-agent settings; explicit custom-agent frontmatter remains authoritative.
+Set `subagents.defaultExtensions` to give builtin, package, user, and project agents without an `extensions` field a shared extension allowlist. Absent preserves Selesai's normal ambient extension discovery. Present as an empty array, the default sets `extensions: []` for agents that do not explicitly define it, disabling ambient extension loading. Present as a non-empty array, the default supplies that allowlist to agents that do not explicitly define one. Project settings win over user settings. Use `agentOverrides.<name>.extensions` for per-agent settings; explicit custom-agent frontmatter remains authoritative.
 
 ```json
 {
@@ -231,7 +246,7 @@ To inspect what `pi-subagents` has actually loaded right now, use:
 /subagents-models commentator
 ```
 
-That reports the live runtime mapping, which can differ from settings on disk until you reload Pi.
+That reports the live runtime mapping, which can differ from settings on disk until you reload Selesai.
 
 You do not have to spell a model exactly. Model ids are matched fuzzily against the registry, so provider separator variations (`anthropic/claude-sonnet-4`, `anthropic:claude-sonnet-4`, or `anthropic.claude-sonnet-4`), id separator variations (`claude-haiku-4.5` vs `claude-haiku-4-5`), case differences (`Claude-Sonnet-4` vs `claude-sonnet-4`), and optional trailing date stamps (`claude-haiku-4-5-20251001` or `claude-haiku-4-5-2025-10-01` vs `claude-haiku-4-5`) all resolve to the same model. Exact `provider/id` matches still win, and a qualified provider query never silently switches providers — it only matches within the named provider. Ambiguous bare ids that exist under multiple providers still require a provider prefix or the current session's provider to disambiguate.
 
@@ -243,7 +258,7 @@ The watchdog reviews repo edits, not ordinary conversation. It runs at the safe 
 
 When enabled, the watchdog also keeps a bounded in-memory current-scope artifact from real user prompts and prepends it to review input by default (`subagents.watchdog.scope.enabled`). Newer prompts supersede and mutate older prompts, so the commentator can flag work that no longer serves the current scope as `scope-drift`. Watchdog auto-follow prompts are not recorded as scope.
 
-You can opt into Scopey-style scope monitoring, inspired by [Scopey](https://github.com/ArchAstro/scopey), by setting `subagents.watchdog.cadence.everyNTools` to run additional non-blocking reviews every N tool results. Cadence warnings are transcript-visible and delivered with Pi's `steer` mode after the current tool boundary; they are never hidden. The same configured watchdog model is used for all checks, so choose a cheap model for frequent monitoring or a strong model for rarer adversarial review.
+You can opt into Scopey-style scope monitoring, inspired by [Scopey](https://github.com/ArchAstro/scopey), by setting `subagents.watchdog.cadence.everyNTools` to run additional non-blocking reviews every N tool results. Cadence warnings are transcript-visible and delivered with Selesai's `steer` mode after the current tool boundary; they are never hidden. The same configured watchdog model is used for all checks, so choose a cheap model for frequent monitoring or a strong model for rarer adversarial review.
 
 When the watchdog displays a blocker at `agent_end`, the existing `subagents.watchdog.autoFollow` policy can queue a visible follow-up user message asking the agent to address it. Auto-follow only runs while the watchdog is enabled, respects `maxAttempts`, and stops on repeated identical blockers using `stalemateRepeats`.
 
@@ -257,7 +272,7 @@ Use `/subagents-watchdog recommend-model` to ask pi-subagents for the current st
 /subagents-watchdog model recommended
 ```
 
-`session model recommended` changes only the current Pi session. `model recommended` saves the recommendation to `~/.selesai/agent/settings.json`; it does not turn the watchdog on. Enable it separately with `/subagents-watchdog on` when you want the extra review pass.
+`session model recommended` changes only the current Selesai session. `model recommended` saves the recommendation to `~/.selesai/agent/settings.json`; it does not turn the watchdog on. Enable it separately with `/subagents-watchdog on` when you want the extra review pass.
 
 You can also set the model explicitly:
 
@@ -340,11 +355,43 @@ To keep subagents inside a budget or compliance profile, enforce a model scope. 
 
 Foreground runs stream progress in the conversation while they run. They default to a generous 30-minute wall-clock timeout when neither the call nor the selected agent provides a timeout; explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win.
 
-Background runs keep working after control returns to you. Inspect active runs with `subagent({ action: "status" })`, or a specific run with `subagent({ action: "status", id: "..." })`. In the TUI, a persistent FleetView below the editor by default shows `main` plus active children with task, elapsed time, and token totals. Set `fleetViewPlacement` to `"aboveEditor"` to move it above the editor. When the focused editor is empty, press `↓` or `←` to activate FleetView, then use `↑`/`↓` or `j`/`k` to select a child and `Enter` to inspect it; printable navigation keys are never intercepted before activation.
+Background runs keep working after control returns to you. Inspect active runs with `subagent({ action: "status" })`, or a specific run with `subagent({ action: "status", id: "..." })`. In the TUI, a persistent FleetView below the editor keeps active work visible as a compact summary. Set `fleetViewPlacement` to `"aboveEditor"` to move it above the editor. When the focused editor is empty, press `↓` or `←` to expand the summary into `main` plus active children with task, elapsed time, and token totals; then use `↑`/`↓` or `j`/`k` to select a child and `Enter` to inspect it. Printable navigation keys are never intercepted before activation.
 
 `/subagents-fleet` opens the live fleet inspector with current-session foreground work, recent async children, structured Markdown/tool transcripts, and completed output/session paths. Use `↑`/`↓` or `j`/`k` to select a child, `Shift+K`/`Shift+J` to scroll one line, `PgUp`/`PgDn` to scroll one page, `x`/`Ctrl+O` to toggle tool details, `r` to refresh, and `Esc` to close. For a selected live async child, `s` sends an acknowledged steer message and `D` stops its top-level async run after confirmation. `Ctrl+Alt+F` opens the same inspector even while a foreground turn is active and slash input is queued. Without a TUI, `/subagents-fleet` retains the textual `subagent({ action: "status", view: "fleet" })` fallback, and mutations use explicit commands: run `/subagents-stop` and pick from the selector, or use `/subagents-stop <run-id>` / `subagent({ action: "stop", id: "..." })` when you already know the id. Use `/subagents-detach [run-id]` only for an active foreground single-subagent run you want to leave running without terminating; the eventual result remains available through status/wait. To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
 
-FleetView replaces the legacy above-editor async widget by default, while completion notifications remain enabled. Parallel runs show every active child independently. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
+FleetView replaces the legacy above-editor async widget by default. Successful background completions stay quiet so inactive Selesai tabs are not marked unread, while failed or paused completions still notify the originating session. Parallel runs show every active child independently. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
+
+When Selesai runs inside [Herdr](https://herdr.dev), pi-subagents automatically reports active async-run counts through Herdr pane metadata. The bridge is enabled only when Herdr supplies `HERDR_ENV=1` and `HERDR_PANE_ID`; outside Herdr it registers no listeners or timers. It restores current-session active runs after `/reload` or `/resume`, refreshes metadata while work is active, and clears it on completion or shutdown. To show the reported label in the expanded Agent sidebar, include `state_text` or `$summary` in its row layout, for example:
+
+```toml
+[ui.sidebar.agents]
+rows = [
+  ["state_icon", "workspace", "tab"],
+  ["agent", "state_text"],
+]
+```
+
+The bridge uses Herdr's existing `herdr:blocked` sibling event when an async child needs attention. It also emits `herdr:busy` while async work remains. Herdr versions that support that sibling event keep the pane's semantic state `working`; older versions ignore it safely and still display the metadata label while the Selesai integration remains the lifecycle authority.
+
+Herdr 0.7.5+ can also open an on-demand inspector for an existing async run:
+
+```ts
+subagent({ action: "inspector.open", id: "<run-id>", index: 0, focus: true })
+subagent({ action: "inspector.status", id: "<run-id>", index: 0 })
+subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
+```
+
+The inspector is a raw dashboard pane, not the child process and not a literal attach. It reads lifecycle/status/output/mission artifacts and sends `steer` or `stop` through pi-subagents' existing control inbox. Closing it never stops the run. Herdr remains optional, ordinary launches stay headless, and missing/older Herdr versions affect only Herdr-specific inspector and project-pane actions. FleetView opens the selected active async child with `H`. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
+
+For substantial work in another codebase, Herdr 0.7.5+ can open a project-owned Selesai pane rooted in that repository:
+
+```ts
+subagent({ action: "project.open", cwd: "/path/to/repo", message: "Own the auth refresh mission for this project." })
+subagent({ action: "project.status", cwd: "/path/to/repo" })
+subagent({ action: "project.close", cwd: "/path/to/repo" })
+```
+
+A project pane runs its own Selesai session in the target directory, so subagents launched from that pane use that project's config, agents, skills, files, git state, and missions. The parent session keeps coordination authority; existing headless runs are not moved into the pane. Pane bindings live under `<projectRoot>/.pi-subagents/project-panes/herdr.json` and are only a local pointer to the Herdr pane.
 
 You can also ask naturally:
 
@@ -354,13 +401,13 @@ Show me the current async runs.
 
 Lifecycle artifact v3 adds `process-terminal-candidate.json` (private runner evidence) and `process-terminal.json` (the public proof projection). A proof is `observed` only after the live parent observes the exact detached runner's `close` event, every recorded child writer has a close record, and any tracked canonical-session lease is free. If the observer is unavailable, the proof is `unknown`; do not infer process exit from `endedAt`, result-file existence, PID disappearance, or lease-directory absence. The `subagent:process-terminal` event and RPC `ping.capabilities.processTerminalProof` expose this status. Process proof is point-in-time evidence and remains separate from execution success or stopped/non-resumable state.
 
-Async runs also write machine-readable lifecycle artifacts for observability and workflow gates. For a top-level async run, `details.asyncDir` points at a directory containing `status.json`, `events.jsonl`, `output-<index>.log`, and `subagent-log-<runId>.md`; the final summary is written to Pi's subagent results directory as `<runId>.json`. Nested async runs use the same shape under the nested async root and are discoverable through status projections that read the nested-run registry. These files are append/update artifacts only; interactive foreground behavior is unchanged.
+Async runs also write machine-readable lifecycle artifacts for observability and workflow gates. For a top-level async run, `details.asyncDir` points at a directory containing `status.json`, `events.jsonl`, `output-<index>.log`, and `subagent-log-<runId>.md`; the final summary is written to Selesai's subagent results directory as `<runId>.json`. Nested async runs use the same shape under the nested async root and are discoverable through status projections that read the nested-run registry. These files are append/update artifacts only; interactive foreground behavior is unchanged.
 
-Foreground and async runners share bounded child-protocol handling. A child JSONL line above 4 MiB fails with structured `protocolError` code `protocol_output_limit`, stderr retains only its latest 128 KiB, split UTF-8 and final unterminated JSON events remain valid, and `agent_end.willRetry` defers completion until the child settles. Current Pi builds use `agent_settled` as the terminal watermark; older builds retain the bounded terminal-message fallback.
+Foreground and async runners share bounded child-protocol handling. A child JSONL line above 16 MiB fails with structured `protocolError` code `protocol_output_limit`; oversized Selesai `turn_end` and `agent_end` aggregates are the exception because they duplicate granular events, so runners replace them with bounded lifecycle records while preserving `agent_end.willRetry`. Stderr retains only its latest 128 KiB, split UTF-8 and final unterminated JSON events remain valid, and `agent_end.willRetry` defers completion until the child settles. Current Selesai builds use `agent_settled` as the terminal watermark; older builds retain the bounded terminal-message fallback.
 
-The stable v1 status/result fields are `lifecycleArtifactVersion`, `runId`/`id`, `sessionId`, `mode`, `state`, `startedAt`, `lastUpdate`, `endedAt`, `durationMs`, `cwd`, `asyncDir`, `sessionFile`, `outputFile`, `workflowGraph`, `steps`, `results`, `totalTokens`, `totalCost`, `model`/`attemptedModels`/`modelAttempts`, `toolCount`, `turnCount`, optional `launchResolvedExtensions`, optional `runtimeAcknowledgedExtensions`, and nested `children` when a child is allowed to launch subagents. `launchResolvedExtensions` is parent-resolved launch intent only: it reports opaque extension identifiers and whether ambient extensions were disabled, without exposing raw extension paths or claiming the child runtime acknowledged that those extensions loaded. Cooperating child extensions can acknowledge child-runtime registration by emitting `subagent:acknowledge-extension` on the child process `pi.events` bus with payload `{ id: string }`. Acknowledgement ids are self-declared opaque strings, must be non-empty, at most 128 characters, contain only `A-Z`, `a-z`, `0-9`, `.`, `_`, `:`, `@`, `+`, or `-`, and must not contain `/`, `\\`, or `..`. The reported `runtimeAcknowledgedExtensions` projection is `{ version: 1, source: "child-runtime", ids, omitted }`, deduplicates ids, keeps at most 32 ids, and counts additional valid unique ids in `omitted`. It is best-effort observability only: absence means no cooperating extension acknowledged, and presence means only that the extension registered in the child runtime, not that its tools, health checks, or features succeeded. Late acknowledgements after terminal serialization are ignored. `events.jsonl` records lifecycle transitions such as `subagent.run.started`, `subagent.step.started`, `subagent.step.completed`/`failed`/`paused`/`stopped`, control attention events, nested interrupt failures, and `subagent.run.completed`/`stopped`; run boundary events include the lifecycle artifact version. Consumers should read these JSON files instead of scraping terminal output; unknown fields and event types should be ignored for forward compatibility.
+The status/result fields are `lifecycleArtifactVersion`, `runId`/`id`, `sessionId`, `mode`, `state`, `startedAt`, `lastUpdate`, `endedAt`, `durationMs`, `cwd`, `asyncDir`, `sessionFile`, `outputFile`, `workflowGraph`, `steps`, `results`, `totalTokens`, `totalCost`, `model`/`attemptedModels`/`modelAttempts`, `toolCount`, `turnCount`, optional `launchResolvedExtensions`, optional `runtimeAcknowledgedExtensions`, and nested `children` when a child is allowed to launch subagents. `launchResolvedExtensions` is parent-resolved launch intent only: it reports opaque extension identifiers and whether ambient extensions were disabled, without exposing raw extension paths or claiming the child runtime acknowledged that those extensions loaded. Cooperating child extensions can acknowledge child-runtime registration by emitting `subagent:acknowledge-extension` on the child process `pi.events` bus with payload `{ id: string }`. Acknowledgement ids are self-declared opaque strings, must be non-empty, at most 128 characters, contain only `A-Z`, `a-z`, `0-9`, `.`, `_`, `:`, `@`, `+`, or `-`, and must not contain `/`, `\\`, or `..`. The reported `runtimeAcknowledgedExtensions` projection is `{ version: 1, source: "child-runtime", ids, omitted }`, deduplicates ids, keeps at most 32 ids, and counts additional valid unique ids in `omitted`. It is best-effort observability only: absence means no cooperating extension acknowledged, and presence means only that the extension registered in the child runtime, not that its tools, health checks, or features succeeded. Late acknowledgements after terminal serialization are ignored. `events.jsonl` records lifecycle transitions such as `subagent.run.started`, `subagent.step.started`, `subagent.step.completed`/`failed`/`paused`/`stopped`, control attention events, nested interrupt failures, and `subagent.run.completed`/`stopped`; run boundary events include the lifecycle artifact version. Consumers should read these JSON files instead of scraping terminal output; unknown fields and event types should be ignored for forward compatibility.
 
-Other Pi extensions can use the versioned in-process event-bus RPC instead of scraping slash output or calling internal modules. Listen for `subagents:rpc:v1:ready`, send requests on `subagents:rpc:v1:request`, and read replies from `subagents:rpc:v1:reply:<requestId>`. The `ping` capability metadata also advertises `events.asyncComplete` for exact process-local completion correlation after RPC `spawn`. Delegation v1/v2 progress updates carry `runId` as soon as foreground execution allocates it, so a caller can retain the package-owned revival target even if its own tool turn is interrupted before the terminal response. Foreground `details.results[]` rows also include a numeric `index` that is unique within the run and stable across partial progress snapshots and the final result; use `(runId, index)` instead of row position to correlate single, counted parallel, and chain children.
+Other Selesai extensions can use the in-process event-bus RPC instead of scraping slash output or calling internal modules. Listen for `subagents:rpc:v1:ready`, send requests on `subagents:rpc:v1:request`, and read replies from `subagents:rpc:v1:reply:<requestId>`. The `ping` capability metadata also advertises `events.asyncComplete` for exact process-local completion correlation after RPC `spawn`. Structured delegation progress updates carry `runId` as soon as foreground execution allocates it, so a caller can retain the package-owned revival target even if its own tool turn is interrupted before the terminal response. Foreground `details.results[]` rows also include a numeric `index` that is unique within the run and stable across partial progress snapshots and the final result; use `(runId, index)` instead of row position to correlate single, counted parallel, and chain children.
 
 ```typescript
 const requestId = crypto.randomUUID();
@@ -376,9 +423,9 @@ pi.events.emit("subagents:rpc:v1:request", {
 });
 ```
 
-The v1 methods are `ping`, `status`, `spawn`, `steer`, `interrupt`, `stop`, and `resume`. `status`, `steer`, `interrupt`, and `resume` reuse the normal package-owned actions. `ping.capabilities.launchResolvedExtensions` advertises the optional launch-resolved extension projection in status details. `ping.capabilities.runtimeAcknowledgedExtensions` advertises the optional child-runtime acknowledgement projection and event name. When `ping.capabilities.fleetStatus` is `{ version: 1 }`, successful `status` replies additionally include `data.fleet`: `{ version: 1, entries, totalActive, omitted }`. Entries are bounded, current-session public display records with an opaque reconciliation `key`, resolved `agent`, optional `role`, `model`, `effort`, caller-facing `goal`, safe `startedAt`, and `{ input, output, total }` tokens. `totalActive` and `omitted` preserve overflow information beyond the bounded entry window. The DTO intentionally never exposes run, async, or tool IDs; clients must ignore unknown fields and fall back to status text when the capability is absent. `steer` requires an async run `id` (plus optional child `index`) and a non-empty `message`; its reply preserves the normal acknowledged-delivery result. RPC steering disables the direct tool's pause-and-revive recovery so an extension keeps authority over the exact child it spawned; `ping.capabilities.nonRecoveringSteer` advertises this guarantee. `resume` requires a run target and non-empty `message`; it builders to the existing revival path, which validates current-session ownership, persisted session/recovery metadata, stopped/live state, capability ceilings, and the exclusive session lease before returning the new async run details. Callers may request a `file-only` output path for the revived result without overriding its model, tools, or budgets. `ping.capabilities.resume` advertises this seam. `spawn` is async-only: omit `async` or set `async: true`, omit `clarify` or set `clarify: false`, and do not pass management `action` values. It goes through the same executor as the `subagent` tool, so agent discovery, validation, session attribution, configured spawn caps, child-safety depth, artifacts, and async status all behave the same. `stop` targets current-session top-level async runs through the stop control channel and records a `stopped` lifecycle instead of reporting a timeout.
+The RPC methods are `ping`, `status`, `spawn`, `steer`, `interrupt`, `stop`, and `resume`. `status`, `steer`, `interrupt`, and `resume` reuse the normal package-owned actions. `ping.capabilities.launchResolvedExtensions` advertises the optional launch-resolved extension projection in status details. `ping.capabilities.runtimeAcknowledgedExtensions` advertises the optional child-runtime acknowledgement projection and event name. When `ping.capabilities.fleetStatus` is `{ version: 1 }`, successful `status` replies additionally include `data.fleet`: `{ version: 1, entries, totalActive, omitted }`. Entries are bounded, current-session public display records with an opaque reconciliation `key`, resolved `agent`, optional `role`, `model`, `effort`, caller-facing `goal`, safe `startedAt`, and `{ input, output, total }` tokens. `totalActive` and `omitted` preserve overflow information beyond the bounded entry window. The DTO intentionally never exposes run, async, or tool IDs; clients must ignore unknown fields and fall back to status text when the capability is absent. `steer` requires an async run `id` (plus optional child `index`) and a non-empty `message`; its reply preserves the normal acknowledged-delivery result. RPC steering disables the direct tool's pause-and-revive recovery so an extension keeps authority over the exact child it spawned; `ping.capabilities.nonRecoveringSteer` advertises this guarantee. `resume` requires a run target and non-empty `message`; it explorers to the existing revival path, which validates current-session ownership, persisted session/recovery metadata, stopped/live state, capability ceilings, and the exclusive session lease before returning the new async run details. Callers may request a `file-only` output path for the revived result without overriding its model, tools, or budgets. `ping.capabilities.resume` advertises this seam. `spawn` is async-only: omit `async` or set `async: true`, omit `clarify` or set `clarify: false`, and do not pass management `action` values. It goes through the same executor as the `subagent` tool, so agent discovery, validation, session attribution, configured spawn caps, child-safety depth, artifacts, and async status all behave the same. `stop` targets current-session top-level async runs through the stop control channel and records a `stopped` lifecycle instead of reporting a timeout.
 
-`pi.events` is in-process only. It does not reach separate Pi processes or child subagents; use the file lifecycle artifacts or `pi-intercom` for cross-process coordination.
+`pi.events` is in-process only. It does not reach separate Selesai processes or child subagents; use the file lifecycle artifacts or `pi-intercom` for cross-process coordination.
 
 If something feels misconfigured, run:
 
@@ -402,7 +449,7 @@ clarify → architect → builder → fresh commentators → builder
 
 Use the optional prompt shortcuts below when you want the pattern to be repeatable.
 
-Packaged `architect` and `recapper` default to forked context when a launch omits `context`; `builder`, `commentator`, `explorer`, and `researcher` default to fresh context. Pass explicit `context: "fresh"` or `context: "fork"` when you intentionally want one context for every child.
+Packaged `architect`, `builder`, `commentator`, and `commentator` default to forked context when a launch omits `context`; pass `context: "fresh"` when you intentionally want a fresh child run.
 
 Child-safety boundaries are enforced at runtime. Spawned child sessions do not receive the bundled `pi-subagents` skill, and forked child context filtering removes parent-only subagent artifacts (including old hidden orchestration-instruction messages, slash/status/control messages, and prior parent `subagent` tool-call/tool-result history) while preserving ordinary prose and unrelated tool calls/results. By default, children do not register the `subagent` tool and receive boundary instructions that they are not the parent orchestrator and must not propose or run subagents. The explicit exception is an agent whose resolved builtin `tools` includes `subagent`; that child gets a child-safe `subagent` tool for the fanout work the parent assigned, still bounded by `maxSubagentDepth`.
 
@@ -417,14 +464,14 @@ The package includes reusable prompt templates for common workflows. You do not 
 | `/parallel-research` | Combine `researcher` and `explorer` for external evidence, local code context, and practical tradeoffs. |
 | `/parallel-context-build` | Run `explorer` agents in parallel to produce planning handoff context and meta-prompts. |
 | `/parallel-handoff-plan` | Combine external research and `explorer` passes into an implementation handoff plan and meta-prompt. |
-| `/gather-context-and-clarify` | explorer/research first, then ask the user the clarification questions that matter. |
+| `/gather-context-and-clarify` | Explorer/research first, then ask the user the clarification questions that matter. |
 | `/parallel-cleanup` | Run review-only cleanup passes after implementation. |
 
 Add `autofix` to `/parallel-review` or `/parallel-cleanup` to apply only the synthesized fixes worth doing now after commentators return.
 
 ## Native supervisor coordination
 
-Child agents can talk back to the parent Pi session without installing `pi-intercom`. `pi-subagents` now provides the child-facing `contact_supervisor` tool and the parent-facing `subagent_supervisor({ action: "reply" })` path natively. If no external `pi-intercom` tool owns the `intercom` name, the native channel also exposes `intercom` as a compatibility fallback.
+Child agents can talk back to the parent Selesai session without installing `pi-intercom`. `pi-subagents` now provides the child-facing `contact_supervisor` tool and the parent-facing `subagent_supervisor({ action: "reply" })` path natively. If no external `pi-intercom` tool owns the `intercom` name, the native channel also exposes `intercom` as a compatibility fallback.
 
 Use it for work where the child might need a decision instead of guessing:
 
@@ -438,9 +485,9 @@ Ask commentator to review this plan. If it sees a decision I need to make, have 
 
 The child can use one dedicated coordination tool:
 
-- `contact_supervisor`: the child contacts the parent/supervisor session that delegated the task. Use `reason: "need_decision"` for blocking decisions or clarification, `reason: "interview_request"` for structured input, and `reason: "progress_update"` for short non-blocking updates when a discovery changes the plan. Do not ask for clarification when the only conflict is review-only/no-edit versus progress-writing or artifact-writing instructions; no-edit wins.
+- `contact_supervisor`: the child contacts the parent/supervisor session that explorerd the task. Use `reason: "need_decision"` for blocking decisions or clarification, `reason: "interview_request"` for structured input, and `reason: "progress_update"` for short non-blocking updates when a discovery changes the plan. Do not ask for clarification when the only conflict is review-only/no-edit versus progress-writing or artifact-writing instructions; no-edit wins.
 
-The parent replies with `subagent_supervisor({ action: "reply", replyTo, message })` or checks pending requests with `subagent_supervisor({ action: "pending" })`. Supervisor messages are scoped to the exact Pi session id that spawned the child. A second Pi session in the same repository does not receive those requests.
+The parent replies with `subagent_supervisor({ action: "reply", replyTo, message })` or checks pending requests with `subagent_supervisor({ action: "pending" })`. Supervisor messages are scoped to the exact Selesai session id that spawned the child. A second Selesai session in the same repository does not receive those requests.
 
 Child-side routine completion handoffs are still not expected. If a child appears stalled, needs-attention notices can show up in the parent session with useful next actions, such as checking `subagent({ action: "status" })`, interrupting the run, or nudging the child.
 
@@ -452,107 +499,50 @@ If messages do not show up, run:
 
 For normal use, you do not need to configure anything. Advanced users can tune the bridge with `intercomBridge` in the configuration section below.
 
-At this point, you know enough to use the plugin. The rest of this README is reference material for exact command syntax, custom agents, saved chains, worktrees, and configuration.
+At this point, you know enough to use the plugin. The rest of this README is reference material for exact command syntax, custom agents, scripted workflows, and configuration.
 
-## Optional pi-permission-system integration
+## Native child tool permissions
 
-[`@gotgenes/pi-permission-system`](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-permission-system)
-adds a second policy layer — `allow` / `ask` / `deny` — on top of
-pi-subagents' visibility-based tool restrictions.
+Native permissions are opt-in and apply only to Selesai child runtimes. With no rules configured, every tool call passes through unchanged. Configure explicit non-bash rules globally in `~/.selesai/agent/extensions/subagent/config.json`:
 
-The two compose independently:
-
-| Layer | What it controls | Who provides it |
-|-------|-----------------|-----------------|
-| Visibility | Which tools are registered before the session starts | pi-subagents (`tools:` frontmatter key) |
-| Policy  | Runtime allow/ask/deny decisions on every tool call, bash command, MCP operation | pi-permission-system (`permission:` frontmatter key) |
-
-### Installing
-
-```bash
-pi install npm:@gotgenes/pi-permission-system
+```json
+{
+  "permissions": {
+    "rules": {
+      "read": "allow",
+      "write": "ask",
+      "edit": "deny"
+    }
+  }
+}
 ```
 
-No configuration is required for the integration — it is automatic when both
-extensions are installed. pi-subagents passes the parent session identity
-to child processes via the `PI_SUBAGENT_PARENT_SESSION` environment variable,
-which the permission system uses to forward `ask` prompts from headless
-subagent processes back to the parent session's UI.
-
-### Per-agent permission frontmatter
-
-Agent files can include a `permission:` block alongside the standard `tools:`
-key. The permission system reads it independently:
+Custom agents can override matching global rules with a `permission:` or `permissions:` frontmatter block:
 
 ```yaml
 ---
 name: builder
-tools: bash,read,write,edit
 permission:
-  "*": ask
-  read: allow
-  bash:
-    "*": ask
-    "git *": allow
-    "npm test": allow
+  write: allow
+  edit: ask
 ---
 ```
 
-In this example the subagent extension restricts visibility to four tools,
-and the permission system then applies `ask`/`allow` policy within that
-visible set. Both keys coexist without collision.
+Rules support `allow`, `ask`, and `deny`. Agent rules override matching global rules; omitted and unknown tools default to `allow`. Explicit `allow` removes an inherited restriction. The gate is not registered when the resolved policy has no `ask` or `deny` rules.
 
-### Checking the integration
+An explicit `ask` pauses that exact tool call and sends a bounded, redacted preview to a one-call permission arbiter owned by the built-in child watchdog. The arbiter uses the configured child-watchdog model and returns only `approve` or `deny`; it does not notify the parent agent. Enable and configure `subagents.watchdog.children` before using `ask` rules. A disabled watchdog, missing model/auth, timeout, malformed response, or runtime error denies the call with a clear error.
 
-Run `/subagents-doctor` to check the permission system status.
-If `ask` prompts from children are not reaching the parent UI, verify both
-extensions are installed:
+Asked requests and decisions are written to bounded audit JSONL, including `decisionSource: "watchdog"` and bounded failure reasons. Ordinary direction and clarification through `contact_supervisor` or the optional `pi-intercom` extension remain separate and are never permission-gated.
 
-```bash
-pi list
-```
+`bash` is always passed through by pi-subagents. Bash rules are rejected rather than parsed, gated, denied, or audited. Install and configure `pi-guard` when command-level bash policy is needed.
 
-### How it works
+A pi-subagents child is headless, so a pi-guard rule that resolves to `ask` cannot request approval from the parent Selesai UI. Native permissions do not forward pi-guard decisions; they only apply to the separate non-bash child permission gate. For child-specific policy, use `PI_GUARD` through a `SELESAI_SUBAGENT_PI_BINARY` wrapper or an equivalent launch wrapper, and configure explicit `allow` or `deny` rules. An `allow` rule grants execution; it is not approval forwarding, so retain explicit denies for commands the child must not run.
 
-At session start, the interactive (root) session records its own identity in
-`PI_SUBAGENT_PARENT_SESSION`. When pi-subagents launches a child, it passes the
-launching session's identity to that child explicitly, falling back to the
-inherited environment variable. When the permission system inside a child
-encounters an `ask` permission, it reads this variable to locate the parent
-session and forwards the confirmation request there.
-
-This resolves an interactive prompt only when the parent it points at is the
-interactive session — i.e. for the direct children of the root session. A
-nested child's parent is itself a headless subagent process with no UI to
-surface the prompt, so `ask` policies are best placed on agents that run as
-direct children of the interactive session.
+External CLI profiles are opaque processes, so native permissions cannot intercept their tools. A launch with effective `ask` or `deny` rules is rejected for an external CLI agent instead of claiming enforcement.
 
 ## Direct commands
 
-Skip this section until you want exact syntax.
-
-| Command | Description |
-|---------|-------------|
-| `/run <agent> [task]` | Run one agent; omit the task for self-contained agents |
-| `/chain agent1 "task1" -> agent2 "task2"` | Run agents in sequence |
-| `/chain explorer "scan" -> (commentator "A" \| commentator "B") -> writer "fix"` | Run a chain with a static parallel group inline |
-| `/parallel agent1 "task1" -> agent2 "task2"` | Run agents in parallel |
-| `/run-chain <chainName> -- <task>` | Launch a saved `.chain.md` or `.chain.json` workflow |
-| `/subagent-cost` | Show parent plus child subagent token usage and cost for this session |
-| `/subagents [agent] [model\|thinking\|prompt\|details]` | Interactively inspect or edit an agent's model, thinking level, or system prompt |
-| `/subagents-doctor` | Show read-only setup diagnostics |
-| `/subagents-detach [run-id]` | Detach an active foreground single-subagent run without terminating its child |
-| `/subagents-models [agent]` | Show the runtime-loaded builtin model mapping, optionally filtered to one builtin |
-| `/subagents-watchdog [status|on|off|recommend-model|model ...|session model ...|check]` | Show or configure the opt-in watchdog; use a strong complementary model such as Opus 4.8 high or GPT 5.5 high |
-| `/subagents-profiles` | List saved subagent profiles from `~/.selesai/agent/profiles/pi-subagents/` |
-| `/subagents-load-profile <name>` | Replace only `settings.subagents` with a saved profile and optionally switch this session to the profile builder model |
-| `/subagents-refresh-provider-models <provider> [--force]` | Create or refresh the cached provider model catalog |
-| `/subagents-generate-profiles <provider>` | Generate `<provider>.quota.json` and `<provider>.quality.json` profiles |
-| `/subagents-check-profile <name>` | Check a saved profile against the current registry and live model probes |
-
-Commands validate agent names locally, support tab completion, and send results back into the conversation.
-
-`/subagents` opens a compact administration flow for builtin, package, user, and project agents. Model choices refresh Pi's model registry first, thinking choices are filtered to levels declared by the selected model, and prompt editing uses Pi's native multiline editor; press Ctrl+G to open the configured external editor. Full metadata is opt-in through `details`. Edits are persisted to the field-owning layer: explicit custom-agent frontmatter remains in the agent file, while settings/profile-managed fields remain in `settings.subagents.agentOverrides`. Package-owned fields and definitions loaded through `PI_SUBAGENT_EXTRA_AGENT_DIRS` stay read-only; settings can still supply model or thinking fields omitted by a package definition.
+Use `/run <agent> [task] [--bg] [--fork]` for one child. Multi-agent orchestration is expressed through `workflowScript` in the `subagent` tool; the legacy `/chain`, `/parallel`, and `/run-chain` commands are not registered.
 
 ### Profiles and provider model catalogs
 
@@ -580,132 +570,24 @@ Use the profile workflow like this:
 
 `/subagents-generate-profiles` uses the provider catalog to produce quota and quality profiles. `/subagents-check-profile` re-checks each assigned model in a saved profile against the current registry and a live probe so you can detect model removals, auth problems, or stale assignments.
 
-### Per-step tasks
+### WorkflowScript replacements
 
-Use `->` to separate steps and give each step its own task:
+Use stable keys and ordinary JavaScript for sequence and parallelism. For watched same-repo workflows, pass `async:false` to show the live in-chat workflow card; `chatProgress` can force `off`, `terminal`, `milestones`, or `live-card` when the automatic policy is not what you want.
 
-```text
-/chain explorer "scan the codebase" -> architect "create an implementation plan"
-/parallel scanner "find security issues" -> commentator "check code style"
+```js
+subagent({ workflowScript: `
+  const scan = await runs.run("scan", { agent: "explorer", task: "Scan the codebase" });
+  const reviews = await runs.all([
+    { key: "correctness", agent: "commentator", task: "Review correctness: " + scan.output },
+    { key: "tests", agent: "commentator", task: "Review tests: " + scan.output }
+  ]);
+  return reviews.map(result => result.output);
+` });
 ```
-
-Both double and single quotes work. You can also use `--` as a delimiter:
-
-```text
-/chain explorer -- scan code -> architect -- analyze auth
-```
-
-Steps without a task inherit behavior from the execution mode. Chain steps get `{previous}`, the prior step’s output. Parallel steps use the first available task as a fallback.
-
-### Inline parallel groups in `/chain`
-
-Wrap a group of agents in parentheses and separate them with `|` to fan them out within a single chain step. The group runs all of its tasks concurrently, then the next `->` step continues once they finish:
-
-```text
-/chain explorer "scan" -> (commentator "review A" | commentator "review B") -> writer "fix"
-```
-
-Notes:
-
-- Groups must contain at least two tasks separated by ` | `, each with its own task.
-- Group syntax is only valid between ` -> ` separators, and the group must appear as a complete step.
-- Only a step that *opens* with `(` is a group. Parentheses inside a shared `--` task (e.g. `/chain explorer -- inspect auth (backend)`) stay literal text and keep the legacy single-agent behavior.
-- A group is treated as the prior step’s output for the next sequential step.
-- Tab completion suggests agents inside groups — after `(`, after `|`, and on each new `->` step.
-
-Add a `[...]` suffix right after the closing `)` to set step-level options on the group:
-
-```text
-/chain explorer "scan" -> (commentator "A" | commentator "B")[concurrency=2,failFast,worktree] -> writer "fix"
-```
-
-| Group option | Description |
-|--------------|-------------|
-| `concurrency=N` | Max tasks running at once within the group. |
-| `failFast` | Stop the group as soon as one task fails. |
-| `worktree` | Run each group task in its own git worktree. |
-
-Dynamic fanout (`expand` / `collect`) is intentionally not available inline — use the
-`subagent({ chain: [...] })` tool API or a saved `.chain.json` for data-driven fan-out.
-
-```text
-/chain explorer "analyze auth" -> architect -> builder
-# explorer gets "analyze auth"; architect gets explorer output; builder gets architect output
-```
-
-For a shared task, list agents and place one `--` before the task:
-
-```text
-/chain explorer architect -- analyze the auth system
-/parallel explorer commentator -- check for security issues
-```
-
-### Inline per-step config
-
-Append `[key=value,...]` to an agent name to override defaults. `/chain` applies every key below; `/run` and `/parallel` use the execution-behavior keys (`output`, `outputMode`, `reads`, `model`, `skills`, `progress`) and ignore chain-only metadata such as `as`, `label`, `phase`, `count`, `outputSchema`, and `acceptance`.
-
-```text
-/chain explorer[output=context.md] "scan code" -> architect[reads=context.md] "analyze auth"
-/run explorer[model=anthropic/claude-sonnet-4] summarize this codebase
-/parallel commentator[skills=code-review+security] "review backend" -> commentator[model=openai/gpt-5-mini] "review frontend"
-```
-
-| Key | Example | Description |
-|-----|---------|-------------|
-| `output` | `output=context.md` | Write results to a file. Absolute paths are used as-is. Relative paths in `/run` resolve under `singleRunOutputBaseDir` when configured, otherwise under the run's output artifact directory. Relative paths in `/chain` and `/parallel` live under the chain or parallel run directory. When omitted, a collision-safe per-run path is generated (`<singleRunOutputBaseDir>/<runId>/result.md` for `/run`; `<chainDir>/outputs/<flat-index>-<agent>.md` for chains; `<asyncDir>/outputs/<flat-index>-<agent>.md` for async) unless `output=false`. |
-| `outputMode` | `outputMode=file-only` | Delivery is reference-first by default: completion returns a concise saved-output reference instead of full child content. Omitted `outputMode` resolves to `file-only` whenever an output path is active; explicit `outputMode=inline` keeps the legacy full inline delivery; explicit `outputMode=file-only` still requires an output path. |
-| `reads` | `reads=a.md+b.md` | Read files before executing. `+` separates multiple paths. |
-| `model` | `model=anthropic/claude-sonnet-4` | Override model for this step. |
-| `skills` | `skills=planning+review` | Override available skills. `+` separates multiple skills. |
-| `progress` | `progress` | Enable progress tracking. |
-| `as` | `as=context` | Name this step’s output so later steps can reference it. |
-| `label` | `label=Recon` | Human-readable label for the step. |
-| `phase` | `phase=analysis` | Group steps into a named phase. |
-| `cwd` | `cwd=packages/api` | Run the step in a subdirectory. |
-| `count` | `count=3` | Fan a group task into N copies (only inside a `( ... )` group). |
-| `outputSchema` | `outputSchema=schema.json` | Validate structured output against a JSON Schema file (path resolved against the session cwd, not an inline step `cwd`). |
-| `acceptance` | `acceptance=checked` | Inline evidence level: `auto`, `attested`, or `checked`. Use the tool API or saved `.chain.json` for object contracts such as `none`, `verified`, or an orthogonal review requirement. `reviewed` is an achieved status, not an input level. |
-
-Set `output=false`, `reads=false`, or `skills=false` to disable that behavior explicitly. Do not use `output=false` for file-only returns; use `outputMode=file-only` with an `output` path.
-
-Inline `[...]` values must not contain spaces or commas — keep `label`/`phase` to single tokens.
-
-### Background and forked runs
-
-Add `--bg` to run in the background:
-
-```text
-/run explorer "audit the codebase" --bg
-/chain explorer "analyze auth" -> architect "design refactor" -> builder --bg
-/parallel explorer "scan frontend" -> explorer "scan backend" --bg
-```
-
-Add `--fork` to start each child from a real branched session created from the parent’s current leaf:
-
-```text
-/run commentator "review this diff" --fork
-/chain explorer "analyze this branch" -> architect "plan next steps" --fork
-/parallel explorer "audit frontend" -> commentator "audit backend" --fork
-```
-
-You can combine them in either order:
-
-```text
-/run commentator "review this diff" --fork --bg
-/run commentator "review this diff" --bg --fork
-```
-
-Background runs are detached. If the parent agent has other independent work, it should keep working. In an interactive chat, it should normally return control when ready to yield and let Pi deliver the completion notification instead of blocking merely to wait. Override that default and use `subagent_wait` when the current request is run-to-completion — for example, the user asked you to report results back before continuing or a skill cannot return before its work finishes. In a non-interactive run, Pi auto-drains current-session work at `agent_end`; use `subagent_wait` when this turn must receive results before it ends. It returns when the next initially active run or registered provider item finishes or a subagent needs attention; use `subagent_wait({ all: true })` for all work active at call time, `subagent_wait({ id })` for one async or remembered detached foreground run, and `subagent_wait({ timeoutMs })` to cap the block.
-
-A foreground child can detach while it waits for a supervisor reply. Reply first, then call `subagent_wait({ id: runId })`. While that wait blocks, it streams the detached child's current tool and recent transcript activity into the pending tool row when transcript artifacts are available. The remembered run stays pending until the child exits, then emits a session-scoped completion notification with recovered output and remains inspectable through `subagent({ action: "status", id: runId })`. Do not call `resume` or launch a replacement while the child remains detached.
-
-Headless sessions also auto-drain current-session subagent and registered provider work at `agent_end`, using one absolute timeout and continuing through attention states. This is a final lifecycle safeguard rather than a replacement for explicit orchestration: `subagent_wait` still lets a model react to each result during the turn. Provider, reconciliation, timeout, and malformed-state failures remain visible errors instead of being treated as successful drains.
-
-The `commentator` and `builder` builtins are designed for an explicit decision loop. A typical pattern is to ask `commentator` for diagnosis and a recommended execution prompt, then only run `builder` after the main agent approves that direction.
 
 ## Clarify and launch UI
 
-Tool calls launch directly by default. Set `clarify: true` on single, parallel, or chain runs when you want to preview and edit the workflow before it runs; slash commands launch directly.
+Tool calls start background work by default. Set `async: false` when the current turn needs a foreground result, or `clarify: true` on single, parallel, or chain runs when you want to preview and edit the workflow before it runs; clarify stays foreground.
 
 Common clarify keys:
 
@@ -722,9 +604,9 @@ Common clarify keys:
 - `p` toggles progress tracking where supported
 Picker screens use `↑↓`, `Enter`, `Esc`, and type-to-filter. The full-screen editor supports word wrapping, paste, `Esc` to save, and `Ctrl+C` to discard.
 
-## Agents and chains
+## Agents
 
-Agents are markdown files with YAML frontmatter and a system prompt body. They define the specialist that will run in the child Pi process.
+Agents are markdown files with YAML frontmatter and a system prompt body. They define the specialist that will run in the child Selesai process.
 
 Agent locations, lowest to highest priority:
 
@@ -733,18 +615,24 @@ Agent locations, lowest to highest priority:
 | Builtin | `~/.selesai/agent/extensions/subagent/agents/` |
 | Installed package | `package.json` `pi-subagents.agents` or `pi.subagents.agents` |
 | User | `~/.selesai/agent/agents/**/*.md` |
-| Project | Project config `agents/**/*.md` (`.selesai/agents/**/*.md` in standard Pi) |
+| Project | Project config `agents/**/*.md` (`.selesai/agents/**/*.md` in standard Selesai) |
 
-Project discovery also reads legacy `.agents/**/*.md` files. Nested subdirectories are discovered recursively. `.chain.md` files do not define agents. Installed Pi packages can expose agent directories from either `{"pi-subagents":{"agents":["./agents"]}}` or `{"pi":{"subagents":{"agents":["./agents"]}}}` in their package manifest. Package agents load above builtins and below user/project agents. If both `.agents/` and the project config agents directory define the same parsed runtime agent name, the project config directory wins. Use `agentScope: "user" | "project" | "both"` to control discovery; `both` is the default and project definitions win runtime-name collisions.
+Project discovery also reads legacy `.agents/**/*.md` files. Nested subdirectories are discovered recursively. `.chain.md` files do not define agents. Installed Selesai packages can expose agent directories from either `{"pi-subagents":{"agents":["./agents"]}}` or `{"pi":{"subagents":{"agents":["./agents"]}}}` in their package manifest. Package agents load above builtins and below user/project agents. If both `.agents/` and the project config agents directory define the same parsed runtime agent name, the project config directory wins. Use `agentScope: "user" | "project" | "both"` to control discovery; `both` is the default and project definitions win runtime-name collisions.
 
-Builtin agents load at the lowest priority, so a user or project agent with the same name overrides them. They do not pin a provider model; they inherit your current Pi default model unless you set `subagents.defaultModel` or `subagents.agentOverrides.<name>.model`. `commentator` is an advisory reviewer that critiques direction and proposes an execution prompt without editing files. `builder` is the implementation agent for normal tasks and approved commentator handoffs.
+Builtin agents load at the lowest priority, so a user or project agent with the same name overrides them. They do not pin a provider model; they inherit your current Selesai default model unless you set `subagents.defaultModel` or `subagents.agentOverrides.<name>.model`. `commentator` is an commentatory commentator that critiques direction and proposes an execution prompt without editing files; `commentator` is the same bundled role under the Claude Code-compatible name. `builder` is the implementation agent for normal tasks and approved commentator handoffs.
+
+The `researcher` builtin uses `web_search`, `fetch_content`, and `get_search_content`; those require [pi-web-access](https://github.com/nicobailon/pi-web-access):
+
+```bash
+pi install npm:pi-web-access
+```
 
 ### Builtin overrides
 
 You can override selected builtin fields without copying the whole agent. Overrides live in settings:
 
 - User: `~/.selesai/agent/settings.json`
-- Project: project config settings file (`.selesai/settings.json` in standard Pi)
+- Project: project config settings file (`.selesai/settings.json` in standard Selesai)
 
 Example:
 
@@ -771,18 +659,18 @@ Set `subagents.disableThinking: true` to clear bundled builtin thinking defaults
 
 ### Prompt assembly
 
-Subagents are designed to be narrow by default. Custom agents start with a clean system prompt and only the context you intentionally give them. They do not automatically inherit Pi’s whole base prompt, project instruction files, or discovered skills catalog.
+Subagents are designed to be narrow by default. Custom agents start with a clean system prompt and only the context you intentionally give them. They do not automatically inherit Selesai’s whole base prompt, project instruction files, or discovered skills catalog.
 
 Use these fields when an agent should see more:
 
 | Field | Effect |
 |-------|--------|
-| `systemPromptMode: append` | Append the agent prompt to Pi’s normal base prompt. |
+| `systemPromptMode: append` | Append the agent prompt to Selesai’s normal base prompt. |
 | `inheritProjectContext: true` | Keep inherited project instructions from files like `AGENTS.md` and `CLAUDE.md`. |
-| `inheritSkills: true` | Let the child see Pi’s discovered skills catalog. |
+| `inheritSkills: true` | Let the child see Selesai’s discovered skills catalog. |
 | `defaultContext: fork` | Use forked session context when a launch omits `context`; explicit `context: "fresh"` still wins. |
 
-Builtin agents opt into project instruction inheritance by default so they follow repo-specific rules out of the box. `builder` also uses append mode because its job is orchestration inside the parent workflow.
+Builtin agents opt into project instruction inheritance by default so they follow repo-specific rules out of the box. `explorer` also uses append mode because its job is orchestration inside the parent workflow.
 
 ### Agent frontmatter
 
@@ -838,21 +726,21 @@ Important fields:
 | Field | Notes |
 |-------|-------|
 | `package` | Optional package identifier. A file with `name: explorer` and `package: code-analysis` registers as `code-analysis.explorer`; serialization keeps `name` and `package` separate. |
-| `aliases` | Optional comma-separated or block-list names that resolve to this agent for selection and explicit `agent`/chain/task inputs. Runtime status, persistence, and config still use the canonical `name`; exact canonical names take precedence over aliases, and alias collisions between distinct canonical agents fail as ambiguous. |
+| `aliases` | Optional comma-separated or block-list names that resolve to this agent for selection and explicit `agent` and task inputs. Runtime status, persistence, and config still use the canonical `name`; exact canonical names take precedence over aliases, and alias collisions between distinct canonical agents fail as ambiguous. |
 | `tools` | Strict child tool allowlist. Named extension tools must also have their provider loaded. `mcp:` entries select direct MCP tools when `pi-mcp-adapter` is installed. |
 | `extensions` | Omitted means normal extensions; empty means no extensions; list values allowlist specific extensions. |
-| `subagentOnlyExtensions` | Extension paths loaded only in spawned child sessions for this agent. Tools registered there are unavailable to the main agent unless also installed through normal Pi extension configuration. |
+| `subagentOnlyExtensions` | Extension paths loaded only in spawned child sessions for this agent. Tools registered there are unavailable to the main agent unless also installed through normal Selesai extension configuration. |
 | `model` | Default model. Bare ids prefer the current provider when possible, then unique registry matches. |
 | `fallbackModels` | Ordered backup models for provider/model failures such as quota, auth, timeout, or unavailable model. Ordinary task failures do not trigger fallback. |
 | `thinking` | Appended as a `:level` suffix at runtime unless a suffix is already present. |
-| `systemPromptMode` | `replace` by default; `append` keeps Pi’s base prompt. |
+| `systemPromptMode` | `replace` by default; `append` keeps Selesai’s base prompt. |
 | `inheritProjectContext` | Keeps or strips inherited project instruction blocks. |
-| `inheritSkills` | Keeps or strips Pi’s discovered skills catalog. |
+| `inheritSkills` | Keeps or strips Selesai’s discovered skills catalog. |
 | `defaultContext` | Optional `fresh` or `fork` launch context default for this agent. |
 | `skills` | Selects specific skills for the child, regardless of `inheritSkills`. |
 | `skillPath` | Invocation-private skill files or discovery directories. Relative paths resolve from the agent definition file. Local matches take precedence, while unresolved or unreadable matches fall back to normal skill discovery. This field discovers candidates only; `skills` still selects what the child receives. |
 | `output` | Default single-agent output file. |
-| `defaultReads` | Files to read before running in chain/parallel behavior. |
+| `defaultReads` | Files to read before running the agent. |
 | `defaultProgress` | Maintain `progress.md`. |
 | `async` | Default a single-agent launch to background (`true`) or foreground (`false`) when the call omits `async`. Explicit call values and `forceTopLevelAsync` win. |
 | `timeoutMs` | Positive integer default runtime deadline in milliseconds for single-agent launches. Foreground launches use 30 minutes when neither the call nor agent provides a timeout; explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win. |
@@ -860,15 +748,15 @@ Important fields:
 | `acceptance` | Acceptance default for single-agent launches. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. Explicit call values win; chain and parallel acceptance remains task/step configuration. |
 | `acceptanceRole` | Optional `read-only` or `writer` role for automatic acceptance inference. Explicit task mutation or no-edit intent wins; otherwise the declared role replaces agent-name guessing. This does not grant or revoke tools. |
 | `completionGuard` | Set `false` only for non-implementation agents that may mention implementation words while using mutation-capable tools such as `bash`. |
-| `interactive` | Parsed for compatibility but not enforced in v1. |
+| `interactive` | Parsed for compatibility but not currently enforced. |
 | `maxSubagentDepth` | Tightens nested delegation for this agent's children. |
 | `memory` | Opt-in role-specific persistent memory. `memory: { scope: "project" \| "user", path: "<name>" }` injects the first lines of a `MEMORY.md` from a dedicated `agent-memory/` directory into the child system prompt. Agents with write tools (`edit`/`write`/`bash`) get a read-write block; read-only agents get a read-only fallback. Project scope resolves under `<project>/.selesai/agent-memory/`, user scope under `~/.selesai/agent/agent-memory/`. Paths are validated against traversal and symlink escape. |
 
-Agent-local `skillPath` candidates never enter Pi's parent/global skills catalog. Pair `inheritSkills: false` with explicit `skills` and `skillPath` when a child should receive only its selected private skills.
+Agent-local `skillPath` candidates never enter Selesai's parent/global skills catalog. Pair `inheritSkills: false` with explicit `skills` and `skillPath` when a child should receive only its selected private skills.
 
 ### Per-agent persistent memory
 
-A recurring custom agent can opt into a durable, role-specific memory scope with the `memory` frontmatter field. This is independent of Pi's own parent/session/project memory system and writes nothing to it; memory lives under a dedicated `agent-memory/` namespace so the two never collide.
+A recurring custom agent can opt into a durable, role-specific memory scope with the `memory` frontmatter field. This is independent of Selesai's own parent/session/project memory system and writes nothing to it; memory lives under a dedicated `agent-memory/` namespace so the two never collide.
 
 ```yaml
 memory:
@@ -882,7 +770,7 @@ Project-scoped memory resolves under `<project>/.selesai/agent-memory/<path>` an
 
 ### Tool and extension selection
 
-If `tools` is omitted, `pi-subagents` does not pass `--tools`, so the child gets Pi’s normal builtin tools. If `tools` is present, regular tool names become an explicit allowlist; an empty `tools:` field emits `--no-tools`. An allowlisted name does not load the extension that registers it: load that provider through normal Pi extension discovery, `extensions`, `subagentOnlyExtensions`, or a path-like `tools` entry. `mcp:` entries are split out and forwarded as direct MCP selections without granting normal builtins unless those builtins are also listed. Path-like `tools` entries, such as extension paths or `.ts`/`.js` files, are treated as tool-extension paths rather than tool names. Internal runtime tools such as `structured_output` are added to an explicit allowlist only when their contract is active. Agents that declare only known read-only builtin tools skip the implementation completion guard, but `bash`, unknown tools, and MCP tools stay mutation-capable. Use `completionGuard: false` for bash-enabled validators or commentators that should never be judged as implementation agents.
+If `tools` is omitted, `pi-subagents` does not pass `--tools`, so the child gets Selesai’s normal builtin tools. If `tools` is present, regular tool names become an explicit allowlist; an empty `tools:` field emits `--no-tools`. An allowlisted name does not load the extension that registers it: load that provider through normal Selesai extension discovery, `extensions`, `subagentOnlyExtensions`, or a path-like `tools` entry. `mcp:` entries are split out and forwarded as direct MCP selections without granting normal builtins unless those builtins are also listed. Path-like `tools` entries, such as extension paths or `.ts`/`.js` files, are treated as tool-extension paths rather than tool names. Internal runtime tools such as `structured_output` are added to an explicit allowlist only when their contract is active. Agents that declare only known read-only builtin tools skip the implementation completion guard, but `bash`, unknown tools, and MCP tools stay mutation-capable. Use `completionGuard: false` for bash-enabled validators or commentators that should never be judged as implementation agents.
 
 Examples:
 
@@ -892,7 +780,7 @@ Examples:
 - `tools: subagent, read`: a child-safe `subagent` tool is available inside that child so it can run explicitly assigned nested fanout.
 - `tools: read, fixture_search` plus `subagentOnlyExtensions: ./tools/fixture-search.ts`: the provider loads only in this agent's child process, and the registered `fixture_search` name survives the strict allowlist.
 
-Direct MCP tools require [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter). Subagents only receive direct MCP tools when `mcp:` entries are listed in their frontmatter; global `directTools: true` in `mcp.json` is not enough by itself. The generic `mcp` proxy tool can still be used for discovery when available. The adapter caches tool metadata at startup, so after connecting a new MCP server for the first time, restart Pi before relying on direct tools. An `mcp:` entry named `subagent` does not authorize nested fanout; only the builtin `subagent` tool name does. If a resolved direct MCP name is missing from the child registry, pi-subagents keeps the launch failed under the strict allowlist and identifies the condition as a host/pi-mcp-adapter registration problem; verify that the adapter registers the selected tools before child startup.
+Direct MCP tools require [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter). Subagents only receive direct MCP tools when `mcp:` entries are listed in their frontmatter; global `directTools: true` in `mcp.json` is not enough by itself. The generic `mcp` proxy tool can still be used for discovery when available. The adapter caches tool metadata at startup, so after connecting a new MCP server for the first time, restart Selesai before relying on direct tools. An `mcp:` entry named `subagent` does not authorize nested fanout; only the builtin `subagent` tool name does. If a resolved direct MCP name is missing from the child registry, pi-subagents keeps the launch failed under the strict allowlist and identifies the condition as a host/pi-mcp-adapter registration problem; verify that the adapter registers the selected tools before child startup.
 
 `extensions` controls child extension loading:
 
@@ -912,115 +800,7 @@ Use `subagentOnlyExtensions` when a custom extension tool should exist only insi
 
 To apply the same `extensions` allowlist to every agent that does not declare its own, set `subagents.defaultExtensions` in user or project settings. Omit it to preserve ambient extension discovery or set it to `[]` to disable ambient extensions by default; project settings win over user settings. Agents that explicitly define `extensions` keep their own value, including an empty `extensions:` field.
 
-Before the first model turn, the child runtime compares every explicit tool name with Pi's final filtered registry. A missing provider now fails the run with the unavailable names and concrete `subagentOnlyExtensions`/`extensions` guidance instead of letting a direct or chained child silently continue without its requested tools.
-
-## Chain files
-
-Chains are reusable workflows stored separately from agent files. Use `.chain.md` for simple sequential saved chains. Use `.chain.json` when a chain needs dynamic fanout.
-
-| Scope | Path |
-|-------|------|
-| Installed package | `package.json` `pi-subagents.chains` or `pi.subagents.chains` |
-| User | `~/.selesai/agent/chains/**/*.chain.md`, `~/.selesai/agent/chains/**/*.chain.json` |
-| Project | Project config `chains/**/*.chain.md`, `chains/**/*.chain.json` (`.selesai/chains/...` in standard Pi) |
-
-Nested subdirectories are discovered recursively. Installed Pi packages can expose chain directories from either `{"pi-subagents":{"chains":["./chains"]}}` or `{"pi":{"subagents":{"chains":["./chains"]}}}` in their package manifest. Package chains load below user/project chains. If both `.chain.md` and `.chain.json` define the same parsed runtime chain name in the same scope, `.chain.json` wins. If user and project scopes define the same parsed runtime chain name, the project chain wins. Chains support the same optional `package` frontmatter as agents; `name: review-flow` plus `package: code-analysis` runs as `code-analysis.review-flow`.
-
-Example:
-
-```md
----
-name: explorer-architect
-description: Gather context then plan implementation
----
-
-## explorer
-phase: Context
-label: Map auth flow
-as: context
-output: context.md
-
-Analyze the codebase for {task}
-
-## architect
-phase: Planning
-label: Implementation plan
-reads: context.md
-model: anthropic/claude-sonnet-4-5:high
-progress: true
-
-Create an implementation plan based on {outputs.context}
-```
-
-Each `.chain.md` `## agent-name` section is a step. Config lines such as `phase`, `label`, `as`, `outputSchema`, `output`, `outputMode`, `reads`, `model`, `skills`, and `progress` go immediately after the header. A blank line separates config from task text. In saved `.chain.md` files, `outputSchema` is a path to a JSON Schema file; direct tool calls and `.chain.json` files can pass the schema object inline.
-
-For `output`, `reads`, `skills`, and `progress`, chain behavior is three-state: omitted inherits from the agent, a value overrides, and `false` disables.
-
-Use `phase` to group related work in status output, `label` for a readable step name, and `as` to store a successful step or parallel task result for later `{outputs.name}` references. Duplicate `as` names, invalid identifiers, and unknown output references fail before child execution.
-
-Dynamic fanout is available only through direct `subagent({ chain: [...] })` JSON or saved `.chain.json` files. It expands an array from a prior structured named output, runs one child template per item, and stores the ordered collection under `collect.as`. The source must be structured output; prose is never parsed. `expand.maxItems` is required, over-limit arrays fail, nested fanout and arbitrary expressions are not supported, and `.chain.md` has no dynamic syntax in this release.
-
-```json
-{
-  "name": "dynamic-review",
-  "description": "Find review targets, fan out commentators, then synthesize.",
-  "chain": [
-    {
-      "agent": "explorer",
-      "task": "Return {\"items\":[{\"path\":\"...\",\"reason\":\"...\"}]} via structured_output.",
-      "as": "targets",
-      "outputSchema": { "type": "object" }
-    },
-    {
-      "expand": {
-        "from": { "output": "targets", "path": "/items" },
-        "item": "target",
-        "key": "/path",
-        "maxItems": 12
-      },
-      "parallel": {
-        "agent": "commentator",
-        "label": "Review {target.path}",
-        "task": "Review {target.path}. Reason: {target.reason}",
-        "outputSchema": { "type": "object" }
-      },
-      "collect": { "as": "reviews" },
-      "concurrency": 4
-    },
-    {
-      "agent": "builder",
-      "task": "Synthesize fixes from {outputs.reviews}"
-    }
-  ]
-}
-```
-
-Create simple `.chain.md` chains by writing files directly or with the `subagent({ action: "create", config: ... })` management action. Create dynamic `.chain.json` chains by writing the JSON file directly. Run saved chains with natural language or:
-
-```text
-/run-chain explorer-architect -- refactor authentication
-```
-
-## Chain variables
-
-Task templates support:
-
-| Variable | Description |
-|----------|-------------|
-| `{task}` | Original task from the first step. |
-| `{previous}` | Output from the prior step, or aggregated output from a parallel step. |
-| `{chain_dir}` | Path to the chain artifact directory. |
-| `{outputs.name}` | Text value from a prior step or completed parallel task with `as: "name"`. |
-
-Parallel outputs are aggregated with clear separators before being passed to the next step:
-
-```text
-=== Parallel Task 1 (builder) ===
-...
-
-=== Parallel Task 2 (builder) ===
-...
-```
+Before the first model turn, the child runtime compares every explicit tool name with Selesai's final filtered registry. A missing provider now fails the run with the unavailable names and concrete `subagentOnlyExtensions`/`extensions` guidance instead of letting a direct or chained child silently continue without its requested tools.
 
 ## Skills
 
@@ -1028,7 +808,7 @@ Skills are `SKILL.md` files made available to an agent. The prompt includes skil
 
 Discovery uses project-first precedence:
 
-1. Project config `skills/{name}/SKILL.md` (`.selesai/skills/{name}/SKILL.md` in standard Pi)
+1. Project config `skills/{name}/SKILL.md` (`.selesai/skills/{name}/SKILL.md` in standard Selesai)
 2. Project packages and project settings packages via `package.json -> pi.skills`
 3. Current task cwd package via `package.json -> pi.skills`
 4. Project config `settings.json -> skills`
@@ -1083,7 +863,7 @@ If you are writing an agent that orchestrates subagents, the bundled skill helps
 
 ## Extension delegation API
 
-Pi extensions can request configured foreground agents through the public event
+Selesai extensions can request configured foreground agents through the public event
 contract exported by `pi-subagents/delegation`.
 
 ### Launch contract preflight
@@ -1111,11 +891,14 @@ if (!result.ok) {
 console.log(result.contract.digest, result.contract.tools.effectiveAllowlist);
 ```
 
-Preflight covers ordinary single-agent launch resolution under public contract version 2: selected agent identity and shadowed candidates, a versioned parsed-definition digest (including system prompt and launch-affecting model, tool, skill, extension, output, and memory fields), fresh/fork context, effective model and thinking, skill and tool resolution, direct MCP selections, runtime/configured extensions, artifact/session paths, async lifecycle/status/result/event/process-terminal paths, package/lifecycle versions, capability-ceiling audit data, and stable digests. `launchContractDigest` is the canonical digest of the caller task, effective system prompt (including the resolved `turnBudget` prompt augmentation when supplied), model candidates, effective tools/extensions/MCP (including inherited capability ceilings), output binding, and structured-output schema that ordinary foreground and async execution report in results/status/events and metadata. Runtime acceptance prose and output-task annotations are intentionally excluded because side-effect-free preflight does not resolve those host/runtime augmentations; the contract version and task digest make that boundary explicit. Raw prompts are not exposed in public contract output. It is side-effect-free for launch state: it does not create child sessions, temp prompt files, structured-output runtimes, tool-diagnostic files, or run artifacts. Some host-owned facts, such as exact fork snapshots, nested async roots, and live model registries, can only be proven by the Pi host; those appear as `host_required` diagnostics instead of silently pretending to be exact.
+Preflight covers ordinary single-agent launch resolution: selected agent identity and shadowed candidates, a parsed-definition digest (including system prompt and launch-affecting model, tool, skill, extension, output, and memory fields), fresh/fork context, effective model and thinking, skill and tool resolution, direct MCP selections, runtime/configured extensions, artifact/session paths, async lifecycle/status/result/event/process-terminal paths, package/lifecycle versions, capability-ceiling audit data, and stable digests. `launchContractDigest` is the canonical digest of the caller task, effective system prompt (including the resolved `turnBudget` prompt augmentation when supplied), model candidates, effective tools/extensions/MCP (including inherited capability ceilings), output binding, and structured-output schema that ordinary foreground and async execution report in results/status/events and metadata. Runtime acceptance prose and output-task annotations are intentionally excluded because side-effect-free preflight does not resolve those host/runtime augmentations; the launch and task digests make that boundary explicit. Raw prompts are not exposed in public contract output. It is side-effect-free for launch state: it does not create child sessions, temp prompt files, structured-output runtimes, tool-diagnostic files, or run artifacts. Some host-owned facts, such as exact fork snapshots, nested async roots, and live model registries, can only be proven by the Selesai host; those appear as `host_required` diagnostics instead of silently pretending to be exact.
 
-### Delegation v1
+### Structured delegation API
 
-The compatibility v1 contract runs one configured foreground agent per request:
+Other Selesai extensions can ask `pi-subagents` to run one configured foreground leaf
+agent through the structured delegation API. It uses the established
+`prompt-template:subagent:*` event family and the same executor as the
+`subagent` tool; it does not add another launcher.
 
 ```ts
 import {
@@ -1126,51 +909,6 @@ import {
 } from "pi-subagents/delegation";
 
 const request: SubagentDelegationRequest = {
-  version: 1,
-  requestId: crypto.randomUUID(),
-  agent: "commentator",
-  task: "Review the supplied evidence.",
-  context: "fresh",
-  cwd: ctx.cwd,
-  timeoutMs: 120_000,
-  toolBudget: { soft: 10, hard: 16, block: "*" },
-};
-
-const unsubscribe = pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
-  const response = payload as SubagentDelegationResponse;
-  if (response.requestId !== request.requestId) return;
-  unsubscribe();
-  // Inspect response.status and the metadata present for this run.
-});
-pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
-```
-
-The contract uses the established `prompt-template:subagent:*` event transport and the same executor as the `subagent` tool; it does not add another launcher. New integrations must send `version: 1`. Requests are strict and single-agent only. They can set fresh or fork context, model, cwd, timeout, turn and tool-call budgets, skills, output behavior, acceptance, and artifact capture. Unknown or malformed fields return `invalid_request` before execution.
-
-Responses distinguish completion, failure, timeout, cancellation, interruption,
-turn or tool-budget exhaustion, explicit acceptance failure, invalid requests,
-and unavailable active context. Optional metadata is omitted when unavailable.
-Request IDs must be unique while active; duplicate active IDs are ignored so the
-original request keeps ownership of its terminal response. Emit
-`SUBAGENT_DELEGATION_CANCEL_EVENT` with the same version and request ID to cancel
-queued or active work.
-
-### Delegation v2
-
-V2 is the owned-leaf contract for workflow supervisors. Independent requests
-can overlap through the delegated executor without weakening the ordinary
-model-facing tool's one-foreground-call-per-turn guard.
-
-```ts
-import {
-  SUBAGENT_DELEGATION_REQUEST_EVENT,
-  SUBAGENT_DELEGATION_RESPONSE_EVENT,
-  type SubagentDelegationV2Request,
-  type SubagentDelegationV2Response,
-} from "pi-subagents/delegation";
-
-const request: SubagentDelegationV2Request = {
-  version: 2,
   requestId: crypto.randomUUID(),
   ownerRunId: workflowRunId,
   nodeId: "review-accuracy",
@@ -1191,8 +929,8 @@ const request: SubagentDelegationV2Request = {
 };
 
 const unsubscribe = pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
-  const response = payload as SubagentDelegationV2Response;
-  if (response.version !== 2 || response.requestId !== request.requestId) return;
+  const response = payload as SubagentDelegationResponse;
+  if (response.requestId !== request.requestId) return;
   if (response.ownerRunId !== request.ownerRunId || response.nodeId !== request.nodeId) return;
   unsubscribe();
   // Inspect response.status, response.result, response.usage, model, and thinking.
@@ -1213,22 +951,28 @@ Terminal usage reports input, output, cache-read, cache-write, cost, turns, tool
 calls, and duration alongside the effective model and thinking level when
 known. Schemas are capped at 64 KiB; tasks and returned text/structured values
 are capped at 1 MiB, with smaller bounds on identity/configuration strings and
-a maximum v2 `timeoutMs` of 2,147,483,647. V2 alone accepts
+a maximum `timeoutMs` of 2,147,483,647. Structured delegation accepts
 `toolBudget: { hard: 0, block: "*" }` to block the first tool call and run a
-zero-tool leaf; delegation v1 and ordinary model-facing/configured budgets keep
-their existing minimum of one. The foreground bridge retains up to 8,192 exact
-pending-cancellation and settled-attempt identities per extension
-context. If either history fills, it fails closed with `unavailable_context`
-for later v2 starts rather than evicting identity facts; lifecycle reset clears
-the bounded history.
+zero-tool leaf; ordinary model-facing/configured budgets keep their existing
+minimum of one. The foreground bridge retains up to 8,192 exact
+pending-cancellation and settled-attempt identities per extension context. If
+either history fills, it fails closed with `unavailable_context` for later
+starts rather than evicting identity facts; lifecycle reset clears the bounded
+history.
 
-Delegation requires an active extension context. Emit requests from a supported event callback or queued application step, not by recursively invoking the `subagent` tool inside another tool's `tool_call` hook. The caller selects a configured agent, but agent discovery and effective tools remain package-owned. A request cannot grant arbitrary tools, and tool restrictions are not an operating-system sandbox. The detached RPC remains async-only; this API is foreground-only.
+Delegation requires an active extension context. Emit requests from a supported
+event callback or queued application step, not by recursively invoking the
+`subagent` tool inside another tool's `tool_call` hook. The caller selects a
+configured agent, but agent discovery and effective tools remain package-owned.
+A request cannot grant arbitrary tools, and tool restrictions are not an
+operating-system sandbox. The detached RPC remains async-only; this API is
+foreground-only.
 
-Existing prompt-template payloads and delegation v1 continue over the same event
-family. V2 remains foreground-only and inherits the configured agent's current
-tools, skills, context, model policy, and workspace authority; it is not a
-sandbox or a durable task broker. `pi-subagents/delegation` is the canonical
-contract for extension integrations.
+Unversioned prompt-template payloads with `requestId`, `agent`, `task`,
+`context`, `model`, and `cwd` are still accepted as a legacy bridge while we
+validate whether any integrations still use them. New integrations should use
+the structured owned-leaf request above. `pi-subagents/delegation` is the
+canonical contract for extension integrations.
 
 ## Capability ceilings
 
@@ -1256,7 +1000,7 @@ Active registrations intersect their `allowedTools` and `allowedAgents` sets and
 
 ## Background-work provider API
 
-Other Pi extensions can make their current-session jobs visible to `subagent_wait` through the versioned process-local provider contract:
+Other Selesai extensions can make their current-session jobs visible to `subagent_wait` through the process-local provider contract:
 
 ```ts
 import { registerBackgroundWorkProvider } from "pi-subagents/background-work";
@@ -1271,11 +1015,11 @@ const dispose = registerBackgroundWorkProvider({
 });
 ```
 
-Each item needs a stable provider-local ID and the exact Pi session ID that owns it. `subagent_wait` captures those identities rather than a count, so one job finishing while another starts still satisfies first-completion waits without losing the replacement. It filters snapshots to the active session, fails closed if a provider disappears while its work is tracked, and surfaces malformed snapshots or provider errors with provider context. Wake channels only shorten polling; validated snapshots remain authoritative.
+Each item needs a stable provider-local ID and the exact Selesai session ID that owns it. `subagent_wait` captures those identities rather than a count, so one job finishing while another starts still satisfies first-completion waits without losing the replacement. It filters snapshots to the active session, fails closed if a provider disappears while its work is tracked, and surfaces malformed snapshots or provider errors with provider context. Wake channels only shorten polling; validated snapshots remain authoritative.
 
-Providers share a registry through `Symbol.for("pi-subagents.background-work.v1")`, allowing independently loaded extension modules to meet in one Pi process. Registration is reload-safe: a new provider with the same name replaces the old callback, and the old disposer cannot remove the replacement. Call the disposer during extension shutdown when possible.
+Providers share a registry through `Symbol.for("pi-subagents.background-work.v1")`, allowing independently loaded extension modules to meet in one Selesai process. Registration is reload-safe: a new provider with the same name replaces the old callback, and the old disposer cannot remove the replacement. Call the disposer during extension shutdown when possible.
 
-Child processes do not gain provider tools or extensions automatically. Add `subagent_wait` to the child agent's `tools` allowlist and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting is serialized through foreground, async, resume, chain, parallel, and fanout launch paths; `PI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence.
+Child processes do not gain provider tools or extensions automatically. Add `subagent_wait` to the child agent's `tools` allowlist and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting is serialized through foreground, async, resume, chain, parallel, and fanout launch paths; `SELESAI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence.
 
 ## Programmatic tool usage
 
@@ -1283,83 +1027,24 @@ These are the parameters the LLM passes when it calls the `subagent` tool. Most 
 
 ### Execution examples
 
-```ts
-// Single agent
-{ agent: "builder", task: "refactor auth" }
-{ agent: "explorer", task: "find todos", maxOutput: { lines: 1000 } }
-{ agent: "explorer", task: "investigate", output: false }
-{ agent: "explorer", task: "write a large report", output: "reports/explorer.md", outputMode: "file-only" }
+```js
+// Single child
+{ agent: "explorer", task: "Analyze the auth flow", async: true }
 
-// Forked context
-{ agent: "builder", task: "continue this thread", context: "fork" }
+// Sequential workflow
+{ workflowScript: `
+  const scan = await runs.run("scan", { agent: "explorer", task: "Analyze auth" });
+  return (await runs.run("plan", { agent: "architect", task: "Plan from: " + scan.output })).output;
+` }
 
-// Parallel
-{ tasks: [{ agent: "explorer", task: "a" }, { agent: "commentator", task: "b" }] }
-{ tasks: [{ agent: "explorer", task: "audit auth", count: 3 }] }
-{ tasks: [{ agent: "explorer", task: "audit frontend" }, { agent: "commentator", task: "audit backend" }], context: "fork" }
-
-// Chain
-{ chain: [
-  { agent: "explorer", task: "Gather context for auth refactor" },
-  { agent: "architect" },
-  { checkpoint: "implementation", message: "Approve implementation before review?" },
-  { agent: "builder" },
-  { agent: "commentator" }
-]}
-
-// Chain in the background, suitable for unblocking the main chat
-{ chain: [...], async: true }
-
-// Chain with fan-out/fan-in
-{ chain: [
-  { agent: "explorer", task: "Gather context", phase: "Context", label: "Map code", as: "context" },
-  { parallel: [
-    { agent: "builder", task: "Implement feature A from {outputs.context}", label: "Feature A", as: "featureA" },
-    { agent: "builder", task: "Implement feature B from {outputs.context}", label: "Feature B", as: "featureB" }
-  ], concurrency: 2, failFast: true },
-  { agent: "commentator", task: "Review {outputs.featureA} and {outputs.featureB}" }
-]}
-
-// Dynamic fanout from structured output
-{ chain: [
-  {
-    agent: "explorer",
-    task: "Return review targets as structured_output: { items: [{ path, reason }] }",
-    as: "targets",
-    outputSchema: { type: "object" }
-  },
-  {
-    expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 12 },
-    parallel: { agent: "commentator", task: "Review {target.path}. Reason: {target.reason}", outputSchema: { type: "object" } },
-    collect: { as: "reviews" },
-    concurrency: 4
-  },
-  { agent: "builder", task: "Synthesize fixes from {outputs.reviews}" }
-] }
-
-// Strict structured output for reliable handoff data
-{ chain: [
-  {
-    agent: "explorer",
-    task: "Return the key files and risks for {task}",
-    as: "scan",
-    outputSchema: {
-      type: "object",
-      required: ["files", "risks"],
-      properties: {
-        files: { type: "array", items: { type: "string" } },
-        risks: { type: "array", items: { type: "string" } }
-      }
-    }
-  },
-  { agent: "architect", task: "Plan from this scan: {outputs.scan}" }
-] }
-
-// Worktree isolation
-{ tasks: [
-  { agent: "builder", task: "Implement auth" },
-  { agent: "builder", task: "Implement API" }
-], worktree: true }
+// Parallel workflow
+{ workflowScript: `
+  const results = await runs.all([
+    { key: "backend", agent: "commentator", task: "Review backend" },
+    { key: "frontend", agent: "commentator", task: "Review frontend" }
+  ]);
+  return results.map(result => result.output);
+` }
 ```
 
 ### Management actions
@@ -1369,7 +1054,6 @@ Agent definitions are not loaded into context by default. Management actions let
 ```ts
 { action: "list" }
 { action: "list", agentScope: "project" }
-{ action: "list", task: "Inspect the authentication flow and report findings only" }
 { action: "get", agent: "explorer" }
 { action: "models" }
 { action: "models", agent: "commentator" }
@@ -1377,7 +1061,7 @@ Agent definitions are not loaded into context by default. Management actions let
 { action: "get", chainName: "review-pipeline" }
 
 { action: "create", config: {
-  name: "Code explorer",
+  name: "Code Explorer",
   package: "code-analysis",
   description: "Scans codebases for patterns and issues",
   scope: "user",
@@ -1400,7 +1084,7 @@ Agent definitions are not loaded into context by default. Management actions let
 
 { action: "create", config: {
   name: "review-pipeline",
-  description: "explorer then review",
+  description: "Explorer then review",
   scope: "project",
   steps: [
     { agent: "explorer", task: "Scan {task}", output: "context.md" },
@@ -1422,8 +1106,6 @@ Agent definitions are not loaded into context by default. Management actions let
 { action: "reset", agent: "commentator" }
 ```
 
-`list` accepts an optional advisory `task` (the sole management-field exception): with a non-empty task it appends a text-only "Task-aware advisory routing" block that deterministically recommends one canonical executable agent for the task (implementation needs a writer role with write tools; read-only needs a read-only role without known write tools) or explains why none is safe. It only recommends and never launches: no agent is started, no params are changed, and executor selection is untouched. To proceed, make a separate explicit execution call with the recommended canonical agent name, e.g. `{ agent: "builder", task: "..." }`. `agentScope` narrows discovery for the recommendation exactly as it does for the rest of `list`.
-
 `create` uses `config.scope`, not `agentScope`. `config.name` is the local frontmatter name; optional `config.package` registers the runtime name as `{package}.{name}` and is saved as separate `name` and `package` frontmatter. `config.aliases` accepts a comma-separated string, string array, or `false` to clear aliases; aliases resolve to the canonical agent name for execution and are shown by `list`/`get`. `update` and `delete` use the runtime name and `agentScope` only when the same runtime name exists in multiple scopes. To clear optional string fields, including `package`, set them to `false` or `""`.
 
 `eject` copies a bundled builtin or package agent verbatim into the user or project agent dir (default `user`) as an editable custom file that shadows the original, so you can customize a builtin without hunting package files. `disable` writes a reversible `agentOverrides.<name>.disabled: true` entry to the user or project settings file (default `user`); the agent stays on disk but is hidden from runtime discovery and `list`. `enable` removes that `disabled` field while preserving any other override fields on the same entry. `reset` deletes the scope's custom agent file and/or settings override entry, restoring the bundled default; it refuses if no bundled default exists (use `delete` for purely custom agents). All four accept `agentScope: "user" | "project"` and operate in one scope at a time; project overrides still win over user ones, so a project-scope disable survives a user-scope `enable` until you target the project scope.
@@ -1433,52 +1115,46 @@ Agent definitions are not loaded into context by default. Management actions let
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `agent` | string | - | Agent name or alias for single mode, or target for management actions. Execution records use the canonical agent name. |
-| `task` | string | - | Task for single mode, or an optional advisory intent for `action: "list"` (appends a task-aware recommendation to list output; never launches). |
-| `action` | string | - | `list`, `get`, `create`, `update`, `delete`, `status`, `interrupt`, `stop`, `resume`, `steer`, `append-step`, `approve-checkpoint`, `reject-checkpoint`, or `doctor`. |
+| `task` | string | - | Task string for single mode. |
+| `action` | string | - | Agent, mission (`mission.create/list/show/update/attach-run/close`), Herdr inspector (`inspector.open/status/close`), status/control, schedule, watchdog, or doctor action. |
 | `chainName` | string | - | Chain name for management actions. |
-| `config` | object/string | - | Agent or chain config for create/update. |
+| `config` | object/string | - | Agent or existing durable chain config for management create/update. |
 | `output` | `string \| false` | agent default | Override single-agent output file. |
-| `outputMode` | `"inline" \| "file-only"` | mode-dependent | Delivery of saved output. Explicit `"inline"` keeps legacy full inline output; explicit `"file-only"` returns a concise saved-file reference and requires an `output` path. Omitted, it resolves to `file-only` whenever an output path is active and `inline` otherwise. |
+| `outputMode` | `"inline" \| "file-only"` | `inline` | Return saved output inline or as a concise saved-file reference. `file-only` requires an `output` path. |
 | `skill` | `string \| string[] \| false` | agent default | Override skills or disable all. |
 | `model` | string | agent default | Override model. |
 | `outputSchema` | object | - | Require schema-valid structured output for a direct single-agent run. |
-| `agentContract` | `{ version: 1 }` | - | Opt into generic agent contract v1. Omit to keep the current/default contract. |
-| `tasks` | array | - | Top-level parallel tasks. Supports `agent`, `task`, `cwd`, `count`, `output`, `outputMode`, `outputSchema`, `reads`, `progress`, `skill`, `model`, `toolBudget`, `acceptance`, and `agentContract`. |
-| `concurrency` | number | config or `4` | Top-level parallel concurrency. |
-| `worktree` | boolean | false | Create isolated git worktrees for parallel tasks. |
-| `chain` | array | - | Sequential, checkpoint, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, `acceptance`, `agentContract`, and v1-only `gateOn` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. With `action: "append-step"`, pass exactly one step to append to a running async chain. |
-| `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every child. When omitted, each agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `architect` and `recapper` default to `fork`; `builder`, `commentator`, `explorer`, and `researcher` default to `fresh`. |
-| `chainDir` | string | temp chain dir | Persistent directory for chain artifacts. Relative chain `output`, `reads`, and `progress` paths live under this directory. |
+| `agentContract` | `{ version: 1 }` | - | Enable the compatibility behavior for this run. Omit for the default behavior. |
+| `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every child. When omitted, each agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `architect`, `builder`, `commentator`, and `commentator` default to `fork`. |
+| `missionId` | string | - | Attach a single-agent or workflow launch to an existing project mission. |
+| `mission` | object/false | - | Create-and-attach shortcut: `{ title, goal?, labels? }`; pass `false` for an intentionally ephemeral launch with no mission record. Explicit mission persistence failures are strict. |
+| `handoffPath` | string | - | Aggregate handoff manifest required by `action: "worktree.discard"`. |
+| `focus` | boolean | true | Focus the newly split pane for `action: "inspector.open"`; not a standalone action. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
 | `lines` | number | `80` | Maximum transcript lines for `action: "status", view: "transcript"`; capped at 500. |
 | `clarify` | boolean | false | Show TUI preview/edit flow. Explicit `clarify: true` keeps the run foreground for the clarify UI. |
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
-| `async` | boolean | false | Background execution. For chains, `clarify: true` explicitly keeps the run foreground for the clarify UI. |
+| `async` | boolean | default-on | Background execution. Scripted workflows always default to background and accept `async:false` as an explicit foreground escape hatch. `clarify:true` applies only to single-agent execution; workflowScript does not open clarify UI. |
+| `chatProgress` | `auto \| off \| terminal \| milestones \| live-card` | `auto` | WorkflowScript chat projection. `auto` renders a live in-chat card only for watched foreground workflows in the same Git repository, including managed worktrees; background and other-repo workflows stay compact. Explicit `live-card` requires `async:false` and the same Git repository. |
 | `timeoutMs` / `maxRuntimeMs` | number | 30 min foreground; none async | Optional run-level max runtime in milliseconds. Foreground uses 30 minutes only when neither the call nor selected agent provides a timeout. |
 | `turnBudget` | object | none | Optional assistant-turn budget `{ maxTurns, graceTurns }`. At `maxTurns` the child is warned to wrap up. After the grace window (default 1), termination occurs at the next assistant boundary; a response that starts tool work records `termination-deferred` until a later boundary. Partial output is returned on abort. |
 | `toolBudget` | object | none | Optional child tool-call budget `{ soft?, hard, block? }`. At `soft` the child is nudged to finalize. After `hard`, configured tools are blocked; `block` defaults to `read`, `grep`, `find`, and `ls`, while `"*"` blocks every tool call. Final assistant text is never blocked. |
 | `usageBudget` | object | none | Optional root-only reported-usage budget `{ tokens?: { soft?, hard }, costUsd?: { soft?, hard } }`. Soft limits are status-only. Hard limits prevent later child launches after reported usage is reconciled; already-running children are not stopped and no reservations are made. |
 | `cwd` | string | runtime cwd | Override working directory. |
 | `maxOutput` | object | 200KB, 5000 lines | Final output truncation limits. |
-| `artifacts` | boolean | false | Write debug artifacts. |
+| `artifacts` | boolean | true | Write debug artifacts. |
 | `includeProgress` | boolean | false | Include full progress in result. |
 | `share` | boolean | false | Upload session export to GitHub Gist. |
 | `sessionDir` | string | derived | Override session log directory. |
 | `acceptance` | string/object/false | inferred | Configure evidence gates with `"auto"`, `"attested"`, `"checked"`, `"verified"`, or `{ level: "none", reason: "..." }`. Independent review is orthogonal: use `review: { required: true, agent?: "commentator", focus?: "..." }`. `review-required` means evidence passed but review is pending; `reviewed` is achieved only after a real independent result. Explicit `"reviewed"` remains schema-recognized solely for actionable preflight recovery. For commentator/read-only calls, omit acceptance. `false` disables gates. With `agentContract: { version: 1 }`, omitted, `"auto"`, and `false` mean no acceptance request for that run; explicit acceptance is reported separately from execution. |
 
-`agentContract: { version: 1 }` keeps existing fields and artifacts but adds derived `execution`, `acceptance`, `review`, and `effects` projections. In v1, acceptance failures do not rewrite execution success, and an explicit completion guard reports `effects.fileMutation` instead of failing the run by itself. Chain steps default to advancing on execution under v1; set `gateOn: "acceptance"` on a v1 step or parallel task when rejected acceptance should stop the chain.
-
-Checkpoint steps use `{ checkpoint: "stable-name", message?: "..." }`. A checkpoint does not launch a child, consume spawn budget, or produce an output reference. Foreground chains return a paused result at the checkpoint so the current parent can explicitly choose the next action. Async chains persist `checkpoint` in status/details and pause before the next step; approve with `subagent({ action: "approve-checkpoint", id: "<run-id>" })` or reject with `subagent({ action: "reject-checkpoint", id: "<run-id>" })`. Approval resumes from that boundary without rerunning completed steps. Rejection is terminal with `state: "rejected"`.
-
 As a conservative orchestration policy, do not set `turnBudget`, a hard `toolBudget`, or a tight `usageBudget` on implementation builders, fix builders, commentators with edit authority, or other mutation-capable children. A default tool budget blocks read/search tools rather than mutation tools, and reported usage has no reservation model, so neither assistant turns, tool-call counts, nor token/cost totals measure whether a delivery slice is buildable or safe to hand off. Hard caps remain appropriate for explicitly read-only explorers, commentators, and validators.
 
 Bound writer work with a narrow task and an outer `timeoutMs` or `maxRuntimeMs` that leaves enough margin for the slice. An elapsed timeout is not a mutation-safe boundary and may still signal a child during tool work. Before the deadline, use `steer` or an attention notice to request a checkpoint after the current tool returns, including changed files, build/test state, remaining work, and commit or PR state.
 
-`context: "fork"` fails fast when the parent session is not persisted, the current leaf is missing, or the branched child session cannot be created. When the inherited transcript contains signed Anthropic `thinking` / `redacted_thinking` blocks, `pi-subagents` strips those provider-private blocks from the forked child session. It forces thinking `off` only when the child’s effective primary or fallback model resolves through the model registry to the Anthropic provider or `anthropic-messages` API; unresolved models are treated conservatively. The result reports every affected child, including on failed runs. Use `context: "fresh"` when an Anthropic child needs thinking. Forking never silently downgrades to `fresh`. In multi-agent runs that omit `context`, each agent/task/step follows its own `defaultContext`, so a fresh-default explorer can run fresh beside a fork-default architect. Pass explicit `context: "fork"` or `context: "fresh"` when you intentionally want one context for every child.
+`context: "fork"` fails fast when the parent session is not persisted, the current leaf is missing, or the branched child session cannot be created. When the inherited transcript contains signed Anthropic `thinking` / `redacted_thinking` blocks, `pi-subagents` strips those provider-private blocks from the forked child session. It forces thinking `off` only when the child’s effective primary or fallback model resolves through the model registry to the Anthropic provider or `anthropic-messages` API; unresolved models are treated conservatively. The result reports every affected child, including on failed runs. Use `context: "fresh"` when an Anthropic child needs thinking. Forking never silently downgrades to `fresh`. In workflow runs that omit `context`, each `runs.run` child follows its own `defaultContext`, so a fresh-default explorer can run fresh beside a fork-default builder. Pass explicit `context: "fork"` or `context: "fresh"` when you intentionally want one context for every child.
 
-Delegated results are reference-first by default. Every child gets a durable saved output unless the caller explicitly uses `output: false`: omitted `output` uses a generated per-run path, omitted `outputMode` resolves to `file-only`, and completion returns a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` Inspect full output through the saved path, async status/transcript, or resume. Explicit `outputMode: "inline"` restores legacy full inline delivery; `output: false` disables durable result persistence (follow-up visibility falls back to bounded excerpts). Failed runs with a successfully persisted result return the error/status plus the saved-output reference; when persistence or read-back fails, only a bounded excerpt (first 80 lines / 4 KiB) is returned together with the error, never raw unbounded output. Generated output files persist even with `artifacts: false`; debug `_input`, `_output`, metadata, and transcript artifacts remain opt-in. In chains, relative `output` paths are resolved inside the chain artifact directory, not the caller's CWD; later `{previous}` steps receive the same compact reference when the prior step used file-only mode. To persist chain outputs outside the temp artifact area, pass a persistent `chainDir` or use an absolute `output` path. A child with only read-only tools does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Children with mutation-capable tools retain the direct-write instruction.
-
-Sequential and parallel chain tasks accept `agent`, `task`, `phase`, `label`, `as`, `outputSchema`, `cwd`, `output`, `outputMode`, `reads`, `progress`, `skill`, `model`, `toolBudget`, `acceptance`, `agentContract`, and v1-only `gateOn`. Parallel tasks also accept `count`. Parallel step groups accept `parallel`, `concurrency`, `failFast`, and `worktree`. If `outputSchema` is present, the child must call `structured_output` with schema-valid JSON; prose-only completion or invalid JSON fails the step. Validated structured values are preserved on the step result, and `as` also exposes a compact text representation through `{outputs.name}`.
+Use `outputMode: "file-only"` when a saved output may be large and the parent only needs a pointer. The returned text is a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` Failed runs and save errors still return normal inline output for debugging. In workflowScript, give each child an explicit output path when later script steps need a durable file reference. A child with only read-only tools does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Children with mutation-capable tools retain the direct-write instruction.
 
 Status and control actions:
 
@@ -1496,7 +1172,7 @@ subagent({ action: "resume", id: "<run-id>", index: 1, message: "follow-up for c
 subagent({ action: "resume", id: "<nested-run-id>", message: "follow-up for a nested child" })
 subagent({ action: "steer", id: "<run-id>", message: "guidance for the running child" })
 subagent({ action: "steer", id: "<run-id>", index: 1, message: "guidance for child 2" })
-subagent({ action: "append-step", id: "<run-id>", chain: [{ agent: "builder", task: "Continue from {previous}" }] })
+subagent({ action: "append-step", id: "<run-id>", step: { agent: "builder", task: "Continue from {previous}" } })
 subagent({ action: "approve-checkpoint", id: "<run-id>" })
 subagent({ action: "reject-checkpoint", id: "<run-id>" })
 subagent({ action: "doctor" })
@@ -1504,47 +1180,55 @@ subagent({ action: "doctor" })
 
 `status` resolves exact foreground ids, top-level async ids, and nested run ids before falling back to prefix matching. `view: "fleet"` is an optional read-only active-run surface with transcript commands; it does not add steering or stop controls. `view: "transcript"` tails the selected run's live `output-<index>.log` or persisted session transcript, with `lines` capped at 500. Nested status shows the root/parent path, nested children, session/artifact paths when known, and nested control commands. Inside child-safe fanout mode, bare `status` requires an id when no local foreground run is active, so children cannot enumerate unrelated top-level async runs. Bare `interrupt` still targets only the visible top-level run; interrupting a nested run requires its explicit nested id.
 
-`resume` revives a paused, completed, or failed async/foreground child by starting a new child from its stored session file; stopped runs remain non-resumable, and it does not interrupt a live top-level async child. Use `steer` for acknowledged live async guidance. Multi-child async runs and remembered foreground single, parallel, or chain runs can be revived by passing `index` to choose the child. Nested runs can be resumed by nested id when their live route or persisted nested session metadata is available. Revive starts a new child process from the old session context; it does not restart the same OS process, and it requires the chosen child to have a persisted `.jsonl` session file. Direct revival takes an exclusive cross-process lease on the canonical session file until the new child finishes. A concurrent attempt fails before Pi is spawned and identifies the owning revived run; dead-owner leases are reclaimed only when staleness can be proved.
+`resume` revives a paused, completed, or failed async/foreground child by starting a new child from its stored session file; stopped runs remain non-resumable, and it does not interrupt a live top-level async child. Use `steer` for acknowledged live async guidance. Multi-child async runs and remembered foreground single, parallel, or chain runs can be revived by passing `index` to choose the child. Nested runs can be resumed by nested id when their live route or persisted nested session metadata is available. Revive starts a new child process from the old session context; it does not restart the same OS process, and it requires the chosen child to have a persisted `.jsonl` session file. Direct revival takes an exclusive cross-process lease on the canonical session file until the new child finishes. A concurrent attempt fails before Selesai is spawned and identifies the owning revived run; dead-owner leases are reclaimed only when staleness can be proved.
 
-`stop` ends a current-session top-level async run. It is deliberately stronger than `interrupt`: it is not a resumable pause, stopped runs should be restarted as new runs, foreground and nested targets are rejected, direct id calls execute immediately, and `/subagents-stop` without an id opens a selector with confirmation when a TUI is available. Use `↑`/`↓` or `j`/`k` to move through that selector. In non-TUI contexts the slash command prints exact `subagent({ action: "stop", id })` and `/subagents-stop <id>` commands. Scheduled jobs can appear in the selector, but they are labeled as scheduled cancellations and route through `schedule-cancel`, not `stop`.
+`stop` ends a current-session top-level async run. It is deliberately stronger than `interrupt`: it is not a resumable pause, stopped runs should be restarted as new runs, foreground and nested targets are rejected, direct id calls execute immediately, and `/subagents-stop` without an id opens a selector with confirmation when a TUI is available. Use `↑`/`↓` or `j`/`k` to move through that selector. In non-TUI contexts the slash command prints exact `subagent({ action: "stop", id })` and `/subagents-stop <id>` commands. Inactive schedules can appear in the selector, but they are labeled as schedules and route through `schedule.pause`, not `stop`.
 
-`steer` waits up to three seconds for a correlated child-Pi input acceptance and returns a request id with `delivered`, `scheduled`, `pending`, `partial`, `recovered`, or `failed` plus per-child states. Delivery means Pi accepted the user message, not model compliance. A pending indexed child returns `scheduled`. Only a top-level single run may interrupt after the acknowledgment deadline and recover after a further 15-second pause/revival bound; chain, parallel, and nested runs never auto-interrupt. Recovery launches a replacement only after the source is confirmed paused, a valid persisted session exists, and deadline, turn, and tool budgets remain. It preserves the original child contract and remaining limits; otherwise the source stays paused with an explicit failure. Late acceptance is recorded but cannot cancel committed recovery. The persisted `steering` ledger retains 20 requests and replaces the old `steerCount`/`lastSteerAt` fields.
+`steer` waits up to three seconds for a correlated child-Selesai input acceptance and returns a request id with `delivered`, `scheduled`, `pending`, `partial`, `recovered`, or `failed` plus per-child states. Delivery means Selesai accepted the user message, not model compliance. A pending indexed child returns `scheduled`. Only a top-level single run may interrupt after the acknowledgment deadline and recover after a further 15-second pause/revival bound; durable multi-child and nested runs never auto-interrupt. Recovery launches a replacement only after the source is confirmed paused, a valid persisted session exists, and deadline, turn, and tool budgets remain. It preserves the original child contract and remaining limits; otherwise the source stays paused with an explicit failure. Late acceptance is recorded but cannot cancel committed recovery. The persisted `steering` ledger retains 20 requests and replaces the old `steerCount`/`lastSteerAt` fields.
 
-`append-step` accepts exactly one sequential, checkpoint, static parallel, or dynamic fanout chain step for a top-level async chain whose status is still `running`. The step is persisted in the run directory and becomes eligible only after the chain's already-queued steps finish; completed, failed, rejected, paused, foreground, single, and top-level parallel runs reject appends.
+`append-step` accepts exactly one `step` object for an existing durable chain for a top-level async chain whose status is still `running`. The step is persisted in the run directory and becomes eligible only after the chain's already-queued steps finish; completed, failed, rejected, paused, foreground, single, and non-chain runs reject appends.
+
+## Durable missions
+
+Missions are durable wrappers around runs. The noun map is:
+
+- **Project/codebase** — where work happens.
+- **Mission** — why explorerd work exists and how to recover it later.
+- **Run** — one actual subagent execution.
+- **Receipt** — proof or a link for an external outcome, such as a PR, CI check, deployment, or release.
+
+Ordinary task launches create a mission by default, with detailed JSON records under `<cwd>/.pi-subagents/missions/` linking goals, run ids, lifecycle status, decisions, artifact paths, and delivery receipts. Automatic persistence failures do not block the run and are reported as `details.missionWarning`; explicit `missionId` and `mission` requests remain strict before launch. Human receipts end with `Mission: <id> (<status>)`, while JSON/structured output text stays unchanged and `details.missionId` is authoritative. Pass `mission: false` for an intentionally ephemeral launch that should not leave a durable mission record. Set `missions.enabled: false` to disable automatic mission creation; explicit mission fields and actions still work.
+
+```ts
+const created = subagent({
+  action: "mission.create",
+  mission: { title: "Ship auth refresh", goal: "Implement and validate token refresh" }
+})
+subagent({ agent: "builder", task: "Implement the approved auth refresh plan", missionId: "<mission-id>" })
+
+// Or create and attach in one launch
+subagent({ agent: "builder", task: "Implement the approved plan", mission: { title: "Ship auth refresh" } })
+```
+
+Use `mission.list`, `mission.show`, `mission.update`, `mission.attach-run`, and `mission.close` for management. Use `mission.update` to record decisions, artifacts, labels, summaries, and delivery receipts while work runs; receipts are durable links for pull requests, CI, deployments, or releases, each with `kind`, `status`, `title`, `url`, and optional `description`. They record delivery state only; pi-subagents does not merge, poll CI, or deploy. Use `mission.close` with a terminal status and summary when a mission is done. After compaction or restart, resume from `mission.list`/`mission.show` first: `mission.show` refreshes linked async status where available, then use the linked run ids with normal `status`, `steer`, `resume`, or `stop` actions. `mission.list` with `missionScope: "global"` reads the user-local pointer index under the Selesai agent directory; project records remain the source of truth, and missing records are reported as stale rather than hiding other projects.
+
+For cross-project work, keep same-project tasks on ordinary subagents. Use an explicit `cwd` for small bounded work in another project. For substantial or long-running work in another project, open a project-owned Herdr pane with `project.open` and give that project Selesai session a narrow mission/result contract. The project pane owns its own subagents; do not model it as ordinary child nesting or expect existing headless runs to move into the pane.
 
 ## Worktree isolation
 
-Parallel agents can clobber each other if they edit the same checkout. `worktree: true` gives each parallel child its own git worktree branched from `HEAD`.
+Scripted workflows can give each writing child a separate managed git worktree by setting `worktree: true` on each `runs.run` / `runs.all` item:
 
-```ts
-{ tasks: [
-  { agent: "builder", task: "Implement auth", count: 2 },
-  { agent: "builder", task: "Implement API" }
-], worktree: true }
-
-{ chain: [
-  { agent: "explorer", task: "Gather context" },
-  { parallel: [
-    { agent: "builder", task: "Implement feature A from {previous}" },
-    { agent: "builder", task: "Implement feature B from {previous}" }
-  ], worktree: true },
-  { agent: "commentator", task: "Review all changes from {previous}" }
-]}
+```javascript
+const [api, ui] = await runs.all([
+  { key: "api", agent: "builder", task: "Implement the API", worktree: true },
+  { key: "ui", agent: "builder", task: "Implement the UI", worktree: true }
+]);
+return { api: api.artifactPaths, ui: ui.artifactPaths };
 ```
 
-Requirements:
+Each child uses the existing worktree lifecycle: it branches from clean HEAD, journals ownership before launch, captures a patch and handoff manifest, then removes cleanly captured temporary worktrees and branches. The handoff manifest path remains available in the child's `artifactPaths`; return or emit it when the orchestrator needs to apply or inspect the patches. `runs.ref` stays concise and intentionally omits full paths.
 
-- run inside a git repo
-- working tree must be clean
-- `node_modules/` is symlinked into each worktree when present
-- task-level `cwd` overrides must be omitted or match the shared cwd
-- configured `worktreeSetupHook` must return valid JSON before timeout
-
-Git worktrees start from tracked files, so ignored dependency state may be absent. `pi-subagents` attempts the `node_modules` symlink above, but if module resolution fails in a fresh worktree, first confirm dependencies were linked, installed, or provisioned by `worktreeSetupHook` before treating it as a code failure.
-
-By default, worktrees are created under the system temp directory. Set `worktreeBaseDir` in config, or `SELESAI_SUBAGENTS_WORKTREE_DIR` when config is unset, to put them under a stable trusted directory. Missing base directories are created automatically.
-
-After a worktree parallel step completes, per-agent diff stats are appended to the output and full patch files are written to artifacts. The runtime also writes a versioned aggregate handoff manifest: foreground runs use the artifact directory's `handoffs/<run-id>.json`, while async runs use `<async-dir>/handoff.json`. The manifest records each child's terminal status, summary, output/session/structured-output references, patch stats and path, and whether its worktree and temporary branch were actually removed. Foreground `details`, async `status.json` and result files, status output, intercom delivery, and completion notifications expose the manifest path. Worktrees and temp branches still receive best-effort fallback cleanup if handoff finalization cannot run.
+A top-level `{ workflowScript, worktree: true }` makes isolation the default for every workflow child. An individual child can override that default with `worktree: false`. Keep one writer when parallel writes are not intentionally isolated.
 
 ## Configuration
 
@@ -1558,15 +1242,23 @@ After a worktree parallel step completes, per-agent diff stats are appended to t
 
 Controls the parent-facing `subagent` tool description registered at startup. `full` is the default. `compact` keeps the execution modes, async/`subagent_wait` guidance, child-safety boundary, management/action split, one-writer review guidance, and artifact/status essentials with less prompt bloat.
 
-`custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.selesai/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the full description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Pi after changing the mode or custom file.
+`custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.selesai/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the full description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Selesai after changing the mode or custom file.
+
+### `inlineToolDisplay`
+
+```json
+{ "inlineToolDisplay": "summary" }
+```
+
+Controls the `subagent` tool result shown inline in chat. The default, `"rich"`, shows live child activity and expands to detailed output. `"summary"` keeps the inline result at one stable row for running, completed, failed, stopped, and paused runs; it does not animate, show elapsed time, preview child output, or change when Selesai's expand key is pressed. FleetView remains available for live progress and detailed inspection.
 
 ### `asyncByDefault`
 
 ```json
-{ "asyncByDefault": true }
+{ "asyncByDefault": false }
 ```
 
-Makes top-level calls use background execution when the request does not explicitly set `async`. Callers can still force foreground with `async: false` unless `forceTopLevelAsync` is enabled.
+Ordinary top-level calls use background execution when the request omits `async`. Set `asyncByDefault` to `false` to restore foreground-by-default behavior. Callers can still force foreground with `async: false` unless `forceTopLevelAsync` is enabled; `clarify: true` remains foreground for its UI.
 
 ### `fleetView`
 
@@ -1590,7 +1282,7 @@ Places the persistent FleetView either `"belowEditor"` or `"aboveEditor"`. The d
 { "asyncWidget": true }
 ```
 
-Controls the legacy above-editor widget for background runs. It defaults to `false` while FleetView is enabled and `true` when FleetView is disabled. Set it explicitly to show both surfaces or hide the legacy widget entirely.
+Controls the under-editor widget for active background runs. It defaults to `true`, including when FleetView is enabled, so active work remains visible after reload. Set it to `false` to hide this widget while keeping FleetView available.
 
 ### `waitTool`
 
@@ -1598,7 +1290,9 @@ Controls the legacy above-editor widget for background runs. It defaults to `fal
 { "waitTool": { "enabled": false } }
 ```
 
-Keeps the `subagent_wait` tool registered but makes direct calls return immediately instead of blocking on active subagent or provider work. The default is enabled. You can also set `"waitTool": false`; set `PI_SUBAGENT_WAIT_TOOL_ENABLED=false` (or `0`, `off`, `disabled`) to override config for one process. The effective value is passed explicitly to child runtimes. Headless `agent_end` auto-drain remains a lifecycle safeguard even when direct wait calls are disabled. Invalid config or environment values fail instead of being coerced.
+Keeps the `subagent_wait` tool registered but makes direct calls return immediately instead of blocking on active subagent or provider work. The default is enabled. You can also set `"waitTool": false`; set `SELESAI_SUBAGENT_WAIT_TOOL_ENABLED=false` (or `0`, `off`, `disabled`) to override config for one process. The effective value is passed explicitly to child runtimes. Headless `agent_end` auto-drain remains a lifecycle safeguard even when direct wait calls are disabled. Invalid config or environment values fail instead of being coerced.
+
+Blocking `subagent_wait({ id: "..." })` keeps the current tool call open until that run changes. In a long-lived interactive parent session, `subagent_wait({ id: "...", nonBlocking: true })` instead resolves the prefix once, persists the exact run identity, returns a subscription token immediately, and wakes that session on completion, failure, attention, reconciliation failure, or timeout. Armed subscriptions appear in ordinary `subagent({ action: "status" })` output and are not counted as active child work. This is different from `waitTool.enabled=false`, which returns immediately without registering any future wake. Provider items remain available only to blocking fleet-wide waits; non-blocking subscriptions require one async or remembered detached foreground run id.
 
 ### `forceTopLevelAsync`
 
@@ -1614,7 +1308,7 @@ Forces depth-0 single, parallel, and chain runs into background mode and bypasse
 { "globalConcurrencyLimit": 20 }
 ```
 
-Caps simultaneously running subagent tasks within a single run across top-level parallel tasks, inline chain parallel groups, and dynamic fanout groups. The default is `20`; invalid values are clamped to `1`. Per-step `concurrency` and `parallel.concurrency` still apply, so effective concurrency is the lower of the local cap and the available global slots.
+Caps simultaneously running children inside existing durable legacy multi-child runs. New orchestration uses `workflowScript` and `runs.all`.
 
 ### `maxSubagentSpawnsPerSession`
 
@@ -1622,7 +1316,7 @@ Caps simultaneously running subagent tasks within a single run across top-level 
 { "maxSubagentSpawnsPerSession": 100 }
 ```
 
-Optionally caps the total number of child subagent launches during one parent session, including completed and failed children, parallel task counts, static chain steps, and bounded dynamic fanout children. Sessions are unlimited by default. Set this value to `0` to disable a configured cap. `PI_SUBAGENT_MAX_SPAWNS_PER_SESSION` overrides the config for a process and follows the same positive-cap/zero-unlimited semantics.
+Optionally caps the total number of child subagent launches during one parent session, including completed and failed children, parallel task counts, static chain steps, and bounded dynamic fanout children. Sessions are unlimited by default. Set this value to `0` to disable a configured cap. `SELESAI_SUBAGENT_MAX_SPAWNS_PER_SESSION` overrides the config for a process and follows the same positive-cap/zero-unlimited semantics.
 
 `subagent({ action: "status" })`, fleet status, and `subagent({ action: "doctor" })` expose used, effective limit, remaining capacity, grants, and the remaining grant allowance. Static chains and parallel calls fail before creating run artifacts or starting partial work when their declared capacity cannot fit. Later retries or unbounded dynamic work are not guaranteed by that preflight.
 
@@ -1631,10 +1325,12 @@ A user may explicitly call `subagent({ action: "grant-spawn-budget", additional:
 ### `scheduledRuns`
 
 ```json
-{ "scheduledRuns": { "enabled": true, "maxPending": 20, "maxLatenessMs": 300000 } }
+{ "scheduledRuns": { "enabled": false, "maxPending": 20 } }
 ```
 
-Enables optional one-shot scheduled subagent runs. When enabled, `subagent({ action: "schedule", agent, task?, schedule: "+10m" | "2030-01-01T09:00:00Z", scheduleName? })` defers a subagent launch until a future time. Absolute ISO timestamps must include a timezone (`Z` or an offset such as `+05:30`). The scheduled run launches as a normal tracked async run with fresh context once it fires, and joins the existing async widget, status, `subagent_wait`, and completion-notification paths. `schedule-list`, `schedule-status`, and `schedule-cancel` manage pending jobs. Schedules are persisted per session and restored after a Pi restart; a job missed by more than `maxLatenessMs` while Pi is unavailable is marked `missed` instead of firing late. `maxPending` caps the number of pending or running scheduled jobs per session (default `20`). The feature is opt-in: leave `enabled` unset to keep scheduling out of the tool surface and prompt. Only schedule explicit delayed runs the user asked for.
+Durable schedules are enabled by default and stored per project under `.pi-subagents/schedules/<id>/`. Create a one-shot schedule with `subagent({ action: "schedule.create", id: "evening-review", name: "Evening review", at: "+30m", agent: "commentator", task: "Review the current diff." })`. Create a fixed recurring workflow with `subagent({ action: "schedule.create", id: "backlog", every: "6h", catchUp: "latest", workflowScript: "..." })`. Fixed intervals support `m`, `h`, `d`, and `w` units and advance from the planned time without completion drift.
+
+Manage schedules with `schedule.list`, `schedule.show`, `schedule.history`, `schedule.pause`, `schedule.resume`, `schedule.run`, `schedule.run-due`, and `schedule.delete`. Runs always launch async with fresh context and disable automatic mission creation; mission attachment is deferred from this first slice. Definitions, bounded history, append-only events, and per-run receipts are stored with mode `0600`. `overlap` is currently fixed to `skip`; `catchUp` supports `latest` (default) and `none`. `schedule.run-due` lets an external launcher start due project work without making `pi-subagents` a daemon. Calendar recurrence, cron, queue/replace overlap, and the schedule TUI inspector are intentionally deferred to the next slice. The old `schedule`, `schedule-list`, `schedule-status`, and `schedule-cancel` actions were removed in this hard cutover.
 
 ### `parallel`
 
@@ -1660,7 +1356,7 @@ Session directory precedence is: `params.sessionDir`, then `config.defaultSessio
 ### `singleRunOutputBaseDir`
 
 ```json
-{ "singleRunOutputBaseDir": "~/.pi/subagent-outputs" }
+{ "singleRunOutputBaseDir": "~/.selesai/subagent-outputs" }
 ```
 
 Routes relative `output` paths for single-agent `/run` calls under this directory. Absolute per-call or agent output paths are still used as-is. When unset, relative single-run outputs go under the run's output artifact directory instead of the project root.
@@ -1671,15 +1367,15 @@ Routes relative `output` paths for single-agent `/run` calls under this director
 { "maxSubagentDepth": 1 }
 ```
 
-Controls nested delegation when no inherited `PI_SUBAGENT_MAX_DEPTH` is already in effect. Per-agent `maxSubagentDepth` can tighten the limit for that agent’s child runs, but cannot relax an inherited stricter limit. This applies even to children that explicitly declare `tools: subagent`; at the cap, execution fanout is blocked instead of silently hiding nested work.
+Controls nested delegation when no inherited `SELESAI_SUBAGENT_MAX_DEPTH` is already in effect. Per-agent `maxSubagentDepth` can tighten the limit for that agent’s child runs, but cannot relax an inherited stricter limit. This applies even to children that explicitly declare `tools: subagent`; at the cap, execution fanout is blocked instead of silently hiding nested work.
 
-### `PI_SUBAGENT_PI_BINARY`
+### `SELESAI_SUBAGENT_PI_BINARY`
 
 ```bash
-export PI_SUBAGENT_PI_BINARY=/path/to/pi-or-wrapper
+export SELESAI_SUBAGENT_PI_BINARY=/path/to/pi-or-wrapper
 ```
 
-Overrides the command used to launch child Pi processes. Package wrappers can set this to their own `pi`/agent binary so subagents inherit wrapper flags, environment setup, and bundled resources without relying on `PATH` ordering. Empty or whitespace-only values are ignored.
+Overrides the command used to launch child Selesai processes. Package wrappers can set this to their own `pi`/agent binary so subagents inherit wrapper flags, environment setup, and bundled resources without relying on `PATH` ordering. Empty or whitespace-only values are ignored.
 
 ### `intercomBridge`
 
@@ -1699,7 +1395,7 @@ Fields:
 
 - `mode`: default `always`; use `fork-only` to inject only for forked runs, or `off` to disable the bridge.
 - `instructionFile`: optional Markdown template replacing the default bridge instructions. `{orchestratorTarget}` is interpolated. Relative paths resolve from `~/.selesai/agent/extensions/subagent/`.
-- `resultDelivery`: default `true`; attempts acknowledged grouped completion delivery through an external `subagent:result-intercom` listener. Set `false` when native parent notifications own completion delivery. Supervisor asks/progress remain active, and genuine enabled-transport acknowledgement failures remain visible.
+- `resultDelivery`: default `false`; set `true` only when an external `subagent:result-intercom` listener is installed. Enabled delivery waits for acknowledgement and reports acknowledgement failures. Supervisor asks/progress remain active.
 
 Bridge activation requires a targetable current parent session id, which `pi-subagents` passes to children automatically. It no longer depends on an external `pi-intercom` installation or per-agent extension allowlists.
 
@@ -1732,6 +1428,38 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 
 `syntheticPaths` must be relative to the worktree root. They are removed before diff capture so helper files do not pollute patches. Tracked files are never excluded; marking a tracked path as synthetic fails setup. Default timeout is `30000` ms.
 
+### `missions`
+
+```json
+{
+  "missions": {
+    "enabled": true,
+    "directory": ".pi-subagents/missions",
+    "globalIndex": true,
+    "retainTerminal": 200
+  }
+}
+```
+
+Automatic missions are enabled by default for ordinary launches with a task. Use per-launch `mission: false` for intentionally ephemeral work, or set `enabled: false` to disable automatic creation globally; explicit mission actions and `missionId`/`mission` launch fields still work. `directory` may be absolute, `~/...`, or project-relative. `retainTerminal` is a positive count (default `200`); pruning removes only the oldest completed, failed, or cancelled records and their pointers, never planned, active, waiting, needs-decision, or corrupt records. The user-global index contains pointers only; missing-record pointers self-heal when globally listed. Set `globalIndex: false` to disable writes or `globalIndexDir` to redirect it.
+
+### `authorityPolicy`
+
+```json
+{
+  "authorityPolicy": {
+    "discardWorktree": "confirm",
+    "destructiveCleanup": "confirm",
+    "spawnBudgetGrant": "confirm",
+    "scheduleCreate": "auto",
+    "stopRun": "auto",
+    "steerRun": "auto"
+  }
+}
+```
+
+Each fixed action resolves to `"auto"`, `"confirm"`, or `"forbid"`. This is intentionally a small action map, not a generic policy language. Confirm-required control actions fail closed without an interactive UI.
+
 ### `artifactDir`
 
 ```json
@@ -1742,7 +1470,9 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 
 Controls where subagent artifact files (inputs, outputs, transcripts, metadata) are stored. Defaults to `"project"`, which writes to `<cwd>/.pi-subagents/artifacts/`. Set to `"session"` to store artifacts under pi's session directory (`~/.selesai/agent/sessions/<session>/subagent-artifacts/`), keeping the working directory clean. Set to `"temp"` to use the OS temp directory.
 
-The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically.
+This preference also controls the default chain scratch directory. `"project"` uses `<cwd>/.pi-subagents/chain-runs/`, while `"session"` and `"temp"` use the user-scoped temp chain directory.
+
+The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically. Temporary chain directories are cleaned up separately after 24 hours.
 
 ### `completionBatch`
 
@@ -1759,21 +1489,21 @@ The `"session"` option uses the same directory that `cleanupAllArtifactDirs` alr
 }
 ```
 
-Controls smart batching of async-completion notifications. When several background subagents finish within a short window, their successful completions are held briefly and delivered as a single grouped message instead of separate notifications. A hard `maxWaitMs` cap (measured from the first completion in a group) guarantees nothing is held indefinitely, and late-finishing siblings that arrive within `stragglerWindowMs` of a group emit join a shorter straggler group governed by `stragglerDebounceMs` and `stragglerMaxWaitMs`.
+Controls smart batching of async-completion notifications. When several background subagents finish within a short window, their successful completions are held briefly and delivered as a single quiet grouped completion instead of separate completions. A hard `maxWaitMs` cap (measured from the first completion in a group) guarantees nothing is held indefinitely, and late-finishing siblings that arrive within `stragglerWindowMs` of a group emit join a shorter straggler group governed by `stragglerDebounceMs` and `stragglerMaxWaitMs`.
 
 Failed and paused completions bypass batching and fire immediately, flushing any held successes first, so failure and needs-attention signals are never delayed. Set `enabled` to `false` to restore the original one-notification-per-completion behavior. Changes apply on the next session start.
 
 ## Files, logs, and observability
 
-Each chain run creates a user-scoped temp directory like:
+Each chain run creates a scratch directory under its resolved chain root. With the default `artifactDir: "project"`, that root is `<cwd>/.pi-subagents/chain-runs/`. With `artifactDir: "session"` or `"temp"`, it is user-scoped temp storage:
 
 ```text
 <tmpdir>/pi-subagents-<scope>/chain-runs/{runId}/
 ```
 
-It may contain files such as `context.md`, `plan.md`, `progress.md`, and `parallel-{stepIndex}/.../output.md`. Directories older than 24 hours are cleaned up on extension startup.
+A run directory may contain files such as `context.md`, `plan.md`, `progress.md`, and `parallel-{stepIndex}/.../output.md`. User-scoped temp chain directories older than 24 hours are cleaned up on extension startup; project-local and explicit persistent roots are not age-scanned.
 
-When explicitly enabled with `artifacts: true`, debug artifacts live under `{sessionDir}/subagent-artifacts/`, `.pi-subagents/artifacts/` for project-scoped runs, or a user-scoped temp artifact directory. Single-run relative `output` files are saved under `{artifactsDir}/outputs/{runId}/` unless `singleRunOutputBaseDir` is configured. Per task you may see:
+Debug artifacts live under `{sessionDir}/subagent-artifacts/`, `.pi-subagents/artifacts/` for project-scoped runs, or a user-scoped temp artifact directory. Single-run relative `output` files are saved under `{artifactsDir}/outputs/{runId}/` unless `singleRunOutputBaseDir` is configured. Per task you may see:
 
 - `{runId}_{agent}_input.md`
 - `{runId}_{agent}_output.md`
@@ -1784,7 +1514,7 @@ Metadata records timing, usage, exit code, final model, attempted models, fallba
 
 Session files are stored under a per-run session directory. With `context: "fork"`, each child starts with `--session <branched-session-file>` produced from the parent’s current leaf. That is a real session fork, not an injected summary.
 
-Async completions notify only the originating session. The result watcher emits `subagent:async-complete`, and the extension consumes that event to render completion notifications. Successful sibling completions are held briefly and delivered as a single grouped message when they finish within a short window (see `completionBatch`); failed and paused completions always fire immediately.
+Async completions belong only to the originating session. The result watcher emits `subagent:async-complete`, and the extension consumes that event to record completion state. Successful sibling completions are held briefly and delivered as a quiet grouped completion when they finish within a short window (see `completionBatch`), avoiding unread markers on inactive tabs. Failed and paused completions remain visible and fire immediately.
 
 Async runs write:
 
@@ -1796,7 +1526,7 @@ Async runs write:
   subagent-log-<id>.md
 ```
 
-`status.json` powers the widget and `subagent({ action: "status" })` output. `events.jsonl` contains wrapper events plus child Pi JSON events annotated with run and step metadata, including correlated `subagent.steer.requested`, `scheduled`, `routed`, `delivered`, `failed`, and `recovered` events plus failure/partial/recovery notices. Nested fanout status is stored as compact sidecar event/registry metadata and merged into parent status views and result/intercom payloads; full recursive status snapshots are not embedded in parent result files. `output-<n>.log` is a live human-readable tail. Fallback information is persisted so background runs are debuggable after completion.
+`status.json` powers the widget and `subagent({ action: "status" })` output. `events.jsonl` contains wrapper events plus child Selesai JSON events annotated with run and step metadata, including correlated `subagent.steer.requested`, `scheduled`, `routed`, `delivered`, `failed`, and `recovered` events plus failure/partial/recovery notices. Nested fanout status is stored as compact sidecar event/registry metadata and merged into parent status views and result/intercom payloads; full recursive status snapshots are not embedded in parent result files. `output-<n>.log` is a live human-readable tail. Fallback information is persisted so background runs are debuggable after completion.
 
 ## Acceptance Gates
 
@@ -1837,7 +1567,7 @@ Acceptance fences are removed from normal output artifacts, while the raw child 
 
 Foreground runs show compact live progress for single, chain, and parallel modes: current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and chain graph metadata when available.
 
-Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step.
+Press Selesai's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step.
 
 Sequential chains show a flow line like `done explorer → running architect`. Chains with parallel steps show per-step cards instead. Chain status uses `label` and `phase` metadata when present, while falling back to agent names for older chains.
 
@@ -1853,23 +1583,23 @@ This is disabled by default. Session data may contain source code, paths, enviro
 
 ## Recursion guard
 
-Subagents can call `subagent` only when their resolved builtin tools explicitly include `subagent`. That is meant for delegated fanout agents, not ordinary builder/commentator children. A depth guard prevents unbounded nesting.
+Subagents can call `subagent` only when their resolved builtin tools explicitly include `subagent`. That is meant for explorerd fanout agents, not ordinary builder/commentator children. A depth guard prevents unbounded nesting.
 
 By default, nesting is limited to two levels: main session → subagent → sub-subagent. Deeper calls are blocked with guidance to complete the current task directly. Nested runs appear in the parent status widget and `status` output as a tree, and `status`, `interrupt`, and `resume` can target a nested run by its id.
 
 Configure the limit with:
 
-1. `PI_SUBAGENT_MAX_DEPTH` before starting Pi
+1. `SELESAI_SUBAGENT_MAX_DEPTH` before starting Selesai
 2. `config.maxSubagentDepth`
 3. `maxSubagentDepth` in agent frontmatter, which can only tighten the inherited limit
 
 ```bash
-export PI_SUBAGENT_MAX_DEPTH=3
-export PI_SUBAGENT_MAX_DEPTH=1
-export PI_SUBAGENT_MAX_DEPTH=0
+export SELESAI_SUBAGENT_MAX_DEPTH=3
+export SELESAI_SUBAGENT_MAX_DEPTH=1
+export SELESAI_SUBAGENT_MAX_DEPTH=0
 ```
 
-`PI_SUBAGENT_DEPTH` is internal and propagated automatically. Do not set it manually.
+`SELESAI_SUBAGENT_DEPTH` is internal and propagated automatically. Do not set it manually.
 
 ## Events
 
@@ -1909,15 +1639,9 @@ Then run it through the native adapter:
 /prompt-workflow take-screenshot https://example.com
 ```
 
-The adapter builders to the named subagent, applies `model`, `skill`, `cwd`, `worktree`, and fork/fresh context metadata, and supports runtime overrides such as `--subagent commentator`, `--fork`, `--fresh`, `--worktree`, and `--bg`.
+The adapter explorers to the named subagent, applies `model`, `skill`, `cwd`, and fork/fresh context metadata, and supports runtime overrides such as `--subagent commentator`, `--fork`, `--fresh`, and `--bg`.
 
-For prompt-template chains, use:
-
-```text
-/chain-prompts analyze -> fix -- user arguments here
-```
-
-Each named prompt becomes a native `subagent` chain step. This is intentionally scoped to subagent workflows; compare-style prompt features such as `/best-of-n` are not part of the built-in adapter.
+Prompt templates with `chain:` frontmatter are translated into `workflowScript` and launched through `/prompt-workflow`; `/chain-prompts` is no longer registered.
 
 ## Runtime files
 

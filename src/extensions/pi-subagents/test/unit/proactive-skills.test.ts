@@ -29,7 +29,7 @@ function chain(name: string, skills: string[]): ChainConfig {
 		description: `${name} chain`,
 		source: "project",
 		filePath: `/tmp/${name}.chain.md`,
-		steps: [{ agent: "worker", skills }],
+		steps: [{ agent: "builder", skills }],
 	};
 }
 
@@ -37,9 +37,9 @@ describe("proactive skill subagent recommendations", () => {
 	it("recommends available skills referenced by multiple enabled configs", () => {
 		const recommendations = recommendProactiveSkillSubagents({
 			agents: [
-				agent("reviewer"),
-				agent("ui-reviewer", ["accessibility"]),
-				agent("disabled-reviewer", ["accessibility"], true),
+				agent("commentator"),
+				agent("ui-commentator", ["accessibility"]),
+				agent("disabled-commentator", ["accessibility"], true),
 			],
 			chains: [chain("ui-check", ["accessibility"]), chain("cleanup", ["deslop"])],
 			availableSkills: [
@@ -50,31 +50,31 @@ describe("proactive skill subagent recommendations", () => {
 
 		assert.equal(recommendations.length, 1);
 		assert.equal(recommendations[0]?.skill, "accessibility");
-		assert.equal(recommendations[0]?.agent, "reviewer");
+		assert.equal(recommendations[0]?.agent, "commentator");
 		assert.equal(recommendations[0]?.references, 2);
-		assert.deepEqual(recommendations[0]?.sources, ["agent:ui-reviewer", "chain:ui-check"]);
+		assert.deepEqual(recommendations[0]?.sources, ["agent:ui-commentator", "chain:ui-check"]);
 	});
 
 	it("filters unavailable orchestration skills and honors config bounds", () => {
 		const recommendations = recommendProactiveSkillSubagents({
 			agents: [
-				agent("delegate", ["pi-subagents", "alpha", "beta"]),
+				agent("explorer", ["pi-subagents", "alpha", "beta"]),
 				agent("one", ["alpha", "beta"]),
 				agent("two", ["gamma"]),
 				agent("three", ["gamma"]),
 			],
 			availableSkills: [{ name: "alpha" }, { name: "beta" }, { name: "gamma" }],
-			config: { preferredAgent: "delegate", maxRecommendations: 2 },
+			config: { preferredAgent: "explorer", maxRecommendations: 2 },
 		});
 
 		assert.deepEqual(recommendations.map((entry) => entry.skill), ["alpha", "beta"]);
-		assert.ok(recommendations.every((entry) => entry.agent === "delegate"));
+		assert.ok(recommendations.every((entry) => entry.agent === "explorer"));
 	});
 
 	it("can be disabled and formats guardrails for visible suggestions", () => {
 		assert.equal(resolveProactiveSkillSubagentsConfig(false).enabled, false);
 		assert.deepEqual(recommendProactiveSkillSubagents({
-			agents: [agent("reviewer", ["deslop"]), agent("cleanup", ["deslop"])],
+			agents: [agent("commentator", ["deslop"]), agent("cleanup", ["deslop"])],
 			availableSkills: [{ name: "deslop" }],
 			config: false,
 		}), []);
@@ -82,7 +82,7 @@ describe("proactive skill subagent recommendations", () => {
 		const lines = formatProactiveSkillSubagentRecommendations([
 			{
 				skill: "deslop",
-				agent: "reviewer",
+				agent: "commentator",
 				references: 2,
 				sources: ["agent:a", "chain:b"],
 				reason: "referenced by 2 configured agents/chains",
@@ -95,7 +95,7 @@ describe("proactive skill subagent recommendations", () => {
 	it("does not discover skills when disabled and treats discovery failures as no suggestions", () => {
 		let discoveryCalls = 0;
 		const disabledLines = buildProactiveSkillSubagentRecommendationLines({
-			agents: [agent("reviewer", ["deslop"]), agent("cleanup", ["deslop"])],
+			agents: [agent("commentator", ["deslop"]), agent("cleanup", ["deslop"])],
 			config: false,
 			discoverAvailableSkills: () => {
 				discoveryCalls++;
@@ -106,7 +106,7 @@ describe("proactive skill subagent recommendations", () => {
 		assert.equal(discoveryCalls, 0);
 
 		const failedDiscoveryLines = buildProactiveSkillSubagentRecommendationLines({
-			agents: [agent("reviewer", ["deslop"]), agent("cleanup", ["deslop"])],
+			agents: [agent("commentator", ["deslop"]), agent("cleanup", ["deslop"])],
 			discoverAvailableSkills: () => {
 				discoveryCalls++;
 				throw new Error("skill scan failed");

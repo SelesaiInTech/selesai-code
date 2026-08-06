@@ -48,13 +48,13 @@ describe("prompt workflows", () => {
 	it("discovers project workflows over user workflows", () => {
 		writePrompt(path.join(agentDir, "prompts"), "native-test", `---
 description: User version
-subagent: reviewer
+subagent: commentator
 ---
 User body
 `);
 		writePrompt(path.join(cwd, ".selesai", "prompts"), "native-test", `---
 description: Project version
-subagent: worker
+subagent: builder
 model: openai/gpt-5-mini
 ---
 Project body $1
@@ -63,14 +63,14 @@ Project body $1
 		const workflow = discoverPromptWorkflows(cwd).find((entry) => entry.name === "native-test");
 
 		assert.equal(workflow?.description, "Project version");
-		assert.equal(workflow?.agent, "worker");
+		assert.equal(workflow?.agent, "builder");
 		assert.equal(workflow?.model, "openai/gpt-5-mini");
 	});
 
 	it("runs a named workflow through native subagent execution", async () => {
 		writePrompt(path.join(cwd, ".selesai", "prompts"), "native-run", `---
 description: Run native prompt
-subagent: reviewer
+subagent: commentator
 model: anthropic/claude-sonnet-4
 skill: deslop,typescript-code
 ---
@@ -87,28 +87,28 @@ Review $1 with $ARGUMENTS
 			run: async (params) => { runs.push(params); },
 		});
 
-		await commands.get("prompt-workflow")!.handler('native-run target --fork --worktree', makeCtx(cwd));
+		await commands.get("prompt-workflow")!.handler('native-run target --fork', makeCtx(cwd));
 
 		assert.equal(sent.length, 0);
 		assert.equal(runs.length, 1);
-		assert.equal(runs[0]?.agent, "reviewer");
+		assert.equal(runs[0]?.agent, "commentator");
 		assert.equal(runs[0]?.model, "anthropic/claude-sonnet-4");
 		assert.deepEqual(runs[0]?.skill, ["deslop", "typescript-code"]);
 		assert.equal(runs[0]?.context, "fork");
-		assert.equal(runs[0]?.worktree, true);
 		assert.equal(runs[0]?.task, "Review target with target");
 	});
 
-	it("runs prompt templates as a native chain", async () => {
+	it("runs declared prompt sequences through workflowScript", async () => {
 		writePrompt(path.join(cwd, ".selesai", "prompts"), "native-analyze", `---
 description: Analyze
-subagent: scout
+subagent: explorer
+chain: native-analyze -> native-fix
 ---
 Analyze $@
 `);
 		writePrompt(path.join(cwd, ".selesai", "prompts"), "native-fix", `---
 description: Fix
-subagent: worker
+subagent: builder
 ---
 Fix from {previous}: $@
 `);
@@ -122,13 +122,12 @@ Fix from {previous}: $@
 			run: async (params) => { runs.push(params); },
 		});
 
-		await commands.get("chain-prompts")!.handler("native-analyze -> native-fix -- bug report", makeCtx(cwd));
+		await commands.get("prompt-workflow")!.handler("native-analyze bug report", makeCtx(cwd));
 
 		assert.equal(runs.length, 1);
-		assert.equal(runs[0]?.chain?.length, 2);
-		assert.equal(runs[0]?.chain?.[0]?.agent, "scout");
-		assert.equal(runs[0]?.chain?.[0]?.task, "Analyze bug report");
-		assert.equal(runs[0]?.chain?.[1]?.agent, "worker");
-		assert.equal(runs[0]?.chain?.[1]?.task, "Fix from {previous}: bug report");
+		assert.match(runs[0]?.workflowScript ?? "", /runs\.run\("prompt-1-native-analyze"/);
+		assert.match(runs[0]?.workflowScript ?? "", /runs\.run\("prompt-2-native-fix"/);
+		assert.match(runs[0]?.workflowScript ?? "", /replaceAll\("\{previous\}"/);
+		assert.equal(commands.has("chain-prompts"), false);
 	});
 });

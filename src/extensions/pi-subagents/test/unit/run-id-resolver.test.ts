@@ -45,7 +45,7 @@ function writeNestedChild(route: ReturnType<typeof createNestedRoute>, parentRun
 		ts: 100,
 		parentRunId,
 		...(parentStepIndex !== undefined ? { parentStepIndex } : {}),
-		child: { id, parentRunId, ...(parentStepIndex !== undefined ? { parentStepIndex } : {}), depth: 1, path: [{ runId: parentRunId, ...(parentStepIndex !== undefined ? { stepIndex: parentStepIndex } : {}) }], state: "running", agent: "worker" },
+		child: { id, parentRunId, ...(parentStepIndex !== undefined ? { parentStepIndex } : {}), depth: 1, path: [{ runId: parentRunId, ...(parentStepIndex !== undefined ? { stepIndex: parentStepIndex } : {}) }], state: "running", agent: "builder" },
 	});
 }
 

@@ -26,12 +26,12 @@ const ctx = {
 
 describe("async runner execution", () => {
 	it("formats interactive yield and headless auto-drain guidance separately", () => {
-		const interactive = formatAsyncStartedMessage("Async: worker [interactive]", true);
+		const interactive = formatAsyncStartedMessage("Async: builder [interactive]", true);
 		assert.match(interactive, /interactive session[\s\S]*return control/i);
 		assert.match(interactive, /do not call subagent_wait\(\) merely to wait/i);
 		assert.doesNotMatch(interactive, /auto-drains current-session background work/i);
 
-		const headless = formatAsyncStartedMessage("Async: worker [headless]", false);
+		const headless = formatAsyncStartedMessage("Async: builder [headless]", false);
 		assert.match(headless, /non-interactive run.*auto-drains current-session background work at agent_end/i);
 		assert.match(headless, /call subagent_wait\(\).*results before it ends/i);
 		assert.doesNotMatch(headless, /By default, return control to the user/i);
@@ -52,10 +52,10 @@ describe("async runner execution", () => {
 	it("resolves async step tool budgets with step over run over agent over config precedence", () => {
 		const result = buildAsyncRunnerSteps("run-1", {
 			chain: [
-				{ agent: "worker", task: "agent beats config" },
-				{ agent: "worker", task: "step beats run", toolBudget: { hard: 2, block: ["grep"] } },
+				{ agent: "builder", task: "agent beats config" },
+				{ agent: "builder", task: "step beats run", toolBudget: { hard: 2, block: ["grep"] } },
 			],
-			agents: [agent("worker", { hard: 4, block: ["read"] })],
+			agents: [agent("builder", { hard: 4, block: ["read"] })],
 			ctx,
 			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
 			maxSubagentDepth: 2,
@@ -72,8 +72,8 @@ describe("async runner execution", () => {
 
 	it("uses agent tool budget before config default when no run override exists", () => {
 		const result = buildAsyncRunnerSteps("run-2", {
-			chain: [{ agent: "worker", task: "agent beats config" }],
-			agents: [agent("worker", { hard: 4, block: ["read"] })],
+			chain: [{ agent: "builder", task: "agent beats config" }],
+			agents: [agent("builder", { hard: 4, block: ["read"] })],
 			ctx,
 			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
 			maxSubagentDepth: 2,
@@ -84,10 +84,34 @@ describe("async runner execution", () => {
 		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 4, block: ["read"] });
 	});
 
+	it("attaches external runner config and rejects unsupported Pi-only overrides", () => {
+		const external = agent("external");
+		external.runner = { type: "external-cli", command: process.execPath, args: ["fake.mjs"] };
+		const built = buildAsyncRunnerSteps("external-run", {
+			chain: [{ agent: "external", task: "review" }],
+			agents: [external],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-external-test"),
+			maxSubagentDepth: 2,
+		});
+		assert.ok("steps" in built);
+		assert.deepEqual(built.steps[0]?.runner, external.runner);
+		assert.equal(built.steps[0]?.model, undefined);
+
+		const rejected = buildAsyncRunnerSteps("external-rejected", {
+			chain: [{ agent: "external", task: "review", model: "provider/model" }],
+			agents: [external],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-external-test"),
+			maxSubagentDepth: 2,
+		});
+		assert.deepEqual(rejected, { error: "Agent 'external' uses runner.type='external-cli' and does not support: model override." });
+	});
+
 	it("uses config default when no step, run, or agent budget exists", () => {
 		const result = buildAsyncRunnerSteps("run-3", {
-			chain: [{ agent: "worker", task: "config default" }],
-			agents: [agent("worker")],
+			chain: [{ agent: "builder", task: "config default" }],
+			agents: [agent("builder")],
 			ctx,
 			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
 			maxSubagentDepth: 2,

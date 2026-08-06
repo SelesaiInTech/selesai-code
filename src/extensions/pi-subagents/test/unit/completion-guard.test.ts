@@ -56,7 +56,7 @@ test("declared read-only builtin tools suppress implementation-word false positi
 test("read-only issue drafting tasks do not trigger on suggested fix wording", () => {
 	const task = "Draft GitHub issue for pi-subagents bug from current conversation. Include title, environment/context, reproduction steps, actual/expected, logs excerpt, suspected cause, suggested fix. Terse but complete. No tools needed.";
 	const result = evaluateCompletionMutationGuard({
-		agent: "delegate",
+		agent: "explorer",
 		task,
 		messages: [assistantText("Title: completionGuard false positive\n\nSuggested fix: model read-only intent.")],
 		tools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
@@ -144,7 +144,7 @@ test("review-only, research, and framework output instructions do not expect mut
 });
 
 test("builder implementation verbs win over investigative wording and scoped prohibitions", () => {
-	assert.equal(expectsImplementationMutation("builder", "Investigate why the worker did not edit files and fix it"), true);
+	assert.equal(expectsImplementationMutation("builder", "Investigate why the builder did not edit files and fix it"), true);
 	assert.equal(expectsImplementationMutation("builder", "Do not modify tests; implement the fix"), true);
 	assert.equal(expectsImplementationMutation("builder", "Do not modify tests — implement the fix"), true);
 	assert.equal(expectsImplementationMutation("builder", "Research the current code path and patch the bug"), true);
@@ -158,9 +158,9 @@ test("builder implementation verbs win over investigative wording and scoped pro
 	assert.equal(expectsImplementationMutation("builder", "Implement the fix and return findings."), true);
 });
 
-test("non-worker implementation tasks still expect mutation", () => {
-	assert.equal(expectsImplementationMutation("delegate", "Fix the bug where no edits were made"), true);
-	assert.equal(expectsImplementationMutation("delegate", "Apply the suggested fix to src/runs/shared/completion-guard.ts"), true);
+test("non-builder implementation tasks still expect mutation", () => {
+	assert.equal(expectsImplementationMutation("explorer", "Fix the bug where no edits were made"), true);
+	assert.equal(expectsImplementationMutation("explorer", "Apply the suggested fix to src/runs/shared/completion-guard.ts"), true);
 	assert.equal(expectsImplementationMutation("builder", "Draft a GitHub issue, then implement the fix"), true);
 });
 
@@ -191,6 +191,36 @@ test("obvious mutating bash commands count as mutation attempts", () => {
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "printf \"mkdir x\"" })]), false);
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git apply patch.diff" })]), true);
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "patch -p0 < fix.patch" })]), true);
+});
+
+test("git publication commands count as mutation attempts", () => {
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git add src/file.ts" })]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git commit -m 'fix: finish change'" })]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git push origin HEAD" })]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git -C /tmp/project add src/file.ts" })]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: 'git -C "/tmp/project with space" add src/file.ts' })]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: 'git -C "$WORKTREE" commit -m fix' })]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git --paginate push" })]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git diff --check && git add src/file.ts && git commit -m fix && git push" })]), true);
+});
+
+test("read-only and quoted git commands do not count as mutation attempts", () => {
+	for (const command of [
+		"git status --short",
+		"git diff --check",
+		"git log -1 --oneline",
+		"git show --stat HEAD",
+		"git ls-remote origin main",
+		"git --help add",
+		"git --version add",
+		"git -h commit",
+		"gh pr view 749",
+		"echo 'git add src/file.ts'",
+		'printf "git commit -m fix"',
+		"echo 'then git push origin HEAD'",
+	]) {
+		assert.equal(hasMutationToolCall([assistantToolCall("bash", { command })]), false, command);
+	}
 });
 
 test("implementation task with mutation attempts does not trigger", () => {

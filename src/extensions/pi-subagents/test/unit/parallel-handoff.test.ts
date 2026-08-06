@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import {
 	formatParallelHandoffReference,
 	writeParallelHandoffGroup,
+	writePendingParallelHandoff,
 } from "../../src/runs/shared/parallel-handoff.ts";
 import type { ParallelHandoffManifest } from "../../src/shared/types.ts";
 import type { WorktreeCleanupReport, WorktreeDiff, WorktreeSetup } from "../../src/runs/shared/worktree.ts";
@@ -46,6 +47,35 @@ function cleanup(state: "complete" | "partial" = "complete"): WorktreeCleanupRep
 }
 
 describe("parallel handoff", () => {
+	it("journals worktree ownership before child results exist", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-pending-"));
+		try {
+			const manifestPath = path.join(dir, "handoff.json");
+			const reference = writePendingParallelHandoff({
+				manifestPath,
+				runId: "run-pending",
+				mode: "parallel",
+				source: "foreground",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: {
+					...setup("/repo", "base-1"),
+					worktrees: [{ path: "/tmp/worktree-0", agentCwd: "/tmp/worktree-0", branch: "branch-0", index: 0, nodeModulesLinked: false, syntheticPaths: [] }],
+				},
+			});
+
+			assert.equal(reference.childCount, 0);
+			assert.equal(reference.cleanupState, "partial");
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as ParallelHandoffManifest;
+			assert.equal(manifest.groups[0]?.cleanup.tasks[0]?.path, "/tmp/worktree-0");
+			assert.equal(manifest.groups[0]?.cleanup.tasks[0]?.preserved, true);
+			assert.match(manifest.groups[0]?.cleanup.tasks[0]?.reason ?? "", /cleanup pending/);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("writes and aggregates versioned worktree handoff groups", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-"));
 		try {
@@ -59,16 +89,16 @@ describe("parallel handoff", () => {
 				stepIndex: 2,
 				flatStartIndex: 3,
 				setup: setup("/repo", "base-1"),
-				diffs: [diff(dir, 0, "worker", true)],
+				diffs: [diff(dir, 0, "builder", true)],
 				cleanup: cleanup(),
 				results: [{
-					agent: "worker",
+					agent: "builder",
 					status: "completed",
 					summary: "implemented",
 					outputPath: "/artifacts/output.md",
 					structuredOutput: { ok: true },
 					structuredOutputPath: "/artifacts/structured.json",
-					sessionPath: "/sessions/worker.jsonl",
+					sessionPath: "/sessions/builder.jsonl",
 				}],
 				now: 100,
 			});
@@ -90,9 +120,9 @@ describe("parallel handoff", () => {
 				stepIndex: 1,
 				flatStartIndex: 1,
 				setup: setup("/repo", "base-1"),
-				diffs: [diff(dir, 1, "reviewer", false)],
+				diffs: [diff(dir, 1, "commentator", false)],
 				cleanup: cleanup("partial"),
-				results: [{ agent: "reviewer", status: "failed", summary: "blocked" }],
+				results: [{ agent: "commentator", status: "failed", summary: "blocked" }],
 				now: 200,
 			});
 			assert.equal(second.groupCount, 2);
@@ -159,9 +189,9 @@ describe("parallel handoff", () => {
 				stepIndex: 0,
 				flatStartIndex: 0,
 				setup: setup("/repo", "base-1"),
-				diffs: [diff(dir, 0, "worker", false)],
+				diffs: [diff(dir, 0, "builder", false)],
 				cleanup: cleanup(),
-				results: [{ agent: "worker", status: "completed" as const, summary: "done" }],
+				results: [{ agent: "builder", status: "completed" as const, summary: "done" }],
 			};
 			writeParallelHandoffGroup({ ...common, runId: "run-1" });
 			assert.throws(

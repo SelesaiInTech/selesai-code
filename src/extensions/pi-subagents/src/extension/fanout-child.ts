@@ -11,7 +11,7 @@ import { readNestedControlRequests, resolveNestedRouteFromEnv, writeNestedContro
 import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom.ts";
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
 import { SubagentParams } from "./schemas.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { type Details, type SubagentState } from "../shared/types.ts";
 
 function getSubagentSessionRoot(parentSessionFile: string | null): string {
@@ -37,7 +37,6 @@ function createChildSafeState(): SubagentState {
 		foregroundRuns: new Map(),
 		foregroundControls: new Map(),
 		lastForegroundControlId: null,
-		pendingForegroundControlNotices: new Map(),
 		cleanupTimers: new Map(),
 		lastUiContext: null,
 		poller: null,
@@ -146,7 +145,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		pi,
 		state,
 		config,
-		asyncByDefault: config.asyncByDefault === true,
+		asyncByDefault: resolveAsyncByDefault(config),
 		waitToolEnabled: resolveWaitToolConfig(config.waitTool).enabled,
 		tempArtifactsDir: getArtifactsDir(null),
 		getSubagentSessionRoot,
@@ -165,7 +164,11 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		].join("\n"),
 		parameters: SubagentParams,
 		execute(id, params, signal, onUpdate, ctx) {
-			return executor.execute(id, params as SubagentParamsLike, signal, onUpdate, ctx);
+			const input = params as SubagentParamsLike;
+			if (input.tasks !== undefined || input.chain !== undefined || input.concurrency !== undefined || input.chainDir !== undefined || (input.worktree !== undefined && !(input.worktree === true && input.agent))) {
+				return Promise.resolve({ content: [{ type: "text", text: "Legacy top-level chain and parallel inputs were removed; use workflowScript." }], isError: true, details: { mode: "management", results: [] } });
+			}
+			return executor.execute(id, input, signal ?? new AbortController().signal, onUpdate, ctx);
 		},
 	};
 

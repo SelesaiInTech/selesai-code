@@ -64,8 +64,8 @@ function child(id: string, state: "queued" | "running" | "complete" | "failed" |
 		path: [{ runId: parentRunId, stepIndex: 1 }],
 		mode: "single" as const,
 		state,
-		agent: "reviewer",
-		agents: ["reviewer"],
+		agent: "commentator",
+		agents: ["commentator"],
 		startedAt: 10,
 		lastUpdate: ts,
 		steps: [{ agent: "leaf", status: state === "running" ? "running" as const : "complete" as const }],
@@ -150,7 +150,7 @@ describe("nested event parsing and projection", () => {
 			ts: 100,
 			parentRunId: "root-run",
 			parentStepIndex: 1,
-			child: child("nested-a", "running", 100),
+			child: { ...child("nested-a", "running", 100), model: "provider/gpt-5.6-luna:medium", thinking: "medium", steps: [{ agent: "leaf", status: "running", model: "provider/leaf", thinking: "low" }], children: [child("nested-grandchild", "running", 100, "nested-a")] },
 		});
 		writeNestedEvent(route, {
 			type: "subagent.nested.updated",
@@ -176,6 +176,11 @@ describe("nested event parsing and projection", () => {
 		assert.equal(registry.children[0]?.id, "nested-a");
 		assert.equal(registry.children[0]?.state, "complete");
 		assert.equal(registry.children[0]?.steps?.[0]?.agent, "leaf");
+		assert.equal(registry.children[0]?.model, "provider/gpt-5.6-luna:medium");
+		assert.equal(registry.children[0]?.thinking, "medium");
+		assert.equal(registry.children[0]?.steps?.[0]?.model, "provider/leaf");
+		assert.equal(registry.children[0]?.steps?.[0]?.thinking, "low");
+		assert.equal(registry.children[0]?.children?.[0]?.id, "nested-grandchild");
 		assert.deepEqual(registry.children[0]?.runtimeAcknowledgedExtensions, {
 			version: 1,
 			source: "child-runtime",
@@ -339,6 +344,43 @@ describe("nested event parsing and projection", () => {
 	});
 
 
+	it("sanitizes nested model bounds and thinking levels", () => {
+		const route = trackRoute();
+		writeNestedEvent(route, {
+			type: "subagent.nested.updated",
+			ts: 100,
+			parentRunId: "root-run",
+			parentStepIndex: 1,
+			child: {
+				...child("nested-model-bounds", "running", 100),
+				model: "m".repeat(600),
+				thinking: "turbo",
+				steps: [{ agent: "leaf", status: "running", model: "builder", thinking: "xhigh" }],
+			},
+		});
+		const summary = projectNestedEvents(route).children[0]!;
+		assert.equal(summary.model?.length, 512);
+		assert.equal(summary.thinking, undefined);
+		assert.equal(summary.steps?.[0]?.thinking, "xhigh");
+	});
+
+	it("projects effective model and thinking from async status, including a single-step run", () => {
+		const summary = nestedSummaryFromAsyncStatus({
+			runId: "child-run",
+			mode: "single",
+			state: "running",
+			startedAt: 1,
+			steps: [
+				{ agent: "builder", status: "running", model: "provider/builder", thinking: "high" },
+			],
+		}, "/tmp/child-run", { id: "child-run", parentRunId: "parent-run", depth: 1, mode: "single", ts: 2 });
+
+		assert.equal(summary.model, "provider/builder");
+		assert.equal(summary.thinking, "high");
+		assert.equal(summary.steps?.[0]?.model, "provider/builder");
+		assert.equal(summary.steps?.[0]?.thinking, "high");
+	});
+
 	it("sanitizes malformed process-terminal proofs in nested status summaries", () => {
 		const summary = nestedSummaryFromAsyncStatus({
 			runId: "child-run",
@@ -347,7 +389,7 @@ describe("nested event parsing and projection", () => {
 			startedAt: 1,
 			processTerminal: { version: 1, state: "bogus", runId: "child-run", runnerProcessInstanceId: "runner-1" } as never,
 			steps: [{
-				agent: "worker",
+				agent: "builder",
 				status: "complete",
 				processTerminal: { version: 1, state: "observed", runId: "wrong-run", runnerProcessInstanceId: "runner-1" } as never,
 			}],
@@ -367,7 +409,7 @@ describe("nested event parsing and projection", () => {
 			startedAt: 1,
 			runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", ids: ["/Users/alice/.secret-extension", "ok-ext", "x".repeat(5000)], omitted: 0 } as never,
 			steps: [{
-				agent: "worker",
+				agent: "builder",
 				status: "complete",
 				runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", ids: ["C:/Users/alice/secret"], omitted: 0 } as never,
 			}],

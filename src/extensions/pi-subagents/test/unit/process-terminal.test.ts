@@ -30,7 +30,7 @@ test("process-terminal proof requires the matching runner instance and writer cl
 				}],
 			},
 		});
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "run-1", state: "complete", lifecycleArtifactVersion: 3, steps: [{ agent: "worker", status: "complete" }] }));
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "run-1", state: "complete", lifecycleArtifactVersion: 3, steps: [{ agent: "builder", status: "complete" }] }));
 		fs.writeFileSync(path.join(asyncDir, "events.jsonl"), "");
 
 		const mismatch = finalizeProcessTerminal(asyncDir, "run-1", {
@@ -67,7 +67,7 @@ test("process-terminal rejects missing writer close evidence", () => {
 			expectedWriters: { "0": 1 },
 			writers: { "0": [] },
 		});
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "run-missing-writer", state: "complete", lifecycleArtifactVersion: 3, steps: [{ agent: "worker", status: "complete" }] }));
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "run-missing-writer", state: "complete", lifecycleArtifactVersion: 3, steps: [{ agent: "builder", status: "complete" }] }));
 		fs.writeFileSync(path.join(asyncDir, "events.jsonl"), "");
 		const proof = finalizeProcessTerminal(asyncDir, "run-missing-writer", {
 			processInstanceId: "runner-missing-writer",
@@ -117,7 +117,7 @@ test("process-terminal preserves stopped non-resumability and requires lease rel
 			revivalLeaseToken: "lease-token",
 			revivalLeaseReleaseAcknowledged: false,
 		});
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "stopped-run", state: "stopped", lifecycleArtifactVersion: 3, steps: [{ agent: "worker", status: "stopped" }] }));
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "stopped-run", state: "stopped", lifecycleArtifactVersion: 3, steps: [{ agent: "builder", status: "stopped" }] }));
 		fs.writeFileSync(path.join(asyncDir, "events.jsonl"), "");
 		const unverified = finalizeProcessTerminal(asyncDir, "stopped-run", { processInstanceId: "stopped-runner", closeObservedAt: 20, exitCode: 0, signal: null });
 		assert.equal(unverified.state, "unknown");
@@ -164,7 +164,7 @@ test("process-terminal rejects cross-run observed sidecars and inconsistent expe
 				"0": [{ processInstanceId: "unexpected-writer", kind: "pi-writer", attempt: 0, closeObservedAt: 10, exitCode: 0, signal: null }],
 			},
 		});
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "actual-run", state: "complete", lifecycleArtifactVersion: 3, steps: [{ agent: "worker", status: "complete" }] }));
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "actual-run", state: "complete", lifecycleArtifactVersion: 3, steps: [{ agent: "builder", status: "complete" }] }));
 		fs.writeFileSync(path.join(asyncDir, "events.jsonl"), "");
 		const inconsistent = finalizeProcessTerminal(asyncDir, "actual-run", { processInstanceId: "runner-1", closeObservedAt: 30, exitCode: 0, signal: null });
 		assert.equal(inconsistent.state, "unknown");

@@ -17,14 +17,14 @@ import {
 
 function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {
-		name: "worker",
-		description: "Test worker",
+		name: "builder",
+		description: "Test builder",
 		systemPrompt: "Base prompt",
 		systemPromptMode: "replace",
 		inheritProjectContext: false,
 		inheritSkills: false,
 		source: "user",
-		filePath: "/tmp/worker.md",
+		filePath: "/tmp/builder.md",
 		...overrides,
 	};
 }
@@ -44,7 +44,7 @@ describe("resolveIntercomBridgeMode", () => {
 
 describe("resolveIntercomSessionTarget", () => {
 	it("prefers an explicit session name", () => {
-		assert.equal(resolveIntercomSessionTarget("planner", "session-12345678", "session-stableabcdef"), "planner");
+		assert.equal(resolveIntercomSessionTarget("architect", "session-12345678", "session-stableabcdef"), "architect");
 	});
 
 	it("uses a runtime-only subagent chat alias when unnamed", () => {
@@ -58,7 +58,7 @@ describe("resolveIntercomSessionTarget", () => {
 
 describe("resolveSubagentIntercomTarget", () => {
 	it("builds stable child session targets from run metadata", () => {
-		assert.equal(resolveSubagentIntercomTarget("78f659a3", "worker"), "subagent-worker-78f659a3");
+		assert.equal(resolveSubagentIntercomTarget("78f659a3", "builder"), "subagent-builder-78f659a3");
 		assert.equal(resolveSubagentIntercomTarget("78f659a3", "senior executor", 1), "subagent-senior-executor-78f659a3-2");
 	});
 });
@@ -98,7 +98,7 @@ describe("resolveIntercomBridge", () => {
 		});
 
 		assert.equal(bridge.active, true);
-		assert.equal(bridge.resultDelivery, true);
+		assert.equal(bridge.resultDelivery, false);
 		assert.equal(bridge.orchestratorTarget, "main");
 		assert.equal(bridge.extensionDir, NATIVE_INTERCOM_EXTENSION_DIR);
 	});

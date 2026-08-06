@@ -52,6 +52,13 @@ async function importSkillsFresh() {
 	return await import(`${pathToFileURL(modulePath).href}?bust=${bust}`) as typeof import("../../src/agents/skills.ts");
 }
 
+async function importAgentsFresh() {
+	const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+	const modulePath = path.resolve(projectRoot, "src/agents/agents.ts");
+	const bust = `${Date.now()}-${Math.random()}`;
+	return await import(`${pathToFileURL(modulePath).href}?bust=${bust}`) as typeof import("../../src/agents/agents.ts");
+}
+
 describe("skills filesystem fallback", () => {
 	beforeEach(() => {
 		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-skills-fallback-"));
@@ -347,6 +354,7 @@ describe("skills filesystem fallback", () => {
 					...process.env,
 					HOME: fakeHome,
 					USERPROFILE: fakeHome,
+					APPDATA: path.join(fakeHome, "appdata"),
 					PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
 					PI_DISCOVERY_MARKER: marker,
 					PI_OFFLINE: "1",
@@ -355,6 +363,137 @@ describe("skills filesystem fallback", () => {
 			},
 		);
 		assert.deepEqual(fs.readFileSync(marker, "utf-8").trim().split(/\r?\n/), ["npm-root-called", "npm-root-called"]);
+	});
+
+	it("uses the Windows APPDATA npm root without invoking npm", async () => {
+		const appData = path.join(tempDir, "appdata");
+		const packageRoot = path.join(appData, "npm", "node_modules", "windows-global-package");
+		const marker = path.join(tempDir, "npm-called");
+		const binDir = path.join(tempDir, "bin");
+		fs.mkdirSync(binDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(binDir, "npm"),
+			`#!/bin/sh\ntouch "${marker}"\nexit 1\n`,
+			{ encoding: "utf-8", mode: 0o755 },
+		);
+		writeSkillFile(path.join(packageRoot, "skills", "windows-global-skill"), "Use the Windows global skill.");
+		fs.writeFileSync(
+			path.join(packageRoot, "package.json"),
+			JSON.stringify({
+				name: "windows-global-package",
+				pi: { skills: ["./skills"] },
+				"pi-subagents": { agents: ["./agents"] },
+			}, null, 2),
+			"utf-8",
+		);
+		fs.mkdirSync(path.join(packageRoot, "agents"), { recursive: true });
+		fs.writeFileSync(path.join(packageRoot, "agents", "windows-global-agent.md"), `---
+name: windows-global-agent
+description: Loaded from the Windows global npm root.
+---
+
+Windows global agent.
+`, "utf-8");
+
+		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		const previousAppData = process.env.APPDATA;
+		const previousPath = process.env.PATH;
+		try {
+			Object.defineProperty(process, "platform", { value: "win32" });
+			process.env.APPDATA = appData;
+			process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
+
+			const skills = await importSkillsFresh();
+			assert.ok(skills.discoverAvailableSkills(tempDir).some((skill) => skill.name === "windows-global-skill"));
+
+			const agents = await importAgentsFresh();
+			assert.ok(agents.discoverAgents(tempDir, "both").agents.some((agent) => agent.name === "windows-global-agent"));
+			assert.equal(fs.existsSync(marker), false, "npm root -g should not run when APPDATA has a global root");
+		} finally {
+			if (platformDescriptor) Object.defineProperty(process, "platform", platformDescriptor);
+			if (previousAppData === undefined) delete process.env.APPDATA;
+			else process.env.APPDATA = previousAppData;
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("falls back to npm when the Windows APPDATA npm root is invalid", async () => {
+		const appData = path.join(tempDir, "appdata-file");
+		const fallbackRoot = path.join(tempDir, "fallback-global-root");
+		const packageRoot = path.join(fallbackRoot, "fallback-global-package");
+		const marker = path.join(tempDir, "npm-called");
+		const binDir = path.join(tempDir, "bin");
+		fs.mkdirSync(path.join(appData, "npm"), { recursive: true });
+		fs.writeFileSync(path.join(appData, "npm", "node_modules"), "not a directory", "utf-8");
+		fs.mkdirSync(binDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(binDir, "npm"),
+			`#!/bin/sh\ntouch "$PI_TEST_NPM_MARKER"\nprintf '%s\\n' "$PI_TEST_FALLBACK_ROOT"\n`,
+			{ encoding: "utf-8", mode: 0o755 },
+		);
+		fs.writeFileSync(
+			path.join(binDir, "npm.cmd"),
+			`@echo off\r\necho called > "%PI_TEST_NPM_MARKER%"\r\necho %PI_TEST_FALLBACK_ROOT%\r\n`,
+			"utf-8",
+		);
+		fs.writeFileSync(
+			path.join(binDir, "cmd.exe"),
+			`#!/bin/sh\nexec sh -c "npm root -g"\n`,
+			{ encoding: "utf-8", mode: 0o755 },
+		);
+		writeSkillFile(path.join(packageRoot, "skills", "fallback-global-skill"), "Use the fallback global skill.");
+		fs.writeFileSync(
+			path.join(packageRoot, "package.json"),
+			JSON.stringify({
+				name: "fallback-global-package",
+				pi: { skills: ["./skills"] },
+				"pi-subagents": { agents: ["./agents"] },
+			}, null, 2),
+			"utf-8",
+		);
+		fs.mkdirSync(path.join(packageRoot, "agents"), { recursive: true });
+		fs.writeFileSync(path.join(packageRoot, "agents", "fallback-global-agent.md"), `---
+name: fallback-global-agent
+description: Loaded from npm fallback global root.
+---
+
+Fallback global agent.
+`, "utf-8");
+
+		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		const previousAppData = process.env.APPDATA;
+		const previousPath = process.env.PATH;
+		const previousComSpec = process.env.ComSpec;
+		const previousMarkerEnv = process.env.PI_TEST_NPM_MARKER;
+		const previousFallbackRootEnv = process.env.PI_TEST_FALLBACK_ROOT;
+		try {
+			Object.defineProperty(process, "platform", { value: "win32" });
+			process.env.APPDATA = appData;
+			process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
+			if (os.platform() !== "win32") process.env.ComSpec = path.join(binDir, "cmd.exe");
+			process.env.PI_TEST_NPM_MARKER = marker;
+			process.env.PI_TEST_FALLBACK_ROOT = fallbackRoot;
+
+			const skills = await importSkillsFresh();
+			assert.ok(skills.discoverAvailableSkills(tempDir).some((skill) => skill.name === "fallback-global-skill"));
+
+			const agents = await importAgentsFresh();
+			assert.ok(agents.discoverAgents(tempDir, "both").agents.some((agent) => agent.name === "fallback-global-agent"));
+			assert.equal(fs.existsSync(marker), true, "npm root -g should run when APPDATA root is invalid");
+		} finally {
+			if (platformDescriptor) Object.defineProperty(process, "platform", platformDescriptor);
+			if (previousAppData === undefined) delete process.env.APPDATA;
+			else process.env.APPDATA = previousAppData;
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+			if (previousComSpec === undefined) delete process.env.ComSpec;
+			else process.env.ComSpec = previousComSpec;
+			if (previousMarkerEnv === undefined) delete process.env.PI_TEST_NPM_MARKER;
+			else process.env.PI_TEST_NPM_MARKER = previousMarkerEnv;
+			if (previousFallbackRootEnv === undefined) delete process.env.PI_TEST_FALLBACK_ROOT;
+			else process.env.PI_TEST_FALLBACK_ROOT = previousFallbackRootEnv;
+		}
 	});
 
 	it("falls back to the runtime cwd when the execution cwd lacks the skill", () => {

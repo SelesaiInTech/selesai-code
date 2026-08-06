@@ -28,14 +28,13 @@ import { discoverAvailableSkills, resolveSkills } from "./skills.ts";
 import {
 	buildProactiveSkillSubagentRecommendationLines,
 } from "./proactive-skills.ts";
-import { formatTaskAwareAgentRecommendation, recommendTaskAwareAgent } from "./task-aware-routing.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 import { toModelInfo } from "../shared/model-info.ts";
 import { resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-fallback.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
-import type { AcceptanceInput, CatalogAgentMetadata, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
 import { getProjectConfigDir } from "../shared/utils.ts";
 import { capabilityCeilingAgentRestrictionSources, isAgentAllowedByCapabilityCeiling, resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
 
@@ -47,14 +46,12 @@ interface ManagementParams {
 	action?: string;
 	agent?: string;
 	chainName?: string;
-	agentScope?: string;
+	agentScope?: unknown;
 	config?: unknown;
-	/** Optional advisory intent for action:'list' only; never launches work. */
-	task?: string;
 }
 
-function result(text: string, isError = false, extraDetails: Partial<Details> = {}): AgentToolResult<Details> {
-	return { content: [{ type: "text", text }], isError, details: { mode: "management", results: [], ...extraDetails } };
+function result(text: string, isError = false): AgentToolResult<Details> {
+	return { content: [{ type: "text", text }], isError, details: { mode: "management", results: [] } };
 }
 
 function parseCsv(value: string): string[] {
@@ -218,34 +215,54 @@ function skillsWarning(cwd: string, agent: Pick<AgentConfig, "skills" | "skillPa
 }
 
 export function editableAgentConfig(agent: AgentConfig): AgentConfig {
+	const { extensions: _extensions, ...withoutExtensions } = agent;
 	const base = agent.override?.base;
+	const {
+		override: _override,
+		model: _model,
+		fallbackModels: _fallbackModels,
+		thinking: _thinking,
+		systemPromptMode: _systemPromptMode,
+		inheritProjectContext: _inheritProjectContext,
+		inheritSkills: _inheritSkills,
+		defaultContext: _defaultContext,
+		acceptanceRole: _acceptanceRole,
+		disabled: _disabled,
+		systemPrompt: _systemPrompt,
+		skills: _skills,
+		skillPath: _skillPath,
+		tools: _tools,
+		mcpDirectTools: _mcpDirectTools,
+		subagentOnlyExtensions: _subagentOnlyExtensions,
+		completionGuard: _completionGuard,
+		...editable
+	} = withoutExtensions;
 	if (!base) {
 		return {
-			...agent,
-			extensions: agent.extensionsFromDefault ? undefined : agent.extensions ? [...agent.extensions] : undefined,
+			...withoutExtensions,
+			...(agent.extensionsFromDefault ? {} : agent.extensions !== undefined ? { extensions: [...agent.extensions] } : {}),
 		};
 	}
 
 	return {
-		...agent,
-		model: base.model,
-		fallbackModels: base.fallbackModels ? [...base.fallbackModels] : undefined,
-		thinking: base.thinking,
+		...editable,
+		...(base.model !== undefined ? { model: base.model } : {}),
+		...(base.fallbackModels !== undefined ? { fallbackModels: [...base.fallbackModels] } : {}),
+		...(base.thinking !== undefined ? { thinking: base.thinking } : {}),
 		systemPromptMode: base.systemPromptMode,
 		inheritProjectContext: base.inheritProjectContext,
 		inheritSkills: base.inheritSkills,
-		defaultContext: base.defaultContext,
-		acceptanceRole: base.acceptanceRole,
-		disabled: base.disabled,
+		...(base.defaultContext !== undefined ? { defaultContext: base.defaultContext } : {}),
+		...(base.acceptanceRole !== undefined ? { acceptanceRole: base.acceptanceRole } : {}),
+		...(base.disabled !== undefined ? { disabled: base.disabled } : {}),
 		systemPrompt: base.systemPrompt,
-		skills: base.skills ? [...base.skills] : undefined,
-		skillPath: base.skillPath ? [...base.skillPath] : undefined,
-		tools: base.tools ? [...base.tools] : undefined,
-		mcpDirectTools: base.mcpDirectTools ? [...base.mcpDirectTools] : undefined,
-		extensions: base.extensions ? [...base.extensions] : undefined,
-		subagentOnlyExtensions: base.subagentOnlyExtensions ? [...base.subagentOnlyExtensions] : undefined,
-		completionGuard: base.completionGuard,
-		override: undefined,
+		...(base.skills !== undefined ? { skills: [...base.skills] } : {}),
+		...(base.skillPath !== undefined ? { skillPath: [...base.skillPath] } : {}),
+		...(base.tools !== undefined ? { tools: [...base.tools] } : {}),
+		...(base.mcpDirectTools !== undefined ? { mcpDirectTools: [...base.mcpDirectTools] } : {}),
+		...(base.extensions !== undefined ? { extensions: [...base.extensions] } : {}),
+		...(base.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: [...base.subagentOnlyExtensions] } : {}),
+		...(base.completionGuard !== undefined ? { completionGuard: base.completionGuard } : {}),
 	};
 }
 
@@ -269,6 +286,7 @@ export function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<
 	if (hasKey(cfg, "description")) changed("description");
 	if (hasKey(cfg, "aliases")) changed("alias", "aliases");
 	if (hasKey(cfg, "systemPrompt")) changed("systemPrompt");
+	if (hasKey(cfg, "runner")) changed("runner");
 	if (hasKey(cfg, "model")) changed("model");
 	if (hasKey(cfg, "fallbackModels")) changed("fallbackModels");
 	if (hasKey(cfg, "tools")) changed("tools");
@@ -367,7 +385,7 @@ function parseStepList(raw: unknown): { steps?: ChainStepConfig[]; error?: strin
 		if (hasKey(s, "toolBudget")) {
 			const validation = validateToolBudgetConfig(s.toolBudget, `config.steps[${i}].toolBudget`);
 			if (validation.error) return { error: validation.error };
-			step.toolBudget = s.toolBudget as ChainStepConfig["toolBudget"];
+			if (s.toolBudget !== undefined) step.toolBudget = s.toolBudget as ToolBudgetConfig;
 		}
 		steps.push(step);
 	}
@@ -383,18 +401,23 @@ function parseTools(raw: string): { tools?: string[]; mcpDirectTools?: string[] 
 			if (direct) mcpDirectTools.push(direct);
 		} else tools.push(item);
 	}
-	return { tools: tools.length ? tools : undefined, mcpDirectTools: mcpDirectTools.length ? mcpDirectTools : undefined };
+	return {
+		...(tools.length ? { tools } : {}),
+		...(mcpDirectTools.length ? { mcpDirectTools } : {}),
+	};
 }
 
 function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): string | undefined {
 	if (hasKey(cfg, "aliases")) {
-		if (cfg.aliases === false || cfg.aliases === "") target.aliases = undefined;
+		if (cfg.aliases === false || cfg.aliases === "") delete target.aliases;
 		else if (typeof cfg.aliases === "string") {
 			const aliases = parseCsv(cfg.aliases).filter((alias) => alias !== target.name);
-			target.aliases = aliases.length ? aliases : undefined;
+			if (aliases.length) target.aliases = aliases;
+			else delete target.aliases;
 		} else if (Array.isArray(cfg.aliases) && cfg.aliases.every((entry) => typeof entry === "string")) {
 			const aliases = [...new Set(cfg.aliases.map((entry) => entry.trim()).filter(Boolean).filter((alias) => alias !== target.name))];
-			target.aliases = aliases.length ? aliases : undefined;
+			if (aliases.length) target.aliases = aliases;
+			else delete target.aliases;
 		} else return "config.aliases must be a comma-separated string, string array, or false when provided.";
 	}
 	if (hasKey(cfg, "systemPrompt")) {
@@ -402,58 +425,92 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		else if (typeof cfg.systemPrompt === "string") target.systemPrompt = cfg.systemPrompt;
 		else return "config.systemPrompt must be a string or false when provided.";
 	}
+	if (hasKey(cfg, "runner")) {
+		if (cfg.runner === false || cfg.runner === "") delete target.runner;
+		else if (cfg.runner && typeof cfg.runner === "object" && !Array.isArray(cfg.runner)) {
+			const runner = cfg.runner as Record<string, unknown>;
+			if (runner.type === "pi" && Object.keys(runner).every((key) => key === "type")) target.runner = { type: "pi" };
+			else if (runner.type === "external-cli" && typeof runner.command === "string" && runner.command.trim()
+				&& (runner.args === undefined || (Array.isArray(runner.args) && runner.args.every((arg) => typeof arg === "string")))
+				&& (runner.promptDelivery === undefined || runner.promptDelivery === "stdin")
+				&& Object.keys(runner).every((key) => ["type", "command", "args", "promptDelivery"].includes(key))) {
+				const runnerArgs = Array.isArray(runner.args) ? runner.args.filter((arg): arg is string => typeof arg === "string") : undefined;
+				target.runner = { type: "external-cli", command: runner.command.trim(), ...(runnerArgs?.length ? { args: runnerArgs } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" } : {}) };
+			} else return "config.runner must be { type: 'pi' } or { type: 'external-cli', command: string, args?: string[], promptDelivery?: 'stdin' }.";
+		} else return "config.runner must be an object, false, or empty string when provided.";
+	}
 	if (hasKey(cfg, "model")) {
-		if (cfg.model === false || cfg.model === "") target.model = undefined;
-		else if (typeof cfg.model === "string") target.model = cfg.model.trim() || undefined;
-		else return "config.model must be a string or false when provided.";
+		if (cfg.model === false || cfg.model === "") delete target.model;
+		else if (typeof cfg.model === "string") {
+			const model = cfg.model.trim();
+			if (model) target.model = model;
+			else delete target.model;
+		} else return "config.model must be a string or false when provided.";
 	}
 	if (hasKey(cfg, "fallbackModels")) {
-		if (cfg.fallbackModels === false || cfg.fallbackModels === "") target.fallbackModels = undefined;
+		if (cfg.fallbackModels === false || cfg.fallbackModels === "") delete target.fallbackModels;
 		else if (typeof cfg.fallbackModels === "string") {
 			const models = parseCsv(cfg.fallbackModels);
-			target.fallbackModels = models.length ? models : undefined;
+			if (models.length) target.fallbackModels = models;
+			else delete target.fallbackModels;
 		} else if (Array.isArray(cfg.fallbackModels)) {
 			const models = cfg.fallbackModels
 				.filter((value): value is string => typeof value === "string")
 				.map((value) => value.trim())
 				.filter(Boolean);
-			target.fallbackModels = models.length ? [...new Set(models)] : undefined;
+			if (models.length) target.fallbackModels = [...new Set(models)];
+			else delete target.fallbackModels;
 		} else return "config.fallbackModels must be a comma-separated string, string array, or false when provided.";
 	}
 	if (hasKey(cfg, "tools")) {
-		if (cfg.tools === false || cfg.tools === "") { target.tools = undefined; target.mcpDirectTools = undefined; }
-		else if (typeof cfg.tools === "string") { const parsed = parseTools(cfg.tools); target.tools = parsed.tools; target.mcpDirectTools = parsed.mcpDirectTools; }
-		else return "config.tools must be a comma-separated string or false when provided.";
+		if (cfg.tools === false || cfg.tools === "") { delete target.tools; delete target.mcpDirectTools; }
+		else if (typeof cfg.tools === "string") {
+			const parsed = parseTools(cfg.tools);
+			if (parsed.tools) target.tools = parsed.tools;
+			else delete target.tools;
+			if (parsed.mcpDirectTools) target.mcpDirectTools = parsed.mcpDirectTools;
+			else delete target.mcpDirectTools;
+		} else return "config.tools must be a comma-separated string or false when provided.";
 	}
 	if (hasKey(cfg, "skills")) {
-		if (cfg.skills === false || cfg.skills === "") target.skills = undefined;
-		else if (typeof cfg.skills === "string") { const skills = parseCsv(cfg.skills); target.skills = skills.length ? skills : undefined; }
-		else return "config.skills must be a comma-separated string or false when provided.";
+		if (cfg.skills === false || cfg.skills === "") delete target.skills;
+		else if (typeof cfg.skills === "string") {
+			const skills = parseCsv(cfg.skills);
+			if (skills.length) target.skills = skills;
+			else delete target.skills;
+		} else return "config.skills must be a comma-separated string or false when provided.";
 	}
 	if (hasKey(cfg, "skillPath")) {
-		if (cfg.skillPath === false || cfg.skillPath === "") target.skillPath = undefined;
-		else if (typeof cfg.skillPath === "string") { const skillPath = parseCsv(cfg.skillPath); target.skillPath = skillPath.length ? skillPath : undefined; }
-		else if (Array.isArray(cfg.skillPath) && cfg.skillPath.every((entry) => typeof entry === "string")) {
+		if (cfg.skillPath === false || cfg.skillPath === "") delete target.skillPath;
+		else if (typeof cfg.skillPath === "string") {
+			const skillPath = parseCsv(cfg.skillPath);
+			if (skillPath.length) target.skillPath = skillPath;
+			else delete target.skillPath;
+		} else if (Array.isArray(cfg.skillPath) && cfg.skillPath.every((entry) => typeof entry === "string")) {
 			const skillPath = [...new Set(cfg.skillPath.map((entry) => entry.trim()).filter(Boolean))];
-			target.skillPath = skillPath.length ? skillPath : undefined;
+			if (skillPath.length) target.skillPath = skillPath;
+			else delete target.skillPath;
 		} else return "config.skillPath must be a comma-separated string, string array, or false when provided.";
 	}
 	if (hasKey(cfg, "extensions")) {
-		if (cfg.extensions === false) target.extensions = undefined;
+		if (cfg.extensions === false) delete target.extensions;
 		else if (cfg.extensions === "") target.extensions = [];
 		else if (typeof cfg.extensions === "string") target.extensions = parseCsv(cfg.extensions);
 		else return "config.extensions must be a comma-separated string, empty string, or false when provided.";
 	}
 	if (hasKey(cfg, "subagentOnlyExtensions")) {
-		if (cfg.subagentOnlyExtensions === false) target.subagentOnlyExtensions = undefined;
+		if (cfg.subagentOnlyExtensions === false) delete target.subagentOnlyExtensions;
 		else if (cfg.subagentOnlyExtensions === "") target.subagentOnlyExtensions = [];
 		else if (typeof cfg.subagentOnlyExtensions === "string") target.subagentOnlyExtensions = parseCsv(cfg.subagentOnlyExtensions);
 		else return "config.subagentOnlyExtensions must be a comma-separated string, empty string, or false when provided.";
 	}
 	if (hasKey(cfg, "thinking")) {
-		if (cfg.thinking === false || cfg.thinking === "") target.thinking = undefined;
-		else if (typeof cfg.thinking === "string") target.thinking = cfg.thinking.trim() || undefined;
-		else return "config.thinking must be a string or false when provided.";
+		if (cfg.thinking === false || cfg.thinking === "") delete target.thinking;
+		else if (typeof cfg.thinking === "string") {
+			const thinking = cfg.thinking.trim();
+			if (thinking) target.thinking = thinking;
+			else delete target.thinking;
+		} else return "config.thinking must be a string or false when provided.";
 	}
 	if (hasKey(cfg, "systemPromptMode")) {
 		if (cfg.systemPromptMode === "append" || cfg.systemPromptMode === "replace") target.systemPromptMode = cfg.systemPromptMode;
@@ -468,30 +525,31 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		target.inheritSkills = cfg.inheritSkills;
 	}
 	if (hasKey(cfg, "defaultContext")) {
-		if (cfg.defaultContext === false || cfg.defaultContext === "") target.defaultContext = undefined;
+		if (cfg.defaultContext === false || cfg.defaultContext === "") delete target.defaultContext;
 		else if (cfg.defaultContext === "fresh" || cfg.defaultContext === "fork") target.defaultContext = cfg.defaultContext;
 		else return "config.defaultContext must be 'fresh', 'fork', or false when provided.";
 	}
 	if (hasKey(cfg, "async")) {
-		if (cfg.async === "") target.defaultAsync = undefined;
+		if (cfg.async === "") delete target.defaultAsync;
 		else if (typeof cfg.async === "boolean") target.defaultAsync = cfg.async;
 		else return "config.async must be a boolean or empty string when provided.";
 	}
 	if (hasKey(cfg, "timeoutMs")) {
-		if (cfg.timeoutMs === false || cfg.timeoutMs === "") target.defaultTimeoutMs = undefined;
+		if (cfg.timeoutMs === false || cfg.timeoutMs === "") delete target.defaultTimeoutMs;
 		else if (typeof cfg.timeoutMs === "number" && Number.isInteger(cfg.timeoutMs) && cfg.timeoutMs > 0) target.defaultTimeoutMs = cfg.timeoutMs;
 		else return "config.timeoutMs must be a positive integer or false when provided.";
 	}
 	if (hasKey(cfg, "turnBudget")) {
-		if (cfg.turnBudget === false || cfg.turnBudget === "") target.defaultTurnBudget = undefined;
+		if (cfg.turnBudget === false || cfg.turnBudget === "") delete target.defaultTurnBudget;
 		else {
 			const resolved = resolveTurnBudgetConfig(cfg.turnBudget, "config.turnBudget");
 			if (resolved.error) return resolved.error;
-			target.defaultTurnBudget = resolved.turnBudget;
+			if (resolved.turnBudget !== undefined) target.defaultTurnBudget = resolved.turnBudget;
+			else delete target.defaultTurnBudget;
 		}
 	}
 	if (hasKey(cfg, "acceptance")) {
-		if (cfg.acceptance === "") target.defaultAcceptance = undefined;
+		if (cfg.acceptance === "") delete target.defaultAcceptance;
 		else {
 			const errors = validateAcceptanceInput(cfg.acceptance, "config.acceptance");
 			if (errors.length > 0) return errors.join(" ");
@@ -499,20 +557,21 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		}
 	}
 	if (hasKey(cfg, "acceptanceRole")) {
-		if (cfg.acceptanceRole === false || cfg.acceptanceRole === "") target.acceptanceRole = undefined;
+		if (cfg.acceptanceRole === false || cfg.acceptanceRole === "") delete target.acceptanceRole;
 		else if (cfg.acceptanceRole === "read-only" || cfg.acceptanceRole === "writer") target.acceptanceRole = cfg.acceptanceRole;
 		else return "config.acceptanceRole must be 'read-only', 'writer', or false when provided.";
 	}
 	if (hasKey(cfg, "output")) {
-		if (cfg.output === false || cfg.output === "") target.output = undefined;
+		if (cfg.output === false || cfg.output === "") delete target.output;
 		else if (typeof cfg.output === "string") target.output = cfg.output;
 		else return "config.output must be a string or false when provided.";
 	}
 	if (hasKey(cfg, "reads")) {
-		if (cfg.reads === false || cfg.reads === "") target.defaultReads = undefined;
+		if (cfg.reads === false || cfg.reads === "") delete target.defaultReads;
 		else if (typeof cfg.reads === "string") {
 			const reads = parseCsv(cfg.reads);
-			target.defaultReads = reads.length ? reads : undefined;
+			if (reads.length) target.defaultReads = reads;
+			else delete target.defaultReads;
 		} else return "config.reads must be a comma-separated string or false when provided.";
 	}
 	if (hasKey(cfg, "progress")) {
@@ -520,7 +579,7 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		target.defaultProgress = cfg.progress;
 	}
 	if (hasKey(cfg, "maxSubagentDepth")) {
-		if (cfg.maxSubagentDepth === false || cfg.maxSubagentDepth === "") target.maxSubagentDepth = undefined;
+		if (cfg.maxSubagentDepth === false || cfg.maxSubagentDepth === "") delete target.maxSubagentDepth;
 		else if (typeof cfg.maxSubagentDepth === "number" && Number.isInteger(cfg.maxSubagentDepth) && cfg.maxSubagentDepth >= 0) {
 			target.maxSubagentDepth = cfg.maxSubagentDepth;
 		} else return "config.maxSubagentDepth must be an integer >= 0 or false when provided.";
@@ -530,12 +589,27 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		target.completionGuard = cfg.completionGuard;
 	}
 	if (hasKey(cfg, "toolBudget")) {
-		if (cfg.toolBudget === false || cfg.toolBudget === "") target.toolBudget = undefined;
+		if (cfg.toolBudget === false || cfg.toolBudget === "") delete target.toolBudget;
 		else {
 			const validation = validateToolBudgetConfig(cfg.toolBudget, "config.toolBudget");
 			if (validation.error) return validation.error;
 			target.toolBudget = cfg.toolBudget as ToolBudgetConfig;
 		}
+	}
+	if (target.runner?.type === "external-cli") {
+		const unsupported = [
+			target.tools?.length || target.mcpDirectTools?.length ? "tools" : undefined,
+			target.model ? "model" : undefined,
+			target.fallbackModels?.length ? "fallbackModels" : undefined,
+			target.thinking ? "thinking" : undefined,
+			target.extensions?.length ? "extensions" : undefined,
+			target.subagentOnlyExtensions?.length ? "subagentOnlyExtensions" : undefined,
+			target.skills?.length || target.skillPath?.length ? "skills" : undefined,
+			target.maxSubagentDepth !== undefined ? "maxSubagentDepth" : undefined,
+			target.completionGuard !== undefined ? "completionGuard" : undefined,
+			target.toolBudget ? "toolBudget" : undefined,
+		].filter((field): field is string => Boolean(field));
+		if (unsupported.length > 0) return `config.runner type 'external-cli' does not support Pi-only fields: ${unsupported.join(", ")}.`;
 	}
 	return undefined;
 }
@@ -588,13 +662,8 @@ function renamePath(
 	return { filePath };
 }
 
-/** Effective declared tools: normal tools plus mcp:-prefixed direct MCP tools. */
-function effectiveAgentTools(agent: AgentConfig): string[] {
-	return [...(agent.tools ?? []), ...(agent.mcpDirectTools ?? []).map((t) => `mcp:${t}`)];
-}
-
 function formatAgentDetail(agent: AgentConfig): string {
-	const tools = effectiveAgentTools(agent);
+	const tools = [...(agent.tools ?? []), ...(agent.mcpDirectTools ?? []).map((t) => `mcp:${t}`)];
 	const lines: string[] = [`Agent: ${agent.name} (${agent.source})`, `Path: ${agent.filePath}`, `Description: ${agent.description}`];
 	if (agent.packageName) {
 		lines.push(`Local name: ${frontmatterNameForConfig(agent)}`);
@@ -607,6 +676,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.skills?.length) lines.push(`Skills: ${agent.skills.join(", ")}`);
 	if (agent.skillPath?.length) lines.push(`Skill paths: ${agent.skillPath.join(", ")}`);
 	lines.push(`System prompt mode: ${agent.systemPromptMode}`);
+	if (agent.runner) lines.push(`Runner: ${JSON.stringify(agent.runner)}`);
 	lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
 	lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
 	if (agent.defaultContext) lines.push(`Default context: ${agent.defaultContext}`);
@@ -680,33 +750,6 @@ function formatChainDetail(chain: ChainConfig): string {
 	return lines.join("\n");
 }
 
-function formatCatalogAgentLine(agent: AgentConfig): string {
-	const parts: string[] = [agent.source, `context: ${agent.defaultContext ?? "fresh"}`];
-	if (agent.acceptanceRole) parts.push(`role: ${agent.acceptanceRole}`);
-	if (agent.aliases?.length) parts.push(`aliases: ${agent.aliases.join(", ")}`);
-	const tools = effectiveAgentTools(agent);
-	if (tools.length) parts.push(`tools: ${tools.join(", ")}`);
-	return `- ${agent.name} (${parts.join(", ")}): ${agent.description}`;
-}
-
-function catalogAgentMetadata(
-	agent: AgentConfig,
-	executable: boolean,
-	restrictionSources: string[] | undefined,
-): CatalogAgentMetadata {
-	return {
-		name: agent.name,
-		source: agent.source,
-		description: agent.description,
-		executable,
-		...(restrictionSources?.length ? { restrictionSources } : {}),
-		...(agent.aliases?.length ? { aliases: [...agent.aliases] } : {}),
-		defaultContext: agent.defaultContext ?? "fresh",
-		...(agent.acceptanceRole ? { acceptanceRole: agent.acceptanceRole } : {}),
-		tools: effectiveAgentTools(agent),
-	};
-}
-
 export function handleList(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
 	const scope = normalizeListScope(params.agentScope) ?? "both";
 	const d = discoverAgentsAll(ctx.cwd);
@@ -722,38 +765,26 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 	const proactiveSuggestions = buildProactiveSkillSubagentRecommendationLines({
 		agents,
 		chains,
-		config: ctx.config?.proactiveSkillSubagents,
+		...(ctx.config?.proactiveSkillSubagents !== undefined ? { config: ctx.config.proactiveSkillSubagents } : {}),
 		discoverAvailableSkills: () => discoverAvailableSkills(ctx.cwd),
 	});
-	const taskAdvice = params.task?.trim()
-		? formatTaskAwareAgentRecommendation(recommendTaskAwareAgent({ task: params.task, agents, capabilityCeiling }))
-		: [];
 	const lines = [
 		"Executable agents:",
-		...(agents.length ? agents.map(formatCatalogAgentLine) : ["- (none)"]),
+		...(agents.length
+			? agents.map((a) => `- ${a.name} (${a.source}${a.defaultContext ? `, context: ${a.defaultContext}` : ""}${a.aliases?.length ? `, aliases: ${a.aliases.join(", ")}` : ""}): ${a.description}`)
+			: ["- (none)"]),
 		...(restrictedAgents.length ? [
 			"",
 			`Restricted agents (not executable in this session${restrictedSources?.length ? `; capability ceiling: ${restrictedSources.join(", ")}` : ""}):`,
-			...restrictedAgents.map(formatCatalogAgentLine),
+			...restrictedAgents.map((a) => `- ${a.name} (${a.source}${a.aliases?.length ? `, aliases: ${a.aliases.join(", ")}` : ""}): ${a.description}`),
 		] : []),
 		"",
 		"Chains:",
 		...(chains.length ? chains.map((c) => `- ${c.name} (${c.source}): ${c.description}`) : ["- (none)"]),
 		...(proactiveSuggestions.length ? ["", ...proactiveSuggestions] : []),
-		...(taskAdvice.length ? ["", ...taskAdvice] : []),
 		...(diagnostics.length ? ["", "Chain diagnostics:", ...diagnostics.map((entry) => `- ${entry.filePath}: ${entry.error}`)] : []),
 	];
-	return result(lines.join("\n"), false, {
-		catalog: {
-			version: 1,
-			agents: [
-				...agents.map((a) => catalogAgentMetadata(a, true, undefined)),
-				...restrictedAgents.map((a) => catalogAgentMetadata(a, false, restrictedSources)),
-			],
-			chains: chains.map((c) => ({ name: c.name, source: c.source, description: c.description })),
-			...(restrictedSources?.length ? { capabilityCeilingSources: restrictedSources } : {}),
-		},
-	});
+	return result(lines.join("\n"));
 }
 
 function formatModelSource(agent: AgentConfig, currentModel: ParentModel | undefined): string {
@@ -904,7 +935,15 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	if (isChain) {
 		const parsed = parseStepList(cfg.steps);
 		if (parsed.error) return result(parsed.error, true);
-		const chain: ChainConfig = { name: runtimeName, localName: name, packageName: parsedPackage.packageName, description: cfg.description.trim(), source: scope, filePath: targetPath, steps: parsed.steps! };
+		const chain: ChainConfig = {
+			name: runtimeName,
+			localName: name,
+			...(parsedPackage.packageName !== undefined ? { packageName: parsedPackage.packageName } : {}),
+			description: cfg.description.trim(),
+			source: scope,
+			filePath: targetPath,
+			steps: parsed.steps!,
+		};
 		fs.writeFileSync(targetPath, serializeChain(chain), "utf-8");
 		const missing = unknownChainAgents(ctx.cwd, chain.steps);
 		if (missing.length) warnings.push(`Warning: chain steps reference unknown agents: ${missing.join(", ")}.`);
@@ -914,7 +953,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	const agent: AgentConfig = {
 		name: runtimeName,
 		localName: name,
-		packageName: parsedPackage.packageName,
+		...(parsedPackage.packageName !== undefined ? { packageName: parsedPackage.packageName } : {}),
 		description: cfg.description.trim(),
 		source: scope,
 		filePath: targetPath,
@@ -945,9 +984,10 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 	const warnings: string[] = [];
 	if (params.agent) {
 		const scopeHint = asDisambiguationScope(params.agentScope);
-		const targetOrError = resolveTarget("agent", params.agent, findAgents(params.agent, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
+		const targetOrError = resolveTarget("agent", params.agent, findAgents(params.agent, ctx.cwd, scopeHint ?? "both"), ctx.cwd, scopeHint);
 		if ("content" in targetOrError) return targetOrError;
 		const target = targetOrError;
+		if (target.source !== "user" && target.source !== "project") return result(`Cannot update ${target.source} agent '${target.name}'. Eject it to user or project scope first.`, true);
 		const updated = editableAgentConfig(target);
 		const oldName = target.name;
 		if (hasKey(cfg, "name") && (typeof cfg.name !== "string" || !cfg.name.trim())) return result("config.name must be a non-empty string when provided.", true);
@@ -967,7 +1007,8 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		if (applyError) return result(applyError, true);
 		const preserveFrontmatterFields = preservedAgentFrontmatterFields(target, cfg);
 		updated.localName = newLocalName;
-		updated.packageName = newPackageName;
+		if (newPackageName !== undefined) updated.packageName = newPackageName;
+		else delete updated.packageName;
 		updated.name = buildRuntimeName(newLocalName, newPackageName);
 		if (hasKey(cfg, "description")) updated.description = (cfg.description as string).trim();
 		if (hasKey(cfg, "model")) {
@@ -998,9 +1039,10 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		return result([headline, ...warnings].join("\n"));
 	}
 	const scopeHint = asDisambiguationScope(params.agentScope);
-	const targetOrError = resolveTarget("chain", params.chainName!, findChains(params.chainName!, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
+	const targetOrError = resolveTarget("chain", params.chainName!, findChains(params.chainName!, ctx.cwd, scopeHint ?? "both"), ctx.cwd, scopeHint);
 	if ("content" in targetOrError) return targetOrError;
 	const target = targetOrError;
+	if (target.source !== "user" && target.source !== "project") return result(`Cannot update ${target.source} chain '${target.name}'. Eject it to user or project scope first.`, true);
 	const updated: ChainConfig = { ...target, steps: [...target.steps] };
 	const oldName = target.name;
 	if (hasKey(cfg, "name") && (typeof cfg.name !== "string" || !cfg.name.trim())) return result("config.name must be a non-empty string when provided.", true);
@@ -1023,7 +1065,8 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		parsedSteps = parsed.steps!;
 	}
 	updated.localName = newLocalName;
-	updated.packageName = newPackageName;
+	if (newPackageName !== undefined) updated.packageName = newPackageName;
+	else delete updated.packageName;
 	updated.name = buildRuntimeName(newLocalName, newPackageName);
 	if (hasKey(cfg, "description")) updated.description = (cfg.description as string).trim();
 	if (parsedSteps) {
@@ -1049,7 +1092,7 @@ function handleDelete(params: ManagementParams, ctx: ManagementContext): AgentTo
 	if (params.agent && params.chainName) return result("Specify either 'agent' or 'chainName', not both.", true);
 	const scopeHint = asDisambiguationScope(params.agentScope);
 	if (params.agent) {
-		const targetOrError = resolveTarget("agent", params.agent, findAgents(params.agent, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
+		const targetOrError = resolveTarget("agent", params.agent, findAgents(params.agent, ctx.cwd, scopeHint ?? "both"), ctx.cwd, scopeHint);
 		if ("content" in targetOrError) return targetOrError;
 		const target = targetOrError;
 		fs.unlinkSync(target.filePath);
@@ -1058,7 +1101,7 @@ function handleDelete(params: ManagementParams, ctx: ManagementContext): AgentTo
 		if (refs.length) lines.push(`Warning: chains reference deleted agent '${target.name}': ${refs.join(", ")}.`);
 		return result(lines.join("\n"));
 	}
-	const targetOrError = resolveTarget("chain", params.chainName!, findChains(params.chainName!, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
+	const targetOrError = resolveTarget("chain", params.chainName!, findChains(params.chainName!, ctx.cwd, scopeHint ?? "both"), ctx.cwd, scopeHint);
 	if ("content" in targetOrError) return targetOrError;
 	const target = targetOrError;
 	fs.unlinkSync(target.filePath);
@@ -1111,7 +1154,7 @@ function handleDisable(params: ManagementParams, ctx: ManagementContext): AgentT
 	const scope = parsedScope.scope!;
 	const d = discoverAgentsAll(ctx.cwd);
 	if (scope === "project" && d.projectSettingsPath === null) {
-		return result("Project override is not available here: no project config root (.pi or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
+		return result("Project override is not available here: no project config root (.selesai or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
 	}
 	const effective = resolveEffectiveAgent(d, raw);
 	if (effective.error) return result(effective.error, true);
@@ -1135,7 +1178,7 @@ function handleEnable(params: ManagementParams, ctx: ManagementContext): AgentTo
 	const scope = parsedScope.scope!;
 	const d = discoverAgentsAll(ctx.cwd);
 	if (scope === "project" && d.projectSettingsPath === null) {
-		return result("Project override is not available here: no project config root (.pi or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
+		return result("Project override is not available here: no project config root (.selesai or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
 	}
 	const effective = resolveEffectiveAgent(d, raw);
 	if (effective.error) return result(effective.error, true);
@@ -1164,7 +1207,7 @@ function handleReset(params: ManagementParams, ctx: ManagementContext): AgentToo
 	const scope = parsedScope.scope!;
 	const d = discoverAgentsAll(ctx.cwd);
 	if (scope === "project" && d.projectSettingsPath === null) {
-		return result("Project override is not available here: no project config root (.pi or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
+		return result("Project override is not available here: no project config root (.selesai or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
 	}
 	const bundled = [...d.package, ...d.builtin].find((a) => a.name === raw || a.name === sanitized);
 	if (!bundled) {

@@ -1,16 +1,12 @@
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
-	SUBAGENT_DELEGATION_PROTOCOL_VERSION,
-	SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
 	SUBAGENT_DELEGATION_STARTED_EVENT,
 	SUBAGENT_DELEGATION_UPDATE_EVENT,
+	type SubagentDelegationInvalidResponse,
 	type SubagentDelegationRequest,
 	type SubagentDelegationResponse,
-	type SubagentDelegationV2InvalidResponse,
-	type SubagentDelegationV2Request,
-	type SubagentDelegationV2Response,
 } from "../api/delegation.ts";
 import { parseSubagentDelegationRequest } from "./delegation-request.ts";
 import {
@@ -21,9 +17,6 @@ import {
 	toSubagentDelegationExecutionParams,
 	toSubagentDelegationResponse,
 	toSubagentDelegationUpdate,
-	toSubagentDelegationV2ExecutionParams,
-	toSubagentDelegationV2Response,
-	toSubagentDelegationV2Update,
 	type DelegatedSubagentExecutionParams,
 	type PromptTemplateBridgeResult,
 	type PromptTemplateDelegationRequest,
@@ -51,11 +44,8 @@ interface PromptTemplateBridgeOptions<Ctx extends { cwd?: string }> {
 		ctx: Ctx,
 		onUpdate: (result: PromptTemplateBridgeResult) => void,
 	) => Promise<PromptTemplateBridgeResult>;
-	/**
-	 * Concurrent-safe executor for strict versioned delegation requests.
-	 * Non-versioned prompt-template requests retain the ordinary single-dispatch guard.
-	 */
-	executeVersioned?: (
+	/** Concurrent-safe executor for structured delegation requests. */
+	executeStructured?: (
 		requestId: string,
 		params: DelegatedSubagentExecutionParams,
 		signal: AbortSignal,
@@ -64,32 +54,43 @@ interface PromptTemplateBridgeOptions<Ctx extends { cwd?: string }> {
 	) => Promise<PromptTemplateBridgeResult>;
 }
 
+function hasStructuredDelegationMarker(data: unknown): boolean {
+	if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+	const value = data as Record<string, unknown>;
+	return Object.hasOwn(value, "ownerRunId")
+		|| Object.hasOwn(value, "nodeId")
+		|| Object.hasOwn(value, "result")
+		|| Object.hasOwn(value, "version");
+}
+
+function validId(value: unknown): value is string {
+	return typeof value === "string" && value.trim().length > 0 && value.length <= 256 && !/[\r\n]/.test(value);
+}
+
 export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: string }>(
 	options: PromptTemplateBridgeOptions<Ctx>,
 ): {
 	cancelAll: () => void;
 	dispose: () => void;
 } {
-	// Legacy and V1 retain requestId-only correlation. V2 attempts are isolated by
-	// their complete wire identity, while logical-node ownership is tracked separately.
-	const controllers = new Map<string, AbortController>();
-	const pendingCancels = new Map<string, true>();
-	const v2Controllers = new Map<string, AbortController>();
-	const pendingV2Cancels = new Map<string, true>();
-	const activeV2Nodes = new Map<string, { attemptKey: string; controller: AbortController }>();
-	const settledV2Attempts = new Map<string, true>();
+	const legacyControllers = new Map<string, AbortController>();
+	const pendingLegacyCancels = new Map<string, true>();
+	const attemptControllers = new Map<string, AbortController>();
+	const pendingAttemptCancels = new Map<string, true>();
+	const activeOwnedNodes = new Map<string, { attemptKey: string; controller: AbortController }>();
+	const settledAttempts = new Map<string, true>();
 	const subscriptions: Array<() => void> = [];
 	let disposed = false;
-	let v2IdentitySaturated = false;
+	let identitySaturated = false;
 
 	const subscribe = (event: string, handler: (data: unknown) => void): void => {
 		const unsubscribe = options.events.on(event, handler);
 		if (typeof unsubscribe === "function") subscriptions.push(unsubscribe);
 	};
-	const ownsRequest = (requestId: string, controller: AbortController): boolean =>
-		!disposed && controllers.get(requestId) === controller;
-	const ownsV2Attempt = (attemptKey: string, controller: AbortController): boolean =>
-		!disposed && v2Controllers.get(attemptKey) === controller;
+	const ownsLegacyRequest = (requestId: string, controller: AbortController): boolean =>
+		!disposed && legacyControllers.get(requestId) === controller;
+	const ownsAttempt = (attemptKey: string, controller: AbortController): boolean =>
+		!disposed && attemptControllers.get(attemptKey) === controller;
 	const boundedRemember = (map: Map<string, true>, key: string): void => {
 		map.delete(key);
 		map.set(key, true);
@@ -99,28 +100,27 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 			map.delete(oldest);
 		}
 	};
-	const rememberV2Identity = (map: Map<string, true>, key: string): void => {
-		if (map.has(key) || v2IdentitySaturated) return;
+	const rememberIdentity = (map: Map<string, true>, key: string): void => {
+		if (map.has(key) || identitySaturated) return;
 		if (map.size >= 8_192) {
-			v2IdentitySaturated = true;
+			identitySaturated = true;
 			return;
 		}
 		map.set(key, true);
 		if (map.size === 8_192) {
-			// V2 identity facts are security state, not an LRU cache. Saturate as
-			// soon as the bounded history fills so no later untracked attempt can
-			// start, rather than evicting a cancellation or settled-attempt fact.
-			v2IdentitySaturated = true;
+			// Exact cancellation and terminal-attempt facts are security state, not an
+			// LRU cache. Once full, fail closed rather than evicting identity facts.
+			identitySaturated = true;
 		}
 	};
-	const v2NodeKey = (ownerRunId: string, nodeId: string): string => JSON.stringify([ownerRunId, nodeId]);
-	const v2AttemptKey = (requestId: string, ownerRunId: string, nodeId: string): string => JSON.stringify([requestId, ownerRunId, nodeId]);
-	const rememberPendingCancel = (requestId: string): void => {
-		boundedRemember(pendingCancels, requestId);
+	const nodeKey = (ownerRunId: string, nodeId: string): string => JSON.stringify([ownerRunId, nodeId]);
+	const attemptKey = (requestId: string, ownerRunId: string, nodeId: string): string => JSON.stringify([requestId, ownerRunId, nodeId]);
+	const rememberPendingLegacyCancel = (requestId: string): void => {
+		boundedRemember(pendingLegacyCancels, requestId);
 	};
-	const emitV2Terminal = (attemptKey: string, payload: SubagentDelegationV2Response): void => {
-		if (disposed || settledV2Attempts.has(attemptKey)) return;
-		rememberV2Identity(settledV2Attempts, attemptKey);
+	const emitTerminal = (key: string, payload: SubagentDelegationResponse): void => {
+		if (disposed || settledAttempts.has(key)) return;
+		rememberIdentity(settledAttempts, key);
 		options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, payload);
 	};
 
@@ -128,119 +128,107 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 		if (!data || typeof data !== "object" || Array.isArray(data)) return;
 		const value = data as Record<string, unknown>;
 		const requestId = value.requestId;
-		if (typeof requestId !== "string" || !requestId.trim() || requestId.length > 256 || /[\r\n]/.test(requestId)) return;
-		if (Object.hasOwn(value, "version")) {
-			if (value.version === SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION) {
-				if (Object.keys(value).some((key) => key !== "version" && key !== "requestId" && key !== "ownerRunId" && key !== "nodeId")) return;
-				const ownerRunId = value.ownerRunId;
-				const nodeId = value.nodeId;
-				if (typeof ownerRunId !== "string" || !ownerRunId.trim() || ownerRunId.length > 256 || /[\r\n]/.test(ownerRunId)) return;
-				if (typeof nodeId !== "string" || !nodeId.trim() || nodeId.length > 256 || /[\r\n]/.test(nodeId)) return;
-				const attemptKey = v2AttemptKey(requestId, ownerRunId, nodeId);
-				const controller = v2Controllers.get(attemptKey);
-				if (controller) controller.abort();
-				else rememberV2Identity(pendingV2Cancels, attemptKey);
-				return;
-			}
-			if (value.version !== SUBAGENT_DELEGATION_PROTOCOL_VERSION) return;
-			if (Object.keys(value).some((key) => key !== "version" && key !== "requestId")) return;
+		if (!validId(requestId)) return;
+		if (hasStructuredDelegationMarker(data)) {
+			if (Object.keys(value).some((key) => key !== "requestId" && key !== "ownerRunId" && key !== "nodeId")) return;
+			const ownerRunId = value.ownerRunId;
+			const nodeId = value.nodeId;
+			if (!validId(ownerRunId) || !validId(nodeId)) return;
+			const key = attemptKey(requestId, ownerRunId, nodeId);
+			const controller = attemptControllers.get(key);
+			if (controller) controller.abort();
+			else rememberIdentity(pendingAttemptCancels, key);
+			return;
 		}
-		const controller = controllers.get(requestId);
+		const controller = legacyControllers.get(requestId);
 		if (controller) {
 			controller.abort();
 			return;
 		}
-		rememberPendingCancel(requestId);
+		rememberPendingLegacyCancel(requestId);
 	});
 
 	subscribe(PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT, async (data) => {
-		const isVersioned = !!data && typeof data === "object" && Object.hasOwn(data, "version");
+		const structuredPayload = hasStructuredDelegationMarker(data);
 		let requestId: string;
 		let params: DelegatedSubagentExecutionParams;
-		let versionedRequest: SubagentDelegationRequest | SubagentDelegationV2Request | undefined;
-		let v2Request: SubagentDelegationV2Request | undefined;
-		let v2Key: string | undefined;
+		let structuredRequest: SubagentDelegationRequest | undefined;
+		let key: string | undefined;
 		let legacyRequest: PromptTemplateDelegationRequest | undefined;
 
-		if (isVersioned) {
+		if (structuredPayload) {
 			const parsed = parseSubagentDelegationRequest(data);
 			if (parsed.ok === false) {
 				if (!disposed && parsed.requestId) {
-					if (parsed.version === SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION) {
-						const payload = {
-							version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
-							requestId: parsed.requestId,
-							...(parsed.ownerRunId ? { ownerRunId: parsed.ownerRunId } : {}),
-							...(parsed.nodeId ? { nodeId: parsed.nodeId } : {}),
-							status: "invalid_request",
-							error: parsed.error,
-						} satisfies SubagentDelegationV2InvalidResponse;
-						if (parsed.ownerRunId && parsed.nodeId) {
-							const attemptKey = v2AttemptKey(parsed.requestId, parsed.ownerRunId, parsed.nodeId);
-							if (!v2Controllers.has(attemptKey)) emitV2Terminal(attemptKey, payload);
-						} else {
-							options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, payload);
-						}
-					} else if (!controllers.has(parsed.requestId)) {
-						options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
-							version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
-							requestId: parsed.requestId,
-							status: "invalid_request",
-							error: parsed.error,
-						} satisfies SubagentDelegationResponse);
+					const payload = {
+						requestId: parsed.requestId,
+						...(parsed.ownerRunId ? { ownerRunId: parsed.ownerRunId } : {}),
+						...(parsed.nodeId ? { nodeId: parsed.nodeId } : {}),
+						status: "invalid_request",
+						error: parsed.error,
+					} satisfies SubagentDelegationInvalidResponse;
+					if (parsed.ownerRunId && parsed.nodeId) {
+						const attemptedKey = attemptKey(parsed.requestId, parsed.ownerRunId, parsed.nodeId);
+						if (!attemptControllers.has(attemptedKey)) emitTerminal(attemptedKey, payload);
+					} else {
+						options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, payload);
 					}
 				}
 				return;
 			}
-			versionedRequest = parsed.request;
+			structuredRequest = parsed.request;
 			requestId = parsed.request.requestId;
-			if (parsed.request.version === SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION) {
-				v2Request = parsed.request;
-				v2Key = v2AttemptKey(requestId, parsed.request.ownerRunId, parsed.request.nodeId);
-				params = toSubagentDelegationV2ExecutionParams(parsed.request);
-			} else {
-				params = toSubagentDelegationExecutionParams(parsed.request);
-			}
+			key = attemptKey(requestId, parsed.request.ownerRunId, parsed.request.nodeId);
+			params = toSubagentDelegationExecutionParams(parsed.request);
 		} else {
+			if (data && typeof data === "object" && !Array.isArray(data)) {
+				const legacy = data as Record<string, unknown>;
+				if (legacy.tasks !== undefined || legacy.worktree !== undefined) {
+					if (typeof legacy.requestId === "string" && legacy.requestId) {
+						options.events.emit(PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT, {
+							requestId: legacy.requestId,
+							messages: [],
+							isError: true,
+							errorText: "Legacy prompt-template tasks/worktree orchestration was removed; use workflowScript.",
+						});
+					}
+					return;
+				}
+			}
 			legacyRequest = parsePromptTemplateRequest(data);
 			if (!legacyRequest) return;
 			requestId = legacyRequest.requestId;
 			params = toLegacyExecutionParams(legacyRequest);
 		}
 
-		// Legacy and V1 keep requestId-only ownership. V2 retransmission and terminal
-		// suppression use the full tuple, independently from logical-node ownership.
-		if (!v2Request && controllers.has(requestId)) return;
-		if (v2Request && v2Key) {
-			if (v2Controllers.has(v2Key) || settledV2Attempts.has(v2Key)) return;
-			if (pendingV2Cancels.delete(v2Key)) {
-				emitV2Terminal(v2Key, {
-					version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
+		if (!structuredRequest && legacyControllers.has(requestId)) return;
+		if (structuredRequest && key) {
+			if (attemptControllers.has(key) || settledAttempts.has(key)) return;
+			if (pendingAttemptCancels.delete(key)) {
+				emitTerminal(key, {
 					requestId,
-					ownerRunId: v2Request.ownerRunId,
-					nodeId: v2Request.nodeId,
+					ownerRunId: structuredRequest.ownerRunId,
+					nodeId: structuredRequest.nodeId,
 					status: "cancelled",
 				});
 				return;
 			}
-			if (v2IdentitySaturated) {
+			if (identitySaturated) {
 				options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
-					version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
 					requestId,
-					ownerRunId: v2Request.ownerRunId,
-					nodeId: v2Request.nodeId,
+					ownerRunId: structuredRequest.ownerRunId,
+					nodeId: structuredRequest.nodeId,
 					status: "unavailable_context",
-					error: "Delegation v2 identity capacity is exhausted for this extension context.",
-				} satisfies SubagentDelegationV2Response);
+					error: "Delegation identity capacity is exhausted for this extension context.",
+				} satisfies SubagentDelegationResponse);
 				return;
 			}
-			const active = activeV2Nodes.get(v2NodeKey(v2Request.ownerRunId, v2Request.nodeId));
+			const active = activeOwnedNodes.get(nodeKey(structuredRequest.ownerRunId, structuredRequest.nodeId));
 			if (active) {
-				emitV2Terminal(v2Key, {
-					version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
+				emitTerminal(key, {
 					requestId,
-					ownerRunId: v2Request.ownerRunId,
-					nodeId: v2Request.nodeId,
+					ownerRunId: structuredRequest.ownerRunId,
+					nodeId: structuredRequest.nodeId,
 					status: "duplicate_node",
 				});
 				return;
@@ -248,22 +236,14 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 		}
 		const ctx = options.getContext();
 		if (!ctx) {
-			if (v2Request && v2Key) {
-				emitV2Terminal(v2Key, {
-					version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
+			if (structuredRequest && key) {
+				emitTerminal(key, {
 					requestId,
-					ownerRunId: v2Request.ownerRunId,
-					nodeId: v2Request.nodeId,
+					ownerRunId: structuredRequest.ownerRunId,
+					nodeId: structuredRequest.nodeId,
 					status: "unavailable_context",
 					error: "No active extension context for delegated subagent execution.",
 				});
-			} else if (versionedRequest) {
-				options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
-					version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
-					requestId,
-					status: "unavailable_context",
-					error: "No active extension context for delegated subagent execution.",
-				} satisfies SubagentDelegationResponse);
 			} else if (legacyRequest) {
 				options.events.emit(PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT, {
 					...legacyRequest,
@@ -276,29 +256,22 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 		}
 
 		const controller = new AbortController();
-		if (v2Request && v2Key) {
-			v2Controllers.set(v2Key, controller);
-			activeV2Nodes.set(v2NodeKey(v2Request.ownerRunId, v2Request.nodeId), { attemptKey: v2Key, controller });
+		if (structuredRequest && key) {
+			attemptControllers.set(key, controller);
+			activeOwnedNodes.set(nodeKey(structuredRequest.ownerRunId, structuredRequest.nodeId), { attemptKey: key, controller });
 		} else {
-			controllers.set(requestId, controller);
-			if (pendingCancels.delete(requestId)) controller.abort();
+			legacyControllers.set(requestId, controller);
+			if (pendingLegacyCancels.delete(requestId)) controller.abort();
 		}
 		if (controller.signal.aborted) {
-			if (v2Request && v2Key) {
-				emitV2Terminal(v2Key, {
-					version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
+			if (structuredRequest && key) {
+				emitTerminal(key, {
 					requestId,
-					ownerRunId: v2Request.ownerRunId,
-					nodeId: v2Request.nodeId,
+					ownerRunId: structuredRequest.ownerRunId,
+					nodeId: structuredRequest.nodeId,
 					status: "cancelled",
 				});
-				activeV2Nodes.delete(v2NodeKey(v2Request.ownerRunId, v2Request.nodeId));
-			} else if (versionedRequest) {
-				options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
-					version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
-					requestId,
-					status: "cancelled",
-				} satisfies SubagentDelegationResponse);
+				activeOwnedNodes.delete(nodeKey(structuredRequest.ownerRunId, structuredRequest.nodeId));
 			} else if (legacyRequest) {
 				options.events.emit(PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT, {
 					...legacyRequest,
@@ -307,23 +280,21 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 					errorText: "Delegated prompt cancelled.",
 				} satisfies PromptTemplateDelegationResponse);
 			}
-			if (v2Key) v2Controllers.delete(v2Key);
-			else controllers.delete(requestId);
+			if (key) attemptControllers.delete(key);
+			else legacyControllers.delete(requestId);
 			return;
 		}
 
 		options.events.emit(
-			versionedRequest ? SUBAGENT_DELEGATION_STARTED_EVENT : PROMPT_TEMPLATE_SUBAGENT_STARTED_EVENT,
-			v2Request
-				? { version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION, requestId, ownerRunId: v2Request.ownerRunId, nodeId: v2Request.nodeId }
-				: versionedRequest
-					? { version: SUBAGENT_DELEGATION_PROTOCOL_VERSION, requestId }
-					: { requestId },
+			structuredRequest ? SUBAGENT_DELEGATION_STARTED_EVENT : PROMPT_TEMPLATE_SUBAGENT_STARTED_EVENT,
+			structuredRequest
+				? { requestId, ownerRunId: structuredRequest.ownerRunId, nodeId: structuredRequest.nodeId }
+				: { requestId },
 		);
 
 		try {
-			const executeRequest = versionedRequest && options.executeVersioned
-				? options.executeVersioned
+			const executeRequest = structuredRequest && options.executeStructured
+				? options.executeStructured
 				: options.execute;
 			const result = await executeRequest(
 				requestId,
@@ -331,14 +302,9 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 				controller.signal,
 				ctx,
 				(update) => {
-					if (v2Key ? !ownsV2Attempt(v2Key, controller) : !ownsRequest(requestId, controller)) return;
-					if (v2Request) {
-						const payload = toSubagentDelegationV2Update(v2Request, update);
-						if (payload) options.events.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, payload);
-						return;
-					}
-					if (versionedRequest) {
-						const payload = toSubagentDelegationUpdate(requestId, update);
+					if (key ? !ownsAttempt(key, controller) : !ownsLegacyRequest(requestId, controller)) return;
+					if (structuredRequest) {
+						const payload = toSubagentDelegationUpdate(structuredRequest, update);
 						if (payload) options.events.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, payload);
 						return;
 					}
@@ -346,14 +312,9 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 					if (payload) options.events.emit(PROMPT_TEMPLATE_SUBAGENT_UPDATE_EVENT, payload);
 				},
 			);
-			if (v2Key ? !ownsV2Attempt(v2Key, controller) : !ownsRequest(requestId, controller)) return;
-			if (v2Request && v2Key) {
-				emitV2Terminal(v2Key, toSubagentDelegationV2Response(v2Request, result, controller.signal.aborted));
-			} else if (versionedRequest) {
-				options.events.emit(
-					SUBAGENT_DELEGATION_RESPONSE_EVENT,
-					toSubagentDelegationResponse(requestId, result, controller.signal.aborted),
-				);
+			if (key ? !ownsAttempt(key, controller) : !ownsLegacyRequest(requestId, controller)) return;
+			if (structuredRequest && key) {
+				emitTerminal(key, toSubagentDelegationResponse(structuredRequest, result, controller.signal.aborted));
 			} else if (legacyRequest) {
 				options.events.emit(
 					PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT,
@@ -363,23 +324,15 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 				);
 			}
 		} catch (error) {
-			if (v2Key ? !ownsV2Attempt(v2Key, controller) : !ownsRequest(requestId, controller)) return;
-			if (v2Request && v2Key) {
-				emitV2Terminal(v2Key, {
-					version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
+			if (key ? !ownsAttempt(key, controller) : !ownsLegacyRequest(requestId, controller)) return;
+			if (structuredRequest && key) {
+				emitTerminal(key, {
 					requestId,
-					ownerRunId: v2Request.ownerRunId,
-					nodeId: v2Request.nodeId,
+					ownerRunId: structuredRequest.ownerRunId,
+					nodeId: structuredRequest.nodeId,
 					status: controller.signal.aborted ? "cancelled" : "failed",
 					...(controller.signal.aborted ? {} : { error: error instanceof Error ? error.message : String(error) }),
 				});
-			} else if (versionedRequest) {
-				options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
-					version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
-					requestId,
-					status: controller.signal.aborted ? "cancelled" : "failed",
-					...(controller.signal.aborted ? {} : { error: error instanceof Error ? error.message : String(error) }),
-				} satisfies SubagentDelegationResponse);
 			} else if (legacyRequest) {
 				options.events.emit(PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT, {
 					...legacyRequest,
@@ -389,40 +342,40 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 				} satisfies PromptTemplateDelegationResponse);
 			}
 		} finally {
-			if (v2Key) {
-				if (v2Controllers.get(v2Key) === controller) v2Controllers.delete(v2Key);
-			} else if (controllers.get(requestId) === controller) controllers.delete(requestId);
-			if (v2Request) {
-				const key = v2NodeKey(v2Request.ownerRunId, v2Request.nodeId);
-				if (activeV2Nodes.get(key)?.controller === controller) activeV2Nodes.delete(key);
+			if (key) {
+				if (attemptControllers.get(key) === controller) attemptControllers.delete(key);
+			} else if (legacyControllers.get(requestId) === controller) legacyControllers.delete(requestId);
+			if (structuredRequest) {
+				const ownedNodeKey = nodeKey(structuredRequest.ownerRunId, structuredRequest.nodeId);
+				if (activeOwnedNodes.get(ownedNodeKey)?.controller === controller) activeOwnedNodes.delete(ownedNodeKey);
 			}
 		}
 	});
 
 	return {
 		cancelAll: () => {
-			for (const controller of controllers.values()) controller.abort();
-			for (const controller of v2Controllers.values()) controller.abort();
-			controllers.clear();
-			v2Controllers.clear();
-			pendingCancels.clear();
-			pendingV2Cancels.clear();
-			activeV2Nodes.clear();
-			settledV2Attempts.clear();
-			v2IdentitySaturated = false;
+			for (const controller of legacyControllers.values()) controller.abort();
+			for (const controller of attemptControllers.values()) controller.abort();
+			legacyControllers.clear();
+			attemptControllers.clear();
+			pendingLegacyCancels.clear();
+			pendingAttemptCancels.clear();
+			activeOwnedNodes.clear();
+			settledAttempts.clear();
+			identitySaturated = false;
 		},
 		dispose: () => {
 			disposed = true;
-			for (const controller of controllers.values()) controller.abort();
-			for (const controller of v2Controllers.values()) controller.abort();
-			controllers.clear();
-			v2Controllers.clear();
+			for (const controller of legacyControllers.values()) controller.abort();
+			for (const controller of attemptControllers.values()) controller.abort();
+			legacyControllers.clear();
+			attemptControllers.clear();
 			for (const unsubscribe of subscriptions) unsubscribe();
 			subscriptions.length = 0;
-			pendingCancels.clear();
-			pendingV2Cancels.clear();
-			activeV2Nodes.clear();
-			settledV2Attempts.clear();
+			pendingLegacyCancels.clear();
+			pendingAttemptCancels.clear();
+			activeOwnedNodes.clear();
+			settledAttempts.clear();
 		},
 	};
 }

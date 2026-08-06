@@ -73,12 +73,32 @@ describe("getPiSpawnCommand", () => {
 		assert.deepEqual(result, { command: "selesai", args });
 	});
 
-	it("accepts the legacy PI_SUBAGENT_PI_BINARY alias", () => {
-		const args = ["--mode", "json", "Task: check output"];
-		assert.deepEqual(getPiSpawnCommand(args, {
-			env: { PI_SUBAGENT_PI_BINARY: "/usr/local/bin/legacy-wrapper" },
-		}), { command: "/usr/local/bin/legacy-wrapper", args });
-	});
+	for (const [platform, execPath] of [
+		["darwin", "/opt/pi/pi"],
+		["linux", "/opt/pi/pi"],
+		["win32", "C:\\Program Files\\Pi\\pi.exe"],
+	] as const) {
+		it(`uses the standalone Pi executable directly on ${platform}`, () => {
+			const packageJsonPath = "/opt/pi-package/package.json";
+			const cliPath = path.resolve(
+				path.dirname(packageJsonPath),
+				"dist/cli.js",
+			);
+			const deps = makeDeps({
+				platform,
+				execPath,
+				argv1: "/missing/host.js",
+				packageJsonPath,
+				packageJsonContent: JSON.stringify({ bin: { selesai: "dist/cli.js" } }),
+				existing: [packageJsonPath, cliPath],
+			});
+			const args = ["--mode", "json", "-p", "Task: review diff"];
+			assert.deepEqual(getPiSpawnCommand(args, deps), {
+				command: execPath,
+				args,
+			});
+		});
+	}
 
 	for (const platform of ["darwin", "linux", "win32"] as const) {
 		it(`uses node + argv1 on ${platform} when argv1 belongs to the Pi package`, () => {
@@ -121,7 +141,7 @@ describe("getPiSpawnCommand", () => {
 			execPath: "/usr/local/bin/node",
 			argv1: "/opt/pi/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ bin: { selesai: "dist/cli/index.js" } }),
 			existing: [packageJsonPath, cliPath],
 		});
 		const args = ["-p", "Task: hello"];
@@ -157,8 +177,8 @@ describe("getPiSpawnCommand", () => {
 			const piRoot = path.join(
 				tempDir,
 				"node_modules",
-				"@earendil-works",
-				"pi-coding-agent",
+				"@selesai",
+				"code",
 			);
 			const piCli = path.join(piRoot, "dist", "cli.js");
 			fs.mkdirSync(path.dirname(hostEntry), { recursive: true });
@@ -173,7 +193,7 @@ describe("getPiSpawnCommand", () => {
 				path.join(piRoot, "package.json"),
 				JSON.stringify({
 					name: "@selesai/code",
-					bin: { pi: "dist/cli.js" },
+					bin: { selesai: "dist/cli.js" },
 				}),
 			);
 
@@ -217,7 +237,7 @@ describe("getPiSpawnCommand", () => {
 		try {
 			const hostRoot = path.join(tempDir, "embedded-host");
 			const hostEntry = path.join(hostRoot, "dist", "server.js");
-			const piRoot = path.join(tempDir, "node_modules", "@earendil-works", "pi-coding-agent");
+			const piRoot = path.join(tempDir, "node_modules", "@selesai", "code");
 			const disguisedEntry = path.join(piRoot, "dist", "cli.js");
 			const piCli = path.join(piRoot, "dist", "real-cli.js");
 			fs.mkdirSync(path.dirname(hostEntry), { recursive: true });
@@ -227,7 +247,7 @@ describe("getPiSpawnCommand", () => {
 			fs.writeFileSync(piCli, "#!/usr/bin/env node\n");
 			fs.writeFileSync(path.join(piRoot, "package.json"), JSON.stringify({
 				name: "@selesai/code",
-				bin: { pi: "dist/real-cli.js" },
+				bin: { selesai: "dist/real-cli.js" },
 			}));
 
 			const result = getPiSpawnCommand(["-p", "Task: hello"], {
@@ -261,7 +281,7 @@ describe("getPiSpawnCommand", () => {
 			execPath: "/usr/local/bin/node",
 			argv1: "/opt/pi/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ bin: { selesai: "dist/cli/index.js" } }),
 			existing: [packageJsonPath, cliPath],
 		});
 		const result = getPiSpawnCommand(["-p", "Task: hello"], deps);
@@ -285,7 +305,12 @@ describe("getPiSpawnCommand", () => {
 			path.join(os.tmpdir(), "pi-spawn-package-root-"),
 		);
 		try {
-			const packageRoot = path.join(tempDir, "node_modules", "@selesai", "code");
+			const packageRoot = path.join(
+				tempDir,
+				"node_modules",
+				"@selesai",
+				"code",
+			);
 			const entry = path.join(packageRoot, "dist", "index.js");
 			const cliPath = path.join(packageRoot, "dist", "cli", "index.js");
 			fs.mkdirSync(path.dirname(entry), { recursive: true });
@@ -303,7 +328,6 @@ describe("getPiSpawnCommand", () => {
 				platform: "win32",
 				execPath: "/usr/local/bin/node",
 				argv1: "/opt/pi/subagent-runner.ts",
-				piPackageRoot: packageRoot,
 				resolvePackageEntry: () => entry,
 				env: {},
 			});
@@ -327,7 +351,7 @@ describe("getPiSpawnCommand with piPackageRoot", () => {
 			execPath: "/usr/local/bin/node",
 			argv1: "/opt/pi/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ bin: { selesai: "dist/cli/index.js" } }),
 			existing: [packageJsonPath, cliPath],
 		});
 		deps.piPackageRoot = "/opt/pi";

@@ -185,7 +185,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 	it("tracks every concurrently running foreground child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		for (let index = 0; index < 3; index++) mockPi.onCall({ output: `Review ${index} complete`, delay: 250 });
-		const agents = [makeAgent("reviewer")];
+		const agents = [makeAgent("commentator")];
 		const state = {
 			baseCwd: tempDir,
 			currentSessionId: null,
@@ -198,9 +198,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 			"parallel-foreground-fleet",
 			{
 				tasks: [
-					{ agent: "reviewer", task: "Review correctness" },
-					{ agent: "reviewer", task: "Review quality" },
-					{ agent: "reviewer", task: "Review tests" },
+					{ agent: "commentator", task: "Review correctness" },
+					{ agent: "commentator", task: "Review quality" },
+					{ agent: "commentator", task: "Review tests" },
 				],
 			},
 			new AbortController().signal,
@@ -287,9 +287,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 			groups: Array<{ children: Array<{ agent: string; summary: string; patch: { path: string } }>; cleanup: { state: string; tasks: Array<{ path: string; worktreeRemoved: boolean; branchRemoved: boolean }> } }>;
 		};
 		assert.equal(handoff.groups[0]!.children[0]!.agent, "echo");
-		// Reference-first handoff: the summary carries the saved-output reference.
-		assert.match(handoff.groups[0]!.children[0]!.summary, /Output saved to: /);
-		assert.doesNotMatch(handoff.groups[0]!.children[0]!.summary, /Worktree task complete/);
+		assert.equal(handoff.groups[0]!.children[0]!.summary, "Worktree task complete");
 		assert.equal(fs.existsSync(handoff.groups[0]!.children[0]!.patch.path), true);
 		assert.ok(result.details?.runId);
 		assert.ok(handoff.groups[0]!.children[0]!.patch.path.includes(`${path.sep}worktree-diffs${path.sep}${result.details.runId}${path.sep}`));
@@ -299,7 +297,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(fs.existsSync(handoff.groups[0]!.cleanup.tasks[0]!.path), false);
 	});
 
-	it("keeps worktree parallel runs successful when handoff manifest writing fails", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
+	it("aborts and cleans up before child execution when the ownership journal cannot be written", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
 		git(["init"]);
 		git(["config", "user.email", "test@example.com"]);
 		git(["config", "user.name", "Test User"]);
@@ -328,10 +326,12 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 				ctx,
 			);
 
-			assert.equal(result.isError, undefined);
+			assert.equal(result.isError, true);
 			assert.equal(result.details?.parallelHandoff, undefined);
-			assert.match(result.content[0]?.text ?? "", /Parallel handoff unavailable:/);
+			assert.match(result.content[0]?.text ?? "", /handoff|not a directory|EEXIST/i);
+			assert.equal(mockPi.callCount(), 0);
 			assert.doesNotMatch(git(["worktree", "list", "--porcelain"]), /pi-parallel-/);
+			assert.equal(git(["branch", "--list", "pi-parallel-*"]), "");
 		} finally {
 			fs.rmSync(sessionDir, { recursive: true, force: true });
 		}
@@ -353,8 +353,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 			assert.equal(result.isError, undefined);
 			assert.equal(result.details?.mode, "parallel");
-			assert.match(result.content[0]?.text ?? "", /Output saved to: /);
-			assert.doesNotMatch(result.content[0]?.text ?? "", new RegExp(`${action} alias finished`));
+			assert.match(result.content[0]?.text ?? "", new RegExp(`${action} alias finished`));
 		}
 	});
 
@@ -380,12 +379,12 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 	it("applies agent acceptance roles to inferred parallel acceptance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "exploration complete" });
 		const executor = makeExecutor([
-			makeAgent("worker", { acceptanceRole: "read-only" }),
+			makeAgent("builder", { acceptanceRole: "read-only" }),
 		]);
 
 		const result = await executor.execute(
 			"parallel-agent-acceptance-role",
-			{ tasks: [{ agent: "worker", task: "Explore the authentication flow" }] },
+			{ tasks: [{ agent: "builder", task: "Explore the authentication flow" }] },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -468,9 +467,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(result.details?.results?.[0]?.timedOut, true);
 		assert.equal(result.details?.results?.[0]?.error, "Subagent timed out after 300ms.");
 		assert.equal(result.details?.results?.[1]?.exitCode, 0);
-		assert.equal(result.details?.results?.[1]?.finalOutput, undefined);
-		assert.ok(result.details?.results?.[1]?.savedOutputPath);
-		assert.equal(fs.readFileSync(result.details?.results?.[1]?.savedOutputPath as string, "utf-8"), "fast done");
+		assert.equal(result.details?.results?.[1]?.finalOutput, "fast done");
 		assert.match(result.content[0]?.text ?? "", /1\/2 succeeded/);
 		assert.match(result.content[0]?.text ?? "", /TIMED OUT: Subagent timed out after 300ms\./);
 	});
@@ -495,9 +492,8 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.match(text, /Output saved to:/);
 		assert.match(text, /2 lines/);
 		assert.doesNotMatch(text, /Parallel full report/);
-		assert.equal(result.details?.results?.[0]?.finalOutput, undefined);
-		assert.match(result.details?.results?.[0]?.outputReference?.message ?? "", /Output saved to:/);
-		assert.doesNotMatch(result.details?.results?.[0]?.outputReference?.message ?? "", /Parallel full report/);
+		assert.match(result.details?.results?.[0]?.finalOutput ?? "", /Output saved to:/);
+		assert.doesNotMatch(result.details?.results?.[0]?.finalOutput ?? "", /Parallel full report/);
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "Parallel full report\nwith details");
 	});
 
@@ -506,7 +502,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 		const result = await executor.execute(
 			"parallel-file-only-missing-output",
-			{ tasks: [{ agent: "echo", task: "Write report", output: false, outputMode: "file-only" }] },
+			{ tasks: [{ agent: "echo", task: "Write report", outputMode: "file-only" }] },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -610,8 +606,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 Inspect
 
----\n**Output:**`));
-		assert.match(taskArg, /## Acceptance Contract/);
+## Acceptance Contract`));
 	});
 
 	it("top-level parallel defaultProgress uses isolated run storage", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -645,11 +640,11 @@ Inspect
 
 	it("top-level parallel suppresses progress when the task is review-only", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Review done" });
-		const executor = makeExecutor([makeAgent("reviewer", { defaultProgress: true })]);
+		const executor = makeExecutor([makeAgent("commentator", { defaultProgress: true })]);
 
 		await executor.execute(
 			"parallel-read-only-progress",
-			{ tasks: [{ agent: "reviewer", task: "Review-only. Do not edit files. Return findings." }] },
+			{ tasks: [{ agent: "commentator", task: "Review-only. Do not edit files. Return findings." }] },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),

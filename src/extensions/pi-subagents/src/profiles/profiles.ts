@@ -18,11 +18,15 @@ export type RecommendedRoleTier = "cheap" | "medium" | "strong";
 
 interface ProfileAgentOverride {
 	model?: string;
+	thinking?: string | false;
+	fallbackModels?: string[] | false;
 }
 
 export interface SubagentProfileFile {
 	subagents: {
 		agentOverrides: Record<string, ProfileAgentOverride>;
+		disableBuiltins?: boolean;
+		[key: string]: unknown;
 	};
 }
 
@@ -130,10 +134,23 @@ function validateSubagentProfile(filePath: string, parsed: Record<string, unknow
 		if (!value || typeof value !== "object" || Array.isArray(value)) {
 			throw new Error(`Profile '${filePath}' has invalid override '${name}'; expected an object.`);
 		}
-		const model = (value as Record<string, unknown>).model;
+		const override = value as Record<string, unknown>;
+		const model = override.model;
 		if (model !== undefined && typeof model !== "string") {
 			throw new Error(`Profile '${filePath}' has invalid model for '${name}'; expected a string.`);
 		}
+		const thinking = override.thinking;
+		if (thinking !== undefined && thinking !== false && typeof thinking !== "string") {
+			throw new Error(`Profile '${filePath}' has invalid thinking for '${name}'; expected a string or false.`);
+		}
+		const fallbackModels = override.fallbackModels;
+		if (fallbackModels !== undefined && fallbackModels !== false && (!Array.isArray(fallbackModels) || fallbackModels.some((item) => typeof item !== "string"))) {
+			throw new Error(`Profile '${filePath}' has invalid fallbackModels for '${name}'; expected an array of strings or false.`);
+		}
+	}
+	const disableBuiltins = (subagents as Record<string, unknown>).disableBuiltins;
+	if (disableBuiltins !== undefined && typeof disableBuiltins !== "boolean") {
+		throw new Error(`Profile '${filePath}' has invalid subagents.disableBuiltins; expected a boolean.`);
 	}
 	return parsed as unknown as SubagentProfileFile;
 }
@@ -242,9 +259,9 @@ function qualityTierToRoleTier(quality: QualityTier, cost: CostTier): Recommende
 }
 
 function agentsForRoleTier(roleTier: RecommendedRoleTier): BuiltinAgentName[] {
-	if (roleTier === "cheap") return ["explorer", "recapper"];
+	if (roleTier === "cheap") return ["explorer"];
 	if (roleTier === "medium") return ["architect", "researcher"];
-	return ["builder", "commentator"];
+	return ["builder", "commentator", "recapper"];
 }
 
 function classifyModel(input: ModelClassificationInput, context: ClassificationContext): {
@@ -387,11 +404,11 @@ function buildProfileFile(kind: ProfileKind, models: { cheap: string; medium: st
 		subagents: {
 			agentOverrides: {
 				explorer: { model: models.cheap },
-				recapper: { model: models.cheap },
 				architect: { model: models.medium },
 				researcher: { model: models.medium },
 				builder: { model: models.strong },
 				commentator: { model: models.strong },
+				recapper: { model: models.strong },
 			},
 		},
 	};
@@ -466,7 +483,16 @@ export function applySubagentProfile(name: string): { filePath: string; settings
 	const { filePath, profile } = readSubagentProfile(name);
 	const settingsPath = getUserSettingsPath();
 	const settings = readSettingsFile(settingsPath);
-	settings.subagents = profile.subagents;
+	const existing = settings.subagents && typeof settings.subagents === "object" && !Array.isArray(settings.subagents)
+		? settings.subagents as Record<string, unknown>
+		: {};
+	// A profile owns the complete agent mapping, but unrelated subagent settings
+	// (notably disableBuiltins, modelScope, watchdog, etc.) survive profile switches.
+	settings.subagents = {
+		...existing,
+		...profile.subagents,
+		agentOverrides: profile.subagents.agentOverrides,
+	};
 	writeJsonFile(settingsPath, settings);
 	return { filePath, settingsPath };
 }
@@ -512,7 +538,7 @@ export async function refreshProviderModelCatalog(
 		probe: { status: ProbeStatus; message?: string };
 	}>;
 	for (const rawModel of availableModels) {
-		const modelRecord = rawModel as Record<string, unknown> & { provider: string; id: string; name?: string };
+		const modelRecord = rawModel as unknown as Record<string, unknown> & { provider: string; id: string; name?: string };
 		const fullId = `${modelRecord.provider}/${modelRecord.id}`;
 		const probe = options.probe === false
 			? { status: "skipped" as const, message: "Live probing disabled." }

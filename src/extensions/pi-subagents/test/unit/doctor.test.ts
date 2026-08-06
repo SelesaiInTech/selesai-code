@@ -43,7 +43,7 @@ function makeChain(name: string, source: ChainConfig["source"]): ChainConfig {
 		description: `${name} chain`,
 		source,
 		filePath: `/tmp/${name}.chain.md`,
-		steps: [{ agent: "worker", task: "Work" }],
+		steps: [{ agent: "builder", task: "Work" }],
 	};
 }
 

@@ -50,13 +50,13 @@ describe("turn-budget module", () => {
 
 	describe("appendTurnBudgetSystemPrompt", () => {
 		it("returns the system prompt unchanged when no budget is configured", () => {
-			assert.equal(appendTurnBudgetSystemPrompt("You are a reviewer.", undefined), "You are a reviewer.");
+			assert.equal(appendTurnBudgetSystemPrompt("You are a commentator.", undefined), "You are a commentator.");
 			assert.equal(appendTurnBudgetSystemPrompt("", undefined), "");
 		});
 
 		it("appends a turn-budget block after an existing system prompt", () => {
-			const result = appendTurnBudgetSystemPrompt("You are a reviewer.", budget({ maxTurns: 5, graceTurns: 2 }));
-			assert.ok(result.startsWith("You are a reviewer.\n\n## Turn budget\n"), result);
+			const result = appendTurnBudgetSystemPrompt("You are a commentator.", budget({ maxTurns: 5, graceTurns: 2 }));
+			assert.ok(result.startsWith("You are a commentator.\n\n## Turn budget\n"), result);
 			assert.match(result, /soft budget of 5 assistant turns/);
 			assert.match(result, /2 additional assistant turns/);
 		});
@@ -68,8 +68,8 @@ describe("turn-budget module", () => {
 		});
 
 		it("trims surrounding whitespace from the existing system prompt before joining", () => {
-			const result = appendTurnBudgetSystemPrompt("\nYou are a reviewer.\n\n", budget());
-			assert.ok(result.startsWith("You are a reviewer.\n\n## Turn budget\n"), result);
+			const result = appendTurnBudgetSystemPrompt("\nYou are a commentator.\n\n", budget());
+			assert.ok(result.startsWith("You are a commentator.\n\n## Turn budget\n"), result);
 			assert.equal(result.startsWith("\n"), false);
 		});
 
@@ -178,9 +178,10 @@ describe("turn-budget module", () => {
 	});
 
 	describe("turnBudgetDecision", () => {
-		it("continues below the hard limit and for a terminal response on the final grace turn", () => {
+		it("continues for a clean terminal response even after the hard limit", () => {
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 3, false, false), "continue");
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, true, false), "continue");
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, true, false), "continue");
 		});
 
 		it("defers termination when the hard-limit assistant response starts tool work", () => {
@@ -188,14 +189,15 @@ describe("turn-budget module", () => {
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, false, true), "defer");
 		});
 
-		it("enforces the hard limit for strict foreground delegation but allows the exact terminal boundary", () => {
+		it("enforces the hard limit for strict foreground delegation but allows terminal completion", () => {
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, false, true, true), "abort");
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, true, true, true), "continue");
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, true, true, true), "continue");
 		});
 
-		it("aborts at the next safe assistant boundary", () => {
+		it("aborts non-terminal work at the next safe assistant boundary", () => {
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, false, false), "abort");
-			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, true, false), "abort");
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, false, false), "abort");
 		});
 
 		it("allows a terminal response at the soft limit when grace turns are zero", () => {

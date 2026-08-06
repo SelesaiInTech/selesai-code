@@ -113,6 +113,8 @@ function compactNestedRun(run: NestedRunSummary | PublicNestedRunSummary, depth 
 		state: run.state,
 		...(run.agent ? { agent: run.agent } : {}),
 		...(run.agents?.length ? { agents: run.agents.slice(0, 12) } : {}),
+		...(run.model ? { model: run.model } : {}),
+		...(run.thinking ? { thinking: run.thinking } : {}),
 		...(run.currentStep !== undefined ? { currentStep: run.currentStep } : {}),
 		...(run.chainStepCount !== undefined ? { chainStepCount: run.chainStepCount } : {}),
 		...(run.parallelGroups?.length ? { parallelGroups: run.parallelGroups.slice(0, 8) } : {}),
@@ -131,6 +133,8 @@ function compactNestedRun(run: NestedRunSummary | PublicNestedRunSummary, depth 
 		...(run.steps?.length ? { steps: run.steps.slice(0, 12).map((step) => ({
 			agent: step.agent,
 			status: step.status,
+			...(step.model ? { model: step.model } : {}),
+			...(step.thinking ? { thinking: step.thinking } : {}),
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 			...(step.activityState ? { activityState: step.activityState } : {}),
 			...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),
@@ -315,7 +319,7 @@ export async function deliverSubagentResultIntercomEvent(
 	payload: SubagentResultIntercomPayload,
 	timeoutMs = 500,
 ): Promise<boolean> {
-	return deliverSubagentIntercomMessageEvent(events, payload.to, payload.message, timeoutMs, payload);
+	return deliverSubagentIntercomMessageEvent(events, payload.to, payload.message, timeoutMs, payload as unknown as Record<string, unknown>);
 }
 
 export async function deliverSubagentIntercomMessageEvent(
