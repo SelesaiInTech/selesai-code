@@ -28,6 +28,7 @@ export {
 	type SessionStats,
 } from "./core/agent-session.ts";
 export { readStoredCredential } from "./core/auth-storage.ts";
+export { ensureTool, getToolPath, type ManagedTool } from "./utils/tools-manager.ts";
 // Compaction
 export {
 	type BranchPreparation,

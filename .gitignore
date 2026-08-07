@@ -9,5 +9,9 @@ dist/
 
 # Local agent/runtime artifacts
 .pi-subagents/artifacts/
+.pi-subagents/missions/
 .selesai/artifacts/
+.selesai/code-graph/
+.selesai/extensions/
+.selesai/research/
 .upstream-cache/

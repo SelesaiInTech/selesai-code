@@ -118,7 +118,7 @@ Selesai also bundles small extensions that solve common coding-agent failures:
 - **Context reminder** — warns when a conversation grows large and suggests a handoff before quality degrades
 - **Copy turn** — copy a user or assistant result by hash with `/cp <hash>`
 - **grep.app** — search public GitHub code and fetch the matching source without leaving the agent
-- **RTK integration** — if `rtk` is installed, compatible shell commands can be rewritten to reduce noisy command output and token use
+- **RTK integration** — provisions the Rust Token Killer binary when needed and rewrites compatible shell commands to reduce noisy output and token use
 
 ### Built-in skills
 

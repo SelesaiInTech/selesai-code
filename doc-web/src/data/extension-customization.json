@@ -634,18 +634,20 @@
       "slug": "rtk",
       "distribution": "bundled",
       "overview": {
-        "en": "RTK is an external dependency. The extension only rewrites commands when rtk is available and not disabled.",
-        "id": "RTK adalah dependensi eksternal. Ekstensi hanya menulis ulang command saat rtk tersedia dan tidak dinonaktifkan."
+        "en": "RTK is managed by Selesai when needed. The extension rewrites commands when a verified rtk binary is available and not disabled.",
+        "id": "RTK dikelola oleh Selesai saat diperlukan. Ekstensi menulis ulang command saat biner rtk terverifikasi tersedia dan tidak dinonaktifkan."
       },
       "sourcePaths": ["src/extensions/rtk.ts"],
       "scopes": [],
       "settings": [
-        { "key": "rtk binary version", "type": "string", "default": ">= 0.23.0", "description": { "en": "Required rtk version on PATH.", "id": "Versi rtk yang diperlukan di PATH." }, "persistence": "external binary" }
+        { "key": "rtk binary version", "type": "string", "default": ">= 0.23.0", "description": { "en": "Required rtk version; Selesai reuses PATH or its managed binary directory.", "id": "Versi rtk yang diperlukan; Selesai menggunakan PATH atau direktori biner terkelola." }, "persistence": "managed or external binary" }
       ],
-      "envVars": [],
+      "envVars": [
+        { "key": "PI_OFFLINE=1", "description": { "en": "Prevent managed binary downloads during startup.", "id": "Cegah pengunduhan biner terkelola saat startup." } }
+      ],
       "controls": [
         { "name": "automatic bash rewrite", "description": { "en": "Transparent; no user command required.", "id": "Transparan; tidak diperlukan command user." } },
-        { "name": "RTK_DISABLED=1", "description": { "en": "Set this environment variable to disable RTK command rewriting for the session.", "id": "Atur variabel lingkungan ini untuk menonaktifkan penulisan ulang command RTK untuk sesi ini." } }
+        { "name": "RTK_DISABLED=1", "description": { "en": "Set this environment variable to disable RTK command rewriting and managed installation for the session.", "id": "Atur variabel lingkungan ini untuk menonaktifkan penulisan ulang command RTK dan instalasi terkelola untuk sesi ini." } }
       ],
       "noConfig": true
     }

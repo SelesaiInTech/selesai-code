@@ -300,8 +300,8 @@ export const capabilities: Capability[] = [
   {
     slug: "rtk",
     category: "skills-and-productivity",
-    en: { displayName: "RTK integration", benefit: "Rewrite compatible shell commands to reduce noisy output and token burn when `rtk` is installed." },
-    id: { displayName: "Integrasi RTK", benefit: "Tulis ulang shell command yang kompatibel untuk mengurangi output berisik dan penggunaan token saat `rtk` terpasang." },
+    en: { displayName: "RTK integration", benefit: "Provision RTK when needed and rewrite compatible shell commands to reduce noisy output and token burn." },
+    id: { displayName: "Integrasi RTK", benefit: "Menyediakan RTK saat diperlukan dan menulis ulang shell command yang kompatibel untuk mengurangi output berisik serta penggunaan token." },
     sourcePaths: ["src/extensions/rtk.ts", "README.md"],
     sourceLinks: [
       links("RTK source", "src/extensions/rtk.ts"),

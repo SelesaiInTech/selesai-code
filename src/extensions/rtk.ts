@@ -1,5 +1,5 @@
 // RTK Pi extension — rewrites bash commands to use rtk for token savings.
-// Requires: rtk >= 0.23.0 in PATH.
+// RTK is provisioned into Selesai's managed binary directory when it is missing.
 //
 // This is a thin delegating extension: all rewrite logic lives in `rtk rewrite`,
 // which is the single source of truth (src/discover/registry.rs).
@@ -11,25 +11,57 @@
 //   3 + stdout  Rewrite (advisory) → mutate command
 
 import type { ExtensionAPI } from "@selesai/code"
-import { isToolCallEventType } from "@selesai/code"
+import { ensureTool, isToolCallEventType } from "@selesai/code"
 
 const REWRITE_TIMEOUT_MS = 2_000
 const MIN_SUPPORTED_RTK_MINOR = 23
 
-// Parse "X.Y.Z" semver, return [major, minor, patch] or null.
-function parseSemver(raw: string): [number, number, number] | null {
+// Parse "X.Y.Z" from either `rtk --version` output or a diagnostic string.
+export function parseSemver(raw: string): [number, number, number] | null {
   const m = raw.trim().match(/(\d+)\.(\d+)\.(\d+)/)
   if (!m) return null
   return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)]
 }
 
+async function probeRtk(pi: ExtensionAPI, rtkPath: string): Promise<boolean> {
+  const ver = await pi.exec(rtkPath, ["--version"], { timeout: REWRITE_TIMEOUT_MS })
+  if (ver.code !== 0) {
+    console.warn("[rtk] managed binary failed --version — extension disabled")
+    return false
+  }
+
+  const parsed = parseSemver(ver.stdout)
+  if (!parsed) {
+    console.warn(`[rtk] could not parse version from ${ver.stdout.trim() || "<empty output>"} — extension disabled`)
+    return false
+  }
+
+  const [major, minor] = parsed
+  if (major === 0 && minor < MIN_SUPPORTED_RTK_MINOR) {
+    console.warn(`[rtk] ${ver.stdout.trim()} is too old (need >= 0.23.0) — extension disabled`)
+    return false
+  }
+
+  // `rtk` is also the name of an unrelated Rust Type Kit project. `gain` is
+  // the upstream RTK Token Killer identity check and prevents that collision.
+  const identity = await pi.exec(rtkPath, ["gain"], { timeout: REWRITE_TIMEOUT_MS })
+  if (identity.code !== 0) {
+    console.warn("[rtk] binary is not rtk-ai/rtk (rtk gain failed) — extension disabled")
+    console.warn("[rtk] install Rust Token Killer from https://github.com/rtk-ai/rtk")
+    return false
+  }
+
+  return true
+}
+
 // Calls `rtk rewrite`; returns the rewritten command or null (pass through).
 async function rewriteCommand(
   pi: ExtensionAPI,
+  rtkPath: string,
   cmd: string,
   signal?: AbortSignal
 ): Promise<string | null> {
-  const result = await pi.exec("rtk", ["rewrite", cmd], {
+  const result = await pi.exec(rtkPath, ["rewrite", cmd], {
     timeout: REWRITE_TIMEOUT_MS,
     signal,
   })
@@ -39,22 +71,26 @@ async function rewriteCommand(
 }
 
 export default async function (pi: ExtensionAPI) {
-  // Probe rtk version at load time; disables extension if missing or too old.
-  const ver = await pi.exec("rtk", ["--version"], { timeout: REWRITE_TIMEOUT_MS })
-  if (ver.code !== 0) {
-    console.warn("[rtk] rtk binary not found in PATH — extension disabled")
-    console.warn("[rtk] you can install rtk-ai to reduce token usage by a lot!")
+  // Explicit opt-out must also prevent an automatic managed-binary download.
+  if (process.env.RTK_DISABLED === "1") return
+
+  let rtkPath: string | undefined
+  try {
+    rtkPath = await ensureTool("rtk")
+  } catch (err) {
+    console.warn(`[rtk] managed installation failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  if (!rtkPath) {
+    console.warn("[rtk] unavailable; install from https://github.com/rtk-ai/rtk")
     return
   }
 
-  // Warn and bail if rtk predates 0.23.0 (when `rtk rewrite` was introduced).
-  const parsed = parseSemver(ver.stdout.replace(/^rtk\s+/, ""))
-  if (parsed) {
-    const [major, minor] = parsed
-    if (major === 0 && minor < MIN_SUPPORTED_RTK_MINOR) {
-      console.warn(`[rtk] rtk ${ver.stdout.trim()} is too old (need >= 0.23.0) — extension disabled`)
-      return
-    }
+  try {
+    if (!(await probeRtk(pi, rtkPath))) return
+  } catch (err) {
+    console.warn(`[rtk] verification failed: ${err instanceof Error ? err.message : String(err)} — extension disabled`)
+    return
   }
 
   pi.on("tool_call", async (event, ctx) => {
@@ -64,11 +100,11 @@ export default async function (pi: ExtensionAPI) {
       const cmd = event.input.command
       if (typeof cmd !== "string" || cmd.trim() === "") return
 
-      if (cmd.startsWith("rtk ")) return
+      if (cmd.trimStart().startsWith("rtk ")) return
       if (process.env.RTK_DISABLED === "1") return
 
       // Delegate to RTK.
-      const rewritten = await rewriteCommand(pi, cmd, ctx.signal)
+      const rewritten = await rewriteCommand(pi, rtkPath, cmd, ctx.signal)
       if (rewritten && rewritten !== cmd) {
         event.input.command = rewritten
       }

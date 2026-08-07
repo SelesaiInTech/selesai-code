@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-The `rtk` extension rewrites compatible Bash tool calls to use the external `rtk` binary. This reduces noisy command output and saves tokens when `rtk` is installed, without changing Selesai's own rewrite behavior.
+The `rtk` extension rewrites compatible Bash tool calls to use the Rust Token Killer binary. Selesai reuses a valid system installation or provisions a verified managed binary, reducing noisy command output without changing Selesai's own rewrite behavior.
 
 <ExtensionStatus
   distribution="bundled"
@@ -18,13 +18,15 @@ The `rtk` extension rewrites compatible Bash tool calls to use the external `rtk
 
 ## Setup and prerequisites
 
-- The extension is bundled with Selesai, but it is **disabled unless `rtk` is installed**.
-- `rtk` must be available in `PATH` and report version `0.23.0` or newer (`rtk rewrite` was introduced in `0.23.0`).
-- If `rtk` is missing, older than `0.23.0`, or the version cannot be parsed, the extension logs a warning and does nothing.
+- The extension is bundled with Selesai and provisions the pinned RTK release into Selesai's managed binary directory when no usable system binary is available.
+- `rtk` must report version `0.23.0` or newer (`rtk rewrite` was introduced in `0.23.0`).
+- Selesai also runs `rtk gain` to reject the unrelated Rust Type Kit binary that uses the same command name.
+- Set `PI_OFFLINE=1` to prevent downloads; the extension then remains disabled if no valid RTK binary is available.
 
 ## What it sets up
 
-- Probes `rtk --version` at extension load time and bails out if the binary is missing or too old.
+- Reuses a valid system `rtk` or downloads the pinned official release into Selesai's managed binary directory with checksum verification.
+- Probes `rtk --version` and `rtk gain` at extension load time and bails out if the binary is missing, unrelated, or too old.
 - Registers a `tool_call` listener that intercepts Bash tool calls and delegates command rewriting to `rtk rewrite`.
 - Applies the rewritten command only when `rtk rewrite` exits `0` or `3` and returns a non-empty stdout that differs from the original command.
 
@@ -35,8 +37,9 @@ The `rtk` extension rewrites compatible Bash tool calls to use the external `rtk
 
 ## What you can do
 
-- Install `rtk >= 0.23.0` in your shell `PATH`, then start Selesai. Compatible `bash` tool calls are rewritten automatically.
-- Set `RTK_DISABLED=1` before launching Selesai to bypass the rewriter.
+- Start Selesai normally; it provisions RTK when needed. Compatible `bash` tool calls are rewritten automatically.
+- Set `RTK_DISABLED=1` before launching Selesai to bypass the rewriter and managed installation.
+- Set `PI_OFFLINE=1` to run without network provisioning.
 - Inspect the rewritten command in the tool output if the model asks for the exact shell behavior.
 
 ## Commands, tools, and shortcuts
@@ -54,6 +57,6 @@ There are no slash commands, tools, or shortcuts. The extension only rewrites Ba
 - Commands that already start with `rtk ` are skipped to avoid recursion.
 - Rewrites are advisory: if `rtk rewrite` exits with an unexpected code, times out after 2 seconds, or throws, the original command runs unchanged (fail-open).
 - The extension does not add new tools or change model behavior; it only mutates the command string passed to Bash.
-- Install and maintain `rtk` separately; Selesai does not bundle it.
+- Selesai does not run `rtk init`; its own Pi hook handles command rewriting and avoids duplicate RTK configuration.
 
 <SourceEvidence slug="rtk" />

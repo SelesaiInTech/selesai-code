@@ -22,6 +22,14 @@
             "cacheRead": 0.003,
             "cacheWrite": 0
           },
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": null,
+            "xhigh": null,
+            "max": "max"
+          },
           "compat": {
             "supportsDeveloperRole": false,
             "requiresReasoningContentOnAssistantMessages": true,
