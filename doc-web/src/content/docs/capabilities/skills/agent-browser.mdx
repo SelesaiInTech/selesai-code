@@ -1,0 +1,52 @@
+---
+draft: false
+title: Agent Browser skill
+---
+
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+
+The bundled `agent-browser` skill provides instructions for browser automation through the external `agent-browser` CLI.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./agent-browser.ts"
+  runtimeSurface="skill-backed"
+  locale="en"
+/>
+
+## Setup and prerequisites
+
+- The skill is bundled with Selesai but the external CLI must be installed separately.
+- Install it with `npm i -g agent-browser && agent-browser install`.
+- The setup extension asks before running a global npm install when the CLI is missing.
+
+## What it sets up
+
+- The `agent-browser` CLI and its browser runtime when the user accepts setup.
+- A discovery skill that tells the agent to load workflows from `agent-browser skills get core`.
+
+## What you can configure
+
+- Use `SELESAI_SKIP_AGENT_BROWSER_SETUP=1` to skip the automatic setup prompt.
+- Run `/setup-agent-browser` to retry setup after declining or after fixing npm permissions.
+
+## What you can do
+
+- Use browser navigation, screenshots, accessibility snapshots, form filling, and extraction through the CLI.
+- Load specialized workflows such as Electron, Slack, dogfood, Vercel Sandbox, or AgentCore from the installed CLI.
+
+## Commands, tools, and shortcuts
+
+| Command | Description |
+| --- | --- |
+| `npm i -g agent-browser` | Install the external CLI globally. |
+| `agent-browser install` | Provision the browser runtime. |
+| `/setup-agent-browser` | Re-run Selesai's setup flow. |
+
+## Limits and safety
+
+- Browser automation runs with the user's local permissions and network access.
+- Global npm installation can require user-specific permissions; Selesai asks for confirmation and reports failures without blocking the agent.
+- The skill's usage guide is served by the installed CLI, so workflow details follow the installed version.
+
+[Source: bundled skill and setup extension](https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/agent-browser/SKILL.md)

@@ -1,0 +1,52 @@
+---
+draft: false
+title: Skill Agent Browser
+---
+
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+
+Skill `agent-browser` yang dibundel menyediakan instruksi otomasi browser melalui CLI eksternal `agent-browser`.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./agent-browser.ts"
+  runtimeSurface="skill-backed"
+  locale="id"
+/>
+
+## Penyiapan dan prasyarat
+
+- Skill dibundel bersama Selesai tetapi CLI eksternal harus diinstal terpisah.
+- Instal dengan `npm i -g agent-browser && agent-browser install`.
+- Extension setup meminta konfirmasi sebelum menjalankan instalasi npm global saat CLI belum ada.
+
+## Yang disiapkan
+
+- CLI `agent-browser` dan runtime browser ketika user menyetujui setup.
+- Skill discovery yang mengarahkan agent untuk memuat workflow dari `agent-browser skills get core`.
+
+## Yang dapat dikonfigurasi
+
+- Gunakan `SELESAI_SKIP_AGENT_BROWSER_SETUP=1` untuk melewati prompt setup otomatis.
+- Jalankan `/setup-agent-browser` untuk mencoba lagi setelah menolak atau memperbaiki permission npm.
+
+## Yang dapat dilakukan
+
+- Gunakan navigasi browser, screenshot, accessibility snapshot, pengisian form, dan ekstraksi melalui CLI.
+- Muat workflow khusus seperti Electron, Slack, dogfood, Vercel Sandbox, atau AgentCore dari CLI yang terinstal.
+
+## Perintah, tool, dan shortcut
+
+| Perintah | Deskripsi |
+| --- | --- |
+| `npm i -g agent-browser` | Instal CLI eksternal secara global. |
+| `agent-browser install` | Sediakan runtime browser. |
+| `/setup-agent-browser` | Jalankan ulang flow setup Selesai. |
+
+## Batasan dan keamanan
+
+- Otomasi browser berjalan dengan permission lokal dan akses network milik user.
+- Instalasi npm global dapat membutuhkan permission khusus; Selesai meminta konfirmasi dan melaporkan kegagalan tanpa memblokir agent.
+- Panduan penggunaan skill disediakan oleh CLI terinstal, sehingga detail workflow mengikuti versi yang terinstal.
+
+[Sumber: skill dan setup extension yang dibundel](https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/agent-browser/SKILL.md)

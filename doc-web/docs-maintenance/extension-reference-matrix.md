@@ -7,6 +7,7 @@ extension documentation accurate. It is not published as user-facing content.
 
 | Slug | Bundled | Manifest entry | Runtime surface | EN guide | ID guide | Source focus |
 |------|---------|----------------|-----------------|----------|----------|--------------|
+| agent-browser | bundled | `./agent-browser.ts` | skill-backed | skills/agent-browser.mdx | id/skills/agent-browser.mdx | agent-browser.ts, skills/agent-browser |
 | copy-turn | bundled | `./copy-turn.ts` | command | continuity/copy-turn.mdx | id/continuity/copy-turn.mdx | copy-turn.ts |
 | context-compaction-reminder | bundled | `./context-compaction-reminder.ts` | automatic | continuity/context-reminder.mdx | id/continuity/context-reminder.mdx | source + test |
 | pi-intercom | bundled | `./pi-intercom/index.ts` | mixed | continuity/intercom.mdx | id/continuity/intercom.mdx | README/config/index |
