@@ -116,7 +116,7 @@
 
 
 
-<table><thead><tr><th>Command</th><th>Description</th></tr></thead><tbody><tr><td><code dir="auto">/handoff-new [goal]</code></td><td>Generate a handoff document and start a clean new session from it.</td></tr><tr><td><code dir="auto">/skill:selesai-handoff [goal]</code></td><td>Ask a skill-backed agent to launch a background Selesai session with a handoff summary instead of editing in place.</td></tr></tbody></table>
+<table><thead><tr><th>Command</th><th>Description</th></tr></thead><tbody><tr><td><code dir="auto">/handoff-new [goal]</code></td><td>Generate a handoff document and start a clean new session from it.</td></tr><tr><td><code dir="auto">$selesai-handoff [goal]</code></td><td>Ask a skill-backed agent to launch a background Selesai session with a handoff summary instead of editing in place.</td></tr></tbody></table>
 <h2 id="limits-and-safety">Limits and safety</h2>
 <ul>
 <li>The model prompt explicitly asks it to redact sensitive information such as API keys, passwords, or PII, but you should still inspect the generated handoff before it is submitted.</li>
