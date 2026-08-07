@@ -5,7 +5,8 @@
 	"description": "Built-in extensions shipped with @selesai/code, loaded via additionalExtensionPaths at boot.",
 	"pi": {
 		"extensions": [
-			"./copy-turn.ts",
+			"./agent-browser.ts",
+		"./copy-turn.ts",
 			"./context-compaction-reminder.ts",
 			"./pi-intercom/index.ts",
 			"./ponytail/index.js",
