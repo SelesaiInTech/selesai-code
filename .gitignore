@@ -15,3 +15,4 @@ dist/
 .selesai/extensions/
 .selesai/research/
 .upstream-cache/
+.grepai/

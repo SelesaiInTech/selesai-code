@@ -34,6 +34,7 @@ const BUNDLED_EXTENSION_GUIDES = {
   "./ponytail/index.js": "skills/ponytail",
   "./question": "research/question",
   "./grep-app": "research/grep-app",
+  "./grepai.ts": "research/grepai",
   "./handoff-new.ts": "continuity/handoff-new",
   "./inline-skills.ts": "skills/inline-skills",
   "./rtk.ts": "skills/rtk",

@@ -18,7 +18,7 @@ function isOfflineModeEnabled(): boolean {
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }
 
-export type ManagedTool = "fd" | "rg" | "rtk";
+export type ManagedTool = "fd" | "rg" | "rtk" | "grepai";
 
 interface ToolConfig {
 	name: string;
@@ -109,6 +109,31 @@ const TOOLS: Record<ManagedTool, ToolConfig> = {
 			if (major === 0 && minor < 23) return false;
 			const gainResult = spawnSync(path, ["gain"], { stdio: "pipe" });
 			return !gainResult.error && gainResult.status === 0;
+		},
+	},
+	grepai: {
+		name: "grepai",
+		repo: "yoanbernabeu/grepai",
+		binaryName: "grepai",
+		systemBinaryNames: ["grepai"],
+		tagPrefix: "v",
+		checksumAssetName: "checksums.txt",
+		getAssetName: (version, plat, architecture) => {
+			const archStr = architecture === "arm64" ? "arm64" : architecture === "x64" ? "amd64" : null;
+			if (!archStr) return null;
+			const osName = plat === "darwin" ? "darwin" : plat === "linux" ? "linux" : plat === "win32" ? "windows" : null;
+			if (!osName) return null;
+			const extension = plat === "win32" ? "zip" : "tar.gz";
+			return `grepai_${version}_${osName}_${archStr}.${extension}`;
+		},
+		// Avoid reusing an unrelated command with the same name. The official
+		// CLI exposes `grepai version`, which prints `grepai version ...`.
+		verify: (path) => {
+			const result = spawnSync(path, ["version"], { stdio: "pipe" });
+			if (result.error || result.status !== 0) return false;
+			return /grepai\s+version/i.test(
+				`${result.stdout?.toString() ?? ""}\n${result.stderr?.toString() ?? ""}`,
+			);
 		},
 	},
 };

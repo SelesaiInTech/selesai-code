@@ -13,6 +13,7 @@ extension documentation accurate. It is not published as user-facing content.
 | ponytail | bundled | `./ponytail/index.js` | skill-backed | skills/ponytail.mdx | id/skills/ponytail.mdx | extension + skills |
 | question | bundled | `./question` | tool | research/question.mdx | id/research/question.mdx | index.ts, schemas.ts, tests |
 | grep-app | bundled | `./grep-app` | tool | research/grep-app.mdx | id/research/grep-app.mdx | index.ts |
+| grepai | bundled | `./grepai.ts` | mixed | research/grepai.mdx | id/research/grepai.mdx | grepai.ts, tools-manager.ts |
 | handoff-new | bundled | `./handoff-new.ts` | command | continuity/handoff-new.mdx | id/continuity/handoff-new.mdx | handoff-new.ts + skills |
 | inline-skills | bundled | `./inline-skills.ts` | skill-backed | skills/inline-skills.mdx | id/skills/inline-skills.mdx | inline-skills.ts, core/skills.ts |
 | rtk | bundled | `./rtk.ts` | automatic | skills/rtk.mdx | id/skills/rtk.mdx | rtk.ts |
