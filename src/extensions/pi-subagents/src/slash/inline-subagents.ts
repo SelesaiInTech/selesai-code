@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@selesai/code";
 import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
-import { discoverAgents, resolveAgentName } from "../agents/agents.ts";
+import { discoverAgents, resolveAgentName, type AgentConfig } from "../agents/agents.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import type { SubagentState } from "../shared/types.ts";
 import { launchSlashSubagent } from "./slash-commands.ts";
@@ -26,6 +26,32 @@ function getInlineAgentToken(textBeforeCursor: string): string | undefined {
 	return match ? match[1] ?? "" : undefined;
 }
 
+// Agent discovery walks builtin+user+project+package agent dirs and node_modules,
+// which is far too slow to run synchronously on every `#` keystroke (it blocks the
+// event loop and the editor drops results while typing). Cache per cwd with a short
+// TTL so the picker is responsive; a failed discovery is cached as empty so a single
+// malformed agent file cannot keep blocking the editor (nor reject its shared
+// autocomplete request chain, which would permanently kill all autocomplete).
+const AGENT_DISCOVERY_CACHE_TTL_MS = 5_000;
+const agentDiscoveryCache = new Map<string, { expiry: number; agents: AgentConfig[] }>();
+
+function discoverAgentsForPicker(cwd: string): AgentConfig[] {
+	const now = Date.now();
+	const cached = agentDiscoveryCache.get(cwd);
+	if (cached && cached.expiry > now) {
+		return cached.agents;
+	}
+	let agents: AgentConfig[] = [];
+	try {
+		agents = discoverAgents(cwd, "both").agents;
+	} catch {
+		// Never let agent discovery break autocomplete; the editor's shared request
+		// chain stays poisoned forever after a single rejected getSuggestions.
+	}
+	agentDiscoveryCache.set(cwd, { expiry: now + AGENT_DISCOVERY_CACHE_TTL_MS, agents });
+	return agents;
+}
+
 export function createInlineSubagentAutocompleteProvider(
 	state: SubagentState,
 	current: AutocompleteProvider,
@@ -42,7 +68,7 @@ export function createInlineSubagentAutocompleteProvider(
 				return current.getSuggestions(lines, cursorLine, cursorCol, options);
 			}
 
-			const items: AutocompleteItem[] = discoverAgents(state.baseCwd, "both").agents
+			const items: AutocompleteItem[] = discoverAgentsForPicker(state.baseCwd)
 				.filter((agent) => agent.name.includes(token.toLowerCase()))
 				.map((agent) => ({
 					value: `#${agent.name}`,

@@ -34,13 +34,20 @@ export function createInlineSkillAutocompleteProvider(pi: ExtensionAPI, current:
 				return current.getSuggestions(lines, cursorLine, cursorCol, options);
 			}
 
-			const items: AutocompleteItem[] = getSkillCommands(pi)
-				.filter((command) => getSkillName(command).includes(token.toLowerCase()))
-				.map((command) => ({
-					value: `$${getSkillName(command)}`,
-					label: `$${getSkillName(command)}`,
-					description: command.description,
-				}));
+			let items: AutocompleteItem[];
+			try {
+				items = getSkillCommands(pi)
+					.filter((command) => getSkillName(command).includes(token.toLowerCase()))
+					.map((command) => ({
+						value: `$${getSkillName(command)}`,
+						label: `$${getSkillName(command)}`,
+						description: command.description,
+					}));
+			} catch {
+				// Never let a getCommands failure reject the editor's shared autocomplete
+				// request chain (a single rejection permanently disables all autocomplete).
+				return current.getSuggestions(lines, cursorLine, cursorCol, options);
+			}
 
 			return items.length > 0 ? { prefix: `$${token}`, items } : current.getSuggestions(lines, cursorLine, cursorCol, options);
 		},

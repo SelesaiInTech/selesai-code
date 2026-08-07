@@ -73,6 +73,20 @@ describe("inline-skills", () => {
 		expect(text.endsWith("Use $research, then $research again")).toBe(true);
 	});
 
+	it("falls back to the base provider instead of rejecting when getCommands throws", async () => {
+		const pi = {
+			getCommands: vi.fn(() => {
+				throw new Error("getCommands failed");
+			}),
+			on: vi.fn(),
+		} as unknown as ExtensionAPI;
+		const base = { getSuggestions: vi.fn(async () => null), applyCompletion: vi.fn() } as any;
+		const provider = createInlineSkillAutocompleteProvider(pi, base);
+
+		await expect(provider.getSuggestions(["$res"], 0, 4, {} as any)).resolves.toBeNull();
+		expect(base.getSuggestions).toHaveBeenCalled();
+	});
+
 	it("registers autocomplete and transforms interactive input", () => {
 		const dir = mkdtempSync(join(tmpdir(), "inline-skills-"));
 		tempDirs.push(dir);
