@@ -6,6 +6,7 @@ All notable changes to `@selesai/code` will be documented in this file.
 
 ### Fixed
 - **Reliable `#`/`$` inline autocomplete (also fixes WSL).** The `#` agent picker no longer runs full agent discovery (builtin/user/project/package dirs plus node_modules walks) synchronously on every keystroke — results are cached per cwd with a short TTL. This matters especially under WSL: running from a Linux-side directory gives the app a `\\wsl.localhost\...` UNC cwd, where the discovery walk costs ~1s per keystroke and the editor's serialized request pipeline then drops/delays `#` (and queued `$`/`@`) suggestions while typing. A failed discovery or `getCommands` error now also falls back to the base provider instead of rejecting the editor's shared autocomplete request chain, which previously permanently disabled `#`, `$`, `@`, and Tab completion for the rest of the session.
+- **No startup-blocking tool downloads.** The `rtk` extension previously ran `ensureTool("rtk")` inside its extension factory, so a missing/mismatched rtk binary triggered a GitHub download (with 120s timeouts) that blocked the entire startup — repeated every launch while the managed binary failed to install. Provisioning now runs after startup completes; bash commands issued before the hook is ready pass through un-rewritten. `fd`/`rg` provisioning at interactive init (pre-existing) remains the only awaited download.
 
 ## [0.7.0] - 2026-08-07
 

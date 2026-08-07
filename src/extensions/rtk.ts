@@ -70,48 +70,54 @@ async function rewriteCommand(
   return result.stdout.trim() || null
 }
 
-export default async function (pi: ExtensionAPI) {
+export default function (pi: ExtensionAPI) {
   // Explicit opt-out must also prevent an automatic managed-binary download.
   if (process.env.RTK_DISABLED === "1") return
 
-  let rtkPath: string | undefined
-  try {
-    rtkPath = await ensureTool("rtk")
-  } catch (err) {
-    console.warn(`[rtk] managed installation failed: ${err instanceof Error ? err.message : String(err)}`)
-  }
-
-  if (!rtkPath) {
-    console.warn("[rtk] unavailable; install from https://github.com/rtk-ai/rtk")
-    return
-  }
-
-  try {
-    if (!(await probeRtk(pi, rtkPath))) return
-  } catch (err) {
-    console.warn(`[rtk] verification failed: ${err instanceof Error ? err.message : String(err)} — extension disabled`)
-    return
-  }
-
-  pi.on("tool_call", async (event, ctx) => {
+  // Provisioning may download the managed binary from GitHub (with 120s timeouts)
+  // and probe system binaries. Running it in the extension factory would block the
+  // whole startup on a slow/unreachable network, so defer it off the critical path.
+  // Bash commands issued before the hook registers simply pass through un-rewritten.
+  void (async () => {
+    let rtkPath: string | undefined
     try {
-      if (!isToolCallEventType("bash", event)) return
-
-      const cmd = event.input.command
-      if (typeof cmd !== "string" || cmd.trim() === "") return
-
-      if (cmd.trimStart().startsWith("rtk ")) return
-      if (process.env.RTK_DISABLED === "1") return
-
-      // Delegate to RTK.
-      const rewritten = await rewriteCommand(pi, rtkPath, cmd, ctx.signal)
-      if (rewritten && rewritten !== cmd) {
-        event.input.command = rewritten
-      }
+      rtkPath = await ensureTool("rtk")
     } catch (err) {
-      // Fail open: never block execution on an unexpected error.
-      console.warn("[rtk] unexpected error in tool_call handler; passing through command", err)
+      console.warn(`[rtk] managed installation failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+
+    if (!rtkPath) {
+      console.warn("[rtk] unavailable; install from https://github.com/rtk-ai/rtk")
       return
     }
-  })
+
+    try {
+      if (!(await probeRtk(pi, rtkPath))) return
+    } catch (err) {
+      console.warn(`[rtk] verification failed: ${err instanceof Error ? err.message : String(err)} — extension disabled`)
+      return
+    }
+
+    pi.on("tool_call", async (event, ctx) => {
+      try {
+        if (!isToolCallEventType("bash", event)) return
+
+        const cmd = event.input.command
+        if (typeof cmd !== "string" || cmd.trim() === "") return
+
+        if (cmd.trimStart().startsWith("rtk ")) return
+        if (process.env.RTK_DISABLED === "1") return
+
+        // Delegate to RTK.
+        const rewritten = await rewriteCommand(pi, rtkPath, cmd, ctx.signal)
+        if (rewritten && rewritten !== cmd) {
+          event.input.command = rewritten
+        }
+      } catch (err) {
+        // Fail open: never block execution on an unexpected error.
+        console.warn("[rtk] unexpected error in tool_call handler; passing through command", err)
+        return
+      }
+    })
+  })()
 }
