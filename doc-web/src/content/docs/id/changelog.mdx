@@ -5,6 +5,14 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis yang dapat dijangkau dari branch `main` Selesai. Tag dari riwayat Pi yang tidak terkait dan tidak di-merge tidak disertakan.
 
+## 0.7.0 — Skill inline (`$`), subagent inline (`#`), RTK terkelola, dan Subagents 0.41
+
+- Skill kini dipanggil inline dengan `$nama-skill` (mis. `$grill-me`, `$pdf-tools extract`) menggantikan `#nama-skill`; mengetik `$` membuka pemilih skill dan teks setelah token tetap berada di pesan pengguna. Command slash `/skill:nama` dan pengaturan `enableSkillCommands` dihapus — daftar command `/` kini hanya menampilkan extension, prompt template, dan command bawaan.
+- Subagent dipanggil inline: `#nama-agent` di awal pesan menjalankan agen tersebut secara langsung (seperti `/run`), dan `#` melengkapi agen yang terinstal secara otomatis. Nama yang tidak dikenal atau ambigu menghasilkan notifikasi dan input dikonsumsi.
+- Extension `rtk` bawaan kini menyediakan binary terkelola terverifikasi (pin `0.42.4`, diverifikasi checksum) saat tidak ada binary sistem yang layak, dan memakai ulang PATH jika ada; `PI_OFFLINE=1` mencegah pengunduhan dan `RTK_DISABLED=1` melewati penulisan ulang serta instalasi terkelola.
+- Memperbarui Pi Subagents bawaan melalui 0.41.0 dengan streaming status `subagent_wait` langsung, jadwal proyek tahan lama, langganan wait non-blocking, ringkasan hasil inline satu baris, tampilan model/thinking FleetView, dan progress chat workflow.
+- Model subagent bawaan kini memakai budget thinking Token-In (`kimi-k3:high`, `deepseek-v4-flash:max`).
+
 ## 0.6.3 — Perbaikan instalasi: pin Readability ke 0.6.0 yang terbit
 
 - Memperbaiki instalasi package: manifest root dan `pi-web-agent` bawaan mendeklarasikan `@mozilla/readability` `^0.6.1`, tetapi registry npm tidak menerbitkan 0.6.1 (terbaru adalah 0.6.0), sehingga instalasi baru 0.6.2 gagal dengan `ETARGET`. Kedua manifest kini mendeklarasikan `^0.6.0` dan lockfile root me-resolve rilis 0.6.0 yang terbit, sehingga instalasi bersih kembali berhasil.

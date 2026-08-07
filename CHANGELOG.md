@@ -2,10 +2,16 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
-## [Unreleased]
+## [0.7.0] - 2026-08-07
+
+### Added
+- **Inline skills via `$` tokens.** The `inline-skills` extension now triggers autocomplete and expands skill tokens with `$skill-name` (e.g. `$grill-me`, `$pdf-tools extract`) instead of `#skill-name`; typing `$` in interactive chat opens the skill picker. Text after the token stays in the user message, so arguments follow the skill normally.
+- **Inline subagents via `#` tokens.** Typing `#agent-name` at the start of a message runs that agent directly (like `/run agent-name <task>`), and typing `#` in the editor autocompletes installed agents. Unknown or ambiguous agent names produce a notification and consume the input without sending anything to the main agent.
+- **Managed RTK binary provisioning.** The bundled `rtk` extension now reuses a valid system binary (`>= 0.23.0`, probed with `rtk --version` and `rtk gain` to reject the unrelated Rust Type Kit binary) or provisions the pinned official release (`0.42.4`) into Selesai's managed binary directory with checksum verification. `PI_OFFLINE=1` disables downloads; `RTK_DISABLED=1` bypasses rewriting and managed installation. The generic tools manager now covers `fd`, `rg`, and `rtk` with optional pinned versions and checksum assets.
+- **Subagents engine upgraded to upstream 0.41.0.** The bundled `pi-subagents` extension advances through 0.41.0: live status streaming for `subagent_wait`, durable project-scoped schedules, an observational external-runs provider, non-blocking `subagent_wait` subscriptions, inline one-row result summaries, FleetView model/thinking display, and restored workflow chat progress. The Selesai fork keeps config-dir routing through host resolvers and defaults debug artifacts on (`artifacts: false` opts out).
+- **Bundled default subagent models updated to Token-In thinking budgets** (`kimi-k3:high`, `deepseek-v4-flash:max`), with `kimi-k3` accepting `max` thinking.
 
 ### Changed
-- **Inline skills use `$` instead of `#`.** The `inline-skills` extension now triggers autocomplete and expands skill tokens with `$skill-name` (e.g. `$grill-me`) instead of `#skill-name`. Regexes, trigger characters, and docs updated.
 - **Skills no longer register as `/skill:name` commands.** Skills are invoked inline via `$skill-name`; the `/` command list now shows only extensions, prompt templates, and built-in commands. Removed the skill-commands autocomplete registration (interactive and RPC `get_commands`), the `enableSkillCommands` setting/toggle, and related docs. The internal `/skill:` text expansion is retained for extension use (e.g. the ponytail `/ponytail-*` aliases).
 
 ## [0.6.3] - 2026-08-05

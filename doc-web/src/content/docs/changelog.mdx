@@ -5,6 +5,14 @@ title: Changelog
 
 This history follows release tags reachable from the Selesai `main` branch. Tags from unrelated, unmerged Pi history are excluded.
 
+## 0.7.0 — Inline skills (`$`), inline subagents (`#`), managed RTK, and Subagents 0.41
+
+- Skills are now invoked inline with `$skill-name` (e.g. `$grill-me`, `$pdf-tools extract`) instead of `#skill-name`; typing `$` opens the skill picker and text after the token stays in the user message. `/skill:name` slash commands and the `enableSkillCommands` setting are removed — the `/` command list now shows only extensions, prompt templates, and built-in commands.
+- Subagents are invoked inline: `#agent-name` at the start of a message runs that agent directly (like `/run`), and `#` autocompletes installed agents. Unknown or ambiguous names produce a notification and consume the input.
+- The bundled `rtk` extension provisions a verified managed binary (pinned `0.42.4`, checksum-verified) when no usable system binary exists, reusing PATH otherwise; `PI_OFFLINE=1` prevents downloads and `RTK_DISABLED=1` bypasses rewriting and managed installation.
+- Updated bundled Pi Subagents through 0.41.0 with live `subagent_wait` status streaming, durable project-scoped schedules, non-blocking wait subscriptions, inline one-row result summaries, FleetView model/thinking display, and workflow chat progress.
+- Bundled default subagent models now use Token-In thinking budgets (`kimi-k3:high`, `deepseek-v4-flash:max`).
+
 ## 0.6.3 — Install repair: pin Readability to the published 0.6.0
 
 - Repaired package install: the root and bundled `pi-web-agent` manifests declared `@mozilla/readability` `^0.6.1`, but the npm registry publishes no 0.6.1 (latest is 0.6.0), so fresh installs of 0.6.2 failed with `ETARGET`. Both manifests now declare `^0.6.0` and the root lockfile resolves the published 0.6.0 release, so clean installs succeed again.
