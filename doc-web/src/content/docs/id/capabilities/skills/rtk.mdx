@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-Extension `rtk` menulis ulang tool call Bash yang kompatibel untuk menggunakan binary `rtk` eksternal. Ini mengurangi output command yang berisik dan menghemat token saat `rtk` terpasang, tanpa mengubah perilaku rewrite Selesai sendiri.
+Extension `rtk` menulis ulang tool call Bash yang kompatibel untuk menggunakan binary Rust Token Killer. Selesai memakai ulang instalasi sistem yang valid atau menyediakan binary terkelola terverifikasi, mengurangi output command yang berisik tanpa mengubah perilaku rewrite Selesai sendiri.
 
 <ExtensionStatus
   distribution="bundled"
@@ -18,13 +18,15 @@ Extension `rtk` menulis ulang tool call Bash yang kompatibel untuk menggunakan b
 
 ## Penyiapan dan prasyarat
 
-- Extension dibundel bersama Selesai, tetapi **tidak aktif kecuali `rtk` terpasang**.
-- `rtk` harus tersedia di `PATH` dan melaporkan versi `0.23.0` atau lebih baru (`rtk rewrite` diperkenalkan di `0.23.0`).
-- Jika `rtk` tidak ada, lebih tua dari `0.23.0`, atau versinya tidak dapat diparse, extension mencetak peringatan dan tidak melakukan apa pun.
+- Extension dibundel bersama Selesai dan menyediakan rilis RTK yang di-pin ke direktori binary terkelola Selesai saat tidak ada binary sistem yang layak.
+- `rtk` harus melaporkan versi `0.23.0` atau lebih baru (`rtk rewrite` diperkenalkan di `0.23.0`).
+- Selesai juga menjalankan `rtk gain` untuk menolak binary Rust Type Kit yang tidak terkait dan memakai nama command yang sama.
+- Setel `PI_OFFLINE=1` untuk mencegah pengunduhan; extension kemudian tetap nonaktif jika tidak ada binary RTK yang valid.
 
 ## Yang disiapkan
 
-- Probe `rtk --version` saat extension dimuat dan keluar jika binary tidak ada atau terlalu tua.
+- Memakai ulang `rtk` sistem yang valid atau mengunduh rilis resmi yang di-pin ke direktori binary terkelola Selesai dengan verifikasi checksum.
+- Probe `rtk --version` dan `rtk gain` saat extension dimuat dan keluar jika binary tidak ada, tidak terkait, atau terlalu tua.
 - Mendaftarkan listener `tool_call` yang mencegat Bash tool call dan mendelegasikan penulisan ulang command ke `rtk rewrite`.
 - Menerapkan command yang ditulis ulang hanya ketika `rtk rewrite` keluar dengan kode `0` atau `3` dan mengembalikan stdout non-kosong yang berbeda dari command asli.
 
@@ -35,8 +37,9 @@ Extension `rtk` menulis ulang tool call Bash yang kompatibel untuk menggunakan b
 
 ## Yang dapat dilakukan
 
-- Pasang `rtk >= 0.23.0` di `PATH` shell Anda, lalu jalankan Selesai. Tool call `bash` yang kompatibel ditulis ulang secara otomatis.
-- Setel `RTK_DISABLED=1` sebelum menjalankan Selesai untuk melewati rewriter.
+- Jalankan Selesai seperti biasa; Selesai menyediakan RTK saat diperlukan. Tool call `bash` yang kompatibel ditulis ulang secara otomatis.
+- Setel `RTK_DISABLED=1` sebelum menjalankan Selesai untuk melewati rewriter dan instalasi terkelola.
+- Setel `PI_OFFLINE=1` untuk berjalan tanpa provisioning jaringan.
 - Periksa command yang ditulis ulang di output tool jika model meminta perilaku shell yang tepat.
 
 ## Perintah, tool, dan shortcut
@@ -54,6 +57,6 @@ Tidak ada slash command, tool, atau shortcut. Extension hanya menulis ulang Bash
 - Command yang sudah diawali `rtk ` dilewati untuk menghindari rekursi.
 - Rewrite bersifat advisory: jika `rtk rewrite` keluar dengan kode tak terduga, timeout setelah 2 detik, atau melempar error, command asli tetap berjalan (fail-open).
 - Extension tidak menambahkan tool baru atau mengubah perilaku model; hanya mengubah string command yang diteruskan ke Bash.
-- Pasang dan kelola `rtk` secara terpisah; Selesai tidak membundelnya.
+- Selesai tidak menjalankan `rtk init`; hook Pi-nya sendiri menangani penulisan ulang command dan menghindari konfigurasi RTK ganda.
 
 <SourceEvidence slug="rtk" />
