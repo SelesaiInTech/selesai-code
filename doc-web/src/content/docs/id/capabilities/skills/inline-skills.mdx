@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-Extension `inline-skills` memungkinkan Anda mengajak skill yang terpasang langsung di dalam pesan dengan mengetik `#skill-name`, alih-alih memulai command `/skill:<name>` terpisah. Extension menyediakan saran autocomplete dan memperluas skill yang cocok ke dalam konteks percakapan sebelum agen berjalan.
+Extension `inline-skills` memungkinkan Anda mengajak skill yang terpasang langsung di dalam pesan dengan mengetik `$skill-name`. Extension menyediakan saran autocomplete dan memperluas skill yang cocok ke dalam konteks percakapan sebelum agen berjalan.
 
 <ExtensionStatus
   distribution="bundled"
@@ -19,13 +19,13 @@ Extension `inline-skills` memungkinkan Anda mengajak skill yang terpasang langsu
 ## Penyiapan dan prasyarat
 
 - Dibundel bersama Selesai dan dimuat otomatis.
-- Hanya bekerja dengan skill yang sudah terpasang sebagai slash command (source di `src/skills/` atau file skill user-level).
-- Memerlukan sesi interaktif dengan editor autocomplete; penggunaan headless atau non-TUI masih memperluas token `#skill-name` yang sudah diketik.
+- Hanya bekerja dengan skill yang sudah terpasang (source di `src/skills/` atau file skill user-level).
+- Memerlukan sesi interaktif dengan editor autocomplete; penggunaan headless atau non-TUI masih memperluas token `$skill-name` yang sudah diketik.
 
 ## Yang disiapkan
 
-- Mendaftarkan autocomplete provider yang dipicu oleh `#`. Saat Anda mengetik, provider menyarankan nama skill terpasang yang mengandung token tersebut.
-- Hook event `input` untuk memperluas setiap token `#skill-name` menjadi blok `<skill>` yang ditambahkan sebelum pesan asli.
+- Mendaftarkan autocomplete provider yang dipicu oleh `$`. Saat Anda mengetik, provider menyarankan nama skill terpasang yang mengandung token tersebut.
+- Hook event `input` untuk memperluas setiap token `$skill-name` menjadi blok `<skill>` yang ditambahkan sebelum pesan asli.
 - Membaca file source setiap skill dari path yang tercatat oleh skill loader dan menghapus frontmatter-nya.
 
 ## Yang dapat dikonfigurasi
@@ -35,10 +35,10 @@ Extension `inline-skills` memungkinkan Anda mengajak skill yang terpasang langsu
 
 ## Yang dapat dilakukan
 
-- Mulai mengetik `#` di editor untuk melihat saran skill terpasang.
-- Terima saran untuk menyisipkan `#skill-name` sebagai teks.
+- Mulai mengetik `$` di editor untuk melihat saran skill terpasang.
+- Terima saran untuk menyisipkan `$skill-name` sebagai teks.
 - Kirim pesan. Sebelum agen berjalan, extension mengganti token inline dengan blok `<skill>` skill tersebut.
-- Sebutkan beberapa skill dalam satu pesan: `#grill-me #implanger` akan memperluas keduanya jika terpasang.
+- Sebutkan beberapa skill dalam satu pesan: `$grill-me $implanger` akan memperluas keduanya jika terpasang.
 
 ## Perintah, tool, dan shortcut
 
@@ -46,8 +46,8 @@ Tidak ada slash command, tool, atau shortcut. Permukaan extension adalah:
 
 | Permukaan | Perilaku |
 | --- | --- |
-| Autocomplete `#<token>` | Menyarankan skill terpasang yang cocok dengan `<token>`. |
-| `#<skill-name>` dalam pesan | Memperluas body skill yang cocok ke dalam konteks. |
+| Autocomplete `$<token>` | Menyarankan skill terpasang yang cocok dengan `<token>`. |
+| `$<skill-name>` dalam pesan | Memperluas body skill yang cocok ke dalam konteks. |
 
 ## Batasan dan keamanan
 

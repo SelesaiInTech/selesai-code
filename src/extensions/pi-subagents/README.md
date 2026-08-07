@@ -544,6 +544,17 @@ External CLI profiles are opaque processes, so native permissions cannot interce
 
 Use `/run <agent> [task] [--bg] [--fork]` for one child. Multi-agent orchestration is expressed through `workflowScript` in the `subagent` tool; the legacy `/chain`, `/parallel`, and `/run-chain` commands are not registered.
 
+### Inline invocation
+
+In interactive chat, `#agent-name` at the start of a message runs that agent directly, like `/run agent-name task` — type `#` in the editor to autocomplete installed agents:
+
+```text
+#architect Turn this plan into a step-by-step implementation plan.
+#commentator What am I missing here?
+```
+
+Unknown or ambiguous agent names are reported via a notification and the input is consumed (nothing is sent to the main agent). Like `/run`, the task text is passed to the agent as its prompt.
+
 ### Profiles and provider model catalogs
 
 Profiles are stored under:

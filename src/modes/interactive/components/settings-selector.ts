@@ -57,7 +57,6 @@ export interface SettingsConfig {
 	imageWidthCells: number;
 	autoResizeImages: boolean;
 	blockImages: boolean;
-	enableSkillCommands: boolean;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
 	transport: Transport;
@@ -92,7 +91,6 @@ export interface SettingsCallbacks {
 	onImageWidthCellsChange: (width: number) => void;
 	onAutoResizeImagesChange: (enabled: boolean) => void;
 	onBlockImagesChange: (blocked: boolean) => void;
-	onEnableSkillCommandsChange: (enabled: boolean) => void;
 	onSteeringModeChange: (mode: "all" | "one-at-a-time") => void;
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
 	onTransportChange: (transport: Transport) => void;
@@ -676,19 +674,9 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
-		// Skill commands toggle (insert after block-images)
+		// Hardware cursor toggle (insert after block-images)
 		const blockImagesIndex = items.findIndex((item) => item.id === "block-images");
 		items.splice(blockImagesIndex + 1, 0, {
-			id: "skill-commands",
-			label: "Skill commands",
-			description: "Register skills as /skill:name commands",
-			currentValue: config.enableSkillCommands ? "true" : "false",
-			values: ["true", "false"],
-		});
-
-		// Hardware cursor toggle (insert after skill-commands)
-		const skillCommandsIndex = items.findIndex((item) => item.id === "skill-commands");
-		items.splice(skillCommandsIndex + 1, 0, {
 			id: "show-hardware-cursor",
 			label: "Show hardware cursor",
 			description: "Show the terminal cursor while still positioning it for IME support",
@@ -775,9 +763,6 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "block-images":
 						callbacks.onBlockImagesChange(newValue === "true");
-						break;
-					case "skill-commands":
-						callbacks.onEnableSkillCommandsChange(newValue === "true");
 						break;
 					case "steering-mode":
 						callbacks.onSteeringModeChange(newValue as "all" | "one-at-a-time");

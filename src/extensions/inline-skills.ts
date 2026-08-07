@@ -5,7 +5,7 @@ import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-
 
 type SkillCommand = SlashCommandInfo & { source: "skill" };
 
-const INLINE_SKILL_TOKEN = /(^|[^a-z0-9_-])#([a-z0-9]+(?:-[a-z0-9]+)*)(?![a-z0-9_-])/gi;
+const INLINE_SKILL_TOKEN = /(^|[^a-z0-9_-])\$([a-z0-9]+(?:-[a-z0-9]+)*)(?![a-z0-9_-])/gi;
 
 function getSkillCommands(pi: ExtensionAPI): SkillCommand[] {
 	return pi
@@ -21,13 +21,13 @@ function getSkillName(command: SkillCommand): string {
 }
 
 function getInlineSkillToken(textBeforeCursor: string): string | undefined {
-	const match = textBeforeCursor.match(/(?:^|[^a-z0-9_-])#([a-z0-9-]*)$/i);
+	const match = textBeforeCursor.match(/(?:^|[^a-z0-9_-])\$([a-z0-9-]*)$/i);
 	return match ? match[1] ?? "" : undefined;
 }
 
 export function createInlineSkillAutocompleteProvider(pi: ExtensionAPI, current: AutocompleteProvider): AutocompleteProvider {
 	return {
-		triggerCharacters: ["#"],
+		triggerCharacters: ["$"],
 		async getSuggestions(lines, cursorLine, cursorCol, options) {
 			const token = getInlineSkillToken((lines[cursorLine] ?? "").slice(0, cursorCol));
 			if (token === undefined) {
@@ -37,12 +37,12 @@ export function createInlineSkillAutocompleteProvider(pi: ExtensionAPI, current:
 			const items: AutocompleteItem[] = getSkillCommands(pi)
 				.filter((command) => getSkillName(command).includes(token.toLowerCase()))
 				.map((command) => ({
-					value: `#${getSkillName(command)}`,
-					label: `#${getSkillName(command)}`,
+					value: `$${getSkillName(command)}`,
+					label: `$${getSkillName(command)}`,
 					description: command.description,
 				}));
 
-			return items.length > 0 ? { prefix: `#${token}`, items } : current.getSuggestions(lines, cursorLine, cursorCol, options);
+			return items.length > 0 ? { prefix: `$${token}`, items } : current.getSuggestions(lines, cursorLine, cursorCol, options);
 		},
 		applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
 			return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);

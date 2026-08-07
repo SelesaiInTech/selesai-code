@@ -65,36 +65,28 @@ For project-level Claude Code skills, add to `.pi/settings.json`:
 
 1. At startup, pi scans skill locations and extracts names and descriptions
 2. The system prompt includes available skills in XML format per the [specification](https://agentskills.io/integrate-skills)
-3. When a task matches, the agent uses `read` to load the full SKILL.md (models don't always do this; use prompting or `/skill:name` to force it)
+3. When a task matches, the agent uses `read` to load the full SKILL.md (models don't always do this; use prompting or `$skill-name` to force it)
 4. The agent follows the instructions, using relative paths to reference scripts and assets
 
 This is progressive disclosure: only descriptions are always in context, full instructions load on-demand.
 
-## Skill Commands
+## Invoking Skills
 
-Skills register as `/skill:name` commands:
+Skills are invoked inline with `$skill-name` anywhere in a message. They are not registered as `/skill:name` slash commands — the `/` command list shows only extensions, prompt templates, and built-in commands.
 
-```bash
-/skill:brave-search           # Load and execute the skill
-/skill:pdf-tools extract      # Load skill with arguments
+```text
+$brave-search                    # Load and execute the skill
+$pdf-tools extract               # Load skill with arguments
 ```
 
-Arguments after the command are appended to the skill content as `User: <args>`.
+Text after the skill token is kept as the user message, so arguments follow the skill normally.
 
 ### Inline Skill Picker
 
-In interactive chat, type `#` anywhere in a prompt to open completion for available skills. Select a skill to insert `#skill-name`; on send, Selesai expands it at that position.
+In interactive chat, type `$` anywhere in a prompt to open completion for available skills. Select a skill to insert `$skill-name`; on send, Selesai expands it at that position.
 
 ```text
-Draft implementation plan, then #codebase-design the module.
-```
-
-Toggle skill commands via `/settings` in interactive mode or in `settings.json`:
-
-```json
-{
-  "enableSkillCommands": true
-}
+Draft implementation plan, then $codebase-design the module.
 ```
 
 ## Skill Structure
@@ -154,7 +146,7 @@ Per the [Agent Skills specification](https://agentskills.io/specification#frontm
 | `compatibility` | No | Max 500 chars. Environment requirements. |
 | `metadata` | No | Arbitrary key-value mapping. |
 | `allowed-tools` | No | Space-delimited list of pre-approved tools (experimental). |
-| `disable-model-invocation` | No | When `true`, skill is hidden from system prompt. Users must use `/skill:name`. |
+| `disable-model-invocation` | No | When `true`, skill is hidden from system prompt. Users must invoke it explicitly with `$skill-name`. |
 
 ### Name Rules
 

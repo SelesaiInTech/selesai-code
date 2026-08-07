@@ -16,7 +16,6 @@
   "editorPaddingX": 0,
   "outputPad": 0,
   "showCacheMissNotices": true,
-  "enableSkillCommands": true,
   "followUpMode": "one-at-a-time",
   "hideThinkingBlock": false,
   "images": {
@@ -40,22 +39,22 @@
   "subagents": {
     "agentOverrides": {
       "architect": {
-        "model": "tokenin/kimi-k3"
+        "model": "tokenin/kimi-k3:high"
       },
       "builder": {
-        "model": "tokenin/deepseek-v4-flash"
+        "model": "tokenin/deepseek-v4-flash:max"
       },
       "commentator": {
-        "model": "tokenin/glm-5.2"
+        "model": "tokenin/deepseek-v4-flash:max"
       },
       "explorer": {
-        "model": "tokenin/deepseek-v4-flash"
+        "model": "tokenin/deepseek-v4-flash:max"
       },
       "recapper": {
-        "model": "tokenin/deepseek-v4-flash"
+        "model": "tokenin/deepseek-v4-flash:max"
       },
       "researcher": {
-        "model": "tokenin/deepseek-v4-flash"
+        "model": "tokenin/deepseek-v4-flash:max"
       }
     }
   },

@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { keyText, type ExtensionAPI, type ExtensionContext } from "@selesai/code";
 import { Key, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
 import { BUILTIN_AGENT_NAMES, discoverAgents } from "../agents/agents.ts";
+import { registerInlineSubagentInvocation } from "./inline-subagents.ts";
 import {
 	DEFAULT_PROVIDER_MODELS_MAX_AGE_DAYS,
 	applySubagentProfile,
@@ -613,7 +614,7 @@ async function runSlashSubagent(
 	}
 }
 
-function launchSlashSubagent(
+export function launchSlashSubagent(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	params: SubagentParamsLike,
@@ -626,6 +627,8 @@ export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
 ): void {
+	registerInlineSubagentInvocation(pi, state);
+
 	let fleetOpen = false;
 	const showFleet = async (ctx: ExtensionContext) => {
 		state.lastUiContext = ctx;

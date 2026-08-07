@@ -4,6 +4,10 @@ All notable changes to `@selesai/code` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Inline skills use `$` instead of `#`.** The `inline-skills` extension now triggers autocomplete and expands skill tokens with `$skill-name` (e.g. `$grill-me`) instead of `#skill-name`. Regexes, trigger characters, and docs updated.
+- **Skills no longer register as `/skill:name` commands.** Skills are invoked inline via `$skill-name`; the `/` command list now shows only extensions, prompt templates, and built-in commands. Removed the skill-commands autocomplete registration (interactive and RPC `get_commands`), the `enableSkillCommands` setting/toggle, and related docs. The internal `/skill:` text expansion is retained for extension use (e.g. the ponytail `/ponytail-*` aliases).
+
 ## [0.6.3] - 2026-08-05
 
 ### Fixed
