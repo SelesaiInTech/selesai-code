@@ -496,6 +496,21 @@ export class ModeAwareAutocompleteProvider implements AutocompleteProvider {
     this.isBashModeActive = isBashModeActive;
   }
 
+  /**
+   * Forward trigger characters from the underlying providers. Without this the
+   * editor resets its trigger set to the defaults when this wrapper is installed
+   * (e.g. "$" is dropped), so inline completions like `$skill` never open a popup.
+   */
+  get triggerCharacters(): string[] | undefined {
+    const chars = new Set<string>();
+    for (const provider of [this.defaultProvider, this.bashProvider, this.oneOffBashProvider]) {
+      for (const character of provider?.triggerCharacters ?? []) {
+        chars.add(character);
+      }
+    }
+    return chars.size > 0 ? [...chars] : undefined;
+  }
+
   getSuggestions(
     lines: string[],
     cursorLine: number,

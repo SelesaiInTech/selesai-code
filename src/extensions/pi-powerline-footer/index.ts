@@ -2721,7 +2721,10 @@ export default function powerlineFooter(pi: ExtensionAPI) {
           return originalRender(width);
         }
 
-        const bc = (s: string) => `${getFgAnsiCode("sep")}${s}${ansi.reset}`;
+        const bc = (s: string) =>
+          typeof editor.borderColor === "function"
+            ? editor.borderColor(s)
+            : `${getFgAnsiCode("sep")}${s}${ansi.reset}`;
         const promptGlyph = bashModeActive ? "$" : config.fixedEditorPromptGlyph;
         const prompt = promptGlyph ? `${ansi.getFgAnsi(200, 200, 200)}${promptGlyph}${ansi.reset}` : "";
         const promptPrefix = prompt ? ` ${prompt} ` : " ";
