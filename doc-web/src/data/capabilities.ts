@@ -314,23 +314,6 @@ export const capabilities: Capability[] = [
     runtimeSurface: "automatic",
   },
   {
-    slug: "grepai",
-    category: "research-and-interaction",
-    en: { displayName: "grepai semantic code search", benefit: "Provision grepai and configure project-local semantic search with the shared Token-In embedding credential." },
-    id: { displayName: "Pencarian kode semantik grepai", benefit: "Sediakan grepai dan konfigurasi pencarian semantik tingkat proyek dengan kredensial embedding Token-In bersama." },
-    sourcePaths: ["src/extensions/grepai.ts", "src/utils/tools-manager.ts", ".pi-subagents/research/grepai.md"],
-    sourceLinks: [
-      links("grepai integration source", "src/extensions/grepai.ts"),
-      links("Managed tools source", "src/utils/tools-manager.ts"),
-      links("grepai research note", ".pi-subagents/research/grepai.md"),
-    ],
-    guideRoute: "capabilities/research/grepai",
-    piComparison: "ergonomic",
-    distribution: "bundled",
-    manifestEntry: "./grepai.ts",
-    runtimeSurface: "mixed",
-  },
-  {
     slug: "llama",
     category: "terminal-workspace",
     en: { displayName: "llama.cpp model manager", benefit: "Manage local llama.cpp router models, search Hugging Face, and load/unload models from the TUI." },

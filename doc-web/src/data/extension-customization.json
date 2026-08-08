@@ -649,43 +649,6 @@
         { "name": "PI_OFFLINE=1", "description": { "en": "Set this environment variable to disable startup network operations, preventing managed binary downloads.", "id": "Atur variabel lingkungan ini untuk menonaktifkan operasi jaringan saat startup, mencegah pengunduhan biner terkelola." } }
       ],
       "noConfig": true
-    },
-    {
-      "slug": "grepai",
-      "distribution": "bundled",
-      "overview": {
-        "en": "grepai is provisioned as a verified managed binary and configured per project to use the shared Token-In embedding proxy.",
-        "id": "grepai disediakan sebagai biner terkelola terverifikasi dan dikonfigurasi per proyek untuk memakai proxy embedding Token-In bersama."
-      },
-      "sourcePaths": ["src/extensions/grepai.ts", "src/utils/tools-manager.ts"],
-      "scopes": [
-        {
-          "label": { "en": "Project grepai config", "id": "Konfigurasi grepai proyek" },
-          "path": ".grepai/config.yaml",
-          "precedence": {
-            "en": "grepai reads this project-local file; its embedder block is patched to the Selesai proxy when setup runs.",
-            "id": "grepai membaca file tingkat proyek ini; blok embedder diarahkan ke proxy Selesai saat setup berjalan."
-          }
-        }
-      ],
-      "settings": [
-        { "key": "store.backend", "type": "string", "default": "gob", "allowedValues": "gob", "description": { "en": "File-based grepai index backend; the integration forces this value so no external database is required.", "id": "Backend index grepai berbasis file; integrasi memaksa nilai ini sehingga tidak membutuhkan database eksternal." }, "persistence": ".grepai/config.yaml" },
-        { "key": "embedder.provider", "type": "string", "default": "openai", "description": { "en": "grepai provider used for the OpenAI-compatible LiteLLM proxy.", "id": "Provider grepai untuk proxy LiteLLM yang kompatibel dengan OpenAI." }, "persistence": ".grepai/config.yaml" },
-        { "key": "embedder.model", "type": "string", "default": "nomic-code", "description": { "en": "Embedding model id sent to the proxy.", "id": "ID model embedding yang dikirim ke proxy." }, "persistence": ".grepai/config.yaml" },
-        { "key": "embedder.endpoint", "type": "string", "default": "https://lite.andlet.me/v1", "description": { "en": "OpenAI-compatible base URL; grepai appends /embeddings.", "id": "Base URL kompatibel OpenAI; grepai menambahkan /embeddings." }, "persistence": ".grepai/config.yaml" },
-        { "key": "embedder.dimensions", "type": "number", "default": "768", "description": { "en": "Expected native width for nomic-code; verify proxy metadata before using a dimension-constrained external store.", "id": "Lebar native yang diharapkan untuk nomic-code; verifikasi metadata proxy sebelum memakai store eksternal yang membatasi dimensi." }, "persistence": ".grepai/config.yaml" }
-      ],
-      "envVars": [
-        { "key": "GREPAI_DISABLED", "description": { "en": "Disable automatic grepai provisioning and setup for the session.", "id": "Nonaktifkan provisioning dan setup grepai otomatis untuk sesi." } },
-        { "key": "SELESAI_SKIP_GREPAI_SETUP", "description": { "en": "Keep grepai provisioning available but skip automatic project configuration.", "id": "Tetap izinkan provisioning grepai tetapi lewati konfigurasi proyek otomatis." } },
-        { "key": "PI_OFFLINE", "description": { "en": "Disable managed binary downloads globally.", "id": "Nonaktifkan semua pengunduhan biner terkelola." } }
-      ],
-      "controls": [
-        { "name": "/setup-grepai", "description": { "en": "Install grepai, configure the current project, and start its initial index using the active Token-In credential.", "id": "Instal grepai, konfigurasi proyek saat ini, dan mulai index awal memakai kredensial Token-In aktif." } },
-        { "name": "automatic project watcher", "description": { "en": "Runs the initial scan and keeps a configured GOB index updated with grepai watch --background.", "id": "Menjalankan scan awal dan menjaga index GOB yang dikonfigurasi tetap diperbarui dengan grepai watch --background." } },
-        { "name": "grepai search/watch Bash hook", "description": { "en": "Configures a project lazily immediately before a config-dependent grepai command runs, then starts indexing when the command needs the index.", "id": "Mengonfigurasi proyek secara lazy tepat sebelum command grepai yang membutuhkan konfigurasi dijalankan, lalu memulai indexing saat command membutuhkan index." } }
-      ],
-      "noConfig": false
     }
   ]
 }

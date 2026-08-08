@@ -7,14 +7,12 @@ extension documentation accurate. It is not published as user-facing content.
 
 | Slug | Bundled | Manifest entry | Runtime surface | EN guide | ID guide | Source focus |
 |------|---------|----------------|-----------------|----------|----------|--------------|
-| agent-browser | bundled | `./agent-browser.ts` | skill-backed | skills/agent-browser.mdx | id/skills/agent-browser.mdx | agent-browser.ts, skills/agent-browser |
 | copy-turn | bundled | `./copy-turn.ts` | command | continuity/copy-turn.mdx | id/continuity/copy-turn.mdx | copy-turn.ts |
 | context-compaction-reminder | bundled | `./context-compaction-reminder.ts` | automatic | continuity/context-reminder.mdx | id/continuity/context-reminder.mdx | source + test |
 | pi-intercom | bundled | `./pi-intercom/index.ts` | mixed | continuity/intercom.mdx | id/continuity/intercom.mdx | README/config/index |
 | ponytail | bundled | `./ponytail/index.js` | skill-backed | skills/ponytail.mdx | id/skills/ponytail.mdx | extension + skills |
 | question | bundled | `./question` | tool | research/question.mdx | id/research/question.mdx | index.ts, schemas.ts, tests |
 | grep-app | bundled | `./grep-app` | tool | research/grep-app.mdx | id/research/grep-app.mdx | index.ts |
-| grepai | bundled | `./grepai.ts` | mixed | research/grepai.mdx | id/research/grepai.mdx | grepai.ts, tools-manager.ts |
 | handoff-new | bundled | `./handoff-new.ts` | command | continuity/handoff-new.mdx | id/continuity/handoff-new.mdx | handoff-new.ts + skills |
 | inline-skills | bundled | `./inline-skills.ts` | skill-backed | skills/inline-skills.mdx | id/skills/inline-skills.mdx | inline-skills.ts, core/skills.ts |
 | rtk | bundled | `./rtk.ts` | automatic | skills/rtk.mdx | id/skills/rtk.mdx | rtk.ts |

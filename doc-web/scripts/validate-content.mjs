@@ -28,14 +28,12 @@ const REQUIRED_HEADINGS_ID = [
 // Explicit mapping from src/extensions/package.json pi.extensions entries to the
 // relative MDX path under doc-web/src/content/docs/capabilities/ (and id/capabilities/).
 const BUNDLED_EXTENSION_GUIDES = {
-  "./agent-browser.ts": "skills/agent-browser",
   "./copy-turn.ts": "continuity/copy-turn",
   "./context-compaction-reminder.ts": "continuity/context-reminder",
   "./pi-intercom/index.ts": "continuity/intercom",
   "./ponytail/index.js": "skills/ponytail",
   "./question": "research/question",
   "./grep-app": "research/grep-app",
-  "./grepai.ts": "research/grepai",
   "./handoff-new.ts": "continuity/handoff-new",
   "./inline-skills.ts": "skills/inline-skills",
   "./rtk.ts": "skills/rtk",

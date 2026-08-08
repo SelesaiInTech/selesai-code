@@ -12,7 +12,6 @@
 			"./ponytail/index.js",
 			"./question",
 			"./grep-app",
-			"./grepai.ts",
 			"./handoff-new.ts",
 			"./inline-skills.ts",
 			"./rtk.ts",
