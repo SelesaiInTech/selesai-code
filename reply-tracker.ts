@@ -111,6 +111,16 @@ export class ReplyTracker {
     throw new Error("Multiple pending asks — specify `to`");
   }
 
+  findUniquePendingAskFrom(to: string, now = Date.now()): IntercomContext | null {
+    const candidates = Array.from(this.pendingAsks.values()).filter((context) => {
+      if (now - context.receivedAt > this.askTimeoutMs) {
+        return false;
+      }
+      return context.from.id === to || context.from.name?.toLowerCase() === to.toLowerCase();
+    });
+    return candidates.length === 1 ? candidates[0]! : null;
+  }
+
   markReplied(replyTo: string): void {
     this.dismissPendingAsk(replyTo);
   }
