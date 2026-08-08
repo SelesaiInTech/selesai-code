@@ -152,32 +152,15 @@ test("a request mentioning normal mode stays active", async () => withTempConfig
   assert.match(result.systemPrompt, /PONYTAIL ULTRA:/);
 }));
 
-test("status bar renders the mode and flips active on agent_start", async () => withTempConfig(async () => {
-  const { events } = createPiHarness();
+test("session_start clears the legacy status without rendering a replacement", async () => withTempConfig(async () => {
+  const { commands, events } = createPiHarness();
   const statusWrites = [];
   const ctx = createCommandContext({
-    sessionManager: { getEntries: () => [{ type: "custom", customType: "ponytail-mode", data: { mode: "ultra" } }] },
-    ui: { notify() {}, setStatus: (key, text) => statusWrites.push({ key, text }), theme: { fg: (_color, text) => text } },
+    ui: { notify() {}, setStatus: (key, text) => statusWrites.push({ key, text }) },
   });
 
   await events.get("session_start")({ reason: "resume" }, ctx);
-  await events.get("agent_start")({}, ctx);
+  await commands.get("ponytail").handler("ultra", ctx);
 
-  assert.equal(statusWrites.at(-2).key, "ponytail");
-  assert.match(statusWrites.at(-2).text, /○.*ULTRA/);
-  assert.match(statusWrites.at(-1).text, /●.*ULTRA/);
-}));
-
-test("status bar stays silent when ui lacks a theme", async () => withTempConfig(async () => {
-  const { events } = createPiHarness();
-  const calls = [];
-  const ctx = createCommandContext({
-    sessionManager: { getEntries: () => [{ type: "custom", customType: "ponytail-mode", data: { mode: "ultra" } }] },
-    ui: { notify() {}, setStatus: (_key, text) => calls.push(text) }, // setStatus present, theme absent
-  });
-
-  await events.get("session_start")({ reason: "resume" }, ctx);
-  await events.get("agent_start")({}, ctx);
-
-  assert.deepEqual(calls, []);
+  assert.deepEqual(statusWrites, [{ key: "ponytail", text: undefined }]);
 }));

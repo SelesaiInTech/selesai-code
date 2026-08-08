@@ -20,7 +20,6 @@ The `ponytail` extension adds compressed communication modes to Selesai. You can
 
 - Bundled with Selesai and loaded automatically.
 - Companion skills are located in `src/skills/ponytail*` directories; the extension itself is the entrypoint, not the individual skills.
-- Requires an interactive TUI session for the status bar and command feedback.
 
 ## What it sets up
 
@@ -28,7 +27,6 @@ The `ponytail` extension adds compressed communication modes to Selesai. You can
 - Registers `/ponytail-review`, `/ponytail-audit`, `/ponytail-gain`, `/ponytail-debt`, and `/ponytail-help` aliases that send the matching `/skill:ponytail-*` message.
 - Persists mode changes as `ponytail-mode` custom session entries.
 - Writes the default mode to the ponytail config file when you use `/ponytail default <mode>`.
-- Shows a status-bar indicator (`● 🐴 ponytail: ⚡ FULL`) while active.
 
 ## What you can configure
 
