@@ -27,7 +27,7 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 
 - Mendaftarkan tool `subagent` untuk run single, paralel, dan berantai.
 - Mendaftarkan keluarga slash command: `/run`, `/chain`, `/parallel`, `/run-chain`, `/subagents`, `/subagent-cost`, `/subagents-doctor`, `/subagents-fleet`, `/subagents-stop`, `/subagents-models`, `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile`, plus shortcut prompt-workflow seperti `/parallel-review`.
-- Mendaftarkan invokasi agen inline: `#nama-agent` di awal pesan menjalankan agen tersebut secara langsung, dan mengetik `#` di editor melengkapi agen yang terinstal secara otomatis.
+- Mendaftarkan invokasi agen inline: `#nama-agent` di mana pun dalam pesan (awal, tengah, atau akhir) menjalankan agen tersebut secara langsung, dan mengetik `#` di editor melengkapi agen yang terinstal secara otomatis.
 - Mendaftarkan shortcut `Ctrl+Alt+F` untuk membuka inspector fleet subagent yang aktif.
 - Membuat artifact lifecycle untuk run async di bawah direktori hasil subagent Selesai.
 - Menyetel `SELESAI_SUBAGENT_PARENT_SESSION` di proses child untuk forwarding permission-system.
@@ -41,7 +41,7 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 
 - Meminta dalam bahasa alami: `Ask commentator to review this diff.`
 - Menjalankan satu agen: `/run commentator "review this plan"`.
-- Menjalankan satu agen secara inline: `#architect Ubah rencana ini menjadi rencana implementasi langkah-demi-langkah.` — `#nama-agent` di awal pesan menjalankan agen tersebut secara langsung (seperti `/run`). Nama yang tidak dikenal atau ambigu menghasilkan notifikasi dan input dikonsumsi tanpa mengirim apa pun ke agen utama.
+- Menjalankan satu agen secara inline: `#architect Ubah rencana ini menjadi rencana implementasi langkah-demi-langkah.` — `#nama-agent` di mana pun dalam pesan (awal, tengah, atau akhir) menjalankan agen tersebut secara langsung (seperti `/run`). Nama yang tidak dikenal atau ambigu hanya menghasilkan notifikasi dan input dikonsumsi bila mention berada di awal pesan; mention di tengah pesan (mis. `issue #42`) lolos tanpa diubah.
 - Menjalankan agen secara berurutan: `/chain explorer "scan auth" -> architect "design refactor" -> builder "implement it"`.
 - Menjalankan agen secara paralel: `/parallel commentator "check correctness" -> commentator "check tests"`.
 - Menggunakan sintaks grup inline: `/chain explorer -> (commentator "A" | commentator "B") -> writer "fix"`.
@@ -68,7 +68,7 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 | `subagent({ action: "stop", id })` | Hentikan run async. |
 | `subagent({ action: "approve-checkpoint", id })` / `reject-checkpoint` | Selesaikan checkpoint chain eksplisit. |
 | `/run <agent> [task] [--bg] [--fork]` | Bentuk slash untuk run single-agent. |
-| `#<agent> [task]` | Bentuk inline untuk run single-agent: `#nama-agent` di awal pesan menjalankan agen tersebut secara langsung. |
+| `#<agent> [task]` | Bentuk inline untuk run single-agent: `#nama-agent` di mana pun dalam pesan menjalankan agen tersebut secara langsung. |
 | `/chain ...` | Bentuk slash untuk chain sequential. |
 | `/parallel ...` | Bentuk slash untuk run paralel. |
 | `/run-chain <chainName> -- <task>` | Jalankan `.chain.md` atau `.chain.json` yang tersimpan. |

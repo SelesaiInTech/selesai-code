@@ -27,7 +27,7 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 
 - Registers the `subagent` tool for single, parallel, and chain runs.
 - Registers a family of slash commands: `/run`, `/chain`, `/parallel`, `/run-chain`, `/subagents`, `/subagent-cost`, `/subagents-doctor`, `/subagents-fleet`, `/subagents-stop`, `/subagents-models`, `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile`, plus prompt-workflow shortcuts such as `/parallel-review`.
-- Registers inline agent invocation: `#agent-name` at the start of a message runs that agent directly, and typing `#` in the editor autocompletes installed agents.
+- Registers inline agent invocation: `#agent-name` anywhere in a message (start, middle, or end) runs that agent directly, and typing `#` in the editor autocompletes installed agents.
 - Registers the `Ctrl+Alt+F` shortcut to open the live subagent fleet inspector.
 - Creates lifecycle artifacts for async runs under the Selesai subagent results directory.
 - Sets `SELESAI_SUBAGENT_PARENT_SESSION` in child processes for permission-system forwarding.
@@ -41,7 +41,7 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 
 - Ask in plain language: `Ask commentator to review this diff.`
 - Run a single agent: `/run commentator "review this plan"`.
-- Invoke a single agent inline: `#architect Turn this plan into a step-by-step implementation plan.` — `#agent-name` at the start of a message runs that agent directly (like `/run`). Unknown or ambiguous agent names produce a notification and consume the input without sending anything to the main agent.
+- Invoke a single agent inline: `#architect Turn this plan into a step-by-step implementation plan.` — `#agent-name` anywhere in a message (start, middle, or end) runs that agent directly (like `/run`). Unknown or ambiguous agent names only produce a notification and consume the input when the mention is at the start of the message; mid-message mentions (e.g. `issue #42`) pass through untouched.
 - Run agents in sequence: `/chain explorer "scan auth" -> architect "design refactor" -> builder "implement it"`.
 - Run agents in parallel: `/parallel commentator "check correctness" -> commentator "check tests"`.
 - Use inline group syntax: `/chain explorer -> (commentator "A" | commentator "B") -> writer "fix"`.
@@ -68,7 +68,7 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 | `subagent({ action: "stop", id })` | Stop an async run. |
 | `subagent({ action: "approve-checkpoint", id })` / `reject-checkpoint` | Resolve an explicit chain checkpoint. |
 | `/run <agent> [task] [--bg] [--fork]` | Slash form of a single-agent run. |
-| `#<agent> [task]` | Inline form of a single-agent run: `#agent-name` at the start of a message runs that agent directly. |
+| `#<agent> [task]` | Inline form of a single-agent run: `#agent-name` anywhere in a message runs that agent directly. |
 | `/chain ...` | Slash form of a sequential chain. |
 | `/parallel ...` | Slash form of a parallel run. |
 | `/run-chain <chainName> -- <task>` | Run a saved `.chain.md` or `.chain.json`. |

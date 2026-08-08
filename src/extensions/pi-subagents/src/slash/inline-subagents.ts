@@ -5,24 +5,29 @@ import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts
 import type { SubagentState } from "../shared/types.ts";
 import { launchSlashSubagent } from "./slash-commands.ts";
 
-/** `#agent-name` at the very start of a message, followed by end-of-line or a space. */
-const INLINE_AGENT_TOKEN_RE = /^#([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/i;
+/** `#agent-name` anywhere in a message (start, middle, or end), like `$skill-name`. */
+const INLINE_AGENT_TOKEN_RE = /(^|[^a-z0-9_-])#([a-z0-9]+(?:-[a-z0-9]+)*)(?![a-z0-9_-])/i;
 
 /**
  * Parse an inline subagent invocation from raw input.
- * Returns the (lowercased) agent name and the task text, or null when the
- * message does not start with a `#agent-name` token.
+ * Returns the (lowercased) agent name, the task text after the mention, and
+ * whether the mention is at the start of the input (leading whitespace counts).
+ * Returns null when the text contains no `#agent-name` token.
  */
-export function parseInlineSubagentInput(text: string): { agentName: string; task: string } | null {
-	const trimmed = text.trimStart();
-	const match = trimmed.match(INLINE_AGENT_TOKEN_RE);
+export function parseInlineSubagentInput(text: string): { agentName: string; task: string; atStart: boolean } | null {
+	const match = text.match(INLINE_AGENT_TOKEN_RE);
 	if (!match) return null;
-	return { agentName: (match[1] ?? "").toLowerCase(), task: trimmed.slice(match[0].length).trim() };
+	const index = match.index ?? 0;
+	return {
+		agentName: (match[2] ?? "").toLowerCase(),
+		task: text.slice(index + match[0].length).trim(),
+		atStart: text.slice(0, index).trim() === "",
+	};
 }
 
-/** Text before the cursor: `#` optionally followed by a partial agent name (message start only). */
+/** Text before the cursor: `#` optionally followed by a partial agent name (anywhere on the line). */
 function getInlineAgentToken(textBeforeCursor: string): string | undefined {
-	const match = textBeforeCursor.match(/^#([a-z0-9-]*)$/i);
+	const match = textBeforeCursor.match(/(?:^|[^a-z0-9_-])#([a-z0-9-]*)$/i);
 	return match ? match[1] ?? "" : undefined;
 }
 
@@ -59,11 +64,12 @@ export function createInlineSubagentAutocompleteProvider(
 	return {
 		triggerCharacters: ["#"],
 		async getSuggestions(lines, cursorLine, cursorCol, options) {
-			// Subagent invocations are whole-message actions: only trigger at the start of the first line.
-			if (cursorLine !== 0 || !state.baseCwd) {
+			// Like the $ skill picker, # works anywhere on the current line, not just
+			// at the start of the message.
+			if (!state.baseCwd) {
 				return current.getSuggestions(lines, cursorLine, cursorCol, options);
 			}
-			const token = getInlineAgentToken((lines[0] ?? "").slice(0, cursorCol));
+			const token = getInlineAgentToken((lines[cursorLine] ?? "").slice(0, cursorCol));
 			if (token === undefined) {
 				return current.getSuggestions(lines, cursorLine, cursorCol, options);
 			}
@@ -90,9 +96,10 @@ export function createInlineSubagentAutocompleteProvider(
 }
 
 /**
- * `#agent-name [task]` inline subagent invocation: typing `#` at the start of a
- * message suggests installed agents; sending `#agent-name task` runs that agent
- * (same path as `/run agent task`) instead of sending the text to the main agent.
+ * `#agent-name [task]` inline subagent invocation: typing `#` anywhere in a
+ * message suggests installed agents; sending a message that contains
+ * `#agent-name` runs that agent (same path as `/run agent task`) instead of
+ * sending the text to the main agent.
  */
 export function registerInlineSubagentInvocation(pi: ExtensionAPI, state: SubagentState): void {
 	pi.on("session_start", (_event, ctx) => {
@@ -108,12 +115,12 @@ export function registerInlineSubagentInvocation(pi: ExtensionAPI, state: Subage
 
 		const agents = discoverAgents(state.baseCwd, "both").agents;
 		const resolved = resolveAgentName(parsed.agentName, agents);
-		if (resolved.error) {
-			ctx.ui.notify?.(resolved.error, "warning");
-			return { action: "handled" };
-		}
-		if (!resolved.agent) {
-			ctx.ui.notify?.(`Unknown subagent: #${parsed.agentName}`, "warning");
+		if (resolved.error || !resolved.agent) {
+			// A #mention that does not resolve only consumes the input when it is an
+			// explicit invocation at the start of the message. Mid-message mentions
+			// (e.g. "issue #42") must never swallow the user's text.
+			if (!parsed.atStart) return { action: "continue" };
+			ctx.ui.notify?.(resolved.error ?? `Unknown subagent: #${parsed.agentName}`, "warning");
 			return { action: "handled" };
 		}
 

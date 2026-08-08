@@ -25,14 +25,31 @@ describe("createInlineSubagentAutocompleteProvider", () => {
 		assert.ok(result.items.length > 0);
 	});
 
-	it("falls back to the base provider outside message start or without a # token", async () => {
+	it("suggests agents for # anywhere in the message, like the $ skill picker", async () => {
 		const base = baseProvider();
 		const provider = createInlineSubagentAutocompleteProvider(state, base);
 
-		// # on a later line is not an inline invocation.
-		assert.equal(await provider.getSuggestions(["", "#"], 1, 1, {} as never), null);
-		// # mid-line is not an inline invocation.
-		assert.equal(await provider.getSuggestions(["see #"], 0, 5, {} as never), null);
+		// # mid-line.
+		const mid = await provider.getSuggestions(["see #arch"], 0, 9, {} as never);
+		assert.ok(mid);
+		assert.equal(mid.prefix, "#arch");
+		assert.ok(mid.items.some((item) => item.value === "#architect"));
+
+		// # on a later line.
+		const later = await provider.getSuggestions(["", "#arch"], 1, 5, {} as never);
+		assert.ok(later);
+		assert.equal(later.prefix, "#arch");
+		assert.ok(later.items.some((item) => item.value === "#architect"));
+	});
+
+	it("falls back to the base provider without a # token or before baseCwd", async () => {
+		const base = baseProvider();
+		const provider = createInlineSubagentAutocompleteProvider(state, base);
+
+		// No # token on the current line.
+		assert.equal(await provider.getSuggestions(["plain text"], 0, 10, {} as never), null);
+		// # mid-word (no boundary before it) is not a mention.
+		assert.equal(await provider.getSuggestions(["pre#arch"], 0, 9, {} as never), null);
 		// No baseCwd yet (session_start not processed) falls back too.
 		const noCwd = createInlineSubagentAutocompleteProvider({ baseCwd: "" } as never, base);
 		assert.equal(await noCwd.getSuggestions(["#"], 0, 1, {} as never), null);
@@ -44,6 +61,7 @@ describe("parseInlineSubagentInput", () => {
 		assert.deepEqual(parseInlineSubagentInput("#architect review the plan"), {
 			agentName: "architect",
 			task: "review the plan",
+			atStart: true,
 		});
 	});
 
@@ -51,24 +69,42 @@ describe("parseInlineSubagentInput", () => {
 		assert.deepEqual(parseInlineSubagentInput("#batch-grill-me interview the user"), {
 			agentName: "batch-grill-me",
 			task: "interview the user",
+			atStart: true,
 		});
 	});
 
 	it("parses #agent-name with no task", () => {
-		assert.deepEqual(parseInlineSubagentInput("#architect"), { agentName: "architect", task: "" });
+		assert.deepEqual(parseInlineSubagentInput("#architect"), { agentName: "architect", task: "", atStart: true });
 	});
 
 	it("is case-insensitive and lowercases the agent name", () => {
-		assert.deepEqual(parseInlineSubagentInput("#Architect plan"), { agentName: "architect", task: "plan" });
+		assert.deepEqual(parseInlineSubagentInput("#Architect plan"), { agentName: "architect", task: "plan", atStart: true });
 	});
 
 	it("allows leading whitespace", () => {
-		assert.deepEqual(parseInlineSubagentInput("  #architect plan"), { agentName: "architect", task: "plan" });
+		assert.deepEqual(parseInlineSubagentInput("  #architect plan"), {
+			agentName: "architect",
+			task: "plan",
+			atStart: true,
+		});
 	});
 
-	it("returns null when the message does not start with #agent", () => {
+	it("parses #agent-name mid-message and at the end, taking the text after the mention as the task", () => {
+		assert.deepEqual(parseInlineSubagentInput("can you #architect review the plan"), {
+			agentName: "architect",
+			task: "review the plan",
+			atStart: false,
+		});
+		assert.deepEqual(parseInlineSubagentInput("let's get #architect"), {
+			agentName: "architect",
+			task: "",
+			atStart: false,
+		});
+	});
+
+	it("returns null without a #mention", () => {
 		assert.equal(parseInlineSubagentInput("review the plan"), null);
-		assert.equal(parseInlineSubagentInput("the #architect review"), null);
+		assert.equal(parseInlineSubagentInput("pre#architect"), null);
 		assert.equal(parseInlineSubagentInput("#"), null);
 		assert.equal(parseInlineSubagentInput("#-architect"), null);
 	});
@@ -77,6 +113,7 @@ describe("parseInlineSubagentInput", () => {
 		assert.deepEqual(parseInlineSubagentInput("#architectreview"), {
 			agentName: "architectreview",
 			task: "",
+			atStart: true,
 		});
 	});
 
@@ -84,6 +121,7 @@ describe("parseInlineSubagentInput", () => {
 		assert.deepEqual(parseInlineSubagentInput("#architect   review the plan   "), {
 			agentName: "architect",
 			task: "review the plan",
+			atStart: true,
 		});
 	});
 });
