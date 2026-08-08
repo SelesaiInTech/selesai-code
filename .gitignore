@@ -12,7 +12,11 @@ dist/
 .pi-subagents/missions/
 .selesai/artifacts/
 .selesai/code-graph/
-.selesai/extensions/
+.selesai/extensions/*
+!.selesai/extensions/grepai/
 .selesai/research/
 .upstream-cache/
-.grepai/
+
+# grepai project index (runtime binaries stay local; config is shared)
+.grepai/*
+!.grepai/config.yaml
