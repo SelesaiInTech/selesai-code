@@ -2242,6 +2242,88 @@ test("intercom reply targets exact replyTo when multiple asks are pending", { co
   }
 });
 
+test("intercom reply targets one of multiple pending asks by short session ID", { concurrency: false }, async () => {
+  const { planner, orchestrator, cleanup } = await setupClients();
+  const { default: piIntercomExtension } = await import("./index.ts");
+  const harness = createExtensionHarness("reply-short-id-worker");
+
+  try {
+    piIntercomExtension(harness.pi as never);
+    await harness.emitLifecycle("session_start");
+    const worker = await waitForSessionByName(planner, "reply-short-id-worker");
+
+    assert.equal((await planner.send(worker.id, { messageId: "reply-short-id-1", text: "First?", expectsReply: true })).delivered, true);
+    assert.equal((await orchestrator.send(worker.id, { messageId: "reply-short-id-2", text: "Second?", expectsReply: true })).delivered, true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const intercomTool = harness.tools.find((tool) => tool.name === "intercom")!;
+    const replyReceived = waitForReply(planner, "reply-short-id-1");
+    const result = await intercomTool.execute("reply-short-id", {
+      action: "reply",
+      to: planner.sessionId!.slice(0, 8),
+      message: "First answer.",
+    }, new AbortController().signal, undefined, harness.ctx);
+    assert.equal(result.details?.delivered, true);
+    assert.equal((await replyReceived).message.content.text, "First answer.");
+
+    const pending = await intercomTool.execute("pending-after-short-id", { action: "pending" }, new AbortController().signal, undefined, harness.ctx);
+    assert.doesNotMatch(pending.content[0]?.text ?? "", /reply-short-id-1/);
+    assert.match(pending.content[0]?.text ?? "", /reply-short-id-2/);
+  } finally {
+    await harness.emitLifecycle("session_shutdown");
+    await cleanup();
+  }
+});
+
+test("a short-ID reply unblocks the original ask when another ask is pending", { concurrency: false }, async () => {
+  const { planner, orchestrator, cleanup } = await setupClients();
+  const { default: piIntercomExtension } = await import("./index.ts");
+  const askerHarness = createExtensionHarness("short-id-asker", { sessionId: "asker123-session" });
+  const replierHarness = createExtensionHarness("short-id-replier", { sessionId: "replier-session" });
+
+  try {
+    piIntercomExtension(askerHarness.pi as never);
+    piIntercomExtension(replierHarness.pi as never);
+    await askerHarness.emitLifecycle("session_start");
+    await replierHarness.emitLifecycle("session_start");
+    const asker = await waitForSessionByName(planner, "short-id-asker");
+    const replier = await waitForSessionByName(planner, "short-id-replier");
+    const askerTool = askerHarness.tools.find((tool) => tool.name === "intercom")!;
+    const replierTool = replierHarness.tools.find((tool) => tool.name === "intercom")!;
+
+    const originalAsk = askerTool.execute("ask-for-work", {
+      action: "ask",
+      to: replier.id,
+      message: "Is any work pending?",
+    }, new AbortController().signal, undefined, askerHarness.ctx);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal((await orchestrator.send(replier.id, {
+      messageId: "another-pending-ask",
+      text: "A separate pending question",
+      expectsReply: true,
+    })).delivered, true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const reply = await replierTool.execute("reply-to-work-ask", {
+      action: "reply",
+      to: asker.id.slice(0, 8),
+      message: "No work is pending.",
+    }, new AbortController().signal, undefined, replierHarness.ctx);
+    assert.equal(reply.details?.delivered, true, reply.content.map((part) => part.text).join("\n"));
+
+    const result = await originalAsk;
+    assert.doesNotMatch(result.content[0]?.text ?? "", /No reply from/);
+    assert.match(result.content[0]?.text ?? "", /No work is pending/);
+
+    const pending = await replierTool.execute("remaining-pending", { action: "pending" }, new AbortController().signal, undefined, replierHarness.ctx);
+    assert.match(pending.content[0]?.text ?? "", /another-pending-ask/);
+  } finally {
+    await askerHarness.emitLifecycle("session_shutdown");
+    await replierHarness.emitLifecycle("session_shutdown");
+    await cleanup();
+  }
+});
+
 test("broker queues replies to recently disconnected named senders", { concurrency: false }, async () => {
   const { planner, orchestrator, cleanup } = await setupClients();
   const replacement = new IntercomClient();
