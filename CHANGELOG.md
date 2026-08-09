@@ -4,6 +4,8 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-09
+
 ### Added
 - Added cwd-scoped `send` and `ask` targeting plus `openProjectPaneIfMissing` for visible cross-codebase peer conversations through Herdr project panes.
 
