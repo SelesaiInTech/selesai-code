@@ -7,7 +7,6 @@ import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
-import type { ModelsJsonProvider } from "./model-config.ts";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -143,7 +142,6 @@ export interface Settings {
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
-	customModels?: Record<string, ModelsJsonProvider>; // Custom model providers, keyed by provider id (models.json schema)
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -1276,26 +1274,6 @@ export class SettingsManager {
 		}
 		this.globalSettings.autoHandoff.thresholdTokens = Math.max(1000, Math.floor(tokens));
 		this.markModified("autoHandoff", "thresholdTokens");
-		this.save();
-	}
-
-	getCustomModels(): Record<string, ModelsJsonProvider> | undefined {
-		return this.settings.customModels ? structuredClone(this.settings.customModels) : undefined;
-	}
-
-	getProjectCustomModels(): Record<string, ModelsJsonProvider> | undefined {
-		return this.projectSettings.customModels ? structuredClone(this.projectSettings.customModels) : undefined;
-	}
-
-	setCustomModels(scope: SettingsScope, value: Record<string, ModelsJsonProvider>): void {
-		if (scope === "project") {
-			this.updateProjectSettings("customModels", (settings) => {
-				settings.customModels = structuredClone(value);
-			});
-			return;
-		}
-		this.globalSettings.customModels = structuredClone(value);
-		this.markModified("customModels");
 		this.save();
 	}
 }

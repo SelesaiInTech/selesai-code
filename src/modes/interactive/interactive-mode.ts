@@ -883,7 +883,7 @@ export class InteractiveMode {
 
 		const modelsJsonError = this.session.modelRuntime.getError();
 		if (modelsJsonError) {
-			this.showError(`model configuration error: ${modelsJsonError}`);
+			this.showError(`models.json error: ${modelsJsonError}`);
 		}
 
 		if (modelFallbackMessage) {
@@ -4227,11 +4227,6 @@ export class InteractiveMode {
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
 					warnings: this.settingsManager.getWarnings(),
-					customModels: {
-						global: this.settingsManager.getCustomModels(),
-						project: this.settingsManager.getProjectCustomModels(),
-					},
-					projectTrusted: this.settingsManager.isProjectTrusted(),
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -4376,19 +4371,11 @@ export class InteractiveMode {
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
 					},
-					onCustomModelsChange: (scope, providers) => {
-						this.settingsManager.setCustomModels(scope, providers);
-						this.session.modelRuntime.setSettingsCustomModels({
-							global: this.settingsManager.getCustomModels(),
-							project: this.settingsManager.getProjectCustomModels(),
-						});
-					},
 					onCancel: () => {
 						done();
 						this.ui.requestRender();
 					},
 				},
-				{ tui: this.ui, keybindings: this.keybindings },
 			);
 			return { component: selector, focus: selector.getSettingsList() };
 		});
@@ -5484,7 +5471,7 @@ export class InteractiveMode {
 			const savedImplicitProjectTrust = this.maybeSaveImplicitProjectTrustAfterReload();
 			const modelsJsonError = this.session.modelRuntime.getError();
 			if (modelsJsonError) {
-				this.showError(`model configuration error: ${modelsJsonError}`);
+				this.showError(`models.json error: ${modelsJsonError}`);
 			}
 			this.showStatus(
 				savedImplicitProjectTrust
