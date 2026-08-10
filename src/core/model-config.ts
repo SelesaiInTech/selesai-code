@@ -253,8 +253,29 @@ export class ModelConfig {
 		this.error = error;
 	}
 
-	static async loadMerged(modelsJsonPaths: readonly string[]): Promise<ModelConfig> {
-		const configs = await Promise.all(modelsJsonPaths.map((path) => ModelConfig.load(path)));
+	/** Build a config from an in-memory provider map (e.g. settings-defined custom models). */
+	static fromProviders(providers: Record<string, ModelsJsonProvider>, sourceLabel: string): ModelConfig {
+		const wrapped: ModelsJson = { providers };
+		if (!validateModelsConfig.Check(wrapped)) {
+			const errors =
+				validateModelsConfig
+					.Errors(wrapped)
+					.map((error) => `  - ${formatValidationPath(error)}: ${error.message}`)
+					.join("\n") || "Unknown schema error";
+			return new ModelConfig(new Map(), `Invalid ${sourceLabel} schema:\n${errors}`);
+		}
+		const map = new Map<string, ModelsJsonProvider>();
+		for (const [providerId, provider] of Object.entries(wrapped.providers)) {
+			map.set(providerId, deepFreeze(structuredClone(provider)));
+		}
+		return new ModelConfig(map);
+	}
+
+	static async loadMerged(sources: readonly (string | ModelConfig)[]): Promise<ModelConfig> {
+		const configs: ModelConfig[] = [];
+		for (const source of sources) {
+			configs.push(typeof source === "string" ? await ModelConfig.load(source) : source);
+		}
 		const providers = new Map<string, ModelsJsonProvider>();
 		const errors: string[] = [];
 		for (const config of configs) {

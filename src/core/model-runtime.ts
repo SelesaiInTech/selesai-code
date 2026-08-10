@@ -32,7 +32,7 @@ import {
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
 import { getAgentDir, getBundledDefaultsDir } from "../config.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
-import { ModelConfig } from "./model-config.ts";
+import { ModelConfig, type ModelsJsonProvider } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
 import {
 	type AuthStatus,
@@ -62,6 +62,8 @@ export interface CreateModelRuntimeOptions {
 	modelsPath?: string | null;
 	modelsStore?: ModelsStore;
 	modelsStorePath?: string;
+	/** Custom model providers from settings (global scope first, then project). */
+	settingsCustomModels?: { global?: Record<string, ModelsJsonProvider>; project?: Record<string, ModelsJsonProvider> };
 	/** Allow create() to refresh model catalogs over the network. Defaults to false. */
 	allowModelNetwork?: boolean;
 	/** Timeout for the create-time network model refresh. */
@@ -103,6 +105,7 @@ export class ModelRuntime implements Models {
 	private readonly compositionErrors = new Map<string, string>();
 	private readonly modelsPath: string | undefined;
 	private readonly modelNetworkEnabled: boolean;
+	private settingsCustomModels: { global?: Record<string, ModelsJsonProvider>; project?: Record<string, ModelsJsonProvider> };
 	private config: ModelConfig;
 	private snapshot: ModelRuntimeSnapshot = {
 		all: [],
@@ -121,11 +124,13 @@ export class ModelRuntime implements Models {
 		modelsStore: ModelsStore,
 		providers: readonly Provider[],
 		modelNetworkEnabled: boolean,
+		settingsCustomModels: { global?: Record<string, ModelsJsonProvider>; project?: Record<string, ModelsJsonProvider> } = {},
 	) {
 		this.credentials = credentials;
 		this.config = config;
 		this.modelsPath = modelsPath;
 		this.modelNetworkEnabled = modelNetworkEnabled;
+		this.settingsCustomModels = settingsCustomModels;
 		this.defaultBuiltins = new Map(providers.map((provider) => [provider.id, provider]));
 		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
 		this.models = createModels({ credentials, modelsStore });
@@ -136,9 +141,16 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
+		const settingsCustomModels = options.settingsCustomModels;
 		const config = await ModelConfig.loadMerged([
 			join(getBundledDefaultsDir(), "models.json"),
 			...(modelsPath ? [modelsPath] : []),
+			...(settingsCustomModels?.global
+				? [ModelConfig.fromProviders(settingsCustomModels.global, "global custom models")]
+				: []),
+			...(settingsCustomModels?.project
+				? [ModelConfig.fromProviders(settingsCustomModels.project, "project custom models")]
+				: []),
 		]);
 		const modelsStore =
 			options.modelsStore ??
@@ -160,6 +172,7 @@ export class ModelRuntime implements Models {
 			modelsStore,
 			providers,
 			process.env.PI_OFFLINE === undefined,
+			settingsCustomModels,
 		);
 		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
@@ -531,6 +544,12 @@ export class ModelRuntime implements Models {
 		this.config = await ModelConfig.loadMerged([
 			join(getBundledDefaultsDir(), "models.json"),
 			...(this.modelsPath ? [this.modelsPath] : []),
+			...(this.settingsCustomModels?.global
+				? [ModelConfig.fromProviders(this.settingsCustomModels.global, "global custom models")]
+				: []),
+			...(this.settingsCustomModels?.project
+				? [ModelConfig.fromProviders(this.settingsCustomModels.project, "project custom models")]
+				: []),
 		]);
 		this.configureRadiusProviders();
 		this.rebuildProviders();
@@ -605,6 +624,18 @@ export class ModelRuntime implements Models {
 		this.nativeExtensionProviders.delete(providerId);
 		this.recomposeProvider(providerId);
 		this.updateModelSnapshot();
+		void this.refresh({ allowNetwork: false });
+	}
+
+	/** Replace the settings-defined custom models and refresh without network access. */
+	setSettingsCustomModels(sources: {
+		global?: Record<string, ModelsJsonProvider>;
+		project?: Record<string, ModelsJsonProvider>;
+	}): void {
+		this.settingsCustomModels = {
+			global: sources.global ? structuredClone(sources.global) : undefined,
+			project: sources.project ? structuredClone(sources.project) : undefined,
+		};
 		void this.refresh({ allowNetwork: false });
 	}
 }

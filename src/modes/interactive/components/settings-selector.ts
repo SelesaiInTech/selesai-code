@@ -4,6 +4,7 @@ import {
 	type Component,
 	Container,
 	getCapabilities,
+	Input,
 	type SelectItem,
 	SelectList,
 	type SelectListLayoutOptions,
@@ -11,8 +12,11 @@ import {
 	SettingsList,
 	Spacer,
 	Text,
+	type TUI,
 } from "@earendil-works/pi-tui";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
+import type { KeybindingsManager } from "../../../core/keybindings.ts";
+import { ModelConfig, type ModelsJsonProvider } from "../../../core/model-config.ts";
 import type { DefaultProjectTrust, WarningSettings } from "../../../core/settings-manager.ts";
 import {
 	getSelectListTheme,
@@ -22,6 +26,7 @@ import {
 	theme,
 } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
+import { ExtensionEditorComponent } from "./extension-editor.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
 
 const SETTINGS_SUBMENU_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -81,6 +86,8 @@ export interface SettingsConfig {
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
 	warnings: WarningSettings;
+	customModels: { global?: Record<string, ModelsJsonProvider>; project?: Record<string, ModelsJsonProvider> };
+	projectTrusted: boolean;
 }
 
 export interface SettingsCallbacks {
@@ -113,6 +120,10 @@ export interface SettingsCallbacks {
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
+	onCustomModelsChange: (
+		scope: "global" | "project",
+		providers: Record<string, ModelsJsonProvider>,
+	) => void;
 	onCancel: () => void;
 }
 
@@ -468,14 +479,398 @@ class ThemeSubmenu extends Container {
 	}
 }
 
+const CUSTOM_MODEL_SCOPE_LABELS: Record<"global" | "project", string> = {
+	global: "Global",
+	project: "Project",
+};
+
+function defaultCustomProvider(providerId: string): ModelsJsonProvider {
+	return {
+		api: "openai-completions",
+		baseUrl: "http://localhost:11434/v1",
+		models: [{ id: "default" }],
+	};
+}
+
+/**
+ * JSON editor submenu for a single custom provider. Reuses the extension
+ * editor when a TUI/keybindings pair is available, otherwise falls back to a
+ * single-line input. JSON is validated against the models.json schema before
+ * it is saved; validation errors are shown inline without losing the edit.
+ */
+class JsonEditorSubmenu extends Container {
+	private readonly scope: "global" | "project";
+	private readonly providerId: string;
+	private readonly providers: Record<string, ModelsJsonProvider>;
+	private readonly onChange: (scope: "global" | "project", providers: Record<string, ModelsJsonProvider>) => void;
+	private readonly onCancel: () => void;
+	private readonly tui: TUI | undefined;
+	private readonly keybindings: KeybindingsManager | undefined;
+	private editor: Component | undefined;
+	private errorText: Text;
+
+	constructor(
+		scope: "global" | "project",
+		providerId: string,
+		providers: Record<string, ModelsJsonProvider>,
+		onChange: (scope: "global" | "project", providers: Record<string, ModelsJsonProvider>) => void,
+		onCancel: () => void,
+		tui?: TUI,
+		keybindings?: KeybindingsManager,
+	) {
+		super();
+		this.scope = scope;
+		this.providerId = providerId;
+		this.providers = providers;
+		this.onChange = onChange;
+		this.onCancel = onCancel;
+		this.tui = tui;
+		this.keybindings = keybindings;
+
+		this.addChild(new Text(theme.bold(theme.fg("accent", `Edit JSON: ${providerId}`)), 0, 0));
+		this.addChild(new Spacer(1));
+		this.addChild(
+			new Text(
+				theme.fg("muted", "Edit the provider configuration (models.json schema). Enter submits, Esc cancels."),
+				0,
+				0,
+			),
+		);
+		this.addChild(new Spacer(1));
+		this.showEditor(JSON.stringify(providers[providerId], null, 2));
+		this.addChild(new Spacer(1));
+		this.errorText = new Text("", 0, 0);
+		this.addChild(this.errorText);
+	}
+
+	handleInput(data: string): void {
+		this.editor?.handleInput?.(data);
+	}
+
+	private showEditor(prefill: string): void {
+		if (this.tui && this.keybindings) {
+			this.editor = new ExtensionEditorComponent(
+				this.tui,
+				this.keybindings,
+				`Edit ${this.providerId}`,
+				prefill,
+				(text) => this.handleSubmit(text),
+				() => this.onCancel(),
+			);
+			return;
+		}
+		const input = new Input();
+		input.setValue(prefill);
+		input.onSubmit = (text) => this.handleSubmit(text);
+		input.onEscape = () => this.onCancel();
+		this.editor = input;
+	}
+
+	private handleSubmit(text: string): void {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(text);
+		} catch (error) {
+			this.setError(`Invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+			return;
+		}
+		const wrapped: Record<string, ModelsJsonProvider> = { [this.providerId]: parsed as ModelsJsonProvider };
+		const configError = ModelConfig.fromProviders(wrapped, "custom models").getError();
+		if (configError) {
+			this.setError(configError);
+			return;
+		}
+		this.providers[this.providerId] = wrapped[this.providerId]!;
+		this.onChange(this.scope, this.providers);
+		this.onCancel();
+	}
+
+	private setError(message: string): void {
+		this.errorText.setText(theme.fg("error", message));
+	}
+}
+
+/** Submenu asking for explicit confirmation before removing a provider. */
+class ConfirmRemoveSubmenu extends Container {
+	private settingsList: SettingsList;
+
+	constructor(providerId: string, onConfirm: () => void, onCancel: () => void) {
+		super();
+		this.addChild(new Text(theme.bold(theme.fg("accent", "Remove provider")), 0, 0));
+		this.addChild(new Spacer(1));
+		this.addChild(new Text(theme.fg("muted", `Remove "${providerId}" from this scope?`), 0, 0));
+		this.addChild(new Spacer(1));
+		const items: SettingItem[] = [
+			{
+				id: "confirm",
+				label: "Remove",
+				currentValue: "remove",
+				values: ["remove"],
+			},
+			{
+				id: "cancel",
+				label: "Cancel",
+				currentValue: "cancel",
+				values: ["cancel"],
+			},
+		];
+		this.settingsList = new SettingsList(
+			items,
+			Math.min(items.length, 10),
+			getSettingsListTheme(),
+			(id) => {
+				if (id === "confirm") onConfirm();
+				else onCancel();
+			},
+			onCancel,
+		);
+		this.addChild(this.settingsList);
+	}
+
+	handleInput(data: string): void {
+		this.settingsList.handleInput(data);
+	}
+}
+
+/** Submenu with Edit JSON / Remove actions for one custom provider. */
+class ProviderActionsSubmenu extends Container {
+	private settingsList: SettingsList;
+
+	constructor(
+		scope: "global" | "project",
+		providerId: string,
+		providers: Record<string, ModelsJsonProvider>,
+		onChange: (scope: "global" | "project", providers: Record<string, ModelsJsonProvider>) => void,
+		onCancel: () => void,
+		tui?: TUI,
+		keybindings?: KeybindingsManager,
+	) {
+		super();
+		this.addChild(new Text(theme.bold(theme.fg("accent", providerId)), 0, 0));
+		this.addChild(new Spacer(1));
+		const items: SettingItem[] = [
+			{
+				id: "edit",
+				label: "Edit JSON",
+				description: "Edit the provider configuration as JSON",
+				currentValue: "edit",
+				submenu: (_currentValue, done) =>
+					new JsonEditorSubmenu(
+						scope,
+						providerId,
+						providers,
+						onChange,
+						() => done(),
+						tui,
+						keybindings,
+					),
+			},
+			{
+				id: "remove",
+				label: "Remove",
+				description: "Remove this provider from the selected scope",
+				currentValue: "remove",
+				submenu: (_currentValue, done) =>
+					new ConfirmRemoveSubmenu(
+						providerId,
+						() => {
+							delete providers[providerId];
+							onChange(scope, providers);
+							done();
+							onCancel();
+						},
+						() => done(),
+					),
+			},
+		];
+		this.settingsList = new SettingsList(
+			items,
+			Math.min(items.length, 10),
+			getSettingsListTheme(),
+			() => {},
+			() => onCancel(),
+		);
+		this.addChild(this.settingsList);
+	}
+
+	handleInput(data: string): void {
+		this.settingsList.handleInput(data);
+	}
+}
+
+/** Submenu prompting for a provider id when adding a new custom provider. */
+class AddProviderSubmenu extends Container {
+	private input: Input;
+
+	constructor(
+		providers: Record<string, ModelsJsonProvider>,
+		onAdd: (providerId: string) => void,
+		onCancel: () => void,
+	) {
+		super();
+		this.addChild(new Text(theme.bold(theme.fg("accent", "Add provider")), 0, 0));
+		this.addChild(new Spacer(1));
+		this.addChild(new Text(theme.fg("muted", "Enter a unique provider id for the new custom provider:"), 0, 0));
+		this.addChild(new Spacer(1));
+		this.input = new Input();
+		this.input.onSubmit = (value) => {
+			const providerId = value.trim();
+			if (!providerId || providerId in providers) {
+				this.input.setValue("");
+				return;
+			}
+			onAdd(providerId);
+		};
+		this.input.onEscape = onCancel;
+		this.addChild(this.input);
+	}
+
+	handleInput(data: string): void {
+		this.input.handleInput(data);
+	}
+}
+
+/** Submenu listing the custom providers in a scope with Add/Edit/Remove actions. */
+class CustomModelsSubmenu extends Container {
+	private listHost: Container;
+	private settingsList!: SettingsList;
+	private readonly state: { global: Record<string, ModelsJsonProvider>; project: Record<string, ModelsJsonProvider> };
+	private readonly projectTrusted: boolean;
+	private readonly onCustomModelsChange: (
+		scope: "global" | "project",
+		providers: Record<string, ModelsJsonProvider>,
+	) => void;
+	private readonly onCancel: () => void;
+	private readonly tui: TUI | undefined;
+	private readonly keybindings: KeybindingsManager | undefined;
+	private scope: "global" | "project";
+	private providers: Record<string, ModelsJsonProvider>;
+
+	constructor(
+		state: { global: Record<string, ModelsJsonProvider>; project: Record<string, ModelsJsonProvider> },
+		projectTrusted: boolean,
+		onCustomModelsChange: (scope: "global" | "project", providers: Record<string, ModelsJsonProvider>) => void,
+		onCancel: () => void,
+		tui?: TUI,
+		keybindings?: KeybindingsManager,
+	) {
+		super();
+		this.state = state;
+		this.projectTrusted = projectTrusted;
+		this.onCustomModelsChange = onCustomModelsChange;
+		this.onCancel = onCancel;
+		this.tui = tui;
+		this.keybindings = keybindings;
+		this.scope = "global";
+		this.providers = state.global;
+
+		this.addChild(new Text(theme.bold(theme.fg("accent", "Custom models")), 0, 0));
+		this.addChild(new Spacer(1));
+		this.addChild(new Text(theme.fg("muted", "Add or edit custom model providers (models.json schema)."), 0, 0));
+		this.addChild(new Spacer(1));
+		this.listHost = new Container();
+		this.addChild(this.listHost);
+		this.rebuildList();
+	}
+
+	handleInput(data: string): void {
+		this.settingsList.handleInput(data);
+	}
+
+	private rebuildList(): void {
+		this.listHost.clear();
+		this.settingsList = new SettingsList(
+			this.buildItems(),
+			10,
+			getSettingsListTheme(),
+			(id, newValue) => this.handleChange(id, newValue),
+			() => this.onCancel(),
+		);
+		this.listHost.addChild(this.settingsList);
+	}
+
+	private buildItems(): SettingItem[] {
+		return [
+			{
+				id: "scope",
+				label: "Scope",
+				description: this.projectTrusted
+					? "Save custom providers to global settings or this project's settings"
+					: "Project scope requires trusting this project",
+				currentValue: CUSTOM_MODEL_SCOPE_LABELS[this.scope],
+				values: this.projectTrusted ? ["Global", "Project"] : ["Global"],
+			},
+			{
+				id: "add",
+				label: "Add provider",
+				description: "Create a new custom model provider in this scope",
+				currentValue: "add",
+				submenu: (_currentValue, done) =>
+					new AddProviderSubmenu(
+						this.providers,
+						(providerId) => {
+							this.providers[providerId] = defaultCustomProvider(providerId);
+							this.onCustomModelsChange(this.scope, this.providers);
+							this.rebuildList();
+							done();
+						},
+						() => {
+							this.rebuildList();
+							done();
+						},
+					),
+			},
+			...Object.keys(this.providers).map((providerId) => ({
+				id: `provider-${providerId}`,
+				label: providerId,
+				description: "Edit or remove this custom provider",
+				currentValue: "manage",
+				submenu: (_currentValue: string, done: (selectedValue?: string) => void) =>
+					new ProviderActionsSubmenu(
+						this.scope,
+						providerId,
+						this.providers,
+						(scope, providers) => {
+							this.onCustomModelsChange(scope, providers);
+							this.rebuildList();
+						},
+						() => {
+							this.rebuildList();
+							done();
+						},
+						this.tui,
+						this.keybindings,
+					),
+			})),
+		];
+	}
+
+	private handleChange(id: string, newValue: string): void {
+		if (id !== "scope") return;
+		this.scope = newValue === "Project" ? "project" : "global";
+		this.providers = this.state[this.scope];
+		this.rebuildList();
+	}
+}
+
 /**
  * Main settings selector component.
  */
 export class SettingsSelectorComponent extends Container {
 	private settingsList: SettingsList;
+	private customModelsState: { global: Record<string, ModelsJsonProvider>; project: Record<string, ModelsJsonProvider> };
 
-	constructor(config: SettingsConfig, callbacks: SettingsCallbacks) {
+	constructor(
+		config: SettingsConfig,
+		callbacks: SettingsCallbacks,
+		options?: { tui?: TUI; keybindings?: KeybindingsManager },
+	) {
 		super();
+
+		this.customModelsState = {
+			global: config.customModels?.global ? { ...config.customModels.global } : {},
+			project: config.customModels?.project ? { ...config.customModels.project } : {},
+		};
 
 		const supportsImages = getCapabilities().images;
 		const followUpKey = keyDisplayText("app.message.followUp");
@@ -602,6 +997,24 @@ export class SettingsSelectorComponent extends Container {
 							callbacks.onWarningsChange(warnings);
 						},
 						() => done(),
+					),
+			},
+			{
+				id: "custom-models",
+				label: "Custom models",
+				description: "Add or edit custom model providers (models.json schema)",
+				currentValue: `${Object.keys(this.customModelsState.global).length + Object.keys(this.customModelsState.project).length} providers`,
+				submenu: (_currentValue, done) =>
+					new CustomModelsSubmenu(
+						this.customModelsState,
+						config.projectTrusted,
+						(scope, providers) => {
+							this.customModelsState[scope] = providers;
+							callbacks.onCustomModelsChange(scope, providers);
+						},
+						() => done(),
+						options?.tui,
+						options?.keybindings,
 					),
 			},
 			{
