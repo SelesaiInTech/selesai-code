@@ -6,29 +6,34 @@
 
 Customizes the default [pi](https://github.com/badlogic/pi-mono) editor with a powerline-style status bar, welcome overlay, and AI-generated "vibes" for loading messages. Inspired by [Powerlevel10k](https://github.com/romkatv/powerlevel10k) and [oh-my-pi](https://github.com/can1357/oh-my-pi).
 
-<img width="1261" height="817" alt="Image" src="https://github.com/user-attachments/assets/4cc43320-3fb8-4503-b857-69dffa7028f2" />
+<img width="1261" height="817" alt="Example powerline UI" src="https://github.com/user-attachments/assets/4cc43320-3fb8-4503-b857-69dffa7028f2" />
+
 
 ## Features
 
 **Editor stash** — Press `Alt+S` to save your editor content and clear the editor, type a quick prompt, and your stashed text auto-restores when the agent finishes. Toggles between stash, pop, and update-existing-stash. A `stash` indicator appears in the powerline bar while text is stashed.
 
+**Powerline Queue + Inbox** — Capture thoughts without interrupting the current agent. Type `# <idea>` and press Enter to save an idea instead of sending it; `# @global <idea>`, `# @current <idea>`, and `# @alias <idea>` route it. Messages typed during compaction are held by Powerline and delivered after successful compaction instead of disappearing into Pi's native queue. `/idea`, `/ideas`, and `/queue` provide a file-backed inbox for current-session prompts, project ideas, aliases, retries, clears, and manual delivery. Use `/ideas next` to work the oldest active idea in the current session, or `/ideas issue` to hand it to the current agent for safe GitHub issue triage. Active queue, idea, and blocked counts appear in the `queue` segment only when there is something to show.
+
 **Working Vibes** — AI-generated themed loading messages. Set `/vibe star trek` and your "Working..." becomes "Running diagnostics..." or "Engaging warp drive...". Supports any theme: pirate, zen, noir, cowboy, etc.
 
 **Welcome and guide** — A recurring Selesai guide appears on startup, new, resumed, and forked sessions. It maps workflow commands, delegation and research prompts, skills, handoff, recovery, and settings to concrete next steps. Use `/guide` to reopen it, `/guide compact` for a small header, `/guide off` to remember dismissal, or `/guide reset` to restore the full tour. New guide features are called out after upgrades; only the guide mode and version marker are persisted.
 
+**Welcome overlay** — Branded splash screen shown as centered overlay on startup. Shows gradient logo, model info, keyboard tips, loaded AGENTS.md/extensions/skills/templates counts, an approximate initial system-prompt token count, and recent sessions. Auto-dismisses after 30 seconds or on any key press. Set `powerline.welcome` to `false` to disable it while keeping the footer enabled.
+
 **Rounded box design** — Status renders directly in the editor's top border, not as a separate footer.
 
-**Fixed editor cluster** — In interactive TUI sessions, chat/feed content scrolls above the fixed Pi working/status line, powerline rows, editor, ghost suggestions, bash transcript, and last-prompt/status rows. Scroll chat with the mouse wheel, PageUp/PageDown, Command+PageUp/PageDown, Ctrl+Shift+Up/Down, or message-jump shortcuts; the editor stays put. Drag text to copy it, drag selection to the viewport edge to scroll, double-click a line to select it, and right-click to open the terminal menu. Use `/powerline fixed-editor off` for Pi’s regular scrolling layout, or `/powerline mouse-scroll off` for native terminal selection.
+**Native Pi layout** — Pi owns fixed input, feed scrolling, selection, and terminal behavior; this extension supplies powerline widgets and the custom bash/stash/editor integrations.
 
-**Live thinking level indicator** — Shows current thinking level (`think:off`, `think:med`, etc.) with per-level colors. High and xhigh levels use a rainbow effect inspired by Claude Code's ultrathink.
+**Live thinking level indicator** — Shows current thinking level (`think:off`, `think:med`, etc.) with per-level colors. High, xhigh, and max levels use a rainbow effect inspired by Claude Code's ultrathink.
 
 **Smart defaults** — Nerd Font auto-detection for iTerm, WezTerm, Kitty, Ghostty, and Alacritty with ASCII fallbacks. Colors matched to oh-my-pi's dark theme.
 
 **Git integration** — Async status fetching with 1s cache TTL. Automatically invalidates on file writes/edits. Shows branch, staged (+), unstaged (*), and untracked (?) counts.
 
-**Context awareness** — Color-coded warnings at 70% (yellow) and 90% (red) context usage. During streaming, the context segment refreshes from live assistant usage instead of waiting for the next turn. Auto-compact indicator when enabled. If `pi-custom-compaction` is installed and enabled, the powerline automatically hides native context segments so the footer does not show stale post-summary usage.
+**Context awareness** — Color-coded warnings above 70% (yellow) and above 90% (red) context usage. During streaming, the context segment refreshes from live assistant usage instead of waiting for the next turn. Auto-compact indicator when enabled. If `pi-custom-compaction` is installed and enabled, the powerline automatically hides native context segments so the footer does not show stale post-summary usage.
 
-**Token intelligence** — Smart formatting (1.2k, 45M), subscription detection (shows "(sub)" vs dollar cost).
+**Token intelligence** — Smart formatting (1.2k, 45M), used/max/percentage context display, subscription detection, and configurable subscription cost display.
 
 **Sticky bash mode** — Toggle bash mode with `ctrl+shift+b` or `/bash-mode`. It keeps a managed shell session alive for the current pi session, shows a dedicated `shell_mode` segment, streams command output into an embedded transcript below the editor, and lets `cd` or exported state persist across commands.
 
@@ -44,26 +49,62 @@ Restart pi to activate.
 
 ## Usage
 
-Activates automatically. Toggle with `/powerline`, switch presets with `/powerline <name>`, fixed-editor mode with `/powerline fixed-editor on|off|toggle`, and wheel mode with `/powerline mouse-scroll on|off|toggle`.
+Activates automatically. Toggle with `/powerline`, switch presets with `/powerline <name>`, and move the primary row with `/powerline placement above|below|toggle`.
 
-Fixed editor is on by default.
+Use `/cd <path>` to continue the current conversation from another working directory. It supports relative paths, absolute paths, `~`, `~/...`, and directory completions. With no argument, `/cd` prints the current Pi session directory. The command switches into a cwd-updated session file so Pi tools and the footer path segment agree after the change.
 
-- `/powerline fixed-editor off` — return to Pi’s regular scrolling layout
-- `/powerline fixed-editor on` — re-enable the fixed editor
-- `/powerline fixed-editor toggle` — switch between the two
+Powerline Queue + Inbox commands and capture shortcuts:
 
-You can also set it in `~/.pi/agent/settings.json` or project-local `.pi/settings.json`:
+- `# <text>` — capture an idea for the current project without sending it to the agent
+- `# @global <text>` — capture a global idea
+- `# @current <text>` — capture an idea targeted to the current session
+- `/queue alias <name> [path]` — save a project alias, defaulting to the current cwd when `path` is omitted
+- `# @name <text>` — capture an idea for a saved project alias
+- `/compact <text>` — compact now and queue `<text>` as the next prompt after successful compaction
+- `/idea [@target] <text>` — command form of idea capture, useful for scripts and users who disable the sigil
+- `/idea issue [id]` — hand the oldest active idea, or a specific idea, to the current agent for safe GitHub issue triage
+- `/ideas` — open the captured-ideas picker
+- `/ideas next` — send the oldest active idea to the current session
+- `/ideas issue [id]` — ask the current agent to dedupe and file a GitHub issue only when the target repo is clear and owned/controlled
+- `/ideas send <id>` — send an idea to the current session
+- `/queue` — open the queued-prompt picker
+- `/queue send [id]` / `/queue retry [id]` — deliver a queued item now
+- `/queue clear <id|all>` — clear queued prompt items
+- `/queue target <id> @name|global|current` — retarget a queued item
+
+The default capture sigil is `#`. When the editor text starts with `# `, the prompt glyph changes to `#`; pressing Enter saves the idea, clears the editor, and leaves the original sigil text in editor history for quick recovery. Configure or disable this under `powerline.queue.captureSigil`:
 
 ```json
 {
   "powerline": {
-    "preset": "default",
-    "fixedEditor": false
+    "queue": {
+      "captureSigil": "#"
+    }
   }
 }
 ```
 
-Use `"fixedEditor": true` to enable it again. Add `"mouseScroll": false` if you want native terminal selection instead of fixed-editor mouse handling.
+Set `captureSigil` to `false` if you often submit markdown headings and prefer `/idea` instead.
+
+Captured data is stored under the Pi agent directory in `powerline-footer/inbox.jsonl` and `powerline-footer/projects.json`. `inbox.jsonl` is a stable read surface for orchestrators and helper agents; each line is a queue item with `id`, `text`, `createdAt`, `updatedAt`, `source`, `target`, `intent`, `status`, and optional `error`. Writes should still go through Powerline commands or the store so locking and atomic writes are preserved. Ideas sent with `/ideas next` or `/ideas send <id>` include a small provenance header so the receiving agent can treat them as deferred captured context. `/idea issue` and `/ideas issue` do not file issues directly from the extension; they send a guarded handoff prompt that tells the current agent to dedupe open issues first, create a GitHub issue only for a clear owned/controlled repo, and ask before filing when the target is unclear.
+
+- `/powerline placement below` — move the primary powerline row below the editor
+- `/powerline placement above` — restore the default placement
+- `/powerline placement toggle` — switch between above and below
+
+You can also set it in the agent settings file (`~/.selesai/agent/settings.json` by default, or under `SELESAI_CODING_AGENT_DIR`) or project-local `.selesai/settings.json`:
+
+```json
+{
+  "showLastPrompt": true,
+  "powerline": {
+    "preset": "default",
+    "placement": "below",
+    "welcome": true
+  }
+}
+```
+
 
 | Preset | Description |
 |--------|-------------|
@@ -76,7 +117,7 @@ Use `"fixedEditor": true` to enable it again. Add `"mouseScroll": false` if you 
 
 **Environment:** `POWERLINE_NERD_FONTS=1` to force Nerd Fonts, `=0` for ASCII.
 
-Preset selection is saved to `~/.pi/agent/settings.json` under `powerline` and restored on startup.
+Preset selection is saved under `powerline` in the agent settings file and restored on startup.
 Run `/powerline default` to switch back to the default preset.
 
 ### Custom items from extension statuses
@@ -119,7 +160,90 @@ You can promote any extension status key into its own dedicated powerline item. 
 - `hideWhenMissing` (optional): hide item when no status is present (default `true`)
 - `excludeFromExtensionStatuses` (optional): omit this key from the aggregate `extension_statuses` segment (default `true`)
 
-If you still prefer the old style, `"powerline": "default"` continues to work.
+If you still prefer the older string preset config shape, `"powerline": "default"` continues to work. String preset shorthand keeps `welcome` enabled and uses the default shortcut/cost/model display settings.
+
+### Disabling segments
+
+Set `powerline.disabledSegments` to hide built-in or configured custom segments from the active preset:
+
+```json
+{
+  "powerline": {
+    "preset": "default",
+    "disabledSegments": ["cost", "extension_statuses", "custom:ci"]
+  }
+}
+```
+
+Built-in names are listed under Segments below. Custom items use `custom:<id>`. Unknown names are ignored with a startup warning.
+
+### Custom layout
+
+Use `powerline.layout` to override segment order and grouping while keeping the selected preset’s colors and segment options. Set `powerline.separator` when you want a separator style independent of the preset:
+
+```json
+{
+  "powerline": {
+    "preset": "default",
+    "separator": "chevron",
+    "layout": {
+      "left": ["model", "thinking", "path", "git"],
+      "right": ["context_pct", "cost"],
+      "secondary": ["custom:ci"]
+    },
+    "customItems": [
+      { "id": "ci", "statusKey": "ci-status" }
+    ]
+  }
+}
+```
+
+A present `left`, `right`, or `secondary` array replaces that preset group exactly; an empty array clears it. Omitted groups keep the preset entries and automatically append custom items by their configured `position`. Explicitly listing a segment moves it out of omitted preset groups, and explicitly placed custom items are not auto-appended elsewhere. `disabledSegments` is applied after layout. `separator` accepts any style listed below; omit it to keep the preset’s separator.
+
+Responsive behavior is unchanged: these groups control ordering and overflow priority, not permanently pinned terminal rows. `right` means “later primary segments,” not right-edge alignment. On wide terminals secondary entries can fit in the top bar; on narrow terminals primary overflow moves into the secondary line. Some segments are hidden when they have no value, so `thinking` appears only when the active session/model reports a non-`off` thinking level. Unknown entries are ignored with a startup warning. The old fixed `custom` preset has been removed; combine any preset with `layout` instead.
+
+### Demo settings
+
+For a compact current footer setup:
+
+```json
+{
+  "powerline": {
+    "preset": "default",
+    "path": { "mode": "basename" },
+    "model": { "display": "name" },
+    "cost": { "subscriptionDisplay": "subscription", "currency": "USD" }
+  }
+}
+```
+
+Use `"model": { "display": "qualified" }` when two providers expose models with the same display name.
+
+`cost.currency` accepts `USD`, `CNY`, `EUR`, `GBP`, `JPY`, `CAD`, `AUD`, `CHF`, `INR`, or `KRW`. Pi reports costs in USD; non-USD display uses a keyless USD FX rate fetched in the background and cached for 24 hours under the Pi agent directory. If no cached rate is available yet, the cost segment renders `-- CODE` until a later footer refresh can use the fetched rate.
+
+Subscription cost display accepts:
+
+| Mode | Subscription + reported cost | Subscription + no reported cost |
+|------|------------------------------|----------------------------------|
+| `subscription` | `(sub)` | `(sub)` |
+| `reported-cost` | `$0.12` | `(sub)` |
+| `both` | `$0.12 (sub)` | `(sub)` |
+
+Segment display formats (opt-in; defaults match the historical rendering):
+
+| Segment option | Values | Default | Effect |
+|---|---|---|---|
+| `"context": { "format" }` | `"full"` / `"percent"` | `"full"` | `"percent"` shows a bare rounded `83%` (threshold-colored, no icon) instead of `12k/200k (6.2%)` |
+| `"cache_read": { "format" }` | `"tokens"` / `"percent"` / `"both"` | `"tokens"` | `"percent"` shows the cache hit rate `cacheRead / (input + cacheRead)` instead of the raw token count; `"both"` shows raw tokens plus the hit rate, e.g. `cache in: 12k (80%)` |
+
+```json
+{
+  "powerline": {
+    "context": { "format": "percent" },
+    "cache_read": { "format": "both" }
+  }
+}
+```
 
 ## Bash mode
 
@@ -145,7 +269,7 @@ The managed shell is persistent for the current pi session. Command output appea
 
 ### Bash mode configuration
 
-In `~/.pi/agent/settings.json`:
+In `~/.selesai/agent/settings.json` (or under `SELESAI_CODING_AGENT_DIR` when that environment variable is set):
 
 ```json
 {
@@ -159,7 +283,7 @@ In `~/.pi/agent/settings.json`:
 
 ## Editor Stash
 
-Use `Alt+S` / `Option+S` as a quick stash toggle while drafting. It keeps one active stash and clears the editor when stashing.
+Use `Alt+S` / `Option+S` as a quick stash toggle while drafting. It keeps one active stash and clears the editor when stashing. Powerline listens for unambiguous Alt/Meta-S escape encodings by default. If your old terminal setup only emits the printable German sharp-S character for Option+S and you still want that to trigger stash, set `"stashSharpSShortcut": true` under `powerline`.
 
 | Editor | Stash | `Alt+S` result |
 |--------|-------|----------------|
@@ -170,7 +294,7 @@ Use `Alt+S` / `Option+S` as a quick stash toggle while drafting. It keeps one ac
 
 Auto-restore after an agent run only happens when the editor is still empty. If you typed meanwhile, the stash is preserved.
 
-The `stash` indicator appears in the powerline bar (on presets with `extension_statuses`). Active stash is still session-local and resets on session switch / disable, but stash history is persisted to `~/.pi/agent/powerline-footer/stash-history.json` so it survives restarts.
+The `stash` indicator appears in the powerline bar (on presets with `extension_statuses`). Active stash is still session-local and resets on session switch / disable, but stash history is persisted to the agent dir at `powerline-footer/stash-history.json` so it survives restarts. By default the agent dir is `~/.selesai/agent`; set `SELESAI_CODING_AGENT_DIR` to move global powerline settings, stash history, sessions, vibes, skills, commands, and extension discovery with Pi.
 
 ### Stash history
 
@@ -184,26 +308,21 @@ Prompt history now has two sources:
 - stashed prompts — up to 12 recent stashed prompts (newest first)
 - recent project prompts — up to 50 recent user-submitted prompts pulled from pi sessions in the current project folder
 
-Selecting an entry inserts it into the editor. If the editor already has text, you can choose `Replace`, `Append`, or `Cancel`.
+Selecting a stashed entry lets you insert it or promote it to an idea. Project prompt history entries insert into the editor. If the editor already has text, you can choose `Replace`, `Append`, or `Cancel`.
 
-### Editor clipboard and chat shortcuts
+### Editor clipboard and navigation shortcuts
 
 - `ctrl+alt+c` — copy full editor content
 - `ctrl+alt+x` — cut full editor content (copy, then clear)
-- `cmd+up` — scroll the fixed-editor chat viewport up
-- `cmd+down` — scroll the fixed-editor chat viewport down
+- `ctrl+alt+q` — open the queued-prompt picker
 - `cmd+shift+up` — move the editor cursor to the start of the first line
 - `cmd+shift+down` — move the editor cursor to the end of the last line
-- `ctrl+shift+u` — jump the fixed-editor chat viewport to the previous user message
-- `ctrl+shift+i` — jump the fixed-editor chat viewport to the next user message
-- `ctrl+alt+,` — jump the fixed-editor chat viewport to the previous LLM message
-- `ctrl+alt+.` — jump the fixed-editor chat viewport to the next LLM message
-- `ctrl+shift+g` — jump the fixed-editor chat viewport to the bottom
-Copy/cut actions do not modify stash state or stash history. Dragging files, folders, images, or screenshots from Finder into the custom editor inserts their path strings. Chat jumps require fixed-editor mode because they use its app-owned scroll viewport. Submitting editor text also returns that viewport to the bottom so new output stays in view.
+
+Copy/cut actions do not modify stash state or stash history. Dragging files, folders, images, or screenshots from Finder into the custom editor inserts their path strings. Pi owns chat scrolling, selection, and fixed input behavior natively.
 
 ### Shortcut configuration
 
-You can override shortcut keys in `~/.pi/agent/settings.json`:
+You can override shortcut keys in the agent settings file:
 
 ```json
 {
@@ -211,20 +330,19 @@ You can override shortcut keys in `~/.pi/agent/settings.json`:
     "stashHistory": "ctrl+alt+h",
     "copyEditor": "ctrl+alt+c",
     "cutEditor": "ctrl+alt+x",
-    "jumpPreviousUserMessage": "ctrl+shift+u",
-    "jumpNextUserMessage": "ctrl+shift+i",
-    "jumpPreviousLlmMessage": "ctrl+alt+,",
-    "jumpNextLlmMessage": "ctrl+alt+.",
-    "jumpChatBottom": "ctrl+shift+g",
-    "scrollChatUp": "cmd+up",
-    "scrollChatDown": "cmd+down",
+    "ideaCapture": null,
+    "queueOpen": "ctrl+alt+q",
     "editorStart": "cmd+shift+up",
     "editorEnd": "cmd+shift+down"
   }
 }
 ```
 
-After changing bindings, run `/reload`. Invalid bindings, reserved key conflicts (like `Alt+S`), or duplicate conflicts automatically fall back to safe defaults. `cmd` and `command` are accepted aliases for Pi's `super` modifier for the documented Command navigation keys; unsupported Command-letter bindings such as `cmd+c` are ignored instead of matching plain text input. Some terminals, including Ghostty, bind Command+Arrow themselves; remap those terminal keys to send `\x1b[1;9A` / `\x1b[1;9B` for chat scrolling and `\x1b[1;10A` / `\x1b[1;10B` for editor-boundary navigation if you want Pi to receive them.
+After changing bindings, run `/reload`. Invalid bindings, reserved key conflicts like `Alt+S`, or duplicate conflicts fall back to safe defaults. Set a binding to `null` or `""` to disable that action. `cmd` and `command` are accepted aliases for Pi's `super` modifier for the documented Command navigation keys.
+
+### Editor autocomplete composition
+
+Powerline wraps Pi's autocomplete provider so bash mode can add shell-aware suggestions. When another editor extension was already installed, powerline now passes Pi's provider through that previous editor's `setAutocompleteProvider()` first and then wraps the resulting provider. This preserves prior autocomplete-provider wrappers where possible, but it is not full render/input composition between custom editors.
 
 ## Working Vibes
 
@@ -247,7 +365,7 @@ Transform boring "Working..." messages into themed phrases that match your style
 
 ### Configuration
 
-In `~/.pi/agent/settings.json`:
+In the agent settings file:
 
 ```json
 {
@@ -270,13 +388,13 @@ In `~/.pi/agent/settings.json`:
 
 **File mode setup:**
 ```bash
-/vibe generate mafia 200    # Generate 200 vibes, save to ~/.pi/agent/vibes/mafia.txt
+/vibe generate mafia 200    # Generate 200 vibes, save to the agent dir
 /vibe mode file             # Switch to file mode
 /vibe mafia                 # Now uses the file
 ```
 
 **How file mode works:**
-1. Vibes are loaded from `~/.pi/agent/vibes/{theme}.txt` into memory
+1. Vibes are loaded from `vibes/{theme}.txt` in the agent dir into memory
 2. Uses seeded shuffle (Mulberry32 PRNG) — cycles through all vibes before repeating
 3. New seed each session — different order every time you restart pi
 4. Zero latency, zero cost, works offline
@@ -305,6 +423,7 @@ The thinking segment shows live updates when you change thinking level:
 | medium | `think:med` | teal |
 | high | `think:high` | rainbow |
 | xhigh | `think:xhigh` | rainbow |
+| max | `think:max` | rainbow |
 
 ## Path Display
 
@@ -314,13 +433,41 @@ The path segment supports three modes:
 |------|---------|-------------|
 | `basename` | `powerline-footer` | Just the directory name (default) |
 | `abbreviated` | `…/extensions/powerline-footer` | Full path with home abbreviated and length limit |
-| `full` | `~/.pi/agent/extensions/powerline-footer` | Complete path with home abbreviated |
+| `full` | `~/.selesai/agent/extensions/powerline-footer` | Complete path with home abbreviated |
 
 Configure via preset options: `path: { mode: "full" }`
 
+## Git polling
+
+By default the git segment polls both branch and dirty state. If background `git status --porcelain` calls interfere with your workflow, use branch-only polling:
+
+```json
+{
+  "powerline": {
+    "git": { "polling": "branch" }
+  }
+}
+```
+
+Use `"off"` to disable extension-owned git polling entirely and only show the branch reported by Pi when available.
+
+## Git host icon
+
+Set `git.hostIcon` to replace the branch icon with the origin remote's host logo:
+
+```json
+{
+  "powerline": {
+    "git": { "hostIcon": true }
+  }
+}
+```
+
+The origin remote is detected (SSH or HTTPS) and mapped to an icon: GitHub (), GitLab (), Bitbucket (), or a generic git logo () for any other remote (self-hosted, Gitea, Codeberg, …). Repositories without an origin remote keep the plain branch icon (), as do ASCII (non–Nerd Font) setups. The remote is read once and cached, so this adds no per-render cost. Default is `false` (branch icon unchanged).
+
 ## Segments
 
-`model` · `thinking` · `shell_mode` · `path` · `git` · `subagents` · `token_in` · `token_out` · `token_total` · `cost` · `context_pct` · `context_total` · `time_spent` · `time` · `session` · `hostname` · `cache_read` · `cache_write`
+`model` · `thinking` · `shell_mode` · `path` · `git` · `subagents` · `token_in` · `token_out` · `token_total` · `cost` · `context_pct` · `context_total` · `time_spent` · `time` · `session` · `hostname` · `cache_read` · `cache_write` · `extension_statuses`
 
 ## Separators
 
@@ -351,12 +498,11 @@ Colors are configurable via pi's theme system. Each preset defines its own color
 
 ### Custom Theme Override
 
-Create `~/.pi/agent/extensions/powerline-footer/theme.json`:
+Create `extensions/powerline-footer/theme.json` in the agent dir (`~/.selesai/agent` by default, or `SELESAI_CODING_AGENT_DIR` when set):
 
 ```json
 {
   "colors": {
-    "pi": "#ff5500",
     "model": "accent",
     "shellMode": "accent",
     "path": "#00afaf",
@@ -378,5 +524,7 @@ Colors can be:
 - **Hex colors**: `#ff5500`, `#d787af`
 
 Icons can be any string, including `""` when you want to suppress a specific glyph entirely.
+
+For npm package installs, this documented agent-dir file is separate from the package files under `~/.selesai/agent/npm/node_modules`. The extension reads the agent-dir override first, then falls back to a `theme.json` colocated with the loaded extension file. Use `/reload` or restart Pi after creating or editing `theme.json`.
 
 See `theme.example.json` for all available options.

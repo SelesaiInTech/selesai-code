@@ -1,4 +1,5 @@
 import type { Theme, ThemeColor } from "@selesai/code";
+import type { CostCurrencyCode } from "./currency-rates.ts";
 
 // Theme color - either a pi theme color name or a custom hex color
 export type ColorValue = ThemeColor | `#${string}`;
@@ -20,6 +21,7 @@ export type SemanticColor =
   | "contextError"
   | "cost"
   | "tokens"
+  | "queue"
   | "separator"
   | "border";
 
@@ -27,29 +29,30 @@ export type SemanticColor =
 export type ColorScheme = Partial<Record<SemanticColor, ColorValue>>;
 
 // Built-in segment identifiers
-export type BuiltinStatusLineSegmentId =
-  | "model"
-  | "identity_group"
-  | "shell_mode"
-  | "path"
-  | "git"
-  | "subagents"
-  | "token_in"
-  | "token_out"
-  | "token_total"
-  | "usage_group"
-  | "cost"
-  | "context_pct"
-  | "context_total"
-  | "time_spent"
-  | "time"
-  | "session"
-  | "session_name"
-  | "hostname"
-  | "cache_read"
-  | "cache_write"
-  | "thinking"
-  | "extension_statuses";
+export const BUILTIN_STATUS_LINE_SEGMENT_IDS = [
+  "model",
+  "shell_mode",
+  "path",
+  "git",
+  "subagents",
+  "queue",
+  "token_in",
+  "token_out",
+  "token_total",
+  "cost",
+  "context_pct",
+  "context_total",
+  "time_spent",
+  "time",
+  "session",
+  "hostname",
+  "cache_read",
+  "cache_write",
+  "thinking",
+  "extension_statuses",
+] as const;
+
+export type BuiltinStatusLineSegmentId = typeof BUILTIN_STATUS_LINE_SEGMENT_IDS[number];
 
 // Segment identifiers (built-in + dynamically registered custom items)
 export type StatusLineSegmentId = BuiltinStatusLineSegmentId | `custom:${string}`;
@@ -68,27 +71,46 @@ export type StatusLineSeparatorStyle =
   | "star";
 
 // Preset names
+export type PowerlinePlacement = "above" | "below";
+
 export type StatusLinePreset =
   | "default"
   | "minimal"
   | "compact"
   | "full"
   | "nerd"
-  | "ascii"
-  | "custom";
+  | "ascii";
 
 // Per-segment options
 export interface StatusLineSegmentOptions {
-  model?: { showThinkingLevel?: boolean };
+  model?: { showThinkingLevel?: boolean; display?: "name" | "qualified" };
   path?: {
     mode?: "basename" | "abbreviated" | "full";
     maxLength?: number;
   };
-  git?: { showBranch?: boolean; showStaged?: boolean; showUnstaged?: boolean; showUntracked?: boolean };
+  git?: {
+    showBranch?: boolean;
+    showStaged?: boolean;
+    showUnstaged?: boolean;
+    showUntracked?: boolean;
+    polling?: "full" | "branch" | "off";
+    /** Replace the branch icon with the origin remote's host logo
+     * (GitHub/GitLab/Bitbucket, or a generic git logo). Default false. */
+    hostIcon?: boolean;
+  };
   time?: { format?: "12h" | "24h"; showSeconds?: boolean };
+  cost?: { subscriptionDisplay?: "subscription" | "reported-cost" | "both"; currency?: CostCurrencyCode };
+  context?: { format?: "full" | "percent" };
+  cache_read?: { format?: "tokens" | "percent" | "both" };
 }
 
 export type CustomItemPosition = "left" | "right" | "secondary";
+
+export interface StatusLineLayout {
+  left?: StatusLineSegmentId[];
+  right?: StatusLineSegmentId[];
+  secondary?: StatusLineSegmentId[];
+}
 
 export interface CustomStatusItem {
   id: string;
@@ -132,18 +154,38 @@ export interface GitStatus {
 }
 
 // Usage statistics
+export interface QueueSummary {
+  queueCount: number;
+  ideaCount: number;
+  blockedCount: number;
+  compacting: boolean;
+  leadingText: string | null;
+  leadingIntent: "steer" | "follow-up" | "post-compact" | "idea" | null;
+  leadingStatus: "queued" | "blocked" | "delivering" | "sent" | "failed" | null;
+}
+
 export interface UsageStats {
   input: number;
   output: number;
   cacheRead: number;
   cacheWrite: number;
   cost: number;
+  // Cumulative cost of subagent child runs (e.g. /parallel, /worker) launched from this session.
+  subagentCost: number;
 }
 
 // Context passed to segment render functions
 export interface SegmentContext {
   // From pi-mono
-  model: { id: string; name?: string; reasoning?: boolean; contextWindow?: number } | undefined;
+  model: {
+    id: string;
+    name?: string;
+    provider?: string;
+    providerId?: string;
+    providerName?: string;
+    reasoning?: boolean;
+    contextWindow?: number;
+  } | undefined;
   thinkingLevel: string;
   sessionId: string | undefined;
   sessionName: string | undefined;
@@ -151,11 +193,14 @@ export interface SegmentContext {
 
   // Computed
   usageStats: UsageStats;
-  contextPercent: number;
+  contextTokens: number | null;
+  contextPercent: number | null;
   contextWindow: number;
+  contextApproximate: boolean;
   autoCompactEnabled: boolean;
   customCompactionEnabled: boolean;
   usingSubscription: boolean;
+  queueSummary: QueueSummary;
   sessionStartTime: number;
   shellModeActive: boolean;
   shellRunning: boolean;

@@ -13,6 +13,7 @@ import {
   OneOffBashAutocompleteProvider,
 } from "../bash-mode/completion.ts";
 import { getIcons } from "../icons.ts";
+import { resolveColor } from "../theme.ts";
 import { ManagedShellSession } from "../bash-mode/shell-session.ts";
 
 function getMethod(target: object, name: string): Function {
@@ -21,6 +22,13 @@ function getMethod(target: object, name: string): Function {
     throw new Error(`Expected ${name} to be a function`);
   }
   return method;
+}
+
+function resolveManagedShellPath(): string | null {
+  for (const shellPath of ["/bin/zsh", "/bin/bash"]) {
+    if (existsSync(shellPath)) return shellPath;
+  }
+  return null;
 }
 
 function ensureEditorModuleLinks(): { cleanup: () => void } {
@@ -76,6 +84,38 @@ test("project history is stored newest-first and global zsh history parses histf
   assert.deepEqual(global, ["plain-command", "git pull", "git fetch"]);
 });
 
+test("global history caches an unreadable file until its fingerprint changes", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "powerline-unreadable-history-"));
+  const historyPath = join(cwd, ".zsh_history");
+  const originalHistfile = process.env.HISTFILE;
+  const originalDebug = console.debug;
+  let debugCalls = 0;
+
+  try {
+    mkdirSync(historyPath);
+    process.env.HISTFILE = historyPath;
+    console.debug = () => {
+      debugCalls += 1;
+    };
+
+    assert.deepEqual(readGlobalShellHistory("/bin/zsh"), []);
+    assert.deepEqual(readGlobalShellHistory("/bin/zsh"), []);
+    assert.equal(debugCalls, 1);
+
+    rmSync(historyPath, { recursive: true });
+    writeFileSync(historyPath, ": 1711111111:0;git status\n");
+    assert.deepEqual(readGlobalShellHistory("/bin/zsh"), ["git status"]);
+  } finally {
+    console.debug = originalDebug;
+    if (originalHistfile === undefined) {
+      delete process.env.HISTFILE;
+    } else {
+      process.env.HISTFILE = originalHistfile;
+    }
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("matchHistoryEntries returns newest entries when the prefix is empty", () => {
   const matches = matchHistoryEntries([
     "git stash",
@@ -112,6 +152,28 @@ test("theme.json can override icons without touching colors", () => {
     } else {
       process.env.POWERLINE_NERD_FONTS = originalNerdFonts;
     }
+  }
+});
+
+test("theme.json loads from the documented agent extension path", () => {
+  const originalAgentDir = process.env.SELESAI_CODING_AGENT_DIR;
+  const agentDir = mkdtempSync(join(tmpdir(), "powerline-theme-"));
+
+  try {
+    const themeDir = join(agentDir, "extensions", "powerline-footer");
+    mkdirSync(themeDir, { recursive: true });
+    writeFileSync(join(themeDir, "theme.json"), JSON.stringify({ colors: { model: "#ff5500", path: "#ff5500" } }));
+    process.env.SELESAI_CODING_AGENT_DIR = agentDir;
+
+    assert.equal(resolveColor("model"), "#ff5500");
+    assert.equal(resolveColor("path"), "#ff5500");
+  } finally {
+    if (originalAgentDir === undefined) {
+      delete process.env.SELESAI_CODING_AGENT_DIR;
+    } else {
+      process.env.SELESAI_CODING_AGENT_DIR = originalAgentDir;
+    }
+    rmSync(agentDir, { recursive: true, force: true });
   }
 });
 
@@ -450,12 +512,18 @@ test("deterministic path completion handles bash argument position", async () =>
   assert.equal(suggestion?.source, "path");
 });
 
-test("managed shell session preserves cwd changes across commands", async () => {
+test("managed shell session preserves cwd changes across commands", async (t) => {
+  const shellPath = resolveManagedShellPath();
+  if (!shellPath) {
+    t.skip("requires zsh or bash");
+    return;
+  }
+
   const cwd = mkdtempSync(join(tmpdir(), "powerline-shell-"));
   const childDir = join(cwd, "child");
   mkdirSync(childDir, { recursive: true });
   const store = new BashTranscriptStore({ transcriptMaxLines: 100, transcriptMaxBytes: 64 * 1024 });
-  const session = new ManagedShellSession("/bin/zsh", cwd, store, () => {}, () => {});
+  const session = new ManagedShellSession(shellPath, cwd, store, () => {}, () => {});
 
   try {
     await session.ensureReady();
@@ -482,10 +550,16 @@ test("managed shell session preserves cwd changes across commands", async () => 
   }
 });
 
-test("managed shell session recovers cleanly after interrupt", async () => {
+test("managed shell session recovers cleanly after interrupt", async (t) => {
+  const shellPath = resolveManagedShellPath();
+  if (!shellPath) {
+    t.skip("requires zsh or bash");
+    return;
+  }
+
   const cwd = mkdtempSync(join(tmpdir(), "powerline-shell-interrupt-"));
   const store = new BashTranscriptStore({ transcriptMaxLines: 100, transcriptMaxBytes: 64 * 1024 });
-  const session = new ManagedShellSession("/bin/zsh", cwd, store, () => {}, () => {});
+  const session = new ManagedShellSession(shellPath, cwd, store, () => {}, () => {});
 
   const waitForCommand = async () => {
     const start = Date.now();
@@ -661,7 +735,12 @@ test("bash editor refreshes shell ghost state after a bracketed paste completes"
   }
 });
 
-test("bash editor inserts Finder file drops as path strings", async () => {
+test("bash editor inserts Finder file drops as path strings", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("Finder file drops are macOS/POSIX paths");
+    return;
+  }
+
   const links = ensureEditorModuleLinks();
 
   try {
@@ -733,28 +812,26 @@ test("one-off bash autocomplete provider stays inactive even inside bang command
   assert.equal(suggestions, null);
 });
 
-test("bash autocomplete providers return null synchronously in shell contexts", () => {
+test("bash autocomplete providers return null in shell contexts", async () => {
   const signal = new AbortController().signal;
 
-  const bashSuggestions = new BashAutocompleteProvider().getSuggestions(["git st"], 0, 6, { signal });
-  const oneOffSuggestions = new OneOffBashAutocompleteProvider().getSuggestions(["!git st"], 0, 7, { signal });
+  const bashSuggestions = await new BashAutocompleteProvider().getSuggestions(["git st"], 0, 6, { signal });
+  const oneOffSuggestions = await new OneOffBashAutocompleteProvider().getSuggestions(["!git st"], 0, 7, { signal });
 
   assert.equal(bashSuggestions, null);
   assert.equal(oneOffSuggestions, null);
-  assert.equal(bashSuggestions instanceof Promise, false);
-  assert.equal(oneOffSuggestions instanceof Promise, false);
 });
 
-test("mode-aware autocomplete provider preserves synchronous default results", () => {
+test("mode-aware autocomplete provider preserves default results", async () => {
   const signal = new AbortController().signal;
-  const syncResult = {
+  const result = {
     items: [{ value: "status", label: "status" }],
     prefix: "st",
   };
   const provider = new ModeAwareAutocompleteProvider(
     {
-      getSuggestions() {
-        return syncResult;
+      async getSuggestions() {
+        return result;
       },
       applyCompletion(lines: string[], cursorLine: number, cursorCol: number) {
         return { lines, cursorLine, cursorCol };
@@ -765,10 +842,9 @@ test("mode-aware autocomplete provider preserves synchronous default results", (
     () => false,
   );
 
-  const suggestions = provider.getSuggestions(["st"], 0, 2, { signal });
+  const suggestions = await provider.getSuggestions(["st"], 0, 2, { signal });
 
-  assert.equal(suggestions, syncResult);
-  assert.equal(suggestions instanceof Promise, false);
+  assert.equal(suggestions, result);
 });
 
 test("one-off bash autocomplete provider stays inactive before the bang command starts", async () => {
@@ -871,6 +947,102 @@ test("bash editor shell history state does not clobber the base prompt history i
 
     assert.equal(fakeEditor.historyIndex, 5);
     assert.equal(fakeEditor.shellHistoryIndex, 0);
+  } finally {
+    links.cleanup();
+  }
+});
+
+test("bash editor recalls prompt history from single-line end without losing the live draft", async () => {
+  const links = ensureEditorModuleLinks();
+
+  try {
+    const { BashModeEditor } = await import("../bash-mode/editor.ts");
+    const { KeybindingsManager } = await import(new URL("../node_modules/@selesai/code/dist/core/keybindings.js", import.meta.url).href);
+    const keybindings = KeybindingsManager.create();
+    const createEditor = () => new BashModeEditor(
+      { requestRender() {}, terminal: { columns: 80, rows: 24 } },
+      {},
+      keybindings,
+      {
+        keybindings,
+        isBashModeActive: () => false,
+        isShellRunning: () => false,
+        onExitBashMode() {},
+        onSubmitCommand() {},
+        onInterrupt() {},
+        onNotify() {},
+        getHistoryEntries: () => [],
+        resolveGhostSuggestion: async () => null,
+      },
+    );
+
+    const editor = createEditor();
+    editor.addToHistory("older prompt");
+    editor.addToHistory("previous prompt");
+    editor.setText("draft");
+
+    editor.handleInput("\x1b[A");
+    assert.equal(editor.getText(), "previous prompt");
+
+    editor.handleInput("\x1b[A");
+    assert.equal(editor.getText(), "older prompt");
+
+    editor.handleInput("\x1b[B");
+    assert.equal(editor.getText(), "previous prompt");
+
+    editor.handleInput("\x1b[B");
+    assert.equal(editor.getText(), "draft");
+
+    const midLineEditor = createEditor();
+    midLineEditor.addToHistory("previous prompt");
+    midLineEditor.setText("draft");
+    midLineEditor.handleInput("\x1b[D");
+    midLineEditor.handleInput("\x1b[A");
+
+    assert.equal(midLineEditor.getText(), "draft");
+
+    const multilineEditor = createEditor();
+    multilineEditor.addToHistory("previous prompt");
+    multilineEditor.setText("first line\nsecond line");
+    multilineEditor.handleInput("\x1b[A");
+
+    assert.equal(multilineEditor.getText(), "first line\nsecond line");
+    assert.equal(Reflect.get(multilineEditor, "historyIndex"), -1);
+
+    const firstLineEditor = createEditor();
+    firstLineEditor.addToHistory("previous prompt");
+    firstLineEditor.setText("first line\nsecond line");
+    Reflect.set(Reflect.get(firstLineEditor, "state"), "cursorLine", 0);
+    Reflect.set(Reflect.get(firstLineEditor, "state"), "cursorCol", 0);
+    firstLineEditor.handleInput("\x1b[A");
+
+    assert.equal(firstLineEditor.getText(), "previous prompt");
+
+    const customKeybindings = new KeybindingsManager({
+      "tui.editor.cursorUp": ["up", "alt+k"],
+    });
+    const customBindingEditor = new BashModeEditor(
+      { requestRender() {}, terminal: { columns: 80, rows: 24 } },
+      {},
+      customKeybindings,
+      {
+        keybindings: customKeybindings,
+        isBashModeActive: () => false,
+        isShellRunning: () => false,
+        onExitBashMode() {},
+        onSubmitCommand() {},
+        onInterrupt() {},
+        onNotify() {},
+        getHistoryEntries: () => [],
+        resolveGhostSuggestion: async () => null,
+      },
+    );
+    customBindingEditor.addToHistory("previous prompt");
+    customBindingEditor.setText("draft");
+    customBindingEditor.handleInput("\x1bk");
+
+    assert.equal(customBindingEditor.getText(), "draft");
+    assert.equal(Reflect.get(customBindingEditor, "historyIndex"), -1);
   } finally {
     links.cleanup();
   }

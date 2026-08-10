@@ -1,4 +1,4 @@
-import { matchesKey } from "@earendil-works/pi-tui";
+import { isKeyRelease, matchesKey, type KeyId } from "@earendil-works/pi-tui";
 
 const SUPER_SHORTCUT_PATTERNS = new Map<string, RegExp>([
   ["super+up", /^\x1b\[(?:1;9(?::[12])?[AH]|574(?:19|23);9(?::[12])?u|7;9(?::[12])?~|27;9;65~)$/],
@@ -37,11 +37,25 @@ export function shortcutConflictKey(shortcut: string): string {
   }
 }
 
-export function matchesConfiguredShortcut(data: string, shortcut: string): boolean {
+export function matchesConfiguredShortcut(data: string, shortcut: string | null | undefined): boolean {
+  if (!shortcut) return false;
+
   const normalizedShortcut = shortcut.toLowerCase();
   if (shortcutUsesSuper(normalizedShortcut)) {
     return SUPER_SHORTCUT_PATTERNS.get(normalizedShortcut)?.test(data) ?? false;
   }
 
-  return matchesKey(data, shortcut);
+  return matchesKey(data, shortcut as KeyId);
+}
+
+export function matchesStashShortcutInput(data: string, options: { includePrintableSharpS?: boolean } = {}): boolean {
+  if (isKeyRelease(data)) return false;
+
+  return (options.includePrintableSharpS === true && data === "ß")
+    || data === "\x1bs"
+    || data === "\x1bS"
+    || /^\x1b\[(?:83|115)(?::\d*)?(?::\d*)?;3(?::\d+)?u$/.test(data)
+    || data === "\x1b[27;3;115~"
+    || data === "\x1b[27;3;83~"
+    || matchesKey(data, "alt+s");
 }

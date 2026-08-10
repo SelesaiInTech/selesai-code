@@ -1,6 +1,6 @@
 {
   "name": "pi-powerline-footer",
-  "version": "0.5.4",
+  "version": "0.12.3",
   "description": "Powerline-style status bar extension for pi coding agent",
   "type": "module",
   "files": [
@@ -9,7 +9,8 @@
     "*.json",
     "!progress.md",
     "bash-mode/**/*.ts",
-    "fixed-editor/**/*.ts"
+    "fixed-editor/**/*.ts",
+    "queue/**/*.ts"
   ],
   "keywords": [
     "pi-package",
@@ -26,17 +27,20 @@
     "url": "git+https://github.com/nicobailon/pi-powerline-footer.git"
   },
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/**/*.test.ts"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "^0.75.0",
+    "@earendil-works/pi-ai": ">=0.81.0 <0.84.0",
     "@selesai/code": "*",
-    "@earendil-works/pi-tui": "^0.75.0"
+    "@earendil-works/pi-tui": ">=0.81.0 <0.84.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.75.0",
+    "@earendil-works/pi-ai": "^0.83.0",
     "@selesai/code": "^0.1.0",
-    "@earendil-works/pi-tui": "^0.75.0"
+    "@earendil-works/pi-tui": "^0.83.0",
+    "@types/node": "24.13.3",
+    "typescript": "5.9.3"
   },
   "pi": {
     "extensions": [

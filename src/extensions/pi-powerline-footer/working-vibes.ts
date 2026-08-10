@@ -2,12 +2,34 @@
 // AI-generated contextual working messages that match a user's preferred theme/vibe.
 // Uses module-level state (matching powerline-footer pattern).
 
-import { complete, type Context } from "@earendil-works/pi-ai";
-import { getAgentDir, getSettingsPath, type ExtensionContext } from "@selesai/code";
+import type { AssistantMessage, Context, Model, ProviderStreamOptions } from "@earendil-works/pi-ai";
+import { getSettingsPath, type ExtensionContext } from "@selesai/code";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { getAgentPath } from "./paths.ts";
 
 type VibeMode = "generate" | "file";
+
+// Extension-registered providers live in the model registry only: their custom `api` values
+// are absent from pi-ai's global api table, so streaming has to go through the provider.
+// Credential-derived base URLs are resolved per request, mirroring ModelRuntime.prepareRequest;
+// getApiKeyAndHeaders() covers the rest of the request auth but never reports a base URL.
+async function completeVibe(
+  providerId: string,
+  model: Model<string>,
+  context: Context,
+  options: ProviderStreamOptions,
+): Promise<AssistantMessage> {
+  const registry = extensionCtx?.modelRegistry;
+  const provider = registry?.getProvider(providerId);
+  if (!registry || !provider) {
+    throw new Error(`Provider not registered: ${providerId}`);
+  }
+
+  const baseUrl = (await registry.getProviderAuth(providerId))?.auth.baseUrl;
+  const requestModel = baseUrl ? { ...model, baseUrl } : model;
+  return provider.stream(requestModel, context, options).result();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Constants
@@ -202,7 +224,7 @@ function saveModelConfig(): boolean {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function getVibesDir(): string {
-  return join(getAgentDir(), "vibes");
+  return getAgentPath("vibes");
 }
 
 function toVibeFileSlug(theme: string): string {
@@ -395,8 +417,7 @@ async function generateVibe(
   }
 
   const aiContext = buildAiContext(buildVibePrompt(ctx));
-
-  const response = await complete(model, aiContext, { apiKey: auth.apiKey, headers: auth.headers, signal });
+  const response = await completeVibe(provider, model, aiContext, { apiKey: auth.apiKey, headers: auth.headers, env: auth.env, signal });
 
   const textContent = response.content.find(c => c.type === "text");
   if (!textContent?.text && response.stopReason === "error" && response.errorMessage) {
@@ -593,11 +614,23 @@ export function getVibeFileCount(theme: string): number {
   return vibes.length;
 }
 
-export interface GenerateVibesResult {
-  success: boolean;
-  count: number;
-  filePath: string;
-  error?: string;
+export type GenerateVibesResult =
+  | { success: true; count: number; filePath: string }
+  | { success: false; count: 0; filePath: string; error: string };
+
+export function parseVibeGenerateArgs(args: readonly string[]): { theme: string; count: number } | null {
+  if (args.length === 0) return null;
+
+  const last = args.at(-1);
+  const parsedCount = last && /^\d+$/.test(last) ? Number.parseInt(last, 10) : Number.NaN;
+  const hasCount = Number.isFinite(parsedCount) && args.length > 1;
+  const theme = hasCount ? args.slice(0, -1).join(" ") : args.join(" ");
+  if (!theme) return null;
+
+  return {
+    theme,
+    count: hasCount ? Math.min(Math.max(Math.floor(parsedCount), 1), 500) : 100,
+  };
 }
 
 export async function generateVibesBatch(
@@ -641,7 +674,7 @@ export async function generateVibesBatch(
   try {
     // Use longer timeout for batch generation (30 seconds)
     const signal = AbortSignal.timeout(30000);
-    const response = await complete(model, aiContext, { apiKey: auth.apiKey, headers: auth.headers, signal });
+    const response = await completeVibe(provider, model, aiContext, { apiKey: auth.apiKey, headers: auth.headers, env: auth.env, signal });
 
     const textContent = response.content.find(c => c.type === "text");
     if (!textContent?.text) {

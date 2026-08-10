@@ -23,9 +23,9 @@ const NERD_COLORS: ColorScheme = {
 
 export const PRESETS: Record<StatusLinePreset, PresetDef> = {
   default: {
-    leftSegments: ["model", "thinking", "shell_mode", "path", "git", "context_pct", "cache_read", "cost"],
+    leftSegments: ["model", "thinking", "shell_mode", "path", "git", "queue", "context_pct", "cache_read", "cost"],
     rightSegments: [],
-    secondarySegments: ["session_name", "extension_statuses"],
+    secondarySegments: ["extension_statuses"],
     separator: "powerline-thin",
     colors: DEFAULT_COLORS,
     segmentOptions: {
@@ -38,7 +38,6 @@ export const PRESETS: Record<StatusLinePreset, PresetDef> = {
   minimal: {
     leftSegments: ["shell_mode", "path", "git"],
     rightSegments: ["context_pct"],
-    secondarySegments: ["session_name"],
     separator: "slash",
     colors: MINIMAL_COLORS,
     segmentOptions: {
@@ -49,8 +48,7 @@ export const PRESETS: Record<StatusLinePreset, PresetDef> = {
 
   compact: {
     leftSegments: ["model", "shell_mode", "git"],
-    rightSegments: ["cost", "context_pct"],
-    secondarySegments: ["session_name"],
+    rightSegments: ["queue", "cost", "context_pct"],
     separator: "powerline-thin",
     colors: DEFAULT_COLORS,
     segmentOptions: {
@@ -60,9 +58,8 @@ export const PRESETS: Record<StatusLinePreset, PresetDef> = {
   },
 
   full: {
-    leftSegments: ["hostname", "model", "thinking", "shell_mode", "path", "git", "subagents"],
+    leftSegments: ["hostname", "model", "thinking", "shell_mode", "path", "git", "queue", "subagents"],
     rightSegments: ["token_in", "token_out", "cache_read", "cost", "context_pct", "time_spent", "time", "extension_statuses"],
-    secondarySegments: ["session_name"],
     separator: "powerline",
     colors: DEFAULT_COLORS,
     segmentOptions: {
@@ -74,9 +71,8 @@ export const PRESETS: Record<StatusLinePreset, PresetDef> = {
   },
 
   nerd: {
-    leftSegments: ["hostname", "model", "thinking", "shell_mode", "path", "git", "session", "subagents"],
+    leftSegments: ["hostname", "model", "thinking", "shell_mode", "path", "git", "queue", "session", "subagents"],
     rightSegments: ["token_in", "token_out", "cache_read", "cache_write", "cost", "context_pct", "context_total", "time_spent", "time", "extension_statuses"],
-    secondarySegments: ["session_name"],
     separator: "powerline",
     colors: NERD_COLORS,
     segmentOptions: {
@@ -89,8 +85,7 @@ export const PRESETS: Record<StatusLinePreset, PresetDef> = {
 
   ascii: {
     leftSegments: ["model", "shell_mode", "path", "git"],
-    rightSegments: ["token_total", "cost", "context_pct"],
-    secondarySegments: ["session_name"],
+    rightSegments: ["queue", "token_total", "cost", "context_pct"],
     separator: "ascii",
     colors: MINIMAL_COLORS,
     segmentOptions: {
@@ -100,20 +95,6 @@ export const PRESETS: Record<StatusLinePreset, PresetDef> = {
     },
   },
 
-  custom: {
-    // {model} {thinking-without-think-prefix} | {path-full-relative-home} | {git} | {subagents}
-    // | {token_in}({cache_read}) · {token_out} {token_total} · {cost} | {context_pct}
-    leftSegments: ["identity_group", "path", "git", "subagents"],
-    rightSegments: ["context_pct"],
-    secondarySegments: ["session_name", "usage_group"],
-    separator: "pipe",
-    colors: DEFAULT_COLORS,
-    segmentOptions: {
-      model: { showThinkingLevel: false },
-      path: { mode: "full" },
-      git: { showBranch: true, showStaged: true, showUnstaged: true, showUntracked: true },
-    },
-  },
 };
 
 export function getPreset(name: StatusLinePreset): PresetDef {

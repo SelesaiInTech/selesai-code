@@ -13,14 +13,37 @@ interface CachedBranch {
   timestamp: number;
 }
 
+export type GitPollingMode = "full" | "branch" | "off";
+
+/** Known git hosting providers we render a dedicated icon for. */
+export type GitHost = "github" | "gitlab" | "bitbucket" | "other";
+
+interface CachedRemoteHost {
+  host: GitHost | null;
+  timestamp: number;
+}
+
 const CACHE_TTL_MS = 1000; // 1 second for file status
 const BRANCH_TTL_MS = 500; // Shorter TTL so branch updates quickly after invalidation
+const REMOTE_TTL_MS = 60_000; // Origin remote almost never changes within a session
 let cachedStatus: CachedGitStatus | null = null;
 let cachedBranch: CachedBranch | null = null;
+let cachedRemoteHost: CachedRemoteHost | null = null;
+let pendingRemoteFetch: Promise<void> | null = null;
 let pendingFetch: Promise<void> | null = null;
 let pendingBranchFetch: Promise<void> | null = null;
 let invalidationCounter = 0; // Track invalidations to prevent stale updates
 let branchInvalidationCounter = 0;
+const updateListeners = new Set<() => void>();
+
+function notifyGitUpdate(): void {
+  for (const listener of updateListeners) listener();
+}
+
+export function subscribeGitUpdates(listener: () => void): () => void {
+  updateListeners.add(listener);
+  return () => updateListeners.delete(listener);
+}
 
 /**
  * Parse git status --porcelain output
@@ -109,6 +132,73 @@ async function fetchGitBranch(): Promise<string | null> {
 }
 
 /**
+ * Classify an origin remote URL into a known hosting provider. Handles both
+ * SSH (`git@host:owner/repo`, `ssh://git@host/…`) and HTTP(S) forms, and
+ * treats sub-domains (e.g. `www.github.com`) and any non-empty remote we
+ * don't recognize as a generic git host.
+ */
+export function detectGitHost(remoteUrl: string | null): GitHost | null {
+  if (!remoteUrl) return null;
+  const trimmed = remoteUrl.trim();
+  if (!trimmed) return null;
+
+  let host: string;
+  const scpLike = /^[^/@]+@([^:/]+):/.exec(trimmed);
+  if (scpLike) {
+    host = scpLike[1]!;
+  } else {
+    try {
+      host = new URL(trimmed).hostname;
+    } catch {
+      return "other";
+    }
+  }
+
+  host = host.toLowerCase().replace(/^www\./, "");
+  if (host === "github.com" || host.endsWith(".github.com")) return "github";
+  if (host === "gitlab.com" || host.endsWith(".gitlab.com")) return "gitlab";
+  if (host === "bitbucket.org" || host.endsWith(".bitbucket.org")) return "bitbucket";
+  return "other";
+}
+
+/**
+ * Fetch the origin remote host asynchronously and cache the result.
+ */
+async function fetchRemoteHost(): Promise<GitHost | null> {
+  const url = await runGit(["remote", "get-url", "origin"]);
+  return detectGitHost(url);
+}
+
+/**
+ * Get the origin remote's hosting provider with a long TTL cache. Returns the
+ * cached value immediately (or null before the first fetch completes) and
+ * refreshes in the background, matching the branch/status caching pattern.
+ */
+export function getGitRemoteHost(): GitHost | null {
+  const now = Date.now();
+  if (cachedRemoteHost && now - cachedRemoteHost.timestamp < REMOTE_TTL_MS) {
+    return cachedRemoteHost.host;
+  }
+
+  if (!pendingRemoteFetch) {
+    pendingRemoteFetch = fetchRemoteHost()
+      .then((host) => {
+        cachedRemoteHost = { host, timestamp: Date.now() };
+        notifyGitUpdate();
+      })
+      .catch(() => {
+        cachedRemoteHost = { host: null, timestamp: Date.now() };
+        notifyGitUpdate();
+      })
+      .finally(() => {
+        pendingRemoteFetch = null;
+      });
+  }
+
+  return cachedRemoteHost ? cachedRemoteHost.host : null;
+}
+
+/**
  * Fetch git status asynchronously
  */
 async function fetchGitStatus(): Promise<{ staged: number; unstaged: number; untracked: number } | null> {
@@ -139,6 +229,7 @@ export function getCurrentBranch(providerBranch: string | null): string | null {
           branch: result,
           timestamp: Date.now(),
         };
+        notifyGitUpdate();
       }
       pendingBranchFetch = null;
     });
@@ -154,9 +245,13 @@ export function getCurrentBranch(providerBranch: string | null): string | null {
  * This is designed for synchronous render() calls - returns last known value
  * while refreshing in background.
  */
-export function getGitStatus(providerBranch: string | null): GitStatus {
+export function getGitStatus(providerBranch: string | null, pollingMode: GitPollingMode = "full"): GitStatus {
   const now = Date.now();
-  const branch = getCurrentBranch(providerBranch);
+  const branch = pollingMode === "off" ? providerBranch : getCurrentBranch(providerBranch);
+
+  if (pollingMode !== "full") {
+    return { branch, staged: 0, unstaged: 0, untracked: 0 };
+  }
 
   // Return cached if fresh
   if (cachedStatus && now - cachedStatus.timestamp < CACHE_TTL_MS) {
@@ -177,6 +272,7 @@ export function getGitStatus(providerBranch: string | null): GitStatus {
         cachedStatus = result
           ? { staged: result.staged, unstaged: result.unstaged, untracked: result.untracked, timestamp: Date.now() }
           : { staged: 0, unstaged: 0, untracked: 0, timestamp: Date.now() };
+        notifyGitUpdate();
       }
       pendingFetch = null;
     });
@@ -196,17 +292,23 @@ export function getGitStatus(providerBranch: string | null): GitStatus {
 }
 
 /**
- * Force refresh git status (call when you know files changed)
+ * Force refresh git status (call when you know files changed).
+ * Serve-stale: keep the last known counts on screen while a background
+ * refresh runs, instead of blanking the segment to zeros (footer flicker).
  */
 export function invalidateGitStatus(): void {
-  cachedStatus = null;
+  if (cachedStatus) cachedStatus.timestamp = 0; // expire, but keep serving the stale value
   invalidationCounter++; // Increment to invalidate any pending fetches
 }
 
 /**
- * Force refresh git branch (call when you know branch might have changed)
+ * Force refresh git branch (call when you know branch might have changed).
+ * Serve-stale: keep showing the last known branch until the refresh lands.
  */
 export function invalidateGitBranch(): void {
-  cachedBranch = null;
+  if (cachedBranch) cachedBranch.timestamp = 0; // expire, but keep serving the stale value
   branchInvalidationCounter++;
+  // The origin remote is repo-scoped, so a branch/cwd change may mean a
+  // different repo; drop the host cache so it re-detects.
+  cachedRemoteHost = null;
 }

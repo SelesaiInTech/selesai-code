@@ -5,6 +5,10 @@ import type { BuiltinStatusLineSegmentId, RenderedSegment, SegmentContext, Seman
 import { normalizeCompactExtensionStatus, normalizeExtensionStatusValue } from "./powerline-config.ts";
 import { fg, rainbow, applyColor } from "./theme.ts";
 import { getIcons, SEP_DOT, getThinkingText } from "./icons.ts";
+import { formatUsdCost } from "./currency-rates.ts";
+import { getGitRemoteHost } from "./git-status.ts";
+import type { IconSet } from "./icons.ts";
+import type { GitHost } from "./git-status.ts";
 
 function color(ctx: SegmentContext, semantic: SemanticColor, text: string): string {
   return fg(ctx.theme, semantic, text, ctx.colors);
@@ -47,8 +51,10 @@ const modelSegment: StatusLineSegment = {
     const opts = ctx.options.model ?? {};
 
     let modelName = ctx.model?.name || ctx.model?.id || "no-model";
-    // Strip "Claude " prefix for brevity
-    if (modelName.startsWith("Claude ")) {
+    if (opts.display === "qualified" && ctx.model?.id) {
+      const provider = ctx.model.provider || ctx.model.providerId || ctx.model.providerName;
+      modelName = provider && !ctx.model.id.includes("/") ? `${provider}/${ctx.model.id}` : ctx.model.id;
+    } else if (modelName.startsWith("Claude ")) {
       modelName = modelName.slice(7);
     }
 
@@ -65,38 +71,6 @@ const modelSegment: StatusLineSegment = {
     }
 
     return { content: color(ctx, "model", content), visible: true };
-  },
-};
-
-const identityGroupSegment: StatusLineSegment = {
-  id: "identity_group",
-  render(ctx) {
-    const model = modelSegment.render({
-      ...ctx,
-      options: { ...ctx.options, model: { ...(ctx.options.model ?? {}), showThinkingLevel: false } },
-    });
-
-    const parts = model.visible && model.content ? [model.content] : [];
-    const thinkingText = getThinkingText(ctx.thinkingLevel || "off");
-    if (thinkingText) {
-      const level = ctx.thinkingLevel || "off";
-      let thinkingContent: string;
-      if (level === "high" || level === "xhigh") {
-        thinkingContent = rainbow(thinkingText);
-      } else if (level === "minimal") {
-        thinkingContent = color(ctx, "thinkingMinimal", thinkingText);
-      } else if (level === "low") {
-        thinkingContent = color(ctx, "thinkingLow", thinkingText);
-      } else if (level === "medium") {
-        thinkingContent = color(ctx, "thinkingMedium", thinkingText);
-      } else {
-        thinkingContent = color(ctx, "thinking", thinkingText);
-      }
-      parts.push(thinkingContent);
-    }
-
-    if (parts.length === 0) return { content: "", visible: false };
-    return { content: parts.join(" "), visible: true };
   },
 };
 
@@ -157,14 +131,31 @@ const pathSegment: StatusLineSegment = {
   },
 };
 
+/**
+ * Icon for the branch label: the origin remote's host logo when hostIcon is
+ * enabled and a remote is known, otherwise the plain branch icon. An
+ * unrecognized remote falls back to the generic git logo.
+ */
+function resolveBranchIcon(icons: IconSet, hostIcon: boolean): string {
+  if (!hostIcon) return icons.branch;
+  const host = getGitRemoteHost();
+  const byHost: Record<GitHost, string> = {
+    github: icons.github,
+    gitlab: icons.gitlab,
+    bitbucket: icons.bitbucket,
+    other: icons.git,
+  };
+  return host ? byHost[host] : icons.branch;
+}
+
 const gitSegment: StatusLineSegment = {
   id: "git",
   render(ctx) {
     const icons = getIcons();
     const opts = ctx.options.git ?? {};
     const { branch, staged, unstaged, untracked } = ctx.git;
-    const gitStatus = (staged > 0 || unstaged > 0 || untracked > 0)
-      ? { staged, unstaged, untracked }
+    const gitStatus = (staged > 0 || unstaged > 0 || untracked > 0) 
+      ? { staged, unstaged, untracked } 
       : null;
 
     if (!branch && !gitStatus) return { content: "", visible: false };
@@ -177,7 +168,8 @@ const gitSegment: StatusLineSegment = {
     let content = "";
     if (showBranch && branch) {
       // Color just the branch name (icon + branch text)
-      content = color(ctx, branchColor, withIcon(icons.branch, branch));
+      const branchIcon = resolveBranchIcon(icons, opts.hostIcon === true);
+      content = color(ctx, branchColor, withIcon(branchIcon, branch));
     }
 
     // Add status indicators (each with their own color, not wrapped)
@@ -225,7 +217,7 @@ const thinkingSegment: StatusLineSegment = {
     const label = levelText[level] || level;
     const content = `think:${label}`;
 
-    if (level === "high" || level === "xhigh") {
+    if (level === "high" || level === "xhigh" || level === "max") {
       return { content: rainbow(content), visible: true };
     }
 
@@ -250,6 +242,31 @@ const subagentsSegment: StatusLineSegment = {
     // This would require extension state management
     // For now, return not visible
     return { content: "", visible: false };
+  },
+};
+
+const queueSegment: StatusLineSegment = {
+  id: "queue",
+  render(ctx) {
+    const summary = ctx.queueSummary;
+    const parts: string[] = [];
+
+    if (summary.compacting && summary.queueCount > 0) {
+      parts.push(`compact q ${summary.queueCount}`);
+    } else if (summary.queueCount > 0) {
+      parts.push(`q ${summary.queueCount}`);
+    }
+
+    if (summary.ideaCount > 0) {
+      parts.push(`ideas ${summary.ideaCount}`);
+    }
+
+    if (summary.blockedCount > 0) {
+      parts.push(`blocked ${summary.blockedCount}`);
+    }
+
+    if (parts.length === 0) return { content: "", visible: false };
+    return { content: color(ctx, "queue", parts.join(SEP_DOT)), visible: true };
   },
 };
 
@@ -290,52 +307,32 @@ const tokenTotalSegment: StatusLineSegment = {
   },
 };
 
-const usageGroupSegment: StatusLineSegment = {
-  id: "usage_group",
-  render(ctx) {
-    const icons = getIcons();
-    const { input, output, cacheRead, cacheWrite, cost } = ctx.usageStats;
-    const total = input + output + cacheRead + cacheWrite;
-    const usingSubscription = ctx.usingSubscription;
-
-    const parts: string[] = [];
-    if (input || cacheRead) {
-      const inText = input ? withIcon(icons.input, formatTokens(input)) : withIcon(icons.input, "0");
-      const cacheRate = input + cacheRead > 0 ? Math.round((cacheRead / (input + cacheRead)) * 100) : 0;
-      const cacheText = `${formatTokens(cacheRead)}/${cacheRate}%`;
-      parts.push(color(ctx, "tokens", `${inText}(${cacheText})`));
-    }
-
-    if (output) {
-      parts.push(color(ctx, "tokens", withIcon(icons.output, formatTokens(output))));
-    }
-
-    const totalCostParts: string[] = [];
-    if (total) totalCostParts.push(withIcon(icons.tokens, formatTokens(total)));
-    if (cost || usingSubscription) {
-      totalCostParts.push(usingSubscription ? "sub" : `$${cost.toFixed(2)}`);
-    }
-    if (totalCostParts.length > 0) {
-      parts.push(color(ctx, "tokens", totalCostParts.join(" ")));
-    }
-
-    if (parts.length === 0) return { content: "", visible: false };
-    return { content: parts.join(SEP_DOT), visible: true };
-  },
-};
-
 const costSegment: StatusLineSegment = {
   id: "cost",
   render(ctx) {
-    const { cost } = ctx.usageStats;
+    const cost = ctx.usageStats.cost + (ctx.usageStats.subagentCost ?? 0);
     const usingSubscription = ctx.usingSubscription;
 
     if (!cost && !usingSubscription) {
       return { content: "", visible: false };
     }
 
-    const costDisplay = usingSubscription ? "(sub)" : `$${cost.toFixed(2)}`;
-    return { content: color(ctx, "cost", costDisplay), visible: true };
+    const reportedCost = cost > 0 ? formatUsdCost(cost, ctx.options.cost?.currency) : null;
+    if (!usingSubscription) {
+      return reportedCost
+        ? { content: color(ctx, "cost", reportedCost), visible: true }
+        : { content: "", visible: false };
+    }
+
+    const subscriptionDisplay = ctx.options.cost?.subscriptionDisplay ?? "subscription";
+    if (subscriptionDisplay === "reported-cost" && reportedCost) {
+      return { content: color(ctx, "cost", reportedCost), visible: true };
+    }
+    if (subscriptionDisplay === "both" && reportedCost) {
+      return { content: color(ctx, "cost", `${reportedCost} (sub)`), visible: true };
+    }
+
+    return { content: color(ctx, "cost", "(sub)"), visible: true };
   },
 };
 
@@ -345,24 +342,33 @@ const contextPctSegment: StatusLineSegment = {
     if (ctx.customCompactionEnabled) return { content: "", visible: false };
 
     const icons = getIcons();
-    const pct = ctx.contextPercent;
-    const window = ctx.contextWindow;
-    const barWidth = 5;
-    const filled = Math.max(0, Math.min(barWidth, Math.round((pct / 100) * barWidth)));
-    const bar = `[${"=".repeat(filled)}${" ".repeat(barWidth - filled)}]`;
-    const pctDisplay = `${Math.round(pct)}%`;
-    const text = `${bar} ${pctDisplay}/${formatTokens(window)}`;
+    const { contextTokens, contextPercent, contextWindow } = ctx;
 
-    let semanticColor: "context" | "contextWarn" | "contextError";
-    if (pct >= 70) {
-      semanticColor = "contextError";
-    } else if (pct >= 50) {
-      semanticColor = "contextWarn";
+    const autoIcon = ctx.autoCompactEnabled && icons.auto ? ` ${icons.auto}` : "";
+    const percentOnly = ctx.options.context?.format === "percent";
+    const hasKnownUsage = contextTokens !== null && contextPercent !== null;
+    const approximate = ctx.contextApproximate ? "~" : "";
+    // "full" (default): tokens/window + one-decimal percentage + auto-compact icon.
+    // "percent": bare rounded percentage, threshold-colored, no icons.
+    const text = percentOnly
+      ? (hasKnownUsage ? `${approximate}${Math.round(contextPercent)}%` : "?")
+      : hasKnownUsage
+        ? `${approximate}${formatTokens(contextTokens)}/${formatTokens(contextWindow)} (${contextPercent.toFixed(1)}%)${autoIcon}`
+        : `?/${formatTokens(contextWindow)}${autoIcon}`;
+
+    // Icon outside color, text inside - use semantic colors for thresholds
+    let content: string;
+    const colored = (semantic: "context" | "contextWarn" | "contextError") =>
+      percentOnly ? color(ctx, semantic, text) : withIcon(icons.context, color(ctx, semantic, text));
+    if (hasKnownUsage && contextPercent > 90) {
+      content = colored("contextError");
+    } else if (hasKnownUsage && contextPercent > 70) {
+      content = colored("contextWarn");
     } else {
-      semanticColor = "context";
+      content = colored("context");
     }
 
-    return { content: withIcon(icons.context, color(ctx, semanticColor, text)), visible: true };
+    return { content, visible: true };
   },
 };
 
@@ -429,17 +435,6 @@ const sessionSegment: StatusLineSegment = {
   },
 };
 
-const sessionNameSegment: StatusLineSegment = {
-  id: "session_name",
-  render(ctx) {
-    const icons = getIcons();
-    const display = ctx.sessionName?.trim();
-    if (!display) return { content: "", visible: false };
-
-    return { content: color(ctx, "model", withIcon(icons.session, display)), visible: true };
-  },
-};
-
 const hostnameSegment: StatusLineSegment = {
   id: "hostname",
   render() {
@@ -453,11 +448,21 @@ const cacheReadSegment: StatusLineSegment = {
   id: "cache_read",
   render(ctx) {
     const icons = getIcons();
-    const { cacheRead } = ctx.usageStats;
+    const { cacheRead, input } = ctx.usageStats;
     if (!cacheRead) return { content: "", visible: false };
 
-    const parts = [icons.cache, icons.input, formatTokens(cacheRead)].filter(Boolean);
-    const content = parts.join(" ");
+    const format = ctx.options.cache_read?.format ?? "tokens";
+    const hitRate = input + cacheRead > 0
+      ? ((cacheRead / (input + cacheRead)) * 100).toFixed(0)
+      : "0";
+
+    let content: string;
+    if (format === "percent") {
+      content = [icons.cache, `${hitRate}%`].filter(Boolean).join(" ");
+    } else {
+      const tokens = [icons.cache, icons.input, formatTokens(cacheRead)].filter(Boolean).join(" ");
+      content = format === "both" ? `${tokens} (${hitRate}%)` : tokens;
+    }
     return { content: color(ctx, "tokens", content), visible: true };
   },
 };
@@ -508,23 +513,21 @@ const extensionStatusesSegment: StatusLineSegment = {
 
 export const SEGMENTS: Record<BuiltinStatusLineSegmentId, StatusLineSegment> = {
   model: modelSegment,
-  identity_group: identityGroupSegment,
   shell_mode: shellModeSegment,
   path: pathSegment,
   git: gitSegment,
   thinking: thinkingSegment,
   subagents: subagentsSegment,
+  queue: queueSegment,
   token_in: tokenInSegment,
   token_out: tokenOutSegment,
   token_total: tokenTotalSegment,
-  usage_group: usageGroupSegment,
   cost: costSegment,
   context_pct: contextPctSegment,
   context_total: contextTotalSegment,
   time_spent: timeSpentSegment,
   time: timeSegment,
   session: sessionSegment,
-  session_name: sessionNameSegment,
   hostname: hostnameSegment,
   cache_read: cacheReadSegment,
   cache_write: cacheWriteSegment,
@@ -553,8 +556,12 @@ function renderCustomSegment(id: `custom:${string}`, ctx: SegmentContext): Rende
   return { content, visible: true };
 }
 
+function isCustomSegmentId(id: StatusLineSegmentId): id is `custom:${string}` {
+  return id.startsWith("custom:");
+}
+
 export function renderSegment(id: StatusLineSegmentId, ctx: SegmentContext): RenderedSegment {
-  if (id.startsWith("custom:")) {
+  if (isCustomSegmentId(id)) {
     return renderCustomSegment(id, ctx);
   }
 

@@ -63,7 +63,10 @@ test("blocking guide dismisses only from its overlay input handler", () => {
 
   assert.equal(GUIDE_DISMISS_HINT, "Press any key to continue");
   assert.match(source, /guideOverlayBlocking = true;[\s\S]*handleInput: \(\) => dismiss\(\),/);
-  assert.doesNotMatch(source, /scheduleDismissWelcome|welcomeDismissScheduler|welcome-dismiss/);
+  // The blocking guide cannot be dismissed by the welcome scheduler: dismissWelcome
+  // bails while guideOverlayBlocking is set, so only the overlay's input handler
+  // (which clears the flag first) can close it.
+  assert.match(source, /function dismissWelcome\(ctx: any\) \{[\s\S]*?if \(guideOverlayBlocking\) return;/);
 });
 
 test("README-derived guide entries stay in the feature map", () => {

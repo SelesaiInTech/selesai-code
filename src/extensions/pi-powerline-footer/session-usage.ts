@@ -22,7 +22,7 @@ function readUsage(value: unknown): UsageStats | null {
   const { input, output, cacheRead, cacheWrite, cost } = value;
   if (![input, output, cacheRead, cacheWrite, cost].every(finiteNumber)) return null;
 
-  return { input, output, cacheRead, cacheWrite, cost };
+  return { input, output, cacheRead, cacheWrite, cost } as UsageStats;
 }
 
 export function readSubagentToolResultUsage(message: unknown): UsageStats | null {
