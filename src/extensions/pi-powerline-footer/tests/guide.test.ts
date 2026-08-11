@@ -22,7 +22,7 @@ const features: GuideFeature[] = [
 ];
 
 
-test("guide opens fully for each real session start", () => {
+test("explicit full guide opens for each real session start", () => {
   for (const reason of ["startup", "new", "resume", "fork"]) {
     assert.equal(resolveGuideDisplayMode({ reason, hasUI: true, guideMode: "full" }), "full");
   }
@@ -35,8 +35,10 @@ test("guide dismissal and compact preferences change automatic display", () => {
   assert.equal(resolveGuideDisplayMode({ reason: "startup", hasUI: false, guideMode: "full" }), "none");
 });
 
-test("quiet startup does not suppress the default blocking guide", () => {
-  assert.equal(resolveGuideDisplayMode({ reason: "startup", hasUI: true, guideMode: "full" }), "full");
+test("guide defaults to a compact header so fixed-editor mode stays active", () => {
+  const preferences = getGuidePreferences({});
+  assert.equal(preferences.mode, "compact");
+  assert.equal(resolveGuideDisplayMode({ reason: "startup", hasUI: true, guideMode: preferences.mode }), "compact");
 });
 
 test("full and compact guide content expose README commands and examples", () => {
@@ -97,9 +99,9 @@ test("guide dismissal persists only the mode and version marker", () => {
   }
 });
 
-test("invalid persisted guide settings fall back to the full guide", () => {
+test("invalid persisted guide settings fall back to the compact guide", () => {
   assert.deepEqual(getGuidePreferences({ selesaiGuide: { mode: "unexpected", lastSeenVersion: 42 } }), {
-    mode: "full",
+    mode: "compact",
     lastSeenVersion: undefined,
   });
 });

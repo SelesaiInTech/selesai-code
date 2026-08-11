@@ -149,7 +149,7 @@ export function getGuidePreferences(settings: unknown): GuidePreferences {
     : {};
 
   return {
-    mode: isGuideMode(raw.mode) ? raw.mode : "full",
+    mode: isGuideMode(raw.mode) ? raw.mode : "compact",
     lastSeenVersion: typeof raw.lastSeenVersion === "string" ? raw.lastSeenVersion : undefined,
   };
 }
