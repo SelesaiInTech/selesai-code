@@ -200,9 +200,17 @@ export function saveGuidePreferences(
   if (!settings) return false;
 
   const current = getGuidePreferences(settings);
-  const next: Record<string, unknown> = {
-    mode: update.mode ?? current.mode,
-  };
+  const raw = isRecord(settings) && isRecord(settings.selesaiGuide)
+    ? settings.selesaiGuide
+    : {};
+  const next: Record<string, unknown> = {};
+  if (update.mode !== undefined) {
+    next.mode = update.mode;
+  } else if (typeof raw.mode === "string") {
+    // Version-only writes (markGuideVersionSeen) must preserve an explicit user
+    // mode but never persist the fallback default as a user choice.
+    next.mode = raw.mode;
+  }
   const lastSeenVersion = update.lastSeenVersion === null
     ? undefined
     : update.lastSeenVersion ?? current.lastSeenVersion;

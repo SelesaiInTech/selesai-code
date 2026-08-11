@@ -10,6 +10,7 @@ import {
   getGuideFeatureLines,
   getGuidePreferences,
   getNewGuideFeatures,
+  markGuideVersionSeen,
   resolveGuideDisplayMode,
   saveGuidePreferences,
   type GuideFeature,
@@ -94,6 +95,28 @@ test("guide dismissal persists only the mode and version marker", () => {
     const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
     assert.deepEqual(settings.selesaiGuide, { mode: "off", lastSeenVersion: "0.5.3" });
     assert.equal(getGuidePreferences(settings).mode, "off");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("version marking never persists an implicit guide mode", () => {
+  const dir = mkdtempSync(join(tmpdir(), "selesai-guide-"));
+  const settingsPath = join(dir, "settings.json");
+
+  try {
+    // markGuideVersionSeen writes only the version marker; the mode stays
+    // unset so the default (compact) applies instead of being locked in.
+    assert.equal(markGuideVersionSeen("0.5.3", settingsPath), true);
+    const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+    assert.deepEqual(settings.selesaiGuide, { lastSeenVersion: "0.5.3" });
+    assert.equal(getGuidePreferences(settings).mode, "compact");
+
+    // An explicitly chosen mode is preserved across version-only writes.
+    assert.equal(saveGuidePreferences({ mode: "off" }, settingsPath), true);
+    assert.equal(saveGuidePreferences({ lastSeenVersion: "0.6.0" }, settingsPath), true);
+    const after = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+    assert.deepEqual(after.selesaiGuide, { mode: "off", lastSeenVersion: "0.6.0" });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
