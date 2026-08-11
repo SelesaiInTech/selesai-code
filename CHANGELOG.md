@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.8.2] - 2026-08-11
+
+### Fixed
+- **Guide version-marking no longer locks in the implicit mode.** When the recurring guide marks a new version as seen, Selesai no longer writes the fallback `compact` mode into `settings.json` as if it were a user choice. An explicit `full`, `compact`, or `off` mode is still preserved across version-only writes, so the guide keeps following the current default until you choose otherwise.
+
 ## [0.8.1] - 2026-08-11
 
 ### Fixed

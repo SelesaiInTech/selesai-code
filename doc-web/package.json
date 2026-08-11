@@ -1,6 +1,6 @@
 {
   "name": "selesai-docs",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "private": true,
   "type": "module",
   "description": "Bilingual documentation website for Selesai, the maintained extension-first fork of the Pi coding agent.",

@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- **Guide version-marking never persists an implicit mode** — `markGuideVersionSeen` (version-only writes) preserves an explicit user mode but never writes the fallback default as a user choice, so the guide keeps following the current default instead of locking in `compact`.
 - **Guide defaults to compact mode** — When `selesaiGuide.mode` is unset, the recurring guide opens in compact mode instead of the full tour. Explicit `full`, `compact`, or `off` settings are still honored.
 
 ### Changed

@@ -5,6 +5,10 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.8.2 — Guide version marking no longer pins the default mode
+
+- Marking a new guide version as seen no longer persists the implicit `compact` mode into `settings.json`; an explicit `full`, `compact`, or `off` choice is still preserved, so the guide keeps following the current default until you opt in.
+
 ## 0.8.1 — Quieter default guide
 
 - The powerline `/guide` tour now defaults to compact mode when `selesaiGuide.mode` is not set; explicit `full`, `compact`, and `off` settings are still honored.

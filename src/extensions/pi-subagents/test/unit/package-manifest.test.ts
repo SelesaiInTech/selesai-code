@@ -26,7 +26,7 @@ const expectedHostPeerRanges = {
 const expectedHostDevVersions = {
 	"@earendil-works/pi-agent-core": "0.81.0",
 	"@earendil-works/pi-ai": "0.81.0",
-	"@selesai/code": "0.8.1",
+	"@selesai/code": "0.8.2",
 	"@earendil-works/pi-tui": "0.81.0",
 } satisfies Record<(typeof hostPeerPackages)[number], string>;
 
