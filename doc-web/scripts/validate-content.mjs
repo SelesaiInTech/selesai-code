@@ -37,6 +37,7 @@ const BUNDLED_EXTENSION_GUIDES = {
   "./handoff-new.ts": "continuity/handoff-new",
   "./inline-skills.ts": "skills/inline-skills",
   "./rtk.ts": "skills/rtk",
+  "./agent-browser.ts": "skills/agent-browser",
   "./tokenin-onboarding.ts": "workspace/tokenin-onboarding",
   "./undo.ts": "continuity/undo",
   "./workflow": "delegation/workflow",

@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar bergaya powerline, tata letak editor tetap, tur panduan berulang, shortcut stash/riwayat editor, bash mode lengket, vibe working bertema, dan deteksi Nerd Font.
+Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar bergaya powerline, tata letak editor tetap, tur panduan berulang, shortcut stash/riwayat editor, bash mode lengket, queue/inbox berbasis file, perpindahan direktori yang mengikuti sesi, vibe working bertema, dan deteksi Nerd Font.
 
 <ExtensionStatus
   distribution="bundled"
@@ -26,7 +26,8 @@ Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar berga
 ## Yang disiapkan
 
 - Mengganti footer/header/editor chrome default dengan segment bergaya powerline.
-- Mendaftarkan command `/powerline`, `/guide`, `/stash-history`, `/bash-mode`, `/bash-reset`, dan `/vibe`.
+- Mendaftarkan command `/powerline`, `/guide`, `/stash-history`, `/bash-mode`, `/bash-reset`, `/vibe`, `/idea`, `/ideas`, `/queue`, dan `/cd`.
+- Menambahkan queue dan inbox berbasis file agar Anda dapat menyimpan ide atau menahan prompt dengan aman selama compaction tanpa mengganggu agent saat ini.
 - Mendaftarkan keyboard shortcut untuk editor stash, copy/cut, lompat chat, toggle bash-mode, dan riwayat stash.
 - Menyiapkan fixed-editor cluster saat diaktifkan sehingga editor dan baris status tetap di layar saat konten chat di-scroll.
 
@@ -48,6 +49,10 @@ Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar berga
 - Toggle sticky bash mode: `Ctrl+Shift+B` atau `/bash-mode on|off|toggle`.
 - Reset shell yang dikelola: `/bash-reset`.
 - Set tema working vibe: `/vibe star trek` atau `/vibe off`.
+- Simpan ide untuk nanti: `# <idea>` atau `/idea <idea>`; telusuri atau kirim dengan `/ideas`.
+- Periksa, coba ulang, ubah target, atau kirim prompt tertahan dengan `/queue`.
+- Lanjutkan percakapan saat ini dari direktori lain dengan `/cd <path>`.
+- Atur segmen, separator, penempatan, welcome screen, dan tampilan biaya melalui pengaturan `powerline`.
 
 ## Perintah, tool, dan shortcut
 
@@ -57,6 +62,10 @@ Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar berga
 | `/powerline <preset>` | Ganti status preset. |
 | `/powerline fixed-editor on\|off\|toggle` | Toggle fixed-editor cluster. |
 | `/powerline mouse-scroll on\|off\|toggle` | Toggle app mouse scroll. |
+| `/cd [path]` | Tampilkan atau ubah direktori sesi saat ini. |
+| `/idea [@target] <text>` | Simpan ide tertunda tanpa mengirimkannya ke agent saat ini. |
+| `/ideas [next\|send\|issue]` | Telusuri ide tersimpan, kirim satu, atau serahkan satu kepada agent untuk triage issue yang terjaga. |
+| `/queue [send\|retry\|clear\|target]` | Telusuri dan kelola prompt yang terantre atau terblokir. |
 | `/guide [full\|compact\|off\|reset]` | Buka, ringkas, tutup, atau reset panduan berulang. |
 | `/stash-history` | Buka prompt history picker. |
 | `/bash-mode on\|off\|toggle` | Toggle sticky bash mode. |
@@ -66,6 +75,7 @@ Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar berga
 | `Ctrl+Alt+H` | Buka stash/prompt history. |
 | `Ctrl+Alt+C` | Copy seluruh teks editor. |
 | `Ctrl+Alt+X` | Cut seluruh teks editor. |
+| `Ctrl+Alt+Q` | Buka pemilih prompt yang terantre. |
 | `Ctrl+Shift+B` | Toggle bash mode. |
 | `Ctrl+Shift+U` / `Ctrl+Shift+I` | Lompat ke pesan user sebelumnya/berikutnya. |
 | `Ctrl+Alt+,` / `Ctrl+Alt+.` | Lompat ke pesan LLM sebelumnya/berikutnya. |
@@ -77,6 +87,7 @@ Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar berga
 
 - UI powerline hanya dirender dalam sesi TUI interaktif.
 - Sticky bash mode menyimpan shell yang dikelola untuk sesi Selesai saat ini. Shell `cd` dan variabel yang diekspor bertahan antar command, tetapi shell dan transkripnya hilang saat sesi berakhir.
+- `# <idea>` hanya menangkap ide bila `#` diikuti spasi; atur `powerline.queue.captureSigil` ke `false` bila heading Markdown lebih sering digunakan, lalu gunakan `/idea`. Prompt yang ditahan selama compaction hanya dikirim setelah compaction berhasil; pekerjaan yang gagal atau dibatalkan tetap terlihat di queue.
 - Pesan vibe yang dihasilkan menggunakan model yang dikonfigurasi dan di-rate-limit. Pre-generate file vibe dengan `/vibe generate <theme> <count>` untuk menghindari latency dan biaya API.
 - Shortcut lompat chat fixed-editor mungkin perlu di-remap pada terminal seperti Ghostty.
 - Konflik shortcut custom dengan key yang dicadangkan secara otomatis diresolve ke default yang aman.

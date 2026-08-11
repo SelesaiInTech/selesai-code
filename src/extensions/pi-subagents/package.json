@@ -97,7 +97,7 @@
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.81.0",
     "@earendil-works/pi-ai": "0.81.0",
-    "@selesai/code": "0.7.0",
+    "@selesai/code": "0.8.0",
     "@earendil-works/pi-tui": "0.81.0",
     "@types/node": "24.13.3",
     "typescript": "5.9.3"

@@ -3,7 +3,14 @@ draft: false
 title: Changelog
 ---
 
-Riwayat ini mengikuti tag rilis yang dapat dijangkau dari branch `main` Selesai. Tag dari riwayat Pi yang tidak terkait dan tidak di-merge tidak disertakan.
+Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
+
+## 0.8.0 — Inbox Powerline, workspace terminal fleksibel, dan setup lebih lancar
+
+- Memperbarui fork `pi-powerline-footer` bawaan hingga upstream 0.12.3. Kini tersedia queue/inbox berbasis file (`# <idea>`, `/idea`, `/ideas`, `/queue`), pengiriman aman setelah compaction, perpindahan direktori sesi dengan `/cd`, tampilan biaya mata uang dan subagent, ikon host git, statistik token tercache, serta layout, penempatan, separator, segmen, dan welcome overlay footer yang dapat dikonfigurasi.
+- Mention inline `#nama-agent` yang dikenal kini dapat memulai run subagent dari bagian mana pun dalam pesan; hash biasa di tengah pesan seperti `issue #42` tetap menjadi teks normal.
+- Menambahkan setup dan panduan Agent Browser bawaan. Selesai meminta persetujuan sebelum memasang CLI eksternal dan menjalankan setup tanpa memblokir startup.
+- Memperbaiki keandalan completion inline `#`/`$`, termasuk pada WSL, dan menunda provisioning RTK hingga startup selesai.
 
 ## 0.7.0 — Skill inline (`$`), subagent inline (`#`), RTK terkelola, dan Subagents 0.41
 

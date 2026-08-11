@@ -2,7 +2,12 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
-## [Unreleased]
+## [0.8.0] - 2026-08-11
+
+### Added
+- **Powerline footer upgraded through upstream 0.12.3.** The bundled workspace now has a file-backed queue/inbox (`# <idea>`, `/idea`, `/ideas`, and `/queue`), compaction-safe prompt delivery, session-aware `/cd`, configurable layout/placement/separators, currency and subagent cost display, git-host icons, and faster cached token statistics.
+- **Inline agent mentions work wherever they are intentional.** A known `#agent-name` can invoke an agent at the start, middle, or end of a message; ordinary mid-message hashes such as `issue #42` still pass through.
+- **Agent Browser setup is bundled.** Selesai can guide and, after confirmation, provision the external browser-automation CLI without blocking startup.
 
 ### Fixed
 - **Reliable `#`/`$` inline autocomplete (also fixes WSL).** The `#` agent picker no longer runs full agent discovery (builtin/user/project/package dirs plus node_modules walks) synchronously on every keystroke — results are cached per cwd with a short TTL. This matters especially under WSL: running from a Linux-side directory gives the app a `\\wsl.localhost\...` UNC cwd, where the discovery walk costs ~1s per keystroke and the editor's serialized request pipeline then drops/delays `#` (and queued `$`/`@`) suggestions while typing. A failed discovery or `getCommands` error now also falls back to the base provider instead of rejecting the editor's shared autocomplete request chain, which previously permanently disabled `#`, `$`, `@`, and Tab completion for the rest of the session.

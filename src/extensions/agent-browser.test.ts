@@ -121,12 +121,12 @@ describe("agent-browser setup extension", () => {
 
 		expect(ctx.ui.confirm).toHaveBeenCalledWith(expect.stringContaining("Install agent-browser?"), expect.any(String));
 		expect(exec).toHaveBeenCalledTimes(4);
-		const calls = exec.mock.calls.map((c) => (c[1] as string[]).join(" "));
+		const calls = exec.mock.calls.map(([command, args]) => [command, ...(args as string[])].join(" "));
 		expect(calls[0]).toContain("--version");
 		expect(calls[1]).toContain("npm");
 		expect(calls[1]).toContain("agent-browser");
 		expect(calls[2]).toContain("--version");
-		expect(calls[3]).toBe(`${process.platform === "win32" ? "/c " : ""}agent-browser install`);
+		expect(calls[3]).toBe(`${process.platform === "win32" ? "cmd /c " : ""}agent-browser install`);
 		expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("browser provisioned"), "info");
 	});
 

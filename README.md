@@ -90,10 +90,11 @@ The bundled `pi-powerline-footer` improves the interactive display with:
 
 - a powerline status bar for model, thinking level, path, git state, context, tokens, cost, cache, and session data
 - a fixed-editor layout that keeps the editor and status area visible while chat scrolls
+- a file-backed queue/inbox for deferred ideas and compaction-safe prompts (`# <idea>`, `/idea`, `/ideas`, and `/queue`), plus session-aware `/cd`
 - a recurring `/guide` tour with compact and remembered-dismissal modes, covering workflows, delegation/research prompts, skills, handoff, and recovery
 - persistent bash mode with shell state, transcript output, history, and ghost suggestions
 - editor stash/restore, prompt history, clipboard shortcuts, and message-jump shortcuts
-- themed working-vibe messages, Nerd Font detection, and configurable presets
+- themed working-vibe messages, Nerd Font detection, configurable presets, layout, placement, and cost display
 
 ### Coordination between sessions
 
@@ -126,13 +127,14 @@ Skills are shipped with Selesai and loaded at boot. They include:
 
 - `ponytail` for minimal implementation mode and review helpers
 - `grill-me` for requirement and design stress-testing
+- `agent-browser` for browser-automation setup and CLI workflows
 - `planger` and `implanger` for decomposed planning and execution
 - `handoff` and `handoff-text` for session continuity
 - `improve-codebase` for architecture and maintainability reviews
 - `ponytail-review`, `ponytail-audit`, `ponytail-gain`, `ponytail-debt`, and `ponytail-help`
 - `workflow-creation` for building durable workflow modes
 
-Invoke one with `/skill:<name>`.
+Invoke one inline with `$skill-name` (for example, `$grill-me`).
 
 ## Why the extensions are bundled
 

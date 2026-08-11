@@ -3,7 +3,14 @@ draft: false
 title: Changelog
 ---
 
-This history follows release tags reachable from the Selesai `main` branch. Tags from unrelated, unmerged Pi history are excluded.
+This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
+
+## 0.8.0 — Powerline inbox, flexible terminal workspace, and smoother setup
+
+- Updated the bundled `pi-powerline-footer` fork through upstream 0.12.3. It now includes a file-backed queue/inbox (`# <idea>`, `/idea`, `/ideas`, `/queue`), safe post-compaction delivery, `/cd` session-directory switching, currency and subagent-cost display, git-host icons, cached token statistics, and configurable footer layout, placement, separators, segments, and welcome overlay.
+- Known inline `#agent-name` mentions can now start a subagent run from anywhere in a message; ordinary mid-message hashes such as `issue #42` remain normal text.
+- Added bundled Agent Browser setup and guidance. Selesai asks before installing the external CLI and performs its setup without blocking startup.
+- Fixed `#`/`$` inline completion reliability, including on WSL, and deferred RTK provisioning until after startup.
 
 ## 0.7.0 — Inline skills (`$`), inline subagents (`#`), managed RTK, and Subagents 0.41
 

@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powerline-style status bar, a fixed-editor layout, a recurring guide tour, editor stash/history shortcuts, sticky bash mode, AI-generated working vibes, and Nerd Font detection.
+The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powerline-style status bar, fixed-editor layout, recurring guide tour, editor stash/history shortcuts, sticky bash mode, file-backed queue/inbox, session-aware directory switching, AI-generated working vibes, and Nerd Font detection.
 
 <ExtensionStatus
   distribution="bundled"
@@ -26,7 +26,8 @@ The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powe
 ## What it sets up
 
 - Replaces the default footer/header/editor chrome with powerline-styled segments.
-- Registers the `/powerline`, `/guide`, `/stash-history`, `/bash-mode`, `/bash-reset`, and `/vibe` commands.
+- Registers the `/powerline`, `/guide`, `/stash-history`, `/bash-mode`, `/bash-reset`, `/vibe`, `/idea`, `/ideas`, `/queue`, and `/cd` commands.
+- Adds a file-backed queue and idea inbox so you can capture thoughts or safely hold prompts through compaction without interrupting the current agent.
 - Registers keyboard shortcuts for editor stash, copy/cut, chat jumps, bash-mode toggle, and stash history.
 - Sets up a fixed-editor cluster when enabled so the editor and status rows stay on screen while chat content scrolls.
 
@@ -48,6 +49,10 @@ The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powe
 - Toggle sticky bash mode: `Ctrl+Shift+B` or `/bash-mode on|off|toggle`.
 - Reset the managed shell: `/bash-reset`.
 - Set a working vibe theme: `/vibe star trek` or `/vibe off`.
+- Capture a deferred idea: `# <idea>` or `/idea <idea>`; browse or send it with `/ideas`.
+- Inspect, retry, retarget, or deliver held prompts with `/queue`.
+- Continue the current conversation from another directory with `/cd <path>`.
+- Arrange segments, separators, placement, welcome screen, and cost display through `powerline` settings.
 
 ## Commands, tools, and shortcuts
 
@@ -57,6 +62,10 @@ The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powe
 | `/powerline <preset>` | Switch status preset. |
 | `/powerline fixed-editor on\|off\|toggle` | Toggle fixed-editor cluster. |
 | `/powerline mouse-scroll on\|off\|toggle` | Toggle app mouse scroll. |
+| `/cd [path]` | Show or change the current session directory. |
+| `/idea [@target] <text>` | Save a deferred idea without sending it to the current agent. |
+| `/ideas [next\|send\|issue]` | Browse saved ideas, deliver one, or hand one to the agent for guarded issue triage. |
+| `/queue [send\|retry\|clear\|target]` | Browse and manage queued or blocked prompts. |
 | `/guide [full\|compact\|off\|reset]` | Open, compact, dismiss, or reset the recurring guide. |
 | `/stash-history` | Open the prompt history picker. |
 | `/bash-mode on\|off\|toggle` | Toggle sticky bash mode. |
@@ -66,6 +75,7 @@ The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powe
 | `Ctrl+Alt+H` | Open stash/prompt history. |
 | `Ctrl+Alt+C` | Copy full editor text. |
 | `Ctrl+Alt+X` | Cut full editor text. |
+| `Ctrl+Alt+Q` | Open the queued-prompt picker. |
 | `Ctrl+Shift+B` | Toggle bash mode. |
 | `Ctrl+Shift+U` / `Ctrl+Shift+I` | Jump to previous/next user message. |
 | `Ctrl+Alt+,` / `Ctrl+Alt+.` | Jump to previous/next LLM message. |
@@ -77,6 +87,7 @@ The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powe
 
 - The powerline UI only renders in interactive TUI sessions.
 - Sticky bash mode keeps a managed shell for the current Selesai session. Shell `cd` and exported variables persist across commands, but the shell and its transcript are lost when the session ends.
+- `# <idea>` captures an idea only when `#` is followed by whitespace; set `powerline.queue.captureSigil` to `false` if markdown headings are more common, then use `/idea` instead. Prompts held during compaction are delivered only after successful compaction; failed or cancelled work remains visible in the queue.
 - Generated vibe messages use the configured model and are rate-limited. Pre-generate vibe files with `/vibe generate <theme> <count>` to avoid API latency and cost.
 - Fixed-editor chat jump shortcuts may need terminal remapping on terminals such as Ghostty.
 - Custom shortcut conflicts with reserved keys are automatically resolved to safe defaults.
