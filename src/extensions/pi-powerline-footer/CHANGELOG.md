@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Guide defaults to compact mode** — When `selesaiGuide.mode` is unset, the recurring guide opens in compact mode instead of the full tour. Explicit `full`, `compact`, or `off` settings are still honored.
+
 ### Changed
 - **Upstream 0.12.3 merge (Selesai fork)** — Updated from upstream v0.5.4 to v0.12.3. Adopts the Powerline queue/inbox (`/idea`, `/ideas`, `/queue`, `/ideas next`, `/ideas issue`), compaction-aware queue delivery, `/cd` session directory switching, cost currency and subagent cost accounting, `powerline.separator`/`layout`/`placement`/`disabledSegments`/`welcome` options, git host icons, cached session token stats, strict TypeScript gate, and all upstream fixes through 0.12.3. Selesai-specific features are preserved: the fixed editor and chat scrolling, the guide overlay, the TPS tracker, session-usage accounting, and mode-aware autocomplete trigger forwarding.
 

@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.8.1] - 2026-08-11
+
+### Fixed
+- **Powerline guide defaults to compact mode.** When `selesaiGuide.mode` is not set, the recurring `/guide` tour now opens in compact mode instead of the full tour. An explicit `full`, `compact`, or `off` setting is still honored.
+
 ## [0.8.0] - 2026-08-11
 
 ### Added
