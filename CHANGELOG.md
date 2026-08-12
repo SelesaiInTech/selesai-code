@@ -13,7 +13,10 @@ The format is intentionally simple and release-oriented.
 - None.
 
 ### Fixed
-- None.
+- Candidate scoring now matches GitHub sources by parsed hostname instead of a `url.includes('github.com/')` substring check that could also match unrelated hosts like `evil.com/github.com/`.
+- `decodeHtmlEntities` now decodes `&amp;` last so an already-encoded entity such as `&amp;lt;` no longer collapses into `<` (double-unescape).
+- The CI workflow now sets an explicit read-only default `GITHUB_TOKEN` permission.
+- Bumped transitive `postcss`, `undici`, and `brace-expansion` in the lockfile to clear reported advisories.
 
 ### Breaking
 - None.
