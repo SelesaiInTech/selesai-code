@@ -233,14 +233,18 @@ function expandTilde(p: string): string {
 	return p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
 }
 
-function isSlashResultRunning(result: { details?: Details }): boolean {
+function isSlashResultRunning(result: { details?: Details; isError?: boolean }): boolean {
+	if (result.isError) return false;
 	return result.details?.progress?.some((entry) => entry.status === "running")
 		|| result.details?.results.some((entry) => entry.progress?.status === "running")
+		|| (result.details?.mode === "workflow" && result.details?.workflow?.value === undefined)
 		|| false;
 }
 
-function isSlashResultError(result: { details?: Details }): boolean {
-	return result.details?.results.some((entry) => entry.exitCode !== 0 && entry.progress?.status !== "running") || false;
+function isSlashResultError(result: { details?: Details; isError?: boolean }): boolean {
+	return result.isError === true
+		|| result.details?.results.some((entry) => entry.exitCode !== 0 && entry.progress?.status !== "running")
+		|| false;
 }
 
 function isStaleExtensionContextError(error: unknown): boolean {

@@ -181,12 +181,28 @@ function buildSingleInitialResult(params: SubagentParamsLike): AgentToolResult<D
 	};
 }
 
+function buildWorkflowInitialResult(params: SubagentParamsLike): AgentToolResult<Details> {
+	const preview = previewSimpleWorkflowRun(params.workflowScript) ?? {};
+	const task = preview.task ?? "";
+	return {
+		content: [{ type: "text", text: task || "Workflow running." }],
+		details: {
+			mode: "workflow",
+			...(params.context ? { context: params.context } : {}),
+			results: [],
+			workflow: { trace: [], emits: [], console: [] },
+		},
+	};
+}
+
 export function buildSlashInitialResult(requestId: string, params: SubagentParamsLike): SlashMessageDetails {
 	const result = (params.tasks?.length ?? 0) > 0
 		? buildParallelInitialResult(params)
 		: (params.chain?.length ?? 0) > 0
 			? buildChainInitialResult(params)
-			: buildSingleInitialResult(params);
+			: params.workflowScript !== undefined
+				? buildWorkflowInitialResult(params)
+				: buildSingleInitialResult(params);
 	liveSnapshots.set(requestId, { result, version: nextVersion() });
 	finalSnapshots.delete(requestId);
 	return { requestId, result };
@@ -206,9 +222,22 @@ function cloneResultsWithProgress(
 
 export function applySlashUpdate(requestId: string, update: SlashSubagentUpdate): void {
 	const snapshot = liveSnapshots.get(requestId);
-	if (!snapshot) return;
+	if (!snapshot || !snapshot.result.details) return;
+	if (update.workflow) {
+		const nextDetails: Details = {
+			...snapshot.result.details,
+			mode: "workflow",
+			workflow: update.workflow,
+			...(update.chatProgress ? { chatProgress: update.chatProgress } : {}),
+		};
+		liveSnapshots.set(requestId, {
+			result: { ...snapshot.result, details: nextDetails },
+			version: nextVersion(),
+		});
+		return;
+	}
 	const progress = update.progress;
-	if (!progress || !snapshot.result.details) return;
+	if (!progress) return;
 	const currentStepIndex = progress.findIndex((entry) => entry.status === "running");
 	const nextDetails: Details = {
 		...snapshot.result.details,

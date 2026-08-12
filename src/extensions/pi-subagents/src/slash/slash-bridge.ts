@@ -28,6 +28,8 @@ export interface SlashSubagentResponse {
 export interface SlashSubagentUpdate {
 	requestId: string;
 	progress?: Details["progress"];
+	workflow?: Details["workflow"];
+	chatProgress?: Details["chatProgress"];
 	currentTool?: string;
 	toolCount?: number;
 }
@@ -142,6 +144,8 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 					const payload: SlashSubagentUpdate = {
 						requestId,
 						progress,
+						workflow: update.details?.workflow,
+						chatProgress: update.details?.chatProgress,
 						currentTool: first?.currentTool,
 						toolCount: first?.toolCount,
 					};
