@@ -41,20 +41,26 @@ export function extractReadableContent(html: string, maxLength = 4000): Extracte
   };
 }
 
+const NAMED_ENTITIES: Record<string, string> = {
+  '&nbsp;': ' ',
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"'
+};
+
 function decodeHtmlEntities(text: string): string {
-  // Decode &amp; last so an already-encoded entity like &amp;lt; does not get
-  // double-unescaped into <, which would let encoded markup through.
-  return text
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&#x27;/gi, "'")
-    .replace(/&#x2F;/gi, '/')
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-    .replace(/&#x([\da-f]+);/gi, (_, code) => String.fromCharCode(parseInt(code, 16)))
-    .replace(/&amp;/gi, '&');
+  // Single pass so each entity is decoded exactly once. A multi-pass decode
+  // rescans its own output, which double-unescapes either &amp;lt; -> < or
+  // &#38;amp; -> & depending on the pass order. One pass avoids both.
+  return text.replace(
+    /&(?:#(\d+)|#x([\da-f]+)|nbsp|amp|lt|gt|quot);/gi,
+    (match, dec, hex) => {
+      if (dec !== undefined) return String.fromCharCode(Number(dec));
+      if (hex !== undefined) return String.fromCharCode(parseInt(hex, 16));
+      return NAMED_ENTITIES[match.toLowerCase()] ?? match;
+    }
+  );
 }
 
 function extractTitle(html: string): string | undefined {

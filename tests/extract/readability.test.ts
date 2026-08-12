@@ -60,6 +60,24 @@ describe('readability extraction', () => {
     expect(result.content.text).not.toContain('color: red');
   });
 
+  it('decodes html entities in one pass without double-unescaping', () => {
+    // Broken CSS forces the fallback path, which decodes entities in the title.
+    const result = extractReadableContentSafely(`
+      <html>
+        <head>
+          <title>Tom &amp;amp; Jerry &amp;lt;tag&amp;gt;</title>
+          <style>.x { &:hover { color: red; } }</style>
+        </head>
+        <body>
+          <div>Some readable body content that survives the fallback path.</div>
+        </body>
+      </html>
+    `);
+
+    // &amp;amp; -> &amp; (not &), and &amp;lt; -> &lt; (not <).
+    expect(result.content.title).toBe('Tom &amp; Jerry &lt;tag&gt;');
+  });
+
   it('returns fallback text from body content when main/article tags are missing', () => {
     const result = extractReadableContentSafely(`
       <html>

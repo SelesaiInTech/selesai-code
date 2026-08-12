@@ -6,7 +6,8 @@ function wantsDiscussionSources(query = '') {
 }
 
 function candidateScore(result: SearchResult, query?: string) {
-  const isGithub = hostOf(result.url) === 'github.com';
+  const host = hostOf(result.url);
+  const isGithub = host === 'github.com' || (host?.endsWith('.github.com') ?? false);
   const profile = classifySourceProfile(result.url);
   const wantsThreads = wantsDiscussionSources(query);
 
