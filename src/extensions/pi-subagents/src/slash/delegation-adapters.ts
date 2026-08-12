@@ -251,7 +251,7 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 				: undefined;
 		return {
 			index: entry.index,
-			agent: entry.agent ?? "explorer",
+			agent: entry.agent ?? "delegate",
 			status: entry.status,
 			currentTool: entry.currentTool,
 			currentToolArgs: entry.currentToolArgs,
@@ -283,19 +283,6 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 		durationMs: progress?.durationMs,
 		tokens: progress?.tokens,
 		taskProgress,
-	};
-}
-
-export function toLegacyExecutionParams(request: PromptTemplateDelegationRequest): DelegatedSubagentExecutionParams {
-	return {
-		agent: request.agent,
-		task: request.task,
-		context: request.context,
-		model: request.model,
-		cwd: request.cwd,
-		async: false,
-		foregroundOnly: true,
-		clarify: false,
 	};
 }
 

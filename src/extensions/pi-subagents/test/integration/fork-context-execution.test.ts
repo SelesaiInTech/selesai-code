@@ -335,14 +335,14 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const { manager, openedPaths, branchedLeafIds } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork" },
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
 			],
 			projectAgentsDir: null,
 		}));
 
 		const result = await executor.execute(
 			"id",
-			{ agent: "builder", task: "test" },
+			{ agent: "worker", task: "test" },
 			new AbortController().signal,
 			undefined,
 			makeCtx(manager),
@@ -376,14 +376,14 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		};
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
 			],
 			projectAgentsDir: null,
 		}));
 
 		const result = await executor.execute(
 			"id",
-			{ agent: "builder", task: "test" },
+			{ agent: "worker", task: "test" },
 			new AbortController().signal,
 			undefined,
 			makeCtx(manager),
@@ -433,7 +433,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		};
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini:high", fallbackModels: ["anthropic/claude-sonnet-4:low"], thinking: "high" },
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini:high", fallbackModels: ["anthropic/claude-sonnet-4:low"], thinking: "high" },
 			],
 			projectAgentsDir: null,
 		}));
@@ -449,7 +449,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		};
 		const result = await executor.execute(
 			"id",
-			{ agent: "builder", task: "test" },
+			{ agent: "worker", task: "test" },
 			new AbortController().signal,
 			undefined,
 			ctx,
@@ -482,7 +482,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		};
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini:high", thinking: "high" },
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini:high", thinking: "high" },
 			],
 			projectAgentsDir: null,
 		}));
@@ -495,7 +495,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		};
 		const result = await executor.execute(
 			"id",
-			{ agent: "builder", task: "test" },
+			{ agent: "worker", task: "test" },
 			new AbortController().signal,
 			undefined,
 			ctx,
@@ -516,7 +516,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const manager = makeSignedThinkingSessionManager(childSessionFile);
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini:high", thinking: "high" },
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini:high", thinking: "high" },
 			],
 			projectAgentsDir: null,
 			modelScope: { enforce: true, allow: ["anthropic/*"] },
@@ -533,7 +533,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		try {
 			const result = await executor.execute(
 				"id",
-				{ agent: "builder", task: "test" },
+				{ agent: "worker", task: "test" },
 				new AbortController().signal,
 				undefined,
 				ctx,
@@ -554,7 +554,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const manager = makeSignedThinkingSessionManager(childSessionFile);
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini", thinking: "high" },
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini", thinking: "high" },
 			],
 			projectAgentsDir: null,
 			modelScope: { enforce: true, allow: ["anthropic/*"] },
@@ -572,7 +572,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 			for (const model of ["", "inherit"]) {
 				const result = await executor.execute(
 					"id",
-					{ agent: "builder", task: "test", model },
+					{ agent: "worker", task: "test", model },
 					new AbortController().signal,
 					undefined,
 					ctx,
@@ -612,7 +612,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		};
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
 			],
 			projectAgentsDir: null,
 		}));
@@ -625,7 +625,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		};
 		const result = await executor.execute(
 			"id",
-			{ agent: "builder", task: "test" },
+			{ agent: "worker", task: "test" },
 			new AbortController().signal,
 			undefined,
 			ctx,
@@ -633,7 +633,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		const text = result.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-		assert.equal(text.includes("fork context forced thinking off for builder (child 0)"), true);
+		assert.equal(text.includes("fork context forced thinking off for worker (child 0)"), true);
 	});
 
 	it("resolves inherit before classifying a forked child", async () => {
@@ -641,7 +641,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const manager = makeSignedThinkingSessionManager(childSessionFile);
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork", thinking: "high" },
+				{ name: "worker", description: "Worker", defaultContext: "fork", thinking: "high" },
 			],
 			projectAgentsDir: null,
 		}));
@@ -655,7 +655,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		const result = await executor.execute(
 			"id",
-			{ agent: "builder", task: "test", model: "inherit" },
+			{ agent: "worker", task: "test", model: "inherit" },
 			new AbortController().signal,
 			undefined,
 			ctx,
@@ -671,7 +671,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const manager = makeSignedThinkingSessionManager(childSessionFile);
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5", thinking: "high" },
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5", thinking: "high" },
 			],
 			projectAgentsDir: null,
 		}));
@@ -688,7 +688,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		const result = await executor.execute(
 			"id",
-			{ tasks: [{ agent: "builder", task: "test", model: "" }] },
+			{ tasks: [{ agent: "worker", task: "test", model: "" }] },
 			new AbortController().signal,
 			undefined,
 			ctx,
@@ -706,7 +706,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const manager = makeSignedThinkingSessionManager(childSessionFile);
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini", thinking: "high" },
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini", thinking: "high" },
 			],
 			projectAgentsDir: null,
 		}));
@@ -719,7 +719,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		const result = await executor.execute(
 			"id",
-			{ tasks: [{ agent: "builder", task: "test", model: "" }] },
+			{ tasks: [{ agent: "worker", task: "test", model: "" }] },
 			new AbortController().signal,
 			undefined,
 			ctx,
@@ -737,7 +737,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const manager = makeSignedThinkingSessionManager(childSessionFile);
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
 			],
 			projectAgentsDir: null,
 		}));
@@ -763,7 +763,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		const result = await executor.execute(
 			"id",
-			{ agent: "builder", task: "test", clarify: true },
+			{ agent: "worker", task: "test", clarify: true },
 			new AbortController().signal,
 			undefined,
 			ctx,
@@ -783,7 +783,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const manager = makeSignedThinkingSessionManager(childSessionFile);
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
 			],
 			projectAgentsDir: null,
 		}));
@@ -796,7 +796,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		const result = await executor.execute(
 			"id",
-			{ agent: "builder", task: "test" },
+			{ agent: "worker", task: "test" },
 			new AbortController().signal,
 			undefined,
 			ctx,
@@ -804,7 +804,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, true);
 		const text = result.content.filter((block) => block.text).map((block) => block.text).join("\n");
-		assert.equal(text.includes("fork context forced thinking off for builder (child 0)"), true);
+		assert.equal(text.includes("fork context forced thinking off for worker (child 0)"), true);
 	});
 
 	it("keeps default-fork context on run-path errors", async () => {
@@ -812,7 +812,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const { manager } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork" },
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
 			],
 			projectAgentsDir: null,
 		}));
@@ -824,7 +824,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		const result = await executor.execute(
 			"id",
-			{ agent: "builder" },
+			{ agent: "worker" },
 			new AbortController().signal,
 			undefined,
 			ctx,
@@ -840,14 +840,14 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const { manager, openedPaths, branchedLeafIds } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "commentator", description: "Oracle", defaultContext: "fork" },
+				{ name: "oracle", description: "Oracle", defaultContext: "fork" },
 			],
 			projectAgentsDir: null,
 		}));
 
 		const result = await executor.execute(
 			"id",
-			{ agent: "commentator", task: "test", context: "fresh" },
+			{ agent: "oracle", task: "test", context: "fresh" },
 			new AbortController().signal,
 			undefined,
 			makeCtx(manager),
@@ -866,7 +866,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const { manager, openedPaths, branchedLeafIds } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork" },
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
 				{ name: "second", description: "Second" },
 			],
 			projectAgentsDir: null,
@@ -874,7 +874,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		const result = await executor.execute(
 			"id",
-			{ tasks: [{ agent: "builder", task: "one" }, { agent: "second", task: "two" }] },
+			{ tasks: [{ agent: "worker", task: "one" }, { agent: "second", task: "two" }] },
 			new AbortController().signal,
 			undefined,
 			makeCtx(manager),
@@ -898,7 +898,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const { manager, openedPaths } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "builder", description: "Worker", defaultContext: "fork" },
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
 				{ name: "second", description: "Second" },
 			],
 			projectAgentsDir: null,
@@ -906,7 +906,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		const result = await executor.execute(
 			"id",
-			{ tasks: [{ agent: "builder", task: "one" }, { agent: "second", task: "two" }], context: "fresh" },
+			{ tasks: [{ agent: "worker", task: "one" }, { agent: "second", task: "two" }], context: "fresh" },
 			new AbortController().signal,
 			undefined,
 			makeCtx(manager),
@@ -924,14 +924,14 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
 				{ name: "echo", description: "Echo" },
-				{ name: "builder", description: "Worker", defaultContext: "fork" },
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
 			],
 			projectAgentsDir: null,
 		}));
 
 		const result = await executor.execute(
 			"id",
-			{ chain: [{ agent: "echo", task: "scan" }, { agent: "builder", task: "write" }], clarify: false },
+			{ chain: [{ agent: "echo", task: "scan" }, { agent: "worker", task: "write" }], clarify: false },
 			new AbortController().signal,
 			undefined,
 			makeCtx(manager),
@@ -965,15 +965,15 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		};
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "explorer", description: "Scout", defaultContext: "fresh" },
-				{ name: "builder", description: "Worker", defaultContext: "fork" },
+				{ name: "scout", description: "Scout", defaultContext: "fresh" },
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
 			],
 			projectAgentsDir: null,
 		}));
 
 		const result = await executor.execute(
 			"id",
-			{ tasks: [{ agent: "explorer", task: "scan" }, { agent: "builder", task: "write" }] },
+			{ tasks: [{ agent: "scout", task: "scan" }, { agent: "worker", task: "write" }] },
 			new AbortController().signal,
 			undefined,
 			makeCtx(manager),
@@ -1000,8 +1000,8 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		};
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "explorer", description: "Scout", defaultContext: "fresh" },
-				{ name: "builder", description: "Worker", defaultContext: "fork" },
+				{ name: "scout", description: "Scout", defaultContext: "fresh" },
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
 			],
 			projectAgentsDir: null,
 		}));
@@ -1010,11 +1010,11 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 			"id",
 			{
 				chain: [
-					{ agent: "explorer", task: "scan" },
-					{ agent: "builder", task: "write" },
+					{ agent: "scout", task: "scan" },
+					{ agent: "worker", task: "write" },
 					{
 						expand: { from: { output: "items", path: "$" } },
-						parallel: { agent: "explorer", task: "inspect item" },
+						parallel: { agent: "scout", task: "inspect item" },
 						collect: { as: "inspections" },
 					},
 				],
@@ -1041,7 +1041,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
 				{ name: "producer", description: "Producer", defaultContext: "fresh" },
-				{ name: "builder", description: "Worker", defaultContext: "fork" },
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
 			],
 			projectAgentsDir: null,
 		}));
@@ -1053,10 +1053,10 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 					{ agent: "producer", task: "produce", as: "items", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "items", path: "/items" }, item: "item", key: "/id", maxItems: 3 },
-						parallel: { agent: "builder", task: "inspect {item.id}" },
+						parallel: { agent: "worker", task: "inspect {item.id}" },
 						collect: { as: "inspections" },
 					},
-					{ agent: "builder", task: "final" },
+					{ agent: "worker", task: "final" },
 				],
 				clarify: false,
 			},
@@ -1074,13 +1074,13 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 	it("reports unknown top-level parallel agents before default-fork preconditions", async () => {
 		const { manager } = makeSessionManagerRecorder({ sessionFile: undefined, leafId: "leaf-current" });
 		const executor = makeExecutorWithDiscoverAgents(() => ({
-			agents: [{ name: "builder", description: "Worker", defaultContext: "fork" }],
+			agents: [{ name: "worker", description: "Worker", defaultContext: "fork" }],
 			projectAgentsDir: null,
 		}));
 
 		const result = await executor.execute(
 			"id",
-			{ tasks: [{ agent: "builder", task: "one" }, { agent: "missing", task: "two" }] },
+			{ tasks: [{ agent: "worker", task: "one" }, { agent: "missing", task: "two" }] },
 			new AbortController().signal,
 			undefined,
 			makeCtx(manager),
@@ -1446,7 +1446,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 	it("keeps inherited model-scope warnings non-fatal in async parallel conversion", { skip: !asyncAvailable ? "jiti not available" : undefined }, async () => {
 		const executor = makeExecutorWithDiscoverAgents(() => ({
-			agents: [{ name: "builder", description: "Worker", model: "openai/gpt-5-mini" }],
+			agents: [{ name: "worker", description: "Worker", model: "openai/gpt-5-mini" }],
 			projectAgentsDir: null,
 			modelScope: { enforce: true, allow: ["anthropic/*"] },
 		}));
@@ -1462,7 +1462,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		try {
 			const result = await executor.execute(
 				"id",
-				{ tasks: [{ agent: "builder", task: "test" }], async: true },
+				{ tasks: [{ agent: "worker", task: "test" }], async: true },
 				new AbortController().signal,
 				undefined,
 				ctx,
@@ -1478,7 +1478,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 	it("keeps inherited model-scope warnings non-fatal after Clarify switches parallel work to background", { skip: !asyncAvailable ? "jiti not available" : undefined }, async () => {
 		const executor = makeExecutorWithDiscoverAgents(() => ({
-			agents: [{ name: "builder", description: "Worker", model: "openai/gpt-5-mini" }],
+			agents: [{ name: "worker", description: "Worker", model: "openai/gpt-5-mini" }],
 			projectAgentsDir: null,
 			modelScope: { enforce: true, allow: ["anthropic/*"] },
 		}));
@@ -1503,7 +1503,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		try {
 			const result = await executor.execute(
 				"id",
-				{ tasks: [{ agent: "builder", task: "test" }], clarify: true },
+				{ tasks: [{ agent: "worker", task: "test" }], clarify: true },
 				new AbortController().signal,
 				undefined,
 				ctx,
@@ -1863,14 +1863,14 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		process.env.USERPROFILE = tempHome;
 		const worktreeDir = path.join(tempDir, "worktree");
 		fs.mkdirSync(worktreeDir, { recursive: true });
-		writeProjectOverride(tempDir, "commentator", "openai/gpt-5-main");
-		writeProjectOverride(worktreeDir, "commentator", "openai/gpt-5-worktree");
+		writeProjectOverride(tempDir, "reviewer", "openai/gpt-5-main");
+		writeProjectOverride(worktreeDir, "reviewer", "openai/gpt-5-worktree");
 		const executor = makeExecutor();
 
 		try {
 			const result = await executor.execute(
 				"id",
-				{ action: "get", agent: "commentator", cwd: "worktree" },
+				{ action: "get", agent: "reviewer", cwd: "worktree" },
 				new AbortController().signal,
 				undefined,
 				makeCtx(makeSessionManagerRecorder().manager),

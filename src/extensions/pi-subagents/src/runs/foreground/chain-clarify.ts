@@ -532,7 +532,7 @@ export class ChainClarifyComponent implements Component {
 			buffer = template.split("\n")[0] ?? "";
 		} else if (mode === "output") {
 			const behavior = this.getEffectiveBehavior(this.selectedStep);
-			buffer = behavior.output === false ? "" : (behavior.output || "");
+			buffer = typeof behavior.output === "string" ? behavior.output : "";
 		} else if (mode === "reads") {
 			const behavior = this.getEffectiveBehavior(this.selectedStep);
 			buffer = behavior.reads === false ? "" : (behavior.reads?.join(", ") || "");
@@ -882,25 +882,22 @@ export class ChainClarifyComponent implements Component {
 		}
 	}
 
-	render(_width: number): string[] {
+	render(width: number): string[] {
+		let lines: string[] = [];
 		if (this.editingStep !== null) {
-			if (this.editMode === "model") {
-				return this.renderModelSelector();
+			if (this.editMode === "model") lines = this.renderModelSelector();
+			else if (this.editMode === "thinking") lines = this.renderThinkingSelector();
+			else if (this.editMode === "skills") lines = this.renderSkillSelector();
+			else lines = this.renderFullEditMode();
+		} else {
+			switch (this.mode) {
+				case 'single': lines = this.renderSingleMode(); break;
+				case 'parallel': lines = this.renderParallelMode(); break;
+				case 'chain': lines = this.renderChainMode(); break;
 			}
-			if (this.editMode === "thinking") {
-				return this.renderThinkingSelector();
-			}
-			if (this.editMode === "skills") {
-				return this.renderSkillSelector();
-			}
-			return this.renderFullEditMode();
 		}
-		// Mode-based navigation rendering
-		switch (this.mode) {
-			case 'single': return this.renderSingleMode();
-			case 'parallel': return this.renderParallelMode();
-			case 'chain': return this.renderChainMode();
-		}
+		const renderWidth = Math.max(0, Math.min(this.width, Math.floor(width)));
+		return lines.map((line) => truncateToWidth(line, renderWidth));
 	}
 
 	/** Render the model selector view */
@@ -1168,7 +1165,9 @@ export class ChainClarifyComponent implements Component {
 
 		const writesValue = behavior.output === false
 			? th.fg("dim", "(disabled)")
-			: (behavior.output || th.fg("dim", "(none)"));
+			: (typeof behavior.output === "string" && behavior.output
+				? behavior.output
+				: th.fg("dim", "(none)"));
 		const writesLabel = th.fg("dim", "writes: ");
 		lines.push(this.row(`     ${writesLabel}${truncateToWidth(writesValue, innerW - 14)}`));
 
@@ -1299,7 +1298,9 @@ export class ChainClarifyComponent implements Component {
 
 			const writesValue = behavior.output === false
 				? th.fg("dim", "(disabled)")
-				: (behavior.output || th.fg("dim", "(none)"));
+				: (typeof behavior.output === "string" && behavior.output
+					? behavior.output
+					: th.fg("dim", "(none)"));
 			const writesLabel = th.fg("dim", "writes: ");
 			lines.push(this.row(`     ${writesLabel}${truncateToWidth(writesValue, innerW - 14)}`));
 

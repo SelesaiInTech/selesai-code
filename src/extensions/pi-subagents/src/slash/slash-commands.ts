@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { keyText, type ExtensionAPI, type ExtensionContext } from "@selesai/code";
-import { Key, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
 import { BUILTIN_AGENT_NAMES, discoverAgents } from "../agents/agents.ts";
 import { registerInlineSubagentInvocation } from "./inline-subagents.ts";
+import { resolveExistingReadPaths } from "../shared/settings.ts";
 import {
 	DEFAULT_PROVIDER_MODELS_MAX_AGE_DAYS,
 	applySubagentProfile,
@@ -23,6 +24,7 @@ import { SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
 import { openSubagentsAdmin } from "./subagents-admin.ts";
+import { SUBAGENT_GUIDE_TOPICS } from "../extension/subagent-guide.ts";
 import { openSubagentFleet } from "../tui/fleet.ts";
 import {
 	applySlashUpdate,
@@ -41,6 +43,7 @@ import {
 	SLASH_SUBAGENT_UPDATE_EVENT,
 	DIRS,
 	type Details,
+	type FleetKeybindingsConfig,
 	type JsonSchemaObject,
 	type SingleResult,
 	type SubagentState,
@@ -282,7 +285,7 @@ class SubagentsStopSelector implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const contentWidth = Math.max(40, Math.min(this.width, width || this.width));
+		const contentWidth = Math.max(0, Math.min(this.width, Math.floor(width)));
 		const lines = [this.theme.bold("Stop subagent run"), this.theme.fg("dim", "Select a current-session async run to stop, or a scheduled run to cancel."), ""];
 		const maxRows = 10;
 		const start = Math.max(0, Math.min(this.selected - maxRows + 1, Math.max(0, this.targets.length - maxRows)));
@@ -306,7 +309,7 @@ class SubagentsStopSelector implements Component {
 		} else {
 			lines.push(this.theme.fg("dim", "↑↓/jk select · Enter confirm · Esc cancel"));
 		}
-		return lines;
+		return lines.map((line) => truncateToWidth(line, contentWidth));
 	}
 }
 
@@ -424,7 +427,7 @@ function parseSingleRequiredArg(args: string, usage: string): { ok: true; value:
 }
 
 function getProfileWorkerModel(profile: { subagents?: { agentOverrides?: Record<string, { model?: string }> } }): string | undefined {
-	const model = profile.subagents?.agentOverrides?.builder?.model;
+	const model = profile.subagents?.agentOverrides?.worker?.model;
 	return typeof model === "string" && model.trim() ? model.trim() : undefined;
 }
 
@@ -622,13 +625,16 @@ export function launchSlashSubagent(
 	void runSlashSubagent(pi, ctx, params);
 }
 
+function slashRunWorkflowScript(key: string, child: Record<string, unknown>): string {
+	return `return runs.run(${JSON.stringify(key)}, ${JSON.stringify(child)})`;
+}
 
 export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
+	options: { fleetKeybindings?: FleetKeybindingsConfig } = {},
 ): void {
 	registerInlineSubagentInvocation(pi, state);
-
 	let fleetOpen = false;
 	const showFleet = async (ctx: ExtensionContext) => {
 		state.lastUiContext = ctx;
@@ -642,7 +648,7 @@ export function registerSlashCommands(
 		}
 		fleetOpen = true;
 		try {
-			await openSubagentFleet(ctx, state, { asyncDirRoot: DIRS.async, resultsDir: DIRS.results });
+			await openSubagentFleet(ctx, state, { asyncDirRoot: DIRS.async, resultsDir: DIRS.results, fleetKeybindings: options.fleetKeybindings });
 		} finally {
 			fleetOpen = false;
 		}
@@ -656,7 +662,7 @@ export function registerSlashCommands(
 	});
 
 	pi.registerCommand("run", {
-		description: "Run a subagent directly: /run agent[output=file] [task] [--bg] [--fork]",
+		description: "Run one subagent through workflowScript: /run agent[output=file] [task] [--bg] [--fork]",
 		getArgumentCompletions: makeAgentCompletions(state),
 		handler: async (args, ctx) => {
 			const { args: cleanedArgs, bg, fork } = extractExecutionFlags(args);
@@ -672,16 +678,16 @@ export function registerSlashCommands(
 
 			let finalTask = task;
 			if (inline.reads && Array.isArray(inline.reads) && inline.reads.length > 0) {
-				finalTask = `[Read from: ${inline.reads.join(", ")}]\n\n${finalTask}`;
+				const existingReads = inline.reads.filter((read) => resolveExistingReadPaths([read], state.baseCwd).length > 0);
+				if (existingReads.length > 0) finalTask = `[Read from: ${existingReads.join(", ")}]\n\n${finalTask}`;
 			}
-			const params: SubagentParamsLike = { agent: agentName, task: finalTask, clarify: false, agentScope: "both" };
-			if (inline.output !== undefined) params.output = inline.output;
-			if (inline.outputMode !== undefined) params.outputMode = inline.outputMode;
-			if (inline.skill !== undefined) params.skill = inline.skill;
-			if (inline.model) params.model = inline.model;
-			if (bg) params.async = true;
-			if (fork) params.context = "fork";
-			launchSlashSubagent(pi, ctx, params);
+			const child: Record<string, unknown> = { agent: agentName, task: finalTask, agentScope: "both" };
+			if (inline.output !== undefined) child.output = inline.output;
+			if (inline.outputMode !== undefined) child.outputMode = inline.outputMode;
+			if (inline.skill !== undefined) child.skill = inline.skill;
+			if (inline.model) child.model = inline.model;
+			if (fork) child.context = "fork";
+			launchSlashSubagent(pi, ctx, { workflowScript: slashRunWorkflowScript("run", child), async: bg ? true : false });
 		},
 	});
 
@@ -696,6 +702,34 @@ export function registerSlashCommands(
 		description: "Show subagent diagnostics",
 		handler: async (_args, ctx) => {
 			await runSlashSubagent(pi, ctx, { action: "doctor" });
+		},
+	});
+
+	pi.registerCommand("subagents-guide", {
+		description: "Show a packaged subagents guide topic",
+		getArgumentCompletions: (prefix) => prefix.includes(" ") ? null : SUBAGENT_GUIDE_TOPICS
+			.filter((topic) => topic.startsWith(prefix))
+			.map((topic) => ({ value: topic, label: topic })),
+		handler: async (args, ctx) => {
+			const topic = args.trim();
+			if (topic.includes(" ")) {
+				ctx.ui.notify("Usage: /subagents-guide [topic]", "error");
+				return;
+			}
+			await runSlashSubagent(pi, ctx, { action: "guide", ...(topic ? { topic } : {}) });
+		},
+	});
+
+	pi.registerCommand("subagents-refine", {
+		description: "Generate a bounded project-local refinement overlay for one subagent",
+		getArgumentCompletions: makeAgentCompletions(state),
+		handler: async (args, ctx) => {
+			const parts = args.trim().split(/\s+/).filter(Boolean);
+			if (parts.length !== 1) {
+				ctx.ui.notify("Usage: /subagents-refine <agent>", "error");
+				return;
+			}
+			await runSlashSubagent(pi, ctx, { action: "refine", agent: parts[0] });
 		},
 	});
 
@@ -850,7 +884,7 @@ export function registerSlashCommands(
 					if (workerModel && typeof pi.setModel === "function" && typeof ctx.modelRegistry?.find === "function" && typeof ctx.modelRegistry?.getAvailable === "function") {
 						const shouldSwitch = await ctx.ui.confirm(
 							"",
-							`Profile loaded. Also switch this session to the profile builder model?\n\n${workerModel}`,
+							`Profile loaded. Also switch this session to the profile worker model?\n\n${workerModel}`,
 						);
 						if (shouldSwitch) {
 							const modelInfo = findModelInfo(workerModel, ctx.modelRegistry.getAvailable().map(toModelInfo));
@@ -864,7 +898,7 @@ export function registerSlashCommands(
 							}
 						}
 					} else if (workerModel) {
-						lines.push(`Profile builder model: ${workerModel}`);
+						lines.push(`Profile worker model: ${workerModel}`);
 					}
 
 					sendSlashText(pi, lines.join("\n"));

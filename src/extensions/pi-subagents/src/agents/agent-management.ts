@@ -1154,7 +1154,7 @@ function handleDisable(params: ManagementParams, ctx: ManagementContext): AgentT
 	const scope = parsedScope.scope!;
 	const d = discoverAgentsAll(ctx.cwd);
 	if (scope === "project" && d.projectSettingsPath === null) {
-		return result("Project override is not available here: no project config root (.selesai or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
+		return result("Project override is not available here: no project config root (.pi or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
 	}
 	const effective = resolveEffectiveAgent(d, raw);
 	if (effective.error) return result(effective.error, true);
@@ -1178,7 +1178,7 @@ function handleEnable(params: ManagementParams, ctx: ManagementContext): AgentTo
 	const scope = parsedScope.scope!;
 	const d = discoverAgentsAll(ctx.cwd);
 	if (scope === "project" && d.projectSettingsPath === null) {
-		return result("Project override is not available here: no project config root (.selesai or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
+		return result("Project override is not available here: no project config root (.pi or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
 	}
 	const effective = resolveEffectiveAgent(d, raw);
 	if (effective.error) return result(effective.error, true);
@@ -1207,7 +1207,7 @@ function handleReset(params: ManagementParams, ctx: ManagementContext): AgentToo
 	const scope = parsedScope.scope!;
 	const d = discoverAgentsAll(ctx.cwd);
 	if (scope === "project" && d.projectSettingsPath === null) {
-		return result("Project override is not available here: no project config root (.selesai or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
+		return result("Project override is not available here: no project config root (.pi or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
 	}
 	const bundled = [...d.package, ...d.builtin].find((a) => a.name === raw || a.name === sanitized);
 	if (!bundled) {

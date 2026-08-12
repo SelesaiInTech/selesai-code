@@ -5,6 +5,8 @@ import {
 	registerHerdrStatusBridge,
 	type HerdrStatusBridgeEvents,
 } from "../../src/integrations/herdr-status.ts";
+import { projectActiveHerdrRuns } from "../../src/extension/index.ts";
+import type { SubagentState } from "../../src/shared/types.ts";
 import {
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_ASYNC_STARTED_EVENT,
@@ -52,7 +54,58 @@ class FakeEvents implements HerdrStatusBridgeEvents {
 	}
 }
 
+function stateForTest(): SubagentState {
+	return {
+		baseCwd: process.cwd(),
+		currentSessionId: "session-current",
+		asyncJobs: new Map(),
+		fleetJobs: new Map(),
+		foregroundRuns: new Map(),
+		foregroundControls: new Map(),
+		lastForegroundControlId: null,
+		cleanupTimers: new Map(),
+		lastUiContext: null,
+		poller: null,
+		completionSeen: new Map(),
+		watcher: null,
+		watcherRestartTimer: null,
+		resultFileCoalescer: { schedule: () => false, clear: () => {} },
+	};
+}
+
 describe("Herdr status bridge", () => {
+	it("projects foreground workflow children onto the parent run without a shell duplicate", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-1", {
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			status: "running",
+			mode: "workflow",
+			agents: ["workflow"],
+		});
+		state.foregroundControls.set("child-1", {
+			runId: "child-1",
+			parentWorkflowRunId: "workflow-1",
+			workflowKey: "review",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			activeChildren: new Map([[0, {
+				index: 0,
+				agent: "reviewer",
+				startedAt: 10,
+				updatedAt: 20,
+				currentActivityState: "needs_attention",
+			}]]),
+		});
+
+		assert.deepEqual(projectActiveHerdrRuns(state), [{
+			id: "workflow-1",
+			agents: ["reviewer"],
+			needsAttention: true,
+		}]);
+	});
+
 	it("reports an async run as visible and semantically busy", async () => {
 		const events = new FakeEvents();
 		const commands: string[][] = [];
@@ -73,13 +126,13 @@ describe("Herdr status bridge", () => {
 		bridge.sessionStarted({ hasUI: true, runs: [] });
 		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
 			id: "run-1",
-			agent: "builder",
+			agent: "worker",
 		});
 		await bridge.flush();
 
 		assert.deepEqual(busyEvents, [{
 			active: true,
-			label: "⏳ 1 subagent (builder)",
+			label: "⏳ 1 subagent (worker)",
 		}]);
 		assert.equal(commands.length, 1);
 		assert.deepEqual(commands[0]?.slice(0, 8), [
@@ -94,10 +147,10 @@ describe("Herdr status bridge", () => {
 		]);
 		assert.ok(commands[0]?.includes("herdr:pi"));
 		assert.ok(commands[0]?.includes("--state-label"));
-		assert.ok(commands[0]?.includes("working=⏳ 1 subagent (builder)"));
-		assert.ok(commands[0]?.includes("idle=⏳ 1 subagent (builder)"));
-		assert.ok(commands[0]?.includes("done=⏳ 1 subagent (builder)"));
-		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (builder)"));
+		assert.ok(commands[0]?.includes("working=⏳ 1 subagent (worker)"));
+		assert.ok(commands[0]?.includes("idle=⏳ 1 subagent (worker)"));
+		assert.ok(commands[0]?.includes("done=⏳ 1 subagent (worker)"));
+		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker)"));
 		assert.ok(commands[0]?.includes("--ttl-ms"));
 		assert.ok(commands[0]?.includes("--seq"));
 
@@ -117,9 +170,9 @@ describe("Herdr status bridge", () => {
 		});
 		bridge.sessionStarted({ hasUI: true, runs: [] });
 
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "builder" });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
 		await bridge.flush();
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-2", agent: "commentator" });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-2", agent: "reviewer" });
 		await bridge.flush();
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-1" });
 		await bridge.flush();
@@ -127,16 +180,16 @@ describe("Herdr status bridge", () => {
 		await bridge.flush();
 
 		assert.deepEqual(busyEvents, [
-			{ active: true, label: "⏳ 1 subagent (builder)" },
+			{ active: true, label: "⏳ 1 subagent (worker)" },
 			{ active: false },
-			{ active: true, label: "⏳ 2 subagents (builder, commentator)" },
+			{ active: true, label: "⏳ 2 subagents (worker, reviewer)" },
 			{ active: false },
-			{ active: true, label: "⏳ 1 subagent (commentator)" },
+			{ active: true, label: "⏳ 1 subagent (reviewer)" },
 			{ active: false },
 		]);
 		assert.equal(commands.length, 4);
-		assert.ok(commands[1]?.includes("summary=⏳ 2 subagents (builder, commentator)"));
-		assert.ok(commands[2]?.includes("summary=⏳ 1 subagent (commentator)"));
+		assert.ok(commands[1]?.includes("summary=⏳ 2 subagents (worker, reviewer)"));
+		assert.ok(commands[2]?.includes("summary=⏳ 1 subagent (reviewer)"));
 		assert.ok(commands[3]?.includes("--clear-state-labels"));
 		assert.ok(commands[3]?.includes("--clear-token"));
 
@@ -155,10 +208,10 @@ describe("Herdr status bridge", () => {
 		});
 		bridge.sessionStarted({ hasUI: true, runs: [] });
 
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "builder" });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
 		events.emit(SUBAGENT_CONTROL_EVENT, {
 			source: "async",
-			noticeText: "builder needs attention",
+			noticeText: "worker needs attention",
 			event: {
 				type: "needs_attention",
 				runId: "run-1",
@@ -175,7 +228,7 @@ describe("Herdr status bridge", () => {
 		bridge.agentStarted();
 
 		assert.deepEqual(blockedEvents, [
-			{ active: true, label: "builder needs attention" },
+			{ active: true, label: "worker needs attention" },
 			{ active: false },
 		]);
 
@@ -186,7 +239,7 @@ describe("Herdr status bridge", () => {
 		const events = new FakeEvents();
 		const blockedEvents: unknown[] = [];
 		const intervals = new FakeIntervals();
-		let authoritativeRuns = [{ id: "run-1", agent: "builder", needsAttention: false }];
+		let authoritativeRuns = [{ id: "run-1", agent: "worker", needsAttention: false }];
 		events.on("herdr:blocked", (payload) => blockedEvents.push(payload));
 		const bridge = registerHerdrStatusBridge({
 			events,
@@ -199,16 +252,16 @@ describe("Herdr status bridge", () => {
 		bridge.sessionStarted({ hasUI: true, runs: authoritativeRuns });
 		events.emit(SUBAGENT_CONTROL_EVENT, {
 			source: "async",
-			noticeText: "builder needs attention",
+			noticeText: "worker needs attention",
 			event: { type: "needs_attention", runId: "run-1" },
 		});
-		authoritativeRuns = [{ id: "run-1", agent: "builder", needsAttention: true }];
+		authoritativeRuns = [{ id: "run-1", agent: "worker", needsAttention: true }];
 		bridge.agentStarted();
 
 		intervals.fireAll();
 		await bridge.flush();
 		assert.deepEqual(blockedEvents, [
-			{ active: true, label: "builder needs attention" },
+			{ active: true, label: "worker needs attention" },
 			{ active: false },
 		]);
 
@@ -216,12 +269,12 @@ describe("Herdr status bridge", () => {
 		// raise the overlay again even if the tracker flag never dropped.
 		events.emit(SUBAGENT_CONTROL_EVENT, {
 			source: "async",
-			noticeText: "builder still needs attention",
+			noticeText: "worker still needs attention",
 			event: { type: "needs_attention", runId: "run-1" },
 		});
 		assert.deepEqual(blockedEvents.at(-1), {
 			active: true,
-			label: "builder still needs attention",
+			label: "worker still needs attention",
 		});
 
 		bridge.dispose();
@@ -239,7 +292,7 @@ describe("Herdr status bridge", () => {
 		});
 		bridge.sessionStarted({ hasUI: true, runs: [] });
 
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "builder" });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
 		events.emit(SUBAGENT_CONTROL_EVENT, {
 			source: "async",
 			event: { type: "needs_attention", runId: "run-1", message: "stuck" },
@@ -265,28 +318,28 @@ describe("Herdr status bridge", () => {
 			refreshMs: 0,
 		});
 		bridge.sessionStarted({ hasUI: true, runs: [] });
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "builder" });
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-2", agent: "commentator" });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-2", agent: "reviewer" });
 
 		events.emit(SUBAGENT_CONTROL_EVENT, {
 			source: "async",
-			noticeText: "builder needs attention",
+			noticeText: "worker needs attention",
 			event: { type: "needs_attention", runId: "run-1" },
 		});
 		events.emit(SUBAGENT_CONTROL_EVENT, {
 			source: "async",
-			noticeText: "commentator needs attention",
+			noticeText: "reviewer needs attention",
 			event: { type: "needs_attention", runId: "run-2" },
 		});
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-2" });
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-1" });
 
 		assert.deepEqual(blockedEvents, [
-			{ active: true, label: "builder needs attention" },
+			{ active: true, label: "worker needs attention" },
 			{ active: false },
-			{ active: true, label: "commentator needs attention" },
+			{ active: true, label: "reviewer needs attention" },
 			{ active: false },
-			{ active: true, label: "builder needs attention" },
+			{ active: true, label: "worker needs attention" },
 			{ active: false },
 		]);
 
@@ -311,22 +364,22 @@ describe("Herdr status bridge", () => {
 			hasUI: true,
 			runs: [{
 				id: "run-restored",
-				agents: ["builder", "commentator"],
+				agents: ["worker", "reviewer"],
 				needsAttention: true,
-				attentionLabel: "commentator needs attention",
+				attentionLabel: "reviewer needs attention",
 			}],
 		});
 		await bridge.flush();
 
 		assert.deepEqual(busyEvents, [{
 			active: true,
-			label: "⏳ 1 subagent (builder, commentator)",
+			label: "⏳ 1 subagent (worker, reviewer)",
 		}]);
 		assert.deepEqual(blockedEvents, [{
 			active: true,
-			label: "commentator needs attention",
+			label: "reviewer needs attention",
 		}]);
-		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (builder, commentator)"));
+		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker, reviewer)"));
 
 		bridge.dispose();
 		await bridge.flush();
@@ -350,7 +403,7 @@ describe("Herdr status bridge", () => {
 		bridge.sessionStarted({ hasUI: true, runs: [] });
 
 		assert.equal(intervals.pendingCount(), 0);
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "builder" });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
 		assert.equal(intervals.pendingCount(), 1);
 		await bridge.flush();
 		intervals.fireAll();
@@ -370,7 +423,7 @@ describe("Herdr status bridge", () => {
 		const commands: string[][] = [];
 		const busyEvents: unknown[] = [];
 		const intervals = new FakeIntervals();
-		let authoritativeRuns = [{ id: "run-1", agent: "builder" }];
+		let authoritativeRuns = [{ id: "run-1", agent: "worker" }];
 		events.on("herdr:busy", (payload) => busyEvents.push(payload));
 		const bridge = registerHerdrStatusBridge({
 			events,
@@ -391,7 +444,7 @@ describe("Herdr status bridge", () => {
 		await bridge.flush();
 
 		assert.deepEqual(busyEvents, [
-			{ active: true, label: "⏳ 1 subagent (builder)" },
+			{ active: true, label: "⏳ 1 subagent (worker)" },
 			{ active: false },
 		]);
 		assert.equal(intervals.pendingCount(), 0);
@@ -418,20 +471,20 @@ describe("Herdr status bridge", () => {
 		});
 		bridge.sessionStarted({ hasUI: true, runs: [] });
 
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "builder" });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
 		await Promise.resolve();
 		assert.equal(commands.length, 1);
 
 		// These snapshots all arrive while the first CLI call is blocked. Only
 		// the final clear matters once that call returns.
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-2", agent: "commentator" });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-2", agent: "reviewer" });
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-1" });
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-2" });
 		releaseFirst?.();
 		await bridge.flush();
 
 		assert.equal(commands.length, 2);
-		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (builder)"));
+		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker)"));
 		assert.ok(commands[1]?.includes("--clear-state-labels"));
 
 		bridge.dispose();
@@ -450,25 +503,25 @@ describe("Herdr status bridge", () => {
 		});
 
 		// Before any session_start, the pane owner is unknown.
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-early", agent: "builder" });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-early", agent: "worker" });
 		await bridge.flush();
 		assert.deepEqual(commands, []);
 		assert.deepEqual(busyEvents, []);
 
 		// A headless parent (print/json mode, or a test harness) must never publish.
-		bridge.sessionStarted({ hasUI: false, runs: [{ id: "run-headless", agent: "builder" }] });
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "builder" });
+		bridge.sessionStarted({ hasUI: false, runs: [{ id: "run-headless", agent: "worker" }] });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
 		await bridge.flush();
 		assert.deepEqual(commands, []);
 		assert.deepEqual(busyEvents, []);
 
 		// Only the root interactive session owns the pane.
 		bridge.sessionStarted({ hasUI: true, runs: [] });
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-2", agent: "commentator" });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-2", agent: "reviewer" });
 		await bridge.flush();
 		assert.equal(commands.length, 1);
-		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (commentator)"));
-		assert.deepEqual(busyEvents, [{ active: true, label: "⏳ 1 subagent (commentator)" }]);
+		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (reviewer)"));
+		assert.deepEqual(busyEvents, [{ active: true, label: "⏳ 1 subagent (reviewer)" }]);
 
 		bridge.dispose();
 	});
@@ -483,8 +536,8 @@ describe("Herdr status bridge", () => {
 			refreshMs: 0,
 		});
 
-		bridge.sessionStarted({ hasUI: true, runs: [{ id: "run-2", agent: "commentator" }] });
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "builder" });
+		bridge.sessionStarted({ hasUI: true, runs: [{ id: "run-2", agent: "reviewer" }] });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
 		bridge.agentStarted();
 		bridge.dispose();
 		await bridge.flush();

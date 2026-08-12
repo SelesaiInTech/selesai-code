@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { validateMissionLaunch } from "../../src/missions/actions.ts";
 import {
 	attachMissionToLaunchResult,
 	prepareMissionLaunch,
@@ -19,6 +20,27 @@ function projectFixture() {
 }
 
 describe("mission launch lifecycle", () => {
+	it("validates the public mission launch shape", () => {
+		assert.deepEqual(validateMissionLaunch({
+			summary: "Review the active backlog",
+			objective: "Find ready work",
+			goal: true,
+			budget: { tokens: 400000 },
+			labels: ["review"],
+		}), {
+			title: "Review the active backlog",
+			objective: "Find ready work",
+			goal: true,
+			budget: { tokens: 400000 },
+			labels: ["review"],
+		});
+		assert.throws(() => validateMissionLaunch({}), /title or mission\.summary/);
+		assert.throws(() => validateMissionLaunch({ title: "Title", summary: "Summary" }), /cannot both be set/);
+		assert.throws(() => validateMissionLaunch({ title: " " }), /non-empty string/);
+		assert.throws(() => validateMissionLaunch({ title: "Title", goal: false }), /must be true/);
+		assert.throws(() => validateMissionLaunch({ title: "Title", goal: true }), /budget is required/);
+	});
+
 	it("creates missions by default for task launches and honors explicit opt-out", () => {
 		const test = projectFixture();
 		try {
@@ -30,7 +52,7 @@ describe("mission launch lifecycle", () => {
 			});
 			assert.ok(binding);
 			const mission = readMission(binding.location, binding.missionId);
-			assert.equal(mission.goal, "Map the auth flow");
+			assert.equal(mission.objective, "Map the auth flow");
 			assert.equal(mission.status, "active");
 			const result = attachMissionToLaunchResult({
 				binding,
@@ -39,7 +61,7 @@ describe("mission launch lifecycle", () => {
 					details: {
 						mode: "single",
 						runId: "default-mission-run",
-						results: [{ index: 0, agent: "builder", task: "Map the auth flow", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 } }],
+						results: [{ index: 0, agent: "worker", task: "Map the auth flow", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 } }],
 					},
 				},
 			});
@@ -51,6 +73,20 @@ describe("mission launch lifecycle", () => {
 				config: { ...test.missionConfig, enabled: false },
 			});
 			assert.equal(disabled, undefined);
+
+			const parallelOnly = prepareMissionLaunch({
+				params: { chain: [{ parallel: [{ task: "" }, { task: "Review parallel work" }] }] },
+				projectRoot: test.projectRoot,
+				config: test.missionConfig,
+			});
+			assert.ok(parallelOnly);
+			assert.equal(readMission(parallelOnly.location, parallelOnly.missionId).objective, "Review parallel work");
+
+			assert.throws(() => prepareMissionLaunch({
+				params: { missionId: "" },
+				projectRoot: test.projectRoot,
+				config: test.missionConfig,
+			}), /missionId/);
 
 			const perLaunchDisabled = prepareMissionLaunch({
 				params: { mission: false, task: "Ephemeral check" },
@@ -71,6 +107,17 @@ describe("mission launch lifecycle", () => {
 				config: { ...test.missionConfig, enabled: false },
 			});
 			assert.ok(explicit);
+			assert.equal(readMission(explicit.location, explicit.missionId).objective, "Tiny one-off");
+
+			const summaryAlias = prepareMissionLaunch({
+				params: { mission: { summary: "Review active backlog", labels: ["review"] }, task: "Review the current diff" },
+				projectRoot: test.projectRoot,
+				config: test.missionConfig,
+			});
+			assert.ok(summaryAlias);
+			assert.deepEqual(readMission(summaryAlias.location, summaryAlias.missionId).labels, ["review"]);
+			assert.equal(readMission(summaryAlias.location, summaryAlias.missionId).title, "Review active backlog");
+			assert.equal(readMission(summaryAlias.location, summaryAlias.missionId).objective, "Review the current diff");
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}
@@ -80,7 +127,7 @@ describe("mission launch lifecycle", () => {
 		const test = projectFixture();
 		try {
 			const binding = prepareMissionLaunch({
-				params: { mission: { title: "Implement feature", goal: "Ship it", labels: ["phase-1"] }, task: "Do the work" },
+				params: { mission: { title: "Implement feature", objective: "Ship it", labels: ["phase-1"] }, task: "Do the work" },
 				projectRoot: test.projectRoot,
 				config: test.missionConfig,
 				ownerSessionId: "session-1",
@@ -93,7 +140,7 @@ describe("mission launch lifecycle", () => {
 					details: {
 						mode: "single",
 						runId: "foreground-1",
-						results: [{ index: 0, agent: "builder", task: "Do the work", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 } }],
+						results: [{ index: 0, agent: "worker", task: "Do the work", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 } }],
 					},
 				},
 			});
@@ -176,7 +223,7 @@ describe("mission launch lifecycle", () => {
 		}
 	});
 
-	it("binds an async launch and reconciles terminal status and artifacts", () => {
+	it("binds an async workflow launch and preserves its mode through completion", () => {
 		const test = projectFixture();
 		try {
 			const asyncDir = path.join(test.root, "async-run");
@@ -191,7 +238,7 @@ describe("mission launch lifecycle", () => {
 				binding,
 				result: {
 					content: [{ type: "text", text: "Async started" }],
-					details: { mode: "chain", runId: "async-1", asyncId: "async-1", asyncDir, results: [] },
+					details: { mode: "workflow", runId: "async-1", asyncId: "async-1", asyncDir, results: [] },
 				},
 			});
 			assert.equal(readMissionBinding(asyncDir)?.missionId, binding.missionId);
@@ -201,7 +248,7 @@ describe("mission launch lifecycle", () => {
 				id: "async-1",
 				runId: "async-1",
 				asyncDir,
-				mode: "chain",
+				mode: "workflow",
 				state: "complete",
 				success: true,
 				summary: "Background work completed",
@@ -209,6 +256,7 @@ describe("mission launch lifecycle", () => {
 			});
 			assert.equal(completed?.status, "completed");
 			assert.equal(completed?.runs[0]?.status, "complete");
+			assert.equal(completed?.runs[0]?.mode, "workflow");
 			assert.ok(completed?.artifacts.some((artifact) => artifact.kind === "output"));
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });

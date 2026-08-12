@@ -22,19 +22,19 @@ describe("child watchdog status helpers", () => {
 					model: "openai/gpt-test-child",
 					thinking: "low",
 					overrides: {
-						builder: {
-							model: "anthropic/claude-test-builder",
+						worker: {
+							model: "anthropic/claude-test-worker",
 							thinking: false,
 						},
 					},
 				},
 			},
-			agent: "builder",
+			agent: "worker",
 			runId: "run-1",
 			childIndex: 0,
 		});
 
-		assert.equal(config?.model, "anthropic/claude-test-builder");
+		assert.equal(config?.model, "anthropic/claude-test-worker");
 		assert.equal(config?.thinking, false);
 		assert.deepEqual(config?.lsp, DEFAULT_WATCHDOG_CONFIG.lsp);
 	});
@@ -43,7 +43,7 @@ describe("child watchdog status helpers", () => {
 		const payload = {
 			enabled: true,
 			runId: "run-1",
-			agent: "builder",
+			agent: "worker",
 			childIndex: 1,
 			watchdogTailTimeoutMs: 100,
 			agentEndTimeoutMs: 200,
@@ -79,7 +79,7 @@ describe("child watchdog status helpers", () => {
 		const firstEvent = {
 			type: CHILD_WATCHDOG_STATUS_EVENT,
 			runId: "run-1",
-			agent: "builder",
+			agent: "worker",
 			childIndex: 0,
 			seq: 1,
 			phase: "reviewing",
@@ -88,20 +88,20 @@ describe("child watchdog status helpers", () => {
 		} as const;
 
 		assert.equal(isChildWatchdogStatusEvent(firstEvent), true);
-		const first = acceptChildWatchdogEvent({ event: firstEvent, runId: "run-1", agent: "builder", childIndex: 0, current: undefined });
+		const first = acceptChildWatchdogEvent({ event: firstEvent, runId: "run-1", agent: "worker", childIndex: 0, current: undefined });
 		assert.deepEqual(first, { phase: "reviewing", seq: 1, lastUpdate: 10, followUpPending: false });
 		assert.equal(childWatchdogIsActive(first), true);
-		assert.equal(acceptChildWatchdogEvent({ event: firstEvent, current: first, runId: "run-1", agent: "builder", childIndex: 0 }), undefined);
-		assert.equal(acceptChildWatchdogEvent({ event: { ...firstEvent, seq: 2, runId: undefined }, current: first, runId: "run-1", agent: "builder", childIndex: 0 }), undefined);
-		assert.equal(acceptChildWatchdogEvent({ event: { ...firstEvent, seq: 2, agent: undefined }, current: first, runId: "run-1", agent: "builder", childIndex: 0 }), undefined);
-		assert.equal(acceptChildWatchdogEvent({ event: { ...firstEvent, seq: 2, childIndex: undefined }, current: first, runId: "run-1", agent: "builder", childIndex: 0 }), undefined);
-		assert.equal(acceptChildWatchdogEvent({ event: { ...firstEvent, seq: 2, agent: "other" }, current: first, runId: "run-1", agent: "builder", childIndex: 0 }), undefined);
+		assert.equal(acceptChildWatchdogEvent({ event: firstEvent, current: first, runId: "run-1", agent: "worker", childIndex: 0 }), undefined);
+		assert.equal(acceptChildWatchdogEvent({ event: { ...firstEvent, seq: 2, runId: undefined }, current: first, runId: "run-1", agent: "worker", childIndex: 0 }), undefined);
+		assert.equal(acceptChildWatchdogEvent({ event: { ...firstEvent, seq: 2, agent: undefined }, current: first, runId: "run-1", agent: "worker", childIndex: 0 }), undefined);
+		assert.equal(acceptChildWatchdogEvent({ event: { ...firstEvent, seq: 2, childIndex: undefined }, current: first, runId: "run-1", agent: "worker", childIndex: 0 }), undefined);
+		assert.equal(acceptChildWatchdogEvent({ event: { ...firstEvent, seq: 2, agent: "other" }, current: first, runId: "run-1", agent: "worker", childIndex: 0 }), undefined);
 
 		const settled = acceptChildWatchdogEvent({
 			event: { ...firstEvent, seq: 2, phase: "idle", ts: 20 },
 			current: first,
 			runId: "run-1",
-			agent: "builder",
+			agent: "worker",
 			childIndex: 0,
 		});
 		assert.equal(settled?.phase, "idle");

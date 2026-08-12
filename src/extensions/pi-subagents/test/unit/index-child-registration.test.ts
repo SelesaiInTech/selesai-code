@@ -10,11 +10,12 @@ import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/sh
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-function parentToolEnv(): NodeJS.ProcessEnv {
+function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	delete env[SUBAGENT_CHILD_ENV];
 	delete env[SUBAGENT_FANOUT_CHILD_ENV];
 	delete env[WAIT_TOOL_ENABLED_ENV];
+	if (agentDir) env.SELESAI_CODING_AGENT_DIR = agentDir;
 	return env;
 }
 
@@ -71,7 +72,7 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
-	it("renders only the public single and workflow execution modes", () => {
+	it("renders only the public workflow execution mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
@@ -84,20 +85,16 @@ describe("subagent extension child mode", () => {
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
 			const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
-			const single = registeredTool.renderCall({ agent: "builder", async: true }, theme).text;
 			const workflow = registeredTool.renderCall({
-				workflowScript: "const scan = await runs.run('scan', {agent:'builder'}); return runs.all([{key:'correctness',agent:'commentator'},{key:'tests',agent:'commentator'}]);",
+				workflowScript: "const scan = await runs.run('scan', {agent:'worker'}); return runs.all([{key:'correctness',agent:'reviewer'},{key:'tests',agent:'reviewer'}]);",
 			}, theme).text;
-			const foregroundWorkflow = registeredTool.renderCall({ workflowScript: "return runs.run('publish', {agent:'builder'});", async: false }, theme).text;
-			const clarifiedWorkflow = registeredTool.renderCall({ workflowScript: "return runs.run('clarify', {agent:'builder'});", async: true, clarify: true }, theme).text;
-			const templateWorkflow = registeredTool.renderCall({ workflowScript: "return runs.run(\`template\`, {agent:'builder'});", async: false }, theme).text;
-			const commentedWorkflow = registeredTool.renderCall({ workflowScript: "// runs.run('ignored', {agent:'builder'})\nconst note = \"key: 'also-ignored'\"; return runs.run('real', {agent:'builder'});" }, theme).text;
-			const dynamicKeyWorkflow = registeredTool.renderCall({ workflowScript: "return runs.all([{key: 'review-' + item, agent: 'commentator'}]);" }, theme).text;
-			const ordinaryKeyWorkflow = registeredTool.renderCall({ workflowScript: "const config = {key: 'secret'}; return runs.all([{agent: 'commentator', config: {key: 'nested'}, key: 'review'}]);" }, theme).text;
-			if (!single.includes("builder [async]")) throw new Error("expected async single badge, got " + single);
+			const foregroundWorkflow = registeredTool.renderCall({ workflowScript: "return runs.run('publish', {agent:'worker'});", async: false }, theme).text;
+			const templateWorkflow = registeredTool.renderCall({ workflowScript: "return runs.run(\`template\`, {agent:'worker'});", async: false }, theme).text;
+			const commentedWorkflow = registeredTool.renderCall({ workflowScript: "// runs.run('ignored', {agent:'worker'})\nconst note = \"key: 'also-ignored'\"; return runs.run('real', {agent:'worker'});" }, theme).text;
+			const dynamicKeyWorkflow = registeredTool.renderCall({ workflowScript: "return runs.all([{key: 'review-' + item, agent: 'reviewer'}]);" }, theme).text;
+			const ordinaryKeyWorkflow = registeredTool.renderCall({ workflowScript: "const config = {key: 'secret'}; return runs.all([{agent: 'reviewer', config: {key: 'nested'}, key: 'review'}]);" }, theme).text;
 			if (!workflow.includes("background · 3 lanes: scan, correctness, tests")) throw new Error("expected workflow manifest, got " + workflow);
 			if (!foregroundWorkflow.includes("foreground · 1 lane: publish")) throw new Error("expected foreground workflow manifest, got " + foregroundWorkflow);
-			if (!clarifiedWorkflow.includes("rejected: clarify UI unsupported")) throw new Error("expected clarified workflow rejection, got " + clarifiedWorkflow);
 			if (!templateWorkflow.includes("foreground · 1 lane: template")) throw new Error("expected static template lane, got " + templateWorkflow);
 			if (!commentedWorkflow.includes("background · 1 lane: real")) throw new Error("expected lexical lane filtering, got " + commentedWorkflow);
 			if (!dynamicKeyWorkflow.includes("workflow script · background")) throw new Error("expected dynamic key fallback, got " + dynamicKeyWorkflow);
@@ -123,10 +120,10 @@ describe("subagent extension child mode", () => {
 				registerSubagentExtension(fakePi);
 				const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
 				const result = registeredTool.renderCall({
-					workflowScript: "return runs.run('scan' /* stable lane */, {agent:'builder'});",
+					workflowScript: "return runs.run('scan' /* stable lane */, {agent:'worker'});",
 				}, theme).text;
 				const explicitForeground = registeredTool.renderCall({
-					workflowScript: "return runs.run('publish', {agent:'builder'});",
+					workflowScript: "return runs.run('publish', {agent:'worker'});",
 					async: false,
 				}, theme).text;
 				if (!result.includes("background · 1 lane: scan")) throw new Error("expected workflow executor background manifest, got " + result);
@@ -165,9 +162,41 @@ describe("subagent extension child mode", () => {
 			if (!error.includes("Retry the subagent call.")) throw new Error("error retry guidance was hidden: " + error);
 			if (error.includes("3 lines")) throw new Error("error was collapsed: " + error);
 
-			const success = render("Managed agents:\n- commentator\n- writer", false);
+			const success = render("Managed agents:\n- reviewer\n- writer", false);
 			if (!success.includes("Managed agents: · 3 lines")) throw new Error("success summary was not collapsed: " + success);
-			if (success.includes("- commentator") || success.includes("- writer")) throw new Error("success details were not collapsed: " + success);
+			if (success.includes("- reviewer") || success.includes("- writer")) throw new Error("success details were not collapsed: " + success);
+		`;
+
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-strip-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
+	it("rejects blank action at the public executor boundary", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			const events = { on() { return () => {}; }, emit() {} };
+			let registeredTool;
+			const fakePi = new Proxy({
+				events,
+				registerTool(tool) { if (tool.name === "subagent") registeredTool = tool; },
+				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			registerSubagentExtension(fakePi);
+			if (!registeredTool) throw new Error("tool not registered");
+			const result = await registeredTool.execute("blank-action", { action: "", agent: "reviewer" }, new AbortController().signal, undefined, { cwd: process.cwd(), hasUI: false });
+			if (!result.isError) throw new Error("blank action should be rejected");
+			const text = result.content?.[0]?.text ?? "";
+			if (!text.includes("action must be a non-empty")) throw new Error("unexpected blank action error: " + text);
 		`;
 
 		execFileSync(
@@ -208,9 +237,9 @@ describe("subagent extension child mode", () => {
 				details: {
 					mode: "single",
 					results: [{
-						agent: "builder", task: "quiet", exitCode: 0, messages: [],
+						agent: "worker", task: "quiet", exitCode: 0, messages: [],
 						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
-						progress: { status: "running", index: 0, agent: "builder", toolCount: 0, tokens: 0, durationMs: 0 },
+						progress: { status: "running", index: 0, agent: "worker", toolCount: 0, tokens: 0, durationMs: 0 },
 					}],
 				},
 			}, { expanded: false }, { fg(_name, text) { return text; }, bold(text) { return text; } }, context);
@@ -255,15 +284,15 @@ describe("subagent extension child mode", () => {
 				if (!registeredTool) throw new Error("tool not registered");
 				const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
 				const base = {
-					agent: "explorer", task: "quiet", messages: [],
+					agent: "delegate", task: "quiet", messages: [],
 					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
 				};
 				const running = registeredTool.renderResult({
 					content: [{ type: "text", text: "partial output that must not appear" }],
-					details: { mode: "single", results: [{ ...base, exitCode: 0, progress: { status: "running", index: 0, agent: "explorer", toolCount: 2, tokens: 300, durationMs: 20_000 } }] },
+					details: { mode: "single", results: [{ ...base, exitCode: 0, progress: { status: "running", index: 0, agent: "delegate", toolCount: 2, tokens: 300, durationMs: 20_000 } }] },
 				}, { expanded: false, isPartial: true }, theme, { state: {} }).render(120);
 				const asyncSingle = registeredTool.renderResult({
-					content: [{ type: "text", text: "Async: explorer [single-run]" }],
+					content: [{ type: "text", text: "Async: delegate [single-run]" }],
 					details: { mode: "single", runId: "single-run", asyncId: "single-run", asyncDir: "/tmp/single-run", results: [] },
 				}, { expanded: false }, theme, { state: {} }).render(120);
 				const asyncChain = registeredTool.renderResult({
@@ -298,13 +327,13 @@ describe("subagent extension child mode", () => {
 					content: [{ type: "text", text: "Agent configuration is invalid." }],
 					details: { mode: "management", results: [] },
 				}, { expanded: false, isPartial: false }, theme, { isError: true, state: {} }).render(120);
-				if (running.length !== 1 || running[0] !== "● explorer · running") throw new Error("unexpected running summary: " + JSON.stringify(running));
+				if (running.length !== 1 || running[0] !== "● delegate · running") throw new Error("unexpected running summary: " + JSON.stringify(running));
 				if (asyncSingle.length !== 1 || asyncSingle[0] !== "● single · running") throw new Error("unexpected async single summary: " + JSON.stringify(asyncSingle));
 				if (asyncChain.length !== 1 || asyncChain[0] !== "● chain · running") throw new Error("unexpected async chain summary: " + JSON.stringify(asyncChain));
-				if (completed.length !== 1 || completed[0] !== "✓ explorer · completed") throw new Error("unexpected completed summary: " + JSON.stringify(completed));
-				if (stopped.length !== 1 || stopped[0] !== "■ explorer · stopped") throw new Error("unexpected stopped summary: " + JSON.stringify(stopped));
-				if (paused.length !== 1 || paused[0] !== "■ explorer · paused") throw new Error("unexpected paused summary: " + JSON.stringify(paused));
-				if (failed.length !== 1 || failed[0] !== "✗ explorer · failed") throw new Error("unexpected failed summary: " + JSON.stringify(failed));
+				if (completed.length !== 1 || completed[0] !== "✓ delegate · completed") throw new Error("unexpected completed summary: " + JSON.stringify(completed));
+				if (stopped.length !== 1 || stopped[0] !== "■ delegate · stopped") throw new Error("unexpected stopped summary: " + JSON.stringify(stopped));
+				if (paused.length !== 1 || paused[0] !== "■ delegate · paused") throw new Error("unexpected paused summary: " + JSON.stringify(paused));
+				if (failed.length !== 1 || failed[0] !== "✗ delegate · failed") throw new Error("unexpected failed summary: " + JSON.stringify(failed));
 				if (failedWithPaused.length !== 1 || failedWithPaused[0] !== "✗ parallel · failed") throw new Error("unexpected paused aggregate summary: " + JSON.stringify(failedWithPaused));
 				if (failedWithStopped.length !== 1 || failedWithStopped[0] !== "✗ parallel · failed") throw new Error("unexpected stopped aggregate summary: " + JSON.stringify(failedWithStopped));
 				if (contextError.length !== 1 || contextError[0] !== "✗ management · failed") throw new Error("unexpected context error summary: " + JSON.stringify(contextError));
@@ -400,7 +429,7 @@ describe("subagent extension child mode", () => {
 				registerSubagentExtension(fakePi);
 				handlers.get("session_start")({}, ctx);
 				widgets.length = 0;
-				eventHandlers.get("subagent:async-started")({ id: "widget-run", pid: 1, sessionId: "session-widget", mode: "single", agent: "builder", asyncDir: "/tmp/widget-run" });
+				eventHandlers.get("subagent:async-started")({ id: "widget-run", pid: 1, sessionId: "session-widget", mode: "single", agent: "worker", asyncDir: "/tmp/widget-run" });
 				handlers.get("tool_result")({ toolName: "subagent" }, ctx);
 				const asyncWidgets = widgets.filter((entry) => entry.key === "subagent-async");
 				if (asyncWidgets.length < 2 || asyncWidgets.some((entry) => entry.value !== undefined)) throw new Error("async widget rendered despite disabled config: " + JSON.stringify(asyncWidgets));
@@ -441,7 +470,7 @@ describe("subagent extension child mode", () => {
 				registerSubagentExtension(fakePi);
 				handlers.get("session_start")({}, ctx);
 				widgets.length = 0;
-				eventHandlers.get("subagent:async-started")({ id: "widget-run", pid: 1, sessionId: "session-widget", mode: "workflow", agent: "builder", asyncDir: "/tmp/widget-run" });
+				eventHandlers.get("subagent:async-started")({ id: "widget-run", pid: 1, sessionId: "session-widget", mode: "workflow", agent: "worker", asyncDir: "/tmp/widget-run" });
 				handlers.get("tool_result")({ toolName: "subagent" }, ctx);
 				const asyncWidgets = widgets.filter((entry) => entry.key === "subagent-async");
 				if (!asyncWidgets.some((entry) => entry.value !== undefined)) throw new Error("async widget was not rendered with FleetView enabled: " + JSON.stringify(asyncWidgets));
@@ -455,11 +484,12 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("restores disk-backed active status after a management tool result", () => {
+	it("restores indexed active status after a management tool result", () => {
 		const script = String.raw`
 			import * as fs from "node:fs";
 			import * as path from "node:path";
 			import registerSubagentExtension from "./index.ts";
+			import { updateActiveRunIndex } from "./src/runs/background/active-run-index.ts";
 			import { DIRS } from "./src/shared/types.ts";
 			const eventHandlers = new Map();
 			const handlers = new Map();
@@ -489,6 +519,7 @@ describe("subagent extension child mode", () => {
 				runId, sessionId, mode: "workflow", state: "running",
 				startedAt: Date.now(), lastUpdate: Date.now(), cwd: process.cwd(), pid: process.pid,
 			}), "utf-8");
+			updateActiveRunIndex(asyncDir, "running");
 			handlers.get("tool_result")({ toolName: "subagent" }, ctx);
 			const fleetWidgets = widgets.filter((entry) => entry.key === "subagent-fleet-status");
 			if (!fleetWidgets.some((entry) => typeof entry.value === "function")) throw new Error("management result did not restore active fleet status: " + JSON.stringify(fleetWidgets));
@@ -544,7 +575,7 @@ describe("subagent extension child mode", () => {
 			handlers.get("session_start")({}, ctx);
 			sent.length = 0;
 			events.emit("subagent:async-complete", {
-				id: "shutdown-held-completion", agent: "builder", success: true, summary: "Done",
+				id: "shutdown-held-completion", agent: "worker", success: true, summary: "Done",
 				exitCode: 0, timestamp: Date.now(), sessionId: "notify-shutdown-session",
 			});
 			if (sent.length !== 0) throw new Error("completion was not queued before shutdown");
@@ -622,7 +653,7 @@ describe("subagent extension child mode", () => {
 			oldRuntime.sent.length = 0;
 			const timersBeforeOldCompletion = new Set(pendingTimers.keys());
 			oldRuntime.events.emit("subagent:async-complete", {
-				id: "reload-held-completion", agent: "builder", success: true, summary: "Old",
+				id: "reload-held-completion", agent: "worker", success: true, summary: "Old",
 				exitCode: 0, timestamp: Date.now(), sessionId: "notify-reload-old",
 			});
 			if (oldRuntime.sent.length !== 0) throw new Error("old completion was not queued before reload");
@@ -637,7 +668,7 @@ describe("subagent extension child mode", () => {
 
 			const timersBeforeNewCompletion = new Set(pendingTimers.keys());
 			newRuntime.events.emit("subagent:async-complete", {
-				id: "reload-new-completion", agent: "commentator", success: true, summary: "New",
+				id: "reload-new-completion", agent: "reviewer", success: true, summary: "New",
 				exitCode: 0, timestamp: Date.now(), sessionId: "notify-reload-new",
 			});
 			const newCompletionTimers = [...pendingTimers.entries()].filter(([token]) => !timersBeforeNewCompletion.has(token));
@@ -820,6 +851,37 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("trims legacy chain controls from the child-safe fanout tool by default", () => {
+		const readRegisteredTool = (legacyChainControls: boolean): { description: string; properties: string[]; id: string; runId: string } => {
+			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fanout-schema-"));
+			fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
+			fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ legacyChainControls }), "utf-8");
+			const script = String.raw`
+				import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
+				import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
+				process.env[SUBAGENT_CHILD_ENV] = "1";
+				process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
+				let tool;
+				registerFanoutChildSubagentExtension({ events: { on() { return () => {}; }, emit() {} }, registerTool(value) { tool = value; }, getSessionName() { return undefined; } });
+				process.stdout.write(JSON.stringify({ description: tool.description, properties: Object.keys(tool.parameters.properties), id: tool.parameters.properties.id.description, runId: tool.parameters.properties.runId.description }));
+			`;
+			const output = execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], {
+				cwd: projectRoot,
+				env: parentToolEnv(agentDir),
+				encoding: "utf-8",
+			});
+			return JSON.parse(output) as { description: string; properties: string[]; id: string; runId: string };
+		};
+
+		const trimmed = readRegisteredTool(false);
+		assert.equal(trimmed.properties.includes("step"), false);
+		assert.doesNotMatch(`${trimmed.description}\n${trimmed.id}\n${trimmed.runId}`, /append-step|approve-checkpoint|reject-checkpoint/);
+
+		const legacy = readRegisteredTool(true);
+		assert.equal(legacy.properties.includes("step"), true);
+		assert.match(`${legacy.description}\n${legacy.id}\n${legacy.runId}`, /append-step/);
+	});
+
 	it("lets fanout children call read-only list but blocks mutating management actions", () => {
 		const script = String.raw`
 			import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
@@ -846,6 +908,10 @@ describe("subagent extension child mode", () => {
 			if (!create.isError) throw new Error("create should be blocked");
 			const text = create.content?.[0]?.text ?? "";
 			if (!text.includes("not available from child-safe subagent fanout mode")) throw new Error("unexpected create error: " + text);
+			const refine = await registeredTool.execute("refine-check", { action: "refine", agent: "worker" }, new AbortController().signal, undefined, ctx);
+			if (!refine.isError) throw new Error("refine should be blocked");
+			const refineText = refine.content?.[0]?.text ?? "";
+			if (!refineText.includes("not available from child-safe subagent fanout mode")) throw new Error("unexpected refine error: " + refineText);
 			const grant = await registeredTool.execute("grant-check", { action: "grant-spawn-budget", additional: 1 }, new AbortController().signal, undefined, { ...ctx, hasUI: true });
 			if (!grant.isError) throw new Error("grant-spawn-budget should be blocked");
 			const grantText = grant.content?.[0]?.text ?? "";

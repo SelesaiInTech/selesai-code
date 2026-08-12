@@ -10,7 +10,7 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const README_PATH = path.join(packageRoot, "README.md");
 const PROMPTING_AND_ROLES_PATH = path.join(packageRoot, "skills", "pi-subagents", "references", "prompting-and-roles.md");
 
-const README_TABLE_HEADING = "## Builtin agents in plain English";
+const README_TABLE_HEADING = "## Builtin agents";
 const PROMPTING_AND_ROLES_TABLE_HEADING = "## Builtin Agents";
 
 /**
@@ -38,10 +38,10 @@ function tableFirstColumnNames(markdown: string, sectionHeading: string): string
 	return names;
 }
 
-function assertExactlySixBuiltins(tablePath: string, heading: string, markdown: string): void {
+function assertExactlyBuiltins(tablePath: string, heading: string, markdown: string): void {
 	const names = tableFirstColumnNames(markdown, heading);
 
-	assert.equal(names.length, 6, `${path.basename(tablePath)}: role table must contain exactly six builtin rows`);
+	assert.equal(names.length, BUILTIN_AGENT_NAMES.length, `${path.basename(tablePath)}: role table must contain exactly ${BUILTIN_AGENT_NAMES.length} builtin rows`);
 	assert.equal(new Set(names).size, names.length, `${path.basename(tablePath)}: role table contains duplicate rows`);
 	assert.deepEqual(
 		[...names].sort(),
@@ -51,13 +51,13 @@ function assertExactlySixBuiltins(tablePath: string, heading: string, markdown: 
 }
 
 describe("builtin agent documentation role tables", () => {
-	it("README lists exactly the six canonical builtins once, with no duplicates or aliases", () => {
+	it("README lists exactly the canonical builtins once, with no duplicates or aliases", () => {
 		const markdown = fs.readFileSync(README_PATH, "utf-8");
-		assertExactlySixBuiltins(README_PATH, README_TABLE_HEADING, markdown);
+		assertExactlyBuiltins(README_PATH, README_TABLE_HEADING, markdown);
 	});
 
-	it("prompting-and-roles reference lists exactly the six canonical builtins once, with no duplicates or aliases", () => {
+	it("prompting-and-roles reference lists exactly the canonical builtins once, with no duplicates or aliases", () => {
 		const markdown = fs.readFileSync(PROMPTING_AND_ROLES_PATH, "utf-8");
-		assertExactlySixBuiltins(PROMPTING_AND_ROLES_PATH, PROMPTING_AND_ROLES_TABLE_HEADING, markdown);
+		assertExactlyBuiltins(PROMPTING_AND_ROLES_PATH, PROMPTING_AND_ROLES_TABLE_HEADING, markdown);
 	});
 });

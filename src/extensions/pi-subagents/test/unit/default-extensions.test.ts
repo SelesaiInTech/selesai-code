@@ -55,18 +55,18 @@ describe("subagents.defaultExtensions", () => {
 	});
 
 	it("preserves ambient discovery when omitted and disables it when empty", () => {
-		let explorer = discoverAgentsAll(tempProject).builtin.find(
-			(agent) => agent.name === "explorer",
+		let scout = discoverAgentsAll(tempProject).builtin.find(
+			(agent) => agent.name === "scout",
 		);
-		assert.equal(explorer?.extensions, undefined);
+		assert.equal(scout?.extensions, undefined);
 
 		writeJson(path.join(tempHome, ".selesai", "agent", "settings.json"), {
 			subagents: { defaultExtensions: [] },
 		});
-		explorer = discoverAgentsAll(tempProject).builtin.find(
-			(agent) => agent.name === "explorer",
+		scout = discoverAgentsAll(tempProject).builtin.find(
+			(agent) => agent.name === "scout",
 		);
-		assert.deepEqual(explorer?.extensions, []);
+		assert.deepEqual(scout?.extensions, []);
 	});
 
 	it("applies the allowlist only when an agent has no extensions field", () => {
@@ -97,7 +97,7 @@ describe("subagents.defaultExtensions", () => {
 			subagents: {
 				defaultExtensions: [],
 				agentOverrides: {
-					explorer: { extensions: ["./explorer.ts"] },
+					scout: { extensions: ["./scout.ts"] },
 					inherited: { extensions: ["./inherited.ts"] },
 					explicit: { extensions: ["./ignored.ts"] },
 				},
@@ -108,8 +108,8 @@ describe("subagents.defaultExtensions", () => {
 
 		const agents = discoverAgents(tempProject, "both").agents;
 		assert.deepEqual(
-			agents.find((agent) => agent.name === "explorer")?.extensions,
-			["./explorer.ts"],
+			agents.find((agent) => agent.name === "scout")?.extensions,
+			["./scout.ts"],
 		);
 		assert.deepEqual(
 			agents.find((agent) => agent.name === "inherited")?.extensions,
@@ -185,19 +185,19 @@ describe("subagents.defaultExtensions", () => {
 
 		assert.deepEqual(
 			discoverAgents(tempProject, "both").agents.find(
-				(agent) => agent.name === "explorer",
+				(agent) => agent.name === "scout",
 			)?.extensions,
 			[],
 		);
 		assert.deepEqual(
 			discoverAgents(tempProject, "user").agents.find(
-				(agent) => agent.name === "explorer",
+				(agent) => agent.name === "scout",
 			)?.extensions,
 			["./user.ts"],
 		);
 		assert.deepEqual(
 			discoverAgents(tempProject, "project").agents.find(
-				(agent) => agent.name === "explorer",
+				(agent) => agent.name === "scout",
 			)?.extensions,
 			[],
 		);

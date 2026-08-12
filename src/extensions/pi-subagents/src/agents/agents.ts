@@ -6,9 +6,9 @@ import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import { parse as parseYaml } from "yaml";
 import * as os from "node:os";
-import "../shared/env.ts";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import "../shared/env.ts";
 import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
@@ -22,8 +22,6 @@ import { parseMemoryFrontmatter } from "./agent-memory.ts";
 import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
-
-const PROCESS_HOME = os.homedir();
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -40,19 +38,25 @@ export interface AgentMemoryConfig {
 
 export const BUILTIN_AGENT_NAMES = [
 	"architect",
+	"advisor",
 	"builder",
 	"commentator",
+	"delegate",
 	"explorer",
+	"oracle",
 	"recapper",
 	"researcher",
+	"reviewer",
+	"scout",
+	"worker",
 ] as const;
 
-export function defaultSystemPromptMode(_name: string): SystemPromptMode {
-	return "replace";
+export function defaultSystemPromptMode(name: string): SystemPromptMode {
+	return name === "delegate" ? "append" : "replace";
 }
 
-export function defaultInheritProjectContext(_name: string): boolean {
-	return false;
+export function defaultInheritProjectContext(name: string): boolean {
+	return name === "delegate";
 }
 
 export function defaultInheritSkills(): boolean {
@@ -615,7 +619,7 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 function isProjectRootCandidate(dir: string): boolean {
 	// The host's user config lives at <home>/.selesai, which must not make the
 	// home directory look like every unrelated project's root.
-	if (path.resolve(dir) === path.resolve(PROCESS_HOME)) return false;
+	if (path.resolve(dir) === path.resolve(os.homedir())) return false;
 	return isDirectory(getProjectConfigDir(dir)) || isDirectory(path.join(dir, ".agents"));
 }
 
@@ -664,16 +668,25 @@ function findConfiguredProjectRoot(cwd: string): string | null {
 	const nearestRoot = candidates[0];
 	if (!nearestRoot) return null;
 
-	const nearestMode = readProjectRootResolution(nearestRoot);
-	if (nearestMode === "nearest") return nearestRoot;
+	let policyRoot: string | undefined;
+	let policyRootIndex = -1;
+	for (const [index, candidate] of candidates.entries()) {
+		const mode = readProjectRootResolution(candidate);
+		if (mode === "nearest") return nearestRoot;
+		if (mode === "git-root") {
+			policyRoot = candidate;
+			policyRootIndex = index;
+			break;
+		}
+	}
+	if (!policyRoot) return nearestRoot;
 
 	const gitRoot = findNearestGitRoot(cwd);
-	const gitProjectRoot = gitRoot ? candidates.find((candidate) => path.resolve(candidate) === path.resolve(gitRoot)) : undefined;
-	if (gitProjectRoot && (nearestMode === "git-root" || readProjectRootResolution(gitProjectRoot) === "git-root")) {
-		return gitProjectRoot;
-	}
-
-	return nearestRoot;
+	const gitProjectRoot = gitRoot
+		? candidates.slice(policyRootIndex).find((candidate) => path.resolve(candidate) === path.resolve(gitRoot))
+		: undefined;
+	const configuredGitRoot = fs.existsSync(path.join(policyRoot, ".git")) ? policyRoot : undefined;
+	return gitProjectRoot ?? configuredGitRoot ?? nearestRoot;
 }
 
 function getUserAgentSettingsPath(): string {

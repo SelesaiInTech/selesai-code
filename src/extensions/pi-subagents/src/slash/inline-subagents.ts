@@ -103,7 +103,7 @@ export function createInlineSubagentAutocompleteProvider(
  */
 export function registerInlineSubagentInvocation(pi: ExtensionAPI, state: SubagentState): void {
 	pi.on("session_start", (_event, ctx) => {
-		ctx.ui.addAutocompleteProvider((current) => createInlineSubagentAutocompleteProvider(state, current));
+		ctx.ui.addAutocompleteProvider?.((current) => createInlineSubagentAutocompleteProvider(state, current));
 	});
 
 	pi.on("input", (event, ctx) => {

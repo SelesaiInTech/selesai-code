@@ -6,29 +6,40 @@ import * as path from "node:path";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { resolveSkillPath, clearSkillCache } from "../../src/agents/skills.ts";
 
-const tmpDir = path.join(os.tmpdir(), "pi-path-resolution-test");
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-path-resolution-"));
 const cwdDir = path.join(tmpDir, "cwd");
+const homeDir = path.join(tmpDir, "home");
+const userAgentsDir = path.join(homeDir, ".agents");
+const userAgentsCanary = path.join(userAgentsDir, ".data-loss-canary");
+const originalHome = process.env.HOME;
+const originalUserProfile = process.env.USERPROFILE;
+const originalAgentDir = process.env.SELESAI_CODING_AGENT_DIR;
 
-const realHomeDir = os.homedir();
-const realUserAgentsDir = path.join(realHomeDir, ".agents");
-const userAgentsDirBackup = path.join(tmpDir, ".agents_backup");
+function restoreEnv(name: "HOME" | "USERPROFILE" | "SELESAI_CODING_AGENT_DIR", value: string | undefined): void {
+	if (value === undefined) delete process.env[name];
+	else process.env[name] = value;
+}
 
 before(() => {
 	fs.mkdirSync(cwdDir, { recursive: true });
-
-	if (fs.existsSync(realUserAgentsDir)) {
-		fs.cpSync(realUserAgentsDir, userAgentsDirBackup, { recursive: true });
-	}
+	fs.mkdirSync(path.join(userAgentsDir, "skills"), { recursive: true });
+	fs.writeFileSync(userAgentsCanary, "preserve me");
+	process.env.HOME = homeDir;
+	process.env.USERPROFILE = homeDir;
+	assert.equal(os.homedir(), homeDir);
+	process.env.SELESAI_CODING_AGENT_DIR = path.join(homeDir, ".selesai", "agent");
 });
 
 after(() => {
-	if (fs.existsSync(userAgentsDirBackup)) {
-		fs.rmSync(realUserAgentsDir, { recursive: true, force: true });
-		fs.cpSync(userAgentsDirBackup, realUserAgentsDir, { recursive: true });
-	} else {
-		fs.rmSync(realUserAgentsDir, { recursive: true, force: true });
+	try {
+		assert.equal(fs.readFileSync(userAgentsCanary, "utf-8"), "preserve me");
+	} finally {
+		restoreEnv("HOME", originalHome);
+		restoreEnv("USERPROFILE", originalUserProfile);
+		restoreEnv("SELESAI_CODING_AGENT_DIR", originalAgentDir);
+		clearSkillCache();
+		fs.rmSync(tmpDir, { recursive: true, force: true });
 	}
-	fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
 describe("Path resolution for .agents and ~/.agents", () => {
@@ -44,7 +55,7 @@ describe("Path resolution for .agents and ~/.agents", () => {
 	});
 
 	test("should resolve skills in ~/.agents/skills", () => {
-		const userSkillsDir = path.join(realHomeDir, ".agents", "skills");
+		const userSkillsDir = path.join(userAgentsDir, "skills");
 		fs.mkdirSync(userSkillsDir, { recursive: true });
 		fs.writeFileSync(path.join(userSkillsDir, "test-skill-2.md"), "---\nname: test-skill-2\ndescription: test desc\n---\nSkill content");
 
@@ -79,8 +90,6 @@ describe("Path resolution for .agents and ~/.agents", () => {
 	});
 
 	test("should resolve agents in ~/.agents", () => {
-		const userAgentsDir = path.join(realHomeDir, ".agents");
-		fs.mkdirSync(userAgentsDir, { recursive: true });
 		fs.writeFileSync(
 			path.join(userAgentsDir, "test-agent-2.md"),
 			"---\nname: test-agent-2\ndescription: Test agent\n---\nAgent content"

@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -12,7 +13,7 @@ afterEach(() => {
 
 function runProcess(command: string, args: string[], cwd: string): Promise<number | null> {
 	return new Promise((resolve, reject) => {
-		const child = spawn(command, args, { cwd, stdio: "inherit", shell: false, windowsHide: true });
+		const child = spawn(command, args, { cwd, stdio: "inherit", shell: false });
 		child.once("error", reject);
 		child.once("close", resolve);
 	});
@@ -45,7 +46,8 @@ describe("external CLI async lifecycle", () => {
 			resultMode: "single",
 		}));
 		const repo = path.resolve(import.meta.dirname, "../..");
-		const exitCode = await runProcess(process.execPath, [path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath], repo);
+		const jitiCli = path.join(path.dirname(fileURLToPath(import.meta.resolve("jiti/package.json"))), "lib", "jiti-cli.mjs");
+		const exitCode = await runProcess(process.execPath, [jitiCli, path.join(repo, "src/runs/background/subagent-runner.ts"), configPath], repo);
 		assert.equal(exitCode, 0);
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
 		assert.equal(status.state, "complete");

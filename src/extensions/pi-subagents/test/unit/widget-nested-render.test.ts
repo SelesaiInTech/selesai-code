@@ -39,13 +39,13 @@ function job(child: NestedRunSummary): AsyncJobState {
 
 describe("nested widget rendering", () => {
 	it("renders a bounded collapsed tree and full child rows when expanded", () => {
-		const child = nested("nested-commentator", "root-run", "running", { currentTool: "read", model: "gpt-5.6-luna:medium", thinking: "medium" });
+		const child = nested("nested-reviewer", "root-run", "running", { currentTool: "read", model: "gpt-5.6-luna:medium", thinking: "medium" });
 		const collapsed = buildWidgetLines([job(child)], theme as any, 120, false).join("\n");
-		assert.match(collapsed, /↳ └─ \[\d{2}:\d{2}:\d{2}\] . nested-commentator · running · gpt-5.6-luna · thinking medium · read/);
+		assert.match(collapsed, /↳ └─ \[\d{2}:\d{2}:\d{2}\] . nested-reviewer · running · gpt-5.6-luna · thinking medium · read/);
 		assert.equal((collapsed.match(/thinking medium/g) ?? []).length, 1);
 
 		const expanded = buildWidgetLines([job(child)], theme as any, 120, true).join("\n");
-		assert.match(expanded, /↳ \[\d{2}:\d{2}:\d{2}\] . nested-commentator · running · gpt-5.6-luna · thinking medium · read/);
+		assert.match(expanded, /↳ \[\d{2}:\d{2}:\d{2}\] . nested-reviewer · running · gpt-5.6-luna · thinking medium · read/);
 
 		const epoch = buildWidgetLines([job(nested("epoch", "root-run", "running", { lastUpdate: 0, startedAt: 0 }))], theme as any, 120, false).join("\n");
 		assert.match(epoch, /↳ └─ \[\d{2}:\d{2}:\d{2}\] . epoch · running/);
@@ -137,7 +137,7 @@ describe("nested widget rendering", () => {
 	});
 
 	it("keeps event-time timestamps stable instead of advancing with wall time", async () => {
-		const state = job(nested("nested-commentator", "root-run", "running", { currentTool: "read", currentToolStartedAt: 0 }));
+		const state = job(nested("nested-reviewer", "root-run", "running", { currentTool: "read", currentToolStartedAt: 0 }));
 		const first = buildWidgetLines([state], theme as any, 120, true);
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		const second = buildWidgetLines([state], theme as any, 120, true);
@@ -145,8 +145,8 @@ describe("nested widget rendering", () => {
 	});
 
 	it("rerenders when only nested state changes", () => {
-		const first = job(nested("nested-commentator", "root-run", "running"));
-		const second = job(nested("nested-commentator", "root-run", "complete"));
+		const first = job(nested("nested-reviewer", "root-run", "running"));
+		const second = job(nested("nested-reviewer", "root-run", "complete"));
 		assert.notEqual(widgetRenderKey(first), widgetRenderKey(second));
 	});
 });

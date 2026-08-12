@@ -42,7 +42,7 @@ describe("async stale-run reconciliation", () => {
 				startedAt: 1000,
 				lastUpdate: 1000,
 				currentStep: 0,
-				steps: [{ agent: "explorer", status: "running", startedAt: 1000 }],
+				steps: [{ agent: "scout", status: "running", startedAt: 1000 }],
 			});
 
 			const result = reconcileAsyncRun(asyncDir, {
@@ -84,7 +84,7 @@ describe("async stale-run reconciliation", () => {
 				startedAt: 1000,
 				lastUpdate: 1000,
 				currentStep: 0,
-				steps: [{ agent: "explorer", status: "running", startedAt: 1000 }],
+				steps: [{ agent: "scout", status: "running", startedAt: 1000 }],
 			});
 			fs.writeFileSync(path.join(asyncDir, "runner.stderr.log"), "startup failed\nmissing peer package\n", "utf-8");
 
@@ -119,7 +119,7 @@ describe("async stale-run reconciliation", () => {
 				startedAt: 1000,
 				lastUpdate: 1000,
 				currentStep: 0,
-				steps: [{ agent: "builder", status: "running", startedAt: 1000 }],
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
 			});
 			fs.mkdirSync(path.join(asyncDir, "events.jsonl"));
 
@@ -153,19 +153,19 @@ describe("async stale-run reconciliation", () => {
 				startedAt: 1000,
 				lastUpdate: 1000,
 				steps: [
-					{ agent: "explorer", status: "running", startedAt: 1000, model: "planned-explorer", attemptedModels: ["planned-explorer"] },
-					{ agent: "builder", status: "running", startedAt: 1100, model: "planned-builder", attemptedModels: ["planned-builder"] },
+					{ agent: "scout", status: "running", startedAt: 1000, model: "planned-scout", attemptedModels: ["planned-scout"] },
+					{ agent: "worker", status: "running", startedAt: 1100, model: "planned-worker", attemptedModels: ["planned-worker"] },
 				],
 			});
-			const scoutSession = path.join(root, "explorer.jsonl");
-			const workerSession = path.join(root, "builder.jsonl");
+			const scoutSession = path.join(root, "scout.jsonl");
+			const workerSession = path.join(root, "worker.jsonl");
 			fs.writeFileSync(path.join(resultsDir, "run-mixed.json"), JSON.stringify({
 				id: "run-mixed",
 				success: false,
 				state: "failed",
 				results: [
-					{ agent: "explorer", success: true, sessionFile: scoutSession, model: "fast", attemptedModels: ["planned-explorer", "fast"] },
-					{ agent: "builder", success: false, error: "boom", sessionFile: workerSession, model: "careful", attemptedModels: ["planned-builder", "careful"] },
+					{ agent: "scout", success: true, sessionFile: scoutSession, model: "fast", attemptedModels: ["planned-scout", "fast"] },
+					{ agent: "worker", success: false, error: "boom", sessionFile: workerSession, model: "careful", attemptedModels: ["planned-worker", "careful"] },
 				],
 			}, null, 2), "utf-8");
 
@@ -180,13 +180,13 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(result.status?.steps?.[0]?.status, "complete");
 			assert.equal(result.status?.steps?.[0]?.exitCode, 0);
 			assert.equal(result.status?.steps?.[0]?.model, "fast");
-			assert.deepEqual(result.status?.steps?.[0]?.attemptedModels, ["planned-explorer", "fast"]);
+			assert.deepEqual(result.status?.steps?.[0]?.attemptedModels, ["planned-scout", "fast"]);
 			assert.equal(result.status?.steps?.[0]?.sessionFile, scoutSession);
 			assert.equal(result.status?.steps?.[1]?.status, "failed");
 			assert.equal(result.status?.steps?.[1]?.exitCode, 1);
 			assert.equal(result.status?.steps?.[1]?.error, "boom");
 			assert.equal(result.status?.steps?.[1]?.model, "careful");
-			assert.deepEqual(result.status?.steps?.[1]?.attemptedModels, ["planned-builder", "careful"]);
+			assert.deepEqual(result.status?.steps?.[1]?.attemptedModels, ["planned-worker", "careful"]);
 			assert.equal(result.status?.steps?.[1]?.sessionFile, workerSession);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -205,7 +205,7 @@ describe("async stale-run reconciliation", () => {
 				pid: 12345,
 				startedAt: 1000,
 				lastUpdate: 1000,
-				steps: [{ agent: "builder", status: "running", startedAt: 1000 }],
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
 			});
 
 			const result = reconcileAsyncRun(asyncDir, {
@@ -236,7 +236,7 @@ describe("async stale-run reconciliation", () => {
 				pid: 12345,
 				startedAt: 1000,
 				lastUpdate: 1000,
-				steps: [{ agent: "builder", status: "running", startedAt: 1000 }],
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
 			});
 			const resultPath = path.join(resultsDir, "run-result.json");
 			fs.writeFileSync(resultPath, JSON.stringify({ id: "run-result", success: true, state: "complete", summary: "already done" }, null, 2), "utf-8");

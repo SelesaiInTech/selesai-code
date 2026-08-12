@@ -21,7 +21,7 @@ describe("createChildTranscriptWriter", () => {
 			transcriptPath,
 			source: "foreground",
 			runId: "run-1",
-			agent: "builder",
+			agent: "worker",
 			childIndex: 0,
 			cwd: "/repo",
 		});
@@ -35,7 +35,7 @@ describe("createChildTranscriptWriter", () => {
 		assert.equal(record.recordType, "message");
 		assert.equal(record.source, "foreground");
 		assert.equal(record.runId, "run-1");
-		assert.equal(record.agent, "builder");
+		assert.equal(record.agent, "worker");
 		assert.equal(record.childIndex, 0);
 		assert.equal(record.cwd, "/repo");
 		assert.equal(record.sourceEventType, "initial_prompt");
@@ -52,7 +52,7 @@ describe("createChildTranscriptWriter", () => {
 			transcriptPath,
 			source: "async",
 			runId: "run-2",
-			agent: "commentator",
+			agent: "reviewer",
 			cwd: "/repo",
 		});
 		writer.writeInitialUserMessage("review it");
@@ -68,7 +68,7 @@ describe("createChildTranscriptWriter", () => {
 			transcriptPath,
 			source: "async",
 			runId: "run-3",
-			agent: "builder",
+			agent: "worker",
 			childIndex: 1,
 			cwd: "/repo",
 		});
@@ -119,7 +119,7 @@ describe("createChildTranscriptWriter", () => {
 			transcriptPath,
 			source: "foreground",
 			runId: "run-4",
-			agent: "builder",
+			agent: "worker",
 			cwd: "/repo",
 		});
 		writer.writeChildEvent({ type: "tool_execution_start", toolCallId: "call-1", toolName: "bash", args: { command: "ls" } });
@@ -152,7 +152,7 @@ describe("createChildTranscriptWriter", () => {
 			transcriptPath,
 			source: "foreground",
 			runId: "run-bounded",
-			agent: "builder",
+			agent: "worker",
 			cwd: "/repo",
 		});
 		writer.writeChildEvent({ type: "tool_execution_start", toolCallId: "large", toolName: "bash", args: { command: "🧪".repeat(10_000) } });
@@ -178,7 +178,7 @@ describe("createChildTranscriptWriter", () => {
 			transcriptPath,
 			source: "async",
 			runId: "run-5",
-			agent: "builder",
+			agent: "worker",
 			cwd: "/repo",
 		});
 		writer.writeStdoutLine("first line");
@@ -202,7 +202,7 @@ describe("createChildTranscriptWriter", () => {
 			transcriptPath,
 			source: "foreground",
 			runId: "run-6",
-			agent: "builder",
+			agent: "worker",
 			cwd: "/repo",
 			maxBytes: 900,
 		});
@@ -254,7 +254,7 @@ describe("createChildTranscriptWriter", () => {
 			transcriptPath,
 			source: "foreground",
 			runId: "run-7",
-			agent: "builder",
+			agent: "worker",
 			cwd: "/repo",
 		});
 		writer.writeInitialUserMessage("should not be written");

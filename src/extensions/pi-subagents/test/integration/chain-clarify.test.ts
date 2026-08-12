@@ -44,14 +44,14 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			{ requestRender() {} },
 			{ fg(_key: string, text: string) { return text; } },
 			[{
-				name: "builder",
+				name: "worker",
 				description: "",
 				systemPrompt: "",
 				systemPromptMode: "replace",
 				inheritProjectContext: false,
 				inheritSkills: false,
 				source: "user",
-				filePath: "builder.md",
+				filePath: "worker.md",
 				model: "gpt-5-mini",
 			}],
 			["Task"],
@@ -79,14 +79,14 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			{ requestRender() {} },
 			{ fg(_key: string, text: string) { return text; } },
 			[{
-				name: "builder",
+				name: "worker",
 				description: "",
 				systemPrompt: "",
 				systemPromptMode: "replace",
 				inheritProjectContext: false,
 				inheritSkills: false,
 				source: "user",
-				filePath: "builder.md",
+				filePath: "worker.md",
 				model: "deepseek-v4-pro",
 			}],
 			["Task"],
@@ -124,14 +124,14 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			{ requestRender() {} },
 			{ fg(_key: string, text: string) { return text; } },
 			[{
-				name: "builder",
+				name: "worker",
 				description: "",
 				systemPrompt: "",
 				systemPromptMode: "replace",
 				inheritProjectContext: false,
 				inheritSkills: false,
 				source: "user",
-				filePath: "builder.md",
+				filePath: "worker.md",
 				model: "openai/gpt-5",
 			}],
 			["Task"],
@@ -155,14 +155,14 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			{ requestRender() {} },
 			{ fg(_key: string, text: string) { return text; } },
 			[{
-				name: "builder",
+				name: "worker",
 				description: "",
 				systemPrompt: "",
 				systemPromptMode: "replace",
 				inheritProjectContext: false,
 				inheritSkills: false,
 				source: "user",
-				filePath: "builder.md",
+				filePath: "worker.md",
 				model: "reasoning-model",
 			}],
 			["Task"],
@@ -194,14 +194,14 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			{ requestRender() {} },
 			{ fg(_key: string, text: string) { return text; } },
 			[{
-				name: "builder",
+				name: "worker",
 				description: "",
 				systemPrompt: "",
 				systemPromptMode: "replace",
 				inheritProjectContext: false,
 				inheritSkills: false,
 				source: "user",
-				filePath: "builder.md",
+				filePath: "worker.md",
 			}],
 			["Task"],
 			"Task",
@@ -232,14 +232,14 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			{ requestRender() {} },
 			{ fg(_key: string, text: string) { return text; } },
 			[{
-				name: "builder",
+				name: "worker",
 				description: "",
 				systemPrompt: "",
 				systemPromptMode: "replace",
 				inheritProjectContext: false,
 				inheritSkills: false,
 				source: "user",
-				filePath: "builder.md",
+				filePath: "worker.md",
 			}],
 			["界".repeat(60)],
 			"Task",
@@ -265,14 +265,14 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			{ requestRender() {} },
 			{ fg(_key: string, text: string) { return text; } },
 			[{
-				name: "builder",
+				name: "worker",
 				description: "",
 				systemPrompt: "",
 				systemPromptMode: "replace",
 				inheritProjectContext: false,
 				inheritSkills: false,
 				source: "user",
-				filePath: "builder.md",
+				filePath: "worker.md",
 				model: "gpt-5-mini",
 			}],
 			["Task"],
@@ -304,7 +304,36 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 		assert.equal(component.getEffectiveModel(0), "github-copilot/gpt-5:high");
 	});
 
-	it("labels every shortcut and keeps the clarify overlay within 84 columns", () => {
+	it("renders malformed chain output values without throwing", () => {
+		const component = new ChainClarifyComponent(
+			{ requestRender() {} },
+			{ fg(_key: string, text: string) { return text; } },
+			[{
+				name: "worker",
+				description: "",
+				systemPrompt: "",
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				source: "user",
+				filePath: "worker.md",
+			}],
+			["Task"],
+			"Task",
+			undefined,
+			[{ output: true, outputMode: "inline", reads: false, progress: false, skills: [], model: undefined }],
+			[],
+			undefined,
+			[],
+			() => {},
+			"chain",
+		);
+
+		assert.doesNotThrow(() => component.render(84));
+		assert.match(component.render(84).map(stripAnsi).join("\n"), /writes: \(none\)/);
+	});
+
+	it("labels every shortcut and keeps the clarify overlay within its allocated width", () => {
 		for (const mode of ["single", "parallel", "chain"] as const) {
 			const count = mode === "single" ? 1 : mode === "parallel" ? 2 : 4;
 			const component = new ChainClarifyComponent(
@@ -363,6 +392,23 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			for (const line of initialLines) {
 				assert.equal(visibleWidth(line), 84, `${mode} line did not match component width: ${line}`);
 			}
+			for (const width of [0, 1, 2, 3, 74]) {
+				for (const line of component.render(width)) {
+					assert.ok(visibleWidth(line) <= width, `${mode} line exceeded constrained render width: ${visibleWidth(line)} > ${width}`);
+				}
+			}
+
+			if (mode === "single") {
+				component.editingStep = 0;
+				component.enterModelSelector();
+				for (let index = 0; index < 100; index++) component.handleModelSelectorInput("x");
+				for (const width of [0, 1, 2, 3, 74, 84]) {
+					for (const line of component.render(width)) {
+						assert.ok(visibleWidth(line) <= width, `model selector line exceeded component width: ${visibleWidth(line)} > ${width}`);
+					}
+				}
+				component.editingStep = null;
+			}
 
 			component.handleInput("b");
 			assert.match(component.render(84).map(stripAnsi).join("\n"), /\[b\]Background:ON/);
@@ -370,7 +416,7 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 	});
 
 	it("navigates non-editing chain steps with j and k", () => {
-		const agents = ["explorer", "builder"].map((name) => ({
+		const agents = ["scout", "worker"].map((name) => ({
 			name,
 			description: "",
 			systemPrompt: "",

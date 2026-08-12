@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { updateActiveRunIndex } from "./active-run-index.ts";
+import { readStatus } from "../../shared/utils.ts";
 import { DIRS, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type SubagentRunMode } from "../../shared/types.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
@@ -84,26 +86,6 @@ function appendJsonlBestEffort(filePath: string, payload: object): void {
 	}
 }
 
-function readStatusFile(asyncDir: string): AsyncStatus | null {
-	const statusPath = path.join(asyncDir, "status.json");
-	let content: string;
-	try {
-		content = fs.readFileSync(statusPath, "utf-8");
-	} catch (error) {
-		if (isNotFoundError(error)) return null;
-		throw new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
-			cause: error instanceof Error ? error : undefined,
-		});
-	}
-	try {
-		return JSON.parse(content) as AsyncStatus;
-	} catch (error) {
-		throw new Error(`Failed to parse async status file '${statusPath}': ${getErrorMessage(error)}`, {
-			cause: error instanceof Error ? error : undefined,
-		});
-	}
-}
-
 interface ResultChildOutcome {
 	agent?: string;
 	success?: boolean;
@@ -172,7 +154,7 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 			modelAttempts: child?.modelAttempts ?? step.modelAttempts,
 		};
 	});
-	return {
+	const terminalStatus: AsyncStatus = {
 		...status,
 		state: repair.state,
 		...(status.lifecycleArtifactVersion === 3 && (!status.processTerminal || status.processTerminal.state === "pending") ? {
@@ -184,6 +166,8 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 		endedAt: status.endedAt ?? now,
 		steps,
 	};
+	delete terminalStatus.displayDismissedAt;
+	return terminalStatus;
 }
 
 function buildStartedStatus(asyncDir: string, startedRun: StartedRunMetadata, now: number): AsyncStatus {
@@ -277,6 +261,7 @@ function writeFailedRepair(asyncDir: string, status: AsyncStatus, resultPath: st
 	const repair = buildFailedRepair(status, asyncDir, now, reason);
 	writeAtomicJson(resultPath, repair.result);
 	writeAtomicJson(path.join(asyncDir, "status.json"), repair.status);
+	updateActiveRunIndex(asyncDir, repair.status.state);
 	appendJsonlBestEffort(path.join(asyncDir, "events.jsonl"), {
 		type: "subagent.run.repaired_stale",
 		ts: now,
@@ -348,7 +333,7 @@ export function checkPidLiveness(pid: number, kill: KillFn = process.kill): PidL
 
 export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOptions = {}): ReconcileAsyncRunResult {
 	const now = options.now?.() ?? Date.now();
-	const status = readStatusFile(asyncDir);
+	const status = readStatus(asyncDir);
 	const startedStatus = !status && options.startedRun ? buildStartedStatus(asyncDir, options.startedRun, now) : undefined;
 	const effectiveStatus = status ?? startedStatus;
 	if (!effectiveStatus) return { status: null, repaired: false };
@@ -358,7 +343,6 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 		if (stepRecord.model !== undefined && typeof stepRecord.model !== "string") throw new Error(`Invalid async status file '${statusPath}': steps[${index}].model must be a string.`);
 		if (stepRecord.thinking !== undefined && typeof stepRecord.thinking !== "string") throw new Error(`Invalid async status file '${statusPath}': steps[${index}].thinking must be a string.`);
 	}
-
 	const runId = effectiveStatus.runId || path.basename(asyncDir);
 	const resultPath = path.join(options.resultsDir ?? DIRS.results, `${runId}.json`);
 	if (fs.existsSync(resultPath)) {
@@ -367,9 +351,13 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 			: undefined;
 		if (terminalStatus) {
 			writeAtomicJson(path.join(asyncDir, "status.json"), terminalStatus);
+			updateActiveRunIndex(asyncDir, terminalStatus.state);
 			return { status: terminalStatus, repaired: true, resultPath, message: "Existing async result file was used to repair stale running status." };
 		}
-		return { status: effectiveStatus, repaired: false, resultPath };
+		if (effectiveStatus.displayDismissedAt === undefined) return { status: effectiveStatus, repaired: false, resultPath };
+	}
+	if (effectiveStatus.displayDismissedAt !== undefined) {
+		return { status: null, repaired: false, resultPath };
 	}
 
 	if (effectiveStatus.state !== "running" || typeof effectiveStatus.pid !== "number") {

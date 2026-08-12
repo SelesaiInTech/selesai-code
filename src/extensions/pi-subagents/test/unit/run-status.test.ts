@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { TEMP_ROOT_DIR, type SubagentState } from "../../src/shared/types.ts";
@@ -37,7 +38,7 @@ describe("async run status inspection", () => {
 				lastUpdate: 100,
 				currentStep: 0,
 				sessionFile,
-				steps: [{ agent: "explorer", status: "running", startedAt: 100, sessionFile }],
+				steps: [{ agent: "scout", status: "running", startedAt: 100, sessionFile }],
 			}, null, 2), "utf-8");
 
 			const result = inspectSubagentStatus({ id: "run-stale" }, {
@@ -52,7 +53,7 @@ describe("async run status inspection", () => {
 			assert.match(text, /State: failed/);
 			assert.match(text, /Diagnosis: Async runner process 12345 exited or disappeared/);
 			assert.match(text, new RegExp(`Result: ${path.join(resultsDir, "run-stale.json").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-			assert.match(text, /Step 1: explorer failed, error: Async runner process 12345 exited or disappeared/);
+			assert.match(text, /Step 1: scout failed, error: Async runner process 12345 exited or disappeared/);
 			assert.match(text, /Revive: subagent\(\{ action: "resume", id: "run-stale", message: "\.\.\." \}\)/);
 			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-stale.json"), "utf-8"));
 			assert.equal(resultJson.success, false);
@@ -71,8 +72,8 @@ describe("async run status inspection", () => {
 			const runOutputPath = path.join(asyncDir, "combined-output.log");
 			const firstStepOutputPath = path.join(asyncDir, "output-0.log");
 			const secondStepOutputPath = path.join(asyncDir, "output-1.log");
-			fs.writeFileSync(firstStepOutputPath, "commentator one", "utf-8");
-			fs.writeFileSync(secondStepOutputPath, "commentator two", "utf-8");
+			fs.writeFileSync(firstStepOutputPath, "reviewer one", "utf-8");
+			fs.writeFileSync(secondStepOutputPath, "reviewer two", "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId: "run-parallel",
 				mode: "parallel",
@@ -86,9 +87,9 @@ describe("async run status inspection", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
-					{ agent: "commentator", status: "running", startedAt: 100, model: "openai-codex/gpt-5.5:high" },
-					{ agent: "commentator", status: "running", startedAt: 100, model: "anthropic/claude-haiku-4-5", thinking: "low" },
-					{ agent: "commentator", status: "pending" },
+					{ agent: "reviewer", status: "running", startedAt: 100, model: "openai-codex/gpt-5.5:high" },
+					{ agent: "reviewer", status: "running", startedAt: 100, model: "anthropic/claude-haiku-4-5", thinking: "low" },
+					{ agent: "reviewer", status: "pending" },
 				],
 			}, null, 2), "utf-8");
 
@@ -104,13 +105,13 @@ describe("async run status inspection", () => {
 			assert.match(text, /Error: top-level async status error/);
 			assert.match(text, /Progress: 2 agents running · 0\/3 done/);
 			assert.match(text, new RegExp(`Output: ${runOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-			assert.match(text, /Agent 1\/3: commentator running \(gpt-5\.5 · thinking high\)/);
-			assert.match(text, /Agent 2\/3: commentator running \(claude-haiku-4-5 · thinking low\)/);
-			assert.match(text, /Agent 3\/3: commentator pending/);
+			assert.match(text, /Agent 1\/3: reviewer running \(gpt-5\.5 · thinking high\)/);
+			assert.match(text, /Agent 2\/3: reviewer running \(claude-haiku-4-5 · thinking low\)/);
+			assert.match(text, /Agent 3\/3: reviewer pending/);
 			assert.doesNotMatch(text, /openai-codex\/gpt-5\.5/);
 			assert.match(text, new RegExp(`  Output: ${firstStepOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 			assert.match(text, new RegExp(`  Output: ${secondStepOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-			assert.doesNotMatch(text, /Step 1: commentator/);
+			assert.doesNotMatch(text, /Step 1: reviewer/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -131,7 +132,7 @@ describe("async run status inspection", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				currentStep: 0,
-				steps: [{ agent: "builder", status: "running", startedAt: 100 }],
+				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
 			}, null, 2), "utf-8");
 
 			const result = inspectSubagentStatus({ id: "run-transcript", view: "transcript", lines: 2 }, {
@@ -144,7 +145,7 @@ describe("async run status inspection", () => {
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
 			assert.match(text, /Run: run-transcript/);
-			assert.match(text, /Step: 0 \(builder\) \| running/);
+			assert.match(text, /Step: 0 \(worker\) \| running/);
 			assert.match(text, new RegExp(`Transcript tail from ${outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(tail truncated\\):`));
 			assert.doesNotMatch(text, /first line/);
 			assert.match(text, /second line/);
@@ -172,8 +173,8 @@ describe("async run status inspection", () => {
 				currentStep: 0,
 				outputFile: wrongOutputPath,
 				steps: [
-					{ agent: "builder", status: "running", startedAt: 100 },
-					{ agent: "commentator", status: "pending", recentOutput: ["RIGHT_CHILD_RECENT"] },
+					{ agent: "worker", status: "running", startedAt: 100 },
+					{ agent: "reviewer", status: "pending", recentOutput: ["RIGHT_CHILD_RECENT"] },
 				],
 			}, null, 2), "utf-8");
 
@@ -186,7 +187,7 @@ describe("async run status inspection", () => {
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
-			assert.match(text, /Agent: 1 \(commentator\) \| pending/);
+			assert.match(text, /Agent: 1 \(reviewer\) \| pending/);
 			assert.match(text, /Recent output from status\.json:/);
 			assert.match(text, /RIGHT_CHILD_RECENT/);
 			assert.doesNotMatch(text, /WRONG_CHILD_OUTPUT/);
@@ -246,7 +247,7 @@ describe("async run status inspection", () => {
 				state: "complete",
 				startedAt: 100,
 				lastUpdate: 200,
-				steps: [{ agent: "builder", status: "complete", sessionFile: linkedSession }],
+				steps: [{ agent: "worker", status: "complete", sessionFile: linkedSession }],
 			}, null, 2), "utf-8");
 
 			const result = inspectSubagentStatus({ id: "run-session-symlink", view: "transcript", index: 0 }, {
@@ -271,7 +272,7 @@ describe("async run status inspection", () => {
 			const asyncRoot = path.join(root, "runs");
 			const asyncDir = path.join(asyncRoot, "run-fleet");
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(path.join(asyncDir, "output-0.log"), "builder output", "utf-8");
+			fs.writeFileSync(path.join(asyncDir, "output-0.log"), "worker output", "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId: "run-fleet",
 				mode: "parallel",
@@ -282,17 +283,18 @@ describe("async run status inspection", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
 				steps: [
-					{ agent: "builder", status: "running", startedAt: 100 },
-					{ agent: "commentator", status: "pending" },
+					{ agent: "worker", status: "running", startedAt: 100 },
+					{ agent: "reviewer", status: "pending" },
 				],
 			}, null, 2), "utf-8");
+			updateActiveRunIndex(asyncDir, "running");
 			const state = {
 				foregroundControls: new Map([["fg-run", {
 					runId: "fg-run",
 					mode: "single",
 					startedAt: 100,
 					updatedAt: 250,
-					currentAgent: "explorer",
+					currentAgent: "scout",
 					currentIndex: 0,
 					lastActivityAt: 240,
 				}]]),
@@ -310,7 +312,7 @@ describe("async run status inspection", () => {
 			assert.equal(result.isError, undefined);
 			assert.match(text, /Subagent fleet: 2 tracked/);
 			assert.match(text, /Foreground runs:/);
-			assert.match(text, /fg-run \| running \| explorer/);
+			assert.match(text, /fg-run \| running \| scout/);
 			assert.match(text, /Async runs:/);
 			assert.match(text, /run-fleet \| running .*\| parallel \| 1 agent running · 0\/2 done/);
 			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", view: "transcript" \}\)/);
@@ -335,7 +337,7 @@ describe("async run status inspection", () => {
 				state: "running",
 				startedAt: 100,
 				lastUpdate: 200,
-				steps: [{ agent: "builder", status: "running", startedAt: 100 }],
+				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
 			}, null, 2), "utf-8");
 			fs.writeFileSync(path.join(otherDir, "status.json"), JSON.stringify({
 				runId: "run-other",
@@ -344,8 +346,10 @@ describe("async run status inspection", () => {
 				state: "running",
 				startedAt: 100,
 				lastUpdate: 200,
-				steps: [{ agent: "commentator", status: "running", startedAt: 100 }],
+				steps: [{ agent: "reviewer", status: "running", startedAt: 100 }],
 			}, null, 2), "utf-8");
+			updateActiveRunIndex(currentDir, "running");
+			updateActiveRunIndex(otherDir, "running");
 			const state = {
 				currentSessionId: "session-current",
 				asyncJobs: new Map(),
@@ -384,7 +388,7 @@ describe("async run status inspection", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				currentStep: 0,
-				steps: [{ agent: "builder", status: "running", startedAt: 100 }],
+				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
 			}, null, 2), "utf-8");
 			const state = {
 				currentSessionId: "session-current",
@@ -421,8 +425,8 @@ describe("async run status inspection", () => {
 				success: true,
 				summary: "AGGREGATE_SENTINEL",
 				results: [
-					{ agent: "builder", output: "first child" },
-					{ agent: "commentator" },
+					{ agent: "worker", output: "first child" },
+					{ agent: "reviewer" },
 				],
 			}, null, 2), "utf-8");
 
@@ -433,7 +437,7 @@ describe("async run status inspection", () => {
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
-			assert.match(text, /Child: 1 \(commentator\)/);
+			assert.match(text, /Child: 1 \(reviewer\)/);
 			assert.match(text, /\(no transcript lines available yet\)/);
 			assert.doesNotMatch(text, /AGGREGATE_SENTINEL/);
 			assert.doesNotMatch(text, /first child/);
@@ -457,8 +461,9 @@ describe("async run status inspection", () => {
 				lastUpdate: 200,
 				currentStep: 0,
 				steering: { requested: 2, scheduled: 1, pending: 1, delivered: 2, failed: 0, recovered: 1, lastRequestedAt: 150, lastDeliveredAt: 150, recent: [{ id: "request", requestedAt: 150, message: "guidance", targets: [{ index: 0, state: "recovered", recoveredAt: 180, lateDeliveredAt: 190 }] }] },
-				steps: [{ agent: "builder", status: "running", startedAt: 100, steering: { requested: 2, scheduled: 1, pending: 1, delivered: 2, failed: 0, recovered: 1, lastRequestedAt: 150, lastDeliveredAt: 150, recent: [{ id: "request", requestedAt: 150, message: "guidance", targets: [{ index: 0, state: "recovered", recoveredAt: 180, lateDeliveredAt: 190 }] }] } }],
+				steps: [{ agent: "worker", status: "running", startedAt: 100, steering: { requested: 2, scheduled: 1, pending: 1, delivered: 2, failed: 0, recovered: 1, lastRequestedAt: 150, lastDeliveredAt: 150, recent: [{ id: "request", requestedAt: 150, message: "guidance", targets: [{ index: 0, state: "recovered", recoveredAt: 180, lateDeliveredAt: 190 }] }] } }],
 			}, null, 2), "utf-8");
+			updateActiveRunIndex(asyncDir, "running");
 
 			const exact = inspectSubagentStatus({ id: "run-steered" }, {
 				asyncDirRoot: asyncRoot,
@@ -469,7 +474,7 @@ describe("async run status inspection", () => {
 			const exactText = textContent(exact);
 			assert.equal(exact.isError, undefined);
 			assert.match(exactText, /Steering: 2 requested, 1 scheduled, 1 pending, 2 delivered, 0 failed, 1 recovered, 1 late acknowledged/);
-			assert.match(exactText, /Step 1: builder running/);
+			assert.match(exactText, /Step 1: worker running/);
 
 			const list = inspectSubagentStatus({}, {
 				asyncDirRoot: asyncRoot,
@@ -513,7 +518,7 @@ describe("async run status inspection", () => {
 					depth: 1,
 					path: [{ runId: "run-nested-root", stepIndex: 0, agent: "orchestrator" }],
 					state: "running",
-					agent: "commentator",
+					agent: "reviewer",
 					currentTool: "read",
 					lastUpdate: 150,
 				},
@@ -529,7 +534,7 @@ describe("async run status inspection", () => {
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
 			assert.match(text, /Step 1: orchestrator running/);
-			assert.match(text, /↳ commentator \[nested-status-child\] running \| tool read/);
+			assert.match(text, /↳ reviewer \[nested-status-child\] running \| tool read/);
 			assert.match(text, /Status: subagent\(\{ action: "status", id: "nested-status-child" \}\)/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -562,7 +567,7 @@ describe("async run status inspection", () => {
 				pid: 54321,
 				startedAt: 150,
 				lastUpdate: 150,
-				steps: [{ agent: "commentator", status: "running", startedAt: 150 }],
+				steps: [{ agent: "reviewer", status: "running", startedAt: 150 }],
 			}, null, 2), "utf-8");
 			writeNestedEvent(route, {
 				type: "subagent.nested.updated",
@@ -578,7 +583,7 @@ describe("async run status inspection", () => {
 					asyncDir: nestedAsyncDir,
 					pid: 54321,
 					state: "running",
-					agent: "commentator",
+					agent: "reviewer",
 					lastUpdate: 150,
 				},
 			});
@@ -592,8 +597,8 @@ describe("async run status inspection", () => {
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
-			assert.match(text, /↳ commentator \[nested-stale\] failed/);
-			assert.match(text, /1\. commentator failed \| error: Async runner process 54321 exited or disappeared/);
+			assert.match(text, /↳ reviewer \[nested-stale\] failed/);
+			assert.match(text, /1\. reviewer failed \| error: Async runner process 54321 exited or disappeared/);
 			assert.ok(fs.existsSync(path.join(resultsDir, "nested", "run-stale-nested-root", "nested-stale.json")));
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -649,6 +654,7 @@ describe("async run status inspection", () => {
 				lastUpdate: 100,
 				steps: [{ agent: "orchestrator", status: "running", startedAt: 100 }],
 			}, null, 2), "utf-8");
+			updateActiveRunIndex(asyncDir, "running");
 
 			const result = inspectSubagentStatus({}, { asyncDirRoot: asyncRoot, resultsDir, kill: () => true, now: () => 200 });
 
@@ -782,8 +788,8 @@ describe("async run status inspection", () => {
 				chainStepCount: 3,
 				parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
 				steps: [
-					{ agent: "explorer", status: "complete", startedAt: 100 },
-					{ agent: "commentator", status: "running", startedAt: 100 },
+					{ agent: "scout", status: "complete", startedAt: 100 },
+					{ agent: "reviewer", status: "running", startedAt: 100 },
 					{ agent: "auditor", status: "pending" },
 					{ agent: "writer", status: "pending" },
 				],
@@ -797,8 +803,8 @@ describe("async run status inspection", () => {
 			});
 
 			const text = textContent(result);
-			assert.match(text, /Step 1\/3: explorer complete/);
-			assert.match(text, /Step 2\/3 Agent 1\/2: commentator running/);
+			assert.match(text, /Step 1\/3: scout complete/);
+			assert.match(text, /Step 2\/3 Agent 1\/2: reviewer running/);
 			assert.match(text, /Step 2\/3 Agent 2\/2: auditor pending/);
 			assert.match(text, /Step 3\/3: writer pending/);
 		} finally {
@@ -819,7 +825,7 @@ describe("async run status inspection", () => {
 				pid: 12345,
 				startedAt: 100,
 				lastUpdate: 100,
-				steps: [{ agent: "explorer", status: "running", startedAt: 100 }],
+				steps: [{ agent: "scout", status: "running", startedAt: 100 }],
 			}, null, 2), "utf-8");
 
 			const result = inspectSubagentStatus({ id: "run-live" }, {
@@ -830,8 +836,8 @@ describe("async run status inspection", () => {
 			});
 
 			const text = textContent(result);
-			assert.match(text, /Step 1: explorer running/);
-			assert.match(text, /Intercom target: subagent-explorer-run-live-1 \(if registered\)/);
+			assert.match(text, /Step 1: scout running/);
+			assert.match(text, /Intercom target: subagent-scout-run-live-1 \(if registered\)/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -913,7 +919,7 @@ describe("async run status inspection", () => {
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			fs.writeFileSync(path.join(resultsDir, "run-result-transcript.json"), JSON.stringify({
 				id: "run-result-transcript",
-				agent: "builder",
+				agent: "worker",
 				success: false,
 				state: "failed",
 				sessionFile,
@@ -927,7 +933,7 @@ describe("async run status inspection", () => {
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
-			assert.match(text, /Child: 0 \(builder\)/);
+			assert.match(text, /Child: 0 \(worker\)/);
 			assert.match(text, /legacy result transcript/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -943,7 +949,7 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(resultsDir, { recursive: true });
 			fs.writeFileSync(path.join(resultsDir, "run-result-index-validation.json"), JSON.stringify({
 				id: "run-result-index-validation",
-				agent: "builder",
+				agent: "worker",
 				success: true,
 				summary: "done",
 			}, null, 2), "utf-8");
@@ -971,7 +977,7 @@ describe("async run status inspection", () => {
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			fs.writeFileSync(path.join(resultsDir, "run-stopped-result.json"), JSON.stringify({
 				id: "run-stopped-result",
-				agent: "builder",
+				agent: "worker",
 				success: false,
 				state: "stopped",
 				stopped: true,
@@ -1003,11 +1009,11 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(resultsDir, { recursive: true });
 			fs.writeFileSync(path.join(resultsDir, "run-signal-result.json"), JSON.stringify({
 				id: "run-signal-result",
-				agent: "builder",
+				agent: "worker",
 				success: false,
 				state: "failed",
 				summary: "Subagent process terminated by signal SIGTERM.",
-				results: [{ agent: "builder", success: false, exitCode: 1, processSignal: "SIGTERM" }],
+				results: [{ agent: "worker", success: false, exitCode: 1, processSignal: "SIGTERM" }],
 			}, null, 2), "utf-8");
 
 			const result = inspectSubagentStatus({ id: "run-signal-result" }, {
@@ -1035,7 +1041,7 @@ describe("async run status inspection", () => {
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			fs.writeFileSync(path.join(resultsDir, "run-result-only.json"), JSON.stringify({
 				id: "run-result-only",
-				agent: "builder",
+				agent: "worker",
 				success: false,
 				state: "failed",
 				sessionFile,

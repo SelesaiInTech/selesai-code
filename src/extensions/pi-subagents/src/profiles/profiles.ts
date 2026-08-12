@@ -259,9 +259,9 @@ function qualityTierToRoleTier(quality: QualityTier, cost: CostTier): Recommende
 }
 
 function agentsForRoleTier(roleTier: RecommendedRoleTier): BuiltinAgentName[] {
-	if (roleTier === "cheap") return ["explorer"];
-	if (roleTier === "medium") return ["architect", "researcher"];
-	return ["builder", "commentator", "recapper"];
+	if (roleTier === "cheap") return ["scout", "delegate"];
+	if (roleTier === "medium") return ["researcher", "reviewer"];
+	return ["worker", "reviewer", "oracle"];
 }
 
 function classifyModel(input: ModelClassificationInput, context: ClassificationContext): {
@@ -403,12 +403,12 @@ function buildProfileFile(kind: ProfileKind, models: { cheap: string; medium: st
 	return {
 		subagents: {
 			agentOverrides: {
-				explorer: { model: models.cheap },
-				architect: { model: models.medium },
+				scout: { model: models.cheap },
+				delegate: { model: models.cheap },
 				researcher: { model: models.medium },
-				builder: { model: models.strong },
-				commentator: { model: models.strong },
-				recapper: { model: models.strong },
+				worker: { model: models.strong },
+				reviewer: { model: models.strong },
+				oracle: { model: models.strong },
 			},
 		},
 	};

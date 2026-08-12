@@ -1,10 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@selesai/code";
 import { parseFrontmatter } from "../agents/frontmatter.ts";
+import { discoverAgents, discoverAgentsAll, resolveAgentName, type ChainConfig, type ChainStepConfig } from "../agents/agents.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
-import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
+import type { ChainStep } from "../shared/settings.ts";
+import { getPromptDirectories } from "../shared/prompt-resources.ts";
 
 interface PromptWorkflow {
 	name: string;
@@ -32,21 +33,9 @@ const RESERVED_COMMAND_NAMES = new Set([
 	"subagents-models",
 ]);
 
-function packagePromptsDir(): string {
-	return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "prompts");
-}
-
-function promptDirs(cwd: string): string[] {
-	return [
-		packagePromptsDir(),
-		path.join(getAgentDir(), "prompts"),
-		path.join(getProjectConfigDir(cwd), "prompts"),
-	];
-}
-
 function readPromptFiles(cwd: string): string[] {
 	const files: string[] = [];
-	for (const dir of promptDirs(cwd)) {
+	for (const dir of Object.values(getPromptDirectories(cwd))) {
 		let entries: fs.Dirent[];
 		try {
 			entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -85,7 +74,7 @@ function parseSkill(value: string | undefined): string | string[] | false | unde
 
 function parseAgent(frontmatter: Record<string, string>): string {
 	const subagent = stringField(frontmatter, "subagent");
-	if (!subagent || subagent === "true") return "explorer";
+	if (!subagent || subagent === "true") return "delegate";
 	return subagent;
 }
 
@@ -213,13 +202,19 @@ function workflowParams(workflow: PromptWorkflow, args: string[], runtime: Retur
 	return {
 		agent: runtime.agentOverride ?? workflow.agent,
 		task,
-		clarify: false,
 		agentScope: "both",
 		...(context ? { context } : {}),
 		...(workflow.model ? { model: workflow.model } : {}),
 		...(workflow.skill !== undefined ? { skill: workflow.skill } : {}),
 		...(workflow.cwd ? { cwd: workflow.cwd } : {}),
-		...(runtime.bg ? { async: true } : {}),
+	};
+}
+
+function promptWorkflowExecutionParams(workflows: PromptWorkflow[], args: string[], runtime: ReturnType<typeof parseRuntimeOptions>): SubagentParamsLike {
+	return {
+		workflowScript: promptWorkflowScript(workflows, args, runtime),
+		agentScope: "both",
+		async: runtime.bg ? true : false,
 	};
 }
 
@@ -228,7 +223,7 @@ function promptWorkflowScript(workflows: PromptWorkflow[], args: string[], runti
 		const params = workflowParams(workflow, args, runtime);
 		const task = params.task ?? "";
 		const child = {
-			agent: params.agent ?? "explorer",
+			agent: params.agent ?? "delegate",
 			task,
 			...(params.model ? { model: params.model } : {}),
 			...(params.skill !== undefined ? { skill: params.skill } : {}),
@@ -249,6 +244,75 @@ function formatWorkflowList(workflows: PromptWorkflow[]): string {
 	return [
 		"Prompt workflows:",
 		...workflows.map((workflow) => `- ${workflow.name}: ${workflow.description} (${workflow.filePath})`),
+	].join("\n");
+}
+
+// --- Selesai additions: native chain / parallel / saved-chain slash commands ---
+
+/**
+ * Parse `agent task | agent task | ...` into chain steps. Runtime flags
+ * (`--bg`, `--fork`, `--fresh`) are stripped before splitting on `|`.
+ */
+function parseStepList(input: string): { agent: string; task: string }[] {
+	const words = shellWords(input);
+	const args: string[] = [];
+	let fork = false;
+	let fresh = false;
+	let bg = false;
+	for (let i = 0; i < words.length; i++) {
+		const word = words[i]!;
+		if (word === "--fork") { fork = true; continue; }
+		if (word === "--fresh") { fresh = true; continue; }
+		if (word === "--bg" || word === "--async") { bg = true; continue; }
+		args.push(word);
+	}
+	const steps: { agent: string; task: string }[] = [];
+	let current = "";
+	for (const word of args) {
+		if (word === "|") {
+			if (current.trim()) steps.push(parseStep(current));
+			current = "";
+			continue;
+		}
+		current += (current ? " " : "") + word;
+	}
+	if (current.trim()) steps.push(parseStep(current));
+	return steps.map((step) => ({ ...step, ...(fork ? { context: "fork" as const } : {}), ...(fresh ? { context: "fresh" as const } : {}) }));
+}
+
+function parseStep(stepText: string): { agent: string; task: string } {
+	const space = stepText.indexOf(" ");
+	if (space === -1) return { agent: stepText, task: "" };
+	return { agent: stepText.slice(0, space), task: stepText.slice(space + 1).trim() };
+}
+
+function resolveStepsAgents(steps: { agent: string; task: string }[], cwd: string): { agent: string; task: string }[] {
+	const agents = discoverAgents(cwd, "both").agents;
+	return steps.map((step) => {
+		const resolved = resolveAgentName(step.agent, agents);
+		if (resolved.error || !resolved.agent) throw new Error(`Unknown agent: ${step.agent}`);
+		return { agent: resolved.agent.name, task: step.task };
+	});
+}
+
+function normalizeChainStep(step: ChainStepConfig): Record<string, unknown> {
+	const normalized: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(step)) {
+		if (value === undefined) continue;
+		if (key === "skills") {
+			if (value !== false) normalized.skill = value;
+			continue;
+		}
+		normalized[key] = value;
+	}
+	return normalized;
+}
+
+function formatChainList(chains: ChainConfig[]): string {
+	if (chains.length === 0) return "No saved chains found in user or project chains.";
+	return [
+		"Saved chains:",
+		...chains.map((chain) => `- ${chain.name}: ${chain.description ?? chain.filePath}`),
 	].join("\n");
 }
 
@@ -281,14 +345,105 @@ export function registerPromptWorkflowCommands(input: {
 						if (!step) throw new Error(`Unknown prompt workflow in chain '${workflow.name}': ${stepName}`);
 						return step;
 					});
-					await run({ workflowScript: promptWorkflowScript(chain, runtime.args, runtime), clarify: false, agentScope: "both", ...(runtime.bg ? { async: true } : {}) }, ctx);
+					await run(promptWorkflowExecutionParams(chain, runtime.args, runtime), ctx);
 					return;
 				}
-				await run(workflowParams(workflow, runtime.args, runtime), ctx);
+				await run(promptWorkflowExecutionParams([workflow], runtime.args, runtime), ctx);
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 			}
 		},
 	});
 
+	pi.registerCommand("chain", {
+		description: "Launch a chain of steps: /chain <agent> <task> | <agent> <task> [--bg] [--fork] [--fresh]",
+		handler: async (rawArgs, ctx) => {
+			try {
+				const steps = resolveStepsAgents(parseStepList(rawArgs), ctx.cwd);
+				if (steps.length === 0) {
+					ctx.ui.notify("Usage: /chain <agent> <task> | <agent> <task> [--bg] [--fork] [--fresh]", "error");
+					return;
+				}
+				const bg = rawArgs.includes("--bg") || rawArgs.includes("--async");
+				await run({ chain: steps as ChainStep[], agentScope: "both", ...(bg ? { async: true } : {}) }, ctx);
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
+
+	pi.registerCommand("parallel", {
+		description: "Launch top-level parallel tasks: /parallel <agent> <task> | <agent> <task> [--bg]",
+		handler: async (rawArgs, ctx) => {
+			try {
+				const steps = resolveStepsAgents(parseStepList(rawArgs), ctx.cwd);
+				if (steps.length === 0) {
+					ctx.ui.notify("Usage: /parallel <agent> <task> | <agent> <task> [--bg]", "error");
+					return;
+				}
+				const bg = rawArgs.includes("--bg") || rawArgs.includes("--async");
+				await run({ tasks: steps, agentScope: "both", ...(bg ? { async: true } : {}) }, ctx);
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
+
+	pi.registerCommand("run-chain", {
+		description: "Run a saved .chain.md/.chain.json workflow: /run-chain <name> [--bg]",
+		handler: async (rawArgs, ctx) => {
+			const words = shellWords(rawArgs);
+			const name = words.find((word) => !word.startsWith("--"));
+			const bg = words.includes("--bg") || words.includes("--async");
+			const chains = discoverAgentsAll(ctx.cwd).chains;
+			if (!name || name === "list") {
+				pi.sendMessage({ content: formatChainList(chains), display: true } as Parameters<typeof pi.sendMessage>[0]);
+				return;
+			}
+			const chain = chains.find((candidate) => candidate.name === name || candidate.localName === name);
+			if (!chain) {
+				ctx.ui.notify(`Unknown saved chain: ${name}`, "error");
+				return;
+			}
+			try {
+				await run({ chain: chain.steps.map(normalizeChainStep) as unknown as ChainStep[], agentScope: "both", ...(bg ? { async: true } : {}) }, ctx);
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
+
+	pi.registerCommand("chain-prompts", {
+		description: "Run a prompt template whose frontmatter declares a chain, as a native chain: /chain-prompts <name> [args]",
+		handler: async (rawArgs, ctx) => {
+			const words = shellWords(rawArgs);
+			const name = words.shift();
+			const workflows = discoverPromptWorkflows(ctx.cwd);
+			if (!name || name === "list") {
+				pi.sendMessage({ content: formatWorkflowList(workflows), display: true } as Parameters<typeof pi.sendMessage>[0]);
+				return;
+			}
+			const workflow = findWorkflow(workflows, name);
+			if (!workflow) {
+				ctx.ui.notify(`Unknown prompt workflow: ${name}`, "error");
+				return;
+			}
+			const runtime = parseRuntimeOptions(words);
+			try {
+				if (workflow.chain) {
+					const steps = splitPromptChain(workflow.chain).map((stepName) => {
+						const step = findWorkflow(workflows, stepName);
+						if (!step) throw new Error(`Unknown prompt workflow in chain '${workflow.name}': ${stepName}`);
+						const params = workflowParams(step, runtime.args, runtime);
+						return { agent: params.agent, task: params.task };
+					});
+					await run({ chain: steps as ChainStep[], agentScope: "both", ...(runtime.bg ? { async: true } : {}) }, ctx);
+					return;
+				}
+				ctx.ui.notify(`Prompt workflow '${name}' has no chain frontmatter; use /prompt-workflow for single-step templates.`, "warning");
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
 }

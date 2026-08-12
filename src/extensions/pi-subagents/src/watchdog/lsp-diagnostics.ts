@@ -448,7 +448,6 @@ async function collectWithTypeScriptLanguageServer(input: {
 		stdio: "pipe",
 		env: { ...process.env, NO_COLOR: "1" },
 		shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(input.command.command),
-		windowsHide: true,
 	});
 	const client = new JsonRpcLspClient(child);
 	const remaining = () => Math.max(1, input.config.timeoutMs - (Date.now() - started));

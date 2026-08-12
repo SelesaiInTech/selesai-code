@@ -56,12 +56,12 @@ describe("profiles helpers", () => {
 		fs.writeFileSync(path.join(profilesDir, "openai-codex.quota.json"), JSON.stringify({
 			subagents: {
 				agentOverrides: {
-					explorer: {
+					scout: {
 						model: "openai-codex/gpt-5.3-codex-spark",
 						thinking: "medium",
 						fallbackModels: ["openai-codex/gpt-5.4-mini"],
 					},
-					commentator: { thinking: false, fallbackModels: false },
+					reviewer: { thinking: false, fallbackModels: false },
 				},
 			},
 		}, null, 2));
@@ -72,7 +72,7 @@ describe("profiles helpers", () => {
 			subagents: {
 				disableBuiltins: true,
 				modelScope: { enforce: true, allow: ["openai-codex/*"] },
-				agentOverrides: { explorer: { model: "old" }, stale: { model: "remove-me" } },
+				agentOverrides: { scout: { model: "old" }, stale: { model: "remove-me" } },
 			},
 		}, null, 2));
 
@@ -84,12 +84,12 @@ describe("profiles helpers", () => {
 		assert.equal(written.subagents.disableBuiltins, true);
 		assert.deepEqual(written.subagents.modelScope, { enforce: true, allow: ["openai-codex/*"] });
 		assert.deepEqual(written.subagents.agentOverrides, {
-			explorer: {
+			scout: {
 				model: "openai-codex/gpt-5.3-codex-spark",
 				thinking: "medium",
 				fallbackModels: ["openai-codex/gpt-5.4-mini"],
 			},
-			commentator: { thinking: false, fallbackModels: false },
+			reviewer: { thinking: false, fallbackModels: false },
 		});
 	});
 
@@ -100,7 +100,7 @@ describe("profiles helpers", () => {
 			subagents: {
 				disableBuiltins: true,
 				agentOverrides: {
-					builder: {
+					worker: {
 						model: "bluebox-azure-openai/gpt-5_6-luna",
 						thinking: "high",
 						fallbackModels: ["bluebox-azure-openai/gpt-5_6-terra"],
@@ -110,16 +110,16 @@ describe("profiles helpers", () => {
 		}, null, 2));
 		const agentDir = path.join(homeDir, ".selesai", "agent", "agents");
 		fs.mkdirSync(agentDir, { recursive: true });
-		fs.writeFileSync(path.join(agentDir, "builder.md"), `---\nname: builder\ndescription: Profile-managed builder\n---\n\nDo work.\n`);
+		fs.writeFileSync(path.join(agentDir, "worker.md"), `---\nname: worker\ndescription: Profile-managed worker\n---\n\nDo work.\n`);
 
 		applySubagentProfile("azure-fallback");
 		const agents = discoverAgents(process.cwd(), "both").agents;
-		const builder = agents.find((agent) => agent.name === "builder");
-		assert.equal(builder?.source, "user");
-		assert.equal(builder?.model, "bluebox-azure-openai/gpt-5_6-luna");
-		assert.equal(builder?.thinking, "high");
-		assert.deepEqual(builder?.fallbackModels, ["bluebox-azure-openai/gpt-5_6-terra"]);
-		assert.equal(builder?.override?.scope, "user");
+		const worker = agents.find((agent) => agent.name === "worker");
+		assert.equal(worker?.source, "user");
+		assert.equal(worker?.model, "bluebox-azure-openai/gpt-5_6-luna");
+		assert.equal(worker?.thinking, "high");
+		assert.deepEqual(worker?.fallbackModels, ["bluebox-azure-openai/gpt-5_6-terra"]);
+		assert.equal(worker?.override?.scope, "user");
 		assert.equal(agents.some((agent) => agent.source === "builtin"), false);
 	});
 
@@ -129,7 +129,7 @@ describe("profiles helpers", () => {
 		fs.writeFileSync(path.join(profilesDir, "invalid.json"), JSON.stringify({
 			subagents: {
 				agentOverrides: {
-					builder: { fallbackModels: ["openai/gpt-5", 42] },
+					worker: { fallbackModels: ["openai/gpt-5", 42] },
 				},
 			},
 		}, null, 2));
@@ -310,8 +310,8 @@ describe("profiles helpers", () => {
 		fs.writeFileSync(path.join(profilesDir, "demo.json"), JSON.stringify({
 			subagents: {
 				agentOverrides: {
-					explorer: { model: "openai-codex/gpt-5.3-codex-spark" },
-					builder: { model: "openai-codex/gpt-5.9" },
+					scout: { model: "openai-codex/gpt-5.3-codex-spark" },
+					worker: { model: "openai-codex/gpt-5.9" },
 				},
 			},
 		}, null, 2));
@@ -328,13 +328,13 @@ describe("profiles helpers", () => {
 		const result = await checkSubagentProfile(pi, ctx as never, "demo");
 		assert.deepEqual(result.results, [
 			{
-				agent: "explorer",
+				agent: "scout",
 				model: "openai-codex/gpt-5.3-codex-spark",
 				inRegistry: true,
 				probe: { status: "ok", message: "OK" },
 			},
 			{
-				agent: "builder",
+				agent: "worker",
 				model: "openai-codex/gpt-5.9",
 				inRegistry: false,
 				probe: { status: "unavailable", message: "model unavailable" },
@@ -346,7 +346,7 @@ describe("profiles helpers", () => {
 		const profilesDir = getSubagentProfilesDir();
 		fs.mkdirSync(profilesDir, { recursive: true });
 		fs.writeFileSync(path.join(profilesDir, "demo.json"), JSON.stringify({
-			subagents: { agentOverrides: { explorer: { model: "gpt-5.3-codex-spark:high" } } },
+			subagents: { agentOverrides: { scout: { model: "gpt-5.3-codex-spark:high" } } },
 		}, null, 2));
 		const probedModels: unknown[] = [];
 		const pi = {

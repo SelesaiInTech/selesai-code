@@ -49,7 +49,7 @@ function makeState(sessionId: string | null, ctx: unknown): SubagentState {
 }
 
 function writeRequest(input: { sessionId: string; runId: string; agent?: string; index?: number; message?: string; createdAt?: number; expiresAt?: number }): string {
-	const agent = input.agent ?? "builder";
+	const agent = input.agent ?? "worker";
 	const index = input.index ?? 0;
 	const channelDir = resolveSupervisorChannelDir(input.runId, agent, index);
 	createdChannels.push(channelDir);
@@ -72,16 +72,16 @@ function writeRequest(input: { sessionId: string; runId: string; agent?: string;
 	return requestId;
 }
 
-function requestFile(runId: string, requestId: string, agent = "builder", index = 0): string {
+function requestFile(runId: string, requestId: string, agent = "worker", index = 0): string {
 	return path.join(resolveSupervisorChannelDir(runId, agent, index), "requests", `${requestId}.json`);
 }
 
-function replyFile(runId: string, requestId: string, agent = "builder", index = 0): string {
+function replyFile(runId: string, requestId: string, agent = "worker", index = 0): string {
 	return path.join(resolveSupervisorChannelDir(runId, agent, index), "replies", `${requestId}.json`);
 }
 
 function makeEmptyChannel(runId: string): string {
-	const channelDir = resolveSupervisorChannelDir(runId, "builder", 0);
+	const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
 	createdChannels.push(channelDir);
 	ensureSupervisorChannelDir(channelDir);
 	return channelDir;
@@ -91,6 +91,14 @@ function ageChannel(channelDir: string, ageMs: number): void {
 	const timestamp = new Date(Date.now() - ageMs);
 	for (const dir of [path.join(channelDir, "requests"), path.join(channelDir, "replies"), channelDir]) {
 		fs.utimesSync(dir, timestamp, timestamp);
+	}
+}
+
+async function waitForCondition(condition: () => boolean, description: string): Promise<void> {
+	const deadline = Date.now() + 1000;
+	while (!condition()) {
+		if (Date.now() > deadline) assert.fail(`Timed out waiting for ${description}`);
+		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
 }
 
@@ -147,6 +155,72 @@ describe("native supervisor channel", () => {
 		assert.deepEqual(sent[0]?.options, { triggerTurn: true });
 		assert.equal(channel.pending.has(matchingId), false, "disposed channel clears pending requests");
 		assert.equal(sent.some(({ message }) => message.details?.id === otherId), false);
+	});
+
+	it("uses polling instead of native watchers on Windows", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const requestId = writeRequest({ sessionId: currentSessionId, runId: `run-${randomUUID()}` });
+		const sent: Array<{ details?: { id?: string } }> = [];
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
+			getSessionName: () => "shared-name",
+		};
+		let watchCalls = 0;
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx), {
+			platform: "win32",
+			watch: (() => {
+				watchCalls += 1;
+				throw new Error("Windows supervisor channel must not call fs.watch.");
+			}) as never,
+		});
+
+		channel.start();
+		channel.dispose();
+
+		assert.equal(watchCalls, 0);
+		assert.deepEqual(sent.map((message) => message.details?.id), [requestId]);
+	});
+
+	it("delivers requests written under an existing request directory by watch event", async () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		makeEmptyChannel(runId);
+		const sent: Array<{ details?: { id?: string } }> = [];
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+
+		try {
+			channel.start();
+			const requestId = writeRequest({ sessionId: currentSessionId, runId });
+			await waitForCondition(() => sent.some((message) => message.details?.id === requestId), "supervisor request watch delivery");
+		} finally {
+			channel.dispose();
+		}
 	});
 
 	it("prunes stale empty supervisor channel directories before polling", () => {
@@ -211,7 +285,7 @@ describe("native supervisor channel", () => {
 	it("emits foreground detach only after displaying a pending supervisor request", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
-		const requestId = writeRequest({ sessionId: currentSessionId, runId, agent: "builder", index: 2 });
+		const requestId = writeRequest({ sessionId: currentSessionId, runId, agent: "worker", index: 2 });
 		const log: string[] = [];
 		const emitted: Array<{ channel: string; payload: { requestId?: string; runId?: string; agent?: string; childIndex?: number } }> = [];
 		const ctx = {
@@ -242,7 +316,7 @@ describe("native supervisor channel", () => {
 			assert.deepEqual(log, ["send", "emit"]);
 			assert.deepEqual(emitted, [{
 				channel: INTERCOM_DETACH_REQUEST_EVENT,
-				payload: { requestId, runId, agent: "builder", childIndex: 2 },
+				payload: { requestId, runId, agent: "worker", childIndex: 2 },
 			}]);
 			assert.equal(channel.pending.has(requestId), true);
 		} finally {
@@ -271,7 +345,7 @@ describe("native supervisor channel", () => {
 			cwd: process.cwd(),
 			sessionId: currentSessionId,
 			updatedAt: 1,
-			children: [{ agent: "builder", index: 0, status: "detached", updatedAt: 1 }],
+			children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 1 }],
 		}]]);
 		const pi = {
 			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
@@ -398,7 +472,7 @@ describe("native supervisor channel", () => {
 			mode: "single",
 			cwd: process.cwd(),
 			updatedAt: Date.now(),
-			children: [{ agent: "builder", index: 0, status: "completed", updatedAt: Date.now() }],
+			children: [{ agent: "worker", index: 0, status: "completed", updatedAt: Date.now() }],
 		}]]);
 		const pi = {
 			getAllTools: () => [],
@@ -464,13 +538,13 @@ describe("native supervisor channel", () => {
 
 	it("removes the request file when a child supervisor ask is cancelled", async () => {
 		const runId = `run-${randomUUID()}`;
-		const channelDir = resolveSupervisorChannelDir(runId, "builder", 0);
+		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
 		createdChannels.push(channelDir);
 		process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
 		process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
 		process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
 		process.env[SUBAGENT_RUN_ID_ENV] = runId;
-		process.env[SUBAGENT_CHILD_AGENT_ENV] = "builder";
+		process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
 		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
 		const registeredTools = new Map<string, { execute: (_id: string, params: { reason: string; message?: string }, signal?: AbortSignal) => Promise<unknown> | unknown }>();
 		const pi = {

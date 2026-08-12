@@ -232,7 +232,7 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 	// ---- Real-world regression test ----
 
 	it("real-world: 19-read review run with trailing EISDIR", () => {
-		// Simulate the actual _impl-commentator run that produced a false positive
+		// Simulate the actual _impl-reviewer run that produced a false positive
 		const readResults = Array.from({ length: 18 }, (_, i) =>
 			toolResult("read", `contents of file ${i + 1}`),
 		);

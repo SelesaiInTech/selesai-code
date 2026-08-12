@@ -99,7 +99,7 @@ function createFakeClock() {
 function completionResult(overrides: Record<string, unknown> = {}) {
 	return {
 		id: `notify-${Math.random().toString(36).slice(2)}`,
-		agent: "builder",
+		agent: "worker",
 		success: true,
 		summary: "Done",
 		exitCode: 0,
@@ -115,7 +115,7 @@ describe("registerSubagentNotify", () => {
 
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: "notify-empty-1",
-			agent: "builder",
+			agent: "worker",
 			success: true,
 			summary: "",
 			exitCode: 0,
@@ -127,7 +127,7 @@ describe("registerSubagentNotify", () => {
 		assert.deepEqual(sent[0], {
 			message: {
 				customType: "subagent-notify",
-				content: "Background task completed: **builder**\n\n(no output)",
+				content: "Background task completed: **worker**\n\n(no output)",
 				display: false,
 			},
 			options: { triggerTurn: true },
@@ -169,7 +169,7 @@ describe("registerSubagentNotify", () => {
 			id: "foreground-run:0",
 			runId: "foreground-run",
 			source: "foreground",
-			agent: "commentator",
+			agent: "reviewer",
 			success: true,
 			summary: "Recovered final review",
 			exitCode: 0,
@@ -181,7 +181,7 @@ describe("registerSubagentNotify", () => {
 		assert.deepEqual(sent[0], {
 			message: {
 				customType: "subagent-notify",
-				content: "Detached foreground task completed: **commentator**\n\nRecovered final review",
+				content: "Detached foreground task completed: **reviewer**\n\nRecovered final review",
 				display: true,
 			},
 			options: { triggerTurn: true },
@@ -193,7 +193,7 @@ describe("registerSubagentNotify", () => {
 		events.emit(SUBAGENT_FOREGROUND_COMPLETE_EVENT, {
 			id: "foreground-run:0",
 			source: "foreground",
-			agent: "commentator",
+			agent: "reviewer",
 			success: true,
 			summary: "Recovered final review",
 			timestamp: 123,
@@ -208,7 +208,7 @@ describe("registerSubagentNotify", () => {
 
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: "notify-summary-1",
-			agent: "builder",
+			agent: "worker",
 			success: true,
 			summary,
 			exitCode: 0,
@@ -222,7 +222,7 @@ describe("registerSubagentNotify", () => {
 		assert.deepEqual(sent[0], {
 			message: {
 				customType: "subagent-notify",
-				content: `Background task completed: **builder** (2/3)\n\n${summary}`,
+				content: `Background task completed: **worker** (2/3)\n\n${summary}`,
 				display: false,
 			},
 			options: { triggerTurn: true },
@@ -234,7 +234,7 @@ describe("registerSubagentNotify", () => {
 
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: "notify-path-1",
-			agent: "builder",
+			agent: "worker",
 			success: true,
 			summary: "Done",
 			exitCode: 0,
@@ -246,7 +246,7 @@ describe("registerSubagentNotify", () => {
 		assert.deepEqual(sent, [{
 			message: {
 				customType: "subagent-notify",
-				content: "Background task completed: **builder**\n\nDone\n\nSession file: /tmp/session.jsonl",
+				content: "Background task completed: **worker**\n\nDone\n\nSession file: /tmp/session.jsonl",
 				display: false,
 			},
 			options: { triggerTurn: true },
@@ -258,7 +258,7 @@ describe("registerSubagentNotify", () => {
 
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: "notify-paused-1",
-			agent: "builder",
+			agent: "worker",
 			success: false,
 			state: "paused",
 			summary: "Paused after interrupt. Waiting for explicit next action.",
@@ -270,7 +270,7 @@ describe("registerSubagentNotify", () => {
 		assert.deepEqual(sent[0], {
 			message: {
 				customType: "subagent-notify",
-				content: "Background task paused: **builder**\n\nPaused after interrupt. Waiting for explicit next action.",
+				content: "Background task paused: **worker**\n\nPaused after interrupt. Waiting for explicit next action.",
 				display: true,
 			},
 			options: { triggerTurn: true },
@@ -282,7 +282,7 @@ describe("registerSubagentNotify", () => {
 
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: "notify-other-session",
-			agent: "builder",
+			agent: "worker",
 			success: true,
 			summary: "Other done",
 			timestamp: 100,
@@ -290,7 +290,7 @@ describe("registerSubagentNotify", () => {
 		});
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: "notify-sessionless",
-			agent: "builder",
+			agent: "worker",
 			success: true,
 			summary: "Legacy cwd-scoped done",
 			timestamp: 101,
@@ -407,16 +407,16 @@ describe("registerSubagentNotify", () => {
 describe("completion formatting helpers", () => {
 	it("formats and parses a parallel handoff without folding it into the result preview", () => {
 		const content = formatSingleCompletion({
-			agent: "builder",
+			agent: "worker",
 			status: "completed",
 			resultPreview: "Done",
 			handoffPath: "/tmp/run/handoff.json",
 			sessionLabel: "Session file",
 			sessionValue: "/tmp/session.jsonl",
 		});
-		assert.equal(content, "Background task completed: **builder**\n\nDone\n\nParallel handoff: /tmp/run/handoff.json\n\nSession file: /tmp/session.jsonl");
+		assert.equal(content, "Background task completed: **worker**\n\nDone\n\nParallel handoff: /tmp/run/handoff.json\n\nSession file: /tmp/session.jsonl");
 		assert.deepEqual(parseSubagentNotifyContent(content), {
-			agent: "builder",
+			agent: "worker",
 			status: "completed",
 			resultPreview: "Done",
 			handoffPath: "/tmp/run/handoff.json",
@@ -425,7 +425,7 @@ describe("completion formatting helpers", () => {
 		});
 		assert.equal(buildCompletionDetails({
 			id: "run",
-			agent: "builder",
+			agent: "worker",
 			success: true,
 			summary: "Done",
 			parallelHandoff: { path: "/tmp/run/handoff.json" },
@@ -434,32 +434,32 @@ describe("completion formatting helpers", () => {
 
 	it("formatSingleCompletion mirrors the in-handler single message shape", () => {
 		const content = formatSingleCompletion({
-			agent: "builder",
+			agent: "worker",
 			status: "completed",
 			taskInfo: " (2/3)",
 			resultPreview: "Done",
 			sessionLabel: "Session file",
 			sessionValue: "/tmp/session.jsonl",
 		});
-		assert.equal(content, "Background task completed: **builder** (2/3)\n\nDone\n\nSession file: /tmp/session.jsonl");
+		assert.equal(content, "Background task completed: **worker** (2/3)\n\nDone\n\nSession file: /tmp/session.jsonl");
 	});
 
 	it("parses detached foreground notification content for the custom renderer", () => {
 		const content = formatSingleCompletion({
-			agent: "commentator",
+			agent: "reviewer",
 			status: "failed",
 			source: "foreground",
 			resultPreview: "Acceptance rejected",
 			sessionLabel: "Session file",
-			sessionValue: "/tmp/commentator.jsonl",
+			sessionValue: "/tmp/reviewer.jsonl",
 		});
 		assert.deepEqual(parseSubagentNotifyContent(content), {
-			agent: "commentator",
+			agent: "reviewer",
 			status: "failed",
 			source: "foreground",
 			resultPreview: "Acceptance rejected",
 			sessionLabel: "session file",
-			sessionValue: "/tmp/commentator.jsonl",
+			sessionValue: "/tmp/reviewer.jsonl",
 		});
 	});
 

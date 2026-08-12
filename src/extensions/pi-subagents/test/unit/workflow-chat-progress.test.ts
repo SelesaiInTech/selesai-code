@@ -6,8 +6,10 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { isSameGitRepository, resolveWorkflowChatProgress } from "../../src/workflows/chat-progress.ts";
 import { renderSubagentResult } from "../../src/tui/render.ts";
-import { createSubagentExecutor, foregroundResultIntercomStatus, shouldSuppressRoutineResultIntercom } from "../../src/runs/foreground/subagent-executor.ts";
-import type { Details, SingleResult, SubagentState } from "../../src/shared/types.ts";
+import { bindMissionWorkflowChildAsyncLaunch, createSubagentExecutor, foregroundResultIntercomStatus, missionWorkflowChildStatus, runMissionWorkflowChild, shouldSuppressRoutineResultIntercom } from "../../src/runs/foreground/subagent-executor.ts";
+import { readMissionBinding } from "../../src/missions/lifecycle.ts";
+import { createMission, readMission } from "../../src/missions/store.ts";
+import { DIRS, type Details, type SingleResult, type SubagentState } from "../../src/shared/types.ts";
 
 const theme = {
 	fg(_name: string, text: string): string { return text; },
@@ -96,6 +98,7 @@ describe("workflow chat progress policy", () => {
 			assert.equal(resolveWorkflowChatProgress({ requested: "auto", parentCwd: repo, workflowCwd: worktree, background: true }).projection?.mode, "milestones");
 			assert.equal(resolveWorkflowChatProgress({ requested: "auto", parentCwd: repo, workflowCwd: other, background: false }).projection?.mode, "terminal");
 			assert.match(resolveWorkflowChatProgress({ requested: "live-card", parentCwd: repo, workflowCwd: other, background: false }).error ?? "", /same Git repository/i);
+			assert.match(resolveWorkflowChatProgress({ requested: "terminal", parentCwd: repo, workflowCwd: repo, background: false }).projection?.mode ?? "", /terminal/);
 		} finally {
 			try { git(repo, ["worktree", "remove", "--force", worktree]); } catch {}
 			fs.rmSync(repo, { recursive: true, force: true });
@@ -112,7 +115,7 @@ describe("workflow chat progress rendering", () => {
 			const updates: Array<{ details?: Details }> = [];
 			const result = await createExecutor().execute(
 				"wf-live",
-				{ workflowScript: `return await runs.run("explorer", { agent: "missing-agent", task: "scan", phase: "Validation", label: "Find renderer seam" });`, async: false },
+				{ workflowScript: `return await runs.run("scout", { agent: "missing-agent", task: "scan", phase: "Validation", label: "Find renderer seam" });`, async: false },
 				new AbortController().signal,
 				(update) => updates.push(update),
 				ctx(repo),
@@ -120,11 +123,82 @@ describe("workflow chat progress rendering", () => {
 			assert.equal(result.isError, true);
 			const liveUpdate = updates.find((update) => update.details?.chatProgress?.mode === "live-card");
 			assert.ok(liveUpdate, "expected a live-card update");
-			assert.equal(liveUpdate.details?.workflow?.trace[0]?.key, "explorer");
+			assert.equal(liveUpdate.details?.workflow?.trace[0]?.key, "scout");
 			assert.equal(liveUpdate.details?.workflow?.trace[0]?.phase, "Validation");
 			assert.equal(liveUpdate.details?.workflow?.trace[0]?.label, "Find renderer seam");
+			const ledgerChild = result.details.mission?.workflowChildren[0];
+			assert.equal(ledgerChild?.key, "scout");
+			assert.equal(ledgerChild?.workflowRunId, "wf-live");
+			assert.equal(ledgerChild?.agent, "missing-agent");
+			assert.equal(ledgerChild?.phase, "Validation");
+			assert.equal(ledgerChild?.status, "failed");
+			assert.equal(ledgerChild?.heartbeat?.status, "failed");
 		} finally {
 			fs.rmSync(repo, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps async workflow launch receipts running in the mission ledger", () => {
+		assert.equal(missionWorkflowChildStatus({
+			content: [{ type: "text", text: "Async: worker [run-1]" }],
+			details: { mode: "single", runId: "run-1", asyncId: "run-1", asyncDir: "/tmp/run-1", results: [] },
+		} as any), "running");
+	});
+
+	it("writes mission binding before async workflow child launch", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-workflow-child-binding-"));
+		const asyncId = `workflow-child-${process.pid}-${Date.now()}`;
+		const asyncDir = path.join(DIRS.async, asyncId);
+		try {
+			const location = {
+				projectRoot: root,
+				missionDir: path.join(root, ".pi-subagents", "missions"),
+				globalIndexDir: path.join(root, ".pi-subagents", "mission-index"),
+				writeGlobalIndex: false,
+			};
+			const mission = createMission(location, { title: "Workflow", objective: "Track child" });
+			const params = bindMissionWorkflowChildAsyncLaunch(
+				{ agent: "worker", task: "run", async: true },
+				{ missionId: mission.id, location, autoCreated: false },
+				false,
+				asyncId,
+			);
+
+			assert.equal(params.workflowChildAsyncId, asyncId);
+			assert.equal(readMissionBinding(asyncDir)?.missionId, mission.id);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("marks workflow launch preparation failures as failed mission children", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-workflow-prep-failure-"));
+		try {
+			const location = {
+				projectRoot: root,
+				missionDir: path.join(root, ".pi-subagents", "missions"),
+				globalIndexDir: path.join(root, ".pi-subagents", "mission-index"),
+				writeGlobalIndex: false,
+			};
+			const mission = createMission(location, { title: "Workflow", objective: "Track child" });
+
+			await assert.rejects(
+				() => runMissionWorkflowChild({ missionId: mission.id, location, autoCreated: false }, "wf-prep-failure", "resume", "Prep", async () => {
+					throw new Error("gate is not supported with retained resume");
+				}),
+				/gate is not supported with retained resume/,
+			);
+			const ledgerChild = readMission(location, mission.id).workflowChildren[0];
+
+			assert.equal(ledgerChild?.key, "resume");
+			assert.equal(ledgerChild?.status, "failed");
+			assert.equal(ledgerChild?.heartbeat?.status, "failed");
+			assert.equal(ledgerChild?.heartbeat?.phase, "Prep");
+			assert.match(ledgerChild?.heartbeat?.message ?? "", /gate is not supported with retained resume/);
+			assert.ok(ledgerChild?.completedAt);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 
@@ -138,7 +212,7 @@ describe("workflow chat progress rendering", () => {
 				chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
 				workflow: {
 					trace: [
-						{ operation: "run", key: "explorer", state: "completed", runId: "run-explorer", phase: "Validation", label: "Found renderer seam", durationMs: 12 },
+						{ operation: "run", key: "scout", state: "completed", runId: "run-scout", phase: "Validation", label: "Found renderer seam", durationMs: 12 },
 						{ operation: "run", key: "tests", state: "started", phase: "Validation", label: "focused integration suite" },
 						{ operation: "run", key: "review", state: "failed", phase: "Validation", label: "fresh-context UX review", error: "needs fixes" },
 					],
@@ -151,15 +225,68 @@ describe("workflow chat progress rendering", () => {
 		assert.match(text, /workflow wf_8f3a12345 .* same repo .* failed/);
 		assert.match(text, /Repo   pi-subagents/);
 		assert.match(text, /Phase  Validation/);
-		assert.match(text, /complete\s+explorer Found renderer seam/);
+		assert.match(text, /complete\s+scout Found renderer seam/);
 		assert.match(text, /running\s+tests focused integration suite/);
 		assert.match(text, /failed\s+review fresh-context UX review .* needs fixes/);
 	});
 
+	it("bounds workflow live-card rows and keeps old failed children visible", () => {
+		const trace = Array.from({ length: 10 }, (_, index) => ({
+			operation: "run" as const,
+			key: `step-${index}`,
+			state: index === 0 ? "failed" as const : "started" as const,
+			label: `review ${index}`,
+			...(index === 0 ? { error: "Failed\n\nOutput:\nI will read the required plan first.\nI will inspect the exact head.\nI will read agent default application path." } : {}),
+		}));
+		const text = componentText(renderSubagentResult({
+			content: [{ type: "text", text: "Workflow running." }],
+			details: {
+				mode: "workflow",
+				runId: "wf_noisy",
+				results: [],
+				chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
+				workflow: { trace, emits: [], console: [] },
+			},
+		}, { expanded: false }, theme as any));
+
+		assert.match(text, /2 older workflow rows hidden/);
+		assert.match(text, /failed\s+step-0 review 0 .* Failed · latest: read agent default application path/);
+		assert.match(text, /running\s+step-9 review 9/);
+		assert.doesNotMatch(text, /step-1/);
+		assert.doesNotMatch(text, /Output:/);
+	});
+
+	it("keeps mixed workflow child error output visible", () => {
+		const text = componentText(renderSubagentResult({
+			content: [{ type: "text", text: "Workflow running." }],
+			details: {
+				mode: "workflow",
+				runId: "wf_mixed_error",
+				results: [],
+				chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
+				workflow: {
+					trace: [{
+						operation: "run",
+						key: "gate-monitor",
+						state: "failed",
+						label: "bot gate",
+						error: "Failed\n\nOutput:\nerror: failed to fetch review threads\nI will inspect the retry path.",
+					}],
+					emits: [],
+					console: [],
+				},
+			},
+		}, { expanded: false }, theme as any));
+
+		assert.match(text, /Failed · error: failed to fetch review threads I will inspect the retry path/);
+		assert.doesNotMatch(text, /latest: inspect the retry path/);
+		assert.doesNotMatch(text, /Output:/);
+	});
+
 	it("suppresses only successful routine child result intercom for live-card workflows", () => {
-		const completed = { agent: "explorer", exitCode: 0, outputState: "present" } as SingleResult;
-		const failed = { agent: "explorer", exitCode: 1, outputState: "present" } as SingleResult;
-		const rejected = { agent: "explorer", exitCode: 0, acceptance: { status: "rejected" }, outputState: "present" } as SingleResult;
+		const completed = { agent: "delegate", exitCode: 0, outputState: "present" } as SingleResult;
+		const failed = { agent: "delegate", exitCode: 1, outputState: "present" } as SingleResult;
+		const rejected = { agent: "delegate", exitCode: 0, acceptance: { status: "rejected" }, outputState: "present" } as SingleResult;
 
 		assert.equal(shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: true, results: [completed] }), true);
 		assert.equal(shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: true, results: [failed] }), false);
@@ -168,7 +295,7 @@ describe("workflow chat progress rendering", () => {
 	});
 
 	it("marks acceptance-rejected foreground intercom results as failed", () => {
-		const rejected = { agent: "explorer", exitCode: 0, acceptance: { status: "rejected" }, outputState: "present" } as SingleResult;
+		const rejected = { agent: "delegate", exitCode: 0, acceptance: { status: "rejected" }, outputState: "present" } as SingleResult;
 
 		assert.equal(foregroundResultIntercomStatus(rejected), "failed");
 	});
@@ -183,7 +310,7 @@ describe("workflow chat progress rendering", () => {
 				chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
 				workflow: {
 					value: "final answer",
-					trace: [{ operation: "run", key: "explorer", state: "completed", runId: "run-explorer" }],
+					trace: [{ operation: "run", key: "scout", state: "completed", runId: "run-scout" }],
 					emits: [],
 					console: [],
 				},

@@ -42,21 +42,21 @@ describe("foreground child control", () => {
 		let firstDetaches = 0;
 		beginForegroundChild(control, {
 			index: 0,
-			agent: "commentator",
+			agent: "reviewer",
 			description: "Review correctness",
 			interrupt: () => { firstInterrupts++; return true; },
 			detach: () => { firstDetaches++; return true; },
 		});
 		beginForegroundChild(control, {
 			index: 1,
-			agent: "commentator",
+			agent: "reviewer",
 			description: "Review quality",
 			interrupt: () => { secondInterrupts++; return true; },
 		});
 
 		assert.equal(control.activeChildren?.size, 2);
 		assert.equal(control.currentIndex, 1);
-		updateForegroundChild(control, 0, progress(0, "commentator", 120));
+		updateForegroundChild(control, 0, progress(0, "reviewer", 120));
 		assert.equal(control.currentIndex, 0);
 		assert.equal(control.tokens, 120);
 		assert.equal(control.inputTokens, 100);
@@ -70,7 +70,7 @@ describe("foreground child control", () => {
 		assert.equal(control.detach?.(), true);
 		assert.equal(firstDetaches, 1);
 
-		updateForegroundChild(control, 1, progress(1, "commentator", 240));
+		updateForegroundChild(control, 1, progress(1, "reviewer", 240));
 		finishForegroundChild(control, 1);
 		assert.equal(control.currentIndex, 0);
 		assert.equal(control.tokens, 120);

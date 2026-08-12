@@ -39,12 +39,12 @@ describe("async chain root attachment", () => {
 			mode: "single",
 			state: "complete",
 			startedAt: 1,
-			steps: [{ agent: "builder", status: "complete", sessionFile }],
+			steps: [{ agent: "worker", status: "complete", sessionFile }],
 		});
 		writeJson(importedRoot.resultPath, {
 			state: "complete",
 			success: true,
-			results: [{ agent: "builder", output: "root output", success: true, sessionFile }],
+			results: [{ agent: "worker", output: "root output", success: true, sessionFile }],
 		});
 
 		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1 });
@@ -55,7 +55,7 @@ describe("async chain root attachment", () => {
 			exitCode: result.exitCode,
 			sessionFile: result.sessionFile,
 		}, {
-			agent: "builder",
+			agent: "worker",
 			output: "root output",
 			exitCode: 0,
 			sessionFile,
@@ -69,7 +69,7 @@ describe("async chain root attachment", () => {
 			mode: "single",
 			state: "running",
 			startedAt: 1,
-			steps: [{ agent: "builder", status: "running" }],
+			steps: [{ agent: "worker", status: "running" }],
 		});
 
 		const waiting = waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 5 });
@@ -77,7 +77,7 @@ describe("async chain root attachment", () => {
 			writeJson(importedRoot.resultPath, {
 				state: "complete",
 				success: true,
-				results: [{ agent: "builder", output: "late root output", success: true }],
+				results: [{ agent: "worker", output: "late root output", success: true }],
 			});
 		}, 20);
 
@@ -95,13 +95,13 @@ describe("async chain root attachment", () => {
 			state: "failed",
 			startedAt: 1,
 			error: "root failed",
-			steps: [{ agent: "builder", status: "failed", error: "root failed" }],
+			steps: [{ agent: "worker", status: "failed", error: "root failed" }],
 		});
 		writeJson(importedRoot.resultPath, {
 			state: "failed",
 			success: false,
 			summary: "root failed",
-			results: [{ agent: "builder", output: "root failed", error: "root failed", success: false }],
+			results: [{ agent: "worker", output: "root failed", error: "root failed", success: false }],
 		});
 
 		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1 });
@@ -118,7 +118,7 @@ describe("async chain root attachment", () => {
 			mode: "single",
 			state: "complete",
 			startedAt: 1,
-			steps: [{ agent: "builder", status: "complete" }],
+			steps: [{ agent: "worker", status: "complete" }],
 		});
 
 		const result = await waitForImportedAsyncRoot(importedRoot, {
@@ -137,7 +137,7 @@ describe("async chain root attachment", () => {
 			mode: "single",
 			state: "running",
 			startedAt: 1,
-			steps: [{ agent: "builder", status: "running" }],
+			steps: [{ agent: "worker", status: "running" }],
 		});
 		let timedOut = false;
 		const waiting = waitForImportedAsyncRoot(importedRoot, {

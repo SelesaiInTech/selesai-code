@@ -50,13 +50,13 @@ describe("turn-budget module", () => {
 
 	describe("appendTurnBudgetSystemPrompt", () => {
 		it("returns the system prompt unchanged when no budget is configured", () => {
-			assert.equal(appendTurnBudgetSystemPrompt("You are a commentator.", undefined), "You are a commentator.");
+			assert.equal(appendTurnBudgetSystemPrompt("You are a reviewer.", undefined), "You are a reviewer.");
 			assert.equal(appendTurnBudgetSystemPrompt("", undefined), "");
 		});
 
 		it("appends a turn-budget block after an existing system prompt", () => {
-			const result = appendTurnBudgetSystemPrompt("You are a commentator.", budget({ maxTurns: 5, graceTurns: 2 }));
-			assert.ok(result.startsWith("You are a commentator.\n\n## Turn budget\n"), result);
+			const result = appendTurnBudgetSystemPrompt("You are a reviewer.", budget({ maxTurns: 5, graceTurns: 2 }));
+			assert.ok(result.startsWith("You are a reviewer.\n\n## Turn budget\n"), result);
 			assert.match(result, /soft budget of 5 assistant turns/);
 			assert.match(result, /2 additional assistant turns/);
 		});
@@ -68,8 +68,8 @@ describe("turn-budget module", () => {
 		});
 
 		it("trims surrounding whitespace from the existing system prompt before joining", () => {
-			const result = appendTurnBudgetSystemPrompt("\nYou are a commentator.\n\n", budget());
-			assert.ok(result.startsWith("You are a commentator.\n\n## Turn budget\n"), result);
+			const result = appendTurnBudgetSystemPrompt("\nYou are a reviewer.\n\n", budget());
+			assert.ok(result.startsWith("You are a reviewer.\n\n## Turn budget\n"), result);
 			assert.equal(result.startsWith("\n"), false);
 		});
 

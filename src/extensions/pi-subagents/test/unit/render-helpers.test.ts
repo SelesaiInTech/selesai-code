@@ -61,20 +61,39 @@ test("truncLine respects grapheme display width", () => {
 	assert.equal(visibleWidth(rendered), 5);
 });
 
+test("truncLine emits no marker at zero width", () => {
+	assert.equal(truncLine("abcdef", 0), "");
+});
+
+test("multiline rendering omits two-column graphemes at one-column width", () => {
+	const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+	Object.defineProperty(process.stdout, "columns", { configurable: true, value: 5 });
+	try {
+		const rendered = componentText(renderSubagentResult({
+			content: [{ type: "text", text: "a🙂b\n🙂" }],
+		}, { expanded: true }, theme as any));
+		assert.deepEqual(rendered.split("\n"), ["a", "b"]);
+		for (const line of rendered.split("\n")) assert.ok(visibleWidth(line) <= 1);
+	} finally {
+		if (originalColumns) Object.defineProperty(process.stdout, "columns", originalColumns);
+		else delete (process.stdout as { columns?: number }).columns;
+	}
+});
+
 test("compact chain rendering uses workflow graph spans for dynamic fanout results", () => {
 	const component = renderSubagentResult({
 		content: [{ type: "text", text: "done" }],
 		details: {
 			mode: "chain",
-			chainAgents: ["explorer", "expand:commentator", "writer"],
+			chainAgents: ["scout", "expand:reviewer", "writer"],
 			totalSteps: 3,
-			results: [result("explorer", "targets"), result("commentator", "a"), result("commentator", "b"), result("writer", "final")],
+			results: [result("scout", "targets"), result("reviewer", "a"), result("reviewer", "b"), result("writer", "final")],
 			workflowGraph: {
 				runId: "render-dynamic",
 				mode: "chain",
 				phases: [],
 				nodes: [
-					{ id: "step-0", kind: "step", agent: "explorer", label: "Scout", status: "completed", flatIndex: 0, stepIndex: 0 },
+					{ id: "step-0", kind: "step", agent: "scout", label: "Scout", status: "completed", flatIndex: 0, stepIndex: 0 },
 					{
 						id: "step-1",
 						kind: "dynamic-parallel-group",
@@ -82,8 +101,8 @@ test("compact chain rendering uses workflow graph spans for dynamic fanout resul
 						status: "completed",
 						stepIndex: 1,
 						children: [
-							{ id: "step-1-item-a", kind: "agent", agent: "commentator", label: "Review A", status: "completed", flatIndex: 1, stepIndex: 1 },
-							{ id: "step-1-item-b", kind: "agent", agent: "commentator", label: "Review B", status: "completed", flatIndex: 2, stepIndex: 1 },
+							{ id: "step-1-item-a", kind: "agent", agent: "reviewer", label: "Review A", status: "completed", flatIndex: 1, stepIndex: 1 },
+							{ id: "step-1-item-b", kind: "agent", agent: "reviewer", label: "Review B", status: "completed", flatIndex: 2, stepIndex: 1 },
 						],
 						dynamic: { sourceOutput: "targets", sourcePath: "/items", itemName: "target", collectAs: "reviews" },
 					},
@@ -94,9 +113,9 @@ test("compact chain rendering uses workflow graph spans for dynamic fanout resul
 	}, { expanded: false }, theme as any);
 
 	const text = componentText(component);
-	assert.match(text, /Step 1: explorer/);
-	assert.match(text, /Agent 1\/2: commentator/);
-	assert.match(text, /Agent 2\/2: commentator/);
+	assert.match(text, /Step 1: scout/);
+	assert.match(text, /Agent 1\/2: reviewer/);
+	assert.match(text, /Agent 2\/2: reviewer/);
 	assert.match(text, /Step 3: writer/);
 });
 
@@ -105,15 +124,15 @@ test("compact chain rendering shows failed zero-child dynamic fanout groups", ()
 		content: [{ type: "text", text: "failed" }],
 		details: {
 			mode: "chain",
-			chainAgents: ["explorer", "expand:commentator", "writer"],
+			chainAgents: ["scout", "expand:reviewer", "writer"],
 			totalSteps: 3,
-			results: [result("explorer", "targets")],
+			results: [result("scout", "targets")],
 			workflowGraph: {
 				runId: "render-empty-dynamic-failed",
 				mode: "chain",
 				phases: [],
 				nodes: [
-					{ id: "step-0", kind: "step", agent: "explorer", label: "Scout", status: "completed", flatIndex: 0, stepIndex: 0 },
+					{ id: "step-0", kind: "step", agent: "scout", label: "Scout", status: "completed", flatIndex: 0, stepIndex: 0 },
 					{
 						id: "step-1",
 						kind: "dynamic-parallel-group",
@@ -133,7 +152,7 @@ test("compact chain rendering shows failed zero-child dynamic fanout groups", ()
 	const text = componentText(component);
 	assert.match(text, /step 1\/3/);
 	assert.doesNotMatch(text, /step 3\/3/);
-	assert.match(text, /Step 1: explorer/);
+	assert.match(text, /Step 1: scout/);
 	assert.match(text, /Step 2: Review targets .* failed/);
 	assert.match(text, /No review targets materialized/);
 	assert.match(text, /Step 3: writer .* pending/);
@@ -144,15 +163,15 @@ test("expanded chain rendering uses workflow graph spans for dynamic fanout resu
 		content: [{ type: "text", text: "done" }],
 		details: {
 			mode: "chain",
-			chainAgents: ["explorer", "expand:commentator", "writer"],
+			chainAgents: ["scout", "expand:reviewer", "writer"],
 			totalSteps: 3,
-			results: [result("explorer", "targets"), result("commentator", "a"), result("commentator", "b"), result("writer", "final")],
+			results: [result("scout", "targets"), result("reviewer", "a"), result("reviewer", "b"), result("writer", "final")],
 			workflowGraph: {
 				runId: "render-dynamic-expanded",
 				mode: "chain",
 				phases: [],
 				nodes: [
-					{ id: "step-0", kind: "step", agent: "explorer", label: "Scout", status: "completed", flatIndex: 0, stepIndex: 0 },
+					{ id: "step-0", kind: "step", agent: "scout", label: "Scout", status: "completed", flatIndex: 0, stepIndex: 0 },
 					{
 						id: "step-1",
 						kind: "dynamic-parallel-group",
@@ -160,8 +179,8 @@ test("expanded chain rendering uses workflow graph spans for dynamic fanout resu
 						status: "completed",
 						stepIndex: 1,
 						children: [
-							{ id: "step-1-item-a", kind: "agent", agent: "commentator", label: "Review A", status: "completed", flatIndex: 1, stepIndex: 1 },
-							{ id: "step-1-item-b", kind: "agent", agent: "commentator", label: "Review B", status: "completed", flatIndex: 2, stepIndex: 1 },
+							{ id: "step-1-item-a", kind: "agent", agent: "reviewer", label: "Review A", status: "completed", flatIndex: 1, stepIndex: 1 },
+							{ id: "step-1-item-b", kind: "agent", agent: "reviewer", label: "Review B", status: "completed", flatIndex: 2, stepIndex: 1 },
 						],
 						dynamic: { sourceOutput: "targets", sourcePath: "/items", itemName: "target", collectAs: "reviews" },
 					},
@@ -172,9 +191,9 @@ test("expanded chain rendering uses workflow graph spans for dynamic fanout resu
 	}, { expanded: true }, theme as any);
 
 	const text = componentText(component);
-	assert.match(text, /Step 1: explorer/);
-	assert.match(text, /Agent 1\/2: commentator/);
-	assert.match(text, /Agent 2\/2: commentator/);
+	assert.match(text, /Step 1: scout/);
+	assert.match(text, /Agent 1\/2: reviewer/);
+	assert.match(text, /Agent 2\/2: reviewer/);
 	assert.match(text, /Step 3: writer/);
 });
 
@@ -183,7 +202,7 @@ test("compact multi-result rendering shows total cost in the header", () => {
 		content: [{ type: "text", text: "done" }],
 		details: {
 			mode: "parallel",
-			results: [result("explorer", "a"), result("commentator", "b")],
+			results: [result("scout", "a"), result("reviewer", "b")],
 			totalCost: { inputTokens: 30, outputTokens: 12, costUsd: 0.04 },
 		},
 	}, { expanded: false }, theme as any));
@@ -197,25 +216,25 @@ test("static sequential and static parallel chain rendering keep existing labels
 		content: [{ type: "text", text: "done" }],
 		details: {
 			mode: "chain",
-			chainAgents: ["explorer", "writer"],
+			chainAgents: ["scout", "writer"],
 			totalSteps: 2,
-			results: [result("explorer", "a"), result("writer", "b")],
+			results: [result("scout", "a"), result("writer", "b")],
 		},
 	}, { expanded: false }, theme as any));
-	assert.match(sequential, /Step 1: explorer/);
+	assert.match(sequential, /Step 1: scout/);
 	assert.match(sequential, /Step 2: writer/);
 
 	const parallel = componentText(renderSubagentResult({
 		content: [{ type: "text", text: "done" }],
 		details: {
 			mode: "chain",
-			chainAgents: ["explorer", "[commentator+auditor]", "writer"],
+			chainAgents: ["scout", "[reviewer+auditor]", "writer"],
 			totalSteps: 3,
-			results: [result("explorer", "a"), result("commentator", "b"), result("auditor", "c"), result("writer", "d")],
+			results: [result("scout", "a"), result("reviewer", "b"), result("auditor", "c"), result("writer", "d")],
 		},
 	}, { expanded: false }, theme as any));
-	assert.match(parallel, /Step 1: explorer/);
-	assert.match(parallel, /Agent 1\/2: commentator/);
+	assert.match(parallel, /Step 1: scout/);
+	assert.match(parallel, /Agent 1\/2: reviewer/);
 	assert.match(parallel, /Agent 2\/2: auditor/);
 	assert.match(parallel, /Step 3: writer/);
 });

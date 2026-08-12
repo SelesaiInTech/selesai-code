@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import { extractToolArgsPreview } from "../../src/shared/utils.ts";
 
 const { buildWidgetLines, clearLegacyResultAnimationTimer, renderWidget } = await import("../../src/tui/render.ts") as {
-	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string }, width?: number, expanded?: boolean) => string[];
+	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string }, width?: number, expanded?: boolean, frame?: number) => string[];
 	clearLegacyResultAnimationTimer: (context: { state: { subagentResultAnimationTimer?: ReturnType<typeof setInterval> } }) => void;
 	renderWidget: (ctx: Record<string, unknown>, jobs: Array<Record<string, unknown>>) => void;
 };
@@ -13,6 +15,7 @@ const theme = {
 };
 
 const runningGlyphPattern = "[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●]";
+const malformedSurrogate = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u;
 
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -55,7 +58,7 @@ function createUiContext() {
 }
 
 function renderWidgetLines(widget: unknown, width = 180): string[] {
-	return (widget as (_tui: unknown, widgetTheme: typeof theme) => { render(width: number): string[] })(undefined, theme).render(width);
+	return (widget as (_tui: { requestRender(): void }, widgetTheme: typeof theme) => { render(width: number): string[] })({ requestRender() {} }, theme).render(width);
 }
 
 function restoreDescriptor(target: object, key: string, descriptor: PropertyDescriptor | undefined): void {
@@ -87,39 +90,90 @@ function resetWidgetLayout(): void {
 describe("subagent async widget rendering", () => {
 	it("orders running jobs before queued summaries and completions", () => {
 		const lines = buildWidgetLines([
-			{ asyncId: "done-1", asyncDir: "/tmp/done", status: "complete", agents: ["commentator"], startedAt: 0, updatedAt: 1000 },
-			{ asyncId: "queued-1", asyncDir: "/tmp/queued", status: "queued", agents: ["architect"], startedAt: 0, updatedAt: 1000 },
-			{ asyncId: "run-1", asyncDir: "/tmp/run", status: "running", agents: ["explorer"], currentStep: 0, stepsTotal: 2, startedAt: Date.now() - 1000, updatedAt: Date.now(), currentTool: "read", currentToolStartedAt: Date.now() - 500 },
+			{ asyncId: "done-1", asyncDir: "/tmp/done", status: "complete", agents: ["reviewer"], startedAt: 0, updatedAt: 1000 },
+			{ asyncId: "queued-1", asyncDir: "/tmp/queued", status: "queued", agents: ["planner"], startedAt: 0, updatedAt: 1000 },
+			{ asyncId: "run-1", asyncDir: "/tmp/run", status: "running", agents: ["scout"], currentStep: 0, stepsTotal: 2, startedAt: Date.now() - 1000, updatedAt: Date.now(), currentTool: "read", currentToolStartedAt: Date.now() - 500 },
 		], theme, 120);
 
 		const text = lines.join("\n");
 		assert.match(text, new RegExp(`^${runningGlyphPattern} Async agents · background`));
-		assert.ok(text.indexOf("explorer") < text.indexOf("queued"), "running row should precede queued summary");
-		assert.ok(text.indexOf("queued") < text.indexOf("commentator"), "queued summary should precede completions");
+		assert.ok(text.indexOf("scout") < text.indexOf("queued"), "running row should precede queued summary");
+		assert.ok(text.indexOf("queued") < text.indexOf("reviewer"), "queued summary should precede completions");
 		assert.match(text, /⎿  read/);
+	});
+
+	it("returns one physical terminal line per widget line for tool previews", () => {
+		const preview = extractToolArgsPreview({ command: "first\r\n\t\x1b[31msecond\x1b[0m" });
+		const lines = buildWidgetLines([{
+			asyncId: "run-1",
+			asyncDir: "/tmp/run",
+			status: "running",
+			mode: "parallel",
+			agents: ["worker"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			steps: [{
+				index: 0,
+				agent: "worker",
+				status: "running",
+				currentTool: "bash",
+				currentToolArgs: preview,
+				recentTools: [{ tool: "bash", args: preview, endMs: 1 }],
+			}],
+		}], theme, 120, true);
+
+		assert.match(lines.join("\n"), /first second/);
+		for (const line of lines) assert.doesNotMatch(line, /[\r\n]/);
+	});
+
+	it("does not split surrogate pairs when widget rows shorten previews again", () => {
+		const preview = `a${"😀".repeat(30)}`;
+		const lines = buildWidgetLines([{
+			asyncId: "run-1",
+			asyncDir: "/tmp/run",
+			status: "running",
+			mode: "parallel",
+			agents: ["worker"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			steps: [{
+				index: 0,
+				agent: "worker",
+				status: "running",
+				currentTool: "bash",
+				currentToolArgs: preview,
+				recentTools: [{ tool: "bash", args: preview, endMs: 1 }],
+			}],
+		}], theme, 60, true);
+
+		for (const line of lines) assert.doesNotMatch(line, malformedSurrogate);
 	});
 
 	it("uses parallel running/done wording for async jobs with parallel groups", () => {
 		const lines = buildWidgetLines([
-			{ asyncId: "run-1", asyncDir: "/tmp/1", status: "running", mode: "parallel", agents: ["explorer", "commentator", "builder"], hasParallelGroups: true, activeParallelGroup: true, runningSteps: 3, completedSteps: 0, stepsTotal: 3 },
+			{ asyncId: "run-1", asyncDir: "/tmp/1", status: "running", mode: "parallel", agents: ["scout", "reviewer", "worker"], hasParallelGroups: true, activeParallelGroup: true, runningSteps: 3, completedSteps: 0, stepsTotal: 3 },
 		], theme, 120);
 
 		const text = lines.join("\n");
 		assert.match(text, /parallel · 3 agents running · 0\/3 done/);
 		assert.match(text, /⎿  thinking…/);
-		assert.doesNotMatch(text, /parallel · explorer, commentator, builder/);
+		assert.doesNotMatch(text, /parallel · scout, reviewer, worker/);
 		assert.doesNotMatch(text, /step 1\/3/);
 	});
 
 	it("collapses repeated async parallel agent names", () => {
 		const lines = buildWidgetLines([
-			{ asyncId: "run-1", asyncDir: "/tmp/1", status: "running", mode: "parallel", agents: ["commentator", "commentator", "commentator"], activeParallelGroup: true, runningSteps: 3, completedSteps: 0, stepsTotal: 3 },
+			{ asyncId: "run-1", asyncDir: "/tmp/1", status: "running", mode: "parallel", agents: ["reviewer", "reviewer", "reviewer"], activeParallelGroup: true, runningSteps: 3, completedSteps: 0, stepsTotal: 3 },
 		], theme, 120);
 
 		const text = lines.join("\n");
 		assert.match(text, /parallel · 3 agents running/);
-		assert.doesNotMatch(text, /parallel · commentator ×3/);
-		assert.doesNotMatch(text, /commentator → commentator → commentator/);
+		assert.doesNotMatch(text, /parallel · reviewer ×3/);
+		assert.doesNotMatch(text, /reviewer → reviewer → reviewer/);
 	});
 
 	it("renders a compact component widget for three active parallel agents without core truncation", () => {
@@ -130,16 +184,16 @@ describe("subagent async widget rendering", () => {
 			asyncDir: "/tmp/1",
 			status: "running",
 			mode: "parallel",
-			agents: ["commentator", "commentator", "commentator"],
+			agents: ["reviewer", "reviewer", "reviewer"],
 			activeParallelGroup: true,
 			runningSteps: 3,
 			completedSteps: 0,
 			stepsTotal: 3,
 			updatedAt: now,
 			steps: [
-				{ index: 0, agent: "commentator", status: "running", lastActivityAt: now, turnCount: 5, toolCount: 18, tokens: { input: 30_000, output: 10_000, cache: 4_000, total: 44_000 } },
-				{ index: 1, agent: "commentator", status: "running", lastActivityAt: now - 2000, turnCount: 4, toolCount: 13, tokens: { input: 16_000, output: 4_000, cache: 2_000, total: 22_000 } },
-				{ index: 2, agent: "commentator", status: "running", currentTool: "grep", currentToolStartedAt: now - 1000, turnCount: 3, toolCount: 11, tokens: { input: 14_000, output: 3_000, cache: 2_000, total: 19_000 } },
+				{ index: 0, agent: "reviewer", status: "running", lastActivityAt: now, turnCount: 5, toolCount: 18, tokens: { input: 30_000, output: 10_000, cache: 4_000, total: 44_000 } },
+				{ index: 1, agent: "reviewer", status: "running", lastActivityAt: now - 2000, turnCount: 4, toolCount: 13, tokens: { input: 16_000, output: 4_000, cache: 2_000, total: 22_000 } },
+				{ index: 2, agent: "reviewer", status: "running", currentTool: "grep", currentToolStartedAt: now - 1000, turnCount: 3, toolCount: 11, tokens: { input: 14_000, output: 3_000, cache: 2_000, total: 19_000 } },
 			],
 		}]);
 		const widget = ui.widgets.at(-1);
@@ -147,12 +201,44 @@ describe("subagent async widget rendering", () => {
 		const lines = (widget as (_tui: unknown, widgetTheme: typeof theme) => { render(width: number): string[] })(undefined, theme).render(180).map((line) => line.trimEnd());
 		const text = lines.join("\n");
 		assert.match(text, /async subagent parallel \(3\) · background/);
-		assert.match(text, /Agent 1\/3: commentator · running · active now · 5 turns · 18 tool uses · 44k token/);
-		assert.match(text, /Agent 2\/3: commentator · running · active 2s ago · 4 turns · 13 tool uses · 22k token/);
-		assert.match(text, /Agent 3\/3: commentator · running · grep \| 1\.0s · 3 turns · 11 tool uses · 19k token/);
-		assert.match(text, /Press configured-expand-key for live detail/);
+		assert.match(text, /Agent 1\/3: reviewer · running · active now · 5 turns · 18 tool uses · 44k token/);
+		assert.match(text, /Agent 2\/3: reviewer · running · active 2s ago · 4 turns · 13 tool uses · 22k token/);
+		assert.match(text, /Agent 3\/3: reviewer · running · grep \| 1\.0s · 3 turns · 11 tool uses · 19k token/);
+		assert.match(text, /Press\s+for live detail/);
 		assert.doesNotMatch(text, /widget truncated/);
 		assert.ok(lines.length <= 10, "collapsed component should stay under Pi's string-widget cap even though it bypasses it");
+	});
+
+	it("honors the component render width instead of the terminal width", () => {
+		resetWidgetLayout();
+		withStdoutSize(50, 120, () => {
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [{
+				asyncId: "run-narrow",
+				asyncDir: "/tmp/pi-subagents-uid-1000/async-subagent-runs/call_with_a_long_identifier",
+				status: "running",
+				mode: "parallel",
+				agents: ["correctness", "tests-maintainability"],
+				activeParallelGroup: true,
+				runningSteps: 2,
+				completedSteps: 0,
+				stepsTotal: 2,
+				steps: [
+					{ index: 0, agent: "correctness", status: "running" },
+					{ index: 1, agent: "tests-maintainability", status: "running" },
+				],
+			}]);
+
+			const widget = ui.widgets.at(-1);
+			for (const width of [0, 1, 2, 3, 74]) {
+				const lines = renderWidgetLines(widget, width);
+				assert.ok(lines.length > 0);
+				for (const line of lines) {
+					assert.ok(visibleWidth(line) <= width, `widget line exceeds render width: ${visibleWidth(line)} > ${width}`);
+				}
+			}
+		});
+		resetWidgetLayout();
 	});
 
 	it("locks crowded collapsed widget height for the current terminal session", () => {
@@ -164,15 +250,15 @@ describe("subagent async widget rendering", () => {
 				asyncDir: `/tmp/run-${jobIndex + 1}`,
 				status: "running",
 				mode: "parallel",
-				agents: ["explorer", "commentator"],
+				agents: ["scout", "reviewer"],
 				activeParallelGroup: true,
 				runningSteps: 2,
 				completedSteps: 0,
 				stepsTotal: 2,
 				updatedAt: now + jobIndex,
 				steps: [
-					{ index: 0, agent: "explorer", status: "running", currentTool: "read", currentToolStartedAt: now - 1000 },
-					{ index: 1, agent: "commentator", status: "running", currentTool: "grep", currentToolStartedAt: now - 2000 },
+					{ index: 0, agent: "scout", status: "running", currentTool: "read", currentToolStartedAt: now - 1000 },
+					{ index: 1, agent: "reviewer", status: "running", currentTool: "grep", currentToolStartedAt: now - 2000 },
 				],
 			}));
 			const ui = createUiContext();
@@ -188,8 +274,8 @@ describe("subagent async widget rendering", () => {
 				runningSteps: 0,
 				completedSteps: 2,
 				steps: [
-					{ index: 0, agent: "explorer", status: "complete" },
-					{ index: 1, agent: "commentator", status: "complete" },
+					{ index: 0, agent: "scout", status: "complete" },
+					{ index: 1, agent: "reviewer", status: "complete" },
 				],
 			}]);
 			const settledLines = renderWidgetLines(ui.widgets.at(-1));
@@ -197,7 +283,7 @@ describe("subagent async widget rendering", () => {
 			assert.match(settledLines.join("\n"), /parallel · done/);
 
 			renderWidget(ui.ctx as never, []);
-			renderWidget(ui.ctx as never, [{ asyncId: "small", asyncDir: "/tmp/small", status: "running", agents: ["builder"], currentTool: "read" }]);
+			renderWidget(ui.ctx as never, [{ asyncId: "small", asyncDir: "/tmp/small", status: "running", agents: ["worker"], currentTool: "read" }]);
 			const resetLines = renderWidgetLines(ui.widgets.at(-1));
 			assert.ok(resetLines.length < 10, "clearing the widget starts a fresh layout session");
 		});
@@ -264,7 +350,7 @@ describe("subagent async widget rendering", () => {
 				asyncId: "run-tiny",
 				asyncDir: "/tmp/run-tiny",
 				status: "running",
-				agents: ["builder"],
+				agents: ["worker"],
 				currentTool: "read",
 			}]);
 
@@ -285,17 +371,17 @@ describe("subagent async widget rendering", () => {
 				asyncDir: "/tmp/run-expanded",
 				status: "running",
 				mode: "parallel",
-				agents: ["commentator"],
+				agents: ["reviewer"],
 				activeParallelGroup: true,
 				runningSteps: 1,
 				completedSteps: 0,
 				stepsTotal: 1,
-				steps: [{ index: 0, agent: "commentator", status: "running", currentTool: "read" }],
+				steps: [{ index: 0, agent: "reviewer", status: "running", currentTool: "read" }],
 			}]);
 
 			const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
 			assert.match(text, /async subagent parallel · background/);
-			assert.match(text, /Agent 1\/1: commentator · running/);
+			assert.match(text, /Agent 1\/1: reviewer · running/);
 			assert.doesNotMatch(text, /subagents \(1\/1 running\)/);
 		});
 		resetWidgetLayout();
@@ -309,16 +395,16 @@ describe("subagent async widget rendering", () => {
 				asyncDir: "/tmp/1",
 				status: "running",
 				mode: "parallel",
-				agents: ["commentator", "commentator", "commentator"],
+				agents: ["reviewer", "reviewer", "reviewer"],
 				activeParallelGroup: true,
 				runningSteps: 2,
 				completedSteps: 1,
 				stepsTotal: 3,
 				updatedAt: now,
 				steps: [
-					{ agent: "commentator", status: "running", lastActivityAt: now, toolCount: 2 },
-					{ agent: "commentator", status: "running", currentTool: "read", currentToolStartedAt: now - 2000 },
-					{ agent: "commentator", status: "complete", tokens: { input: 1000, output: 500, cache: 0, total: 1500 } },
+					{ agent: "reviewer", status: "running", lastActivityAt: now, toolCount: 2 },
+					{ agent: "reviewer", status: "running", currentTool: "read", currentToolStartedAt: now - 2000 },
+					{ agent: "reviewer", status: "complete", tokens: { input: 1000, output: 500, cache: 0, total: 1500 } },
 				],
 			},
 		], theme, 160);
@@ -326,11 +412,11 @@ describe("subagent async widget rendering", () => {
 		const text = lines.join("\n");
 		assert.match(text, /async subagent parallel \(3\) · background/);
 		assert.match(text, /parallel · 2 agents running · 1\/3 done/);
-		assert.match(text, /Agent 1\/3: commentator · running · 2 tool uses/);
+		assert.match(text, /Agent 1\/3: reviewer · running · 2 tool uses/);
 		assert.match(text, /⎿  active now/);
-		assert.match(text, /Agent 2\/3: commentator · running\n\s+⎿  read \| 2\.0s/);
-		assert.match(text, /Press configured-expand-key for live detail/);
-		assert.match(text, /Agent 3\/3: commentator · complete · 1\.5k token/);
+		assert.match(text, /Agent 2\/3: reviewer · running\n\s+⎿  read \| 2\.0s/);
+		assert.match(text, /Press\s+for live detail/);
+		assert.match(text, /Agent 3\/3: reviewer · complete · 1\.5k token/);
 	});
 
 	it("shows async job and step context badges", () => {
@@ -342,22 +428,22 @@ describe("subagent async widget rendering", () => {
 				status: "running",
 				mode: "parallel",
 				context: "mixed",
-				agents: ["explorer", "builder"],
+				agents: ["scout", "worker"],
 				activeParallelGroup: true,
 				runningSteps: 2,
 				completedSteps: 0,
 				stepsTotal: 2,
 				updatedAt: now,
 				steps: [
-					{ agent: "explorer", context: "fresh", status: "running", lastActivityAt: now },
-					{ agent: "builder", context: "fork", status: "running", currentTool: "bash", currentToolStartedAt: now - 1000 },
+					{ agent: "scout", context: "fresh", status: "running", lastActivityAt: now },
+					{ agent: "worker", context: "fork", status: "running", currentTool: "bash", currentToolStartedAt: now - 1000 },
 				],
 			},
 		], theme, 160).join("\n");
 
 		assert.match(text, /parallel \[mixed\]/);
-		assert.match(text, /Agent 1\/2: explorer \[fresh\] · running/);
-		assert.match(text, /Agent 2\/2: builder \[fork\] · running/);
+		assert.match(text, /Agent 1\/2: scout \[fresh\] · running/);
+		assert.match(text, /Agent 2\/2: worker \[fork\] · running/);
 	});
 
 	it("shows model and thinking for active async widget rows", () => {
@@ -367,21 +453,21 @@ describe("subagent async widget rendering", () => {
 				asyncDir: "/tmp/1",
 				status: "running",
 				mode: "parallel",
-				agents: ["commentator", "explorer"],
+				agents: ["reviewer", "scout"],
 				activeParallelGroup: true,
 				runningSteps: 2,
 				completedSteps: 0,
 				stepsTotal: 2,
 				steps: [
-					{ agent: "commentator", status: "running", model: "openai-codex/gpt-5.5:high" },
-					{ agent: "explorer", status: "running", model: "anthropic/claude-haiku-4-5", thinking: "low" },
+					{ agent: "reviewer", status: "running", model: "openai-codex/gpt-5.5:high" },
+					{ agent: "scout", status: "running", model: "anthropic/claude-haiku-4-5", thinking: "low" },
 				],
 			},
 		], theme, 180);
 
 		const text = lines.join("\n");
-		assert.match(text, /Agent 1\/2: commentator · running \(gpt-5\.5 · thinking high\)/);
-		assert.match(text, /Agent 2\/2: explorer · running \(claude-haiku-4-5 · thinking low\)/);
+		assert.match(text, /Agent 1\/2: reviewer · running \(gpt-5\.5 · thinking high\)/);
+		assert.match(text, /Agent 2\/2: scout · running \(claude-haiku-4-5 · thinking low\)/);
 		assert.doesNotMatch(text, /openai-codex\/gpt-5\.5/);
 		assert.doesNotMatch(text, /gpt-5\.5:high/);
 	});
@@ -393,20 +479,20 @@ describe("subagent async widget rendering", () => {
 				asyncDir: "/tmp/1",
 				status: "running",
 				mode: "parallel",
-				agents: ["commentator"],
+				agents: ["reviewer"],
 				activeParallelGroup: true,
 				runningSteps: 1,
 				completedSteps: 0,
 				stepsTotal: 1,
 				steps: [
-					{ agent: "commentator", status: "running", model: "anthropic/claude-opus-4-5-20260501-super-long-model-name:high" },
+					{ agent: "reviewer", status: "running", model: "anthropic/claude-opus-4-5-20260501-super-long-model-name:high" },
 				],
 			},
 		], theme, 68);
 
 		const row = lines.find((line) => line.includes("Agent 1/1")) ?? "";
-		assert.match(row, /Agent 1\/1: commentator · running/);
-		assert.doesNotMatch(row, /Agent 1\/1: commentator \(/);
+		assert.match(row, /Agent 1\/1: reviewer · running/);
+		assert.doesNotMatch(row, /Agent 1\/1: reviewer \(/);
 	});
 
 	it("shows inline live detail for expanded async parallel widget rows", () => {
@@ -416,7 +502,7 @@ describe("subagent async widget rendering", () => {
 			asyncDir: "/tmp/1",
 			status: "running",
 			mode: "parallel",
-			agents: ["commentator"],
+			agents: ["reviewer"],
 			activeParallelGroup: true,
 			runningSteps: 1,
 			completedSteps: 0,
@@ -425,7 +511,7 @@ describe("subagent async widget rendering", () => {
 			steps: [
 				{
 					index: 0,
-					agent: "commentator",
+					agent: "reviewer",
 					status: "running",
 					currentTool: "read",
 					currentToolArgs: "src/tui/render.ts",
@@ -437,16 +523,174 @@ describe("subagent async widget rendering", () => {
 		};
 
 		const collapsedText = buildWidgetLines([job], theme, 180).join("\n");
-		assert.match(collapsedText, /Press configured-expand-key for live detail/);
+		assert.match(collapsedText, /Press\s+for live detail/);
 		assert.doesNotMatch(collapsedText, /found renderWidget/);
 
 		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
-		assert.doesNotMatch(expandedText, /Press configured-expand-key for live detail/);
+		assert.doesNotMatch(expandedText, /Press\s+for live detail/);
 		assert.match(expandedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
 		assert.match(expandedText, outputPathPattern("/tmp/1/output-0.log"));
 		assert.match(expandedText, /grep: async widget/);
 		assert.match(expandedText, /found renderWidget/);
 		assert.match(expandedText, /checking expanded state/);
+	});
+
+	it("compacts noisy repeated live output in expanded async widget rows", () => {
+		const now = Date.now();
+		const job = {
+			asyncId: "run-noisy",
+			asyncDir: "/tmp/noisy",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			updatedAt: now,
+			steps: [
+				{
+					index: 0,
+					agent: "reviewer",
+					status: "running",
+					currentTool: "read",
+					currentToolArgs: "src/tui/render.ts",
+					currentToolStartedAt: now - 2000,
+					recentOutput: [
+						"I will read the required plan first.",
+						"I will inspect the exact head.",
+						"I will read the relevant implementation seams.",
+						"I will verify the action list.",
+						"I will inspect the public tool schema.",
+						"I will check the async launch path.",
+						"I will read agent default application path.",
+					],
+				},
+			],
+		};
+
+		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.match(expandedText, /↻ 7 progress updates/);
+		assert.match(expandedText, /latest: read agent default application path/);
+		assert.match(expandedText, /pattern: repeated short status lines/);
+		assert.doesNotMatch(expandedText, /required plan first/);
+	});
+
+	it("compacts repeated subagent status snapshots inside mixed live output", () => {
+		const now = Date.now();
+		const job = {
+			asyncId: "run-status-snapshots",
+			asyncDir: "/tmp/status-snapshots",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			updatedAt: now,
+			steps: [
+				{
+					index: 0,
+					agent: "reviewer",
+					status: "running",
+					currentTool: "bash",
+					currentToolArgs: "set -euo pipefail",
+					currentToolStartedAt: now - 2000,
+					recentOutput: [
+						"reviewer · step 1/1 · 11 tool uses · 3m27s",
+						"Step 1/1: reviewer · running (gpt-5.5 · thinking xhigh) · 4 turns · 11 tool uses",
+						"reviewer · step 1/1 · 11 tool uses · 3m29s",
+						"Step 1/1: reviewer · running (gpt-5.5 · thinking xhigh) · 4 turns · 11 tool uses",
+						"reviewer · step 1/1 · 11 tool uses · 3m32s",
+						"Step 1/1: reviewer · running (gpt-5.5 · thinking xhigh) · 4 turns · 11 tool uses",
+						"repo=nicobailon/pi-subagents",
+						"sha=d61aca... | 2m32s",
+						"output: /var/folders/x/T/pi-subagents-uid-501/async-subagent-runs/run-status-snapshots/output.log",
+					],
+				},
+			],
+		};
+
+		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.match(expandedText, /↻ 7 progress updates/);
+		assert.match(expandedText, /latest: output: \/var\/folders\/x\/T\/pi-subagents-uid-501\/async-subagent-runs\/run-status-snapshots\/output.log/);
+		assert.match(expandedText, /repo=nicobailon\/pi-subagents/);
+		assert.match(expandedText, /sha=d61aca\.\.\. \| 2m32s/);
+		assert.doesNotMatch(expandedText, /3m27s/);
+		assert.doesNotMatch(expandedText, /3m29s/);
+	});
+
+	it("keeps mixed live output raw instead of hiding non-status lines", () => {
+		const now = Date.now();
+		const job = {
+			asyncId: "run-mixed",
+			asyncDir: "/tmp/mixed",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			updatedAt: now,
+			steps: [
+				{
+					index: 0,
+					agent: "reviewer",
+					status: "running",
+					recentOutput: [
+						"I will read the required plan first.",
+						"I will inspect the exact head.",
+						"I will verify the action list.",
+						"I will check the async launch path.",
+						"error: failed to fetch review threads",
+						"details: GraphQL returned 502",
+					],
+				},
+			],
+		};
+
+		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.doesNotMatch(expandedText, /↻/);
+		assert.match(expandedText, /error: failed to fetch review threads/);
+		assert.match(expandedText, /details: GraphQL returned 502/);
+	});
+
+	it("keeps status-looking error signals visible", () => {
+		const now = Date.now();
+		const job = {
+			asyncId: "run-status-error",
+			asyncDir: "/tmp/status-error",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			updatedAt: now,
+			steps: [
+				{
+					index: 0,
+					agent: "reviewer",
+					status: "running",
+					recentOutput: [
+						"Checking permissions: Access Denied",
+						"Checking token state: error from GitHub",
+						"Checking CI: failed",
+						"Checking retry: timed out",
+						"Checking fallback: unable to recover",
+						"Checking final status: rejected",
+					],
+				},
+			],
+		};
+
+		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.doesNotMatch(expandedText, /↻/);
+		assert.match(expandedText, /older signal line: Checking permissions: Access Denied/);
+		assert.match(expandedText, /Checking final status: rejected/);
 	});
 
 	it("shows step detail and configured live detail key hint for running single async jobs with steps", () => {
@@ -456,13 +700,13 @@ describe("subagent async widget rendering", () => {
 			asyncDir: "/tmp/single-run",
 			status: "running",
 			mode: "single",
-			agents: ["builder"],
+			agents: ["worker"],
 			stepsTotal: 1,
 			updatedAt: now,
 			steps: [
 				{
 					index: 0,
-					agent: "builder",
+					agent: "worker",
 					status: "running",
 					currentTool: "read",
 					currentToolArgs: "src/tui/render.ts",
@@ -473,15 +717,15 @@ describe("subagent async widget rendering", () => {
 		};
 
 		const collapsedText = buildWidgetLines([job], theme, 180).join("\n");
-		assert.match(collapsedText, /async subagent builder · background/);
-		assert.match(collapsedText, /Step 1\/1: builder · running/);
+		assert.match(collapsedText, /async subagent worker · background/);
+		assert.match(collapsedText, /Step 1\/1: worker · running/);
 		assert.match(collapsedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
-		assert.match(collapsedText, /Press configured-expand-key for live detail/);
+		assert.match(collapsedText, /Press\s+for live detail/);
 		assert.match(collapsedText, outputPathPattern("/tmp/single-run/output-0.log"));
 		assert.doesNotMatch(collapsedText, /reading render widget/);
 
 		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
-		assert.doesNotMatch(expandedText, /Press configured-expand-key for live detail/);
+		assert.doesNotMatch(expandedText, /Press\s+for live detail/);
 		assert.match(expandedText, /reading render widget/);
 	});
 
@@ -493,7 +737,7 @@ describe("subagent async widget rendering", () => {
 				asyncDir: "/tmp/single-no-steps",
 				status: "running",
 				mode: "single",
-				agents: ["builder"],
+				agents: ["worker"],
 				currentTool: "read",
 				currentToolStartedAt: now - 1000,
 				updatedAt: now,
@@ -502,7 +746,7 @@ describe("subagent async widget rendering", () => {
 
 		assert.match(text, /⎿  read 1\.0s/);
 		assert.doesNotMatch(text, /Step 1\/1/);
-		assert.doesNotMatch(text, /Press configured-expand-key for live detail/);
+		assert.doesNotMatch(text, /Press\s+for live detail/);
 	});
 
 	it("includes logical chain context for active async chain parallel groups", () => {
@@ -512,7 +756,7 @@ describe("subagent async widget rendering", () => {
 				asyncDir: "/tmp/chain",
 				status: "running",
 				mode: "chain",
-				agents: ["commentator", "auditor"],
+				agents: ["reviewer", "auditor"],
 				activeParallelGroup: true,
 				currentStep: 1,
 				chainStepCount: 3,
@@ -528,36 +772,42 @@ describe("subagent async widget rendering", () => {
 	});
 
 	it("uses logical chain steps after an async chain parallel group finishes", () => {
-		const lines = buildWidgetLines([
-			{
-				asyncId: "run-chain",
-				asyncDir: "/tmp/chain",
-				status: "running",
-				mode: "chain",
-				agents: ["explorer", "commentator", "auditor", "writer"],
-				activeParallelGroup: false,
-				currentStep: 3,
-				chainStepCount: 2,
-				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
-				stepsTotal: 4,
-				steps: [
-					{ index: 0, agent: "explorer", status: "complete" },
-					{ index: 1, agent: "commentator", status: "complete" },
-					{ index: 2, agent: "auditor", status: "complete" },
-					{ index: 3, agent: "writer", status: "running", toolCount: 1 },
-				],
-			},
-		], theme, 180);
+		const job = {
+			asyncId: "run-chain",
+			asyncDir: "/tmp/chain",
+			status: "running",
+			mode: "chain",
+			agents: ["scout", "reviewer", "auditor", "writer"],
+			activeParallelGroup: false,
+			currentStep: 3,
+			chainStepCount: 2,
+			parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
+			stepsTotal: 4,
+			steps: [
+				{ index: 0, agent: "scout", status: "complete" },
+				{ index: 1, agent: "reviewer", status: "complete" },
+				{ index: 2, agent: "auditor", status: "complete" },
+				{ index: 3, agent: "writer", status: "running", toolCount: 1 },
+			],
+		};
+		const lines = buildWidgetLines([job], theme, 180, false, 0);
 
 		const text = lines.join("\n");
 		assert.match(text, /async subagent chain \(2\)/);
 		assert.match(text, /chain · step 2\/2/);
 		assert.match(text, /Step 1\/2: parallel group · 3\/3 done/);
 		assert.match(text, /Step 2\/2: writer · running · 1 tool use/);
-		assert.match(text, /Press configured-expand-key for live detail/);
+		assert.match(text, /Press\s+for live detail/);
 		assert.match(text, outputPathPattern("/tmp/chain/output-3.log"));
 		assert.doesNotMatch(text, /step 4\/4/);
 		assert.doesNotMatch(text, /Step 4\/4/);
+
+		const second = buildWidgetLines([job], theme, 180, false, 1);
+		assert.notEqual(
+			firstRunningGlyph(lines.find((line) => line.includes("Step 2/2")) ?? ""),
+			firstRunningGlyph(second.find((line) => line.includes("Step 2/2")) ?? ""),
+			"logical chain step glyph should advance with the render frame",
+		);
 	});
 
 	it("omits zero-running labels for pending active async parallel groups", () => {
@@ -567,7 +817,7 @@ describe("subagent async widget rendering", () => {
 				asyncDir: "/tmp/parallel-pending",
 				status: "running",
 				mode: "parallel",
-				agents: ["explorer", "commentator", "builder"],
+				agents: ["scout", "reviewer", "worker"],
 				activeParallelGroup: true,
 				runningSteps: 0,
 				completedSteps: 0,
@@ -578,7 +828,7 @@ describe("subagent async widget rendering", () => {
 				asyncDir: "/tmp/chain-pending",
 				status: "running",
 				mode: "chain",
-				agents: ["commentator", "auditor"],
+				agents: ["reviewer", "auditor"],
 				activeParallelGroup: true,
 				currentStep: 0,
 				chainStepCount: 2,
@@ -613,7 +863,7 @@ describe("subagent async widget rendering", () => {
 			{ asyncId: "run-2", asyncDir: "/tmp/2", status: "running", agents: ["a2"] },
 			{ asyncId: "run-3", asyncDir: "/tmp/3", status: "running", agents: ["a3"] },
 			{ asyncId: "run-4", asyncDir: "/tmp/4", status: "running", agents: ["a4"] },
-			{ asyncId: "queued-1", asyncDir: "/tmp/q", status: "queued", agents: ["architect"] },
+			{ asyncId: "queued-1", asyncDir: "/tmp/q", status: "queued", agents: ["planner"] },
 		], theme, 120);
 
 		assert.match(lines.join("\n"), /\+1 more \(1 queued\)/);
@@ -621,12 +871,12 @@ describe("subagent async widget rendering", () => {
 
 	it("advances running widget glyphs when progress seed changes", () => {
 		const first = buildWidgetLines([
-			{ asyncId: "run-progress", asyncDir: "/tmp/run", status: "running", agents: ["builder"], updatedAt: 11 },
-			{ asyncId: "run-other", asyncDir: "/tmp/other", status: "running", agents: ["explorer"], updatedAt: 0 },
+			{ asyncId: "run-progress", asyncDir: "/tmp/run", status: "running", agents: ["worker"], updatedAt: 11 },
+			{ asyncId: "run-other", asyncDir: "/tmp/other", status: "running", agents: ["scout"], updatedAt: 0 },
 		], theme, 120);
 		const second = buildWidgetLines([
-			{ asyncId: "run-progress", asyncDir: "/tmp/run", status: "running", agents: ["builder"], updatedAt: 12 },
-			{ asyncId: "run-other", asyncDir: "/tmp/other", status: "running", agents: ["explorer"], updatedAt: 0 },
+			{ asyncId: "run-progress", asyncDir: "/tmp/run", status: "running", agents: ["worker"], updatedAt: 12 },
+			{ asyncId: "run-other", asyncDir: "/tmp/other", status: "running", agents: ["scout"], updatedAt: 0 },
 		], theme, 120);
 
 		assert.notEqual(firstGrapheme(first[0] ?? ""), firstGrapheme(second[0] ?? ""), "header glyph should advance from changed progress");
@@ -636,19 +886,19 @@ describe("subagent async widget rendering", () => {
 			asyncId: "run-step-progress",
 			asyncDir: "/tmp/run-step",
 			status: "running",
-			agents: ["builder"],
+			agents: ["worker"],
 			stepsTotal: 1,
 			updatedAt: 20,
-			steps: [{ agent: "builder", status: "running", currentToolStartedAt: 10 }],
+			steps: [{ agent: "worker", status: "running", currentToolStartedAt: 10 }],
 		}], theme, 120);
 		const secondStep = buildWidgetLines([{
 			asyncId: "run-step-progress",
 			asyncDir: "/tmp/run-step",
 			status: "running",
-			agents: ["builder"],
+			agents: ["worker"],
 			stepsTotal: 1,
 			updatedAt: 20,
-			steps: [{ agent: "builder", status: "running", currentToolStartedAt: 11 }],
+			steps: [{ agent: "worker", status: "running", currentToolStartedAt: 11 }],
 		}], theme, 120);
 		assert.notEqual(
 			firstRunningGlyph(firstStep.find((line) => line.includes("Step 1/1")) ?? ""),
@@ -662,7 +912,7 @@ describe("subagent async widget rendering", () => {
 			asyncId: "run-stable",
 			asyncDir: "/tmp/run",
 			status: "running",
-			agents: ["builder"],
+			agents: ["worker"],
 			startedAt: 1_000,
 			updatedAt: 3_000,
 			currentTool: "read",
@@ -677,13 +927,73 @@ describe("subagent async widget rendering", () => {
 		assert.equal(firstGrapheme(first[1] ?? ""), firstGrapheme(second[1] ?? ""));
 	});
 
-	it("does not animate queued-only widgets", async () => {
-		const ui = createUiContext();
-		renderWidget(ui.ctx as never, [{ asyncId: "queued-only", asyncDir: "/tmp/queued", status: "queued", agents: ["architect"] }]);
-		const initialWidgetCount = ui.widgets.length;
-		await new Promise((resolve) => setTimeout(resolve, 190));
-		assert.equal(ui.widgets.length, initialWidgetCount, "static queued widget should not refresh at animation cadence");
-		assert.equal(ui.renderRequests, 0);
+	it("advances component running glyphs with the render clock", () => {
+		const originalNow = Date.now;
+		let renderRequests = 0;
+		try {
+			Date.now = () => 1_000;
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [{
+				asyncId: "run-stable",
+				asyncDir: "/tmp/run",
+				status: "running",
+				mode: "parallel",
+				agents: ["reviewer"],
+				activeParallelGroup: true,
+				runningSteps: 1,
+				completedSteps: 0,
+				stepsTotal: 1,
+				updatedAt: 1_000,
+				steps: [{ index: 0, agent: "reviewer", status: "running" }],
+			}, {
+				asyncId: "run-other",
+				asyncDir: "/tmp/other",
+				status: "running",
+				mode: "single",
+				agents: ["scout"],
+				updatedAt: 1_000,
+			}]);
+			const component = (ui.widgets.at(-1) as (_tui: { requestRender(): void }, widgetTheme: typeof theme) => { render(width: number): string[] })(
+				{ requestRender: () => { renderRequests += 1; } },
+				theme,
+			);
+			const first = component.render(180);
+
+			Date.now = () => 1_250;
+			const second = component.render(180);
+			const withoutRunningGlyphs = (lines: string[]) => lines.map((line) => line.replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/gu, ""));
+
+			assert.equal(renderRequests, 0, "the component must not own the repaint cadence");
+			assert.notDeepEqual(second, first, "the render clock should advance quiet running glyphs");
+			assert.deepEqual(withoutRunningGlyphs(second), withoutRunningGlyphs(first), "only running glyphs should change");
+			assert.notEqual(firstRunningGlyph(first[0] ?? ""), firstRunningGlyph(second[0] ?? ""), "header glyph should advance");
+			assert.notEqual(firstRunningGlyph(first[1] ?? ""), firstRunningGlyph(second[1] ?? ""), "job glyph should advance");
+			assert.notEqual(
+				firstRunningGlyph(first.find((line) => line.includes("Agent 1/1")) ?? ""),
+				firstRunningGlyph(second.find((line) => line.includes("Agent 1/1")) ?? ""),
+				"step glyph should advance",
+			);
+		} finally {
+			Date.now = originalNow;
+			renderWidget(createUiContext().ctx as never, []);
+		}
+	});
+
+	it("does not animate queued-only widgets", () => {
+		const originalNow = Date.now;
+		try {
+			Date.now = () => 1_000;
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [{ asyncId: "queued-only", asyncDir: "/tmp/queued", status: "queued", agents: ["planner"] }]);
+			const component = (ui.widgets.at(-1) as (_tui: unknown, widgetTheme: typeof theme) => { render(width: number): string[] })(undefined, theme);
+			const first = component.render(180);
+			Date.now = () => 1_250;
+			assert.deepEqual(component.render(180), first);
+			assert.equal(ui.renderRequests, 0);
+		} finally {
+			Date.now = originalNow;
+			renderWidget(createUiContext().ctx as never, []);
+		}
 	});
 
 	it("clears legacy result row animation timers", async () => {
@@ -703,7 +1013,7 @@ describe("subagent async widget rendering", () => {
 
 	it("does not refresh running widgets at animation cadence", async () => {
 		const ui = createUiContext();
-		renderWidget(ui.ctx as never, [{ asyncId: "run-static", asyncDir: "/tmp/run", status: "running", agents: ["explorer"] }]);
+		renderWidget(ui.ctx as never, [{ asyncId: "run-static", asyncDir: "/tmp/run", status: "running", agents: ["scout"] }]);
 		const initialWidgetCount = ui.widgets.length;
 		await new Promise((resolve) => setTimeout(resolve, 190));
 		assert.equal(ui.widgets.length, initialWidgetCount, "running widget should wait for status updates instead of animation ticks");

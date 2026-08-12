@@ -75,9 +75,9 @@ describe("public launch contract preflight", () => {
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });
 		writeSkill(cwd, "project-skill");
-		writeAgent(path.join(cwd, ".selesai", "agents", "builder.md"), `---
-name: builder
-description: Project builder
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
 tools:
   - read
   - write
@@ -97,7 +97,7 @@ Project prompt.
 		try {
 			const ceiling = resolveSubagentCapabilityCeiling("preflight-session");
 			const result = await resolveSubagentLaunchContract({
-				agent: "builder",
+				agent: "worker",
 				cwd,
 				task: "Inspect the repo",
 				runId: "run-123",
@@ -115,7 +115,7 @@ Project prompt.
 			assert.equal(result.contract.agent.definitionProjectionVersion, 1);
 			assert.match(result.contract.agent.definitionDigest, /^[a-f0-9]{64}$/);
 			assert.match(result.contract.launchContractDigest, /^[a-f0-9]{64}$/);
-			assert.ok(result.contract.agent.shadowedCandidates.some((candidate) => candidate.name === "builder" && candidate.source === "builtin"));
+			assert.ok(result.contract.agent.shadowedCandidates.some((candidate) => candidate.name === "worker" && candidate.source === "builtin"));
 			assert.equal(result.contract.model, "test/primary:high");
 			assert.deepEqual(result.contract.modelCandidates, ["test/primary:high", "test/fallback:high"]);
 			assert.equal(result.contract.thinking, "high");
@@ -133,7 +133,7 @@ Project prompt.
 			assert.notEqual(result.contract.roots.lifecycle?.asyncDir, result.contract.roots.artifactsDir);
 			assert.match(result.contract.digest, /^[a-f0-9]{64}$/);
 			const repeated = await resolveSubagentLaunchContract({
-				agent: "builder",
+				agent: "worker",
 				cwd,
 				task: "Inspect the repo",
 				runId: "run-123",
@@ -156,9 +156,9 @@ Project prompt.
 	it("resolves agent aliases to the canonical launch contract agent", async () => {
 		const cwd = path.join(tempDir, "repo-alias");
 		fs.mkdirSync(cwd, { recursive: true });
-		writeAgent(path.join(cwd, ".selesai", "agents", "builder.md"), `---
-name: builder
-description: Project builder
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
 aliases: developer, coder
 ---
 Project prompt.
@@ -171,22 +171,22 @@ Project prompt.
 		});
 
 		assert.equal(result.ok, true);
-		assert.equal(result.contract.agent.name, "builder");
+		assert.equal(result.contract.agent.name, "worker");
 	});
 
 	it("reports alias collisions as ambiguous agents", async () => {
 		const cwd = path.join(tempDir, "repo-alias-collision");
 		fs.mkdirSync(cwd, { recursive: true });
-		writeAgent(path.join(cwd, ".selesai", "agents", "builder.md"), `---
-name: builder
-description: Project builder
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
 aliases: coder
 ---
 Project prompt.
 `);
-		writeAgent(path.join(cwd, ".selesai", "agents", "commentator.md"), `---
-name: commentator
-description: Project commentator
+		writeAgent(path.join(cwd, ".selesai", "agents", "reviewer.md"), `---
+name: reviewer
+description: Project reviewer
 aliases: coder
 ---
 Review prompt.
@@ -196,32 +196,32 @@ Review prompt.
 
 		assert.equal(result.ok, false);
 		assert.equal(result.code, "ambiguous_agent");
-		assert.match(result.message, /Ambiguous agent alias 'coder': commentator, builder|Ambiguous agent alias 'coder': builder, commentator/);
+		assert.match(result.message, /Ambiguous agent alias 'coder': reviewer, worker|Ambiguous agent alias 'coder': worker, reviewer/);
 	});
 
 	it("changes definition and launch digests when selected agent content changes", async () => {
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });
-		const agentPath = path.join(cwd, ".selesai", "agents", "builder.md");
+		const agentPath = path.join(cwd, ".selesai", "agents", "worker.md");
 		writeAgent(agentPath, `---
-name: digest-builder
-description: Digest builder
+name: digest-worker
+description: Digest worker
 tools:
   - read
 ---
 First prompt.
 `);
-		const before = await resolveSubagentLaunchContract({ agent: "digest-builder", cwd, runId: "digest-test" });
+		const before = await resolveSubagentLaunchContract({ agent: "digest-worker", cwd, runId: "digest-test" });
 		assert.equal(before.ok, true);
 		writeAgent(agentPath, `---
-name: digest-builder
-description: Digest builder
+name: digest-worker
+description: Digest worker
 tools:
   - read
 ---
 Changed prompt.
 `);
-		const after = await resolveSubagentLaunchContract({ agent: "digest-builder", cwd, runId: "digest-test" });
+		const after = await resolveSubagentLaunchContract({ agent: "digest-worker", cwd, runId: "digest-test" });
 		assert.equal(after.ok, true);
 		assert.notEqual(after.contract.agent.definitionDigest, before.contract.agent.definitionDigest);
 		assert.notEqual(after.contract.launchContractDigest, before.contract.launchContractDigest);
@@ -232,9 +232,9 @@ Changed prompt.
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });
 		writeSkill(cwd, "digest-skill");
-		writeAgent(path.join(cwd, ".selesai", "agents", "builder.md"), `---
-name: builder
-description: Project builder
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
 tools:
   - read
 skills:
@@ -242,12 +242,12 @@ skills:
 ---
 Project prompt.
 `);
-		const before = await resolveSubagentLaunchContract({ agent: "builder", cwd, runId: "skill-digest-test" });
+		const before = await resolveSubagentLaunchContract({ agent: "worker", cwd, runId: "skill-digest-test" });
 		assert.equal(before.ok, true);
 		fs.writeFileSync(path.join(cwd, ".selesai", "skills", "digest-skill", "SKILL.md"), "---\ndescription: updated digest-skill\n---\n\nUse digest-skill.\n", "utf-8");
 		clearSkillCache();
 
-		const after = await resolveSubagentLaunchContract({ agent: "builder", cwd, runId: "skill-digest-test" });
+		const after = await resolveSubagentLaunchContract({ agent: "worker", cwd, runId: "skill-digest-test" });
 		assert.equal(after.ok, true);
 		assert.equal(after.contract.agent.definitionDigest, before.contract.agent.definitionDigest);
 		assert.notEqual(after.contract.launchContractDigest, before.contract.launchContractDigest);
@@ -257,9 +257,9 @@ Project prompt.
 	it("returns closed failures for missing agents and missing skills", async () => {
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });
-		writeAgent(path.join(cwd, ".selesai", "agents", "builder.md"), `---
-name: builder
-description: Project builder
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
 skills:
   - missing-skill
 ---
@@ -269,7 +269,7 @@ Project prompt.
 		const missingAgent = await resolveSubagentLaunchContract({ agent: "missing", cwd });
 		assert.deepEqual(missingAgent, { ok: false, code: "missing_agent", message: "Unknown agent: missing", diagnostics: [] });
 
-		const missingSkill = await resolveSubagentLaunchContract({ agent: "builder", cwd });
+		const missingSkill = await resolveSubagentLaunchContract({ agent: "worker", cwd });
 		assert.equal(missingSkill.ok, false);
 		assert.equal(missingSkill.code, "missing_skill");
 		assert.match(missingSkill.message, /missing-skill/);
@@ -278,22 +278,22 @@ Project prompt.
 	it("fails closed for invalid runtime inputs", async () => {
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });
-		writeAgent(path.join(cwd, ".selesai", "agents", "builder.md"), `---
-name: builder
-description: Project builder
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
 ---
 Project prompt.
 `);
 
-		const invalidCwd = await resolveSubagentLaunchContract({ agent: "builder", cwd: path.join(tempDir, "missing") });
+		const invalidCwd = await resolveSubagentLaunchContract({ agent: "worker", cwd: path.join(tempDir, "missing") });
 		assert.equal(invalidCwd.ok, false);
 		assert.equal(invalidCwd.code, "invalid_cwd");
 
-		const unsupportedMode = await resolveSubagentLaunchContract({ agent: "builder", cwd, context: "bogus" as never });
+		const unsupportedMode = await resolveSubagentLaunchContract({ agent: "worker", cwd, context: "bogus" as never });
 		assert.equal(unsupportedMode.ok, false);
 		assert.equal(unsupportedMode.code, "unsupported_mode");
 
-		const invalidArtifactDir = await resolveSubagentLaunchContract({ agent: "builder", cwd, artifactDir: "bogus" as never });
+		const invalidArtifactDir = await resolveSubagentLaunchContract({ agent: "worker", cwd, artifactDir: "bogus" as never });
 		assert.equal(invalidArtifactDir.ok, false);
 		assert.equal(invalidArtifactDir.code, "invalid_artifact_dir");
 	});
@@ -345,9 +345,9 @@ Project prompt.
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });
 		writeSkill(cwd, "project-skill");
-		writeAgent(path.join(cwd, ".selesai", "agents", "builder.md"), `---
-name: builder
-description: Project builder
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
 tools:
   - read
 skills:
@@ -357,7 +357,7 @@ Project prompt.
 `);
 
 		const result = await resolveSubagentLaunchContract({
-			agent: "builder",
+			agent: "worker",
 			cwd,
 			capabilityCeiling: { version: 1, allowedTools: [], denyExtensions: false, sources: ["test"] },
 		});

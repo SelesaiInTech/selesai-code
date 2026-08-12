@@ -12,6 +12,24 @@ The `subagent(...)` tool also supports management actions.
 subagent({ action: "list" })
 ```
 
+### List retained children
+
+```typescript
+subagent({ action: "children.list" })
+```
+
+Lists up to the last 10 completed retained workflow children from this parent session with their run ids. Continue one in a later workflow with `runs.run(key, { resume: "<run-id>", task: "follow-up" })`; the revived child keeps its stored agent, model, and tool contract.
+
+### Refinement overlays
+
+```typescript
+subagent({ action: "refine", agent: "reviewer" })
+subagent({ action: "refine.show", agent: "reviewer" })
+subagent({ action: "refine.rollback", agent: "reviewer" })
+```
+
+`refine` builds a bounded project-local guidance overlay for one agent from recent run evidence, using a fresh read-only proposal child; validated guidance is stored under `.pi-subagents/refinements/<agent>.md` with revision snapshots and is injected into that agent's child system prompt for this project. `refine.show` prints the current overlay and history; `refine.rollback` restores the previous revision. Guidance that tries to override safety, policy, tool, output, acceptance, developer, or system instructions is rejected. `/subagents-refine <agent>` is the slash equivalent.
+
 ### Create an agent
 
 ```typescript
@@ -51,15 +69,15 @@ subagent({ action: "delete", agent: "code-analysis.my-agent" })
 
 ```typescript
 // Copy a bundled builtin/package agent to user scope as an editable custom file.
-subagent({ action: "eject", agent: "commentator" })
-subagent({ action: "eject", agent: "commentator", agentScope: "project" })
+subagent({ action: "eject", agent: "reviewer" })
+subagent({ action: "eject", agent: "reviewer", agentScope: "project" })
 
 // Hide an agent from runtime discovery without deleting it (reversible).
-subagent({ action: "disable", agent: "commentator" })
-subagent({ action: "enable", agent: "commentator", agentScope: "project" })
+subagent({ action: "disable", agent: "reviewer" })
+subagent({ action: "enable", agent: "reviewer", agentScope: "project" })
 
 // Delete the scope's custom agent file and/or settings override, restoring the bundled default.
-subagent({ action: "reset", agent: "commentator" })
+subagent({ action: "reset", agent: "reviewer" })
 ```
 
 `eject` copies a builtin or package agent verbatim into the user (default) or project agent dir so it can be customized without hunting package files; the copy shadows the original by runtime name. `disable` writes a reversible `agentOverrides.<name>.disabled: true` entry to the user or project settings file. `enable` removes that `disabled` field while keeping any other override fields. `reset` removes the scope's custom file and settings override to restore the bundled default, and refuses if no bundled default exists (use `delete` for purely custom agents). All four take optional `agentScope: "user" | "project"`; project overrides win over user ones, so target the project scope to undo a project-scope disable.
@@ -130,15 +148,17 @@ The package includes prompt shortcuts for common workflows: `/parallel-review`,
 `/parallel-cleanup`. Use them when the user wants repeatable review,
 review/fix loops, research, context handoff, implementation handoff,
 clarification, or cleanup-review patterns. `/parallel-review autofix` and
-`/parallel-cleanup autofix` synthesize commentator feedback and then apply only the
+`/parallel-cleanup autofix` synthesize reviewer feedback and then apply only the
 fixes worth doing now. Parent agents can also apply the same recipes directly
 with `subagent(...)` when the user describes the workflow in natural language
 instead of invoking a slash command.
 
-Additional user prompt templates can explorer into `pi-subagents` through the native `/prompt-workflow` command. This is useful when a slash command should always run through a particular agent or with forked context. Prompt frontmatter can set `subagent`, `model`, `skill`, `cwd`, `fresh`, `fork`, or `inheritContext` for the native adapter.
+Additional user prompt templates can delegate into `pi-subagents` through the native `/prompt-workflow` and `/chain-prompts` commands. This is useful when a slash command should always run through a particular agent or with forked context. Prompt frontmatter can set `subagent`, `model`, `skill`, `cwd`, `fresh`, `fork`, or `inheritContext` for the native adapter; a `chain:` frontmatter list (names separated by ` -> `) runs the templates as a sequence, and `/chain-prompts` runs that sequence as a native chain.
+
+Native chain and parallel steps are also launchable directly from the command line: `/chain <agent> <task> | <agent> <task> [--bg] [--fork] [--fresh]`, `/parallel <agent> <task> | <agent> <task> [--bg]`, and `/run-chain <name>` for saved `.chain.md` / `.chain.json` workflows (`/run-chain list` lists them). Saved chains are managed like agents through `{ action: "create" | "get" | "update" | "delete" }` with `chainName`, and discovered from user (`~/.selesai/agent/chains/`) and project (`.selesai/chains/`) chains dirs plus package `chains` metadata.
 
 ## Extension RPC
 
 Other Pi extensions can call `pi-subagents` through the in-process event bus. The RPC channels are `subagents:rpc:v1:ready`, `subagents:rpc:v1:request`, and per-request replies at `subagents:rpc:v1:reply:<requestId>`. Envelopes use `{ version: 1, requestId, method, params }`, and replies use `{ version: 1, requestId, success, data | error }`. `ping` advertises the exact process-local async completion event as `events.asyncComplete` for RPC-spawn consumers.
 
-Methods: `ping`, `status`, `spawn`, `steer`, `interrupt`, `resume`, and `stop`. `ping` capability metadata advertises optional projections: `capabilities.fleetStatus: { version: 1 }` adds bounded current-session `data.fleet` records (opaque reconciliation `key`, resolved `agent`, optional `role`, `model`, `effort`, caller-facing `goal`, `startedAt`, split `{ input, output, total }` tokens, plus `totalActive`/`omitted` overflow counts) to successful `status` replies; `capabilities.launchResolvedExtensions` advertises parent-resolved opaque launch-extension identifiers in status details; `capabilities.runtimeAcknowledgedExtensions` advertises the best-effort child-runtime acknowledgement projection fed by cooperating extensions emitting `subagent:acknowledge-extension`. Foreground `details.results[]` rows carry a stable numeric `index`; correlate children by `(runId, index)` rather than row position. Consumers should read status/result artifacts and RPC projections instead of scraping terminal output and must ignore unknown fields. `spawn` is async-only and rejects management actions, `async: false`, or `clarify: true`; it reuses the normal executor, so discovery, validation, session attribution, configured spawn caps, child-safety depth, artifacts, and async status are shared with the `subagent` tool. `status`, acknowledged async `steer`, and `interrupt` map to the normal control actions. RPC steer disables pause-and-revive recovery and advertises `capabilities.nonRecoveringSteer`, preserving the caller's authority over the exact spawned child. `resume` requires a target plus non-empty message and explorers to the package-owned revival path; it may set a caller-owned `file-only` output path but cannot override the persisted child model, tools, budgets, session ownership, or exclusive session lease. `stop` targets running async runs through the existing timeout control channel. `pi.events` is process-local, so separate Pi processes and child subagents need lifecycle artifact files or `pi-intercom` instead.
+Methods: `ping`, `status`, `spawn`, `steer`, `interrupt`, `resume`, and `stop`. `ping` capability metadata advertises optional projections: `capabilities.fleetStatus: { version: 1 }` adds bounded current-session `data.fleet` records (opaque reconciliation `key`, resolved `agent`, optional `role`, `model`, `effort`, caller-facing `goal`, `startedAt`, split `{ input, output, total }` tokens, plus `totalActive`/`omitted` overflow counts) to successful `status` replies; `capabilities.launchResolvedExtensions` advertises parent-resolved opaque launch-extension identifiers in status details; `capabilities.runtimeAcknowledgedExtensions` advertises the best-effort child-runtime acknowledgement projection fed by cooperating extensions emitting `subagent:acknowledge-extension`. Foreground `details.results[]` rows carry a stable numeric `index`; correlate children by `(runId, index)` rather than row position. Consumers should read status/result artifacts and RPC projections instead of scraping terminal output and must ignore unknown fields. `spawn` requires `workflowScript`, is async-only, and rejects management actions, `async: false`, or `clarify: true`; it reuses the normal executor, so discovery, validation, session attribution, configured spawn caps, child-safety depth, artifacts, and async status are shared with the `subagent` tool. `status`, acknowledged async `steer`, and `interrupt` map to the normal control actions. RPC steer disables pause-and-revive recovery and advertises `capabilities.nonRecoveringSteer`, preserving the caller's authority over the exact spawned child. `resume` requires a target plus non-empty message and delegates to the package-owned revival path; it may set a caller-owned `file-only` output path but cannot override the persisted child model, tools, budgets, session ownership, or exclusive session lease. `stop` targets running async runs through the existing timeout control channel. `pi.events` is process-local, so separate Pi processes and child subagents need lifecycle artifact files or `pi-intercom` instead.

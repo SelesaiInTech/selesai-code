@@ -49,11 +49,11 @@ describe("flattenSteps", () => {
 
 	it("expands parallel groups into individual steps", () => {
 		const steps: RunnerStep[] = [
-			{ agent: "explorer", task: "find info" },
+			{ agent: "scout", task: "find info" },
 			{
 				parallel: [
-					{ agent: "commentator-a", task: "review part 1" },
-					{ agent: "commentator-b", task: "review part 2" },
+					{ agent: "reviewer-a", task: "review part 1" },
+					{ agent: "reviewer-b", task: "review part 2" },
 				],
 			},
 			{ agent: "summarizer", task: "combine" },
@@ -62,7 +62,7 @@ describe("flattenSteps", () => {
 		assert.equal(flat.length, 4);
 		assert.deepEqual(
 			flat.map((s) => s.agent),
-			["explorer", "commentator-a", "commentator-b", "summarizer"],
+			["scout", "reviewer-a", "reviewer-b", "summarizer"],
 		);
 	});
 
@@ -149,8 +149,8 @@ describe("mapConcurrent", () => {
 		// All workers should start nearly simultaneously
 		const d1 = startTimes[1]! - startTimes[0]!;
 		const d2 = startTimes[2]! - startTimes[0]!;
-		assert.ok(d1 < 20, `builder 1 should start immediately, got ${d1}ms delay`);
-		assert.ok(d2 < 20, `builder 2 should start immediately, got ${d2}ms delay`);
+		assert.ok(d1 < 20, `worker 1 should start immediately, got ${d1}ms delay`);
+		assert.ok(d2 < 20, `worker 2 should start immediately, got ${d2}ms delay`);
 	});
 
 	it("notifies scheduling settlement only after workers outliving an early rejection stop", async () => {
@@ -222,12 +222,12 @@ describe("DEFAULT_GLOBAL_CONCURRENCY_LIMIT", () => {
 describe("aggregateParallelOutputs", () => {
 	it("aggregates successful outputs with headers", () => {
 		const result = aggregateParallelOutputs([
-			{ agent: "commentator-a", output: "Looks good", exitCode: 0 },
-			{ agent: "commentator-b", output: "Needs fixes", exitCode: 0 },
+			{ agent: "reviewer-a", output: "Looks good", exitCode: 0 },
+			{ agent: "reviewer-b", output: "Needs fixes", exitCode: 0 },
 		]);
-		assert.ok(result.includes("=== Parallel Task 1 (commentator-a) ==="));
+		assert.ok(result.includes("=== Parallel Task 1 (reviewer-a) ==="));
 		assert.ok(result.includes("Looks good"));
-		assert.ok(result.includes("=== Parallel Task 2 (commentator-b) ==="));
+		assert.ok(result.includes("=== Parallel Task 2 (reviewer-b) ==="));
 		assert.ok(result.includes("Needs fixes"));
 	});
 

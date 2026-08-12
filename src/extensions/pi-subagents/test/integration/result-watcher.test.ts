@@ -7,6 +7,8 @@ import type { ExtensionContext } from "@selesai/code";
 import { buildCompletionKey } from "../../src/runs/background/completion-dedupe.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
+import { prepareMissionLaunch, writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
+import { readMission, updateMission } from "../../src/missions/store.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
@@ -28,6 +30,15 @@ function createState(): SubagentState {
 			clear: () => {},
 		},
 	};
+}
+
+async function waitForPredicate(predicate: () => boolean, timeoutMs = 2_500): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (!predicate()) {
+		if (Date.now() >= deadline) return predicate();
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+	return true;
 }
 
 describe("result watcher", () => {
@@ -73,6 +84,201 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("does not inspect scheduled observers while priming current-session results", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-current-prime-"));
+		try {
+			const state = createState();
+			state.currentSessionId = "session-current";
+			let observedRunIdScans = 0;
+			fs.writeFileSync(path.join(resultsDir, "current.json"), JSON.stringify({
+				id: "current",
+				sessionId: "session-current",
+				success: true,
+				summary: "done",
+			}), "utf-8");
+			const watcher = createResultWatcher({
+				events: {
+					on: () => () => {},
+					emit() {},
+				},
+			}, state, resultsDir, 60_000, {
+				deliverIntercomResults: false,
+				observedCompletionRunIds() {
+					observedRunIdScans += 1;
+					return [];
+				},
+			});
+			watcher.primeExistingResults();
+			assert.equal(observedRunIdScans, 0);
+			watcher.stopResultWatcher();
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("skips full parsing for unrelated sessions during priming, safety scans, and native watch events", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-filter-"));
+		try {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const parsedIds: string[] = [];
+			const state = createState();
+			state.currentSessionId = "session-current";
+			let safetyScan: (() => void) | undefined;
+			let watchEvent: ((event: string, file: string | Buffer | null) => void) | undefined;
+			let safetyScanIntervalMs: number | undefined;
+			let observedRunIdScans = 0;
+			const fakeWatcher = {
+				on() { return fakeWatcher; },
+				close() {},
+				unref() {},
+			} as fs.FSWatcher;
+			const writeResult = (id: string, sessionId: string) => {
+				fs.writeFileSync(path.join(resultsDir, `${id}.json`), JSON.stringify({
+					id,
+					results: [{ structuredOutput: { sessionId: "nested-not-owner" } }],
+					sessionId,
+					success: true,
+					summary: "done",
+				}), "utf-8");
+			};
+			writeResult("startup-current", "session-current");
+			writeResult("startup-stale", "session-stale");
+			const watcher = createResultWatcher({
+				events: {
+					on: () => () => {},
+					emit(event: string, data: unknown) { emitted.push({ event, data }); },
+				},
+			}, state, resultsDir, 60_000, {
+				deliverIntercomResults: false,
+				observedCompletionRunIds() {
+					observedRunIdScans += 1;
+					return [];
+				},
+				parseResult(raw) {
+					const parsed = JSON.parse(raw) as { id: string };
+					parsedIds.push(parsed.id);
+					return parsed;
+				},
+				fs: {
+					...fs,
+					watch(_dir, listener) {
+						watchEvent = listener as typeof watchEvent;
+						return fakeWatcher;
+					},
+				},
+				timers: {
+					setTimeout,
+					clearTimeout,
+					setInterval(handler: () => void, delay?: number) {
+						safetyScan = handler;
+						safetyScanIntervalMs = delay;
+						return { unref() {} } as NodeJS.Timeout;
+					},
+					clearInterval() { safetyScan = undefined; },
+				},
+			});
+			try {
+				watcher.startResultWatcher();
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => !fs.existsSync(path.join(resultsDir, "startup-current.json"))), true);
+				assert.deepEqual(parsedIds, ["startup-current"]);
+				assert.equal(safetyScanIntervalMs, 60_000);
+
+				writeResult("scan-current", "session-current");
+				writeResult("scan-stale", "session-stale");
+				safetyScan?.();
+				assert.equal(await waitForPredicate(() => !fs.existsSync(path.join(resultsDir, "scan-current.json"))), true);
+				assert.deepEqual(parsedIds, ["startup-current", "scan-current"]);
+
+				const scansBeforeWatchEvents = observedRunIdScans;
+				watchEvent?.("rename", "watch-current.json");
+				writeResult("watch-current", "session-current");
+				assert.equal(await waitForPredicate(() => !fs.existsSync(path.join(resultsDir, "watch-current.json"))), true);
+				assert.equal(observedRunIdScans, scansBeforeWatchEvents);
+
+				writeResult("watch-stale", "session-stale");
+				watchEvent?.("rename", "watch-stale.json");
+				assert.equal(await waitForPredicate(() => observedRunIdScans > scansBeforeWatchEvents), true);
+				assert.deepEqual(parsedIds, ["startup-current", "scan-current", "watch-current"]);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 3);
+			assert.deepEqual(fs.readdirSync(resultsDir).filter((file) => file.endsWith(".json")).sort(), ["scan-stale.json", "startup-stale.json", "watch-stale.json"]);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("syncs mission workflow child completion before result cleanup", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-mission-"));
+		const resultsDir = path.join(root, "results");
+		const project = path.join(root, "project");
+		const asyncDir = path.join(root, "async-child");
+		fs.mkdirSync(resultsDir, { recursive: true });
+		fs.mkdirSync(project, { recursive: true });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		try {
+			const outputPath = path.join(asyncDir, "output.md");
+			const binding = prepareMissionLaunch({
+				params: { mission: { title: "Workflow mission" }, task: "Run async child" },
+				projectRoot: project,
+				config: { globalIndexDir: path.join(root, "global-index") },
+				ownerSessionId: "session-current",
+			});
+			assert.ok(binding);
+			writeMissionAsyncBinding(asyncDir, binding);
+			updateMission(binding.location, binding.missionId, {
+				upsertWorkflowChildren: [{
+					workflowRunId: "workflow-1",
+					key: "background",
+					runId: "async-child",
+					status: "running",
+					artifactPaths: [asyncDir],
+					heartbeat: { status: "running" },
+				}],
+			});
+			fs.writeFileSync(path.join(resultsDir, "async-child.json"), JSON.stringify({
+				id: "async-child",
+				runId: "async-child",
+				sessionId: "session-current",
+				asyncDir,
+				mode: "single",
+				state: "complete",
+				success: true,
+				summary: "Async child completed",
+				parentWorkflowRunId: "workflow-1",
+				workflowKey: "background",
+				results: [{ agent: "worker", success: true, output: "done", artifactPaths: { outputPath } }],
+			}), "utf-8");
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				notifier: { deliver: async () => true },
+			});
+			try {
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			const mission = readMission(binding.location, binding.missionId);
+			const child = mission.workflowChildren[0];
+			assert.equal(fs.existsSync(path.join(resultsDir, "async-child.json")), false);
+			assert.equal(child?.status, "completed");
+			assert.equal(child?.runId, "async-child");
+			assert.ok(child?.completedAt);
+			assert.equal(child?.heartbeat?.status, "completed");
+			assert.equal(child?.heartbeat?.message, "Async child completed");
+			assert.ok(child?.artifactPaths.includes(outputPath));
+			assert.ok(child?.artifactPaths.includes(path.join(asyncDir, "status.json")));
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("observes retained-project completions without changing active-session delivery", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-scheduled-"));
 		const resultsDir = path.join(root, "results");
@@ -93,7 +299,7 @@ describe("result watcher", () => {
 		});
 		try {
 			manager.bindSession(ctx);
-			await manager.handleToolCall({ action: "schedule.create", id: "retained", every: "1h", agent: "builder" }, ctx);
+			await manager.handleToolCall({ action: "schedule.create", id: "retained", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, ctx);
 			await manager.handleToolCall({ action: "schedule.run", id: "retained" }, ctx);
 			const scheduleDir = path.join(scheduledRunStorePath(project, undefined, path.join(root, "stores")), "retained");
 			assert.equal(fs.existsSync(path.join(scheduleDir, "active.lock")), true);
@@ -153,7 +359,7 @@ describe("result watcher", () => {
 				success: false,
 				state: "failed",
 				summary: "Subagent process terminated by signal SIGTERM.",
-				results: [{ agent: "builder", output: "", success: false, exitCode: 1, processSignal: "SIGTERM" }],
+				results: [{ agent: "worker", output: "", success: false, exitCode: 1, processSignal: "SIGTERM" }],
 				intercomTarget: "native-parent",
 			}), "utf-8");
 			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
@@ -217,24 +423,24 @@ describe("result watcher", () => {
 			try {
 				fs.writeFileSync(ownerResultPath, JSON.stringify({
 					id: "owner-run",
-					agent: "builder",
+					agent: "worker",
 					mode: "single",
 					success: true,
 					state: "complete",
 					summary: "owner output",
-					results: [{ agent: "builder", output: "owner output", success: true }],
+					results: [{ agent: "worker", output: "owner output", success: true }],
 					sessionId: "session-owner",
 					cwd: "/repo",
 					intercomTarget: "owner-target",
 				}), "utf-8");
 				fs.writeFileSync(sessionlessResultPath, JSON.stringify({
 					id: "sessionless-run",
-					agent: "builder",
+					agent: "worker",
 					mode: "single",
 					success: true,
 					state: "complete",
 					summary: "legacy cwd-scoped output",
-					results: [{ agent: "builder", output: "legacy cwd-scoped output", success: true }],
+					results: [{ agent: "worker", output: "legacy cwd-scoped output", success: true }],
 					cwd: "/repo",
 					intercomTarget: "sessionless-target",
 				}), "utf-8");
@@ -338,6 +544,68 @@ describe("result watcher", () => {
 			}
 
 			assert.equal(watchedDir, nativeResultsDir);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("drains durable results when an active fs.watch misses events", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
+		try {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const pi = {
+				events: {
+					on: () => () => {},
+					emit(event: string, data: unknown) {
+						emitted.push({ event, data });
+					},
+				},
+			};
+			const state = createState();
+			state.currentSessionId = "session-1";
+			let scan: (() => void) | undefined;
+			const fakeWatcher = {
+				on() {
+					return fakeWatcher;
+				},
+				close() {},
+				unref() {},
+			} as fs.FSWatcher;
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
+				fs: { ...fs, watch: () => fakeWatcher },
+				deliverIntercomResults: false,
+				timers: {
+					setTimeout,
+					clearTimeout,
+					setInterval(handler: () => void) {
+						scan = handler;
+						return { unref() {} } as NodeJS.Timeout;
+					},
+					clearInterval() {
+						scan = undefined;
+					},
+				},
+			});
+			try {
+				watcher.startResultWatcher();
+				assert.equal(state.watcher, fakeWatcher);
+				for (const id of ["missed-a", "missed-b"]) {
+					fs.writeFileSync(path.join(resultsDir, `${id}.json`), JSON.stringify({
+						id,
+						sessionId: "session-1",
+						success: true,
+						state: "complete",
+						summary: "done",
+					}), "utf-8");
+				}
+				scan?.();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 2);
+			assert.deepEqual(fs.readdirSync(resultsDir).filter((file) => file.endsWith(".json")), []);
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
@@ -665,7 +933,7 @@ describe("result watcher", () => {
 					depth: 1,
 					path: [{ runId: "async-nested-root", stepIndex: 0 }],
 					state: "complete",
-					agent: "nested-commentator",
+					agent: "nested-reviewer",
 					sessionFile: path.join(resultsDir, "nested-child.jsonl"),
 				},
 			});
@@ -877,7 +1145,7 @@ describe("result watcher", () => {
 
 				fs.rmSync(registryPath, { force: true });
 				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 650));
+				assert.equal(await waitForPredicate(() => !fs.existsSync(resultPath) && emitted.some((entry) => entry.event === "subagent:async-complete")), true);
 			} finally {
 				console.error = originalError;
 				watcher.stopResultWatcher();
@@ -1036,7 +1304,7 @@ describe("result watcher", () => {
 				fs.writeFileSync(path.join(resultsDir, "async-2.json"), JSON.stringify({
 					id: "async-2",
 					runId: "run-456",
-					agent: "builder",
+					agent: "worker",
 					success: true,
 					state: "complete",
 					summary: "Worker summary",
@@ -1083,11 +1351,13 @@ describe("result watcher", () => {
 			const originalError = console.error;
 			const logged: unknown[][] = [];
 			console.error = (...args: unknown[]) => { logged.push(args); };
+			const loggedWarning = () => logged.some((entry) => /Subagent async grouped result intercom delivery was not acknowledged/.test(String(entry[0] ?? "")));
+			let warned = false;
 			try {
 				fs.writeFileSync(path.join(resultsDir, "unacknowledged.json"), JSON.stringify({
 					id: "unacknowledged",
 					runId: "run-unacknowledged",
-					agent: "builder",
+					agent: "worker",
 					success: true,
 					state: "complete",
 					summary: "Worker summary",
@@ -1095,14 +1365,14 @@ describe("result watcher", () => {
 					intercomTarget: "orchestrator",
 				}), "utf-8");
 				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 600));
+				warned = await waitForPredicate(loggedWarning);
 			} finally {
 				console.error = originalError;
 				watcher.stopResultWatcher();
 			}
 
 			assert.equal(emitted.filter((entry) => entry.event === "subagent:result-intercom").length, 1);
-			assert.equal(logged.some((entry) => /Subagent async grouped result intercom delivery was not acknowledged/.test(String(entry[0] ?? ""))), true);
+			assert.equal(warned, true);
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
@@ -1143,7 +1413,7 @@ describe("result watcher", () => {
 				fs.writeFileSync(path.join(resultsDir, "acknowledged.json"), JSON.stringify({
 					id: "acknowledged",
 					runId: "run-acknowledged",
-					agent: "builder",
+					agent: "worker",
 					success: true,
 					state: "complete",
 					summary: "Worker summary",
@@ -1172,7 +1442,7 @@ describe("result watcher", () => {
 			const emitted: string[] = [];
 			const watcher = createResultWatcher({ events: { on: () => () => {}, emit(event) { emitted.push(event); } } }, state, resultsDir, 60_000);
 			const resultFile = "expired.json";
-			const result = { sessionId: "session-1", agent: "builder", success: true, summary: "new result", timestamp: 123 };
+			const result = { sessionId: "session-1", agent: "worker", success: true, summary: "new result", timestamp: 123 };
 			const resultPath = path.join(resultsDir, resultFile);
 			fs.writeFileSync(resultPath, JSON.stringify(result), "utf-8");
 			state.completionSeen.set(buildCompletionKey(result, `result:${resultFile}`), Date.now() - 61_000);
@@ -1201,7 +1471,7 @@ describe("result watcher", () => {
 				notifier: { async deliver() { attempts += 1; return attempts > 1; } },
 			});
 			const resultPath = path.join(resultsDir, "retry.json");
-			fs.writeFileSync(resultPath, JSON.stringify({ id: "retry", sessionId: "session-1", agent: "builder", success: true, summary: "done", timestamp: 1 }), "utf-8");
+			fs.writeFileSync(resultPath, JSON.stringify({ id: "retry", sessionId: "session-1", agent: "worker", success: true, summary: "done", timestamp: 1 }), "utf-8");
 			try {
 				watcher.primeExistingResults();
 				await new Promise((resolve) => setTimeout(resolve, 50));
@@ -1229,7 +1499,7 @@ describe("result watcher", () => {
 				notifier: { deliver: () => new Promise<boolean>((resolve) => { accept = resolve; }) },
 			});
 			const resultPath = path.join(resultsDir, "stale.json");
-			fs.writeFileSync(resultPath, JSON.stringify({ id: "stale", sessionId: "session-1", agent: "builder", success: true, summary: "done", timestamp: 1 }), "utf-8");
+			fs.writeFileSync(resultPath, JSON.stringify({ id: "stale", sessionId: "session-1", agent: "worker", success: true, summary: "done", timestamp: 1 }), "utf-8");
 			watcher.primeExistingResults();
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			watcher.stopResultWatcher();
@@ -1252,7 +1522,7 @@ describe("result watcher", () => {
 			const watcher = createResultWatcher({ events: { on: () => () => {}, emit(event) { emitted.push(event); } } }, state, resultsDir, 60_000, {
 				notifier: { async deliver(result) { delivered.push({ triggerTurn: result.triggerTurn }); return true; } },
 			});
-			fs.writeFileSync(path.join(resultsDir, "quiet.json"), JSON.stringify({ id: "quiet", sessionId: "session-1", agent: "builder", success: true, summary: "done", timestamp: 1, intercomTarget: "host" }), "utf-8");
+			fs.writeFileSync(path.join(resultsDir, "quiet.json"), JSON.stringify({ id: "quiet", sessionId: "session-1", agent: "worker", success: true, summary: "done", timestamp: 1, intercomTarget: "host" }), "utf-8");
 			try {
 				watcher.primeExistingResults({ triggerTurn: false });
 				await new Promise((resolve) => setTimeout(resolve, 75));

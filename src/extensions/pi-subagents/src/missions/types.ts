@@ -13,6 +13,19 @@ export type MissionRunMode = "single" | "parallel" | "chain" | "workflow" | "sch
 export type MissionArtifactKind = "status" | "output" | "patch" | "manifest" | "review" | "note" | "other";
 export type MissionReceiptKind = "pull_request" | "ci" | "deployment" | "release";
 export type MissionReceiptStatus = "pending" | "ready" | "succeeded" | "failed";
+export type MissionGoalStatus = "active" | "paused" | "budget-exhausted";
+
+export interface MissionGoal {
+	status: MissionGoalStatus;
+}
+
+export interface MissionTokenBudget {
+	tokens: number;
+}
+
+export interface MissionTokenUsage {
+	tokens: number;
+}
 
 export interface MissionRunLink {
 	runId: string;
@@ -23,6 +36,7 @@ export interface MissionRunLink {
 	status?: string;
 	startedAt?: string;
 	completedAt?: string;
+	usage?: MissionTokenUsage;
 }
 
 export interface MissionDecision {
@@ -36,6 +50,36 @@ export interface MissionDecision {
 	resolvedAt?: string;
 	resolution?: string;
 }
+
+export interface MissionChildHeartbeat {
+	updatedAt: string;
+	status?: string;
+	phase?: string;
+	message?: string;
+}
+
+export interface MissionWorkflowChild {
+	workflowRunId: string;
+	key: string;
+	status: string;
+	startedAt: string;
+	updatedAt: string;
+	runId?: string;
+	agent?: string;
+	task?: string;
+	label?: string;
+	phase?: string;
+	completedAt?: string;
+	sessionPath?: string;
+	artifactPaths: string[];
+	heartbeat?: MissionChildHeartbeat;
+}
+
+export type MissionWorkflowChildUpdate = Pick<MissionWorkflowChild, "workflowRunId" | "key" | "status"> & Partial<Omit<MissionWorkflowChild, "workflowRunId" | "key" | "status" | "startedAt" | "updatedAt" | "artifactPaths" | "heartbeat">> & {
+	startedAt?: string;
+	artifactPaths?: string[];
+	heartbeat?: Omit<MissionChildHeartbeat, "updatedAt"> & { updatedAt?: string };
+};
 
 export interface MissionArtifact {
 	kind: MissionArtifactKind;
@@ -56,13 +100,17 @@ export interface MissionRecord {
 	schemaVersion: 1;
 	id: string;
 	title: string;
-	goal: string;
+	objective: string;
+	goal?: MissionGoal;
+	budget?: MissionTokenBudget;
+	usage?: MissionTokenUsage;
 	status: MissionStatus;
 	createdAt: string;
 	updatedAt: string;
 	cwd?: string;
 	ownerSessionId?: string;
 	runs: MissionRunLink[];
+	workflowChildren: MissionWorkflowChild[];
 	decisions: MissionDecision[];
 	artifacts: MissionArtifact[];
 	receipts: MissionReceipt[];
@@ -115,7 +163,9 @@ export interface GlobalMissionListResult {
 
 export interface MissionCreateInput {
 	title: string;
-	goal: string;
+	objective: string;
+	goal?: boolean;
+	budget?: MissionTokenBudget;
 	status?: MissionStatus;
 	labels?: string[];
 	ownerSessionId?: string;
@@ -123,13 +173,18 @@ export interface MissionCreateInput {
 
 export interface MissionUpdateInput {
 	title?: string;
-	goal?: string;
+	objective?: string;
+	goal?: MissionGoal | false;
+	budget?: MissionTokenBudget;
+	usage?: MissionTokenUsage;
 	status?: MissionStatus;
 	summary?: string;
 	labels?: string[];
 	acceptance?: unknown;
 	addRuns?: MissionRunLink[];
+	upsertWorkflowChildren?: MissionWorkflowChildUpdate[];
 	addArtifacts?: MissionArtifact[];
 	addDecisions?: Array<Omit<MissionDecision, "id" | "status" | "createdAt">>;
+	resolveDecision?: { id: string; resolution: string };
 	addReceipts?: Array<Omit<MissionReceipt, "createdAt">>;
 }

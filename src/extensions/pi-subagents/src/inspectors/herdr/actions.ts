@@ -90,10 +90,10 @@ function shellQuote(value: string): string {
 }
 
 function inspectorCommand(input: { runnerPath: string; asyncDir: string; runId: string; index?: number; missionPath?: string; allowSteer: boolean; allowStop: boolean }): string {
-	const args = [process.execPath, "--experimental-strip-types", input.runnerPath, "--async-dir", input.asyncDir, "--run-id", input.runId, "--allow-steer", String(input.allowSteer), "--allow-stop", String(input.allowStop)];
+	const args = [process.execPath, input.runnerPath, "--async-dir", input.asyncDir, "--run-id", input.runId, "--allow-steer", String(input.allowSteer), "--allow-stop", String(input.allowStop)];
 	if (input.index !== undefined) args.push("--index", String(input.index));
 	if (input.missionPath) args.push("--mission-path", input.missionPath);
-	return args.map(shellQuote).join(" ");
+	return `${process.platform === "win32" ? "& " : ""}${args.map(shellQuote).join(" ")}`;
 }
 
 function missionForRun(asyncDir: string, cwd: string, config: MissionStoreConfig | undefined, runId: string): { id: string; path: string } | undefined {
@@ -195,7 +195,7 @@ export async function handleHerdrInspectorAction(action: HerdrInspectorAction, p
 	const paneId = extractPaneId(split.data);
 	if (!paneId) return result("Herdr inspector error (PANE_GONE): pane split returned no pane id.", true);
 	const mission = missionForRun(target.asyncDir, deps.cwd, deps.missions, target.runId);
-	const runnerPath = deps.runnerPath ?? fileURLToPath(new URL("./inspector-runner.ts", import.meta.url));
+	const runnerPath = deps.runnerPath ?? fileURLToPath(new URL("../../../inspector-runner.mjs", import.meta.url));
 	const command = inspectorCommand({
 		runnerPath,
 		asyncDir: target.asyncDir,

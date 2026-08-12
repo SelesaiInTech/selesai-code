@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { discoverPromptWorkflows, registerPromptWorkflowCommands } from "../../src/slash/prompt-workflows.ts";
+import { renderWorkflowPrompt } from "../../src/shared/prompt-resources.ts";
 import type { SubagentParamsLike } from "../../src/runs/foreground/subagent-executor.ts";
 
 const originalAgentDir = process.env.SELESAI_CODING_AGENT_DIR;
@@ -48,13 +49,13 @@ describe("prompt workflows", () => {
 	it("discovers project workflows over user workflows", () => {
 		writePrompt(path.join(agentDir, "prompts"), "native-test", `---
 description: User version
-subagent: commentator
+subagent: reviewer
 ---
 User body
 `);
 		writePrompt(path.join(cwd, ".selesai", "prompts"), "native-test", `---
 description: Project version
-subagent: builder
+subagent: worker
 model: openai/gpt-5-mini
 ---
 Project body $1
@@ -63,14 +64,36 @@ Project body $1
 		const workflow = discoverPromptWorkflows(cwd).find((entry) => entry.name === "native-test");
 
 		assert.equal(workflow?.description, "Project version");
-		assert.equal(workflow?.agent, "builder");
+		assert.equal(workflow?.agent, "worker");
 		assert.equal(workflow?.model, "openai/gpt-5-mini");
+	});
+
+	it("renders explicitly scoped prompt fragments with simple variables", () => {
+		writePrompt(path.join(agentDir, "prompts"), "writer-followup", `---
+description: User follow-up
+---
+User pass {{pass}}: {{previous}} {{missing}}
+`);
+		writePrompt(path.join(cwd, ".selesai", "prompts"), "writer-followup", "Project pass {{pass}}: {{previous}}");
+
+		assert.equal(renderWorkflowPrompt("user:writer-followup", { pass: 1, previous: "draft" }, cwd), "User pass 1: draft {{missing}}");
+		assert.equal(renderWorkflowPrompt("project:writer-followup", { pass: 2, previous: "revision" }, cwd), "Project pass 2: revision");
+		assert.match(renderWorkflowPrompt("package:review-loop", undefined, cwd), /^Run a parent-orchestrated review loop/);
+		assert.throws(() => renderWorkflowPrompt("writer-followup", {}, cwd), /package:<name>.*user:<name>.*project:<name>/);
+		assert.throws(() => renderWorkflowPrompt("project:../secret", {}, cwd), /ref must use/);
+		try {
+			fs.symlinkSync(path.join(agentDir, "prompts", "writer-followup.md"), path.join(cwd, ".selesai", "prompts", "linked.md"));
+			assert.throws(() => renderWorkflowPrompt("project:linked", {}, cwd), /not a regular file/);
+		} catch (error) {
+			if (!["EPERM", "EACCES", "ENOSYS"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+		}
+		assert.throws(() => renderWorkflowPrompt("project:writer-followup", { previous: { nested: true } }, cwd), /string, number, or boolean/);
 	});
 
 	it("runs a named workflow through native subagent execution", async () => {
 		writePrompt(path.join(cwd, ".selesai", "prompts"), "native-run", `---
 description: Run native prompt
-subagent: commentator
+subagent: reviewer
 model: anthropic/claude-sonnet-4
 skill: deslop,typescript-code
 ---
@@ -91,24 +114,35 @@ Review $1 with $ARGUMENTS
 
 		assert.equal(sent.length, 0);
 		assert.equal(runs.length, 1);
-		assert.equal(runs[0]?.agent, "commentator");
-		assert.equal(runs[0]?.model, "anthropic/claude-sonnet-4");
-		assert.deepEqual(runs[0]?.skill, ["deslop", "typescript-code"]);
-		assert.equal(runs[0]?.context, "fork");
-		assert.equal(runs[0]?.task, "Review target with target");
+		const params = runs[0];
+		assert.equal(params?.agent, undefined);
+		assert.equal(params?.task, undefined);
+		assert.equal(params?.clarify, undefined);
+		assert.equal(params?.model, undefined);
+		assert.equal(params?.skill, undefined);
+		assert.equal(params?.context, undefined);
+		assert.equal(params?.agentScope, "both");
+		assert.equal(params?.async, false);
+		const script = params?.workflowScript ?? "";
+		assert.match(script, /runs\.run\("prompt-1-native-run"/);
+		assert.match(script, /"agent":"reviewer"/);
+		assert.match(script, /"model":"anthropic\/claude-sonnet-4"/);
+		assert.match(script, /"skill":\["deslop","typescript-code"\]/);
+		assert.match(script, /"context":"fork"/);
+		assert.match(script, /Review target with target/);
 	});
 
 	it("runs declared prompt sequences through workflowScript", async () => {
 		writePrompt(path.join(cwd, ".selesai", "prompts"), "native-analyze", `---
 description: Analyze
-subagent: explorer
+subagent: scout
 chain: native-analyze -> native-fix
 ---
 Analyze $@
 `);
 		writePrompt(path.join(cwd, ".selesai", "prompts"), "native-fix", `---
 description: Fix
-subagent: builder
+subagent: worker
 ---
 Fix from {previous}: $@
 `);
@@ -125,9 +159,18 @@ Fix from {previous}: $@
 		await commands.get("prompt-workflow")!.handler("native-analyze bug report", makeCtx(cwd));
 
 		assert.equal(runs.length, 1);
-		assert.match(runs[0]?.workflowScript ?? "", /runs\.run\("prompt-1-native-analyze"/);
-		assert.match(runs[0]?.workflowScript ?? "", /runs\.run\("prompt-2-native-fix"/);
-		assert.match(runs[0]?.workflowScript ?? "", /replaceAll\("\{previous\}"/);
-		assert.equal(commands.has("chain-prompts"), false);
+		const params = runs[0];
+		assert.equal(params?.agent, undefined);
+		assert.equal(params?.task, undefined);
+		assert.equal(params?.clarify, undefined);
+		assert.equal(params?.agentScope, "both");
+		assert.equal(params?.async, false);
+		assert.match(params?.workflowScript ?? "", /runs\.run\("prompt-1-native-analyze"/);
+		assert.match(params?.workflowScript ?? "", /runs\.run\("prompt-2-native-fix"/);
+		assert.match(params?.workflowScript ?? "", /replaceAll\("\{previous\}"/);
+		assert.equal(commands.has("chain-prompts"), true);
+		assert.equal(commands.has("chain"), true);
+		assert.equal(commands.has("parallel"), true);
+		assert.equal(commands.has("run-chain"), true);
 	});
 });

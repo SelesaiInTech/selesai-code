@@ -45,7 +45,7 @@ describe("agent management config parsing", () => {
 	it("hides lower-priority agents shadowed by project agents in list output", () => {
 		const agentsDir = path.join(tempDir, ".selesai", "agents");
 		fs.mkdirSync(agentsDir, { recursive: true });
-		fs.writeFileSync(path.join(agentsDir, "explorer.md"), "---\nname: explorer\ndescription: Project explorer override\n---\n\nProject explorer agent.\n");
+		fs.writeFileSync(path.join(agentsDir, "scout.md"), "---\nname: scout\ndescription: Project scout override\n---\n\nProject scout agent.\n");
 
 		const result = handleList(
 			{ agentScope: "project" },
@@ -53,8 +53,8 @@ describe("agent management config parsing", () => {
 		);
 
 		assert.equal(result.isError, false);
-		assert.match(readText(result), /- explorer \(project\): Project explorer override/);
-		assert.doesNotMatch(readText(result), /- explorer \(builtin/);
+		assert.match(readText(result), /- scout \(project\): Project scout override/);
+		assert.doesNotMatch(readText(result), /- scout \(builtin/);
 	});
 
 	it("gets only the effective agent detail and respects explicit scope", () => {
@@ -65,26 +65,26 @@ describe("agent management config parsing", () => {
 		fs.mkdirSync(userAgentsDir, { recursive: true });
 		fs.mkdirSync(path.join(packageDir, "agents"), { recursive: true });
 		fs.mkdirSync(path.join(packageDir, "chains"), { recursive: true });
-		fs.writeFileSync(path.join(projectAgentsDir, "builder.md"), "---\nname: builder\ndescription: Project builder override\n---\n\nProject builder.\n");
-		fs.writeFileSync(path.join(userAgentsDir, "builder.md"), "---\nname: builder\ndescription: User builder override\n---\n\nUser builder.\n");
+		fs.writeFileSync(path.join(projectAgentsDir, "worker.md"), "---\nname: worker\ndescription: Project worker override\n---\n\nProject worker.\n");
+		fs.writeFileSync(path.join(userAgentsDir, "worker.md"), "---\nname: worker\ndescription: User worker override\n---\n\nUser worker.\n");
 		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"], chains: ["chains"] } }));
-		fs.writeFileSync(path.join(packageDir, "agents", "builder.md"), "---\nname: builder\ndescription: Package builder override\n---\n\nPackage builder.\n");
+		fs.writeFileSync(path.join(packageDir, "agents", "worker.md"), "---\nname: worker\ndescription: Package worker override\n---\n\nPackage worker.\n");
 		fs.writeFileSync(path.join(packageDir, "chains", "package-flow.chain.json"), JSON.stringify({
 			name: "package-flow",
 			description: "Package flow",
-			chain: [{ agent: "builder", task: "Package task" }],
+			chain: [{ agent: "worker", task: "Package task" }],
 		}), "utf-8");
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 
-		const effective = readText(handleManagementAction("get", { agent: "builder" }, ctx));
-		assert.match(effective, /Agent: builder \(project\)/);
-		assert.match(effective, /Description: Project builder override/);
-		assert.doesNotMatch(effective, /User builder override|Package builder override|Implementation agent for normal tasks/);
+		const effective = readText(handleManagementAction("get", { agent: "worker" }, ctx));
+		assert.match(effective, /Agent: worker \(project\)/);
+		assert.match(effective, /Description: Project worker override/);
+		assert.doesNotMatch(effective, /User worker override|Package worker override|Implementation agent for normal tasks/);
 
-		const userScoped = readText(handleManagementAction("get", { agent: "builder", agentScope: "user" }, ctx));
-		assert.match(userScoped, /Agent: builder \(user\)/);
-		assert.match(userScoped, /Description: User builder override/);
-		assert.doesNotMatch(userScoped, /Project builder override|Implementation agent for normal tasks/);
+		const userScoped = readText(handleManagementAction("get", { agent: "worker", agentScope: "user" }, ctx));
+		assert.match(userScoped, /Agent: worker \(user\)/);
+		assert.match(userScoped, /Description: User worker override/);
+		assert.doesNotMatch(userScoped, /Project worker override|Implementation agent for normal tasks/);
 
 		const userChainsDir = path.join(tempDir, "agent-home", "chains");
 		const projectChainsDir = path.join(tempDir, ".selesai", "chains");
@@ -93,12 +93,12 @@ describe("agent management config parsing", () => {
 		fs.writeFileSync(path.join(userChainsDir, "shared-flow.chain.json"), JSON.stringify({
 			name: "shared-flow",
 			description: "User shared flow",
-			chain: [{ agent: "builder", task: "User flow" }],
+			chain: [{ agent: "worker", task: "User flow" }],
 		}), "utf-8");
 		fs.writeFileSync(path.join(projectChainsDir, "shared-flow.chain.json"), JSON.stringify({
 			name: "shared-flow",
 			description: "Project shared flow",
-			chain: [{ agent: "builder", task: "Project flow" }],
+			chain: [{ agent: "worker", task: "Project flow" }],
 		}), "utf-8");
 
 		const userChain = readText(handleManagementAction("get", { chainName: "shared-flow", agentScope: "user" }, ctx));
@@ -120,7 +120,7 @@ describe("agent management config parsing", () => {
 
 	it("surfaces JSON parse errors for update config strings", () => {
 		const result = handleUpdate(
-			{ agent: "commentator", config: '{"description":' },
+			{ agent: "reviewer", config: '{"description":' },
 			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
 		);
 
@@ -213,8 +213,8 @@ describe("agent management config parsing", () => {
 	it("creates and updates packaged chains while preserving packaged step names", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 		fs.mkdirSync(path.join(tempDir, ".selesai", "agents"), { recursive: true });
-		fs.writeFileSync(path.join(tempDir, ".selesai", "agents", "code-analysis.explorer.md"), `---
-name: explorer
+		fs.writeFileSync(path.join(tempDir, ".selesai", "agents", "code-analysis.scout.md"), `---
+name: scout
 package: code-analysis
 description: Fast recon
 ---
@@ -223,7 +223,7 @@ Inspect
 `, "utf-8");
 
 		const created = handleCreate(
-			{ config: { name: "Review Flow", package: "Code Analysis", description: "Review flow", scope: "project", steps: [{ agent: "code-analysis.explorer", task: "Inspect", toolBudget: { soft: 3, hard: 5, block: ["read"] } }] } },
+			{ config: { name: "Review Flow", package: "Code Analysis", description: "Review flow", scope: "project", steps: [{ agent: "code-analysis.scout", task: "Inspect", toolBudget: { soft: 3, hard: 5, block: ["read"] } }] } },
 			ctx,
 		);
 		assert.equal(created.isError, false);
@@ -232,7 +232,7 @@ Inspect
 		let content = fs.readFileSync(filePath, "utf-8");
 		assert.match(content, /^name: review-flow$/m);
 		assert.match(content, /^package: code-analysis$/m);
-		assert.match(content, /^## code-analysis\.explorer$/m);
+		assert.match(content, /^## code-analysis\.scout$/m);
 		assert.match(content, /^toolBudget: \{"soft":3,"hard":5,"block":\["read"\]\}$/m);
 
 		const updated = handleUpdate(
@@ -252,35 +252,35 @@ Inspect
 		const result = handleCreate(
 			{
 				config: {
-					name: "background-commentator",
+					name: "background-reviewer",
 					description: "Review in the background",
 					scope: "project",
 					async: false,
 					timeoutMs: 120_000,
 					turnBudget: { maxTurns: 8, graceTurns: 2 },
-					acceptance: { level: "none", reason: "lightweight commentator" },
+					acceptance: { level: "none", reason: "lightweight reviewer" },
 				},
 			},
 			ctx,
 		);
 
 		assert.equal(result.isError, false);
-		const filePath = path.join(tempDir, ".selesai", "agents", "background-commentator.md");
+		const filePath = path.join(tempDir, ".selesai", "agents", "background-reviewer.md");
 		let content = fs.readFileSync(filePath, "utf-8");
 		assert.match(content, /^async: false$/m);
 		assert.match(content, /^timeoutMs: 120000$/m);
 		assert.match(content, /^turnBudget: \{"maxTurns":8,"graceTurns":2\}$/m);
-		assert.match(content, /^acceptance: \{"level":"none","reason":"lightweight commentator"\}$/m);
+		assert.match(content, /^acceptance: \{"level":"none","reason":"lightweight reviewer"\}$/m);
 
-		const got = handleManagementAction("get", { agent: "background-commentator" }, ctx);
+		const got = handleManagementAction("get", { agent: "background-reviewer" }, ctx);
 		assert.equal(got.isError, false);
 		assert.match(readText(got), /Async: false/);
 		assert.match(readText(got), /Timeout: 120000ms/);
 		assert.match(readText(got), /Turn budget: \{"maxTurns":8,"graceTurns":2\}/);
-		assert.match(readText(got), /Acceptance: \{"level":"none","reason":"lightweight commentator"\}/);
+		assert.match(readText(got), /Acceptance: \{"level":"none","reason":"lightweight reviewer"\}/);
 
 		const updated = handleUpdate(
-			{ agent: "background-commentator", config: { async: true, timeoutMs: false, turnBudget: false, acceptance: "" } },
+			{ agent: "background-reviewer", config: { async: true, timeoutMs: false, turnBudget: false, acceptance: "" } },
 			ctx,
 		);
 		assert.equal(updated.isError, false);
@@ -291,7 +291,7 @@ Inspect
 		assert.doesNotMatch(content, /^acceptance:/m);
 
 		const deprecatedFalse = handleUpdate(
-			{ agent: "background-commentator", config: { acceptance: false } },
+			{ agent: "background-reviewer", config: { acceptance: false } },
 			ctx,
 		);
 		assert.equal(deprecatedFalse.isError, false);
@@ -333,21 +333,21 @@ Inspect
 	it("creates and updates agents with tool budgets", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 		const result = handleCreate(
-			{ config: { name: "budgeted-commentator", description: "Review with a budget", scope: "project", toolBudget: { soft: 4, hard: 7, block: ["read", "grep"] } } },
+			{ config: { name: "budgeted-reviewer", description: "Review with a budget", scope: "project", toolBudget: { soft: 4, hard: 7, block: ["read", "grep"] } } },
 			ctx,
 		);
 
 		assert.equal(result.isError, false);
-		const filePath = path.join(tempDir, ".selesai", "agents", "budgeted-commentator.md");
+		const filePath = path.join(tempDir, ".selesai", "agents", "budgeted-reviewer.md");
 		let content = fs.readFileSync(filePath, "utf-8");
 		assert.match(content, /^toolBudget: \{"soft":4,"hard":7,"block":\["read","grep"\]\}$/m);
 
-		const got = handleManagementAction("get", { agent: "budgeted-commentator" }, ctx);
+		const got = handleManagementAction("get", { agent: "budgeted-reviewer" }, ctx);
 		assert.equal(got.isError, false);
 		assert.match(readText(got), /Tool budget: \{"soft":4,"hard":7,"block":\["read","grep"\]\}/);
 
 		const updated = handleUpdate(
-			{ agent: "budgeted-commentator", config: { toolBudget: { hard: 3, block: "*" } } },
+			{ agent: "budgeted-reviewer", config: { toolBudget: { hard: 3, block: "*" } } },
 			ctx,
 		);
 		assert.equal(updated.isError, false);
@@ -365,7 +365,7 @@ Inspect
 		assert.match(readText(agentResult), /config\.toolBudget\.soft must be <= config\.toolBudget\.hard/);
 
 		const chainResult = handleCreate(
-			{ config: { name: "bad-chain-budget", description: "Bad budget", scope: "project", steps: [{ agent: "commentator", toolBudget: { hard: 2, block: [] } }] } },
+			{ config: { name: "bad-chain-budget", description: "Bad budget", scope: "project", steps: [{ agent: "reviewer", toolBudget: { hard: 2, block: [] } }] } },
 			ctx,
 		);
 		assert.equal(chainResult.isError, true);
@@ -572,10 +572,10 @@ Drive the failing test first.
 			name: "dynamic-review",
 			description: "Review dynamic targets",
 			chain: [
-				{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "commentator", task: "Review {target.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
 					collect: { as: "reviews" },
 				},
 			],
@@ -598,7 +598,7 @@ Drive the failing test first.
 		fs.writeFileSync(chainPath, JSON.stringify({
 			name: "dynamic-review",
 			description: "Review dynamic targets",
-			chain: [{ agent: "explorer", task: "Return targets" }],
+			chain: [{ agent: "scout", task: "Return targets" }],
 		}), "utf-8");
 
 		const updated = handleUpdate({ chainName: "dynamic-review", config: { name: "Review Flow", package: "Code Analysis" } }, ctx);
@@ -611,7 +611,7 @@ Drive the failing test first.
 		const parsed = JSON.parse(content) as { name?: string; package?: string; chain?: Array<{ agent?: string }> };
 		assert.equal(parsed.name, "review-flow");
 		assert.equal(parsed.package, "code-analysis");
-		assert.equal(parsed.chain?.[0]?.agent, "explorer");
+		assert.equal(parsed.chain?.[0]?.agent, "scout");
 	});
 
 	it("gets dynamic JSON chain details and lists invalid chain diagnostics", () => {
@@ -621,10 +621,10 @@ Drive the failing test first.
 			name: "dynamic-review",
 			description: "Review dynamic targets",
 			chain: [
-				{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "commentator", task: "Review {target.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
 					collect: { as: "reviews" },
 				},
 			],
@@ -635,7 +635,7 @@ Drive the failing test first.
 		assert.equal(got.isError, false);
 		assert.match(readText(got), /Dynamic fanout -> reviews/);
 		assert.match(readText(got), /Expand: targets\/items/);
-		assert.match(readText(got), /Agent: commentator/);
+		assert.match(readText(got), /Agent: reviewer/);
 
 		const listed = handleManagementAction("list", {}, ctx);
 		assert.equal(listed.isError, false);
@@ -661,7 +661,7 @@ Drive the failing test first.
 		assert.equal(result.isError, false);
 		assert.match(text, /^Builtin subagent models/m);
 		assert.match(text, /Current session model:\n  openai\/gpt-5-mini/);
-		assert.match(text, /(?:^|\n)explorer\n  model:\n    openai\/gpt-5-mini\n  source: inherits current session model(?:\n|$)/);
+		assert.match(text, /(?:^|\n)scout\n  model:\n    openai\/gpt-5-mini\n  source: inherits current session model(?:\n|$)/);
 	});
 
 	it("reports override source and disabled builtin state in runtime model mappings", () => {
@@ -670,7 +670,7 @@ Drive the failing test first.
 		fs.writeFileSync(projectSettingsPath, JSON.stringify({
 			subagents: {
 				agentOverrides: {
-					commentator: { model: "claude-sonnet-4", disabled: true },
+					reviewer: { model: "claude-sonnet-4", disabled: true },
 				},
 			},
 		}, null, 2), "utf-8");
@@ -686,11 +686,11 @@ Drive the failing test first.
 			model: { provider: "openai", id: "gpt-5-mini" },
 		};
 
-		const result = handleManagementAction("models", { agent: "commentator" }, ctx);
+		const result = handleManagementAction("models", { agent: "reviewer" }, ctx);
 		const text = readText(result);
 		assert.equal(result.isError, false);
 		assert.match(text, /^Builtin subagent model/m);
-		assert.match(text, /Agent: commentator/);
+		assert.match(text, /Agent: reviewer/);
 		assert.match(text, /Effective model:\n  anthropic\/claude-sonnet-4/);
 		assert.match(text, /Source: project override/);
 		assert.match(text, /Requested model setting:\n  claude-sonnet-4/);
@@ -708,17 +708,17 @@ Drive the failing test first.
 		assert.match(readText(result), /Builtin agent 'not-a-builtin' not found/);
 	});
 
-	it("creates explorer with its builtin prompt defaults", () => {
+	it("creates delegate with its builtin prompt defaults", () => {
 		const result = handleCreate(
-			{ config: { name: "explorer", description: "Delegate helper", scope: "project" } },
+			{ config: { name: "delegate", description: "Delegate helper", scope: "project" } },
 			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
 		);
 
 		assert.equal(result.isError, false);
-		const filePath = path.join(tempDir, ".selesai", "agents", "explorer.md");
+		const filePath = path.join(tempDir, ".selesai", "agents", "delegate.md");
 		const content = fs.readFileSync(filePath, "utf-8");
-		assert.match(content, /systemPromptMode: replace/);
-		assert.match(content, /inheritProjectContext: false/);
+		assert.match(content, /systemPromptMode: append/);
+		assert.match(content, /inheritProjectContext: true/);
 		assert.match(content, /inheritSkills: false/);
 	});
 
@@ -746,7 +746,7 @@ Inspect cleanup.
 		const listed = handleManagementAction("list", {}, ctx);
 		const text = readText(listed);
 		assert.match(text, /Proactive skill subagent suggestions:/);
-		assert.match(text, /- deslop via commentator/);
+		assert.match(text, /- deslop via reviewer/);
 		assert.match(text, /Cleanup review\./);
 	});
 

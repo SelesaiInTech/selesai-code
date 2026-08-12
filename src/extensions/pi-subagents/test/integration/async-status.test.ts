@@ -4,11 +4,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { formatAsyncRunList, listAsyncRuns } from "../../src/runs/background/async-status.ts";
+import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 
 function createAsyncDir(root: string, id: string, status: Record<string, unknown>): string {
 	const dir = path.join(root, id);
 	fs.mkdirSync(dir, { recursive: true });
 	fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify(status), "utf-8");
+	if (status.state === "queued" || status.state === "running") updateActiveRunIndex(dir, status.state);
 	return dir;
 }
 
@@ -27,8 +29,8 @@ describe("async status helpers", () => {
 				currentStep: 1,
 				outputFile,
 				steps: [
-					{ agent: "explorer", status: "complete", durationMs: 10, description: "Inspect auth only" },
-					{ agent: "builder", status: "running", durationMs: 20, description: "Patch billing only" },
+					{ agent: "scout", status: "complete", durationMs: 10, description: "Inspect auth only" },
+					{ agent: "worker", status: "running", durationMs: 20, description: "Patch billing only" },
 				],
 			});
 			createAsyncDir(root, "run-b", {
@@ -37,7 +39,7 @@ describe("async status helpers", () => {
 				state: "complete",
 				startedAt: 50,
 				lastUpdate: 75,
-				steps: [{ agent: "commentator", status: "complete" }],
+				steps: [{ agent: "reviewer", status: "complete" }],
 			});
 
 			const runs = listAsyncRuns(root, { states: ["queued", "running"] });
@@ -45,7 +47,7 @@ describe("async status helpers", () => {
 			assert.equal(runs[0]?.id, "run-a");
 			assert.equal(runs[0]?.cwd, "/repo-a");
 			assert.equal(runs[0]?.steps.length, 2);
-			assert.equal(runs[0]?.steps[1]?.agent, "builder");
+			assert.equal(runs[0]?.steps[1]?.agent, "worker");
 			assert.equal(runs[0]?.steps[1]?.status, "running");
 			assert.equal(runs[0]?.steps[0]?.description, "Inspect auth only");
 			assert.equal(runs[0]?.steps[1]?.description, "Patch billing only");
@@ -65,7 +67,7 @@ describe("async status helpers", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				steps: [{
-					agent: "builder",
+					agent: "worker",
 					status: "complete",
 					agentContract: { version: 1 },
 					execution: { status: "completed", success: true, exitCode: 0 },
@@ -100,7 +102,7 @@ describe("async status helpers", () => {
 				lastUpdate: 200,
 				capabilityCeiling: ceiling,
 				capabilityAudit: audit,
-				steps: [{ agent: "builder", status: "complete", capabilityCeiling: ceiling, capabilityAudit: audit }],
+				steps: [{ agent: "worker", status: "complete", capabilityCeiling: ceiling, capabilityAudit: audit }],
 			});
 
 			const runs = listAsyncRuns(root, { states: ["complete"] });
@@ -123,8 +125,8 @@ describe("async status helpers", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				steps: [
-					{ agent: "explorer", context: "fresh", status: "running" },
-					{ agent: "builder", context: "fork", status: "running" },
+					{ agent: "scout", context: "fresh", status: "running" },
+					{ agent: "worker", context: "fork", status: "running" },
 				],
 			});
 
@@ -133,8 +135,8 @@ describe("async status helpers", () => {
 			assert.deepEqual(runs[0]?.steps.map((step) => step.context), ["fresh", "fork"]);
 			const text = formatAsyncRunList(runs);
 			assert.match(text, /run-context \| running .* \| parallel \[mixed\]/);
-			assert.match(text, /1\. explorer \[fresh\] \| running/);
-			assert.match(text, /2\. builder \[fork\] \| running/);
+			assert.match(text, /1\. scout \[fresh\] \| running/);
+			assert.match(text, /2\. worker \[fork\] \| running/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -150,16 +152,16 @@ describe("async status helpers", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				steps: [
-					{ agent: "commentator", status: "running", model: "openai-codex/gpt-5.5:high" },
-					{ agent: "explorer", status: "running", model: "anthropic/claude-haiku-4-5", thinking: "low" },
+					{ agent: "reviewer", status: "running", model: "openai-codex/gpt-5.5:high" },
+					{ agent: "scout", status: "running", model: "anthropic/claude-haiku-4-5", thinking: "low" },
 					{ agent: "local", status: "running", model: "ollama/qwen2.5-coder:7b" },
 					{ agent: "fallback", status: "running", model: "anthropic/claude-sonnet-4-5:low", thinking: "high" },
 				],
 			});
 
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
-			assert.match(text, /1\. commentator \| running \| gpt-5\.5 · thinking high/);
-			assert.match(text, /2\. explorer \| running \| claude-haiku-4-5 · thinking low/);
+			assert.match(text, /1\. reviewer \| running \| gpt-5\.5 · thinking high/);
+			assert.match(text, /2\. scout \| running \| claude-haiku-4-5 · thinking low/);
 			assert.match(text, /3\. local \| running \| qwen2\.5-coder:7b(?! · thinking)/);
 			assert.match(text, /4\. fallback \| running \| claude-sonnet-4-5 · thinking low/);
 			assert.doesNotMatch(text, /openai-codex\/gpt-5\.5/);
@@ -181,7 +183,7 @@ describe("async status helpers", () => {
 				lastActivityAt,
 				startedAt: Date.now() - 70_000,
 				lastUpdate: Date.now(),
-				steps: [{ agent: "builder", status: "running", activityState: "needs_attention", lastActivityAt }],
+				steps: [{ agent: "worker", status: "running", activityState: "needs_attention", lastActivityAt }],
 			});
 
 			const runs = listAsyncRuns(root, { states: ["running"] });
@@ -206,7 +208,7 @@ describe("async status helpers", () => {
 				wrapUpRequested: true,
 				turnBudget: { maxTurns: 2, graceTurns: 1, turnCount: 3, outcome: "termination-deferred", wrapUpRequestedAtTurn: 2, terminationDeferredAtTurn: 3 },
 				steps: [{
-					agent: "builder",
+					agent: "worker",
 					status: "running",
 					wrapUpRequested: true,
 					turnBudget: { maxTurns: 2, graceTurns: 1, turnCount: 3, outcome: "termination-deferred", wrapUpRequestedAtTurn: 2, terminationDeferredAtTurn: 3 },
@@ -232,13 +234,35 @@ describe("async status helpers", () => {
 				lastActivityAt: now - 90_000,
 				startedAt: now - 120_000,
 				lastUpdate: now,
-				steps: [{ agent: "builder", status: "running", lastActivityAt: now - 90_000 }],
+				steps: [{ agent: "worker", status: "running", lastActivityAt: now - 90_000 }],
 			});
 
 			const runs = listAsyncRuns(root, { states: ["running"] });
 			assert.equal(runs[0]?.activityState, undefined);
 			assert.equal(runs[0]?.steps[0]?.activityState, undefined);
-			assert.match(formatAsyncRunList(runs, "Active async runs"), /builder \| running \| active/);
+			assert.match(formatAsyncRunList(runs, "Active async runs"), /worker \| running \| active/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not infer workflow activity from the workflow launch time", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-workflow-no-false-activity-"));
+		try {
+			const now = Date.now();
+			createAsyncDir(root, "workflow-running", {
+				runId: "workflow-running",
+				mode: "workflow",
+				state: "running",
+				startedAt: now - 120_000,
+				lastUpdate: now - 120_000,
+				steps: [{ agent: "main", workflowKey: "main", status: "running", startedAt: now - 120_000 }],
+			});
+
+			const runs = listAsyncRuns(root, { states: ["running"] });
+			assert.equal(runs[0]?.lastActivityAt, undefined);
+			assert.equal(runs[0]?.steps[0]?.lastActivityAt, undefined);
+			assert.doesNotMatch(formatAsyncRunList(runs), /active 2m ago/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -283,7 +307,7 @@ describe("async status helpers", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				endedAt: 200,
-				steps: [{ agent: "builder", status: "complete" }],
+				steps: [{ agent: "worker", status: "complete" }],
 			});
 
 			const runs = listAsyncRuns(root, { states: ["paused"] });
@@ -293,7 +317,7 @@ describe("async status helpers", () => {
 
 			const text = formatAsyncRunList(runs, "Paused async runs");
 			assert.match(text, /run-paused \| paused/);
-			assert.match(text, /builder \| complete/);
+			assert.match(text, /worker \| complete/);
 			assert.doesNotMatch(text, /paused\/paused/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -324,7 +348,7 @@ describe("async status helpers", () => {
 				mode: "single",
 				state: "running",
 				startedAt: 100,
-				steps: [{ agent: "builder", status: "running" }],
+				steps: [{ agent: "worker", status: "running" }],
 			});
 
 			assert.throws(
@@ -347,7 +371,7 @@ describe("async status helpers", () => {
 				pid: 12345,
 				startedAt: 100,
 				lastUpdate: 100,
-				steps: [{ agent: "explorer", status: "running", startedAt: 100 }],
+				steps: [{ agent: "scout", status: "running", startedAt: 100 }],
 			});
 
 			const active = listAsyncRuns(root, {
@@ -380,9 +404,9 @@ describe("async status helpers", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
-					{ agent: "explorer", status: "running", durationMs: 12_000 },
-					{ agent: "commentator", status: "running", durationMs: 11_000 },
-					{ agent: "builder", status: "pending" },
+					{ agent: "scout", status: "running", durationMs: 12_000 },
+					{ agent: "reviewer", status: "running", durationMs: 11_000 },
+					{ agent: "worker", status: "pending" },
 				],
 			});
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
@@ -407,9 +431,9 @@ describe("async status helpers", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
-					{ agent: "explorer", status: "failed" },
-					{ agent: "commentator", status: "failed" },
-					{ agent: "builder", status: "paused" },
+					{ agent: "scout", status: "failed" },
+					{ agent: "reviewer", status: "failed" },
+					{ agent: "worker", status: "paused" },
 				],
 			});
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["failed"] }));
@@ -433,9 +457,9 @@ describe("async status helpers", () => {
 				chainStepCount: 2,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
-					{ agent: "explorer", status: "running", durationMs: 12_000 },
-					{ agent: "commentator", status: "running", durationMs: 11_000 },
-					{ agent: "builder", status: "pending" },
+					{ agent: "scout", status: "running", durationMs: 12_000 },
+					{ agent: "reviewer", status: "running", durationMs: 11_000 },
+					{ agent: "worker", status: "pending" },
 					{ agent: "writer", status: "pending" },
 				],
 			});
@@ -459,9 +483,9 @@ describe("async status helpers", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
-					{ agent: "explorer", status: "complete", durationMs: 12_000 },
-					{ agent: "commentator", status: "running", durationMs: 11_000 },
-					{ agent: "builder", status: "pending" },
+					{ agent: "scout", status: "complete", durationMs: 12_000 },
+					{ agent: "reviewer", status: "running", durationMs: 11_000 },
+					{ agent: "worker", status: "pending" },
 				],
 			});
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
@@ -485,7 +509,7 @@ describe("async status helpers", () => {
 				chainStepCount: 2,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 4 }, null, "bad"],
 				steps: [
-					{ agent: "explorer", status: "running", durationMs: 12_000 },
+					{ agent: "scout", status: "running", durationMs: 12_000 },
 					{ agent: "writer", status: "pending" },
 				],
 			});
@@ -510,8 +534,8 @@ describe("async status helpers", () => {
 				chainStepCount: 1,
 				parallelGroups: "bad",
 				steps: [
-					{ agent: "explorer", status: "running" },
-					{ agent: "commentator", status: "pending" },
+					{ agent: "scout", status: "running" },
+					{ agent: "reviewer", status: "pending" },
 				],
 			});
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
@@ -533,8 +557,8 @@ describe("async status helpers", () => {
 				lastUpdate: 300,
 				currentStep: 0,
 				steps: [
-					{ agent: "explorer", status: "running", durationMs: 12_000 },
-					{ agent: "commentator", status: "pending" },
+					{ agent: "scout", status: "running", durationMs: 12_000 },
+					{ agent: "reviewer", status: "pending" },
 				],
 			});
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
@@ -544,32 +568,51 @@ describe("async status helpers", () => {
 		}
 	});
 
-	it("filters terminal runs to active states without scanning nested routes per run", () => {
-		// Regression guard: load-time restoration calls listAsyncRuns with a
-		// queued/running filter over every run dir on disk. The nested-route
-		// lookup must be skipped for runs that fail the state filter, otherwise
-		// session start freezes when many stale run dirs have accumulated.
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-filter-"));
+	it("lists indexed active runs without reading historical status files", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-indexed-"));
 		try {
 			for (let i = 0; i < 200; i++) {
-				createAsyncDir(root, `run-${i}`, {
-					runId: `run-${i}`,
+				createAsyncDir(root, `terminal-${i}`, {
+					runId: `terminal-${i}`,
 					mode: "single",
 					state: "complete",
 					startedAt: 100,
-					lastUpdate: 200,
-					steps: [{ agent: "commentator", status: "complete" }],
+					steps: [{ agent: "reviewer", status: "complete" }],
 				});
 			}
+			fs.writeFileSync(path.join(root, "terminal-0", "status.json"), "{not-json", "utf-8");
+			createAsyncDir(root, "active", {
+				runId: "active",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
 
-			const start = Date.now();
-			const runs = listAsyncRuns(root, { states: ["queued", "running"] });
-			const elapsed = Date.now() - start;
+			const runs = listAsyncRuns(root, { states: ["queued", "running"], reconcile: false });
 
-			assert.equal(runs.length, 0);
-			// 200 terminal dirs filtered to active states should resolve in well
-			// under a second. The old per-run nested-route scan blew past this.
-			assert.ok(elapsed < 1000, `listAsyncRuns took ${elapsed}ms for 200 terminal runs`);
+			assert.deepEqual(runs.map((run) => run.id), ["active"]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("prunes terminal active markers while preserving history listing", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-index-prune-"));
+		try {
+			const asyncDir = createAsyncDir(root, "finished", {
+				runId: "finished",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			updateActiveRunIndex(asyncDir, "running");
+
+			assert.deepEqual(listAsyncRuns(root, { states: ["running"], reconcile: false }), []);
+			assert.equal(fs.existsSync(path.join(root, ACTIVE_RUN_INDEX_DIR, "finished")), false);
+			assert.deepEqual(listAsyncRuns(root, { states: ["complete"], reconcile: false }).map((run) => run.id), ["finished"]);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

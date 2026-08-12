@@ -26,9 +26,9 @@ function needsAttentionEvent(overrides: Partial<ControlEvent> = {}): ControlEven
 		to: "needs_attention",
 		ts: 1,
 		runId: "run-1",
-		agent: "builder",
+		agent: "worker",
 		index: 0,
-		message: "builder needs attention",
+		message: "worker needs attention",
 		reason: "idle",
 		...overrides,
 	};
@@ -62,6 +62,21 @@ describe("subagent control notice delivery", () => {
 		assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
 	});
 
+	it("delivers goal notices without starting a new turn", () => {
+		const state = makeState();
+		const recorder = makeRecorder();
+
+		handleSubagentControlNotice({
+			pi: recorder.pi,
+			state,
+			visibleControlNotices: new Set(),
+			details: { source: "goal", event: needsAttentionEvent(), noticeText: "Goal is ready." },
+		});
+
+		assert.equal(recorder.sent.length, 1);
+		assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: false });
+	});
+
 	it("does not queue a foreground notice that Pi could flush after completion", () => {
 		const state = makeState();
 		state.foregroundControls.set("run-1", {
@@ -69,7 +84,7 @@ describe("subagent control notice delivery", () => {
 			mode: "parallel",
 			startedAt: 0,
 			updatedAt: 0,
-			currentAgent: "builder",
+			currentAgent: "worker",
 			currentIndex: 0,
 			currentActivityState: "needs_attention",
 		});

@@ -96,6 +96,7 @@ interface AsyncStatusPayload {
 	currentTool?: string;
 	currentPath?: string;
 	state?: string;
+	endedAt?: number;
 	launchContractDigest?: string;
 	launchResolvedExtensions?: LaunchResolvedExtensions;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions;
@@ -191,7 +192,7 @@ function childWatchdogStatus(runId: string, phase: "idle" | "reviewing" | "autof
 	return {
 		type: CHILD_WATCHDOG_STATUS_EVENT,
 		runId,
-		agent: "builder",
+		agent: "worker",
 		childIndex: 0,
 		stepIndex: 0,
 		seq,
@@ -230,6 +231,7 @@ interface AsyncExecutionModule {
 
 interface UtilsModule {
 	readStatus(dir: string): { runId: string; state: string; mode: string } | null;
+	pruneStatusCacheForAsyncRoot(root: string, runIds: Iterable<string>): number;
 }
 
 interface TypesModule {
@@ -254,6 +256,7 @@ const isAsyncAvailable = asyncMod?.isAsyncAvailable;
 const executeAsyncSingle = asyncMod?.executeAsyncSingle;
 const executeAsyncChain = asyncMod?.executeAsyncChain;
 const readStatus = utils?.readStatus;
+const pruneStatusCacheForAsyncRoot = utils?.pruneStatusCacheForAsyncRoot;
 const ASYNC_DIR = typesMod?.ASYNC_DIR;
 const RESULTS_DIR = typesMod?.RESULTS_DIR;
 const TEMP_ROOT_DIR = typesMod?.TEMP_ROOT_DIR;
@@ -455,9 +458,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 	function launchProtocolTest(id: string): void {
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Exercise child protocol",
-			agentConfig: makeAgent("builder", { completionGuard: false }),
+			agentConfig: makeAgent("worker", { completionGuard: false }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -483,6 +486,16 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.output, "你好 from fragmented async JSON");
 	});
 
+	it("persists terminal status before creating the result artifact", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "completed output" });
+		const id = `async-terminal-status-${Date.now().toString(36)}`;
+		launchProtocolTest(id);
+		await waitForAsyncResultFile(id);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(status.state, "complete");
+		assert.equal(status.endedAt !== undefined, true);
+	});
+
 	it("persists absent output provenance when async lifecycle text is synthetic", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ jsonl: [mockAssistantMessage("", "tool_use")], stderr: "mock child failure", exitCode: 1 });
 		const id = `async-output-absent-${Date.now().toString(36)}`;
@@ -504,12 +517,12 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	});
 
 	it("matches preflight launch digest in equivalent foreground and async execution", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		const agentName = `contract-builder-${Date.now().toString(36)}`;
+		const agentName = `contract-worker-${Date.now().toString(36)}`;
 		const task = "Compare the resolved launch inputs.";
 		const turnBudget = { maxTurns: 2, graceTurns: 1 } as const;
 		const agentPath = path.join(tempDir, ".selesai", "agents", `${agentName}.md`);
 		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
-		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Contract comparison builder\n---\n`, "utf-8");
+		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Contract comparison worker\n---\n`, "utf-8");
 		const discovered = discoverAgents(tempDir).agents.find((agent) => agent.name === agentName);
 		assert.ok(discovered, "expected temporary agent definition to be discovered");
 		const preflight = await resolveSubagentLaunchContract({ agent: agentName, cwd: tempDir, task, turnBudget, runId: "contract-preflight" });
@@ -548,9 +561,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-launch-digest-${Date.now().toString(36)}`;
 		const privateExtension = path.join(tempDir, "extensions", "private-extension.ts");
 		const launch = executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Exercise launch digest reporting",
-			agentConfig: makeAgent("builder", { completionGuard: false, extensions: [privateExtension] }),
+			agentConfig: makeAgent("worker", { completionGuard: false, extensions: [privateExtension] }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -560,7 +573,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 		assert.match(launch.details.launchContractDigest ?? "", /^[a-f0-9]{64}$/);
 		const payload = await readAsyncPayload(id);
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete" && candidate.runtimeAcknowledgedExtensions !== undefined);
 		assert.equal(payload.launchContractDigest, launch.details.launchContractDigest);
 		assert.equal(payload.results[0]?.launchContractDigest, launch.details.launchContractDigest);
 		assert.equal(status.launchContractDigest, launch.details.launchContractDigest);
@@ -612,7 +625,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 	it("foreground checkpoint decisions use current-session control actions", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "analysis done" });
-		const executor = makeAsyncExecutor([makeAgent("analyst"), makeAgent("builder")]);
+		const executor = makeAsyncExecutor([makeAgent("analyst"), makeAgent("worker")]);
 		const ctx = makeMinimalCtx(tempDir);
 		ctx.sessionManager.getSessionId = () => "session-foreground-checkpoint";
 		const id = `foreground-checkpoint-${Date.now().toString(36)}`;
@@ -621,7 +634,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			chain: [
 				{ agent: "analyst", task: "Analyze" },
 				{ checkpoint: "review", message: "Approve implementation?" },
-				{ agent: "builder", task: "Implement" },
+				{ agent: "worker", task: "Implement" },
 			],
 		}, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
 
@@ -646,9 +659,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			chain: [
 				{ agent: "analyst", task: "Analyze" },
 				{ checkpoint: "review" },
-				{ agent: "builder", task: "Implement" },
+				{ agent: "worker", task: "Implement" },
 			],
-			agents: [makeAgent("analyst"), makeAgent("builder")],
+			agents: [makeAgent("analyst"), makeAgent("worker")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -717,11 +730,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const sessionFile = path.join(tempDir, "sessions", "parent-session", "session.jsonl");
 		const ctx = makeMinimalCtx(tempDir);
 		ctx.sessionManager.getSessionFile = () => sessionFile;
-		const executor = makeAsyncExecutor([makeAgent("builder", { completionGuard: false })], { artifactDir: "session" });
+		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })], { artifactDir: "session" });
 
 		const launch = await executor.execute(
 			"async-session-artifact-dir",
-			{ agent: "builder", task: "Write async session artifacts", async: true, runId: "async-session-artifacts", acceptance: false },
+			{ agent: "worker", task: "Write async session artifacts", async: true, runId: "async-session-artifacts", acceptance: false },
 			new AbortController().signal,
 			undefined,
 			ctx,
@@ -746,13 +759,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const sessionId = `session-capability-${Date.now().toString(36)}`;
 		const handle = registerSubagentCapabilityCeiling({ sessionId, ceiling: { allowedTools: ["read"], denyExtensions: true }, source: "test" });
 		try {
-			const executor = makeAsyncExecutor([makeAgent("builder", { tools: ["read", "write"], completionGuard: false })]);
+			const executor = makeAsyncExecutor([makeAgent("worker", { tools: ["read", "write"], completionGuard: false })]);
 			const id = `async-capability-${Date.now().toString(36)}`;
 			const ctx = makeMinimalCtx(tempDir);
 			ctx.sessionManager.getSessionId = () => sessionId;
 			const launch = await executor.execute(
 				id,
-				{ agent: "builder", task: "Run with a restricted capability ceiling", async: true, runId: id, acceptance: false, artifacts: true },
+				{ agent: "worker", task: "Run with a restricted capability ceiling", async: true, runId: id, acceptance: false, artifacts: true },
 				new AbortController().signal,
 				undefined,
 				ctx,
@@ -787,9 +800,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "", stderr: "model unavailable", exitCode: 1 });
 		const id = `async-empty-failure-artifact-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Fail before output",
-			agentConfig: makeAgent("builder", { completionGuard: false }),
+			agentConfig: makeAgent("worker", { completionGuard: false }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: true, includeInput: true, includeOutput: true, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
 			artifactsDir: path.join(tempDir, ".pi-subagents", "artifacts"),
@@ -814,9 +827,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-artifact-dir-recovery-${Date.now().toString(36)}`;
 		const artifactsDir = path.join(tempDir, ".pi-subagents", "artifacts");
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Complete after generated artifacts are cleaned",
-			agentConfig: makeAgent("builder", { completionGuard: false }),
+			agentConfig: makeAgent("worker", { completionGuard: false }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: true, includeInput: true, includeOutput: true, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
 			artifactsDir,
@@ -899,9 +912,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "OK" });
 		const id = `async-single-literal-output-ref-${Date.now().toString(36)}`;
 		const result = executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task,
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -931,9 +944,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			mockPi.onCall({ output: "non-node exec async done" });
 			const id = `async-non-node-exec-${Date.now().toString(36)}`;
 			const result = executeAsyncSingle(id, {
-				agent: "builder",
+				agent: "worker",
 				task: "Say non-node exec async done. Do not edit files.",
-				agentConfig: makeAgent("builder"),
+				agentConfig: makeAgent("worker"),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				artifactConfig: {
 					enabled: false,
@@ -965,9 +978,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			mockPi.onCall({ output: "stale node exec async done" });
 			const id = `async-stale-node-exec-${Date.now().toString(36)}`;
 			const result = executeAsyncSingle(id, {
-				agent: "builder",
+				agent: "worker",
 				task: "Say stale node exec async done. Do not edit files.",
-				agentConfig: makeAgent("builder"),
+				agentConfig: makeAgent("worker"),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				artifactConfig: {
 					enabled: false,
@@ -1095,7 +1108,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		await waitForMockPiCall(mockPi, 1, 10_000);
 		const resultPath = await waitForAsyncResultFile(id, 8_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
 		assert.equal(payload.state, "failed");
 		assert.equal(payload.success, false);
 		assert.equal(payload.exitCode, 1);
@@ -1111,6 +1124,69 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(status.steps?.map((step) => step.error), ["Subagent timed out after 1500ms.", "Subagent timed out after 1500ms."]);
 		assert.deepEqual(payload.results.map((result) => result.timedOut), [true, true]);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("enforces an agent-level timeout on an async serial child without a composite deadline", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+		mockPi.onCall({ delay: 5_000, output: "too late" });
+		const id = `async-child-timeout-chain-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ agent: "slow", task: "Wait" }],
+			agents: [makeAgent("slow", { defaultTimeoutMs: 150 })],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.timeoutMs, undefined, "composite parent must remain unbounded by default");
+		assert.equal(payload.state, "failed");
+		assert.equal(payload.results[0]?.timedOut, true);
+		assert.equal(payload.results[0]?.error, "Subagent timed out after 150ms.");
+	});
+
+	it("enforces child timeouts on async parallel tasks without a composite deadline", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+		mockPi.onCall({ delay: 5_000, output: "one too late" });
+		mockPi.onCall({ delay: 5_000, output: "two too late" });
+		const id = `async-child-timeout-parallel-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{
+				parallel: [
+					{ agent: "slow-one", task: "Wait" },
+					{ agent: "slow-two", task: "Wait" },
+				],
+				concurrency: 2,
+			}],
+			resultMode: "parallel",
+			agents: [
+				makeAgent("slow-one", { defaultTimeoutMs: 150 }),
+				makeAgent("slow-two", { defaultTimeoutMs: 200 }),
+			],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.timeoutMs, undefined, "composite parent must remain unbounded by default");
+		assert.equal(payload.state, "failed");
+		assert.deepEqual(payload.results.map((result) => result.timedOut), [true, true]);
+		assert.deepEqual(payload.results.map((result) => result.error), ["Subagent timed out after 150ms.", "Subagent timed out after 200ms."]);
 	});
 
 	it("hard-kills async children that ignore timeout SIGTERM", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -1140,7 +1216,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const elapsedMs = Date.now() - startedAt;
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
 		assert.equal(payload.state, "failed");
 		assert.equal(payload.timedOut, true);
 		assert.equal(payload.results[0]?.timedOut, true);
@@ -1151,15 +1227,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("cancels async acceptance verification when the run times out", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("cancels async acceptance verification when the run times out", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ output: "implementation complete" });
 		const id = `async-timeout-acceptance-${Date.now().toString(36)}`;
 		const timeoutMs = 1_000;
 		const startedAt = Date.now();
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Implement with verified acceptance",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: true,
@@ -1182,7 +1258,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const resultPath = await waitForAsyncResultFile(id, 5_000);
 		const elapsedMs = Date.now() - startedAt;
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
 		assert.equal(payload.state, "failed");
 		assert.equal(payload.timedOut, true);
 		assert.equal(payload.results[0]?.timedOut, true);
@@ -1206,9 +1282,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 		const id = `async-turn-budget-soft-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Use the final grace turn to wrap up.",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -1218,7 +1294,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
 		assert.equal(payload.success, true);
 		assert.equal(payload.state, "complete");
 		assert.equal(payload.turnBudgetExceeded, undefined);
@@ -1245,9 +1321,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 		const id = `async-turn-budget-hard-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Exceed the turn budget.",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -1257,7 +1333,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
 		assert.equal(payload.success, true);
 		assert.equal(payload.state, "complete");
 		assert.equal(payload.exitCode, 0);
@@ -1295,9 +1371,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			],
 		});
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Finish active tool work before enforcing the hard limit.",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -1319,7 +1395,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
 		assert.equal(payload.state, "complete");
 		assert.equal(payload.turnBudgetExceeded, undefined);
 		assert.equal(payload.turnBudget?.outcome, "wrap-up-requested");
@@ -1345,9 +1421,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 		const id = `async-turn-budget-timeout-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Timeout while hard termination is deferred.",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -1361,7 +1437,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		deliverTimeoutRequest({ asyncDir, pid: pending.pid, source: "test" });
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
 		assert.equal(payload.state, "failed");
 		assert.equal(payload.timedOut, true);
 		assert.equal(payload.turnBudgetExceeded, undefined);
@@ -1387,9 +1463,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 		const id = `async-turn-budget-stop-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Stop while hard termination is deferred.",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -1402,7 +1478,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		deliverStopRequest({ asyncDir, pid: pending.pid, source: "test" });
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "stopped");
 		assert.equal(payload.state, "stopped");
 		assert.equal(payload.stopped, true);
 		assert.equal(payload.turnBudgetExceeded, undefined);
@@ -1445,13 +1521,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const wrappedTask = `Fork preamble: ${"execution ".repeat(20)}`;
 		const rawGoal = `Caller-facing goal: ${"raw ".repeat(40)}`;
 		const singleResult = executeAsyncSingle(singleId, {
-			agent: "builder",
+			agent: "worker",
 			task: wrappedTask,
 			goal: rawGoal,
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			...commonParams,
 		});
-		assert.match(singleResult.content[0]?.text ?? "", /Async: builder \[/);
+		assert.match(singleResult.content[0]?.text ?? "", /Async: worker \[/);
 		assert.match(singleResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
 		assert.match(singleResult.content[0]?.text ?? "", /call subagent_wait\(\)/i);
 		assert.match(singleResult.content[0]?.text ?? "", /non-interactive run: Pi auto-drains current-session background work at agent_end/);
@@ -1462,9 +1538,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "interactive done" });
 		const interactiveId = `async-handoff-interactive-${Date.now().toString(36)}`;
 		const interactiveResult = executeAsyncSingle(interactiveId, {
-			agent: "builder",
+			agent: "worker",
 			task: "Interactive handoff",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			...commonParams,
 			ctx: { ...commonParams.ctx, interactive: true },
 		});
@@ -1478,9 +1554,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "parallel two done" });
 		const parallelId = `async-handoff-parallel-${Date.now().toString(36)}`;
 		const parallelResult = executeAsyncChain(parallelId, {
-			chain: [{ parallel: [{ agent: "builder", task: "Do one" }, { agent: "commentator", task: "Do two" }] }],
+			chain: [{ parallel: [{ agent: "worker", task: "Do one" }, { agent: "reviewer", task: "Do two" }] }],
 			resultMode: "parallel",
-			agents: [makeAgent("builder"), makeAgent("commentator")],
+			agents: [makeAgent("worker"), makeAgent("reviewer")],
 			...commonParams,
 		});
 		assert.match(parallelResult.content[0]?.text ?? "", /Async parallel:/);
@@ -1490,7 +1566,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const parallelResultPath = await waitForAsyncResultFile(parallelId, 10_000);
 		const parallelPayload = JSON.parse(fs.readFileSync(parallelResultPath, "utf-8")) as { agent?: string; mode?: string };
 		assert.equal(parallelPayload.mode, "parallel");
-		assert.equal(parallelPayload.agent, "parallel:builder+commentator");
+		assert.equal(parallelPayload.agent, "parallel:worker+reviewer");
 
 		mockPi.onCall({ output: "chain done" });
 		const chainId = `async-handoff-chain-${Date.now().toString(36)}`;
@@ -1498,8 +1574,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const chainChildTask = `Do chained work ${"child ".repeat(15)}`;
 		const chainResult = executeAsyncChain(chainId, {
 			task: chainGoal,
-			chain: [{ agent: "builder", task: chainChildTask }],
-			agents: [makeAgent("builder")],
+			chain: [{ agent: "worker", task: chainChildTask }],
+			agents: [makeAgent("worker")],
 			...commonParams,
 		});
 		assert.match(chainResult.content[0]?.text ?? "", /Async chain:/);
@@ -1515,8 +1591,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-missing-extension-tool-${Date.now().toString(36)}`;
 
 		executeAsyncChain(id, {
-			chain: [{ agent: "extension-builder", task: "Use fixture search" }],
-			agents: [makeAgent("extension-builder", { tools: ["read", "fixture_search"] })],
+			chain: [{ agent: "extension-worker", task: "Use fixture search" }],
+			agents: [makeAgent("extension-worker", { tools: ["read", "fixture_search"] })],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -1533,11 +1609,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 	it("applies agent acceptance roles to inferred async acceptance", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "exploration complete" });
-		const executor = makeAsyncExecutor([makeAgent("builder", { acceptanceRole: "read-only" })]);
+		const executor = makeAsyncExecutor([makeAgent("worker", { acceptanceRole: "read-only" })]);
 
 		const result = await executor.execute(
 			"async-agent-acceptance-role",
-			{ agent: "builder", task: "Explore the authentication flow", async: true, clarify: false },
+			{ agent: "worker", task: "Explore the authentication flow", async: true, clarify: false },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -1551,11 +1627,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 	it("applies agent acceptance roles to inferred async parallel acceptance", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "parallel exploration complete" });
-		const executor = makeAsyncExecutor([makeAgent("builder", { acceptanceRole: "read-only" })]);
+		const executor = makeAsyncExecutor([makeAgent("worker", { acceptanceRole: "read-only" })]);
 
 		const result = await executor.execute(
 			"async-parallel-agent-acceptance-role",
-			{ tasks: [{ agent: "builder", task: "Explore the authentication flow" }], async: true, clarify: false },
+			{ tasks: [{ agent: "worker", task: "Explore the authentication flow" }], async: true, clarify: false },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -1599,6 +1675,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	});
 
 	it("top-level async parallel conversion preserves output, reads, and progress", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		fs.writeFileSync(path.join(tempDir, "input.md"), "context");
 		mockPi.onCall({ output: "Async top-level report" });
 		const executor = createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
@@ -1608,13 +1685,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (p: string) => p,
-			discoverAgents: () => ({ agents: [makeAgent("builder", { defaultProgress: true })] }),
+			discoverAgents: () => ({ agents: [makeAgent("worker", { defaultProgress: true })] }),
 		});
 
 		const result = await executor.execute(
 			"async-parallel-fields",
 			{
-				tasks: [{ agent: "builder", task: "Do async work", output: "async-top-output.md", reads: ["input.md"] }],
+				tasks: [{ agent: "worker", task: "Do async work", output: "async-top-output.md", reads: ["input.md"] }],
 				async: true,
 				clarify: false,
 			},
@@ -1667,11 +1744,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		it(`async top-level parallel isolates inherited output (${outputOverride === true ? "output:true" : "omitted output"})`, { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 			mockPi.onCall({ matchArgIncludes: "Write the first report", output: "first async report" });
 			mockPi.onCall({ matchArgIncludes: "Write the second report", output: "second async report" });
-			const agent = makeAgent("builder", { output: "context.md", tools: ["read", "grep", "find", "ls"] });
+			const agent = makeAgent("worker", { output: "context.md", tools: ["read", "grep", "find", "ls"] });
 			const executor = makeAsyncExecutor([agent]);
 			const tasks = [
-				{ agent: "builder", task: "Write the first report", ...(outputOverride !== undefined ? { output: outputOverride } : {}) },
-				{ agent: "builder", task: "Write the second report", ...(outputOverride !== undefined ? { output: outputOverride } : {}) },
+				{ agent: "worker", task: "Write the first report", ...(outputOverride !== undefined ? { output: outputOverride } : {}) },
+				{ agent: "worker", task: "Write the second report", ...(outputOverride !== undefined ? { output: outputOverride } : {}) },
 			];
 			const launch = await executor.execute(
 				`async-inherited-output-${outputOverride === true ? "true" : "omitted"}`,
@@ -1688,8 +1765,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(payload.results[1]?.output?.split("\n\nOutput saved to:")[0], "second async report");
 			const outputDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", launch.details?.asyncId as string);
 			const authoritativePaths = [
-				path.join(outputDir, "parallel-0", "0-builder", "context.md"),
-				path.join(outputDir, "parallel-0", "1-builder", "context.md"),
+				path.join(outputDir, "parallel-0", "0-worker", "context.md"),
+				path.join(outputDir, "parallel-0", "1-worker", "context.md"),
 			];
 			assert.equal(fs.readFileSync(authoritativePaths[0]!, "utf-8"), "first async report");
 			assert.equal(fs.readFileSync(authoritativePaths[1]!, "utf-8"), "second async report");
@@ -1702,8 +1779,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const taskArgs = calls.map((name) => (JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord).args?.at(-1) ?? "");
 			const firstTask = taskArgs.find((task) => task.includes("Write the first report")) ?? "";
 			const secondTask = taskArgs.find((task) => task.includes("Write the second report")) ?? "";
-			assert.ok(firstTask.includes(path.join("parallel-0", "0-builder", "context.md")));
-			assert.ok(secondTask.includes(path.join("parallel-0", "1-builder", "context.md")));
+			assert.ok(firstTask.includes(path.join("parallel-0", "0-worker", "context.md")));
+			assert.ok(secondTask.includes(path.join("parallel-0", "1-worker", "context.md")));
 			for (const taskArg of [firstTask, secondTask]) {
 				assert.match(taskArg, /Return the complete artifact in your final response\./);
 				assert.match(taskArg, /Do not call contact_supervisor merely because no write-capable tool is available\./);
@@ -1713,13 +1790,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	}
 
 	it("async top-level parallel rejects duplicate explicit output paths before spawning", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
-		const executor = makeAsyncExecutor([makeAgent("builder")]);
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
 		const result = await executor.execute(
 			"async-duplicate-output",
 			{
 				tasks: [
-					{ agent: "builder", task: "Write A", output: "same.md" },
-					{ agent: "builder", task: "Write B", output: "same.md" },
+					{ agent: "worker", task: "Write A", output: "same.md" },
+					{ agent: "worker", task: "Write B", output: "same.md" },
 				],
 				async: true,
 				clarify: false,
@@ -1730,20 +1807,20 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		);
 
 		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /Parallel tasks 1 \(builder\) and 2 \(builder\).*same\.md/);
+		assert.match(result.content[0]?.text ?? "", /Parallel tasks 1 \(worker\) and 2 \(worker\).*same\.md/);
 		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("async top-level parallel preserves distinct explicit output destinations", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ matchArgIncludes: "first.md", output: "first explicit report" });
 		mockPi.onCall({ matchArgIncludes: "second.md", output: "second explicit report" });
-		const executor = makeAsyncExecutor([makeAgent("builder", { output: "context.md" })]);
+		const executor = makeAsyncExecutor([makeAgent("worker", { output: "context.md" })]);
 		const launch = await executor.execute(
 			"async-distinct-explicit-output",
 			{
 				tasks: [
-					{ agent: "builder", task: "Write A", output: "first.md" },
-					{ agent: "builder", task: "Write B", output: "second.md" },
+					{ agent: "worker", task: "Write A", output: "first.md" },
+					{ agent: "worker", task: "Write B", output: "second.md" },
 				],
 				async: true,
 				clarify: false,
@@ -1758,8 +1835,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const outputDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", launch.details?.asyncId as string);
 		assert.equal(fs.readFileSync(path.join(outputDir, "first.md"), "utf-8"), "first explicit report");
 		assert.equal(fs.readFileSync(path.join(outputDir, "second.md"), "utf-8"), "second explicit report");
-		assert.ok(payload.results[0]?.artifactPaths?.outputPath?.endsWith("_builder_0_output.md"));
-		assert.ok(payload.results[1]?.artifactPaths?.outputPath?.endsWith("_builder_1_output.md"));
+		assert.ok(payload.results[0]?.artifactPaths?.outputPath?.endsWith("_worker_0_output.md"));
+		assert.ok(payload.results[1]?.artifactPaths?.outputPath?.endsWith("_worker_1_output.md"));
 	});
 
 	it("async chain static parallel namespaces inherited default outputs", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -1767,8 +1844,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ matchArgIncludes: "Write second", output: "chain second report" });
 		const id = `async-chain-parallel-output-${Date.now().toString(36)}`;
 		const launch = executeAsyncChain(id, {
-			chain: [{ parallel: [{ agent: "builder", task: "Write first" }, { agent: "builder", task: "Write second" }] }],
-			agents: [makeAgent("builder", { output: "context.md" })],
+			chain: [{ parallel: [{ agent: "worker", task: "Write first" }, { agent: "worker", task: "Write second" }] }],
+			agents: [makeAgent("worker", { output: "context.md" })],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-chain-output" },
 			artifactConfig: { enabled: true, includeInput: false, includeOutput: true, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			artifactsDir: path.join(tempDir, ".pi-subagents", "artifacts"),
@@ -1781,8 +1858,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.success, true);
 		const outputDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", id);
 		const authoritativePaths = [
-			path.join(outputDir, "parallel-0", "0-builder", "context.md"),
-			path.join(outputDir, "parallel-0", "1-builder", "context.md"),
+			path.join(outputDir, "parallel-0", "0-worker", "context.md"),
+			path.join(outputDir, "parallel-0", "1-worker", "context.md"),
 		];
 		assert.equal(fs.readFileSync(authoritativePaths[0]!, "utf-8"), "chain first report");
 		assert.equal(fs.readFileSync(authoritativePaths[1]!, "utf-8"), "chain second report");
@@ -1793,8 +1870,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(fs.readFileSync(artifactPaths[1], "utf-8"), "chain second report");
 		const calls = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).sort();
 		const taskArgs = calls.map((name) => (JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord).args?.at(-1) ?? "");
-		assert.ok(taskArgs.find((task) => task.includes("Write first"))?.includes(path.join("parallel-0", "0-builder", "context.md")));
-		assert.ok(taskArgs.find((task) => task.includes("Write second"))?.includes(path.join("parallel-0", "1-builder", "context.md")));
+		assert.ok(taskArgs.find((task) => task.includes("Write first"))?.includes(path.join("parallel-0", "0-worker", "context.md")));
+		assert.ok(taskArgs.find((task) => task.includes("Write second"))?.includes(path.join("parallel-0", "1-worker", "context.md")));
 	});
 
 	it("async single preserves checked evidence while independent review is pending", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -1825,14 +1902,14 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		};
 		const id = `async-acceptance-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Implement acceptance-covered fix",
-			agentConfig: makeAgent("builder", { completionGuard: false }),
+			agentConfig: makeAgent("worker", { completionGuard: false }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-acceptance" },
 			artifactConfig,
 			shareEnabled: false,
 			maxSubagentDepth: 2,
-			acceptance: { level: "checked", criteria: ["Patch bug"], review: { agent: "commentator", required: true } },
+			acceptance: { level: "checked", criteria: ["Patch bug"], review: { agent: "reviewer", required: true } },
 		});
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
@@ -1856,13 +1933,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (p: string) => p,
-			discoverAgents: () => ({ agents: [makeAgent("commentator", { defaultProgress: true })] }),
+			discoverAgents: () => ({ agents: [makeAgent("reviewer", { defaultProgress: true })] }),
 		});
 
 		const result = await executor.execute(
 			"async-chain-read-only-progress",
 			{
-				chain: [{ agent: "commentator" }],
+				chain: [{ agent: "reviewer" }],
 				task: "Review-only. Do not edit files. Return findings.",
 				async: true,
 				clarify: false,
@@ -1934,7 +2011,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(!result.isError);
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
 		assert.deepEqual(payload.results[0]?.structuredOutput, { value: "Alpha structured" });
 		assert.deepEqual(payload.outputs?.data?.structured, { value: "Alpha structured" });
 		assert.match(readMockPiArgs(mockPi, 1).at(-1) ?? "", /Alpha structured/);
@@ -1952,15 +2029,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ matchArgIncludes: "Scout API", output: "Scout A async findings" });
 		mockPi.onCall({ matchArgIncludes: "Scout UI", output: "Scout B async findings" });
 		mockPi.onCall({ matchArgIncludes: "Synthesize:", output: "Async funnel synthesis" });
-		mockPi.onCall({ matchArgIncludes: "Review funnel A:", output: "Async commentator A done" });
-		mockPi.onCall({ matchArgIncludes: "Review funnel B:", output: "Async commentator B done" });
+		mockPi.onCall({ matchArgIncludes: "Review funnel A:", output: "Async reviewer A done" });
+		mockPi.onCall({ matchArgIncludes: "Review funnel B:", output: "Async reviewer B done" });
 		const id = `async-parallel-funnel-fanout-${Date.now().toString(36)}`;
 		const result = executeAsyncChain(id, {
 			chain: [
 				{
 					parallel: [
-						{ agent: "explorer-a", task: "Scout API" },
-						{ agent: "explorer-b", task: "Scout UI" },
+						{ agent: "scout-a", task: "Scout API" },
+						{ agent: "scout-b", task: "Scout UI" },
 					],
 					concurrency: 2,
 				},
@@ -1973,7 +2050,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 					concurrency: 2,
 				},
 			],
-			agents: [makeAgent("explorer-a"), makeAgent("explorer-b"), makeAgent("synthesizer"), makeAgent("review-a"), makeAgent("review-b")],
+			agents: [makeAgent("scout-a"), makeAgent("scout-b"), makeAgent("synthesizer"), makeAgent("review-a"), makeAgent("review-b")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-parallel-funnel-fanout" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -1983,14 +2060,14 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(!result.isError, `should launch: ${JSON.stringify(result.content)}`);
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
 		assert.equal(payload.success, true);
 		assert.deepEqual(payload.results.map((entry) => entry.output), [
 			"Scout A async findings",
 			"Scout B async findings",
 			"Async funnel synthesis",
-			"Async commentator A done",
-			"Async commentator B done",
+			"Async reviewer A done",
+			"Async reviewer B done",
 		]);
 		assert.deepEqual(status.steps?.map((step) => step.status), ["complete", "complete", "complete", "complete", "complete"]);
 		assert.deepEqual(status.parallelGroups, [
@@ -1998,9 +2075,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			{ start: 3, count: 2, stepIndex: 2 },
 		]);
 		const funnelTask = readMockPiArgsMatching(mockPi, "Synthesize:").at(-1) ?? "";
-		assert.match(funnelTask, /=== Parallel Task 1 \(explorer-a\) ===/);
+		assert.match(funnelTask, /=== Parallel Task 1 \(scout-a\) ===/);
 		assert.match(funnelTask, /Scout A async findings/);
-		assert.match(funnelTask, /=== Parallel Task 2 \(explorer-b\) ===/);
+		assert.match(funnelTask, /=== Parallel Task 2 \(scout-b\) ===/);
 		assert.match(funnelTask, /Scout B async findings/);
 		assert.match(readMockPiArgsMatching(mockPi, "Review funnel A:").at(-1) ?? "", /Review funnel A:\nAsync funnel synthesis/);
 		assert.match(readMockPiArgsMatching(mockPi, "Review funnel B:").at(-1) ?? "", /Review funnel B:\nAsync funnel synthesis/);
@@ -2023,13 +2100,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "commentator", task: "Review {target.path}", label: "Review {target.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "reviewer", task: "Review {target.path}", label: "Review {target.path}", outputSchema: { type: "object" } },
 					collect: { as: "reviews" },
 					concurrency: 1,
 				},
 				{ agent: "consumer", task: "Use {outputs.reviews}" },
 			],
-			agents: [makeAgent("producer"), makeAgent("commentator"), makeAgent("consumer")],
+			agents: [makeAgent("producer"), makeAgent("reviewer"), makeAgent("consumer")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-placeholder" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -2045,7 +2122,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			if (fs.existsSync(statusPath)) status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
 			else await new Promise((resolve) => setTimeout(resolve, 50));
 		}
-		assert.deepEqual(status.steps?.map((step) => step.agent), ["producer", "expand:commentator", "consumer"]);
+		assert.deepEqual(status.steps?.map((step) => step.agent), ["producer", "expand:reviewer", "consumer"]);
 		assert.equal(status.steps?.[1]?.label, "Review {target.path}");
 		assert.equal(status.steps?.[1]?.outputName, "reviews");
 		assert.deepEqual(status.parallelGroups, [{ start: 1, count: 1, stepIndex: 1 }]);
@@ -2054,7 +2131,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const finalStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		assert.equal(payload.success, true);
-		assert.deepEqual(finalStatus.steps?.map((step) => step.agent), ["producer", "commentator", "commentator", "consumer"]);
+		assert.deepEqual(finalStatus.steps?.map((step) => step.agent), ["producer", "reviewer", "reviewer", "consumer"]);
 		assert.deepEqual(finalStatus.parallelGroups, [{ start: 1, count: 2, stepIndex: 1 }]);
 	});
 
@@ -2070,7 +2147,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
 					parallel: {
-						agent: "commentator",
+						agent: "reviewer",
 						task: "Review {target.path}",
 						label: "Review {target.path}",
 						outputSchema: { type: "object" },
@@ -2080,7 +2157,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				},
 				{ agent: "consumer", task: "Use {outputs.reviews}" },
 			],
-			agents: [makeAgent("producer"), makeAgent("commentator", { output: "context.md" }), makeAgent("consumer")],
+			agents: [makeAgent("producer"), makeAgent("reviewer", { output: "context.md" }), makeAgent("consumer")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic" },
 			artifactConfig: { enabled: true, includeInput: false, includeOutput: true, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			artifactsDir: path.join(tempDir, ".pi-subagents", "artifacts"),
@@ -2102,8 +2179,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(collected.map((item) => item.structured), [{ ok: "a" }, { ok: "b" }]);
 		const outputDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", id);
 		const dynamicOutputPaths = [
-			path.join(outputDir, "dynamic-1", "0-commentator", "context.md"),
-			path.join(outputDir, "dynamic-1", "1-commentator", "context.md"),
+			path.join(outputDir, "dynamic-1", "0-reviewer", "context.md"),
+			path.join(outputDir, "dynamic-1", "1-reviewer", "context.md"),
 		];
 		assert.equal(fs.readFileSync(dynamicOutputPaths[0]!, "utf-8"), "review-a");
 		assert.equal(fs.readFileSync(dynamicOutputPaths[1]!, "utf-8"), "review-b");
@@ -2130,13 +2207,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "commentator", task: "Review {target.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
 					collect: { as: "reviews" },
 					concurrency: 1,
 				},
 			],
 			usageBudget: { tokens: { hard: 200 } },
-			agents: [makeAgent("producer"), makeAgent("commentator")],
+			agents: [makeAgent("producer"), makeAgent("reviewer")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-budget" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -2151,7 +2228,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(status.steps?.[1]?.status, "complete");
 		assert.equal(status.steps?.[2]?.status, "failed");
 		assert.match(status.steps?.[2]?.error ?? "", /Usage budget exhausted/);
-		assert.equal(payload.results.find((result) => result.agent === "commentator" && result.skipped)?.skipped, true);
+		assert.equal(payload.results.find((result) => result.agent === "reviewer" && result.skipped)?.skipped, true);
 	});
 
 	it("rejects a shared explicit output before dynamic fanout children start", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -2162,12 +2239,12 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", maxItems: 2 },
-					parallel: { agent: "commentator", task: "Review {target.path}", output: "shared.md" },
+					parallel: { agent: "reviewer", task: "Review {target.path}", output: "shared.md" },
 					collect: { as: "reviews" },
 					concurrency: 2,
 				},
 			],
-			agents: [makeAgent("producer"), makeAgent("commentator")],
+			agents: [makeAgent("producer"), makeAgent("reviewer")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-explicit-output" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -2196,7 +2273,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 2 },
 					parallel: {
-						agent: "commentator",
+						agent: "reviewer",
 						task: "Review {target.path}",
 						label: "Review {target.path}",
 						outputSchema: { type: "object" },
@@ -2205,7 +2282,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 					concurrency: 1,
 				},
 			],
-			agents: [makeAgent("producer"), makeAgent("commentator", { model: "anthropic/claude-sonnet-4-5:high", thinking: "high" })],
+			agents: [makeAgent("producer"), makeAgent("reviewer", { model: "anthropic/claude-sonnet-4-5:high", thinking: "high" })],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -2330,7 +2407,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "commentator", task: "Review {target.path}", outputSchema: { type: "object" }, acceptance: { level: "checked" } },
+					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" }, acceptance: { level: "checked" } },
 					collect: { as: "reviews" },
 					acceptance: {
 						level: "verified",
@@ -2338,7 +2415,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 					},
 				},
 			],
-			agents: [makeAgent("producer"), makeAgent("commentator")],
+			agents: [makeAgent("producer"), makeAgent("reviewer")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-acceptance-timeout" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -2349,7 +2426,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const resultPath = await waitForAsyncResultFile(id, 5_000);
 		const elapsedMs = Date.now() - startedAt;
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
 		const dynamicNode = payload.workflowGraph?.nodes?.[1] as { status?: string; error?: string; acceptanceStatus?: string } | undefined;
 		assert.equal(payload.state, "failed");
 		assert.equal(payload.timedOut, true);
@@ -2373,13 +2450,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "commentator", task: "Review {target.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
 					collect: { as: "reviews" },
 					concurrency: 1,
 				},
 				{ agent: "consumer", task: "Use {outputs.reviews}" },
 			],
-			agents: [makeAgent("producer"), makeAgent("commentator"), makeAgent("consumer")],
+			agents: [makeAgent("producer"), makeAgent("reviewer"), makeAgent("consumer")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-targets" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -2405,11 +2482,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 1 },
-					parallel: { agent: "commentator", task: "Review {target.path}" },
+					parallel: { agent: "reviewer", task: "Review {target.path}" },
 					collect: { as: "reviews" },
 				},
 			],
-			agents: [makeAgent("producer"), makeAgent("commentator")],
+			agents: [makeAgent("producer"), makeAgent("reviewer")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-fail" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -2419,7 +2496,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(!result.isError);
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload & { workflowGraph?: AsyncResultPayload["workflowGraph"]; error?: string };
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed") as AsyncStatusPayload & { workflowGraph?: AsyncResultPayload["workflowGraph"]; error?: string };
 		assert.equal(payload.success, false);
 		assert.match(payload.results.at(-1)?.error ?? "", /exceeding maxItems 1/);
 		assert.equal(payload.workflowGraph?.nodes?.[1]?.status, "failed");
@@ -2438,11 +2515,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "commentator", task: "Review {target.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
 					collect: { as: "reviews", outputSchema: { type: "object" } },
 				},
 			],
-			agents: [makeAgent("producer"), makeAgent("commentator")],
+			agents: [makeAgent("producer"), makeAgent("reviewer")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-collect-fail" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -2459,7 +2536,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(payload.workflowGraph?.nodes?.[1]?.error ?? "", /Collected output validation failed/);
 	});
 
-	it("top-level async worktree parallel resolves reads against the worktree and output under project artifacts", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : process.platform === "win32" ? "worktree path separators unreliable on Windows CI" : undefined }, async () => {
+	it("top-level async worktree parallel keeps existing reads and writes output under project artifacts", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : process.platform === "win32" ? "worktree path separators unreliable on Windows CI" : undefined }, async () => {
 		const repoDir = createRepo("pi-subagent-async-worktree-");
 		try {
 			mockPi.onCall({ output: "Worktree report" });
@@ -2471,13 +2548,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				tempArtifactsDir: repoDir,
 				getSubagentSessionRoot: () => repoDir,
 				expandTilde: (p: string) => p,
-				discoverAgents: () => ({ agents: [makeAgent("builder")] }),
+				discoverAgents: () => ({ agents: [makeAgent("worker")] }),
 			});
 
 			const result = await executor.execute(
 				"async-parallel-worktree-fields",
 				{
-					tasks: [{ agent: "builder", task: "Do worktree work", output: "report.md", reads: ["input.md"] }],
+					tasks: [{ agent: "worker", task: "Do worktree work", output: "report.md", reads: ["input.md"] }],
 					async: true,
 					clarify: false,
 					worktree: true,
@@ -2493,11 +2570,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const worktreeCwd = path.join(os.tmpdir(), `pi-worktree-${asyncId}-s0-0`);
 			const args = await waitForMockPiArgs(mockPi, 0);
 			const taskArg = args.at(-1) ?? "";
-			assert.ok(taskArg.includes(`[Read from: ${path.join(worktreeCwd, "input.md")}]`));
+			assert.match(taskArg, new RegExp(`\\[Read from: ${escapeRegExp(path.join(worktreeCwd, "input.md"))}\\]`));
 			assert.ok(taskArg.includes(`Write your findings to exactly this path: ${path.join(repoDir, ".pi-subagents", "artifacts", "outputs", asyncId, "report.md")}`));
 			const resultPath = await waitForAsyncResultFile(asyncId, 90_000);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-			const status = JSON.parse(fs.readFileSync(path.join(result.details!.asyncDir!, "status.json"), "utf-8")) as AsyncStatusPayload;
+			const status = await waitForAsyncState(asyncId, (candidate) => candidate.state === "complete");
 			assert.equal(payload.parallelHandoff?.version, 1);
 			assert.equal(payload.parallelHandoff?.path, path.join(result.details!.asyncDir!, "handoff.json"));
 			assert.deepEqual(status.parallelHandoff, payload.parallelHandoff);
@@ -2509,7 +2586,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				groups: Array<{ children: Array<{ agent: string; status: string; patch: { path: string } }>; cleanup: { state: string } }>;
 			};
 			assert.equal(handoff.version, 1);
-			assert.equal(handoff.groups[0]!.children[0]!.agent, "builder");
+			assert.equal(handoff.groups[0]!.children[0]!.agent, "worker");
 			assert.equal(handoff.groups[0]!.children[0]!.status, "completed");
 			assert.equal(handoff.groups[0]!.cleanup.state, "complete");
 			assert.equal(fs.existsSync(handoff.groups[0]!.children[0]!.patch.path), true, "patch artifact should outlive cleanup");
@@ -2518,33 +2595,49 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
-	it("readStatus caches unchanged files and invalidates same-mtime replacements", () => {
-		const dir = createTempDir();
+	it("readStatus caches ordered sweeps above 50 files and invalidates same-mtime replacements", () => {
+		const root = createTempDir();
 		try {
-			const statusPath = path.join(dir, "status.json");
 			const fixedTimestamp = new Date(1_700_000_000_000);
-			const statusData = {
-				runId: "cache-test",
-				state: "running",
-				mode: "single",
-				startedAt: fixedTimestamp.getTime(),
-			};
-			fs.writeFileSync(statusPath, JSON.stringify(statusData));
-			fs.utimesSync(statusPath, fixedTimestamp, fixedTimestamp);
+			const dirs = Array.from({ length: 51 }, (_, index) => {
+				const dir = path.join(root, `run-${index}`);
+				const statusPath = path.join(dir, "status.json");
+				fs.mkdirSync(dir);
+				fs.writeFileSync(statusPath, JSON.stringify({
+					runId: `cache-test-${index}`,
+					state: "running",
+					mode: "single",
+					startedAt: fixedTimestamp.getTime(),
+				}));
+				fs.utimesSync(statusPath, fixedTimestamp, fixedTimestamp);
+				return dir;
+			});
 
-			const cached = readStatus(dir);
-			assert.ok(cached);
-			assert.strictEqual(readStatus(dir), cached);
+			const cached = dirs.map((dir) => readStatus(dir));
+			cached.forEach((status) => assert.ok(status));
+			dirs.forEach((dir, index) => assert.strictEqual(readStatus(dir), cached[index]));
 
-			writeAtomicJson(statusPath, { ...statusData, state: "stopped" });
+			const replacedDir = dirs[25]!;
+			const cachedStatus = cached[25];
+			assert.ok(cachedStatus);
+			const statusPath = path.join(replacedDir, "status.json");
+			writeAtomicJson(statusPath, { ...cachedStatus, state: "stopped" });
 			fs.utimesSync(statusPath, fixedTimestamp, fixedTimestamp);
 			assert.equal(fs.statSync(statusPath).mtimeMs, fixedTimestamp.getTime());
-			const replaced = readStatus(dir);
+			const replaced = readStatus(replacedDir);
 			assert.ok(replaced);
 			assert.equal(replaced.state, "stopped");
-			assert.notStrictEqual(replaced, cached);
+			assert.notStrictEqual(replaced, cachedStatus);
+
+			fs.rmSync(statusPath);
+			assert.equal(readStatus(replacedDir), null);
+
+			const removedDir = dirs[50]!;
+			assert.ok(readStatus(removedDir));
+			fs.rmSync(removedDir, { recursive: true, force: true });
+			assert.equal(pruneStatusCacheForAsyncRoot(root, dirs.slice(0, 50).map((dir) => path.basename(dir))), 1);
 		} finally {
-			removeTempDir(dir);
+			removeTempDir(root);
 		}
 	});
 
@@ -2578,10 +2671,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const asyncDir = path.join(ASYNC_DIR, id);
 		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
 		const run = executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
 			acceptance: { level: "none", reason: "descriptor persistence coverage" },
-			agentConfig: makeAgent("builder", {
+			turnBudget: { maxTurns: 8, graceTurns: 2 },
+			agentConfig: makeAgent("worker", {
 				model: "openai/gpt-5-mini:high",
 				fallbackModels: ["anthropic/claude-sonnet-4:low"],
 			}),
@@ -2616,12 +2710,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const descriptorPath = path.join(asyncDir, "recovery-descriptor.json");
 		const descriptor = JSON.parse(fs.readFileSync(descriptorPath, "utf-8"));
 		assert.equal(descriptor.sourceRunId, id);
-		assert.equal(descriptor.agent, "builder");
+		assert.equal(descriptor.agent, "worker");
 		assert.equal(descriptor.model, "openai/gpt-5-mini:high");
 		assert.deepEqual(descriptor.fallbackModels, ["anthropic/claude-sonnet-4:low"]);
 		assert.equal(descriptor.cwd, tempDir);
 		assert.equal(descriptor.sessionDir, path.join(sessionRoot, `async-${id}`));
 		assert.deepEqual(descriptor.acceptance, { level: "none", reason: "descriptor persistence coverage" });
+		assert.deepEqual(descriptor.initialTurnBudget, { maxTurns: 8, graceTurns: 2 });
 		assert.equal(Object.hasOwn(descriptor.acceptance, "explicit"), false);
 		assert.equal(Object.hasOwn(descriptor.acceptance, "inferredReason"), false);
 		assert.equal(Object.hasOwn(descriptor, "task"), false);
@@ -2635,7 +2730,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0].modelAttempts.length, 2);
 		assert.deepEqual(payload.results[0].totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
 		assert.deepEqual(payload.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
-		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const statusPayload = await waitForAsyncState(id, (candidate) => candidate.state === "complete" && candidate.totalCost !== undefined);
 		assert.equal(statusPayload.lifecycleArtifactVersion, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION);
 		assert.equal(statusPayload.steps[0]?.model, "anthropic/claude-sonnet-4:low");
 		assert.equal(statusPayload.steps[0]?.thinking, "low");
@@ -2657,9 +2752,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "Recovered asynchronously after startup race" });
 		const id = `async-startup-retry-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder", {
+			agentConfig: makeAgent("worker", {
 				model: "openai/gpt-5-mini:high",
 				fallbackModels: ["anthropic/claude-sonnet-4:low"],
 			}),
@@ -2706,9 +2801,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "Recovered after stream failure" });
 		const id = `async-fallback-stream-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder", {
+			agentConfig: makeAgent("worker", {
 				model: "openai/gpt-5-mini:high",
 				fallbackModels: ["anthropic/claude-sonnet-4:low"],
 			}),
@@ -2747,9 +2842,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "fallback must not run" });
 		const id = `async-fallback-toolfail-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder", {
+			agentConfig: makeAgent("worker", {
 				model: "openai/gpt-5-mini:high",
 				fallbackModels: ["anthropic/claude-sonnet-4:low"],
 			}),
@@ -2795,9 +2890,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "Recovered asynchronously" });
 		const id = `async-fallback-thinking-off-${Date.now().toString(36)}`;
 		const run = executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder", {
+			agentConfig: makeAgent("worker", {
 				model: "openai/gpt-5-mini:high",
 				fallbackModels: ["anthropic/claude-sonnet-4:low"],
 				thinking: "high",
@@ -2850,9 +2945,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "Recovered asynchronously from empty output" });
 		const id = `async-empty-output-fallback-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder", {
+			agentConfig: makeAgent("worker", {
 				model: "openai/gpt-5-mini",
 				fallbackModels: ["anthropic/claude-sonnet-4"],
 			}),
@@ -2900,9 +2995,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "Recovered asynchronously on fallback" });
 		const id = `async-empty-output-after-tool-error-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder", {
+			agentConfig: makeAgent("worker", {
 				model: "openai/gpt-5-mini",
 				fallbackModels: ["anthropic/claude-sonnet-4"],
 			}),
@@ -2942,11 +3037,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			exitCode: 0,
 		});
 		const id = `async-zero-exit-provider-error-${Date.now().toString(36)}`;
-		const asyncDir = path.join(ASYNC_DIR, id);
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder", { model: "openai/gpt-5-mini" }),
+			agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini" }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -2964,8 +3058,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		assert.equal(payload.success, false);
 		assert.match(payload.results[0]?.error ?? "", /429 quota exceeded/);
-		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
-		assert.equal(statusPayload.state, "failed");
+		const statusPayload = await waitForAsyncState(id, (status) => status.state === "failed");
 		assert.match(statusPayload.steps?.[0]?.error ?? "", /429 quota exceeded/);
 	});
 
@@ -2990,9 +3083,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-recovered-child-error-${Date.now().toString(36)}`;
 		const asyncDir = path.join(ASYNC_DIR, id);
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder", { model: "openai/gpt-5-mini" }),
+			agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini" }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -3014,7 +3107,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.success, true);
 		assert.equal(payload.results[0]?.error, undefined);
 		assert.equal(payload.results[0]?.output, "Recovered asynchronously");
-		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const statusPayload = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
 		assert.equal(statusPayload.state, "complete");
 		assert.equal(statusPayload.steps?.[0]?.status, "complete");
 		assert.equal(statusPayload.steps?.[0]?.exitCode, 0);
@@ -3040,9 +3133,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-provider-error-empty-stop-${Date.now().toString(36)}`;
 		const asyncDir = path.join(ASYNC_DIR, id);
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder", { model: "openai/gpt-5-mini" }),
+			agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini" }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -3064,7 +3157,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.success, false);
 		assert.match(payload.results[0]?.error ?? "", /provider transport failed/);
 		assert.equal(payload.results[0]?.output, "");
-		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const statusPayload = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
 		assert.equal(statusPayload.state, "failed");
 		assert.equal(statusPayload.steps?.[0]?.status, "failed");
 		assert.equal(statusPayload.steps?.[0]?.exitCode, 1);
@@ -3199,9 +3292,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "async inline report" });
 		const id = `async-string-false-output-${Date.now().toString(36)}`;
 		const run = executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder", { output: "default-report.md" }),
+			agentConfig: makeAgent("worker", { output: "default-report.md" }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -3238,9 +3331,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const sessionRoot = path.join(tempDir, "sessions");
 
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Deploy app",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -3277,9 +3370,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const sessionRoot = path.join(tempDir, "sessions");
 
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Implement the approved fixes",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -3312,7 +3405,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const eventsPath = path.join(ASYNC_DIR, id, "events.jsonl");
 		const eventsText = fs.readFileSync(eventsPath, "utf-8");
 		assert.match(eventsText, /"reason":"completion_guard"/);
-		assert.match(eventsText, /Subagent failed: builder/);
+		assert.match(eventsText, /Subagent failed: worker/);
 		assert.doesNotMatch(eventsText, /Status:/);
 		assert.doesNotMatch(eventsText, /Interrupt:/);
 	});
@@ -3322,9 +3415,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-v1-separate-${Date.now().toString(36)}`;
 
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Implement the approved fixes",
-			agentConfig: makeAgent("builder", { completionGuard: true }),
+			agentConfig: makeAgent("worker", { completionGuard: true }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -3343,7 +3436,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const statusPayload = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const statusPayload = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
 
 		assert.equal(payload.success, true);
 		assert.equal(payload.state, "complete");
@@ -3364,9 +3457,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-single-schema-${Date.now().toString(36)}`;
 
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Return structured data",
-			agentConfig: makeAgent("builder", { completionGuard: false }),
+			agentConfig: makeAgent("worker", { completionGuard: false }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -3432,9 +3525,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const sessionRoot = path.join(tempDir, "sessions");
 
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder", { model: "gpt-5-mini" }),
+			agentConfig: makeAgent("worker", { model: "gpt-5-mini" }),
 			ctx: {
 				pi: { events: { emit() {} } },
 				cwd: tempDir,
@@ -3494,14 +3587,14 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
 			expandTilde: (p: string) => p,
-			discoverAgents: () => ({ agents: [makeAgent("builder")] }),
+			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
 		});
 		const retainedCtx = makeMinimalCtx(tempDir);
 		retainedCtx.sessionManager.getSessionId = () => "session-a";
 		retainedCtx.model = { provider: "deepseek", id: "scheduled-model" };
 		const launch = await executor.executeScheduled(
 			`scheduled-owner-${Date.now().toString(36)}`,
-			{ agent: "builder", task: "Run retained project timer", async: true, acceptance: false },
+			{ agent: "worker", task: "Run retained project timer", async: true, acceptance: false },
 			new AbortController().signal,
 			retainedCtx,
 		) as AsyncExecutionResult;
@@ -3514,7 +3607,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(state.subagentSpawns, { sessionId: "session-b", count: 1, configuredLimit: 1, granted: 1, grantHistory: [] });
 		const blocked = await executor.executeScheduled(
 			`scheduled-owner-blocked-${Date.now().toString(36)}`,
-			{ agent: "builder", task: "Exceed the retained owner budget", async: true, acceptance: false },
+			{ agent: "worker", task: "Exceed the retained owner budget", async: true, acceptance: false },
 			new AbortController().signal,
 			retainedCtx,
 		);
@@ -3544,7 +3637,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
 			expandTilde: (p: string) => p,
-			discoverAgents: () => ({ agents: [makeAgent("builder")] }),
+			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
 		});
 		const retainedCtx = makeMinimalCtx(tempDir);
 		retainedCtx.sessionManager.getSessionId = () => "session-a";
@@ -3584,7 +3677,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
 			expandTilde: (p: string) => p,
-			discoverAgents: () => ({ agents: [makeAgent("builder")] }),
+			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
 		});
 		const initialCtx = makeMinimalCtx(tempDir);
 		initialCtx.sessionManager.getSessionId = () => "session-continued";
@@ -3595,7 +3688,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		continuedCtx.sessionManager.getSessionId = () => "session-continued";
 		const launch = await executor.execute(
 			"continued-async-child",
-			{ agent: "builder", task: "Do work", async: true, acceptance: false },
+			{ agent: "worker", task: "Do work", async: true, acceptance: false },
 			new AbortController().signal,
 			undefined,
 			continuedCtx,
@@ -3612,7 +3705,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 	it("foreground chains keep the last parent session model after continuation drops ctx.model", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Done foreground" });
-		const executor = makeAsyncExecutor([makeAgent("builder", { completionGuard: false })]);
+		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
 		const initialCtx = makeMinimalCtx(tempDir);
 		initialCtx.sessionManager.getSessionId = () => "session-continued";
 		initialCtx.model = { provider: "deepseek", id: "deepseek-v4-flash" };
@@ -3622,7 +3715,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		continuedCtx.sessionManager.getSessionId = () => "session-continued";
 		const result = await executor.execute(
 			"continued-foreground-chain",
-			{ chain: [{ agent: "builder", task: "Do work" }], acceptance: false },
+			{ chain: [{ agent: "worker", task: "Do work" }], acceptance: false },
 			new AbortController().signal,
 			undefined,
 			continuedCtx,
@@ -3637,9 +3730,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const id = `async-single-parent-model-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: {
 				pi: { events: { emit() {} } },
 				cwd: tempDir,
@@ -3674,8 +3767,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const id = `async-chain-parent-model-${Date.now().toString(36)}`;
 		executeAsyncChain(id, {
-			chain: [{ agent: "builder", task: "Do work" }],
-			agents: [makeAgent("builder")],
+			chain: [{ agent: "worker", task: "Do work" }],
+			agents: [makeAgent("worker")],
 			ctx: {
 				pi: { events: { emit() {} } },
 				cwd: tempDir,
@@ -3710,8 +3803,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const id = `async-chain-empty-model-${Date.now().toString(36)}`;
 		executeAsyncChain(id, {
-			chain: [{ agent: "builder", task: "Do work", model: "" }],
-			agents: [makeAgent("builder", { model: "anthropic/claude-sonnet-4-5", thinking: "high" })],
+			chain: [{ agent: "worker", task: "Do work", model: "" }],
+			agents: [makeAgent("worker", { model: "anthropic/claude-sonnet-4-5", thinking: "high" })],
 			ctx: {
 				pi: { events: { emit() {} } },
 				cwd: tempDir,
@@ -3754,8 +3847,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			for (const [index, requestedModel] of [undefined, "", "inherit"].entries()) {
 				const id = `async-chain-no-parent-${index}-${Date.now().toString(36)}`;
 				executeAsyncChain(id, {
-					chain: [{ agent: "builder", task: "Do work", ...(requestedModel !== undefined ? { model: requestedModel } : {}) }],
-					agents: [makeAgent("builder", { model: "openai/gpt-5-mini", thinking: "high" })],
+					chain: [{ agent: "worker", task: "Do work", ...(requestedModel !== undefined ? { model: requestedModel } : {}) }],
+					agents: [makeAgent("worker", { model: "openai/gpt-5-mini", thinking: "high" })],
 					ctx: {
 						pi: { events: { emit() {} } },
 						cwd: tempDir,
@@ -3804,9 +3897,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		try {
 			writePackageSkill(taskCwd, "async-task-cwd-skill");
 			executeAsyncSingle(id, {
-				agent: "builder",
+				agent: "worker",
 				task: "Do work",
-				agentConfig: makeAgent("builder", { skills: ["async-task-cwd-skill"] }),
+				agentConfig: makeAgent("worker", { skills: ["async-task-cwd-skill"] }),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				cwd: taskCwd,
 				artifactConfig: {
@@ -3842,15 +3935,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("injects agent-file-relative local skills into background single child prompts", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Done asynchronously" });
 		const id = `async-local-skill-${Date.now().toString(36)}`;
-		const agentFile = path.join(tempDir, "agents", "builder", "builder.md");
+		const agentFile = path.join(tempDir, "agents", "worker", "worker.md");
 		const skillFile = path.join(path.dirname(agentFile), "skills", "local", "SKILL.md");
 		fs.mkdirSync(path.dirname(skillFile), { recursive: true });
 		fs.writeFileSync(skillFile, "---\ndescription: async local skill\n---\nLocal skill body\n", "utf-8");
 
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder", { filePath: agentFile, skills: ["local"], skillPath: ["./skills"] }),
+			agentConfig: makeAgent("worker", { filePath: agentFile, skills: ["local"], skillPath: ["./skills"] }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -3896,9 +3989,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("background single runs report unavailable pi-subagents skill requests", () => {
 		const id = `async-pi-subagents-skill-${Date.now().toString(36)}`;
 		const result = executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			cwd: tempDir,
 			artifactConfig: {
@@ -3922,8 +4015,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("background chains report unavailable pi-subagents skill requests", () => {
 		const id = `async-chain-pi-subagents-skill-${Date.now().toString(36)}`;
 		const result = executeAsyncChain(id, {
-			chain: [{ agent: "builder", task: "Do work", skill: ["pi-subagents"] }],
-			agents: [makeAgent("builder")],
+			chain: [{ agent: "worker", task: "Do work", skill: ["pi-subagents"] }],
+			agents: [makeAgent("worker")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			cwd: tempDir,
 			artifactConfig: {
@@ -3954,8 +4047,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		try {
 			writePackageSkill(path.join(chainCwd, "packages", "app"), "async-chain-step-skill");
 			executeAsyncChain(id, {
-				chain: [{ agent: "builder", task: "Do work", cwd: "packages/app", skill: ["async-chain-step-skill"] }],
-				agents: [makeAgent("builder")],
+				chain: [{ agent: "worker", task: "Do work", cwd: "packages/app", skill: ["async-chain-step-skill"] }],
+				agents: [makeAgent("worker")],
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				cwd: chainCwd,
 				artifactConfig: {
@@ -4053,9 +4146,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		fs.mkdirSync(path.join(TEMP_ROOT_DIR, `async-cfg-${id}.json`), { recursive: true });
 
 		const result = executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -4080,9 +4173,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const missingCwd = path.join(tempDir, "missing-cwd");
 
 		const singleResult = executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			cwd: missingCwd,
 			artifactConfig: {
@@ -4104,8 +4197,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const chainId = `async-missing-cwd-chain-${Date.now().toString(36)}`;
 		const chainResult = executeAsyncChain(chainId, {
-			chain: [{ agent: "builder", task: "Do work" }],
-			agents: [makeAgent("builder")],
+			chain: [{ agent: "worker", task: "Do work" }],
+			agents: [makeAgent("worker")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			cwd: missingCwd,
 			artifactConfig: {
@@ -4135,9 +4228,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		try {
 			const id = `async-spawn-fail-${Date.now().toString(36)}`;
 			const result = executeAsyncSingle(id, {
-				agent: "builder",
+				agent: "worker",
 				task: "Do work",
-				agentConfig: makeAgent("builder"),
+				agentConfig: makeAgent("worker"),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				artifactConfig: {
 					enabled: false,
@@ -4172,8 +4265,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		fs.mkdirSync(path.join(TEMP_ROOT_DIR, `async-cfg-${id}.json`), { recursive: true });
 
 		const result = executeAsyncChain(id, {
-			chain: [{ agent: "builder", task: "Do work" }],
-			agents: [makeAgent("builder")],
+			chain: [{ agent: "worker", task: "Do work" }],
+			agents: [makeAgent("worker")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -4203,9 +4296,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 			const start = Date.now();
 			executeAsyncSingle(id, {
-				agent: "builder",
+				agent: "worker",
 				task: "Do work",
-				agentConfig: makeAgent("builder"),
+				agentConfig: makeAgent("worker"),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 				shareEnabled: false,
@@ -4237,9 +4330,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 			const start = Date.now();
 			executeAsyncSingle(id, {
-				agent: "builder",
+				agent: "worker",
 				task: "Do work",
-				agentConfig: makeAgent("builder"),
+				agentConfig: makeAgent("worker"),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 				shareEnabled: false,
@@ -4269,9 +4362,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 			const start = Date.now();
 			executeAsyncSingle(id, {
-				agent: "builder",
+				agent: "worker",
 				task: "Do work",
-				agentConfig: makeAgent("builder"),
+				agentConfig: makeAgent("worker"),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 				shareEnabled: false,
@@ -4304,9 +4397,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const start = Date.now();
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -4349,9 +4442,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const start = Date.now();
 		executeAsyncSingle(id, {
-			agent: "explorer",
+			agent: "scout",
 			task: "Inspect something",
-			agentConfig: makeAgent("explorer"),
+			agentConfig: makeAgent("scout"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -4394,9 +4487,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
 
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Do work",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -4431,9 +4524,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
 
 		executeAsyncSingle(id, {
-			agent: "explorer",
+			agent: "scout",
 			task: "Investigate behavior",
-			agentConfig: makeAgent("explorer"),
+			agentConfig: makeAgent("scout"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -4499,9 +4592,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const eventsPath = path.join(asyncDir, "events.jsonl");
 		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Run the command",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -4541,23 +4634,25 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	});
 
 	it("subagent_wait wakes when an async child is waiting on contact_supervisor", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const id = `async-supervisor-attention-${Date.now().toString(36)}`;
+		const replyReleasePath = path.join(tempDir, `${id}.reply`);
+		const finalReleasePath = path.join(tempDir, `${id}.final`);
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
-				{ delay: 5_000, jsonl: [events.toolEnd("contact_supervisor"), events.toolResult("contact_supervisor", "**Reply from supervisor:**\nProceed")] },
-				{ delay: 2_500, jsonl: [events.assistantMessage("Done")] },
+				{ waitForPath: replyReleasePath, jsonl: [events.toolEnd("contact_supervisor"), events.toolResult("contact_supervisor", "**Reply from supervisor:**\nProceed")] },
+				{ waitForPath: finalReleasePath, jsonl: [events.assistantMessage("Done")] },
 			],
 		});
 
-		const id = `async-supervisor-attention-${Date.now().toString(36)}`;
 		const asyncDir = path.join(ASYNC_DIR, id);
 		const eventsPath = path.join(asyncDir, "events.jsonl");
 		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
 		const statusPath = path.join(asyncDir, "status.json");
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Ask the supervisor for a blocking decision",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -4573,55 +4668,71 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			},
 		});
 
-		const attentionDeadline = Date.now() + 10_000;
-		let statusDuringAttention: AsyncStatusPayload | undefined;
-		while (Date.now() < attentionDeadline && !fs.existsSync(resultPath)) {
-			if (fs.existsSync(statusPath)) {
+		const releaseMockChild = () => {
+			if (!fs.existsSync(replyReleasePath)) fs.writeFileSync(replyReleasePath, "release", "utf-8");
+			if (!fs.existsSync(finalReleasePath)) fs.writeFileSync(finalReleasePath, "release", "utf-8");
+		};
+		const releaseSupervisorReply = () => {
+			if (!fs.existsSync(replyReleasePath)) fs.writeFileSync(replyReleasePath, "release", "utf-8");
+		};
+		try {
+			const attentionDeadline = Date.now() + 10_000;
+			let statusDuringAttention: AsyncStatusPayload | undefined;
+			while (Date.now() < attentionDeadline && !fs.existsSync(resultPath)) {
+				if (fs.existsSync(statusPath)) {
+					const nextStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+					if (nextStatus.currentTool === "contact_supervisor" && nextStatus.activityState === "needs_attention") {
+						statusDuringAttention = nextStatus;
+						break;
+					}
+				}
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			}
+			assert.ok(statusDuringAttention, "expected status.json to expose the blocking supervisor request");
+
+			try {
+				const waitResult = await waitForSubagents({ id, timeoutMs: 3_500 }, undefined, {
+					state: { currentSessionId: "session-1", foregroundRuns: new Map(), asyncJobs: new Map(), cleanupTimers: new Map(), resultFileCoalescer: new Map() },
+					pollIntervalMs: 100,
+					events: createEventBus(),
+				});
+				const waitText = waitResult.content[0]?.text ?? "";
+				assert.equal(waitResult.isError, undefined);
+				assert.match(waitText, /attention required/i);
+				assert.match(waitText, new RegExp(id));
+				assert.match(waitText, /intercom\(\{ action: "pending" \}\)/);
+				assert.equal(fs.existsSync(resultPath), false, "wait should return before the child completes");
+			} finally {
+				releaseSupervisorReply();
+			}
+
+			const eventText = fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath, "utf-8") : "";
+			assert.match(eventText, /"type":"needs_attention"/);
+			assert.match(eventText, /"reason":"supervisor_request"/);
+			assert.equal(statusDuringAttention.activityState, "needs_attention");
+			assert.equal(statusDuringAttention.steps?.[0]?.activityState, "needs_attention");
+			assert.equal(statusDuringAttention.currentTool, "contact_supervisor");
+			assert.equal(statusDuringAttention.steps?.[0]?.currentTool, "contact_supervisor");
+
+			const clearDeadline = Date.now() + 10_000;
+			let statusAfterReply: AsyncStatusPayload | undefined;
+			while (Date.now() < clearDeadline && !fs.existsSync(resultPath)) {
 				const nextStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-				if (nextStatus.currentTool === "contact_supervisor" && nextStatus.activityState === "needs_attention") {
-					statusDuringAttention = nextStatus;
+				if (nextStatus.state === "running" && !nextStatus.currentTool && !nextStatus.steps?.[0]?.currentTool) {
+					statusAfterReply = nextStatus;
 					break;
 				}
+				await new Promise((resolve) => setTimeout(resolve, 100));
 			}
-			await new Promise((resolve) => setTimeout(resolve, 100));
+			assert.ok(statusAfterReply, "expected the child to keep running after the supervisor reply");
+			assert.equal(statusAfterReply.activityState, undefined);
+			assert.equal(statusAfterReply.steps?.[0]?.activityState, undefined);
+
+			fs.writeFileSync(finalReleasePath, "release", "utf-8");
+			await waitForAsyncResultFile(id);
+		} finally {
+			releaseMockChild();
 		}
-		assert.ok(statusDuringAttention, "expected status.json to expose the blocking supervisor request");
-
-		const waitResult = await waitForSubagents({ id, timeoutMs: 3_500 }, undefined, {
-			state: { currentSessionId: "session-1", foregroundRuns: new Map(), asyncJobs: new Map(), cleanupTimers: new Map(), resultFileCoalescer: new Map() },
-			pollIntervalMs: 100,
-			events: createEventBus(),
-		});
-		const waitText = waitResult.content[0]?.text ?? "";
-		assert.equal(waitResult.isError, undefined);
-		assert.match(waitText, /attention required/i);
-		assert.match(waitText, new RegExp(id));
-		assert.match(waitText, /intercom\(\{ action: "pending" \}\)/);
-		assert.equal(fs.existsSync(resultPath), false, "wait should return before the child completes");
-
-		const eventText = fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath, "utf-8") : "";
-		assert.match(eventText, /"type":"needs_attention"/);
-		assert.match(eventText, /"reason":"supervisor_request"/);
-		assert.equal(statusDuringAttention.activityState, "needs_attention");
-		assert.equal(statusDuringAttention.steps?.[0]?.activityState, "needs_attention");
-		assert.equal(statusDuringAttention.currentTool, "contact_supervisor");
-		assert.equal(statusDuringAttention.steps?.[0]?.currentTool, "contact_supervisor");
-
-		const clearDeadline = Date.now() + 10_000;
-		let statusAfterReply: AsyncStatusPayload | undefined;
-		while (Date.now() < clearDeadline && !fs.existsSync(resultPath)) {
-			const nextStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-			if (nextStatus.state === "running" && !nextStatus.currentTool && !nextStatus.steps?.[0]?.currentTool) {
-				statusAfterReply = nextStatus;
-				break;
-			}
-			await new Promise((resolve) => setTimeout(resolve, 100));
-		}
-		assert.ok(statusAfterReply, "expected the child to keep running after the supervisor reply");
-		assert.equal(statusAfterReply.activityState, undefined);
-		assert.equal(statusAfterReply.steps?.[0]?.activityState, undefined);
-
-		await waitForAsyncResultFile(id);
 	});
 
 	it("background runs escalate repeated mutating tool failures", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -4640,9 +4751,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
 
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Implement the approved fixes",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -4724,9 +4835,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const sessionRoot = path.join(tempDir, "sessions");
 
 			executeAsyncSingle(id, {
-				agent: "builder",
+				agent: "worker",
 				task: "Stream noisy diagnostics",
-				agentConfig: makeAgent("builder"),
+				agentConfig: makeAgent("worker"),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				artifactConfig: {
 					enabled: false,
@@ -4775,9 +4886,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const sessionRoot = path.join(tempDir, "sessions");
 
 		executeAsyncSingle(id, {
-			agent: "builder",
+			agent: "worker",
 			task: "Stream detailed progress",
-			agentConfig: makeAgent("builder"),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,

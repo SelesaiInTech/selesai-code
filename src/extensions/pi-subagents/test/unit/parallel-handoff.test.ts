@@ -89,16 +89,16 @@ describe("parallel handoff", () => {
 				stepIndex: 2,
 				flatStartIndex: 3,
 				setup: setup("/repo", "base-1"),
-				diffs: [diff(dir, 0, "builder", true)],
+				diffs: [diff(dir, 0, "worker", true)],
 				cleanup: cleanup(),
 				results: [{
-					agent: "builder",
+					agent: "worker",
 					status: "completed",
 					summary: "implemented",
 					outputPath: "/artifacts/output.md",
 					structuredOutput: { ok: true },
 					structuredOutputPath: "/artifacts/structured.json",
-					sessionPath: "/sessions/builder.jsonl",
+					sessionPath: "/sessions/worker.jsonl",
 				}],
 				now: 100,
 			});
@@ -120,9 +120,9 @@ describe("parallel handoff", () => {
 				stepIndex: 1,
 				flatStartIndex: 1,
 				setup: setup("/repo", "base-1"),
-				diffs: [diff(dir, 1, "commentator", false)],
+				diffs: [diff(dir, 1, "reviewer", false)],
 				cleanup: cleanup("partial"),
-				results: [{ agent: "commentator", status: "failed", summary: "blocked" }],
+				results: [{ agent: "reviewer", status: "failed", summary: "blocked" }],
 				now: 200,
 			});
 			assert.equal(second.groupCount, 2);
@@ -189,9 +189,9 @@ describe("parallel handoff", () => {
 				stepIndex: 0,
 				flatStartIndex: 0,
 				setup: setup("/repo", "base-1"),
-				diffs: [diff(dir, 0, "builder", false)],
+				diffs: [diff(dir, 0, "worker", false)],
 				cleanup: cleanup(),
-				results: [{ agent: "builder", status: "completed" as const, summary: "done" }],
+				results: [{ agent: "worker", status: "completed" as const, summary: "done" }],
 			};
 			writeParallelHandoffGroup({ ...common, runId: "run-1" });
 			assert.throws(

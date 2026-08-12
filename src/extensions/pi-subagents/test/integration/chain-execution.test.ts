@@ -221,12 +221,12 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	it("pauses foreground chains at approval checkpoints without launching the next child", async () => {
 		mockPi.onCall({ output: "analysis done" });
 		mockPi.onCall({ output: "should not run" });
-		const agents = [makeAgent("analyst"), makeAgent("builder")];
+		const agents = [makeAgent("analyst"), makeAgent("worker")];
 
 		const result = await executeChain!(makeChainParams([
 			{ agent: "analyst", task: "Analyze" },
 			{ checkpoint: "review", message: "Approve implementation?" },
-			{ agent: "builder", task: "Implement" },
+			{ agent: "worker", task: "Implement" },
 		], agents));
 
 		assert.equal(result.isError, undefined);
@@ -241,10 +241,10 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 	it("applies global permissions to foreground chain children", async () => {
 		mockPi.onCall({ echoEnv: [PERMISSION_POLICY_ENV, PERMISSION_AUDIT_PATH_ENV] });
-		const agents = [makeAgent("builder")];
+		const agents = [makeAgent("worker")];
 
 		const result = await executeChain!(makeChainParams(
-			[{ agent: "builder", task: "Work" }],
+			[{ agent: "worker", task: "Work" }],
 			agents,
 			{ permissions: { rules: { write: "ask" } } },
 		));
@@ -410,11 +410,11 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 				"```",
 			].join("\n"),
 		});
-		const agents = [makeAgent("builder", { completionGuard: false })];
+		const agents = [makeAgent("worker", { completionGuard: false })];
 
 		const result = await executeChain(
 			makeChainParams(
-				[{ agent: "builder", task: "Implement fix", output: "accepted.md", outputMode: "file-only", acceptance: { level: "checked", criteria: ["Patch bug"] } }],
+				[{ agent: "worker", task: "Implement fix", output: "accepted.md", outputMode: "file-only", acceptance: { level: "checked", criteria: ["Patch bug"] } }],
 				agents,
 				{ chainDir: tempDir },
 			),
@@ -442,7 +442,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		const failed = await executeChain(
 			makeChainParams(
-				[{ agent: "builder", task: "Implement fix", acceptance: { level: "checked" } }],
+				[{ agent: "worker", task: "Implement fix", acceptance: { level: "checked" } }],
 				agents,
 			),
 		);
@@ -467,11 +467,11 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 			"```",
 		].join("\n");
 		mockPi.onCall({ output: acceptanceReport });
-		const agents = [makeAgent("builder", { completionGuard: false })];
+		const agents = [makeAgent("worker", { completionGuard: false })];
 
 		const result = await executeChain(
 			makeChainParams(
-				[{ agent: "builder", task: "Implement fix", acceptance: { level: "verified", verify: [{ id: "runtime-pass", command: "node -e \"process.exit(0)\"" }] } }],
+				[{ agent: "worker", task: "Implement fix", acceptance: { level: "verified", verify: [{ id: "runtime-pass", command: "node -e \"process.exit(0)\"" }] } }],
 				agents,
 			),
 		);
@@ -482,7 +482,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		mockPi.onCall({ output: acceptanceReport });
 		const failed = await executeChain(
 			makeChainParams(
-				[{ agent: "builder", task: "Implement fix", acceptance: { level: "verified", verify: [{ id: "runtime-fail", command: "node -e \"process.exit(5)\"" }] } }],
+				[{ agent: "worker", task: "Implement fix", acceptance: { level: "verified", verify: [{ id: "runtime-fail", command: "node -e \"process.exit(5)\"" }] } }],
 				agents,
 			),
 		);
@@ -560,8 +560,8 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		const result = await executeChain(
 			makeChainParams(
-				[{ agent: "builder", task: "Do work" }],
-				[makeAgent("builder")],
+				[{ agent: "worker", task: "Do work" }],
+				[makeAgent("worker")],
 				{
 					ctx: {
 						...makeMinimalCtx(tempDir),
@@ -582,8 +582,8 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		const result = await executeChain(
 			makeChainParams(
-				[{ agent: "builder", task: "Do work", model: "inherit" }],
-				[makeAgent("builder")],
+				[{ agent: "worker", task: "Do work", model: "inherit" }],
+				[makeAgent("worker")],
 				{
 					ctx: {
 						...makeMinimalCtx(tempDir),
@@ -601,11 +601,11 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 	it("suppresses progress for {task} chain templates when the top-level task is review-only", async () => {
 		mockPi.onCall({ output: "Review done" });
-		const agents = [makeAgent("commentator", { defaultProgress: true })];
+		const agents = [makeAgent("reviewer", { defaultProgress: true })];
 
 		await executeChain(
 			makeChainParams(
-				[{ agent: "commentator" }],
+				[{ agent: "reviewer" }],
 				agents,
 				{ task: "Review-only. Do not edit files. Return findings." },
 			),
@@ -616,15 +616,36 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.equal(fs.existsSync(path.join(tempDir, "progress.md")), false);
 	});
 
+	it("foreground chains resolve explicit reads inside the chain directory", async () => {
+		mockPi.onCall({ output: "Review done" });
+		const chainDir = path.join(tempDir, "chain-reads");
+		const runId = "chain-reads-run";
+		const runDir = path.join(chainDir, runId);
+		fs.mkdirSync(runDir, { recursive: true });
+		fs.writeFileSync(path.join(runDir, "plan.md"), "chain plan");
+		fs.writeFileSync(path.join(runDir, "progress.md"), "chain progress");
+
+		await executeChain!(makeChainParams(
+			[{ agent: "reviewer", task: "Review the chain artifacts.", reads: ["plan.md", "progress.md"] }],
+			[makeAgent("reviewer")],
+			{ chainDir, runId },
+		));
+
+		const taskArg = readCallArgs(0).at(-1) ?? "";
+		assert.ok(taskArg.includes("[Read from: "));
+		assert.ok(taskArg.includes(path.join(runDir, "plan.md")));
+		assert.ok(taskArg.includes(path.join(runDir, "progress.md")));
+	});
+
 	it("foreground chains still resolve defaultProgress inside the chain directory", async () => {
 		mockPi.onCall({ output: "Progress done" });
-		const agents = [makeAgent("commentator", { defaultProgress: true })];
+		const agents = [makeAgent("reviewer", { defaultProgress: true })];
 		const chainDir = path.join(tempDir, "chain-progress");
 		const runId = "chain-progress-run";
 
 		await executeChain(
 			makeChainParams(
-				[{ agent: "commentator", task: "Track chain work" }],
+				[{ agent: "reviewer", task: "Track chain work" }],
 				agents,
 				{ chainDir, runId },
 			),
@@ -681,16 +702,16 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		mockPi.onCall({ output: "review-a", structuredOutput: { ok: "a" } });
 		mockPi.onCall({ output: "review-b", structuredOutput: { ok: "b" } });
 		mockPi.onCall({ output: "synthesized" });
-		const agents = [makeAgent("explorer"), makeAgent("commentator"), makeAgent("writer")];
+		const agents = [makeAgent("scout"), makeAgent("reviewer"), makeAgent("writer")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
-					{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
 						parallel: {
-							agent: "commentator",
+							agent: "reviewer",
 							task: "Review {target.path}",
 							label: "Review {target.path}",
 							outputSchema: { type: "object" },
@@ -724,14 +745,14 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		});
 		mockPi.onCall({ echoEnv: [PERMISSION_POLICY_ENV, PERMISSION_AUDIT_PATH_ENV], structuredOutput: { ok: "a" } });
 		mockPi.onCall({ echoEnv: [PERMISSION_POLICY_ENV, PERMISSION_AUDIT_PATH_ENV], structuredOutput: { ok: "b" } });
-		const agents = [makeAgent("explorer"), makeAgent("commentator")];
+		const agents = [makeAgent("scout"), makeAgent("reviewer")];
 
 		const result = await executeChain!(makeChainParams(
 			[
-				{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-					parallel: { agent: "commentator", task: "Review {item.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" } },
 					collect: { as: "reviews" },
 					concurrency: 1,
 				},
@@ -741,7 +762,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		));
 
 		assert.equal(result.isError, undefined);
-		const reviewerResults = result.details.results.filter((entry) => entry.agent === "commentator");
+		const reviewerResults = result.details.results.filter((entry) => entry.agent === "reviewer");
 		assert.equal(reviewerResults.length, 2);
 		for (const child of reviewerResults) {
 			const env = JSON.parse(child.finalOutput ?? "{}") as Record<string, string | null>;
@@ -757,15 +778,15 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		});
 		mockPi.onCall({ output: acceptanceReport({ changedFiles: ["src/a.ts"] }), structuredOutput: { ok: "a" } });
 		mockPi.onCall({ output: acceptanceReport({ changedFiles: ["src/b.ts"] }), structuredOutput: { ok: "b" } });
-		const agents = [makeAgent("explorer"), makeAgent("commentator", { completionGuard: false })];
+		const agents = [makeAgent("scout"), makeAgent("reviewer", { completionGuard: false })];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
-					{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-						parallel: { agent: "commentator", task: "Review {item.path}", outputSchema: { type: "object" }, acceptance: { level: "checked" } },
+						parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" }, acceptance: { level: "checked" } },
 						collect: { as: "reviews" },
 						acceptance: { level: "checked" },
 						concurrency: 1,
@@ -779,7 +800,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		const dynamicNode = result.details.workflowGraph?.nodes[1];
 		assert.equal(dynamicNode?.acceptanceStatus, "review-required");
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["checked", "checked"]);
-		assert.deepEqual(result.details.results.filter((child) => child.agent === "commentator").map((child) => child.acceptance?.evidenceStatus), ["checked", "checked"]);
+		assert.deepEqual(result.details.results.filter((child) => child.agent === "reviewer").map((child) => child.acceptance?.evidenceStatus), ["checked", "checked"]);
 	});
 
 	it("applies read-only acceptance roles to dynamic children and their aggregate group", async () => {
@@ -796,15 +817,15 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		});
 		mockPi.onCall({ output: readOnlyReport, structuredOutput: { ok: "a" } });
 		mockPi.onCall({ output: readOnlyReport, structuredOutput: { ok: "b" } });
-		const agents = [makeAgent("explorer"), makeAgent("recapper", { acceptanceRole: "read-only" })];
+		const agents = [makeAgent("scout"), makeAgent("explorer", { acceptanceRole: "read-only" })];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
-					{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-						parallel: { agent: "recapper", task: "Explore {item.path}", outputSchema: { type: "object" } },
+						parallel: { agent: "explorer", task: "Explore {item.path}", outputSchema: { type: "object" } },
 						collect: { as: "reviews" },
 						concurrency: 1,
 					},
@@ -814,7 +835,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		);
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
-		const explorerResults = result.details.results.filter((child) => child.agent === "recapper");
+		const explorerResults = result.details.results.filter((child) => child.agent === "explorer");
 		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance.level), ["attested", "attested"]);
 		const dynamicNode = result.details.workflowGraph?.nodes[1];
 		assert.equal(dynamicNode?.acceptanceStatus, "attested");
@@ -828,15 +849,15 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		});
 		mockPi.onCall({ output: acceptanceReport({ changedFiles: ["src/a.ts"] }), structuredOutput: { ok: "a" } });
 		mockPi.onCall({ output: acceptanceReport({ changedFiles: ["src/b.ts"] }), structuredOutput: { ok: "b" } });
-		const agents = [makeAgent("explorer"), makeAgent("recapper", { acceptanceRole: "read-only" })];
+		const agents = [makeAgent("scout"), makeAgent("explorer", { acceptanceRole: "read-only" })];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
-					{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-						parallel: { agent: "recapper", task: "Patch {item.path}", outputSchema: { type: "object" } },
+						parallel: { agent: "explorer", task: "Patch {item.path}", outputSchema: { type: "object" } },
 						collect: { as: "reviews" },
 						concurrency: 1,
 					},
@@ -846,7 +867,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		);
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
-		const explorerResults = result.details.results.filter((child) => child.agent === "recapper");
+		const explorerResults = result.details.results.filter((child) => child.agent === "explorer");
 		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance.level), ["checked", "checked"]);
 		const dynamicNode = result.details.workflowGraph?.nodes[1];
 		assert.equal(dynamicNode?.acceptanceStatus, "rejected");
@@ -860,15 +881,15 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		});
 		mockPi.onCall({ output: "review-a", structuredOutput: { ok: "a" } });
 		mockPi.onCall({ exitCode: 1, stderr: "review-b failed" });
-		const agents = [makeAgent("explorer"), makeAgent("commentator")];
+		const agents = [makeAgent("scout"), makeAgent("reviewer")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
-					{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-						parallel: { agent: "commentator", task: "Review {item.path}", outputSchema: { type: "object" } },
+						parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" } },
 						collect: { as: "reviews" },
 						concurrency: 1,
 					},
@@ -885,15 +906,15 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 	it("fails dynamic fanout before spawning children for invalid source arrays", async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "a" }, { path: "b" }] } });
-		const agents = [makeAgent("explorer"), makeAgent("commentator")];
+		const agents = [makeAgent("scout"), makeAgent("reviewer")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
-					{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 1 },
-						parallel: { agent: "commentator", task: "Review {item.path}" },
+						parallel: { agent: "reviewer", task: "Review {item.path}" },
 						collect: { as: "reviews" },
 					},
 				],
@@ -910,15 +931,15 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 	it("marks dynamic file-only validation failures as failed graph groups before spawning children", async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }] } });
-		const agents = [makeAgent("explorer"), makeAgent("commentator")];
+		const agents = [makeAgent("scout"), makeAgent("reviewer")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
-					{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-						parallel: { agent: "commentator", task: "Review {item.path}", outputMode: "file-only" },
+						parallel: { agent: "reviewer", task: "Review {item.path}", outputMode: "file-only" },
 						collect: { as: "reviews" },
 					},
 				],
@@ -937,15 +958,15 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	it("marks empty dynamic fanout skip as a completed graph group", async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [] } });
 		mockPi.onCall({ output: "used empty reviews" });
-		const agents = [makeAgent("explorer"), makeAgent("commentator"), makeAgent("writer")];
+		const agents = [makeAgent("scout"), makeAgent("reviewer"), makeAgent("writer")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
-					{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4, onEmpty: "skip" },
-						parallel: { agent: "commentator", task: "Review {item.path}" },
+						parallel: { agent: "reviewer", task: "Review {item.path}" },
 						collect: { as: "reviews" },
 					},
 					{ agent: "writer", task: "Use {outputs.reviews}" },
@@ -964,15 +985,15 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	it("marks dynamic collect schema failures as failed graph groups", async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }] } });
 		mockPi.onCall({ output: "review-a", structuredOutput: { ok: "a" } });
-		const agents = [makeAgent("explorer"), makeAgent("commentator")];
+		const agents = [makeAgent("scout"), makeAgent("reviewer")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
-					{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-						parallel: { agent: "commentator", task: "Review {item.path}", outputSchema: { type: "object" } },
+						parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" } },
 						collect: { as: "reviews", outputSchema: { type: "object" } },
 					},
 				],
@@ -993,16 +1014,16 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		mockPi.onCall({ output: "review-a", structuredOutput: { ok: "a" } });
 		mockPi.onCall({ output: "review-b", structuredOutput: { ok: "b" } });
 		mockPi.onCall({ steps: [{ jsonl: [events.assistantMessage("writer started")] }] });
-		const agents = [makeAgent("explorer"), makeAgent("commentator"), makeAgent("writer")];
+		const agents = [makeAgent("scout"), makeAgent("reviewer"), makeAgent("writer")];
 		let writerUpdateChildren: Array<{ itemKey?: string; status?: string }> | undefined;
 
 		const result = await executeChain(
 			makeChainParams(
 				[
-					{ agent: "explorer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-						parallel: { agent: "commentator", task: "Review {item.path}", outputSchema: { type: "object" } },
+						parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" } },
 						collect: { as: "reviews" },
 						concurrency: 1,
 					},
@@ -1063,10 +1084,10 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 			properties: { ok: { type: "boolean" }, note: { type: "string" } },
 		};
 		mockPi.onCall({ output: "prose", structuredOutput: { ok: true, note: "captured" } });
-		const agents = [makeAgent("builder")];
+		const agents = [makeAgent("worker")];
 
 		const result = await executeChain(
-			makeChainParams([{ agent: "builder", task: "Return structured", outputSchema: schema }], agents),
+			makeChainParams([{ agent: "worker", task: "Return structured", outputSchema: schema }], agents),
 		);
 
 		assert.ok(!result.isError);
@@ -1075,7 +1096,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		mockPi.reset();
 		mockPi.onCall({ structuredOutput: { ok: true, note: "tool-only" } });
 		const structuredOnly = await executeChain(
-			makeChainParams([{ agent: "builder", task: "Return structured", outputSchema: schema }], agents),
+			makeChainParams([{ agent: "worker", task: "Return structured", outputSchema: schema }], agents),
 		);
 		assert.ok(!structuredOnly.isError);
 		assert.deepEqual(structuredOnly.details.results[0]?.structuredOutput, { ok: true, note: "tool-only" });
@@ -1083,15 +1104,23 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		mockPi.reset();
 		mockPi.onCall({ output: "prose only" });
 		const missing = await executeChain(
-			makeChainParams([{ agent: "builder", task: "Return structured", outputSchema: schema }], agents),
+			makeChainParams([{ agent: "worker", task: "Return structured", outputSchema: schema }], agents),
 		);
 		assert.equal(missing.isError, true);
 		assert.match(missing.details.results[0]?.error ?? "", /Missing structured_output call/);
 
 		mockPi.reset();
+		mockPi.onCall({ output: "prose only" });
+		const missingImplementation = await executeChain(
+			makeChainParams([{ agent: "worker", task: "Implement the fix and return structured data", outputSchema: schema }], agents),
+		);
+		assert.equal(missingImplementation.isError, true);
+		assert.match(missingImplementation.details.results[0]?.error ?? "", /Missing structured_output call/);
+
+		mockPi.reset();
 		mockPi.onCall({ output: "invalid", structuredOutput: { ok: "yes" } });
 		const invalid = await executeChain(
-			makeChainParams([{ agent: "builder", task: "Return structured", outputSchema: schema, phase: "Validate", label: "Structured builder", as: "result" }], agents),
+			makeChainParams([{ agent: "worker", task: "Return structured", outputSchema: schema, phase: "Validate", label: "Structured worker", as: "result" }], agents),
 		);
 		assert.equal(invalid.isError, true);
 		assert.match(invalid.details.results[0]?.error ?? "", /Structured output validation failed/);
@@ -1100,13 +1129,35 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.match(invalid.details.workflowGraph?.nodes[0]?.error ?? "", /Structured output validation failed/);
 	});
 
+	it("accepts recovered tool errors before valid structured output", async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "tool_result_end",
+				message: { role: "toolResult", toolName: "read", isError: true, content: [{ type: "text", text: "EISDIR" }] },
+			}],
+			structuredOutput: { ok: true },
+		});
+		const agents = [makeAgent("worker")];
+
+		const result = await executeChain(
+			makeChainParams([{
+				agent: "worker",
+				task: "Recover and return structured data",
+				outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
+			}], agents),
+		);
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		assert.deepEqual(result.details.results[0]?.structuredOutput, { ok: true });
+	});
+
 	it("substitutes {task} in templates", async () => {
 		mockPi.onCall({ output: "Done" });
-		const agents = [makeAgent("builder")];
+		const agents = [makeAgent("worker")];
 
 		const result = await executeChain(
 			makeChainParams(
-				[{ agent: "builder", task: "Review {task} carefully" }],
+				[{ agent: "worker", task: "Review {task} carefully" }],
 				agents,
 				{ task: "the authentication module" },
 			),
@@ -1122,11 +1173,11 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 	it("creates and uses chain_dir", async () => {
 		mockPi.onCall({ output: "Done" });
-		const agents = [makeAgent("builder")];
+		const agents = [makeAgent("worker")];
 
 		const result = await executeChain(
 			makeChainParams(
-				[{ agent: "builder", task: "Write to {chain_dir}" }],
+				[{ agent: "worker", task: "Write to {chain_dir}" }],
 				agents,
 			),
 		);
@@ -1199,13 +1250,13 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 	it("runs a 3-step chain end-to-end", async () => {
 		mockPi.onCall({ output: "Step output" });
-		const agents = [makeAgent("explorer"), makeAgent("architect"), makeAgent("executor")];
+		const agents = [makeAgent("scout"), makeAgent("planner"), makeAgent("executor")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
-					{ agent: "explorer", task: "Survey the codebase" },
-					{ agent: "architect" },
+					{ agent: "scout", task: "Survey the codebase" },
+					{ agent: "planner" },
 					{ agent: "executor" },
 				],
 				agents,
@@ -1217,16 +1268,16 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.ok(result.details.results.every((r) => r.exitCode === 0));
 	});
 
-	it("runs a 40-step alternating builder and commentator chain", async () => {
+	it("runs a 40-step alternating worker and reviewer chain", async () => {
 		const chainLength = 40;
 		for (let i = 0; i < chainLength; i++) {
 			mockPi.onCall({ output: `step-${i}-output` });
 		}
 		const chain = Array.from({ length: chainLength }, (_, i): TestSequentialStep => ({
-			agent: i % 2 === 0 ? "builder" : "commentator",
-			...(i === 0 ? { task: "Start long builder/commentator chain" } : {}),
+			agent: i % 2 === 0 ? "worker" : "reviewer",
+			...(i === 0 ? { task: "Start long worker/reviewer chain" } : {}),
 		}));
-		const agents = [makeAgent("builder"), makeAgent("commentator")];
+		const agents = [makeAgent("worker"), makeAgent("reviewer")];
 
 		const result = await executeChain(makeChainParams(chain, agents));
 
@@ -1236,7 +1287,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.equal(result.details.totalSteps, chainLength);
 		assert.equal(result.details.chainAgents?.length, chainLength);
 		assert.equal(result.details.workflowGraph?.nodes.length, chainLength);
-		assert.equal(result.details.workflowGraph?.nodes.at(-1)?.agent, "commentator");
+		assert.equal(result.details.workflowGraph?.nodes.at(-1)?.agent, "reviewer");
 		assert.equal(result.details.workflowGraph?.nodes.at(-1)?.flatIndex, chainLength - 1);
 		assert.ok(result.details.results.every((r) => r.exitCode === 0));
 		assert.deepEqual(
@@ -1251,11 +1302,11 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	});
 
 	it("returns error for unknown agent in chain", async () => {
-		const agents = [makeAgent("explorer")];
+		const agents = [makeAgent("scout")];
 
 		const result = await executeChain(
 			makeChainParams(
-				[{ agent: "explorer", task: "Start" }, { agent: "nonexistent" }],
+				[{ agent: "scout", task: "Start" }, { agent: "nonexistent" }],
 				agents,
 			),
 		);
@@ -1301,12 +1352,12 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 	it("uses custom chainDir when provided", async () => {
 		mockPi.onCall({ output: "Done" });
-		const agents = [makeAgent("builder")];
+		const agents = [makeAgent("worker")];
 		const customChainDir = path.join(tempDir, "my-chain");
 
 		const result = await executeChain(
 			makeChainParams(
-				[{ agent: "builder", task: "Use {chain_dir}" }],
+				[{ agent: "worker", task: "Use {chain_dir}" }],
 				agents,
 				{ chainDir: customChainDir },
 			),
@@ -1323,11 +1374,11 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		delete process.env.SELESAI_SUBAGENT_MAX_DEPTH;
 		try {
 			mockPi.onCall({ echoEnv: ["SELESAI_SUBAGENT_DEPTH", "SELESAI_SUBAGENT_MAX_DEPTH"] });
-			const agents = [makeAgent("builder", { maxSubagentDepth: 1 })];
+			const agents = [makeAgent("worker", { maxSubagentDepth: 1 })];
 
 			const result = await executeChain(
 				makeChainParams(
-					[{ agent: "builder", task: "Inspect env" }],
+					[{ agent: "worker", task: "Inspect env" }],
 					agents,
 					{ maxSubagentDepth: 3 },
 				),
@@ -1416,15 +1467,15 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 
 	it("runs parallel tasks within a chain step", async () => {
 		mockPi.onCall({ output: "Parallel task done" });
-		const agents = [makeAgent("commentator-a"), makeAgent("commentator-b")];
+		const agents = [makeAgent("reviewer-a"), makeAgent("reviewer-b")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
 					{
 						parallel: [
-							{ agent: "commentator-a", task: "Review auth module" },
-							{ agent: "commentator-b", task: "Review data layer" },
+							{ agent: "reviewer-a", task: "Review auth module" },
+							{ agent: "reviewer-b", task: "Review data layer" },
 						],
 					},
 				],
@@ -1440,13 +1491,13 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 	it("applies global permissions to foreground static parallel children", async () => {
 		mockPi.onCall({ echoEnv: [PERMISSION_POLICY_ENV, PERMISSION_AUDIT_PATH_ENV] });
 		mockPi.onCall({ echoEnv: [PERMISSION_POLICY_ENV, PERMISSION_AUDIT_PATH_ENV] });
-		const agents = [makeAgent("commentator-a"), makeAgent("commentator-b")];
+		const agents = [makeAgent("reviewer-a"), makeAgent("reviewer-b")];
 
 		const result = await executeChain!(makeChainParams(
 			[{
 				parallel: [
-					{ agent: "commentator-a", task: "Review A" },
-					{ agent: "commentator-b", task: "Review B" },
+					{ agent: "reviewer-a", task: "Review A" },
+					{ agent: "reviewer-b", task: "Review B" },
 				],
 			}],
 			agents,
@@ -1474,8 +1525,8 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 		const artifactsDir = path.join(tempDir, "artifacts");
 		const result = await executeChain(
 			makeChainParams(
-				[{ parallel: [{ agent: "commentator-a", task: "Review in isolation" }], worktree: true }],
-				[makeAgent("commentator-a")],
+				[{ parallel: [{ agent: "reviewer-a", task: "Review in isolation" }], worktree: true }],
+				[makeAgent("reviewer-a")],
 				{ runId, artifactsDir },
 			),
 		);
@@ -1488,7 +1539,7 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 			groups: Array<{ stepIndex: number; children: Array<{ agent: string; patch: { path: string } }>; cleanup: { state: string } }>;
 		};
 		assert.equal(handoff.groups[0]!.stepIndex, 0);
-		assert.equal(handoff.groups[0]!.children[0]!.agent, "commentator-a");
+		assert.equal(handoff.groups[0]!.children[0]!.agent, "reviewer-a");
 		assert.equal(handoff.groups[0]!.cleanup.state, "complete");
 		assert.equal(fs.existsSync(handoff.groups[0]!.children[0]!.patch.path), true);
 		assert.match(handoff.groups[0]!.children[0]!.patch.path, /worktree-diffs\/foreground-chain-handoff\/step-0\//);
@@ -1496,15 +1547,15 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 
 	it("aggregates parallel outputs for next sequential step", async () => {
 		mockPi.onCall({ output: "Review findings here" });
-		const agents = [makeAgent("commentator-a"), makeAgent("commentator-b"), makeAgent("synthesizer")];
+		const agents = [makeAgent("reviewer-a"), makeAgent("reviewer-b"), makeAgent("synthesizer")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
 					{
 						parallel: [
-							{ agent: "commentator-a", task: "Review security" },
-							{ agent: "commentator-b", task: "Review performance" },
+							{ agent: "reviewer-a", task: "Review security" },
+							{ agent: "reviewer-b", task: "Review performance" },
 						],
 					},
 					{ agent: "synthesizer" },
@@ -1517,12 +1568,12 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 		assert.equal(result.details.results.length, 3);
 		const synthTask = result.details.results[2].task;
 		assert.ok(
-			synthTask.includes("=== Parallel Task 1 (commentator-a) ==="),
-			"synthesizer should include commentator-a output block",
+			synthTask.includes("=== Parallel Task 1 (reviewer-a) ==="),
+			"synthesizer should include reviewer-a output block",
 		);
 		assert.ok(
-			synthTask.includes("=== Parallel Task 2 (commentator-b) ==="),
-			"synthesizer should include commentator-b output block",
+			synthTask.includes("=== Parallel Task 2 (reviewer-b) ==="),
+			"synthesizer should include reviewer-b output block",
 		);
 	});
 
@@ -1559,15 +1610,15 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 		mockPi.onCall({ matchArgIncludes: "Synthesize:", output: "Funnel synthesis" });
 		mockPi.onCall({ matchArgIncludes: "Review funnel A:", output: "Reviewer A done" });
 		mockPi.onCall({ matchArgIncludes: "Review funnel B:", output: "Reviewer B done" });
-		const agents = [makeAgent("explorer-a"), makeAgent("explorer-b"), makeAgent("synthesizer"), makeAgent("review-a"), makeAgent("review-b")];
+		const agents = [makeAgent("scout-a"), makeAgent("scout-b"), makeAgent("synthesizer"), makeAgent("review-a"), makeAgent("review-b")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
 					{
 						parallel: [
-							{ agent: "explorer-a", task: "Scout API" },
-							{ agent: "explorer-b", task: "Scout UI" },
+							{ agent: "scout-a", task: "Scout API" },
+							{ agent: "scout-b", task: "Scout UI" },
 						],
 					},
 					{ agent: "synthesizer", task: "Synthesize:\n{previous}" },
@@ -1583,12 +1634,12 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 		);
 
 		assert.ok(!result.isError, `should succeed: ${JSON.stringify(result.content)}`);
-		assert.deepEqual(result.details.results.map((entry) => entry.agent), ["explorer-a", "explorer-b", "synthesizer", "review-a", "review-b"]);
+		assert.deepEqual(result.details.results.map((entry) => entry.agent), ["scout-a", "scout-b", "synthesizer", "review-a", "review-b"]);
 		assert.equal(result.details.totalSteps, 3);
 		const funnelTask = readCallArgsMatching("Synthesize:").at(-1) ?? "";
-		assert.match(funnelTask, /=== Parallel Task 1 \(explorer-a\) ===/);
+		assert.match(funnelTask, /=== Parallel Task 1 \(scout-a\) ===/);
 		assert.match(funnelTask, /Scout A findings/);
-		assert.match(funnelTask, /=== Parallel Task 2 \(explorer-b\) ===/);
+		assert.match(funnelTask, /=== Parallel Task 2 \(scout-b\) ===/);
 		assert.match(funnelTask, /Scout B findings/);
 		const fanoutTaskA = readCallArgsMatching("Review funnel A:").at(-1) ?? "";
 		const fanoutTaskB = readCallArgsMatching("Review funnel B:").at(-1) ?? "";
@@ -1601,15 +1652,15 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 
 	it("aggregates file-only parallel outputs as file references for the next step", async () => {
 		mockPi.onCall({ output: "full parallel chain output\nwith details" });
-		const agents = [makeAgent("commentator-a"), makeAgent("commentator-b"), makeAgent("synthesizer")];
+		const agents = [makeAgent("reviewer-a"), makeAgent("reviewer-b"), makeAgent("synthesizer")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
 					{
 						parallel: [
-							{ agent: "commentator-a", task: "Review A", output: "a.md", outputMode: "file-only" },
-							{ agent: "commentator-b", task: "Review B", output: "b.md", outputMode: "file-only" },
+							{ agent: "reviewer-a", task: "Review A", output: "a.md", outputMode: "file-only" },
+							{ agent: "reviewer-b", task: "Review B", output: "b.md", outputMode: "file-only" },
 						],
 					},
 					{ agent: "synthesizer" },
@@ -1629,14 +1680,14 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 	});
 
 	it("rejects chain parallel file-only output without spawning siblings", async () => {
-		const agents = [makeAgent("commentator-a"), makeAgent("commentator-b")];
+		const agents = [makeAgent("reviewer-a"), makeAgent("reviewer-b")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[{
 					parallel: [
-						{ agent: "commentator-a", task: "Review A", outputMode: "file-only" },
-						{ agent: "commentator-b", task: "Review B", output: "b.md" },
+						{ agent: "reviewer-a", task: "Review A", outputMode: "file-only" },
+						{ agent: "reviewer-b", task: "Review B", output: "b.md" },
 					],
 				}],
 				agents,
@@ -1779,12 +1830,12 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 
 	it("sequential → parallel → sequential (mixed chain)", async () => {
 		mockPi.onCall({ output: "Step complete" });
-		const agents = [makeAgent("explorer"), makeAgent("rev-a"), makeAgent("rev-b"), makeAgent("writer")];
+		const agents = [makeAgent("scout"), makeAgent("rev-a"), makeAgent("rev-b"), makeAgent("writer")];
 
 		const result = await executeChain(
 			makeChainParams(
 				[
-					{ agent: "explorer", task: "Initial scan" },
+					{ agent: "scout", task: "Initial scan" },
 					{
 						parallel: [
 							{ agent: "rev-a", task: "Deep review A" },

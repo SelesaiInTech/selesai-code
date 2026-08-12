@@ -62,7 +62,7 @@ describe("below-editor subagent FleetView", () => {
 				mode: "single",
 				startedAt: now - 11_000 + index,
 				updatedAt: now,
-				currentAgent: `builder-${index}`,
+				currentAgent: `worker-${index}`,
 				description: index === 0 ? "Inspect\nmodule 0" : `Inspect module ${index}`,
 				...(index === 0 ? { model: "anthropic/fable-5", thinking: "low" } : {}),
 				tokens: index === 0 ? 13_100 : 100,
@@ -106,9 +106,9 @@ describe("below-editor subagent FleetView", () => {
 			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
 			const expandedLines = component.render(80);
 			assert.ok(expandedLines.some((line) => line.includes("> main")));
-			assert.ok(expandedLines.some((line) => line.includes("  builder-0")), "unselected agents use blank focus space");
+			assert.ok(expandedLines.some((line) => line.includes("  worker-0")), "unselected agents use blank focus space");
 			assert.ok(expandedLines.every((line) => !/[⏺◯]/u.test(line)), "selection avoids terminal-ambiguous circle glyphs");
-			assert.ok(expandedLines.some((line) => line.includes("builder-0 (fable-5 · thinking low)")));
+			assert.ok(expandedLines.some((line) => line.includes("worker-0 (fable-5 · thinking low)")));
 			assert.ok(expandedLines.some((line) => line.includes("11s · ↓ 13.1k tokens")));
 			assert.ok(expandedLines.some((line) => line.includes("↓ 1 more")));
 			for (const line of expandedLines) assert.ok(visibleWidth(line) <= 80, `line exceeded width: ${line}`);
@@ -124,9 +124,9 @@ describe("below-editor subagent FleetView", () => {
 
 	it("keeps one queued agent visible in the compact summary", () => {
 		const state = stateForTest();
-		state.asyncJobs.set("run-builder", {
-			asyncId: "run-builder",
-			asyncDir: "/tmp/run-builder",
+		state.asyncJobs.set("run-worker", {
+			asyncId: "run-worker",
+			asyncDir: "/tmp/run-worker",
 			status: "queued",
 			mode: "single",
 			startedAt: 10,
@@ -160,12 +160,12 @@ describe("below-editor subagent FleetView", () => {
 
 	it("registers above the editor when configured", () => {
 		const state = stateForTest();
-		state.foregroundControls.set("run-builder", {
-			runId: "run-builder",
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
 			mode: "single",
 			startedAt: 10,
 			updatedAt: 20,
-			currentAgent: "builder",
+			currentAgent: "worker",
 		});
 		let placement: string | undefined;
 		const ctx = {
@@ -191,12 +191,12 @@ describe("below-editor subagent FleetView", () => {
 
 	it("stops refreshing when the captured extension context becomes stale", () => {
 		const state = stateForTest();
-		state.foregroundControls.set("run-builder", {
-			runId: "run-builder",
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
 			mode: "single",
 			startedAt: 10,
 			updatedAt: 20,
-			currentAgent: "builder",
+			currentAgent: "worker",
 		});
 		let stale = false;
 		let contextReads = 0;
@@ -238,12 +238,12 @@ describe("below-editor subagent FleetView", () => {
 
 	it("does not swallow unrelated widget cleanup errors", () => {
 		const state = stateForTest();
-		state.foregroundControls.set("run-builder", {
-			runId: "run-builder",
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
 			mode: "single",
 			startedAt: 10,
 			updatedAt: 20,
-			currentAgent: "builder",
+			currentAgent: "worker",
 		});
 		const ctx = {
 			hasUI: true,
@@ -264,12 +264,12 @@ describe("below-editor subagent FleetView", () => {
 
 	it("preserves multiple unrelated UI cleanup errors", () => {
 		const state = stateForTest();
-		state.foregroundControls.set("run-builder", {
-			runId: "run-builder",
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
 			mode: "single",
 			startedAt: 10,
 			updatedAt: 20,
-			currentAgent: "builder",
+			currentAgent: "worker",
 		});
 		const ctx = {
 			hasUI: true,
@@ -297,12 +297,12 @@ describe("below-editor subagent FleetView", () => {
 
 	it("keeps widget ownership through invalidation so an empty refresh removes it", () => {
 		const state = stateForTest();
-		state.foregroundControls.set("run-builder", {
-			runId: "run-builder",
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
 			mode: "single",
 			startedAt: 10,
 			updatedAt: 20,
-			currentAgent: "builder",
+			currentAgent: "worker",
 		});
 		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[]; invalidate(): void }) | undefined;
 		let removals = 0;
@@ -335,12 +335,12 @@ describe("below-editor subagent FleetView", () => {
 
 	it("removes the dynamic widget while the fleet inspector owns the viewport", () => {
 		const state = stateForTest();
-		state.foregroundControls.set("run-builder", {
-			runId: "run-builder",
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
 			mode: "single",
 			startedAt: 10,
 			updatedAt: 20,
-			currentAgent: "builder",
+			currentAgent: "worker",
 		});
 		const registrations: string[] = [];
 		const ctx = {
@@ -500,9 +500,9 @@ describe("below-editor subagent FleetView", () => {
 			startedAt: 50,
 			updatedAt: 200,
 			steps: [
-				{ agent: "explorer", index: 0, status: "complete" },
-				{ agent: "builder", index: 1, status: "running" },
-				{ agent: "commentator", index: 2, status: "pending" },
+				{ agent: "scout", index: 0, status: "complete" },
+				{ agent: "worker", index: 1, status: "running" },
+				{ agent: "reviewer", index: 2, status: "pending" },
 			],
 		});
 		state.asyncJobs.set("parallel-group", {
@@ -515,7 +515,7 @@ describe("below-editor subagent FleetView", () => {
 			startedAt: 100,
 			updatedAt: 200,
 			steps: [
-				{ agent: "commentator", index: 3, status: "running" },
+				{ agent: "reviewer", index: 3, status: "running" },
 				{ agent: "tester", index: 4, status: "pending" },
 			],
 		});
@@ -534,9 +534,9 @@ describe("below-editor subagent FleetView", () => {
 			startedAt: 10,
 			updatedAt: 30,
 			activeChildren: new Map([
-				[0, { index: 0, agent: "commentator", description: "Review correctness", startedAt: 11, updatedAt: 21, tokens: 100 }],
-				[1, { index: 1, agent: "commentator", description: "Review quality", startedAt: 12, updatedAt: 22, tokens: 200 }],
-				[2, { index: 2, agent: "commentator", description: "Review tests", startedAt: 13, updatedAt: 23, tokens: 300 }],
+				[0, { index: 0, agent: "reviewer", description: "Review correctness", startedAt: 11, updatedAt: 21, tokens: 100 }],
+				[1, { index: 1, agent: "reviewer", description: "Review quality", startedAt: 12, updatedAt: 22, tokens: 200 }],
+				[2, { index: 2, agent: "reviewer", description: "Review tests", startedAt: 13, updatedAt: 23, tokens: 300 }],
 			]),
 		});
 
@@ -550,6 +550,24 @@ describe("below-editor subagent FleetView", () => {
 		assert.deepEqual(collectFleetSnapshot(state).items.map((item) => item.key), entries.map((entry) => entry.key));
 	});
 
+	it("labels workflow-owned foreground children", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("child-1", {
+			runId: "child-1",
+			parentWorkflowRunId: "workflow-1",
+			workflowKey: "review",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			activeChildren: new Map([[0, { index: 0, agent: "reviewer", description: "Review the change", startedAt: 10, updatedAt: 20 }]]),
+		});
+
+		assert.deepEqual(collectFleetStatusEntries(state).map((entry) => ({ agent: entry.agent, description: entry.description })), [{
+			agent: "reviewer",
+			description: "workflow child: workflow-1 (review) · Review the change",
+		}]);
+	});
+
 	it("uses the same item keys as the full inspector", () => {
 		const state = stateForTest();
 		state.foregroundControls.set("foreground", {
@@ -557,7 +575,7 @@ describe("below-editor subagent FleetView", () => {
 			mode: "single",
 			startedAt: 10,
 			updatedAt: 20,
-			currentAgent: "builder",
+			currentAgent: "worker",
 			currentIndex: 2,
 		});
 		const asyncJob = {
@@ -568,7 +586,7 @@ describe("below-editor subagent FleetView", () => {
 			mode: "single" as const,
 			startedAt: 10,
 			updatedAt: 20,
-			steps: [{ agent: "commentator", index: 0, status: "running" as const }],
+			steps: [{ agent: "reviewer", index: 0, status: "running" as const }],
 		};
 		state.asyncJobs.set(asyncJob.asyncId, asyncJob);
 		state.fleetJobs!.set(asyncJob.asyncId, asyncJob);
@@ -589,8 +607,8 @@ describe("below-editor subagent FleetView", () => {
 			startedAt: 100,
 			updatedAt: 200,
 			steps: [
-				{ agent: "commentator", index: 0, status: "running", description: "Review only authentication", startedAt: 120, model: "openai/gpt-5", thinking: "medium", tokens: { input: 4_000, output: 200, total: 4_200 } },
-				{ agent: "builder", index: 1, status: "running", description: "Implement only billing", startedAt: 121, tokens: { input: 100, output: 20, total: 120 } },
+				{ agent: "reviewer", index: 0, status: "running", description: "Review only authentication", startedAt: 120, model: "openai/gpt-5", thinking: "medium", tokens: { input: 4_000, output: 200, total: 4_200 } },
+				{ agent: "worker", index: 1, status: "running", description: "Implement only billing", startedAt: 121, tokens: { input: 100, output: 20, total: 120 } },
 			],
 		});
 		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
@@ -612,8 +630,8 @@ describe("below-editor subagent FleetView", () => {
 			const component = widgetFactory!(tui, theme);
 			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
 			const lines = component.render(180);
-			assert.ok(lines.some((line) => line.includes("commentator (gpt-5 · thinking medium)") && line.includes("Review only authentication")));
-			assert.ok(lines.some((line) => line.includes("builder") && line.includes("Implement only billing")));
+			assert.ok(lines.some((line) => line.includes("reviewer (gpt-5 · thinking medium)") && line.includes("Review only authentication")));
+			assert.ok(lines.some((line) => line.includes("worker") && line.includes("Implement only billing")));
 			assert.ok(lines.every((line) => !line.includes("Review the authentication changes")), "per-child descriptions should replace the run-level fallback when present");
 			assert.ok(lines.some((line) => line.includes("↓ 4.2k tokens")));
 		} finally {
@@ -623,12 +641,12 @@ describe("below-editor subagent FleetView", () => {
 
 	it("only captures navigation at an empty editor and opens the selected child", async () => {
 		const state = stateForTest();
-		state.foregroundControls.set("run-builder", {
-			runId: "run-builder",
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
 			mode: "single",
 			startedAt: Date.now() - 1_000,
 			updatedAt: Date.now(),
-			currentAgent: "builder",
+			currentAgent: "worker",
 			description: "Implement FleetView",
 		});
 		let editorText = "draft";
@@ -682,16 +700,16 @@ describe("below-editor subagent FleetView", () => {
 			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true }, "custom editors should activate FleetView across jiti boundaries");
 			assert.ok(component.render(100).length > 1, "keyboard activation should expand the roster");
 			assert.deepEqual(inputHandler!("j"), { consume: true }, "active FleetView should navigate down with j");
-			assert.ok(component.render(100).some((line) => line.includes("> builder")));
+			assert.ok(component.render(100).some((line) => line.includes("> worker")));
 			assert.deepEqual(inputHandler!("k"), { consume: true }, "active FleetView should navigate up with k");
 			assert.ok(component.render(100).some((line) => line.includes("> main")));
 
 			tui.focusedComponent = Object.create(Editor.prototype) as Editor;
 			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true });
-			assert.ok(component.render(100).some((line) => line.includes("> builder")));
+			assert.ok(component.render(100).some((line) => line.includes("> worker")));
 			assert.deepEqual(inputHandler!("\r"), { consume: true });
 			await Promise.resolve();
-			assert.deepEqual(opened, ["foreground-active:run-builder:0"]);
+			assert.deepEqual(opened, ["foreground-active:run-worker:0"]);
 			assert.equal(widgetFactory, undefined, "the widget should unregister while the inspector owns the viewport");
 
 			closeInspector!();
@@ -699,7 +717,7 @@ describe("below-editor subagent FleetView", () => {
 			assert.ok(widgetFactory, "closing should restore the FleetView widget");
 			assert.notEqual(widgetFactory, component, "restoration should install a new component factory");
 			const restoredComponent = widgetFactory!(tui, theme);
-			assert.ok(restoredComponent.render(100).some((line) => line.includes("> builder")), "closing should restore the prior selected roster row");
+			assert.ok(restoredComponent.render(100).some((line) => line.includes("> worker")), "closing should restore the prior selected roster row");
 			assert.deepEqual(inputHandler!("\x1b"), { consume: true });
 			assert.equal(restoredComponent.render(100).length, 1, "Escape should return to the compact summary");
 		} finally {

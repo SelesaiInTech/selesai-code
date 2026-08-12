@@ -3,12 +3,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@selesai/code";
+import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { shortenPath } from "../../shared/formatters.ts";
 import type { AsyncStatus, Details, ExtensionConfig } from "../../shared/types.ts";
 import type { SubagentParamsLike } from "../foreground/subagent-executor.ts";
 import { validateExecutionAcceptance } from "../shared/acceptance.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { previewSimpleWorkflowRun } from "../../workflows/scripted-workflow.ts";
 
 export const SCHEDULED_RUN_ACTIONS = [
 	"schedule.create",
@@ -34,7 +36,7 @@ export type ScheduleRunState = "running" | "skipped" | "missed" | "completed" | 
 export type ScheduleTrigger =
 	| { kind: "once"; at: string; nextRunAt?: string }
 	| { kind: "interval"; every: string; everyMs: number; anchorAt: string; nextRunAt: string };
-export type ScheduleTarget = { workflowScript: string } | { agent: string; task?: string };
+export type ScheduleTarget = { workflowScript: string };
 
 export interface ScheduleRecord {
 	schemaVersion: 1;
@@ -86,7 +88,7 @@ export function scheduledRunsEnabled(config: ExtensionConfig): boolean {
 }
 
 export function scheduledRunStorePath(cwd: string, _sessionId?: string, root?: string): string {
-	if (!root) return path.join(path.resolve(cwd), ".pi-subagents", "schedules");
+	if (!root) return path.join(getProjectSubagentsDir(path.resolve(cwd)), "schedules");
 	const projectKey = createHash("sha256").update(path.resolve(cwd)).digest("hex").slice(0, 20);
 	return path.join(root, projectKey);
 }
@@ -188,6 +190,14 @@ function readJson(file: string, label: string): unknown {
 	}
 }
 
+function parseScheduleTarget(value: unknown, file: string): ScheduleTarget {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Schedule record '${file}' has invalid trigger or target.`);
+	const target = value as { workflowScript?: unknown; agent?: unknown; task?: unknown };
+	if (typeof target.workflowScript === "string" && target.workflowScript.trim()) return { workflowScript: target.workflowScript.trim() };
+	if (target.agent !== undefined || target.task !== undefined) throw new Error(`Schedule record '${file}' uses a removed legacy agent target; recreate it with target.workflowScript.`);
+	throw new Error(`Schedule record '${file}' requires a workflowScript target.`);
+}
+
 function parseSchedule(value: unknown, file: string): ScheduleRecord {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Schedule record '${file}' must be a JSON object.`);
 	const record = value as Partial<ScheduleRecord>;
@@ -200,10 +210,7 @@ function parseSchedule(value: unknown, file: string): ScheduleRecord {
 	} else if (record.trigger.kind === "interval") {
 		if (typeof record.trigger.every !== "string" || typeof record.trigger.everyMs !== "number" || typeof record.trigger.anchorAt !== "string" || typeof record.trigger.nextRunAt !== "string") throw new Error(`Schedule record '${file}' has an invalid interval trigger.`);
 	} else throw new Error(`Schedule record '${file}' has an unsupported trigger.`);
-	const workflow = "workflowScript" in record.target && typeof record.target.workflowScript === "string";
-	const agent = "agent" in record.target && typeof record.target.agent === "string";
-	if (workflow === agent) throw new Error(`Schedule record '${file}' has an invalid target.`);
-	return record as ScheduleRecord;
+	return { ...record, target: parseScheduleTarget(record.target, file) } as ScheduleRecord;
 }
 
 class ScheduleStore {
@@ -304,27 +311,25 @@ function textResult(text: string, schedules?: ScheduleRecord[], runs?: ScheduleR
 }
 
 function targetLabel(target: ScheduleTarget): string {
-	return "workflowScript" in target ? "workflowScript" : `agent ${target.agent}`;
+	const preview = previewSimpleWorkflowRun(target.workflowScript);
+	return preview?.agent ? `workflowScript -> agent ${preview.agent}` : "workflowScript (dynamic)";
 }
 
 function sanitizeTarget(params: SubagentParamsLike): { target?: ScheduleTarget; error?: string } {
-	if (params.tasks || params.chain) return { error: "Recurring schedules support workflowScript or one agent/task target, not legacy tasks or chain inputs." };
-	const hasWorkflow = typeof params.workflowScript === "string" && params.workflowScript.trim().length > 0;
-	const hasAgent = typeof params.agent === "string" && params.agent.trim().length > 0;
-	if (hasWorkflow === hasAgent) return { error: "schedule.create requires exactly one target: workflowScript or agent with optional task." };
+	if (params.tasks || params.chain) return { error: "Recurring schedules require workflowScript; legacy tasks and chain inputs are unsupported." };
+	if (params.agent !== undefined || params.task !== undefined) return { error: "schedule.create requires workflowScript. Use workflowScript: \"return runs.run('main', { agent, task })\"." };
+	if (typeof params.workflowScript !== "string" || !params.workflowScript.trim()) return { error: "schedule.create requires a non-empty workflowScript." };
 	if (params.context === "fork") return { error: "Scheduled runs require fresh context." };
 	if (params.async === false) return { error: "Scheduled runs are always async." };
-	if (params.clarify === true) return { error: "Scheduled runs cannot open clarify UI." };
 	const acceptanceErrors = validateExecutionAcceptance(params as Parameters<typeof validateExecutionAcceptance>[0]);
 	if (acceptanceErrors.length) return { error: acceptanceErrors.join(" ") };
-	return hasWorkflow ? { target: { workflowScript: params.workflowScript!.trim() } } : { target: { agent: params.agent!.trim(), ...(params.task === undefined ? {} : { task: params.task }) } };
+	return { target: { workflowScript: params.workflowScript.trim() } };
 }
 
 function executionParams(schedule: ScheduleRecord): SubagentParamsLike {
 	return {
 		...schedule.target,
 		async: true,
-		clarify: false,
 		context: "fresh",
 		cwd: schedule.cwd,
 		mission: false,
@@ -399,6 +404,29 @@ export class ScheduledRunManager {
 		} catch (error) {
 			return textResult(error instanceof Error ? error.message : String(error), undefined, undefined, true);
 		}
+	}
+
+	observedCompletionRunIds(): Set<string> {
+		const runIds = new Set<string>();
+		for (const store of this.stores.values()) {
+			let ids: string[];
+			try {
+				ids = store.ids();
+			} catch (error) {
+				console.error(`Failed to inspect schedule store '${store.root}' during async completion discovery:`, error);
+				continue;
+			}
+			for (const id of ids) {
+				try {
+					for (const run of store.history(id)) {
+						if (run.state === "running" && run.asyncId) runIds.add(run.asyncId);
+					}
+				} catch (error) {
+					console.error(`Failed to inspect schedule '${id}' in '${store.root}' during async completion discovery:`, error);
+				}
+			}
+		}
+		return runIds;
 	}
 
 	handleAsyncCompletion(payload: unknown): void {

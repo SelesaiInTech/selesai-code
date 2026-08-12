@@ -1,7 +1,7 @@
 {
   "name": "pi-subagents",
-  "version": "0.41.0",
-  "description": "Selesai extension for single-agent delegation and scripted multi-agent workflows",
+  "version": "0.47.1",
+  "description": "Selesai extension for single-agent delegation, chains, parallel groups, and scripted multi-agent workflows",
   "author": "Nico Bailon",
   "license": "MIT",
   "type": "module",
@@ -15,7 +15,8 @@
     "./control-channel": "./src/api/control-channel.ts",
     "./intercom-bridge": "./src/api/intercom-bridge.ts",
     "./pi-args": "./src/api/pi-args.ts",
-    "./shared-types": "./src/api/shared-types.ts"
+    "./shared-types": "./src/api/shared-types.ts",
+    "./project-panes": "./src/api/project-panes.ts"
   },
   "repository": {
     "type": "git",
@@ -28,11 +29,11 @@
   "keywords": [
     "pi-package",
     "pi",
+    "pi-coding-agent",
     "subagents",
     "ai",
     "agents",
-    "cli",
-    "selesai"
+    "cli"
   ],
   "bin": {
     "pi-subagents": "install.mjs"
@@ -44,6 +45,7 @@
     "agents/",
     "skills/**/*",
     "prompts/**/*",
+    "docs/**/*",
     "README.md",
     "CHANGELOG.md"
   ],
@@ -64,9 +66,6 @@
     ],
     "prompts": [
       "./prompts"
-    ],
-    "agents": [
-      "./agents"
     ]
   },
   "peerDependencies": {
@@ -97,9 +96,9 @@
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.81.0",
     "@earendil-works/pi-ai": "0.81.0",
-    "@selesai/code": "0.8.2",
     "@earendil-works/pi-tui": "0.81.0",
     "@types/node": "24.13.3",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "@selesai/code": "file:./test/fixtures/pi-coding-agent-shim"
   }
 }

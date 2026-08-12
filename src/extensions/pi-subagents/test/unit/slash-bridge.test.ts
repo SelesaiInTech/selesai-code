@@ -52,7 +52,7 @@ describe("slash subagent bridge requester context", () => {
     await done;
   });
 
-  it("rejects removed chain and parallel inputs before executor dispatch", async () => {
+  it("accepts direct execution inputs before executor dispatch", async () => {
     const events = eventBus();
     let executeCalls = 0;
     registerSlashSubagentBridge({
@@ -67,9 +67,8 @@ describe("slash subagent bridge requester context", () => {
     const done = new Promise<void>((resolve, reject) => {
       events.on(RESPONSE, (data: any) => {
         try {
-          assert.equal(data.isError, true);
-          assert.match(data.errorText, /removed.*workflowScript/i);
-          assert.equal(executeCalls, 0);
+          assert.equal(data.isError, false);
+          assert.equal(executeCalls, 1);
           resolve();
         } catch (error) {
           reject(error);
@@ -77,7 +76,35 @@ describe("slash subagent bridge requester context", () => {
       });
     });
 
-    events.emit(REQUEST, { requestId: "legacy-parallel", params: { tasks: [{ agent: "builder", task: "work" }] } });
+    events.emit(REQUEST, { requestId: "legacy-single", params: { agent: "worker", task: "work" } });
+    await done;
+  });
+
+  it("accepts chain and parallel inputs before executor dispatch", async () => {
+    const events = eventBus();
+    let executeCalls = 0;
+    registerSlashSubagentBridge({
+      events,
+      getContext: () => ({ cwd: "/repo" }) as any,
+      execute: async () => {
+        executeCalls++;
+        return { content: [{ type: "text", text: "unexpected" }], details: { mode: "single", results: [] } } as any;
+      },
+    });
+
+    const done = new Promise<void>((resolve, reject) => {
+      events.on(RESPONSE, (data: any) => {
+        try {
+          assert.equal(data.isError, false);
+          assert.equal(executeCalls, 1);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+
+    events.emit(REQUEST, { requestId: "legacy-parallel", params: { tasks: [{ agent: "worker", task: "work" }] } });
     await done;
   });
 });

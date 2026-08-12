@@ -64,8 +64,8 @@ function child(id: string, state: "queued" | "running" | "complete" | "failed" |
 		path: [{ runId: parentRunId, stepIndex: 1 }],
 		mode: "single" as const,
 		state,
-		agent: "commentator",
-		agents: ["commentator"],
+		agent: "reviewer",
+		agents: ["reviewer"],
 		startedAt: 10,
 		lastUpdate: ts,
 		steps: [{ agent: "leaf", status: state === "running" ? "running" as const : "complete" as const }],
@@ -355,7 +355,7 @@ describe("nested event parsing and projection", () => {
 				...child("nested-model-bounds", "running", 100),
 				model: "m".repeat(600),
 				thinking: "turbo",
-				steps: [{ agent: "leaf", status: "running", model: "builder", thinking: "xhigh" }],
+				steps: [{ agent: "leaf", status: "running", model: "worker", thinking: "xhigh" }],
 			},
 		});
 		const summary = projectNestedEvents(route).children[0]!;
@@ -371,13 +371,13 @@ describe("nested event parsing and projection", () => {
 			state: "running",
 			startedAt: 1,
 			steps: [
-				{ agent: "builder", status: "running", model: "provider/builder", thinking: "high" },
+				{ agent: "worker", status: "running", model: "provider/worker", thinking: "high" },
 			],
 		}, "/tmp/child-run", { id: "child-run", parentRunId: "parent-run", depth: 1, mode: "single", ts: 2 });
 
-		assert.equal(summary.model, "provider/builder");
+		assert.equal(summary.model, "provider/worker");
 		assert.equal(summary.thinking, "high");
-		assert.equal(summary.steps?.[0]?.model, "provider/builder");
+		assert.equal(summary.steps?.[0]?.model, "provider/worker");
 		assert.equal(summary.steps?.[0]?.thinking, "high");
 	});
 
@@ -389,7 +389,7 @@ describe("nested event parsing and projection", () => {
 			startedAt: 1,
 			processTerminal: { version: 1, state: "bogus", runId: "child-run", runnerProcessInstanceId: "runner-1" } as never,
 			steps: [{
-				agent: "builder",
+				agent: "worker",
 				status: "complete",
 				processTerminal: { version: 1, state: "observed", runId: "wrong-run", runnerProcessInstanceId: "runner-1" } as never,
 			}],
@@ -409,7 +409,7 @@ describe("nested event parsing and projection", () => {
 			startedAt: 1,
 			runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", ids: ["/Users/alice/.secret-extension", "ok-ext", "x".repeat(5000)], omitted: 0 } as never,
 			steps: [{
-				agent: "builder",
+				agent: "worker",
 				status: "complete",
 				runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", ids: ["C:/Users/alice/secret"], omitted: 0 } as never,
 			}],

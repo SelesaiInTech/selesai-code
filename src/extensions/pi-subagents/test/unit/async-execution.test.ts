@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { buildAsyncRunnerSteps, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
+import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 
 const agent = (name: string, toolBudget?: AgentConfig["toolBudget"]): AgentConfig => ({
@@ -26,14 +26,16 @@ const ctx = {
 
 describe("async runner execution", () => {
 	it("formats interactive yield and headless auto-drain guidance separately", () => {
-		const interactive = formatAsyncStartedMessage("Async: builder [interactive]", true);
+		const interactive = formatAsyncStartedMessage("Async: worker [interactive]", true);
 		assert.match(interactive, /interactive session[\s\S]*return control/i);
 		assert.match(interactive, /do not call subagent_wait\(\) merely to wait/i);
+		assert.match(interactive, /nonBlocking: true/);
 		assert.doesNotMatch(interactive, /auto-drains current-session background work/i);
 
-		const headless = formatAsyncStartedMessage("Async: builder [headless]", false);
+		const headless = formatAsyncStartedMessage("Async: worker [headless]", false);
 		assert.match(headless, /non-interactive run.*auto-drains current-session background work at agent_end/i);
 		assert.match(headless, /call subagent_wait\(\).*results before it ends/i);
+		assert.doesNotMatch(headless, /nonBlocking: true/);
 		assert.doesNotMatch(headless, /By default, return control to the user/i);
 	});
 
@@ -52,10 +54,10 @@ describe("async runner execution", () => {
 	it("resolves async step tool budgets with step over run over agent over config precedence", () => {
 		const result = buildAsyncRunnerSteps("run-1", {
 			chain: [
-				{ agent: "builder", task: "agent beats config" },
-				{ agent: "builder", task: "step beats run", toolBudget: { hard: 2, block: ["grep"] } },
+				{ agent: "worker", task: "agent beats config" },
+				{ agent: "worker", task: "step beats run", toolBudget: { hard: 2, block: ["grep"] } },
 			],
-			agents: [agent("builder", { hard: 4, block: ["read"] })],
+			agents: [agent("worker", { hard: 4, block: ["read"] })],
 			ctx,
 			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
 			maxSubagentDepth: 2,
@@ -70,10 +72,34 @@ describe("async runner execution", () => {
 		assert.deepEqual(result.steps[1]?.toolBudget, { hard: 2, block: ["grep"] });
 	});
 
+	it("assigns default and agent-level deadlines to async serial and parallel children", () => {
+		const result = buildAsyncRunnerSteps("timeout-run", {
+			chain: [
+				{ agent: "default-worker", task: "default serial timeout" },
+				{
+					parallel: [
+						{ agent: "default-worker", task: "default parallel timeout" },
+						{ agent: "custom-worker", task: "custom parallel timeout" },
+					],
+				},
+			],
+			agents: [agent("default-worker"), { ...agent("custom-worker"), defaultTimeoutMs: 7_000 }],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-async-timeout-test"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.ok("steps" in result, "expected successful step build");
+		assert.equal(result.steps[0]?.timeoutMs, DEFAULT_ASYNC_TIMEOUT_MS);
+		const parallel = result.steps[1];
+		assert.ok(parallel && "parallel" in parallel && Array.isArray(parallel.parallel));
+		assert.deepEqual(parallel.parallel.map((step) => step.timeoutMs), [DEFAULT_ASYNC_TIMEOUT_MS, 7_000]);
+	});
+
 	it("uses agent tool budget before config default when no run override exists", () => {
 		const result = buildAsyncRunnerSteps("run-2", {
-			chain: [{ agent: "builder", task: "agent beats config" }],
-			agents: [agent("builder", { hard: 4, block: ["read"] })],
+			chain: [{ agent: "worker", task: "agent beats config" }],
+			agents: [agent("worker", { hard: 4, block: ["read"] })],
 			ctx,
 			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
 			maxSubagentDepth: 2,
@@ -110,8 +136,8 @@ describe("async runner execution", () => {
 
 	it("uses config default when no step, run, or agent budget exists", () => {
 		const result = buildAsyncRunnerSteps("run-3", {
-			chain: [{ agent: "builder", task: "config default" }],
-			agents: [agent("builder")],
+			chain: [{ agent: "worker", task: "config default" }],
+			agents: [agent("worker")],
 			ctx,
 			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
 			maxSubagentDepth: 2,

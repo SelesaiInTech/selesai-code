@@ -52,15 +52,15 @@ describe("mergeAgentsForScope", () => {
 	});
 
 	it("includes builtin agents when no user or project override exists", () => {
-		const builtinAgents = [makeAgent("explorer", "builtin", "builtin prompt")];
+		const builtinAgents = [makeAgent("scout", "builtin", "builtin prompt")];
 		const result = mergeAgentsForScope("both", [], [], builtinAgents);
 		assert.equal(result.length, 1);
 		assert.equal(result[0]?.source, "builtin");
 	});
 
 	it("user agents override builtins with the same name", () => {
-		const builtinAgents = [makeAgent("explorer", "builtin", "builtin prompt")];
-		const userAgents = [makeAgent("explorer", "user", "custom prompt")];
+		const builtinAgents = [makeAgent("scout", "builtin", "builtin prompt")];
+		const userAgents = [makeAgent("scout", "user", "custom prompt")];
 		const result = mergeAgentsForScope("both", userAgents, [], builtinAgents);
 		assert.equal(result.length, 1);
 		assert.equal(result[0]?.source, "user");
@@ -68,10 +68,10 @@ describe("mergeAgentsForScope", () => {
 	});
 
 	it("package agents override builtins but not user or project agents", () => {
-		const builtinAgents = [makeAgent("explorer", "builtin", "builtin prompt")];
-		const packageAgents = [makeAgent("explorer", "package", "package prompt")];
-		const userAgents = [makeAgent("explorer", "user", "user prompt")];
-		const projectAgents = [makeAgent("explorer", "project", "project prompt")];
+		const builtinAgents = [makeAgent("scout", "builtin", "builtin prompt")];
+		const packageAgents = [makeAgent("scout", "package", "package prompt")];
+		const userAgents = [makeAgent("scout", "user", "user prompt")];
+		const projectAgents = [makeAgent("scout", "project", "project prompt")];
 
 		assert.equal(mergeAgentsForScope("both", [], [], builtinAgents, packageAgents)[0]?.source, "package");
 		assert.equal(mergeAgentsForScope("user", userAgents, [], builtinAgents, packageAgents)[0]?.source, "user");
@@ -79,8 +79,8 @@ describe("mergeAgentsForScope", () => {
 	});
 
 	it("project agents override builtins with the same name", () => {
-		const builtinAgents = [makeAgent("explorer", "builtin", "builtin prompt")];
-		const projectAgents = [makeAgent("explorer", "project", "project prompt")];
+		const builtinAgents = [makeAgent("scout", "builtin", "builtin prompt")];
+		const projectAgents = [makeAgent("scout", "project", "project prompt")];
 		const result = mergeAgentsForScope("both", [], projectAgents, builtinAgents);
 		assert.equal(result.length, 1);
 		assert.equal(result[0]?.source, "project");

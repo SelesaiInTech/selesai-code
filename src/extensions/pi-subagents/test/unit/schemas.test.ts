@@ -175,6 +175,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(workflowScript?.type, "string");
 		assert.equal(workflowScript?.minLength, 1);
 		assert.match(String(workflowScript?.description ?? ""), /runs\.run/);
+		assert.match(String(workflowScript?.description ?? ""), /sequential and parallel phases dynamically/i);
 		assert.match(String(workflowScript?.description ?? ""), /worktree:true/i);
 		assert.match(String(workflowScript?.description ?? ""), /no filesystem, shell, Pi tools, or host globals/i);
 		const chatProgress = SubagentParams?.properties?.chatProgress;
@@ -183,14 +184,31 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(chatProgress?.description ?? ""), /same Git repository/i);
 		const worktree = SubagentParams?.properties?.worktree;
 		assert.equal(worktree?.type, "boolean");
-		assert.match(String(worktree?.description ?? ""), /direct single child/i);
+		assert.match(String(worktree?.description ?? ""), /each workflow child/i);
+		const gate = SubagentParams?.properties?.gate;
+		assert.equal(gate?.type, "string");
+		assert.equal(gate?.minLength, 1);
+		assert.match(String(gate?.description ?? ""), /cannot be combined with acceptance/i);
+		const properties = SubagentParams?.properties as Record<string, unknown> | undefined;
+		assert.ok(properties?.task, "task should be model-facing for SINGLE mode");
+		assert.ok(properties?.clarify, "clarify should be model-facing for the clarify TUI");
+		assert.ok(properties?.chain, "chain should be model-facing for CHAIN mode");
+		assert.ok(properties?.tasks, "tasks should be model-facing for PARALLEL mode");
+		assert.ok(properties?.output, "output remains a workflow child default");
 	});
 
-	it("removes legacy top-level orchestration parameters", () => {
-		for (const name of ["tasks", "chain", "concurrency", "chainDir"]) {
-			assert.equal((SubagentParams?.properties as Record<string, unknown> | undefined)?.[name], undefined, `${name} should not be public`);
+	it("includes chain controls by default and trims them when legacyChainControls is false", () => {
+		for (const name of ["tasks", "chain", "task", "clarify"]) {
+			assert.ok((SubagentParams?.properties as Record<string, unknown> | undefined)?.[name], `${name} should be public by default`);
 		}
-		const stepSchema = (SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined)?.step;
+
+		const trimmed = (schemas.createSubagentParamsSchema as (options?: { legacyChainControls?: boolean }) => SubagentParamsSchema)({ legacyChainControls: false });
+		assert.equal(trimmed.properties?.step, undefined);
+		assert.doesNotMatch(JSON.stringify(trimmed), /append-step/);
+		assert.ok(trimmed.properties?.chain, "chain stays model-facing even in the trimmed schema");
+
+		const full = (schemas.createSubagentParamsSchema as (options: { legacyChainControls: boolean }) => SubagentParamsSchema)();
+		const stepSchema = (full.properties as Record<string, JsonSchemaNode> | undefined)?.step;
 		assert.equal(stepSchema?.type, "object");
 		assert.match(String(stepSchema?.description ?? ""), /append-step.*only/i);
 	});
@@ -199,16 +217,17 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const actionSchema = SubagentParams?.properties?.action;
 		assert.ok(actionSchema, "action schema should exist");
 		assert.equal(actionSchema.type, "string");
+		assert.equal(actionSchema.minLength, 1);
 		assert.equal(actionSchema.enum, undefined);
 		const description = String(actionSchema.description ?? "");
 		assert.match(description, /Optional management\/control action/);
-		assert.match(description, /Omit this field entirely for execution\/delegation/);
-		assert.match(description, /\{agent, task\} or \{workflowScript\}/);
+		assert.match(description, /Omit this field for workflowScript execution/);
+		assert.doesNotMatch(description, /\{agent, task\}/);
 		assert.match(description, /use it only for management\/control actions/);
 		assert.doesNotMatch(description, /orchestration\./);
 	});
 
-	it("includes foreground timeout aliases and turn budget", () => {
+	it("documents workflow timeout aliases and turn budget", () => {
 		const timeoutSchema = SubagentParams?.properties?.timeoutMs;
 		const maxRuntimeSchema = SubagentParams?.properties?.maxRuntimeMs;
 		const turnBudgetSchema = SubagentParams?.properties?.turnBudget;
@@ -217,10 +236,13 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(maxRuntimeSchema, "maxRuntimeMs schema should exist");
 		assert.equal(timeoutSchema.minimum, 1);
 		assert.equal(maxRuntimeSchema.minimum, 1);
-		assert.match(String(timeoutSchema.description ?? ""), /foreground and async\/background/i);
+		assert.match(String(timeoutSchema.description ?? ""), /foreground runs and async children/i);
+		assert.match(String(timeoutSchema.description ?? ""), /async children default to 30m/i);
+		assert.match(String(timeoutSchema.description ?? ""), /async composites have no default parent deadline/i);
 		assert.doesNotMatch(String(timeoutSchema.description ?? ""), /foreground-only/i);
 		assert.match(String(maxRuntimeSchema.description ?? ""), /timeoutMs/i);
-		assert.match(String(maxRuntimeSchema.description ?? ""), /foreground and async\/background/i);
+		assert.match(String(maxRuntimeSchema.description ?? ""), /async children default to 30m/i);
+		assert.match(String(maxRuntimeSchema.description ?? ""), /async composites have no default parent deadline/i);
 		assert.equal(turnBudgetSchema?.properties?.maxTurns?.minimum, 1);
 		assert.equal(turnBudgetSchema?.properties?.graceTurns?.minimum, 0);
 		assert.equal(toolBudgetSchema?.properties?.soft?.minimum, 1);
@@ -356,12 +378,12 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const serialized = JSON.stringify(schema);
-		// Mission, inspector, and inline workflow fields intentionally expanded the public tool surface.
-		assert.ok(serialized.length < 17_000, `expected compact schema under 17k chars, got ${serialized.length}`);
+		// Mission, inspector, inline workflow, and guide fields intentionally expanded the public tool surface.
+		assert.ok(serialized.length < 27_000, `expected compact schema under 27k chars, got `);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		assert.equal(serialized.split("Optional acceptance policy.").length - 1, 1);
-		assert.match(String((schema.properties as Record<string, JsonSchemaNode> | undefined)?.agent?.description ?? ""), /SINGLE mode/);
+		assert.match(String((schema.properties as Record<string, JsonSchemaNode> | undefined)?.agent?.description ?? ""), /management actions/);
 		const acceptanceDescription = String((schema.properties as Record<string, JsonSchemaNode> | undefined)?.acceptance?.description ?? "");
 		assert.match(acceptanceDescription, /acceptance policy/);
 		assert.match(acceptanceDescription, /Supported evidence kinds:/);
@@ -369,6 +391,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(acceptanceDescription, /changed-files/);
 		assert.match(acceptanceDescription, /manual-notes/);
 		assert.match(acceptanceDescription, /\{ level: "checked", evidence: \["commands-run", "changed-files"\] \}/);
+		const missionDescription = String((schema.properties as Record<string, JsonSchemaNode> | undefined)?.mission?.description ?? "");
+		assert.match(missionDescription, /exactly one non-empty title or summary/);
+		assert.match(missionDescription, /goal may only be true/);
+		assert.match(missionDescription, /requires budget\.tokens/);
 
 		const nestedDescriptionPaths: string[] = [];
 		const stack: Array<{ path: string; value: unknown }> = [{ path: "SubagentParams", value: schema }];
@@ -467,7 +493,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const reviewedRecoveryBranch = acceptanceStringBranches.find((branch) => Array.isArray(branch.enum) && branch.enum.includes("reviewed"));
 		assert.deepEqual(reviewedRecoveryBranch?.enum, ["reviewed"]);
 		assert.equal(reviewedRecoveryBranch?.deprecated, true);
-		assert.match(String(acceptanceSchema.description ?? ""), /commentator\/read-only calls, omit acceptance/i);
+		assert.match(String(acceptanceSchema.description ?? ""), /reviewer\/read-only calls, omit acceptance/i);
 		assert.match(String(acceptanceSchema.description ?? ""), /acceptance\.review\.required/);
 		const acceptanceObjectBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "object");
 		assert.ok(acceptanceObjectBranch, "acceptance should support object config");
@@ -487,49 +513,38 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const validator = CompileSchema(SubagentParams);
 		const validValues = [
 			{ skill: "review" },
-			{ workflowScript: "return await runs.run(\"one\", {agent: \"commentator\", task: \"check\"})" },
-			{ action: "append-step", id: "run-1", step: { agent: "commentator", task: "Continue" } },
+			{ workflowScript: "return await runs.run(\"one\", {agent: \"reviewer\", task: \"check\"})" },
+			{ action: "append-step", id: "run-1", step: { agent: "reviewer", task: "Continue" } },
 			{ skill: false },
-			{ agent: "builder", task: "Fix", acceptance: false },
-			{ agent: "builder", task: "Fix", timeoutMs: 1000 },
+			{ action: "get", agent: "worker" },
+			{ workflowScript: "return runs.run('main', { agent: 'worker', task: 'Fix', acceptance: false })", timeoutMs: 1000 },
 			{ action: "steer", id: "run-1", message: "focus on tests" },
 			{ action: "steer", id: "run-1", index: 0, message: "focus on tests" },
-			{ action: "single", agent: "builder", task: "Fix" },
 			{ action: "not-a-real-action" },
-			{ agent: "builder", task: "Fix", acceptance: "checked" },
-			{ agent: "builder", task: "Fix", acceptance: "reviewed" },
-			{ agent: "builder", task: "Fix", acceptance: { level: "verified", verify: [{ id: "tests", command: "npm test" }] } },
-			{ agent: "builder", task: "Fix", acceptance: { level: "none", reason: "parent will verify manually" } },
-			{ agent: "builder", task: "Fix", acceptance: { level: "checked", review: false } },
-			{ config: { name: "commentator", description: "Review things" } },
-			{ config: JSON.stringify({ name: "commentator", description: "Review things" }) },
-			{ agent: "builder", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: 1 } },
-			{ agent: "builder", task: "Fix", turnBudget: { maxTurns: 1 } },
-			{ agent: "builder", task: "Fix", turnBudget: { maxTurns: 3, graceTurns: 0 } },
-			{ agent: "builder", task: "Fix", toolBudget: { soft: 5, hard: 8, block: ["read", "grep"] } },
-			{ agent: "builder", task: "Fix", toolBudget: { hard: 8, block: "*" } },
+			{ config: { name: "reviewer", description: "Review things" } },
+			{ config: JSON.stringify({ name: "reviewer", description: "Review things" }) },
 		];
 		const invalidValues = [
 			{ skill: 123 },
-			{ agent: "builder", task: "Fix", acceptance: "none" },
-			{ agent: "builder", task: "Fix", acceptance: "verified" },
+			{ agent: "worker", task: "Fix", acceptance: "none" },
+			{ agent: "worker", task: "Fix", acceptance: "verified" },
 			{ skill: [123] },
 			{ output: 123 },
 			{ timeoutMs: 0 },
 			{ maxRuntimeMs: -1 },
-			{ agent: "builder", task: "Fix", acceptance: true },
+			{ agent: "worker", task: "Fix", acceptance: true },
 			{ config: [] },
 			{ config: null },
-			{ agent: "builder", task: "Fix", turnBudget: { maxTurns: 0 } },
-			{ agent: "builder", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: -1 } },
-			{ agent: "builder", task: "Fix", turnBudget: { maxTurns: 1.5 } },
-			{ agent: "builder", task: "Fix", turnBudget: { graceTurns: 1 } },
-			{ agent: "builder", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: 1, extra: true } },
-			{ agent: "builder", task: "Fix", toolBudget: { hard: 0 } },
-			{ agent: "builder", task: "Fix", toolBudget: { hard: 3, soft: 0 } },
-			{ agent: "builder", task: "Fix", toolBudget: { hard: 3, block: [123] } },
-			{ agent: "builder", task: "Fix", toolBudget: { hard: 3, block: [] } },
-			{ agent: "builder", task: "Fix", toolBudget: { hard: 3, block: "read" } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 0 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: -1 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 1.5 } },
+			{ agent: "worker", task: "Fix", turnBudget: { graceTurns: 1 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: 1, extra: true } },
+			{ agent: "worker", task: "Fix", toolBudget: { hard: 0 } },
+			{ agent: "worker", task: "Fix", toolBudget: { hard: 3, soft: 0 } },
+			{ agent: "worker", task: "Fix", toolBudget: { hard: 3, block: [123] } },
+			{ agent: "worker", task: "Fix", toolBudget: { hard: 3, block: [] } },
+			{ agent: "worker", task: "Fix", toolBudget: { hard: 3, block: "read" } },
 		];
 
 		for (const value of validValues) {

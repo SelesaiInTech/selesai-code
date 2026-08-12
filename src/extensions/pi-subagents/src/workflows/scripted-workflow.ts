@@ -10,6 +10,9 @@ const { inspect } = require("node:util");
 let nextCallId = 0;
 const pending = new Map();
 const runKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const trackedPromisePatch = Symbol("trackedPromisePatch");
+const trackedPromiseObservations = new WeakMap();
+let suppressRunObservation = 0;
 
 function stableRunJson(value) {
   if (Array.isArray(value)) return "[" + value.map(stableRunJson).join(",") + "]";
@@ -17,12 +20,124 @@ function stableRunJson(value) {
   return JSON.stringify(value) ?? "undefined";
 }
 
-function hostCall(method, args) {
-  return new Promise((resolve, reject) => {
-    const callId = ++nextCallId;
+function isDirectWorkflowScriptPromiseHandlerCall() {
+  const stack = new Error().stack;
+  if (typeof stack !== "string") return false;
+  const frame = stack.split("\n").slice(1).map((line) => line.trim()).find((line) =>
+    line &&
+    !line.includes("isDirectWorkflowScriptPromiseHandlerCall") &&
+    !line.includes("markObserved") &&
+    !line.includes("promise.then") &&
+    !line.includes("promise.catch") &&
+    !line.includes("promise.finally")
+  );
+  return frame ? frame.includes("workflow-script.js") && !frame.includes("at async ") : false;
+}
+
+function mergeObservations(...groups) {
+  const seen = new Set();
+  const merged = [];
+  for (const group of groups) {
+    for (const observation of group) {
+      if (!observation || typeof observation.callId !== "number" || typeof observation.key !== "string" || seen.has(observation.callId)) continue;
+      seen.add(observation.callId);
+      merged.push(observation);
+    }
+  }
+  return merged;
+}
+
+function trackedObservations(value) {
+  return value && (typeof value === "object" || typeof value === "function") ? trackedPromiseObservations.get(value) ?? [] : [];
+}
+
+function withSuppressedRunObservation(callback) {
+  suppressRunObservation += 1;
+  try {
+    return callback();
+  } finally {
+    suppressRunObservation -= 1;
+  }
+}
+
+function trackRunObservation(observations, promise) {
+  const merged = mergeObservations(trackedObservations(promise), observations);
+  if (merged.length === 0 || !promise || typeof promise.then !== "function") return promise;
+  trackedPromiseObservations.set(promise, merged);
+  if (promise[trackedPromisePatch]) return promise;
+
+  const observedCallIds = new Set();
+  const markObserved = () => {
+    if (suppressRunObservation > 0 || isDirectWorkflowScriptPromiseHandlerCall()) return;
+    for (const observation of trackedObservations(promise)) {
+      if (observedCallIds.has(observation.callId)) continue;
+      observedCallIds.add(observation.callId);
+      parentPort.postMessage({ type: "runObserved", callId: observation.callId, key: observation.key });
+    }
+  };
+  const originalThen = promise.then.bind(promise);
+  const originalCatch = promise.catch.bind(promise);
+  const originalFinally = promise.finally.bind(promise);
+  Object.defineProperty(promise, trackedPromisePatch, { value: true });
+  promise.then = (onFulfilled, onRejected) => {
+    markObserved();
+    return trackRunObservation(trackedObservations(promise), originalThen(onFulfilled, onRejected));
+  };
+  promise.catch = (onRejected) => {
+    markObserved();
+    return trackRunObservation(trackedObservations(promise), originalCatch(onRejected));
+  };
+  promise.finally = (onFinally) => {
+    markObserved();
+    return trackRunObservation(trackedObservations(promise), originalFinally(onFinally));
+  };
+  return promise;
+}
+
+function trackPromiseCombinator(items, createPromise) {
+  const values = Array.from(items);
+  const observations = mergeObservations(...values.map(trackedObservations));
+  const promise = withSuppressedRunObservation(() => createPromise(values));
+  return observations.length > 0 ? trackRunObservation(observations, promise) : promise;
+}
+
+const workflowPromise = new Proxy(Promise, {
+  construct(target, args) {
+    return new target(...args);
+  },
+  get(target, prop) {
+    if (prop === "all") return (items) => trackPromiseCombinator(items, (values) => target.all(values));
+    if (prop === "allSettled") return (items) => trackPromiseCombinator(items, (values) => target.allSettled(values));
+    if (prop === "race") return (items) => trackPromiseCombinator(items, (values) => target.race(values));
+    if (prop === "any") return (items) => trackPromiseCombinator(items, (values) => target.any(values));
+    if (prop === "resolve") return (value) => {
+      const observations = trackedObservations(value);
+      const promise = withSuppressedRunObservation(() => target.resolve(value));
+      return observations.length > 0 ? trackRunObservation(observations, promise) : promise;
+    };
+    const value = target[prop];
+    return typeof value === "function" ? value.bind(target) : value;
+  },
+});
+
+function hostCall(method, args, observation) {
+  const callId = ++nextCallId;
+  const promise = new Promise((resolve, reject) => {
     pending.set(callId, { resolve, reject });
     parentPort.postMessage({ type: "call", callId, method, args });
   });
+  return observation && typeof observation.key === "string"
+    ? trackRunObservation([{ key: observation.key, callId }], promise)
+    : promise;
+}
+
+function runHostCall(key, params, collectFailure) {
+  const callId = ++nextCallId;
+  const promise = new Promise((resolve, reject) => {
+    pending.set(callId, { resolve, reject });
+    parentPort.postMessage({ type: "call", callId, method: "run", args: { key, params, ...(collectFailure ? { collectFailure: true } : {}) } });
+  });
+  return { key, callId, promise };
 }
 
 function formatRef(result) {
@@ -37,11 +152,17 @@ const runFingerprints = new Map();
 function validateRunCall(key, params, label, fingerprints) {
   if (typeof key !== "string" || !runKeyPattern.test(key)) throw new Error(label + " has an invalid key.");
   if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error(label + " requires a params object.");
-  if (Object.prototype.hasOwnProperty.call(params, "action") || Object.prototype.hasOwnProperty.call(params, "workflowScript") || Object.prototype.hasOwnProperty.call(params, "tasks") || Object.prototype.hasOwnProperty.call(params, "chain") || Object.prototype.hasOwnProperty.call(params, "concurrency") || Object.prototype.hasOwnProperty.call(params, "chainDir")) {
+  if (Object.prototype.hasOwnProperty.call(params, "action") || Object.prototype.hasOwnProperty.call(params, "workflowScript") || Object.prototype.hasOwnProperty.call(params, "tasks") || Object.prototype.hasOwnProperty.call(params, "chain") || Object.prototype.hasOwnProperty.call(params, "parallel") || Object.prototype.hasOwnProperty.call(params, "concurrency") || Object.prototype.hasOwnProperty.call(params, "chainDir")) {
     const hint = label === "runs.run" ? "; use runs.all(...) and JavaScript control flow for orchestration." : ".";
     throw new Error(label + " accepts one child via { agent, task } and execution controls only" + hint);
   }
   if (params.worktree !== undefined && typeof params.worktree !== "boolean") throw new Error(label + " worktree must be true or false.");
+  if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) throw new Error(label + " gate must be a non-empty command string.");
+  if (params.gate !== undefined && params.acceptance !== undefined) throw new Error(label + " gate cannot be combined with acceptance; use one gate command or acceptance.verify.");
+  if (params.gate !== undefined && params.resume !== undefined) throw new Error(label + " gate is not supported with retained resume.");
+  if (params.resume !== undefined && (typeof params.resume !== "string" || !params.resume.trim())) throw new Error(label + " resume must be a non-empty retained run id.");
+  if (params.resume !== undefined && params.agent !== undefined) throw new Error(label + " resume and agent are mutually exclusive.");
+  if (params.resume !== undefined && (typeof params.task !== "string" || !params.task.trim())) throw new Error(label + " resume requires a non-empty task follow-up.");
   assertJsonValue(params, label + " params");
   const fingerprint = stableRunJson(params);
   const existing = fingerprints.get(key);
@@ -52,7 +173,7 @@ function validateRunCall(key, params, label, fingerprints) {
 const runs = Object.freeze({
   run(key, params) {
     validateRunCall(key, params, "runs.run", runFingerprints);
-    return hostCall("run", { key, params });
+    return hostCall("run", { key, params }, { key });
   },
   all(items) {
     if (!Array.isArray(items)) throw new Error("runs.all(items) requires an array.");
@@ -67,13 +188,36 @@ const runs = Object.freeze({
       calls.push({ key, params });
     }
     for (const { key, params } of calls) runFingerprints.set(key, stableRunJson(params));
-    return Promise.all(calls.map(({ key, params }) => hostCall("run", { key, params, collectFailure: true })));
+    const launched = calls.map(({ key, params }) => runHostCall(key, params, true));
+    return trackRunObservation(launched.map(({ key, callId }) => ({ key, callId })), Promise.all(launched.map(({ promise }) => promise)));
   },
   status(keyOrRunId) { return hostCall("status", { keyOrRunId }); },
   ref: formatRef,
   refs(results) {
     if (!Array.isArray(results)) throw new Error("runs.refs(results) requires an array.");
     return results.map(formatRef).join("\n");
+  },
+});
+
+function validateStateKey(key) {
+  if (typeof key !== "string" || !runKeyPattern.test(key)) throw new Error("state key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.");
+  return key;
+}
+
+const state = Object.freeze({
+  get(key) { return hostCall("state.get", { key: validateStateKey(key) }); },
+  set(key, value) {
+    const validKey = validateStateKey(key);
+    assertJsonValue(value, "state.set('" + validKey + "') value");
+    return hostCall("state.set", { key: validKey, value });
+  },
+});
+
+const prompts = Object.freeze({
+  render(ref, vars) {
+    if (typeof ref !== "string" || !ref.trim()) throw new Error("prompts.render(ref, vars) requires a non-empty ref string.");
+    if (vars !== undefined) assertJsonValue(vars, "prompts.render vars");
+    return hostCall("prompts.render", { ref, vars });
   },
 });
 
@@ -84,6 +228,17 @@ const capturedConsole = Object.freeze(Object.fromEntries(
     parentPort.postMessage({ type: "console", level, text: args.map((value) => typeof value === "string" ? value : inspect(value, { depth: 4, breakLength: 120 })).join(" ") });
   }]),
 ));
+
+function formatWorkflowScriptSyntaxError(error) {
+  const details = error && error.stack ? error.stack : String(error);
+  return [
+    "workflowScript must be valid JavaScript.",
+    "If task text contains Markdown fences or backticks, use an array joined with \"\\n\" or escaped strings instead of a raw backtick template literal.",
+    "",
+    "Original SyntaxError:",
+    details,
+  ].join("\n");
+}
 
 function assertJsonValue(value, path = "emit", seen = new Set()) {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
@@ -108,6 +263,25 @@ function assertJsonValue(value, path = "emit", seen = new Set()) {
   seen.delete(value);
 }
 
+function isPlainWorkflowObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === null || prototype === Object.prototype || prototype === contextObjectPrototype;
+}
+
+function omitUndefinedWorkflowValues(value, seen = new Set()) {
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return value;
+  seen.add(value);
+  const normalized = Array.isArray(value)
+    ? value.map((entry) => entry === undefined ? null : omitUndefinedWorkflowValues(entry, seen))
+    : isPlainWorkflowObject(value) && Object.getOwnPropertySymbols(value).length === 0
+      ? Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => entry === undefined ? [] : [[key, omitUndefinedWorkflowValues(entry, seen)]]))
+      : value;
+  seen.delete(value);
+  return normalized;
+}
+
 parentPort.on("message", async (message) => {
   if (message.type === "response") {
     const entry = pending.get(message.callId);
@@ -119,12 +293,20 @@ parentPort.on("message", async (message) => {
   }
   if (message.type !== "start") return;
   try {
-    const sandbox = { runs, emit(value) { assertJsonValue(value); parentPort.postMessage({ type: "emit", value }); }, console: capturedConsole };
+    const sandbox = { runs, prompts, Promise: workflowPromise, emit(value) { assertJsonValue(value); parentPort.postMessage({ type: "emit", value }); }, console: capturedConsole };
+    if (message.stateEnabled) sandbox.state = state;
     const context = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
     contextObjectPrototype = vm.runInContext("Object.prototype", context);
-    const compiled = new vm.Script("(async () => {\n" + message.script + "\n})()", { filename: "workflow-script.js" });
+    let compiled;
+    try {
+      compiled = new vm.Script("(async () => {\n" + message.script + "\n})()", { filename: "workflow-script.js" });
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      parentPort.postMessage({ type: "error", error: formatWorkflowScriptSyntaxError(error) });
+      return;
+    }
     const value = await compiled.runInContext(context);
-    const persistedValue = value === undefined ? null : value;
+    const persistedValue = value === undefined ? null : omitUndefinedWorkflowValues(value);
     assertJsonValue(persistedValue, "return");
     parentPort.postMessage({ type: "complete", value: persistedValue });
   } catch (error) {
@@ -136,6 +318,8 @@ parentPort.on("message", async (message) => {
 export interface WorkflowScriptChildResult {
 	key: string;
 	ok: boolean;
+	/** Canonical child agent name when launch resolution produced one. */
+	agent?: string;
 	runId?: string;
 	output: string;
 	error?: string;
@@ -148,6 +332,8 @@ export interface WorkflowScriptTraceEntry {
 	operation: "run" | "status";
 	key: string;
 	state: "started" | "completed" | "failed" | "reused";
+	/** Canonical child agent name when resolved launch or result data is available. */
+	agent?: string;
 	runId?: string;
 	durationMs?: number;
 	phase?: string;
@@ -175,10 +361,17 @@ export class WorkflowScriptError extends Error {
 
 export interface RunWorkflowScriptOptions {
 	script: string;
-	timeoutMs: number;
+	timeoutMs?: number;
 	signal?: AbortSignal;
 	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
 	status: (keyOrRunId: string, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
+	state?: {
+		get: (key: string) => unknown | Promise<unknown>;
+		set: (key: string, value: unknown) => void | Promise<void>;
+	};
+	prompts?: {
+		render: (ref: string, vars?: unknown) => string | Promise<string>;
+	};
 	onTrace?: (trace: WorkflowScriptTraceEntry[]) => void;
 	onEmit?: (emits: unknown[]) => void;
 }
@@ -239,29 +432,56 @@ export function formatWorkflowJsonPreview(value: unknown, maxLength: number): st
 	}
 }
 
+export interface SimpleWorkflowRunPreview {
+	agent?: string;
+	task?: string;
+}
+
+/** Display-only preview for the exact simple `return runs.run(key, {...})` form. */
+export function previewSimpleWorkflowRun(script: string | undefined): SimpleWorkflowRunPreview | undefined {
+	const body = script?.match(/^\s*return\s+(?:await\s+)?runs\.run\s*\(\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`$\\]*`)\s*,\s*\{([\s\S]*)\}\s*\)\s*;?\s*$/)?.[1];
+	if (body === undefined) return undefined;
+	const readProperty = (name: "agent" | "task"): string | undefined => {
+		const match = body.match(new RegExp(`(?:^|,)\\s*(?:${name}|["']${name}["'])\\s*:\\s*("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\u0060[^\u0060$\\\\]*\u0060)`));
+		if (!match?.[1]) return undefined;
+		const literal = match[1];
+		if (literal.startsWith('"')) {
+			try { return JSON.parse(literal) as string; } catch { return undefined; }
+		}
+		if (literal.slice(1, -1).includes("\\")) return undefined;
+		return literal.slice(1, -1);
+	};
+	const agent = readProperty("agent");
+	const task = readProperty("task");
+	return { ...(agent !== undefined ? { agent } : {}), ...(task !== undefined ? { task } : {}) };
+}
+
 function stableJson(value: unknown): string {
 	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
 	if (isRecord(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
 	return JSON.stringify(value) ?? "undefined";
 }
 
-function validateKey(value: unknown): string {
+function validateKey(value: unknown, owner = "runs.run"): string {
 	if (typeof value !== "string" || !KEY_PATTERN.test(value)) {
-		throw new Error("runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.");
+		throw new Error(`${owner} key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.`);
 	}
 	return value;
 }
 
-function workflowStringMetadata(params: Record<string, unknown>): Pick<WorkflowScriptTraceEntry, "phase" | "label"> {
+function workflowStringMetadata(params: Record<string, unknown>): Pick<WorkflowScriptTraceEntry, "phase" | "label" | "agent"> {
 	return {
 		...(typeof params.phase === "string" && params.phase.trim() ? { phase: params.phase.trim() } : {}),
 		...(typeof params.label === "string" && params.label.trim() ? { label: params.label.trim() } : {}),
+		// Requested agent name, so a child is identifiable while it runs. Launch
+		// resolution overwrites this with the canonical name on the terminal entry.
+		...(typeof params.agent === "string" && params.agent.trim() ? { agent: params.agent.trim() } : {}),
 	};
 }
 
 export async function runWorkflowScript(options: RunWorkflowScriptOptions): Promise<WorkflowScriptResult> {
 	if (!options.script.trim()) throw new Error("workflowScript must not be empty.");
-	if (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1) throw new Error("workflow script timeout must be a positive integer.");
+	if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new Error("workflow script timeout must be a positive integer.");
 
 	const worker = new Worker(WORKER_SOURCE, { eval: true });
 	const emits: unknown[] = [];
@@ -269,7 +489,8 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const trace: WorkflowScriptTraceEntry[] = [];
 	const children = new Map<string, WorkflowScriptChildResult>();
 	const childOrder: string[] = [];
-	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult> }>();
+	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult>; observed: boolean }>();
+	const observedRunCalls = new Set<number>();
 	const childController = new AbortController();
 	let settled = false;
 
@@ -283,15 +504,22 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		const finish = (outcome: { value: unknown } | { error: Error }) => {
 			if (settled) return;
 			settled = true;
-			clearTimeout(timer);
+			if (timer) clearTimeout(timer);
 			options.signal?.removeEventListener("abort", onAbort);
 			void worker.terminate();
-			childController.abort("error" in outcome ? outcome.error : new Error("Workflow script completed; unawaited child launches are aborted."));
+			const unobservedKeys = "value" in outcome ? [...launches].filter(([, launch]) => !launch.observed).map(([key]) => key) : [];
+			const completionError = unobservedKeys.length > 0
+				? new Error(`workflowScript completed with unawaited runs.run launch(es): ${unobservedKeys.map((key) => `'${key}'`).join(", ")}. Await or return each launch.`)
+				: undefined;
+			childController.abort("error" in outcome ? outcome.error : completionError ?? new Error("Workflow script completed."));
 			if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial()));
+			else if (completionError) reject(new WorkflowScriptError(completionError.message, partial()));
 			else resolve({ value: outcome.value, ...partial() });
 		};
 		const onAbort = () => finish({ error: new Error("Workflow script aborted.") });
-		const timer = setTimeout(() => finish({ error: new Error(`Workflow script timed out after ${options.timeoutMs}ms.`) }), options.timeoutMs);
+		const timer = options.timeoutMs === undefined
+			? undefined
+			: setTimeout(() => finish({ error: new Error(`Workflow script timed out after ${options.timeoutMs}ms.`) }), options.timeoutMs);
 		options.signal?.addEventListener("abort", onAbort, { once: true });
 		if (options.signal?.aborted) return onAbort();
 
@@ -330,14 +558,54 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				return finish({ value: message.value });
 			}
 			if (message.type === "error") return finish({ error: new Error(typeof message.error === "string" ? message.error : "Workflow script failed.") });
+			if (message.type === "runObserved" && typeof message.callId === "number") {
+				const key = typeof message.key === "string" ? message.key : undefined;
+				const launch = key ? launches.get(key) : undefined;
+				if (launch) launch.observed = true;
+				else observedRunCalls.add(message.callId);
+				return;
+			}
 			if (message.type !== "call" || typeof message.callId !== "number" || typeof message.method !== "string" || !isRecord(message.args)) return;
 
-			const respond = (promise: Promise<WorkflowScriptChildResult>) => {
+			const respond = (promise: Promise<unknown>) => {
 				void promise.then(
-					(value) => worker.postMessage({ type: "response", callId: message.callId, ok: true, value: omitUndefinedWorkflowValues(value) }),
-					(error: unknown) => worker.postMessage({ type: "response", callId: message.callId, ok: false, error: error instanceof Error ? error.message : String(error) }),
+					(value) => {
+						if (!settled) worker.postMessage({ type: "response", callId: message.callId, ok: true, value: omitUndefinedWorkflowValues(value) });
+					},
+					(error: unknown) => {
+						if (!settled) worker.postMessage({ type: "response", callId: message.callId, ok: false, error: error instanceof Error ? error.message : String(error) });
+					},
 				);
 			};
+
+			if (message.method === "prompts.render") {
+				if (!options.prompts) return respond(Promise.reject(new Error("Workflow prompt rendering is unavailable.")));
+				const ref = message.args.ref;
+				const vars = message.args.vars;
+				if (typeof ref !== "string" || !ref.trim()) return respond(Promise.reject(new Error("prompts.render(ref, vars) requires a non-empty ref string.")));
+				return respond(Promise.resolve().then(() => options.prompts!.render(ref, vars)).then((rendered) => {
+					if (typeof rendered !== "string") throw new Error("prompts.render must return task text.");
+					return rendered;
+				}));
+			}
+
+			if (message.method === "state.get" || message.method === "state.set") {
+				if (!options.state) return respond(Promise.reject(new Error("Workflow state is unavailable without a mission.")));
+				let key: string;
+				try {
+					key = validateKey(message.args.key, "state");
+				} catch (error) {
+					return respond(Promise.reject(error));
+				}
+				if (message.method === "state.get") return respond(Promise.resolve().then(() => options.state!.get(key)));
+				const value = message.args.value;
+				try {
+					assertWorkflowJsonValue(value, `state.set('${key}') value`);
+				} catch (error) {
+					return respond(Promise.reject(error));
+				}
+				return respond(Promise.resolve().then(() => options.state!.set(key, value)));
+			}
 
 			if (message.method === "status") {
 				const keyOrRunId = message.args.keyOrRunId;
@@ -366,13 +634,32 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (!isRecord(params)) return respond(Promise.reject(new Error(`runs.run('${key}', params) requires a params object.`)));
 			if (params.action !== undefined) return respond(Promise.reject(new Error(`runs.run('${key}') accepts execution params only; management action is not allowed.`)));
 			if (params.workflowScript !== undefined) return respond(Promise.reject(new Error(`runs.run('${key}') cannot start a nested workflow script.`)));
-			if (params.tasks !== undefined || params.chain !== undefined || params.concurrency !== undefined || params.chainDir !== undefined) {
+			if (params.tasks !== undefined || params.chain !== undefined || params.parallel !== undefined || params.concurrency !== undefined || params.chainDir !== undefined) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') accepts one child via { agent, task }; use runs.all(...) and JavaScript control flow for orchestration.`)));
 			}
 			if (params.worktree !== undefined && typeof params.worktree !== "boolean") {
 				return respond(Promise.reject(new Error(`runs.run('${key}') worktree must be true or false.`)));
 			}
+			if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') gate must be a non-empty command string.`)));
+			}
+			if (params.gate !== undefined && params.acceptance !== undefined) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') gate cannot be combined with acceptance; use one gate command or acceptance.verify.`)));
+			}
+			if (params.gate !== undefined && params.resume !== undefined) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') gate is not supported with retained resume.`)));
+			}
+			if (params.resume !== undefined && (typeof params.resume !== "string" || !params.resume.trim())) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') resume must be a non-empty retained run id.`)));
+			}
+			if (params.resume !== undefined && params.agent !== undefined) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') resume and agent are mutually exclusive.`)));
+			}
+			if (params.resume !== undefined && (typeof params.task !== "string" || !params.task.trim())) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') resume requires a non-empty task follow-up.`)));
+			}
 			const collectFailure = message.args.collectFailure === true;
+			const callObserved = observedRunCalls.delete(message.callId);
 			const deliver = (promise: Promise<WorkflowScriptChildResult>) => collectFailure
 				? promise
 				: promise.then((result) => {
@@ -383,6 +670,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			const existing = launches.get(key);
 			if (existing) {
 				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
+				if (callObserved) existing.observed = true;
 				trace.push({ operation: "run", key, state: "reused", ...workflowStringMetadata(params) });
 				traceChanged();
 				return respond(deliver(existing.promise));
@@ -395,7 +683,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			const promise = Promise.resolve().then(() => options.launch(key, { ...params, async: params.async ?? false }, childController.signal)).then((result) => {
 				const normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
 				children.set(key, normalized);
-				trace.push({ operation: "run", key, state: normalized.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
+				trace.push({ operation: "run", key, state: normalized.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
 				traceChanged();
 				return normalized;
 			}, (error: unknown) => {
@@ -406,10 +694,10 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				traceChanged();
 				return failure;
 			});
-			launches.set(key, { fingerprint, promise });
+			launches.set(key, { fingerprint, promise, observed: callObserved });
 			respond(deliver(promise));
 		});
 
-		worker.postMessage({ type: "start", script: options.script });
+		worker.postMessage({ type: "start", script: options.script, stateEnabled: options.state !== undefined });
 	});
 }

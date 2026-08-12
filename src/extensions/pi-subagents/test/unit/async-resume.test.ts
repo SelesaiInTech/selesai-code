@@ -26,14 +26,14 @@ describe("async resume lookup", () => {
 				lastUpdate: 200,
 				cwd: root,
 				sessionFile,
-				steps: [{ agent: "builder", status: "complete" }],
+				steps: [{ agent: "worker", status: "complete" }],
 			});
 
 			const target = resolveAsyncResumeTarget({ id: "run-a" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
 
 			assert.equal(target.kind, "revive");
 			assert.equal(target.runId, "run-abc");
-			assert.equal(target.agent, "builder");
+			assert.equal(target.agent, "worker");
 			assert.equal(target.sessionFile, sessionFile);
 			assert.equal(target.cwd, root);
 		} finally {
@@ -52,7 +52,7 @@ describe("async resume lookup", () => {
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-ceiling", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
 				capabilityCeiling: { version: 1, allowedTools: ["read", "write"], denyExtensions: true, sources: ["run"] },
-				steps: [{ agent: "builder", status: "complete", sessionFile, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: false, sources: ["step"] } }],
+				steps: [{ agent: "worker", status: "complete", sessionFile, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: false, sources: ["step"] } }],
 			});
 
 			const target = resolveAsyncResumeTarget({ id: "run-ceiling" }, { asyncDirRoot: asyncRoot, resultsDir });
@@ -61,7 +61,7 @@ describe("async resume lookup", () => {
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-ceiling", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
 				capabilityCeiling: { version: 2, allowedTools: ["read"], denyExtensions: true, sources: ["run"] },
-				steps: [{ agent: "builder", status: "complete", sessionFile }],
+				steps: [{ agent: "worker", status: "complete", sessionFile }],
 			});
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-ceiling" }, { asyncDirRoot: asyncRoot, resultsDir }), /capabilityCeiling version/);
 
@@ -69,14 +69,14 @@ describe("async resume lookup", () => {
 			writeJson(path.join(resultsDir, "run-ceiling.json"), {
 				runId: "run-ceiling", mode: "single", state: "complete", success: true, cwd: root,
 				capabilityCeiling: { version: 1, allowedTools: ["read", "grep"], denyExtensions: false, sources: ["result"] },
-				results: [{ agent: "builder", success: true, sessionFile, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["result-step"] } }],
+				results: [{ agent: "worker", success: true, sessionFile, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["result-step"] } }],
 			});
 			const resultOnly = resolveAsyncResumeTarget({ id: "run-ceiling" }, { asyncDirRoot: asyncRoot, resultsDir });
 			assert.deepEqual(resultOnly.capabilityCeiling, { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["result", "result-step"] });
 
 			writeJson(path.join(resultsDir, "run-ceiling.json"), {
 				runId: "run-ceiling", mode: "single", state: "complete", success: true, cwd: root,
-				results: [{ agent: "builder", success: true, sessionFile, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true } }],
+				results: [{ agent: "worker", success: true, sessionFile, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true } }],
 			});
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-ceiling" }, { asyncDirRoot: asyncRoot, resultsDir }), /capabilityCeiling sources/);
 		} finally {
@@ -94,10 +94,10 @@ describe("async resume lookup", () => {
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-descriptor", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
-				steps: [{ agent: "builder", status: "paused", sessionFile }],
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
 			});
 			const descriptor = {
-				version: 1, sourceRunId: "run-descriptor", agent: "builder", cwd: root, systemPromptMode: "replace",
+				version: 1, sourceRunId: "run-descriptor", agent: "worker", cwd: root, systemPromptMode: "replace",
 				inheritProjectContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
 			};
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, token: "must-not-be-accepted" });
@@ -121,7 +121,61 @@ describe("async resume lookup", () => {
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /different source run/);
 
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, agent: "another-agent" });
-			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /not 'builder'/);
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /not 'worker'/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("normalizes persisted turn-budget state without weakening public input validation", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-turn-budget-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-turn-budget");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-turn-budget", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
+			});
+			const descriptor = {
+				version: 1,
+				sourceRunId: "run-turn-budget",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+			};
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				...descriptor,
+				initialTurnBudget: {
+					maxTurns: 8,
+					graceTurns: 2,
+					outcome: "within-budget",
+					turnCount: 0,
+					wrapUpRequestedAtTurn: 8,
+					terminationDeferredAtTurn: 10,
+					exceededAtTurn: 11,
+				},
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir });
+
+			assert.deepEqual(target.recoveryDescriptor?.initialTurnBudget, { maxTurns: 8, graceTurns: 2 });
+
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				...descriptor,
+				initialTurnBudget: { maxTurns: 8, graceTurns: 2, unrelated: true },
+			});
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir }),
+				/recoveryDescriptor\.initialTurnBudget\.unrelated is not supported/,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -137,12 +191,12 @@ describe("async resume lookup", () => {
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
-				steps: [{ agent: "builder", status: "paused", sessionFile }],
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
 			});
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				version: 1,
 				sourceRunId: "run-acceptance",
-				agent: "builder",
+				agent: "worker",
 				cwd: root,
 				systemPromptMode: "replace",
 				inheritProjectContext: false,
@@ -186,12 +240,12 @@ describe("async resume lookup", () => {
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-reviewed-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
-				steps: [{ agent: "builder", status: "paused", sessionFile }],
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
 			});
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				version: 1,
 				sourceRunId: "run-reviewed-acceptance",
-				agent: "builder",
+				agent: "worker",
 				cwd: root,
 				systemPromptMode: "replace",
 				inheritProjectContext: false,
@@ -206,7 +260,7 @@ describe("async resume lookup", () => {
 					criteria: ["Return evidence"],
 					evidence: ["validation-output"],
 					verify: [],
-					review: { agent: "commentator", required: true },
+					review: { agent: "reviewer", required: true },
 					stopRules: [],
 				},
 			});
@@ -230,12 +284,12 @@ describe("async resume lookup", () => {
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-inferred-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
-				steps: [{ agent: "builder", status: "paused", sessionFile }],
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
 			});
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				version: 1,
 				sourceRunId: "run-inferred-acceptance",
-				agent: "builder",
+				agent: "worker",
 				cwd: root,
 				systemPromptMode: "replace",
 				inheritProjectContext: false,
@@ -250,7 +304,7 @@ describe("async resume lookup", () => {
 					criteria: [],
 					evidence: [],
 					verify: [],
-					review: { agent: "commentator", required: true },
+					review: { agent: "reviewer", required: true },
 					stopRules: [],
 				},
 			});
@@ -280,7 +334,7 @@ describe("async resume lookup", () => {
 				lastUpdate: 200,
 				cwd: root,
 				sessionFile,
-				steps: [{ agent: "builder", status: "stopped", stopped: true, sessionFile }],
+				steps: [{ agent: "worker", status: "stopped", stopped: true, sessionFile }],
 			});
 
 			assert.throws(
@@ -301,14 +355,14 @@ describe("async resume lookup", () => {
 				mode: "single",
 				state: "running",
 				startedAt: 100,
-				steps: [{ agent: "explorer", status: "running" }],
+				steps: [{ agent: "scout", status: "running" }],
 			});
 			writeJson(path.join(asyncRoot, "run-ab", "status.json"), {
 				runId: "run-ab",
 				mode: "single",
 				state: "running",
 				startedAt: 100,
-				steps: [{ agent: "builder", status: "running" }],
+				steps: [{ agent: "worker", status: "running" }],
 			});
 
 			assert.throws(
@@ -350,7 +404,7 @@ describe("async resume lookup", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				sessionFile,
-				steps: [{ agent: "builder", status: "complete" }],
+				steps: [{ agent: "worker", status: "complete" }],
 			});
 
 			assert.throws(
@@ -368,10 +422,10 @@ describe("async resume lookup", () => {
 			const resultsDir = path.join(root, "results");
 			writeJson(path.join(resultsDir, "run-result.json"), {
 				id: "run-result",
-				agent: "builder",
+				agent: "worker",
 				success: true,
 				state: "complete",
-				results: [{ agent: "builder", sessionFile: { path: "session.jsonl" } }],
+				results: [{ agent: "worker", sessionFile: { path: "session.jsonl" } }],
 			});
 
 			assert.throws(
@@ -389,10 +443,10 @@ describe("async resume lookup", () => {
 			const resultsDir = path.join(root, "results");
 			writeJson(path.join(resultsDir, "run-result-model.json"), {
 				id: "run-result-model",
-				agent: "builder",
+				agent: "worker",
 				success: true,
 				state: "complete",
-				results: [{ agent: "builder", model: { id: "bad" } }],
+				results: [{ agent: "worker", model: { id: "bad" } }],
 			});
 
 			assert.throws(
@@ -402,10 +456,10 @@ describe("async resume lookup", () => {
 
 			writeJson(path.join(resultsDir, "run-result-model.json"), {
 				id: "run-result-model",
-				agent: "builder",
+				agent: "worker",
 				success: true,
 				state: "complete",
-				results: [{ agent: "builder", thinking: { level: "high" } }],
+				results: [{ agent: "worker", thinking: { level: "high" } }],
 			});
 
 			assert.throws(
@@ -427,7 +481,7 @@ describe("async resume lookup", () => {
 				mode: "single",
 				state: "running",
 				startedAt: 100,
-				steps: [{ agent: "builder", status: "running" }],
+				steps: [{ agent: "worker", status: "running" }],
 			});
 
 			assert.throws(
@@ -448,7 +502,7 @@ describe("async resume lookup", () => {
 				mode: "single",
 				state: "running",
 				startedAt: 100,
-				steps: [{ agent: "builder", status: "running", model: { id: "bad" } }],
+				steps: [{ agent: "worker", status: "running", model: { id: "bad" } }],
 			});
 
 			assert.throws(
@@ -461,7 +515,7 @@ describe("async resume lookup", () => {
 				mode: "single",
 				state: "running",
 				startedAt: 100,
-				steps: [{ agent: "builder", status: "running", thinking: { level: "high" } }],
+				steps: [{ agent: "worker", status: "running", thinking: { level: "high" } }],
 			});
 
 			assert.throws(
@@ -483,7 +537,7 @@ describe("async resume lookup", () => {
 				state: "running",
 				startedAt: 100,
 				lastUpdate: 100,
-				steps: [{ agent: "explorer", status: "running", model: "openai/gpt-4.1", thinking: "off" }],
+				steps: [{ agent: "scout", status: "running", model: "openai/gpt-4.1", thinking: "off" }],
 			});
 
 			const target = resolveAsyncResumeTarget({ id: "run-live" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
@@ -507,19 +561,19 @@ describe("async resume lookup", () => {
 				mode: "single",
 				state: "running",
 				startedAt: 100,
-				steps: [{ agent: "builder", status: "running" }],
+				steps: [{ agent: "worker", status: "running" }],
 			});
 			writeJson(path.join(asyncRoot, "sessionless", "status.json"), {
 				runId: "sessionless",
 				mode: "single",
 				state: "running",
 				startedAt: 100,
-				steps: [{ agent: "builder", status: "running" }],
+				steps: [{ agent: "worker", status: "running" }],
 			});
 			writeJson(path.join(resultsDir, "result-only.json"), {
 				id: "result-only",
 				sessionId: "session-a",
-				agent: "builder",
+				agent: "worker",
 				state: "complete",
 				success: true,
 			});
@@ -529,11 +583,11 @@ describe("async resume lookup", () => {
 				mode: "single",
 				state: "complete",
 				startedAt: 100,
-				steps: [{ agent: "builder", status: "complete" }],
+				steps: [{ agent: "worker", status: "complete" }],
 			});
 			writeJson(path.join(resultsDir, "mixed.json"), {
 				id: "mixed",
-				agent: "builder",
+				agent: "worker",
 				state: "complete",
 				success: true,
 			});
@@ -542,12 +596,12 @@ describe("async resume lookup", () => {
 				mode: "single",
 				state: "complete",
 				startedAt: 100,
-				steps: [{ agent: "builder", status: "complete" }],
+				steps: [{ agent: "worker", status: "complete" }],
 			});
 			writeJson(path.join(resultsDir, "mixed-reverse.json"), {
 				id: "mixed-reverse",
 				sessionId: "session-a",
-				agent: "builder",
+				agent: "worker",
 				state: "complete",
 				success: true,
 			});
@@ -712,14 +766,14 @@ describe("async resume lookup", () => {
 			kind: "revive",
 			runId: "run-old",
 			state: "complete",
-			agent: "builder",
+			agent: "worker",
 			index: 0,
 			sessionFile: "/tmp/session.jsonl",
 		}, "What changed?");
 
 		assert.match(task, /Original run: run-old/);
 		assert.doesNotMatch(task, /async subagent conversation/);
-		assert.match(task, /Original agent: builder/);
+		assert.match(task, /Original agent: worker/);
 		assert.match(task, /Original session file: \/tmp\/session\.jsonl/);
 		assert.match(task, /Follow-up:\nWhat changed\?/);
 	});

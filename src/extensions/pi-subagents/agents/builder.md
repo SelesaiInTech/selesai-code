@@ -1,7 +1,6 @@
 ---
 name: builder
 description: Mutation-capable scoped implementation
-aliases: developer, coder, implementer, develop
 acceptanceRole: writer
 thinking: high
 systemPromptMode: replace

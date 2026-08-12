@@ -75,7 +75,7 @@ describe("resolveChainTemplates", { skip: !available ? "pi packages not availabl
 
 	it("mixed sequential + parallel", () => {
 		const chain = [
-			{ agent: "explorer", task: "Scan" },
+			{ agent: "scout", task: "Scan" },
 			{
 				parallel: [
 					{ agent: "rev-a", task: "Deep review A" },
@@ -171,6 +171,14 @@ describe("resolveStepBehavior", { skip: !available ? "pi packages not available"
 		assert.equal(behavior.output, false);
 	});
 
+	it("ignores boolean and string true output overrides", () => {
+		const config = { name: "test", output: "report.md" };
+		assert.equal(resolveStepBehavior(config, { output: true }).output, "report.md");
+		assert.equal(resolveStepBehavior(config, { output: "true" }).output, "report.md");
+		assert.equal(resolveStepBehavior({ name: "test" }, { output: true }).output, false);
+		assert.equal(resolveStepBehavior({ name: "test" }, { output: "true" }).output, false);
+	});
+
 	it("defaults to false when agent has no config", () => {
 		const config = { name: "test" };
 		const behavior = resolveStepBehavior(config, {});
@@ -183,8 +191,8 @@ describe("resolveStepBehavior", { skip: !available ? "pi packages not available"
 describe("resolveParallelBehaviors", { skip: !available ? "pi packages not available" : undefined }, () => {
 	it("string false agent default disables output in chain parallel tasks", () => {
 		const behaviors = resolveParallelBehaviors(
-			[{ agent: "commentator", task: "Review" }],
-			[{ name: "commentator", output: "false" }],
+			[{ agent: "reviewer", task: "Review" }],
+			[{ name: "reviewer", output: "false" }],
 			0,
 		);
 
@@ -206,13 +214,25 @@ describe("read-only progress suppression", { skip: !available ? "pi packages not
 });
 
 describe("buildChainInstructions", { skip: !available ? "pi packages not available" : undefined }, () => {
-	it("adds [Read from:] prefix for reads", () => {
-		const behavior = { reads: ["context.md"], output: false, outputMode: "inline", progress: false, skills: undefined };
+	it("includes existing reads and omits missing reads", () => {
+		const behavior = { reads: ["context.md", "missing.md"], output: false, outputMode: "inline", progress: false, skills: undefined };
 		const dir = createTempDir("chain-test-");
 		try {
+			fs.writeFileSync(path.join(dir, "context.md"), "context");
 			const { prefix } = buildChainInstructions(behavior, dir, false);
 			assert.ok(prefix.includes("[Read from:"), `should have Read instruction: ${prefix}`);
-			assert.ok(prefix.includes("context.md"), "should reference the file");
+			assert.ok(prefix.includes("context.md"), "should reference the existing file");
+			assert.doesNotMatch(prefix, /missing\.md/);
+		} finally {
+			removeTempDir(dir);
+		}
+	});
+
+	it("omits the read prefix when all configured reads are missing", () => {
+		const behavior = { reads: ["missing.md"], output: false, outputMode: "inline", progress: false, skills: undefined };
+		const dir = createTempDir("chain-test-");
+		try {
+			assert.doesNotMatch(buildChainInstructions(behavior, dir, false).prefix, /\[Read from:/);
 		} finally {
 			removeTempDir(dir);
 		}

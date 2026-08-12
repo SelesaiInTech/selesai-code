@@ -2,10 +2,11 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { PROJECT_SUBAGENTS_RELATIVE_DIR } from "../shared/artifacts.ts";
 
-const IGNORED_CHANGE_PREFIXES = [".pi-subagents/", "tmp/", "node_modules/"];
-const IGNORED_CHANGE_PATHS = new Set([".pi-subagents", "tmp", "node_modules"]);
-const IGNORED_CHANGE_SEGMENTS = new Set([".git", ".pi-subagents", "node_modules"]);
+const IGNORED_CHANGE_PREFIXES = [`${PROJECT_SUBAGENTS_RELATIVE_DIR}/`, "tmp/", "node_modules/"];
+const IGNORED_CHANGE_PATHS = new Set([PROJECT_SUBAGENTS_RELATIVE_DIR, "tmp", "node_modules"]);
+const IGNORED_CHANGE_SEGMENTS = new Set([".git", "node_modules"]);
 
 const DEFAULT_MAX_HASH_FILE_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_HASH_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -37,7 +38,7 @@ export interface WatchdogRepoChangeSignature {
 }
 
 function git(cwd: string, args: string[]): string | undefined {
-	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, windowsHide: true });
+	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
 	if (result.status !== 0) return undefined;
 	return result.stdout;
 }

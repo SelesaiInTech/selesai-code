@@ -136,12 +136,12 @@ function taskHasReadOnlyDeliverable(taskText: string): boolean {
 }
 
 function isReviewerStyleAgent(agent: string): boolean {
-	return /\b(?:commentator|advisor|reviewer|oracle)\b/i.test(agent);
+	return /\b(?:advisor|reviewer|oracle)\b/i.test(agent);
 }
 
 function hasImplementationIntent(agent: string, taskText: string): boolean {
 	if (isReviewerStyleAgent(agent)) return REVIEWER_REQUIRED_EDIT_PATTERNS.some((pattern) => pattern.test(taskText));
-	if (agent === "worker" || agent === "builder") return WORKER_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
+	if (agent === "worker") return WORKER_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
 	return GENERAL_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
 }
 

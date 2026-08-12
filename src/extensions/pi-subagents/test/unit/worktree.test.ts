@@ -178,8 +178,8 @@ describe("worktree", () => {
 		assert.equal(
 			findWorktreeTaskCwdConflict(
 				[
-					{ agent: "builder-a" },
-					{ agent: "builder-b", cwd: sharedCwd },
+					{ agent: "worker-a" },
+					{ agent: "worker-b", cwd: sharedCwd },
 				],
 				sharedCwd,
 			),
@@ -191,7 +191,7 @@ describe("worktree", () => {
 		const sharedCwd = path.join("/tmp", "repo");
 		assert.equal(
 			findWorktreeTaskCwdConflict(
-				[{ agent: "builder-a", cwd: "." }],
+				[{ agent: "worker-a", cwd: "." }],
 				sharedCwd,
 			),
 			undefined,
@@ -202,14 +202,14 @@ describe("worktree", () => {
 		const sharedCwd = path.join("/tmp", "repo");
 		const conflict = findWorktreeTaskCwdConflict(
 			[
-				{ agent: "builder-a", cwd: sharedCwd },
-				{ agent: "builder-b", cwd: path.join(sharedCwd, "packages", "app") },
+				{ agent: "worker-a", cwd: sharedCwd },
+				{ agent: "worker-b", cwd: path.join(sharedCwd, "packages", "app") },
 			],
 			sharedCwd,
 		);
 		assert.deepEqual(conflict, {
 			index: 1,
-			agent: "builder-b",
+			agent: "worker-b",
 			cwd: path.join(sharedCwd, "packages", "app"),
 		});
 	});
@@ -338,7 +338,7 @@ describe("worktree", () => {
 			setup = createWorktrees(repoDir, "captured", 1);
 			const worktreePath = setup.worktrees[0]!.path;
 			fs.writeFileSync(path.join(worktreePath, "tracked.txt"), "captured\n", "utf-8");
-			const diffs = diffWorktrees(setup, ["builder"], path.join(repoDir, "artifacts", "captured"));
+			const diffs = diffWorktrees(setup, ["worker"], path.join(repoDir, "artifacts", "captured"));
 			assert.equal(diffs[0]?.error, undefined);
 			assert.ok(fs.statSync(diffs[0]!.patchPath).size > 0);
 

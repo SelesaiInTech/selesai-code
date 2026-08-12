@@ -70,7 +70,7 @@ describe("getPiSpawnCommand", () => {
 			},
 			env: { SELESAI_SUBAGENT_PI_BINARY: "   " },
 		});
-		assert.deepEqual(result, { command: "selesai", args });
+		assert.deepEqual(result, { command: "pi", args });
 	});
 
 	for (const [platform, execPath] of [
@@ -152,7 +152,7 @@ describe("getPiSpawnCommand", () => {
 		});
 	});
 
-	it("falls back to plain selesai command on POSIX when CLI script cannot be resolved", () => {
+	it("falls back to plain pi command on POSIX when CLI script cannot be resolved", () => {
 		const args = ["--mode", "json", "Task: check output"];
 		const result = getPiSpawnCommand(args, {
 			platform: "darwin",
@@ -163,7 +163,7 @@ describe("getPiSpawnCommand", () => {
 			},
 			env: {},
 		});
-		assert.deepEqual(result, { command: "selesai", args });
+		assert.deepEqual(result, { command: "pi", args });
 	});
 
 	it("ignores embedded host entry points and resolves the Pi package bin on every platform", () => {
@@ -289,7 +289,7 @@ describe("getPiSpawnCommand", () => {
 		assert.equal(result.args[0], cliPath);
 	});
 
-	it("falls back to selesai when Windows CLI script cannot be resolved", () => {
+	it("falls back to pi when Windows CLI script cannot be resolved", () => {
 		const deps = makeDeps({
 			platform: "win32",
 			argv1: "/opt/pi/subagent-runner.ts",
@@ -297,7 +297,7 @@ describe("getPiSpawnCommand", () => {
 		});
 		const args = ["-p", "Task: hello"];
 		const result = getPiSpawnCommand(args, deps);
-		assert.deepEqual(result, { command: "selesai", args });
+		assert.deepEqual(result, { command: "pi", args });
 	});
 
 	it("walks from package main entry to resolve package bin", () => {
@@ -328,7 +328,7 @@ describe("getPiSpawnCommand", () => {
 				platform: "win32",
 				execPath: "/usr/local/bin/node",
 				argv1: "/opt/pi/subagent-runner.ts",
-				resolvePackageEntry: () => entry,
+				resolvePackageJson: () => path.join(packageRoot, "package.json"),
 				env: {},
 			});
 			assert.equal(result.command, "/usr/local/bin/node");

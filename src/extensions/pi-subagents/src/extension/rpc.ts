@@ -2,6 +2,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@selesai/code";
 import { Compile } from "typebox/compile";
+import { validateChainInput } from "./chain-validation.ts";
 import { resolveAsyncRunLocation } from "../runs/background/async-resume.ts";
 import { deliverStopRequest } from "../runs/background/control-channel.ts";
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
@@ -16,10 +17,11 @@ import {
 	SUBAGENT_PROCESS_TERMINAL_EVENT,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 } from "../shared/types.ts";
+import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
-import { validateChainInput } from "./chain-validation.ts";
 import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
+import { normalizePublicSubagentExecution } from "./public-execution.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
 export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
@@ -101,12 +103,8 @@ const MAX_METADATA_LENGTH = 128;
 
 function displayText(value: unknown, maxLength: number): string | undefined {
 	if (typeof value !== "string") return undefined;
-	// Strip complete CSI/OSC/DCS/APC/PM strings and C1 controls before collapsing
-	// whitespace; never leave CSI parameters behind after removing ESC.
-	const normalized = value.slice(0, 4_096)
-		.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x9b[0-?]*[ -/]*[@-~]|\x1b][\s\S]*?(?:\x07|\x1b\\)|\x1b[PX^_][\s\S]*?\x1b\\|[\u0000-\u001f\u007f-\u009f]/g, " ")
-		.replace(/\s+/g, " ").trim();
-	return normalized ? normalized.slice(0, maxLength) : undefined;
+	const normalized = sanitizeDisplayText(value.slice(0, 4_096));
+	return normalized ? truncateDisplayText(normalized, maxLength) : undefined;
 }
 
 function publicTokens(value: unknown): { input: number; output: number; total: number } {
@@ -426,19 +424,15 @@ async function executeChecked(
 
 function spawnParams(params: unknown): SubagentParamsLike {
 	const input = assertRecordParams(params, "spawn");
-	if (input.tasks !== undefined || input.chain !== undefined || input.concurrency !== undefined || input.chainDir !== undefined || (input.worktree !== undefined && !(input.worktree === true && input.agent))) {
-		throw new SubagentRpcError("invalid_params", "RPC spawn no longer accepts top-level chain or parallel inputs; use workflowScript.");
-	}
-	if (input.action !== undefined) {
+	const normalized = normalizePublicSubagentExecution(input);
+	if (!normalized.ok) throw new SubagentRpcError("invalid_params", normalized.error);
+	if (normalized.params.action !== undefined) {
 		throw new SubagentRpcError("invalid_params", "RPC spawn does not accept management/control actions. Use status or interrupt RPC methods instead.");
 	}
 	if (input.async === false) {
 		throw new SubagentRpcError("invalid_params", "RPC spawn only supports detached async launches; omit async or set async: true.");
 	}
-	if (input.clarify === true) {
-		throw new SubagentRpcError("invalid_params", "RPC spawn cannot open the clarify UI; omit clarify or set clarify: false.");
-	}
-	return { ...(input as SubagentParamsLike), async: true, clarify: false };
+	return { ...(normalized.params as SubagentParamsLike), async: true };
 }
 
 function steerParams(params: unknown): SubagentParamsLike {
@@ -447,10 +441,12 @@ function steerParams(params: unknown): SubagentParamsLike {
 		throw new SubagentRpcError("invalid_params", "RPC steer requires a non-empty message.");
 	const target = normalizeTargetParams(input, "steer");
 	if (!target.id && !target.runId && !target.dir) throw new SubagentRpcError("invalid_params", "RPC steer requires id, runId, or dir.");
+	if (input.mode !== undefined && input.mode !== "steer" && input.mode !== "follow_up" && input.mode !== "auto") throw new SubagentRpcError("invalid_params", "RPC steer mode must be steer, follow_up, or auto.");
 	return {
 		action: "steer",
 		...target,
 		message: input.message.trim(),
+		...(typeof input.mode === "string" ? { mode: input.mode as "steer" | "follow_up" | "auto" } : {}),
 		steeringRecovery: false,
 	};
 }
@@ -498,6 +494,10 @@ function stopAsyncRun(
 	if (!initialStatus) throw new SubagentRpcError("not_found", `Status file not found for async run '${initialRunId}'.`);
 	if (!currentSessionId || initialStatus.sessionId !== currentSessionId) {
 		throw new SubagentRpcError("not_found", `Async run '${initialRunId}' was not found in the active session.`);
+	}
+
+	if (initialStatus.mode === "workflow" && initialStatus.state === "running") {
+		throw new SubagentRpcError("invalid_state", `Workflow ${initialRunId} is not controlled by this extension runtime; reload recovery cannot stop it safely.`);
 	}
 
 	let status;

@@ -34,7 +34,7 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 	it("streams progress updates into the visible slash snapshot", () => {
 		clearSlashSnapshots!();
 		const details = buildSlashInitialResult!("req-1", {
-			agent: "explorer",
+			agent: "scout",
 			task: "scan codebase",
 		});
 
@@ -43,7 +43,7 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 			currentTool: "find",
 			toolCount: 2,
 			progress: [{
-				agent: "explorer",
+				agent: "scout",
 				status: "running",
 				task: "scan codebase",
 				currentTool: "find",
@@ -66,14 +66,14 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 	it("does not assign a parallel child update to another chain placeholder", () => {
 		clearSlashSnapshots!();
 		const details = buildSlashInitialResult!("req-parallel", {
-			chain: [{ parallel: [{ agent: "explorer", task: "map" }, { agent: "explorer", task: "analyze" }] }],
+			chain: [{ parallel: [{ agent: "scout", task: "map" }, { agent: "context-builder", task: "analyze" }] }],
 		});
 
 		applySlashUpdate!("req-parallel", {
 			requestId: "req-parallel",
 			progress: [{
 				index: 1,
-				agent: "explorer",
+				agent: "context-builder",
 				status: "running",
 				task: "analyze",
 				currentTool: "find",
@@ -90,10 +90,10 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 		assert.equal(results[1]?.progress?.currentTool, "find");
 	});
 
-	it("creates stable placeholders for a 40-step builder/commentator chain", () => {
+	it("creates stable placeholders for a 40-step worker/reviewer chain", () => {
 		clearSlashSnapshots!();
 		const chain = Array.from({ length: 40 }, (_, index) => ({
-			agent: index % 2 === 0 ? "builder" : "commentator",
+			agent: index % 2 === 0 ? "worker" : "reviewer",
 			...(index === 0 ? { task: "Start long chain" } : {}),
 		}));
 
@@ -106,14 +106,14 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 		assert.equal(details.result.details.totalSteps, 40);
 		assert.equal(details.result.details.currentStepIndex, 0);
 		assert.equal(details.result.details.results[0]?.progress?.status, "running");
-		assert.equal(details.result.details.results[39]?.agent, "commentator");
+		assert.equal(details.result.details.results[39]?.agent, "reviewer");
 		assert.equal(details.result.details.results[39]?.progress?.index, 39);
 	});
 
 	it("prefers finalized snapshots and restores them from persisted custom messages", () => {
 		clearSlashSnapshots!();
 		const details = buildSlashInitialResult!("req-2", {
-			agent: "explorer",
+			agent: "scout",
 			task: "scan codebase",
 		});
 
@@ -124,7 +124,7 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 				details: {
 					mode: "single",
 					results: [{
-						agent: "explorer",
+						agent: "scout",
 						task: "scan codebase",
 						exitCode: 0,
 						messages: [],

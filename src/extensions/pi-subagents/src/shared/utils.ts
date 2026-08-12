@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
+import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "./display-text.ts";
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
 
@@ -101,6 +102,23 @@ export function getAgentDir(): string {
 
 const statusCache = new Map<string, { mtime: number; ctime: number; size: number; ino: number; status: AsyncStatus }>();
 
+export function pruneStatusCacheForAsyncRoot(asyncDirRoot: string, runIds: Iterable<string>): number {
+	const root = path.resolve(asyncDirRoot);
+	const currentStatusPaths = new Set(
+		Array.from(runIds, (runId) => path.resolve(root, runId, "status.json")),
+	);
+	let removed = 0;
+	for (const statusPath of statusCache.keys()) {
+		const resolved = path.resolve(statusPath);
+		const relative = path.relative(root, resolved);
+		if (relative && !relative.startsWith("..") && !path.isAbsolute(relative) && !currentStatusPaths.has(resolved)) {
+			statusCache.delete(statusPath);
+			removed++;
+		}
+	}
+	return removed;
+}
+
 function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -127,7 +145,10 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 	try {
 		stat = fs.statSync(statusPath);
 	} catch (error) {
-		if (isNotFoundError(error)) return null;
+		if (isNotFoundError(error)) {
+			statusCache.delete(statusPath);
+			return null;
+		}
 		throw new Error(`Failed to inspect async status file '${statusPath}': ${getErrorMessage(error)}`, {
 			cause: error instanceof Error ? error : undefined,
 		});
@@ -148,7 +169,10 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 	try {
 		content = fs.readFileSync(statusPath, "utf-8");
 	} catch (error) {
-		if (isNotFoundError(error)) return null;
+		if (isNotFoundError(error)) {
+			statusCache.delete(statusPath);
+			return null;
+		}
 		throw new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
 			cause: error instanceof Error ? error : undefined,
 		});
@@ -170,10 +194,6 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 		ino: stat.ino,
 		status,
 	});
-	if (statusCache.size > 50) {
-		const firstKey = statusCache.keys().next().value;
-		if (firstKey) statusCache.delete(firstKey);
-	}
 	return status;
 }
 
@@ -522,11 +542,8 @@ export function detectSubagentError(messages: Message[]): ErrorInfo {
  * Extract a preview of tool arguments for display
  */
 export function extractToolArgsPreview(args: Record<string, unknown>): string {
-	const truncatePreview = (value: string, maxLength: number): string =>
-		value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
-
 	const stringifyPreviewValue = (value: unknown): string | undefined => {
-		if (typeof value === "string" && value.trim().length > 0) return value;
+		if (typeof value === "string" && value.trim().length > 0) return sanitizeDisplayText(value);
 		if (typeof value === "number" || typeof value === "boolean") return String(value);
 		return undefined;
 	};
@@ -539,39 +556,32 @@ export function extractToolArgsPreview(args: Record<string, unknown>): string {
 		return `${first}${suffix}`;
 	};
 
-	// Handle MCP tool calls - show server/tool info
-	if (args.tool && typeof args.tool === "string") {
-		const server = args.server && typeof args.server === "string" ? `${args.server}/` : "";
-		const toolArgs = args.args && typeof args.args === "string" ? ` ${args.args.slice(0, 40)}` : "";
-		return `${server}${args.tool}${toolArgs}`;
+	if (typeof args.tool === "string") {
+		const server = typeof args.server === "string" ? `${sanitizeDisplayText(args.server)}/` : "";
+		const toolArgs = typeof args.args === "string" ? ` ${truncateDisplayText(sanitizeDisplayText(args.args), 40)}` : "";
+		return sanitizeDisplayText(`${server}${args.tool}${toolArgs}`);
 	}
 
 	const queriesPreview = previewArray(args.queries);
-	if (queriesPreview) return truncatePreview(queriesPreview, 60);
-	if (typeof args.query === "string" && args.query.trim().length > 0) return truncatePreview(args.query, 60);
-	if (typeof args.workflow === "string" && args.workflow.trim().length > 0) return `workflow=${truncatePreview(args.workflow, 48)}`;
+	if (queriesPreview) return previewDisplayText(queriesPreview, 60);
+	if (typeof args.query === "string" && args.query.trim().length > 0) return previewDisplayText(args.query, 60);
+	if (typeof args.workflow === "string" && args.workflow.trim().length > 0) return `workflow=${previewDisplayText(args.workflow, 48)}`;
 
-	if (typeof args.url === "string" && args.url.trim().length > 0) return truncatePreview(args.url, 60);
+	if (typeof args.url === "string" && args.url.trim().length > 0) return previewDisplayText(args.url, 60);
 	const urlsPreview = previewArray(args.urls);
-	if (urlsPreview) return truncatePreview(urlsPreview, 60);
-	if (typeof args.prompt === "string" && args.prompt.trim().length > 0) return truncatePreview(args.prompt, 60);
-	
+	if (urlsPreview) return previewDisplayText(urlsPreview, 60);
+	if (typeof args.prompt === "string" && args.prompt.trim().length > 0) return previewDisplayText(args.prompt, 60);
+
 	const previewKeys = ["command", "path", "file_path", "pattern", "query", "url", "task", "describe", "search"];
 	for (const key of previewKeys) {
-		if (args[key] && typeof args[key] === "string") {
-			const value = args[key] as string;
-			return truncatePreview(value, 60);
-		}
+		if (typeof args[key] === "string") return previewDisplayText(args[key], 60);
 	}
-	
-	// Fallback: show first string value found
+
 	for (const [key, value] of Object.entries(args)) {
+		const displayKey = sanitizeDisplayText(key);
 		const arrayPreview = previewArray(value);
-		if (arrayPreview) return `${key}=${truncatePreview(arrayPreview, 50)}`;
-		if (typeof value === "string" && value.length > 0) {
-			const preview = truncatePreview(value, 50);
-			return `${key}=${preview}`;
-		}
+		if (arrayPreview) return `${displayKey}=${previewDisplayText(arrayPreview, 50)}`;
+		if (typeof value === "string" && value.length > 0) return `${displayKey}=${previewDisplayText(value, 50)}`;
 	}
 	return "";
 }

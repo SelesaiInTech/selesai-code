@@ -26,9 +26,8 @@ const expectedHostPeerRanges = {
 const expectedHostDevVersions = {
 	"@earendil-works/pi-agent-core": "0.81.0",
 	"@earendil-works/pi-ai": "0.81.0",
-	"@selesai/code": "0.8.2",
 	"@earendil-works/pi-tui": "0.81.0",
-} satisfies Record<(typeof hostPeerPackages)[number], string>;
+} satisfies Record<Exclude<(typeof hostPeerPackages)[number], "@selesai/code">, string>;
 
 function collectSourceFiles(dir: string): string[] {
 	const files: string[] = [];
@@ -64,6 +63,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./intercom-bridge": "./src/api/intercom-bridge.ts",
 		"./pi-args": "./src/api/pi-args.ts",
 		"./shared-types": "./src/api/shared-types.ts",
+		"./project-panes": "./src/api/project-panes.ts",
 	});
 	const backgroundWork = await import("pi-subagents/background-work");
 	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
@@ -90,6 +90,11 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(typeof sharedTypes.wrapForkTask, "function");
 	assert.equal(typeof sharedTypes.DEFAULT_FORK_PREAMBLE, "string");
 	assert.equal("TEMP_ROOT_DIR" in sharedTypes, false);
+	const projectPanes = await import("pi-subagents/project-panes");
+	assert.equal(projectPanes.PROJECT_PANES_API_VERSION, 1);
+	assert.equal(typeof projectPanes.openProjectPane, "function");
+	assert.equal(typeof projectPanes.getProjectPaneStatus, "function");
+	assert.equal(typeof projectPanes.closeProjectPane, "function");
 });
 
 test("direct @earendil-works runtime imports are declared for CI installs", () => {
@@ -118,6 +123,10 @@ test("direct dependency declarations are exact version pins", () => {
 
 	for (const section of ["dependencies", "devDependencies"] as const) {
 		for (const [name, version] of Object.entries<string>(packageJson[section] ?? {})) {
+			if (name === "@selesai/code") {
+				assert.equal(version, "file:./test/fixtures/pi-coding-agent-shim");
+				continue;
+			}
 			assert.match(version, exactVersionPattern, `${section}.${name} should use an exact version`);
 		}
 	}
@@ -147,6 +156,11 @@ test("host-owned development packages use the supported SDK baseline", () => {
 	for (const [name, version] of Object.entries(expectedHostDevVersions)) {
 		assert.equal(packageJson.devDependencies?.[name], version, `${name} should use ${version}`);
 	}
+	assert.equal(
+		packageJson.devDependencies?.["@selesai/code"],
+		"file:./test/fixtures/pi-coding-agent-shim",
+		"pi-coding-agent should use the local type/runtime shim until upstream Pi no longer pins vulnerable Undici",
+	);
 });
 
 test("old pi package scope is not used by source or tests", () => {

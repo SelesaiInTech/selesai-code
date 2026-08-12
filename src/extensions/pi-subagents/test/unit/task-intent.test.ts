@@ -4,18 +4,18 @@ import { classifyTaskMutationIntent, expectsImplementationMutation, taskMayMutat
 
 describe("classifyTaskMutationIntent", () => {
 	it("keeps write imperatives despite investigative wording", () => {
-		assert.equal(classifyTaskMutationIntent("builder", "Inspect the failure and implement the fix").kind, "implementation");
-		assert.equal(classifyTaskMutationIntent("builder", "Research the current code path and patch the bug").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Inspect the failure and implement the fix").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Research the current code path and patch the bug").kind, "implementation");
 	});
 
 	it("does not broaden the shared completion-guard classifier for role-only path patches", () => {
-		assert.equal(classifyTaskMutationIntent("builder", "Patch src/auth.ts").kind, "unknown");
+		assert.equal(classifyTaskMutationIntent("worker", "Patch src/auth.ts").kind, "unknown");
 	});
 
 	it("treats scoped no-edit constraints as constraints, not task intent", () => {
-		assert.equal(classifyTaskMutationIntent("builder", "Do not modify tests; implement the fix").kind, "implementation");
-		assert.equal(classifyTaskMutationIntent("builder", "Fix the bug. Do not edit files outside src/.").kind, "implementation");
-		assert.equal(classifyTaskMutationIntent("builder", "Must not touch the production database; implement the fix locally").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify tests; implement the fix").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Fix the bug. Do not edit files outside src/.").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Must not touch the production database; implement the fix locally").kind, "implementation");
 	});
 
 	it("stops the prohibition object before a following implementation clause", () => {
@@ -28,42 +28,42 @@ describe("classifyTaskMutationIntent", () => {
 			"Do not modify tests – implement the fix",
 			"Do not modify tests — implement the fix",
 		]) {
-			assert.equal(classifyTaskMutationIntent("builder", task).kind, "implementation", task);
+			assert.equal(classifyTaskMutationIntent("worker", task).kind, "implementation", task);
 		}
-		assert.equal(classifyTaskMutationIntent("builder", "Do not modify tests and fixtures").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify tests and fixtures").kind, "read-only");
 	});
 
 	it("lets blanket no-edit prohibitions win over write verbs", () => {
-		assert.equal(classifyTaskMutationIntent("builder", "Implement this. Do not edit files.").kind, "read-only");
-		assert.equal(classifyTaskMutationIntent("builder", "Do not edit files. Tell me how to fix the bug.").kind, "read-only");
-		assert.equal(classifyTaskMutationIntent("builder", "Report on the extraction pipeline. Do not modify project/source files.").kind, "read-only");
-		assert.equal(classifyTaskMutationIntent("commentator", "Final correctness review after prior fixes. Inspect all changed files and tests. Do not modify project/source files. Report findings.").kind, "read-only");
-		assert.equal(classifyTaskMutationIntent("builder", "Verification-only task. Do not edit product/source/config files.\n   Run a disposable check, delete its temporary harness, and retain only\n   a sanitized report at an explicitly named artifact path.").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("worker", "Implement this. Do not edit files.").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not edit files. Tell me how to fix the bug.").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("worker", "Report on the extraction pipeline. Do not modify project/source files.").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("reviewer", "Final correctness review after prior fixes. Inspect all changed files and tests. Do not modify project/source files. Report findings.").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("worker", "Verification-only task. Do not edit product/source/config files.\n   Run a disposable check, delete its temporary harness, and retain only\n   a sanitized report at an explicitly named artifact path.").kind, "read-only");
 	});
 
 	it("strips repeated prohibition phrases before testing write intent", () => {
-		assert.equal(classifyTaskMutationIntent("builder", "Do not modify vendor/. Do not modify generated/. Summarize the build.").kind, "read-only");
-		assert.equal(classifyTaskMutationIntent("builder", "Do not modify vendor/. Do not modify generated/. Implement the fix in src/.").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify vendor/. Do not modify generated/. Summarize the build.").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify vendor/. Do not modify generated/. Implement the fix in src/.").kind, "implementation");
 	});
 
-	it("classifies research agents and commentator-style tasks as read-only", () => {
+	it("classifies research agents and reviewer-style tasks as read-only", () => {
 		assert.equal(classifyTaskMutationIntent("researcher", "Research this and patch the bug").kind, "read-only");
-		assert.equal(classifyTaskMutationIntent("commentator", "Review this and fix any real issues").kind, "read-only");
-		assert.equal(classifyTaskMutationIntent("commentator", "Review findings and determine what to implement with playbooks instead of before").kind, "read-only");
-		assert.equal(classifyTaskMutationIntent("commentator", "Review findings and determine what to implement with playbooks instead of before").kind, "read-only");
-		assert.equal(classifyTaskMutationIntent("commentator", "Review this; regardless of findings, apply changes directly").kind, "implementation");
-		assert.equal(classifyTaskMutationIntent("commentator", "Implement the approved file changes").kind, "implementation");
-		assert.equal(classifyTaskMutationIntent("commentator", "Implement the approved file changes").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("reviewer", "Review this and fix any real issues").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("oracle", "Review findings and determine what to implement with playbooks instead of before").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("advisor", "Review findings and determine what to implement with playbooks instead of before").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("reviewer", "Review this; regardless of findings, apply changes directly").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("oracle", "Implement the approved file changes").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("advisor", "Implement the approved file changes").kind, "implementation");
 	});
 
 	it("keeps report-writing deliverables read-only", () => {
-		assert.equal(classifyTaskMutationIntent("builder", "Write a report on the API").kind, "read-only");
-		assert.equal(classifyTaskMutationIntent("builder", "Create a summary").kind, "unknown");
+		assert.equal(classifyTaskMutationIntent("worker", "Write a report on the API").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("worker", "Create a summary").kind, "unknown");
 	});
 
 	it("expectsImplementationMutation mirrors the classifier", () => {
-		assert.equal(expectsImplementationMutation("builder", "Do not modify tests; implement the fix"), true);
-		assert.equal(expectsImplementationMutation("builder", "Review the diff and suggest fixes only. Do not edit files."), false);
+		assert.equal(expectsImplementationMutation("worker", "Do not modify tests; implement the fix"), true);
+		assert.equal(expectsImplementationMutation("worker", "Review the diff and suggest fixes only. Do not edit files."), false);
 	});
 });
 

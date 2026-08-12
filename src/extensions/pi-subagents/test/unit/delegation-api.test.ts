@@ -48,7 +48,7 @@ const request: SubagentDelegationRequest = {
 	requestId: "attempt-1",
 	ownerRunId: "owner-1",
 	nodeId: "node-1",
-	agent: "commentator",
+	agent: "reviewer",
 	task: "Review evidence",
 	context: "fresh",
 	cwd: "/repo",
@@ -137,13 +137,13 @@ describe("public subagent delegation contract", () => {
 			},
 			executeStructured: async (_id, params, _signal, _ctx, onUpdate) => {
 				observedParams = params as unknown as Record<string, unknown>;
-				onUpdate({ details: { mode: "single", runId: "run-1", results: [{ agent: "commentator", model: "openai/gpt-5", thinking: "high" }], progress: [{ currentTool: "read" }] } });
+				onUpdate({ details: { mode: "single", runId: "run-1", results: [{ agent: "reviewer", model: "openai/gpt-5", thinking: "high" }], progress: [{ currentTool: "read" }] } });
 				return {
 					details: {
 						mode: "single",
 						runId: "run-1",
 						results: [{
-							agent: "commentator",
+							agent: "reviewer",
 							exitCode: 0,
 							model: "openai/gpt-5",
 							thinking: "high",
@@ -169,7 +169,7 @@ describe("public subagent delegation contract", () => {
 			nodeId: "node-1",
 			status: "completed",
 			runId: "run-1",
-			agent: "commentator",
+			agent: "reviewer",
 			model: "openai/gpt-5",
 			thinking: "high",
 			exitCode: 0,
@@ -179,7 +179,7 @@ describe("public subagent delegation contract", () => {
 		} satisfies SubagentDelegationResponse);
 		assert.equal(ordinaryCalls, 0);
 		assert.deepEqual(observedParams, {
-			agent: "commentator",
+			agent: "reviewer",
 			task: "Review evidence",
 			context: "fresh",
 			cwd: "/repo",
@@ -217,7 +217,7 @@ describe("public subagent delegation contract", () => {
 					details: {
 						mode: "single",
 						results: [{
-							agent: "commentator",
+							agent: "reviewer",
 							exitCode: 0,
 							...(structuredOutput === undefined ? {} : { structuredOutput }),
 							usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
@@ -345,7 +345,7 @@ describe("public subagent delegation contract", () => {
 					details: {
 						mode: "single",
 						results: [{
-							agent: "commentator",
+							agent: "reviewer",
 							exitCode: 0,
 							finalOutput: requestId,
 							usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
@@ -399,7 +399,7 @@ describe("public subagent delegation contract", () => {
 					details: {
 						mode: "single",
 						results: [{
-							agent: "commentator",
+							agent: "reviewer",
 							exitCode: 0,
 							finalOutput: requestId,
 							usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
@@ -445,37 +445,31 @@ describe("public subagent delegation contract", () => {
 		settledBridge.dispose();
 	});
 
-	it("retains the unversioned prompt-template bridge as legacy fallback", async () => {
+	it("rejects the unversioned prompt-template direct delegation fallback", async () => {
 		const events = new FakeEvents();
-		let structuredCalls = 0;
-		let legacyCalls = 0;
+		let executeCalls = 0;
 		const bridge = registerPromptTemplateDelegationBridge({
 			events,
 			getContext: () => ({ cwd: "/repo" }),
 			execute: async () => {
-				legacyCalls++;
-				return { content: [{ type: "text", text: "legacy done" }], details: { mode: "single", results: [{ agent: "commentator", finalOutput: "legacy done", exitCode: 0 }] } };
-			},
-			executeStructured: async () => {
-				structuredCalls++;
-				return { details: { mode: "single", results: [] } };
+				executeCalls++;
+				return { content: [{ type: "text", text: "unreachable" }], details: { mode: "single", results: [] } };
 			},
 		});
 		const responsePromise = once(events, SUBAGENT_DELEGATION_RESPONSE_EVENT);
 		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, {
 			requestId: "legacy-1",
-			agent: "commentator",
+			agent: "reviewer",
 			task: "Legacy prompt-template delegation",
 			context: "fresh",
 			model: "openai/gpt-5",
 			cwd: "/repo",
 		});
-		const response = await responsePromise as { requestId: string; isError: boolean; contentText?: string };
+		const response = await responsePromise as { requestId: string; isError: boolean; errorText?: string };
 		assert.equal(response.requestId, "legacy-1");
-		assert.equal(response.isError, false);
-		assert.equal(response.contentText, "legacy done");
-		assert.equal(legacyCalls, 1);
-		assert.equal(structuredCalls, 0);
+		assert.equal(response.isError, true);
+		assert.match(response.errorText ?? "", /Legacy prompt-template direct delegation was removed/);
+		assert.equal(executeCalls, 0);
 		bridge.dispose();
 	});
 });

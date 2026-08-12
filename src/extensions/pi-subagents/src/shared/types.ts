@@ -400,7 +400,7 @@ export type ProcessTerminalV1 =
 	});
 
 export type SteeringActionState = "delivered" | "scheduled" | "pending" | "partial" | "recovered" | "failed";
-export type SteeringTargetState = "scheduled" | "pending" | "routed" | "delivered" | "late" | "failed" | "recovered";
+export type SteeringTargetState = "scheduled" | "pending" | "routed" | "queued" | "delivered" | "late" | "failed" | "recovered";
 
 export interface SteeringTargetStatus {
 	index: number;
@@ -446,6 +446,7 @@ export interface SteerActionTarget {
 export interface SteerActionResult {
 	requestId: string;
 	state: SteeringActionState;
+	deliveryStatus: "delivered" | "queued";
 	sourceRunId: string;
 	replacementRunId?: string;
 	targets: SteerActionTarget[];
@@ -741,6 +742,19 @@ export interface AcceptanceVerifyResult {
 	stdout?: string;
 	stderr?: string;
 	durationMs: number;
+	artifactPath?: string;
+	cacheKey?: string;
+	memoized?: boolean;
+	envKeys?: string[];
+	envHash?: string;
+	workspaceState?: {
+		kind: "git-tracked";
+		repoRoot: string;
+		cwdRelative: string;
+		head: string;
+		diffHash: string;
+	};
+	artifactError?: string;
 }
 
 export interface AcceptanceReviewResult {
@@ -933,12 +947,48 @@ export interface SpawnBudgetSnapshot {
 	grantHistory: SpawnBudgetGrant[];
 }
 
+/** Slim per-child projection of a terminal result payload, safe to surface in tool_result details. */
+export interface WaitCompletionChild {
+	agent?: string;
+	/** Child run identity where the producer records one (workflow children); artifact files are keyed by it. */
+	runId?: string;
+	success?: boolean;
+	outputState?: SubagentOutputState;
+	error?: string;
+	model?: string;
+	artifactPaths?: Partial<ArtifactPaths>;
+}
+
+/**
+ * Terminal completion observed for a run a subagent_wait call covered. Carries run
+ * identity and the artifact trail; output text stays in the tool result content.
+ */
+export interface WaitCompletion {
+	runId: string;
+	agent?: string;
+	mode?: string;
+	state?: string;
+	success?: boolean;
+	/** Versioned bounded output archive retained with the durable completion replay. */
+	archivePath?: string;
+	results?: WaitCompletionChild[];
+}
+
 export interface Details {
 	mode: SubagentResultMode | "management";
 	runId?: string;
+	/** Host tool-call id retained when it differs from the internal run id. */
+	toolCallId?: string;
 	/** Run-level context summary. "mixed" when children resolved to different modes. */
 	context?: "fresh" | "fork" | "mixed";
 	results: SingleResult[];
+	/**
+	 * Terminal completion payloads for runs this subagent_wait call observed
+	 * finishing. Async completions travel as result files that are consumed and
+	 * deleted after text delivery, so without this field their run and artifact
+	 * identity never reaches tool_result details.
+	 */
+	completions?: WaitCompletion[];
 	controlEvents?: ControlEvent[];
 	steering?: SteerActionResult;
 	asyncId?: string;
@@ -963,7 +1013,7 @@ export interface Details {
 		artifactPath?: string;
 	};
 	// Chain metadata for observability
-	chainAgents?: string[];      // Agent names in order, e.g., ["explorer", "architect"]
+	chainAgents?: string[];      // Agent names in order, e.g., ["scout", "planner"]
 	totalSteps?: number;         // Total steps in chain
 	currentStepIndex?: number;   // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
@@ -997,6 +1047,7 @@ export interface Details {
 			operation: "run" | "status";
 			key: string;
 			state: "started" | "completed" | "failed" | "reused";
+			agent?: string;
 			runId?: string;
 			phase?: string;
 			label?: string;
@@ -1232,11 +1283,15 @@ export interface ExternalProcessStatus {
 export interface AsyncStatus {
 	lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
 	runId: string;
+	/** Host tool-call id retained when it differs from the internal run id. */
+	toolCallId?: string;
 	sessionId?: string;
 	mode: SubagentRunMode;
 	context?: "fresh" | "fork" | "mixed";
 	isNested?: boolean;
 	state: "queued" | "running" | "complete" | "failed" | "paused" | "stopped" | "rejected";
+	/** Display-only dismissal marker for a reload-orphaned workflow. */
+	displayDismissedAt?: number;
 	error?: string;
 	activityState?: ActivityState;
 	lastActivityAt?: number;
@@ -1488,6 +1543,12 @@ export interface ForegroundChildControl {
 
 export interface ForegroundRunControl {
 	runId: string;
+	/** Workflow shell that owns this live foreground child, when applicable. */
+	parentWorkflowRunId?: string;
+	/** Stable workflow lane key for this live foreground child. */
+	workflowKey?: string;
+	/** Private control root used to steer a live workflow-owned child. */
+	workflowSteeringDir?: string;
 	/** Originating parent session; required for public fleet projection. */
 	sessionId?: string;
 	mode: SubagentRunMode;
@@ -1557,6 +1618,8 @@ export interface SubagentState {
 	fleetJobs?: Map<string, AsyncJobState>;
 	/** Suppress dynamic status widgets while the fleet overlay owns the viewport. */
 	fleetInspectorOpen?: boolean;
+	/** Temporarily suppress dynamic widgets while Pi compacts the session. */
+	widgetsSuspended?: boolean;
 	foregroundRuns?: Map<string, ForegroundResumeRun>;
 	foregroundControls: Map<string, ForegroundRunControl>;
 	lastForegroundControlId: string | null;
@@ -1564,6 +1627,8 @@ export interface SubagentState {
 	lastUiContext: ExtensionContext | null;
 	poller: NodeJS.Timeout | null;
 	completionSeen: Map<string, number>;
+	/** Terminal result payloads observed by the result watcher, keyed by run id and pruned by the completion TTL. */
+	completedResults?: Map<string, { seenAt: number; completion: WaitCompletion }>;
 	watcher: FSWatcher | null;
 	watcherRestartTimer: ReturnType<typeof setTimeout> | null;
 	resultFileCoalescer: {
@@ -1621,6 +1686,10 @@ export interface RunSyncOptions {
 	permissions?: import("../runs/shared/permissions.ts").PermissionConfig;
 	/** Session id of the direct parent session for permission-system ask forwarding. */
 	parentSessionId?: string;
+	/** Private prompt-runtime steering transport for workflow-owned foreground children. */
+	steerInboxDir?: string;
+	steerCapabilityPath?: string;
+	steerAckDir?: string;
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	cwd?: string;
@@ -1722,9 +1791,31 @@ export type InlineToolDisplay = "rich" | "summary";
 export interface ScheduledRunsConfig {
 	enabled?: boolean;
 	maxPending?: number;
+	/** Absolute or `~/` root for per-project durable schedules. */
+	storeRoot?: string;
 }
 
 export type FleetViewPlacement = "aboveEditor" | "belowEditor";
+
+export const FLEET_KEYBINDING_ACTIONS = [
+	"close",
+	"scrollUp",
+	"scrollDown",
+	"selectUp",
+	"selectDown",
+	"selectFirst",
+	"selectLast",
+	"pageUp",
+	"pageDown",
+	"refresh",
+	"steer",
+	"inspect",
+	"stop",
+	"toggleTools",
+] as const;
+
+export type FleetKeybindingAction = typeof FLEET_KEYBINDING_ACTIONS[number];
+export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>>;
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
@@ -1732,10 +1823,14 @@ export interface ExtensionConfig {
 	fleetView?: boolean;
 	/** Place the persistent FleetView above or below the editor. Defaults to belowEditor. */
 	fleetViewPlacement?: FleetViewPlacement;
+	/** Local keybindings for the full Fleet inspector. */
+	fleetKeybindings?: FleetKeybindingsConfig;
 	/** Show the under-editor async runs widget. Defaults to true, including when FleetView is enabled. */
 	asyncWidget?: boolean;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
 	toolDescriptionMode?: ToolDescriptionMode;
+	/** Include legacy append-step and checkpoint controls in the registered tool schema. Defaults to false. */
+	legacyChainControls?: boolean;
 	/** Inline chat rendering for the subagent tool. Defaults to rich. */
 	inlineToolDisplay?: InlineToolDisplay;
 	forceTopLevelAsync?: boolean;
@@ -1761,6 +1856,8 @@ export interface ExtensionConfig {
 	worktreeBaseDir?: string;
 	/** Where to store subagent artifact files. Defaults to "project" (cwd/.pi-subagents). Set to "session" for pi session dir, or "temp" for OS temp. */
 	artifactDir?: ArtifactDirPreference;
+	/** Artifact cleanup retention. Set cleanupDays to 0 to disable cleanup. */
+	artifactConfig?: Pick<ArtifactConfig, "cleanupDays">;
 	intercomBridge?: IntercomBridgeConfig;
 	proactiveSkillSubagents?: ProactiveSkillSubagentsConfig | false;
 	scheduledRuns?: ScheduledRunsConfig;
@@ -1868,7 +1965,7 @@ export const SLASH_SUBAGENT_CANCEL_EVENT = "subagent:slash:cancel";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.attach-run", "mission.close", "worktree.discard", "inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "append-step", "approve-checkpoint", "reject-checkpoint", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
+export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "append-step", "approve-checkpoint", "reject-checkpoint", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
+import { discoverAgents } from "../../src/agents/agents.ts";
 import {
 	createEventBus,
 	createMockPi,
@@ -185,7 +186,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 	it("tracks every concurrently running foreground child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		for (let index = 0; index < 3; index++) mockPi.onCall({ output: `Review ${index} complete`, delay: 250 });
-		const agents = [makeAgent("commentator")];
+		const agents = [makeAgent("reviewer")];
 		const state = {
 			baseCwd: tempDir,
 			currentSessionId: null,
@@ -198,9 +199,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 			"parallel-foreground-fleet",
 			{
 				tasks: [
-					{ agent: "commentator", task: "Review correctness" },
-					{ agent: "commentator", task: "Review quality" },
-					{ agent: "commentator", task: "Review tests" },
+					{ agent: "reviewer", task: "Review correctness" },
+					{ agent: "reviewer", task: "Review quality" },
+					{ agent: "reviewer", task: "Review tests" },
 				],
 			},
 			new AbortController().signal,
@@ -337,13 +338,12 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		}
 	});
 
-	it("treats parallel action aliases with tasks as top-level parallel execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("rejects parallel action aliases at the public boundary", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		for (const action of ["parallel", "PARALLEL", "tasks"]) {
 			mockPi.reset();
-			mockPi.onCall({ output: `${action} alias finished` });
 			const executor = makeExecutor();
 
-			const result = await executor.execute(
+			const result = await executor.executePublic(
 				`parallel-alias-${action}`,
 				{ action, tasks: [{ agent: "echo", task: `Run ${action}` }] },
 				new AbortController().signal,
@@ -351,9 +351,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 				makeMinimalCtx(tempDir),
 			);
 
-			assert.equal(result.isError, undefined);
-			assert.equal(result.details?.mode, "parallel");
-			assert.match(result.content[0]?.text ?? "", new RegExp(`${action} alias finished`));
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /is not a management action/);
+			assert.equal(mockPi.callCount(), 0);
 		}
 	});
 
@@ -379,12 +379,12 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 	it("applies agent acceptance roles to inferred parallel acceptance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "exploration complete" });
 		const executor = makeExecutor([
-			makeAgent("builder", { acceptanceRole: "read-only" }),
+			makeAgent("worker", { acceptanceRole: "read-only" }),
 		]);
 
 		const result = await executor.execute(
 			"parallel-agent-acceptance-role",
-			{ tasks: [{ agent: "builder", task: "Explore the authentication flow" }] },
+			{ tasks: [{ agent: "worker", task: "Explore the authentication flow" }] },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -588,25 +588,63 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
 	});
 
-	it("top-level parallel reads are injected once with chain-style prefix", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "Read done" });
-		const executor = makeExecutor();
+	it("top-level parallel reviewer runs do not inherit bundled chain artifact reads", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		fs.writeFileSync(path.join(tempDir, "plan.md"), "chain plan");
+		fs.writeFileSync(path.join(tempDir, "progress.md"), "chain progress");
+		mockPi.onCall({ output: "Review done" });
+		const reviewer = discoverAgents(tempDir, "project").agents.find((agent) => agent.name === "reviewer");
+		assert.ok(reviewer, "expected bundled reviewer");
+		assert.equal(reviewer.defaultReads, undefined);
+		const executor = makeExecutor([reviewer]);
 
 		await executor.execute(
-			"parallel-reads",
-			{ tasks: [{ agent: "echo", task: "Inspect", reads: ["a.md", "b.md"] }] },
+			"parallel-reviewer-without-chain-artifacts",
+			{ tasks: [{ agent: "reviewer", task: "Review the supplied files." }] },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
 		);
 
-		const args = readLastCallArgs();
-		const taskArg = args.at(-1) ?? "";
-		assert.ok(taskArg.startsWith(`Task: [Read from: ${path.join(tempDir, "a.md")}, ${path.join(tempDir, "b.md")}]
+		const taskArg = readLastCallArgs().at(-1) ?? "";
+		assert.doesNotMatch(taskArg, /\[Read from:/);
+		assert.doesNotMatch(taskArg, /plan\.md|progress\.md/);
+	});
+
+	it("top-level parallel reads include existing files and omit missing files", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		fs.writeFileSync(path.join(tempDir, "a.md"), "context");
+		mockPi.onCall({ output: "Read done" });
+		const executor = makeExecutor();
+
+		await executor.execute(
+			"parallel-reads",
+			{ tasks: [{ agent: "echo", task: "Inspect", reads: ["a.md", "missing.md"] }] },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const taskArg = readLastCallArgs().at(-1) ?? "";
+		assert.ok(taskArg.startsWith(`Task: [Read from: ${path.join(tempDir, "a.md")}]
 
 Inspect
 
 ## Acceptance Contract`));
+		assert.doesNotMatch(taskArg, /missing\.md/);
+	});
+
+	it("top-level parallel omits the read prefix when all files are missing", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Read done" });
+		const executor = makeExecutor();
+
+		await executor.execute(
+			"parallel-missing-reads",
+			{ tasks: [{ agent: "echo", task: "Inspect", reads: ["missing.md"] }] },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.doesNotMatch(readLastCallArgs().at(-1) ?? "", /\[Read from:/);
 	});
 
 	it("top-level parallel defaultProgress uses isolated run storage", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -640,11 +678,11 @@ Inspect
 
 	it("top-level parallel suppresses progress when the task is review-only", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Review done" });
-		const executor = makeExecutor([makeAgent("commentator", { defaultProgress: true })]);
+		const executor = makeExecutor([makeAgent("reviewer", { defaultProgress: true })]);
 
 		await executor.execute(
 			"parallel-read-only-progress",
-			{ tasks: [{ agent: "commentator", task: "Review-only. Do not edit files. Return findings." }] },
+			{ tasks: [{ agent: "reviewer", task: "Review-only. Do not edit files. Return findings." }] },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),

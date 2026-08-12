@@ -18,9 +18,9 @@ import * as path from "node:path";
 import { tryImport } from "../support/helpers.ts";
 import type { RealSessionRun } from "../support/real-session-runner.ts";
 
-const piCodingAgent = await tryImport<unknown>("@selesai/code");
+const piCodingAgent = await tryImport<{ __piSubagentsTestShim?: boolean }>("@selesai/code");
 const piAi = await tryImport<unknown>("@earendil-works/pi-ai");
-const available = Boolean(piCodingAgent && piAi);
+const available = Boolean(piCodingAgent && !piCodingAgent.__piSubagentsTestShim && piAi);
 
 const CHILD_MARKER = "CHILD_REAL_SESSION_OK";
 // Env vars the runner must clear so a parent that was itself spawned as a
@@ -51,7 +51,7 @@ describe("real Pi-session subagent E2E", { skip: !available ? "pi runtime packag
 	it("loads requested extension tools in direct and workflow children and diagnoses missing providers", async () => {
 		const { runRealSubagentSession, subagentCall, subagentToolResults } = await import("../support/real-session-runner.ts");
 		const extensionAgent = `---
-name: extension-builder
+name: extension-worker
 description: Uses a child-only fixture tool
 tools: read, fixture_search
 subagentOnlyExtensions: ./fixture-extension.ts
@@ -59,7 +59,7 @@ completionGuard: false
 ---
 Use the available tools.`;
 		const missingAgent = `---
-name: missing-extension-builder
+name: missing-extension-worker
 description: Requests an extension tool without loading its provider
 tools: read, missing_search
 completionGuard: false
@@ -80,22 +80,22 @@ Use the available tools.`;
 			childText: CHILD_MARKER,
 			reportChildTools: true,
 			projectFiles: {
-				".selesai/agents/extension-builder.md": extensionAgent,
-				".selesai/agents/missing-extension-builder.md": missingAgent,
+				".selesai/agents/extension-worker.md": extensionAgent,
+				".selesai/agents/missing-extension-worker.md": missingAgent,
 				"fixture-extension.ts": fixtureExtension,
 			},
 			respond(context) {
 				const resultCount = (context.messages as Array<{ role?: string; toolName?: string }>).filter((message) => message.role === "toolResult" && message.toolName === "subagent").length;
 				if (resultCount === 0) {
-					return subagentCall({ agent: "extension-builder", task: "Report active tools.", context: "fresh", async: false, clarify: false, agentScope: "project" }, "call-direct-extension");
+					return subagentCall({ agent: "extension-worker", task: "Report active tools.", context: "fresh", async: false, clarify: false, agentScope: "project" }, "call-direct-extension");
 				}
 				if (resultCount === 1) {
 					return subagentCall({
 						workflowScript: `return await runs.all([
-							{ key: "extension", agent: "extension-builder", task: "Report active tools." },
+							{ key: "extension", agent: "extension-worker", task: "Report active tools." },
 							{
 								key: "structured",
-								agent: "extension-builder",
+								agent: "extension-worker",
 								task: "Submit the required structured marker.",
 								outputSchema: {
 									type: "object",
@@ -111,7 +111,7 @@ Use the available tools.`;
 					}, "call-workflow-extension");
 				}
 				if (resultCount === 2) {
-					return subagentCall({ agent: "missing-extension-builder", task: "Report active tools.", context: "fresh", async: false, clarify: false, agentScope: "project" }, "call-missing-extension");
+					return subagentCall({ agent: "missing-extension-worker", task: "Report active tools.", context: "fresh", async: false, clarify: false, agentScope: "project" }, "call-missing-extension");
 				}
 				return "Child tool checks complete.";
 			},
@@ -134,7 +134,7 @@ Use the available tools.`;
 	it("accepts child tools registered by async before_agent_start hooks", async () => {
 		const { runRealSubagentSession, subagentCall, subagentToolResults } = await import("../support/real-session-runner.ts");
 		const asyncExtensionAgent = `---
-name: async-extension-builder
+name: async-extension-worker
 description: Uses a child-only tool registered from before_agent_start
 tools: read, fixture_async_search
 subagentOnlyExtensions: ./fixture-async-extension.ts
@@ -159,13 +159,13 @@ Report active tools.`;
 			childText: CHILD_MARKER,
 			reportChildTools: true,
 			projectFiles: {
-				".selesai/agents/async-extension-builder.md": asyncExtensionAgent,
+				".selesai/agents/async-extension-worker.md": asyncExtensionAgent,
 				"fixture-async-extension.ts": fixtureAsyncExtension,
 			},
 			respond(context) {
 				const resultCount = (context.messages as Array<{ role?: string; toolName?: string }>).filter((message) => message.role === "toolResult" && message.toolName === "subagent").length;
 				if (resultCount > 0) return "Async child tool check complete.";
-				return subagentCall({ agent: "async-extension-builder", task: "Report active tools.", context: "fresh", async: false, clarify: false, agentScope: "project" }, "call-async-extension");
+				return subagentCall({ agent: "async-extension-worker", task: "Report active tools.", context: "fresh", async: false, clarify: false, agentScope: "project" }, "call-async-extension");
 			},
 			timeoutMs: 60_000,
 		});
@@ -191,12 +191,12 @@ Report active tools.`;
 
 		try {
 			run = await runRealSubagentSession({
-				prompt: "Delegate to a builder and report its exact result.",
+				prompt: "Delegate to a worker and report its exact result.",
 				childText: CHILD_MARKER,
 				respond: routeParentThroughSubagent({
 					childMarker: CHILD_MARKER,
 					subagentArgs: {
-						agent: "builder",
+						agent: "worker",
 						task: "Return the marker from the faux child provider.",
 						context: "fresh",
 						async: false,

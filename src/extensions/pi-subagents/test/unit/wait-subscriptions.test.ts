@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import { registerWaitTool } from "../../src/runs/background/wait-tool.ts";
 import { createWaitSubscriptionManager } from "../../src/runs/background/wait-subscriptions.ts";
+import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, type IntercomEventBus, type SubagentState } from "../../src/shared/types.ts";
 
@@ -19,7 +20,7 @@ function writeStatus(asyncRoot: string, runId: string, state: string, extra: obj
 		state,
 		startedAt: now,
 		lastUpdate: now,
-		steps: [{ agent: "builder", status: state }],
+		steps: [{ agent: "worker", status: state }],
 		...extra,
 	}), "utf-8");
 }
@@ -97,7 +98,7 @@ describe("non-blocking wait subscriptions", () => {
 				cwd: root,
 				sessionId: "session-a",
 				updatedAt: Date.now(),
-				children: [{ agent: "builder", index: 0, status: "detached" }],
+				children: [{ agent: "worker", index: 0, status: "detached" }],
 			}]]);
 			let tool: { execute: (...args: unknown[]) => Promise<{ content: Array<{ text?: string }>; isError?: boolean }> } | undefined;
 			registerWaitTool({
@@ -120,10 +121,10 @@ describe("non-blocking wait subscriptions", () => {
 		const resultsDir = path.join(root, "results");
 		const subscriptionsDir = path.join(root, "subscriptions");
 		const bus = new TestBus();
-		const sent: Array<{ message: { content?: unknown }; options?: { triggerTurn?: boolean } }> = [];
+		const sent: Array<{ message: { content?: unknown; details?: { completions?: Array<{ runId?: string; archivePath?: string }> } }; options?: { triggerTurn?: boolean } }> = [];
 		const pi = {
 			events: bus,
-			sendMessage(message: { content?: unknown }, options?: { triggerTurn?: boolean }) { sent.push({ message, options }); },
+			sendMessage(message: { content?: unknown; details?: { completions?: Array<{ runId?: string; archivePath?: string }> } }, options?: { triggerTurn?: boolean }) { sent.push({ message, options }); },
 		};
 		try {
 			writeStatus(asyncRoot, "run-exact", "running", { sessionId: "session-a", pid: 999_999 });
@@ -145,9 +146,19 @@ describe("non-blocking wait subscriptions", () => {
 			assert.equal(sent.length, 0, "an unrelated exact run must not satisfy the subscription");
 
 			writeStatus(asyncRoot, "run-exact", "complete", { sessionId: "session-a" });
+			recordWaitCompletion(restoredState, "run-exact", {
+				agent: "worker",
+				state: "complete",
+				success: true,
+				results: [{ agent: "worker", success: true, output: "done" }],
+			}, Date.now(), 60_000, { resultsDir, sessionId: "session-a" });
+			restoredState.completedResults?.clear();
 			bus.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-exact" });
 			assert.equal(sent.length, 1);
 			assert.match(String(sent[0]?.message.content), /run run-exact: completed/);
+			assert.match(String(sent[0]?.message.content), /Completion archive:/);
+			assert.equal(sent[0]?.message.details?.completions?.[0]?.runId, "run-exact");
+			assert.ok(sent[0]?.message.details?.completions?.[0]?.archivePath);
 			assert.equal(sent[0]?.options?.triggerTurn, true);
 			assert.equal(restoredState.waitSubscriptions?.has(registration.token), false);
 			assert.equal(fs.existsSync(path.join(subscriptionsDir, `${registration.token}.json`)), false);
@@ -186,6 +197,44 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
+	it("tells the parent to revive the failed child before replacing resumable async runs", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-revive-first-"));
+		const asyncRoot = path.join(root, "runs");
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const completedSessionFile = path.join(root, "completed-session.jsonl");
+		const failedSessionFile = path.join(root, "failed-session.jsonl");
+		const sent: string[] = [];
+		const state = makeState();
+		const manager = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+		} as never, state, { asyncDirRoot: asyncRoot, subscriptionsDir, pollIntervalMs: 60_000, kill: () => true });
+		try {
+			fs.writeFileSync(completedSessionFile, "{}\n", "utf-8");
+			fs.writeFileSync(failedSessionFile, "{}\n", "utf-8");
+			writeStatus(asyncRoot, "run-revive", "running", { sessionId: "session-a", pid: 999_999 });
+			manager.arm({ targetKind: "async", runId: "run-revive", requestedId: "run-revive", timeoutMs: 30_000 });
+
+			writeStatus(asyncRoot, "run-revive", "failed", {
+				sessionId: "session-a",
+				steps: [
+					{ agent: "first", status: "complete", sessionFile: completedSessionFile },
+					{ agent: "second", status: "failed", sessionFile: failedSessionFile },
+				],
+			});
+			manager.reconcile();
+
+			const message = sent[0] ?? "";
+			assert.match(message, /Resume-first/);
+			assert.match(message, /subagent\(\{ action: "resume", id: "run-revive", index: 1, message:/);
+			assert.match(message, /before reporting failure or launching a replacement/);
+			assert.match(message, /only if revive fails or the user explicitly asks/);
+		} finally {
+			manager.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("waits for foreground run restoration before reconciling a restored subscription", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-foreground-restore-"));
 		const subscriptionsDir = path.join(root, "subscriptions");
@@ -198,7 +247,7 @@ describe("non-blocking wait subscriptions", () => {
 			cwd: root,
 			sessionId: "session-a",
 			updatedAt: Date.now(),
-			children: [{ agent: "builder", index: 0, status: "detached" }],
+			children: [{ agent: "worker", index: 0, status: "detached" }],
 		}]]);
 		const pi = {
 			events: bus,
@@ -331,7 +380,7 @@ describe("non-blocking wait subscriptions", () => {
 				sessionId: "session-a",
 				pid: 999_999,
 				activityState: "needs_attention",
-				steps: [{ agent: "builder", status: "running", activityState: "needs_attention" }],
+				steps: [{ agent: "worker", status: "running", activityState: "needs_attention" }],
 			});
 			manager.reconcile();
 			assert.match(sent.shift() ?? "", /needs attention/);

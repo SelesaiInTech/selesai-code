@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readSubagentEnv } from "../../shared/env.ts";
 
 export const PI_CODING_AGENT_PACKAGE = "@selesai/code";
 export const SELESAI_SUBAGENT_PI_BINARY_ENV = "SELESAI_SUBAGENT_PI_BINARY";
@@ -73,7 +72,7 @@ function normalizePath(filePath: string): string {
 
 function isStandalonePiExecutable(execPath: string): boolean {
 	const executableName = execPath.split(/[\\/]/).pop();
-	return /^(?:pi|selesai)(?:\.exe)?$/i.test(executableName ?? "");
+	return /^pi(?:\.exe)?$/i.test(executableName ?? "");
 }
 
 export function resolvePiCliScript(
@@ -104,10 +103,11 @@ export function resolvePiCliScript(
 		const resolvePackageJson =
 			deps.resolvePackageJson ??
 			(() => {
-				const packageRoot = deps.piPackageRoot
-					?? (deps.resolvePackageEntry ? findPiPackageRootFromEntry(deps.resolvePackageEntry()) : resolvePiPackageRoot())
-					?? resolveInstalledPiPackageRoot();
-				if (packageRoot) return path.join(packageRoot, "package.json");
+				const root = deps.piPackageRoot ?? resolvePiPackageRoot();
+				if (root) return path.join(root, "package.json");
+				const packageRoot = deps.resolvePackageEntry
+					? findPiPackageRootFromEntry(deps.resolvePackageEntry())
+					: resolveInstalledPiPackageRoot();
 				if (!packageRoot)
 					throw new Error(
 						`Could not resolve ${PI_CODING_AGENT_PACKAGE} package root`,
@@ -122,14 +122,14 @@ export function resolvePiCliScript(
 		const binPath =
 			typeof binField === "string"
 				? binField
-				: (binField?.selesai ?? Object.values(binField ?? {})[0]);
+				: (binField?.pi ?? Object.values(binField ?? {})[0]);
 		if (!binPath) return undefined;
 		const candidate = path.resolve(path.dirname(packageJsonPath), binPath);
 		if (isRunnableNodeScript(candidate, existsSync)) {
 			return candidate;
 		}
 	} catch {
-		// Verified CLI resolution is optional; falling back to `selesai` lets PATH handle execution.
+		// Verified CLI resolution is optional; falling back to `pi` lets PATH handle execution.
 		return undefined;
 	}
 
@@ -141,7 +141,7 @@ export function getPiSpawnCommand(
 	deps: PiSpawnDeps = {},
 ): PiSpawnCommand {
 	const env = deps.env ?? process.env;
-	const piBinary = readSubagentEnv(env, SELESAI_SUBAGENT_PI_BINARY_ENV)?.trim();
+	const piBinary = env[SELESAI_SUBAGENT_PI_BINARY_ENV]?.trim();
 	if (piBinary) {
 		return { command: piBinary, args };
 	}
@@ -159,5 +159,5 @@ export function getPiSpawnCommand(
 		};
 	}
 
-	return { command: "selesai", args };
+	return { command: "pi", args };
 }

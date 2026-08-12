@@ -28,16 +28,16 @@ function agent(name: string): AgentConfig {
 
 describe("capability ceiling agent allowlist", () => {
 	it("parses, round-trips, and intersects allowedAgents", () => {
-		const parsed = parseSubagentCapabilityCeiling({ version: 1, allowedAgents: ["builder", "commentator", "builder"], denyExtensions: false, sources: ["plan"] });
-		assert.deepEqual(parsed.allowedAgents, ["builder", "commentator"]);
+		const parsed = parseSubagentCapabilityCeiling({ version: 1, allowedAgents: ["worker", "reviewer", "worker"], denyExtensions: false, sources: ["plan"] });
+		assert.deepEqual(parsed.allowedAgents, ["reviewer", "worker"]);
 		assert.deepEqual(decodeSubagentCapabilityCeiling(encodeSubagentCapabilityCeiling(parsed)), parsed);
 
 		assert.deepEqual(intersectSubagentCapabilityCeilings(
-			{ version: 1, allowedAgents: ["builder", "commentator"], denyExtensions: false, sources: ["outer"] },
-			{ version: 1, allowedAgents: ["commentator", "explorer"], denyExtensions: true, sources: ["inner"] },
+			{ version: 1, allowedAgents: ["worker", "reviewer"], denyExtensions: false, sources: ["outer"] },
+			{ version: 1, allowedAgents: ["reviewer", "scout"], denyExtensions: true, sources: ["inner"] },
 		), {
 			version: 1,
-			allowedAgents: ["commentator"],
+			allowedAgents: ["reviewer"],
 			denyExtensions: true,
 			sources: ["inner", "outer"],
 		});
@@ -50,14 +50,14 @@ describe("capability ceiling agent allowlist", () => {
 
 	it("marks non-allowlisted agents as restricted in list output", () => {
 		const sessionId = `allowlist-list-${Date.now()}-${Math.random()}`;
-		const handle = registerSubagentCapabilityCeiling({ sessionId, source: "plan-mode", ceiling: { allowedAgents: ["commentator"] } });
+		const handle = registerSubagentCapabilityCeiling({ sessionId, source: "plan-mode", ceiling: { allowedAgents: ["reviewer"] } });
 		try {
 			const result = handleList({}, { cwd: process.cwd(), currentSessionId: sessionId, modelRegistry: { getAvailable: () => [] } });
 			const text = result.content[0]?.text ?? "";
 			assert.match(text, /Executable agents:/);
-			assert.match(text, /- commentator /);
+			assert.match(text, /- reviewer /);
 			assert.match(text, /Restricted agents \(not executable in this session; capability ceiling: plan-mode\):/);
-			assert.match(text, /- builder /);
+			assert.match(text, /- worker /);
 		} finally {
 			handle.dispose();
 		}
@@ -65,23 +65,23 @@ describe("capability ceiling agent allowlist", () => {
 
 	it("rejects a non-allowlisted agent in preflight launch resolution", async () => {
 		const result = await resolveSubagentLaunchContract({
-			agent: "builder",
+			agent: "worker",
 			cwd: process.cwd(),
-			capabilityCeiling: { version: 1, allowedAgents: ["commentator"], denyExtensions: false, sources: ["plan-mode"] },
+			capabilityCeiling: { version: 1, allowedAgents: ["reviewer"], denyExtensions: false, sources: ["plan-mode"] },
 		});
 		assert.equal(result.ok, false);
 		assert.equal(result.code, "restricted_agent");
-		assert.match(result.message, /does not allow agent 'builder'/);
-		assert.match(result.message, /Allowed agents: commentator/);
+		assert.match(result.message, /does not allow agent 'worker'/);
+		assert.match(result.message, /Allowed agents: reviewer/);
 	});
 
 	it("rejects a non-allowlisted foreground launch before spawning", async () => {
-		const result = await runSync(process.cwd(), [agent("builder"), agent("commentator")], "builder", "Do work", {
-			capabilityCeiling: { version: 1, allowedAgents: ["commentator"], denyExtensions: false, sources: ["plan-mode"] },
+		const result = await runSync(process.cwd(), [agent("worker"), agent("reviewer")], "worker", "Do work", {
+			capabilityCeiling: { version: 1, allowedAgents: ["reviewer"], denyExtensions: false, sources: ["plan-mode"] },
 		});
 		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /does not allow agent 'builder'/);
-		assert.deepEqual(result.capabilityCeiling?.allowedAgents, ["commentator"]);
+		assert.match(result.error ?? "", /does not allow agent 'worker'/);
+		assert.deepEqual(result.capabilityCeiling?.allowedAgents, ["reviewer"]);
 	});
 
 	it("includes allowedAgents in propagated launch env and audit metadata", () => {
@@ -91,12 +91,12 @@ describe("capability ceiling agent allowlist", () => {
 			sessionEnabled: false,
 			inheritProjectContext: false,
 			inheritSkills: false,
-			childAgentName: "commentator",
-			capabilityCeiling: { version: 1, allowedAgents: ["commentator"], allowedTools: ["read"], denyExtensions: true, sources: ["plan-mode"] },
+			childAgentName: "reviewer",
+			capabilityCeiling: { version: 1, allowedAgents: ["reviewer"], allowedTools: ["read"], denyExtensions: true, sources: ["plan-mode"] },
 		});
 		assert.equal(capabilityAudit?.agentAllowed, true);
 		assert.deepEqual(capabilityAudit?.agentRestrictionSources, ["plan-mode"]);
 		assert.ok(env.SELESAI_SUBAGENT_CAPABILITY_CEILING_V1);
-		assert.deepEqual(decodeSubagentCapabilityCeiling(env.SELESAI_SUBAGENT_CAPABILITY_CEILING_V1)?.allowedAgents, ["commentator"]);
+		assert.deepEqual(decodeSubagentCapabilityCeiling(env.SELESAI_SUBAGENT_CAPABILITY_CEILING_V1)?.allowedAgents, ["reviewer"]);
 	});
 });

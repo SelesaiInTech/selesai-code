@@ -1,5 +1,6 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@selesai/code";
+import { normalizePublicSubagentExecution } from "../extension/public-execution.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import {
 	SLASH_SUBAGENT_CANCEL_EVENT,
@@ -77,21 +78,22 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 		if (!data || typeof data !== "object") return;
 		const request = data as Partial<SlashSubagentRequest>;
 		if (typeof request.requestId !== "string" || !request.params) return;
-		const { requestId, params } = request as SlashSubagentRequest;
-		if (params.tasks !== undefined || params.chain !== undefined || params.concurrency !== undefined || params.worktree !== undefined || params.chainDir !== undefined) {
-			const message = "Legacy slash-event chain and parallel inputs were removed; use workflowScript.";
+		const { requestId } = request as SlashSubagentRequest;
+		const normalized = normalizePublicSubagentExecution((request as SlashSubagentRequest).params);
+		if (!normalized.ok) {
 			options.events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
 				requestId,
 				result: {
-					content: [{ type: "text", text: message }],
+					content: [{ type: "text", text: normalized.error }],
 					isError: true,
-					details: { mode: "management", results: [] },
+					details: { mode: normalized.mode, results: [] },
 				},
 				isError: true,
-				errorText: message,
+				errorText: normalized.error,
 			} satisfies SlashSubagentResponse);
 			return;
 		}
+		const params = normalized.params;
 
 		const ctx = request.ctx ?? options.getContext();
 		if (!ctx) {

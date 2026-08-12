@@ -21,8 +21,8 @@ describe("async permission forwarding session identity", () => {
 	it("uses the parent session id for permission forwarding instead of the async status identity", () => {
 		const currentSessionId = path.join("/tmp", "parent-session.jsonl");
 		const built = buildAsyncRunnerSteps("run-abc", {
-			chain: [{ agent: "builder", task: "Do work" }],
-			agents: [makeAgent("builder")],
+			chain: [{ agent: "worker", task: "Do work" }],
+			agents: [makeAgent("worker")],
 			ctx: {
 				pi: {} as never,
 				cwd: "/tmp/project",
@@ -47,18 +47,18 @@ describe("async permission forwarding session identity", () => {
 				{ agent: "source", task: "produce targets", as: "targets" },
 				{
 					expand: { from: { output: "targets", path: "/items" }, maxItems: 2 },
-					parallel: { agent: "commentator", task: "Review {item.path}" },
+					parallel: { agent: "reviewer", task: "Review {item.path}" },
 					collect: { as: "reviews" },
 				},
-				{ agent: "builder", task: "Use reviews" },
+				{ agent: "worker", task: "Use reviews" },
 			],
-			agents: [makeAgent("source"), makeAgent("commentator"), { ...makeAgent("builder"), model: "anthropic/claude-sonnet-4-5:high", thinking: "high" }],
+			agents: [makeAgent("source"), makeAgent("reviewer"), { ...makeAgent("worker"), model: "anthropic/claude-sonnet-4-5:high", thinking: "high" }],
 			ctx: {
 				pi: {} as never,
 				cwd: "/tmp/project",
 				currentSessionId: "/tmp/parent-session.jsonl",
 			},
-			sessionFilesByFlatIndex: [undefined, "/tmp/dynamic-0.jsonl", "/tmp/dynamic-1.jsonl", "/tmp/static-builder.jsonl"],
+			sessionFilesByFlatIndex: [undefined, "/tmp/dynamic-0.jsonl", "/tmp/dynamic-1.jsonl", "/tmp/static-worker.jsonl"],
 			thinkingOverridesByFlatIndex: [undefined, "off", "off", "off"],
 			maxSubagentDepth: 1,
 			asyncDir: "/tmp/async-run",
@@ -71,15 +71,15 @@ describe("async permission forwarding session identity", () => {
 		assert.deepEqual(dynamic.thinkingOverrides, ["off", "off"]);
 		const staticWorker = built.steps[2];
 		assert.ok(staticWorker && !("parallel" in staticWorker));
-		assert.equal(staticWorker.sessionFile, "/tmp/static-builder.jsonl");
+		assert.equal(staticWorker.sessionFile, "/tmp/static-worker.jsonl");
 		assert.equal(staticWorker.model, "anthropic/claude-sonnet-4-5:off");
 		assert.equal(staticWorker.thinking, "off");
 	});
 
 	it("applies thinking overrides to async fallback candidates", () => {
 		const built = buildAsyncRunnerSteps("run-abc", {
-			chain: [{ agent: "builder", task: "Do work" }],
-			agents: [{ ...makeAgent("builder"), model: "openai/gpt-5-mini:high", fallbackModels: ["anthropic/claude-sonnet-4:low"], thinking: "high" }],
+			chain: [{ agent: "worker", task: "Do work" }],
+			agents: [{ ...makeAgent("worker"), model: "openai/gpt-5-mini:high", fallbackModels: ["anthropic/claude-sonnet-4:low"], thinking: "high" }],
 			ctx: {
 				pi: {} as never,
 				cwd: "/tmp/project",
