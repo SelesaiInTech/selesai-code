@@ -99,35 +99,30 @@
       "slug": "workflow",
       "distribution": "bundled",
       "overview": {
-        "en": "Workflow modes are source-defined state machines. Users select a mode and pass a goal; they do not edit mode phases, prompts, or validators through config files.",
-        "id": "Mode workflow adalah state machine yang didefinisikan source. User memilih mode dan memberikan goal; mereka tidak mengedit fase mode, prompt, atau validator melalui file konfigurasi."
+        "en": "Workflow modes are pi-subagents saved chains defined in source. Users pick a mode and pass a goal; the chains, checkpoint gates, and acceptance criteria are not edited through config files.",
+        "id": "Mode workflow adalah saved chain pi-subagents yang didefinisikan source. User memilih mode dan memberikan goal; chain, gate checkpoint, dan kriteria acceptance tidak diedit melalui file konfigurasi."
       },
       "sourcePaths": [
         "src/extensions/workflow/extension.ts",
-        "src/extensions/workflow/adapter.ts",
-        "src/extensions/workflow/state-machine.ts",
-        "src/extensions/workflow/modes/prototype.ts",
-        "src/extensions/workflow/modes/quicktype.ts",
-        "src/extensions/workflow/modes/task.ts"
+        "src/extensions/workflow/modes.ts"
       ],
       "scopes": [
         {
           "label": { "en": "Mode-owned source", "id": "Source milik mode" },
-          "path": "src/extensions/workflow/modes/*.ts (source-owned)",
+          "path": "src/extensions/workflow/modes.ts (source-owned)",
           "precedence": {
-            "en": "Phases, prompts, validators, loop caps, artifact names, and artifact base path are defined in source, not user files.",
-            "id": "Fase, prompt, validator, batas loop, nama artefak, dan path dasar artefak didefinisikan di source, bukan file user."
+            "en": "Chain steps, checkpoint gates, and acceptance criteria are defined in source, not user files.",
+            "id": "Langkah chain, gate checkpoint, dan kriteria acceptance didefinisikan di source, bukan file user."
           }
         }
       ],
       "settings": [
         { "key": "mode", "type": "string", "default": "(selected by command)", "allowedValues": "\"prototype\", \"quicktype\", \"task\", \"loop\"", "description": { "en": "Selected at runtime by invoking /workflow-prototype, /workflow-quicktype, /workflow-task, or /workflow-loop.", "id": "Dipilih saat runtime dengan memanggil /workflow-prototype, /workflow-quicktype, /workflow-task, atau /workflow-loop." }, "persistence": "invocation only" },
-        { "key": "goal / resume arguments", "type": "string", "description": { "en": "Passed as a command argument; not stored in a config file.", "id": "Diberikan sebagai argumen command; tidak disimpan di file konfigurasi." }, "persistence": "command argument" }
+        { "key": "goal argument", "type": "string", "description": { "en": "Passed as a command argument (the chain's {task}); not stored in a config file.", "id": "Diberikan sebagai argumen command ({task} chain); tidak disimpan di file konfigurasi." }, "persistence": "command argument" }
       ],
       "envVars": [],
       "controls": [
-        { "name": "/workflow-prototype, /workflow-quicktype, /workflow-task, /workflow-loop", "description": { "en": "Start a new workflow run in the selected mode.", "id": "Mulai run workflow baru dalam mode yang dipilih." } },
-        { "name": "workflow writer tools", "description": { "en": "Each mode registers mode-specific start/end tool pairs for the agent.", "id": "Setiap mode mendaftarkan pasangan tool start/end khusus mode untuk agent." } }
+        { "name": "/workflow-prototype, /workflow-quicktype, /workflow-task, /workflow-loop", "description": { "en": "Launch the selected mode's pi-subagents chain with the goal as its {task}.", "id": "Meluncurkan chain pi-subagents mode yang dipilih dengan goal sebagai {task}." } }
       ],
       "noConfig": true
     },

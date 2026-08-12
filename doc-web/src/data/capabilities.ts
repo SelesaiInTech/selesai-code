@@ -57,8 +57,8 @@ export const capabilities: Capability[] = [
   {
     slug: "workflow",
     category: "delegation-and-workflows",
-    en: { displayName: "Durable workflows", benefit: "Resumable, stateful project workflows across prototype, quicktype, task, and direct loop modes with explicit lifecycle management and scripted subagent steps." },
-    id: { displayName: "Workflow tahan lama", benefit: "Alur kerja proyek yang stateful dan dapat dilanjutkan kembali dengan mode prototype, quicktype, task, dan loop langsung serta manajemen siklus hidup eksplisit." },
+    en: { displayName: "Durable workflows", benefit: "The four workflow modes (task, prototype, quicktype, loop) as pi-subagents saved chains: phases as chain steps, human gates as checkpoints, and verified acceptance as the chain acceptance gate." },
+    id: { displayName: "Workflow tahan lama", benefit: "Empat mode alur kerja (task, prototype, quicktype, loop) sebagai saved chain pi-subagents: fase sebagai langkah rantai, persetujuan manusia sebagai checkpoint, dan acceptance terverifikasi sebagai gerbang acceptance rantai." },
     sourcePaths: ["src/extensions/workflow/", "README.md"],
     sourceLinks: [
       links("Workflow source", "src/extensions/workflow/"),

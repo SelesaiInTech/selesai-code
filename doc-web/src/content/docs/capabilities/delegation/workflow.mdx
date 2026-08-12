@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-The `workflow` extension provides durable, resumable project workflows. Four modes are bundled: `prototype`, `quicktype`, `task`, and `loop`. The direct `loop` mode is for work already planned in the parent conversation; it runs only builder/reviewer rounds.
+The `workflow` extension ships the four workflow mode shapes as **pi-subagents saved chains**. Four commands are bundled: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, and `/workflow-loop`. Each launches its chain through pi-subagents — phases are chain steps, human gates are `checkpoint` steps, verified acceptance is the chain `acceptance` gate, durable state lives in the auto-created mission, and resumability comes from pi-subagents' retained children.
 
 <ExtensionStatus
   distribution="bundled"
@@ -19,16 +19,14 @@ The `workflow` extension provides durable, resumable project workflows. Four mod
 ## Setup and prerequisites
 
 - This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- It launches chains through the `pi-subagents` extension, which must be loaded (it is bundled too).
 - Requires an interactive TUI session.
-- Each workflow mode writes phase artifacts under a generated `.selesai/artifacts/` directory inside the project. Ensure the project path is writable.
-- Subagent support is used internally (e.g., builder, commentator, architect, explorer, recapper); the `subagent` tool must be available.
+- The Selesai agent roster (`architect`, `builder`, `commentator`, `explorer`, `recapper`, `researcher`) provides the chain steps.
 
 ## What it sets up
 
 - Registers one slash command per mode: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, `/workflow-loop`.
-- Registers the shared `write_workflow_artifact` tool and the `end_workflow` tool.
-- Maintains a `workflow.json` run file inside each run's artifact directory so the run can be resumed later.
-- Reuses a global in-process registry so the four modes do not conflict when loaded together.
+- Each command launches a pi-subagents chain (`launchSlashSubagent`) with the goal as the chain's `{task}`.
 
 ## What you can configure
 
@@ -37,7 +35,7 @@ The `workflow` extension provides durable, resumable project workflows. Four mod
 
 ## What you can do
 
-- Start a durable plan/implement/review cycle:
+- Start a plan/implement/review cycle:
 
 <div class="install-command">
   <pre><code>/workflow-task add a persistent todo store with sqlite</code></pre>
@@ -45,52 +43,38 @@ The `workflow` extension provides durable, resumable project workflows. Four mod
   <span class="copy-status" role="status" aria-live="polite"></span>
 </div>
 
-- Resume a previous run: `/workflow-task resume` lists resumable runs, or `/workflow-task resume <run-id>` resumes a specific one.
-- Continue an active run: `/workflow-task` (no arguments) lets you continue at the current phase.
-- End a terminal-ready run by calling `end_workflow({ mode: "task" })` (or `prototype` / `quicktype` / `loop`).
+### Mode chains
 
-### Mode phases
-
-| Mode | Phases |
+| Mode | Chain steps |
 | --- | --- |
-| `task` | plan → reuse → handoff → loop |
-| `quicktype` | grilling → plan → reuse → handoff → loop → audit |
-| `prototype` | grilling → research → plan → reuse → handoff → loop → audit |
-| `loop` | loop (direct build ↔ review) |
+| `task` | architect (plan) → checkpoint → explorer (reuse) → recapper (handoff) → checkpoint → builder (implementation, verified acceptance) → commentator (review) → checkpoint |
+| `prototype` | researcher (research) → architect (plan) → checkpoint → explorer (reuse) → recapper (handoff) → checkpoint → builder (implementation, verified acceptance) → commentator (review) → checkpoint → commentator (audit of uncommitted diff) |
+| `quicktype` | same as `prototype` minus the researcher step |
+| `loop` | builder (implementation, verified acceptance) → commentator (review) → checkpoint — direct build↔review rounds for an already-agreed plan |
 
-- `grilling` asks clarification questions until the frontier of decisions is empty.
-- `research` gathers external evidence when needed.
-- `plan` produces a build plan that must end with `WORKFLOW_PLAN_STATUS: ready`.
-- `reuse` explores the existing codebase (skipped automatically if there is no git history).
-- `handoff` compiles a self-contained context document that must end with `WORKFLOW_HANDOFF_STATUS: ready`.
-- `loop` runs builder/commentator review cycles until the commentator ends with `WORKFLOW_REVIEW_STATUS: clean` or the max iteration cap is reached. In direct `loop` mode, parent must synthesize the agreed conversation plan, constraints, and acceptance criteria into each fresh subagent prompt; no plan or handoff artifact is created.
-- `audit` (quicktype/prototype only) performs a final review of uncommitted changes.
+- Human gates are `checkpoint` steps: approve with `subagent({ action: "approve-checkpoint", id })`, reject with `reject-checkpoint`. A rejected checkpoint stops the chain.
+- Builder steps carry a chain `acceptance` gate (verified `checked` level with `commands-run` and `changed-files` evidence).
+- Durable process state lives in the auto-created **mission** per launch (state, artifacts, decisions, receipts); inspect with `mission.list` / `mission.show`.
+- Resumability is pi-subagents' retained children: `children.list` plus `runs.run({ resume })` to continue a run.
 
 ## Commands, tools, and shortcuts
 
-| Command / tool | Description |
+| Command | Description |
 | --- | --- |
-| `/workflow-prototype [<goal>\|resume]` | Run the full prototype workflow. |
-| `/workflow-quicktype [<goal>\|resume]` | Run the quicker prototype workflow without a research phase. |
-| `/workflow-task [<goal>\|resume]` | Run the task workflow with plan/reuse/handoff/loop. |
-| `/workflow-loop [<goal>\|resume]` | Run direct builder/reviewer rounds for an already-agreed plan. |
-| `write_workflow_artifact({ content })` | Write the current phase artifact; the engine advances to the next phase if validators pass. |
-| `end_workflow({ mode: "task"\|"quicktype"\|"prototype"\|"loop" })` | Explicitly close a terminal-ready workflow. |
+| `/workflow-prototype <goal>` | Run the full prototype chain (research → plan → reuse → handoff → loop → audit). |
+| `/workflow-quicktype <goal>` | Run the quicker prototype chain without research. |
+| `/workflow-task <goal>` | Run the task chain (plan → reuse → handoff → build↔review). |
+| `/workflow-loop <goal>` | Run direct builder/reviewer rounds for an already-agreed plan. |
 
 ## Limits and safety
 
-- Only one workflow run can be active per mode at a time. End or detach the current run before starting another.
-- Parent-owned phase artifacts must be written with `write_workflow_artifact`; direct `write` or `edit` tool calls are blocked while a workflow is active.
-- The engine-owned `loop-complete.md` is written automatically when a clean review is detected. Do not write it yourself.
-- Loop review rounds are capped (default 3). A blocking review at the cap pauses the loop with a warning.
-- Completed workflow runs remain resumable until `end_workflow` writes `status: completed` to the run file.
-- Runs are never auto-resumed after reload. You must explicitly call `resume`.
+- Chains launch asynchronously; the live result card, snapshots, and notifications come from pi-subagents' slash UX.
+- Each command needs a non-empty goal; an empty invocation shows usage instead of launching.
+- The previous durable engine (state machine, `workflow.json` run state, `write_workflow_artifact` / `end_workflow` tools, and marker-validated phase artifacts) is gone. The four modes are chains; phase markers and parent-owned artifact writes are not part of this design.
+- Build↔review rounds are driven by the `builder → commentator → checkpoint` segment: a blocking review rejects the checkpoint, and you re-run `/workflow-<mode>` (or resume/append) for another round. There is no automatic iteration cap.
 
-### Scripted subagent steps
+## Migration
 
-- The workflow extension is the durable shell: a phase may call `subagent({ workflowScript, output: false })` as one step instead of a single-agent call.
-- In loop phase, a scripted call counts as one review round; the script must return or emit the aggregated review text containing the `WORKFLOW_REVIEW_STATUS: clean|blocking` marker.
-- Per-child `output:` inside the script string is not rewritten — scripts should omit it. The adapter forces `output: false` on the call itself so children stay inline.
-- Scripted steps remain child-level and ephemeral: they carry no durable process state. The workflow run file (`workflow.json`) remains the source of truth for resume.
+Active runs from the old engine (`.selesai/artifacts/*/workflow.json`) are **not resumable**. The old run files can be deleted; start fresh with `/workflow-<mode> <goal>`.
 
 <SourceEvidence slug="workflow" />
