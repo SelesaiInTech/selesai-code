@@ -158,6 +158,12 @@ test("post-compaction queue delivery does not read ctx.cwd from the delayed call
   assert.match(source, /if \(isStaleExtensionContextError\(error\)\) \{\r?\n\s+if \(!sent\) queueStore\.update\(item\.id, \{ status: "queued", error: undefined \}\);/);
 });
 
+test("editor-adjacent widgets cache queue and last-prompt work", () => {
+  assert.match(source, /const QUEUE_SUMMARY_CACHE_TTL_MS = 250;/);
+  assert.match(source, /queueSummaryCache = null;\r?\n\s+requestImmediateStatusRender/);
+  assert.match(source, /lastPromptRenderCache\.source === lastUserPrompt/);
+});
+
 test("unknown context estimates are event-scoped and cleared before compaction", () => {
   assert.match(source, /approximateContextUsage = event\.reason === "reload" \? estimateUnknownContextUsage\(ctx\) : null;/);
   assert.match(source, /unknownCoreFallback: approximateContextUsage,/);

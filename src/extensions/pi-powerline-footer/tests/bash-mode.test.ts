@@ -865,12 +865,241 @@ test("bash editor refreshGhostSuggestion reuses the ghost scheduling path", asyn
     let scheduled = false;
 
     getMethod(BashModeEditor.prototype, "refreshGhostSuggestion").call({
+      areCompletionsEnabled() {
+        return true;
+      },
       scheduleGhostUpdate() {
         scheduled = true;
       },
     });
 
     assert.equal(scheduled, true);
+  } finally {
+    links.cleanup();
+  }
+});
+
+test("bash editor refreshGhostSuggestion clears ghosts when completions are disabled", async () => {
+  const links = ensureEditorModuleLinks();
+
+  try {
+    const { BashModeEditor } = await import("../bash-mode/editor.ts");
+    let cleared = false;
+    let scheduled = false;
+
+    getMethod(BashModeEditor.prototype, "refreshGhostSuggestion").call({
+      areCompletionsEnabled() {
+        return false;
+      },
+      clearGhostSuggestion() {
+        cleared = true;
+      },
+      scheduleGhostUpdate() {
+        scheduled = true;
+      },
+    });
+
+    assert.equal(cleared, true);
+    assert.equal(scheduled, false);
+  } finally {
+    links.cleanup();
+  }
+});
+
+test("bash editor hot path avoids full expansion and coalesces ghost work", async () => {
+  const links = ensureEditorModuleLinks();
+
+  try {
+    const { BashModeEditor } = await import("../bash-mode/editor.ts");
+    const { KeybindingsManager } = await import(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js", import.meta.url).href);
+    const keybindings = KeybindingsManager.create();
+    const resolved: string[] = [];
+    let bashModeActive = false;
+    const editor = new BashModeEditor(
+      { requestRender() {}, terminal: { columns: 80, rows: 24 } },
+      { borderColor: (text: string) => text },
+      keybindings,
+      {
+        keybindings,
+        isBashModeActive: () => bashModeActive,
+        isShellRunning: () => false,
+        onExitBashMode() {},
+        onSubmitCommand() {},
+        onInterrupt() {},
+        onNotify() {},
+        getHistoryEntries: () => [],
+        resolveGhostSuggestion: async (text) => {
+          resolved.push(text);
+          return null;
+        },
+      },
+    );
+
+    (editor as { getExpandedText(): string }).getExpandedText = () => {
+      throw new Error("expanded text should not be read while typing");
+    };
+    const insertCharacter = Reflect.get(editor, "insertCharacter").bind(editor);
+    let fastInserts = 0;
+    Reflect.set(editor, "insertCharacter", (character: string) => {
+      fastInserts += 1;
+      insertCharacter(character);
+    });
+
+    for (const character of ["a", "A", ".", "漢", "🙂"]) editor.handleInput(character);
+    assert.equal(editor.getText(), "aA.漢🙂");
+    assert.equal(fastInserts, 5);
+    editor.onExtensionShortcut = (data) => data === "b";
+    editor.handleInput("b");
+    assert.equal(editor.getText(), "aA.漢🙂");
+    assert.equal(fastInserts, 5);
+    editor.onExtensionShortcut = undefined;
+    editor.render(80);
+
+    bashModeActive = true;
+    editor.setText("");
+    editor.handleInput("g");
+    editor.handleInput("i");
+    editor.handleInput("t");
+    assert.deepEqual(resolved, []);
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    assert.deepEqual(resolved, ["git"]);
+    editor.clearGhostSuggestion();
+
+  } finally {
+    links.cleanup();
+  }
+});
+
+test("bash editor long ASCII backspace keeps undo without scanning the full line", async () => {
+  const links = ensureEditorModuleLinks();
+
+  try {
+    const { BashModeEditor } = await import("../bash-mode/editor.ts");
+    const { KeybindingsManager } = await import(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js", import.meta.url).href);
+    const keybindings = KeybindingsManager.create();
+    const editor = new BashModeEditor(
+      { requestRender() {}, terminal: { columns: 80, rows: 24 } },
+      { borderColor: (text: string) => text },
+      keybindings,
+      {
+        keybindings,
+        isBashModeActive: () => false,
+        isShellRunning: () => false,
+        onExitBashMode() {},
+        onSubmitCommand() {},
+        onInterrupt() {},
+        onNotify() {},
+        getHistoryEntries: () => [],
+        resolveGhostSuggestion: async () => null,
+      },
+    );
+    const original = "x".repeat(5000);
+    editor.setText(original);
+    Reflect.get(editor, "undoStack").clear();
+    const segment = Reflect.get(editor, "segment").bind(editor);
+    Reflect.set(editor, "segment", () => {
+      throw new Error("long ASCII backspace must not segment the full line");
+    });
+
+    editor.handleInput("\x7f");
+    assert.equal(editor.getText(), original.slice(0, -1));
+
+    editor.handleInput("\x1b[122;9u");
+    assert.equal(editor.getText(), original);
+
+    Reflect.set(editor, "segment", segment);
+    editor.setText(`${"x".repeat(4998)}\u0600a`);
+    editor.handleInput("\x7f");
+    assert.equal(editor.getText(), "x".repeat(4998));
+  } finally {
+    links.cleanup();
+  }
+});
+
+test("bash editor long ASCII backspace preserves custom app bindings by input sequence", async () => {
+  const links = ensureEditorModuleLinks();
+
+  try {
+    const { BashModeEditor } = await import("../bash-mode/editor.ts");
+    const { KeybindingsManager } = await import(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js", import.meta.url).href);
+    const keybindings = new KeybindingsManager({ "app.clear": "ctrl+h" });
+    const editor = new BashModeEditor(
+      { requestRender() {}, terminal: { columns: 80, rows: 24 } },
+      { borderColor: (text: string) => text },
+      keybindings,
+      {
+        keybindings,
+        isBashModeActive: () => false,
+        isShellRunning: () => false,
+        onExitBashMode() {},
+        onSubmitCommand() {},
+        onInterrupt() {},
+        onNotify() {},
+        getHistoryEntries: () => [],
+        resolveGhostSuggestion: async () => null,
+      },
+    );
+    let cleared = false;
+    editor.onAction("app.clear", () => {
+      cleared = true;
+    });
+    const original = "x".repeat(5000);
+    editor.setText(original);
+
+    editor.handleInput("\x7f");
+    assert.equal(editor.getText(), original.slice(0, -1));
+    assert.equal(cleared, false);
+
+    editor.handleInput("\x08");
+    assert.equal(cleared, true);
+    assert.equal(editor.getText(), original.slice(0, -1));
+  } finally {
+    links.cleanup();
+  }
+});
+
+test("bash editor fast path preserves plain custom keybindings", async () => {
+  const links = ensureEditorModuleLinks();
+
+  try {
+    const { BashModeEditor } = await import("../bash-mode/editor.ts");
+    const { KeybindingsManager } = await import(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js", import.meta.url).href);
+    const { getKeybindings, setKeybindings } = await import(new URL("../node_modules/@earendil-works/pi-tui/dist/index.js", import.meta.url).href);
+    const previousKeybindings = getKeybindings();
+    const keybindings = new KeybindingsManager({ "tui.editor.cursorLeft": "a" });
+
+    try {
+      setKeybindings(keybindings);
+      const editor = new BashModeEditor(
+        { requestRender() {}, terminal: { columns: 80, rows: 24 } },
+        { borderColor: (text: string) => text },
+        keybindings,
+        {
+          keybindings,
+          isBashModeActive: () => false,
+          isShellRunning: () => false,
+          onExitBashMode() {},
+          onSubmitCommand() {},
+          onInterrupt() {},
+          onNotify() {},
+          getHistoryEntries: () => [],
+          resolveGhostSuggestion: async () => null,
+        },
+      );
+
+      editor.setText("x");
+      editor.handleInput("a");
+      assert.equal(editor.getText(), "x");
+      assert.deepEqual(editor.getCursor(), { line: 0, col: 0 });
+
+      keybindings.setUserBindings({ "tui.editor.cursorLeft": "shift+a" });
+      Reflect.set(editor, "plainBoundInputs", null);
+      editor.handleInput("A");
+      assert.equal(editor.getText(), "x");
+      assert.deepEqual(editor.getCursor(), { line: 0, col: 0 });
+    } finally {
+      setKeybindings(previousKeybindings);
+    }
   } finally {
     links.cleanup();
   }
@@ -1332,6 +1561,7 @@ test("bash editor command-z resets shell history and updates ghost state", async
     Reflect.set(shellEditor, "shellHistoryItems", ["git status"]);
     Reflect.set(shellEditor, "shellHistoryDraft", "git");
     shellEditor.handleInput("\x1b[122;9u");
+    await new Promise((resolve) => setTimeout(resolve, 75));
 
     assert.equal(shellEditor.getText(), "a");
     assert.equal(Reflect.get(shellEditor, "shellHistoryIndex"), -1);
@@ -1602,7 +1832,7 @@ test("bash editor does not accept a hidden ghost suggestion when the cursor is n
     const { BashModeEditor } = await import("../bash-mode/editor.ts");
     const accepted = getMethod(BashModeEditor.prototype, "acceptGhostSuggestion").call({
       ghost: { value: "git status", source: "project-history" },
-      getExpandedText() {
+      getText() {
         return "git st";
       },
       getCursor() {

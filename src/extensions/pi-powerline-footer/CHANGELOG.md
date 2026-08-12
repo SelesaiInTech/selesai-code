@@ -7,9 +7,22 @@
 - **Guide defaults to compact mode** — When `selesaiGuide.mode` is unset, the recurring guide opens in compact mode instead of the full tour. Explicit `full`, `compact`, or `off` settings are still honored.
 
 ### Changed
-- **Upstream 0.12.3 merge (Selesai fork)** — Updated from upstream v0.5.4 to v0.12.3. Adopts the Powerline queue/inbox (`/idea`, `/ideas`, `/queue`, `/ideas next`, `/ideas issue`), compaction-aware queue delivery, `/cd` session directory switching, cost currency and subagent cost accounting, `powerline.separator`/`layout`/`placement`/`disabledSegments`/`welcome` options, git host icons, cached session token stats, strict TypeScript gate, and all upstream fixes through 0.12.3. Selesai-specific features are preserved: the guide overlay, the TPS tracker, session-usage accounting, and mode-aware autocomplete trigger forwarding.
+- **Upstream 0.13.0 merge (Selesai fork)** — Updated from upstream v0.12.3 to v0.13.0. Adopts editor typing/cursor responsiveness work (opt-in profiling, bounded fast render path, cached queue/prompt render, async git completion lookups, debounced bash ghost completion), opt-in bash completions, and read-only git polling that no longer takes `.git/index.lock`. Follows upstream's removal of the saved idea inbox (idea capture commands, sigil capture, and issue handoff). Selesai-specific features are preserved: the guide overlay, the TPS tracker, session-usage accounting, mode-aware autocomplete trigger forwarding, the fixed-editor prompt glyph and border color, and `@selesai/code` path resolvers.
 - **Native fullscreen dock** — Removed the unsupported terminal-split compositor and its fixed-editor/mouse-scroll/chat-jump controls. Powerline status, editor, and widgets now use Pi 0.84.1's native fullscreen dock; Selesai defaults to fullscreen while `tuiMode: "regular"` opts out.
 
+## [0.13.0] - 2026-08-12
+
+### Changed
+- **Editor typing responsiveness** — Avoid expanding paste markers or joining full drafts in editor hot paths, debounce bash ghost completion, run git completion lookups asynchronously, cache queue/prompt render work, use a bounded fast render path for large editor drafts, and avoid full grapheme scans when deleting plain ASCII from long lines. Opt-in profiling and render A/B flags now identify remaining editor costs without affecting normal sessions.
+- **Editor hot-path cleanup** — Simplified type narrowing in the fast Backspace path without changing behavior.
+- **Bash completions are opt-in** — Disable Powerline bash ghost suggestions and one-off `!command` predictions by default. Set `bashMode.completions` to `true` to re-enable them.
+- **GitHub Actions runtime** — Updated checkout and Node setup actions to their Node 24 runtime versions.
+
+### Fixed
+- **Git polling no longer takes `.git/index.lock`** — Read-only git commands now run with `GIT_OPTIONAL_LOCKS=0`, so polling `git status` stops refreshing the index as a side effect, which raced interactive git in the same repo and could leave an orphaned lock behind. Thanks to Max Kaye (@XertroV) for #156.
+
+### Removed
+- **Saved idea inbox** — Removed unused idea capture commands, sigil capture, and issue handoff. The queue now manages queued prompts only.
 
 ## [0.12.3] - 2026-08-09
 
