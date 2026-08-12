@@ -314,6 +314,22 @@ export const capabilities: Capability[] = [
     runtimeSurface: "automatic",
   },
   {
+    slug: "agent-browser",
+    category: "skills-and-productivity",
+    en: { displayName: "Agent browser automation", benefit: "Browser automation through the external `agent-browser` CLI: navigation, screenshots, accessibility snapshots, form filling, and extraction, with an opt-in setup flow." },
+    id: { displayName: "Otomasi browser agent", benefit: "Otomasi browser melalui CLI eksternal `agent-browser`: navigasi, screenshot, accessibility snapshot, pengisian form, dan ekstraksi, dengan alur setup yang dapat dipilih." },
+    sourcePaths: ["src/extensions/agent-browser.ts", "src/skills/agent-browser/"],
+    sourceLinks: [
+      links("Setup extension source", "src/extensions/agent-browser.ts"),
+      links("Agent-browser skill", "src/skills/agent-browser/"),
+    ],
+    guideRoute: "capabilities/skills/agent-browser",
+    piComparison: "bundled",
+    distribution: "bundled",
+    manifestEntry: "./agent-browser.ts",
+    runtimeSurface: "skill-backed",
+  },
+  {
     slug: "llama",
     category: "terminal-workspace",
     en: { displayName: "llama.cpp model manager", benefit: "Manage local llama.cpp router models, search Hugging Face, and load/unload models from the TUI." },

@@ -233,6 +233,69 @@ header.header {
   margin-block-end: 1rem;
 }
 
+/* Capabilities page hero and badge legend */
+.capabilities-intro {
+  max-width: 46rem;
+}
+
+.capabilities-intro h2 {
+  font-size: clamp(1.9rem, 4vw, 2.8rem);
+}
+
+.comparison-legend {
+  margin: 2.5rem 0 3rem;
+  padding: 1.2rem 1.4rem;
+  border: 1px solid var(--selesai-border);
+  border-radius: 0.75rem;
+  background: var(--selesai-surface-raised);
+}
+
+.comparison-legend h2 {
+  margin: 0 0 0.4rem;
+  font-size: var(--sl-text-lg);
+}
+
+.comparison-legend p {
+  margin: 0 0 0.75rem;
+  color: var(--sl-color-gray-2);
+}
+
+.comparison-legend ul {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.comparison-legend li {
+  margin: 0.4rem 0;
+  color: var(--sl-color-gray-2);
+  font-size: var(--sl-text-sm);
+  line-height: 1.6;
+}
+
+.legend-badge {
+  display: inline-block;
+  margin-right: 0.5rem;
+  padding: 0.12rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: var(--sl-text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sl-color-gray-2);
+  vertical-align: 0.08em;
+}
+
+.legend-badge--difference {
+  color: var(--sl-color-accent-high);
+  background: var(--sl-color-accent-low);
+}
+
+.legend-badge--bundled {
+  color: var(--selesai-status-ok);
+}
+
 /* Homepage */
 [data-page-title] .accent,
 .hero .accent {

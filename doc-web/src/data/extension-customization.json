@@ -653,6 +653,25 @@
         { "name": "PI_OFFLINE=1", "description": { "en": "Set this environment variable to disable startup network operations, preventing managed binary downloads.", "id": "Atur variabel lingkungan ini untuk menonaktifkan operasi jaringan saat startup, mencegah pengunduhan biner terkelola." } }
       ],
       "noConfig": true
+    },
+    {
+      "slug": "agent-browser",
+      "distribution": "bundled",
+      "overview": {
+        "en": "Agent-browser setup is prompt-driven: Selesai offers to install the external CLI when it is missing. The install flow can be skipped or re-run; there are no persistent settings.",
+        "id": "Setup agent-browser didorong prompt: Selesai menawarkan instalasi CLI eksternal saat belum ada. Alur instalasi dapat dilewati atau dijalankan ulang; tidak ada pengaturan persisten."
+      },
+      "sourcePaths": ["src/extensions/agent-browser.ts", "src/skills/agent-browser/SKILL.md"],
+      "scopes": [],
+      "settings": [
+        { "key": "agent-browser CLI", "type": "external binary", "default": "(not installed)", "description": { "en": "Optional global npm CLI. Selesai offers to install and provision it on first startup when missing.", "id": "CLI npm global opsional. Selesai menawarkan untuk menginstal dan menyediakannya saat startup pertama jika belum ada." }, "persistence": "external binary" }
+      ],
+      "envVars": [],
+      "controls": [
+        { "name": "SELESAI_SKIP_AGENT_BROWSER_SETUP=1", "description": { "en": "Set this environment variable to skip the automated setup prompt.", "id": "Atur variabel lingkungan ini untuk melewati prompt setup otomatis." } },
+        { "name": "/setup-agent-browser", "description": { "en": "Re-run the install flow any time, including after declining.", "id": "Jalankan ulang alur instalasi kapan saja, termasuk setelah menolak." } }
+      ],
+      "noConfig": true
     }
   ]
 }

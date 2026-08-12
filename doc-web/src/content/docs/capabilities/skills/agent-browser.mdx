@@ -4,6 +4,7 @@ title: Agent Browser skill
 ---
 
 import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 
 The bundled `agent-browser` skill provides instructions for browser automation through the external `agent-browser` CLI.
 
@@ -26,6 +27,8 @@ The bundled `agent-browser` skill provides instructions for browser automation t
 - A discovery skill that tells the agent to load workflows from `agent-browser skills get core`.
 
 ## What you can configure
+
+<ExtensionCustomization slug="agent-browser" locale="en" />
 
 - Use `SELESAI_SKIP_AGENT_BROWSER_SETUP=1` to skip the automatic setup prompt.
 - Run `/setup-agent-browser` to retry setup after declining or after fixing npm permissions.

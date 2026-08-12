@@ -5,6 +5,7 @@ title: Mengapa Selesai
 
 import ComparisonCallout from "../../../components/ComparisonCallout.astro";
 import SourceEvidence from "../../../components/SourceEvidence.astro";
+import { categories, capabilities } from "../../../data/capabilities.ts";
 
 Selesai adalah fork dari [Pi coding agent](https://github.com/earendil-works/pi). Selesai mempertahankan inti terminal-first yang dapat di-*hack* dan menambahkan satu set extension, skill, serta perbaikan ruang kerja yang terkoordinasi. Halaman ini memisahkan apa yang sudah disediakan Pi dari apa yang ditambahkan atau dibundel Selesai, serta menautkan setiap klaim material Selesai ke bukti.
 
@@ -27,17 +28,70 @@ Pi tetap menjadi harness coding kecil dan mumpuni. Selesai mempertahankan kemamp
   ]}
 />
 
+## Perbandingan sekilas
+
+Pi memiliki ekosistem extension dan skill opsional yang luas. Taruhan Selesai berbeda: instal satu package dan dapatkan satu set **{capabilities.length} kemampuan** yang terkoordinasi — {capabilities.filter((capability) => capability.distribution === "bundled").length} ekstensi bundel yang dimuat otomatis, {capabilities.filter((capability) => capability.distribution === "optional").length} ekstensi opsional, dan {capabilities.filter((capability) => capability.distribution === "core").length} built-in inti — diuji bersama dan dikirim dengan setiap rilis.
+
+<ComparisonCallout
+  claim="Pi memiliki ekosistem; Selesai membundel satu set yang terkoordinasi dan teruji. Setiap kemampuan bundel berada in-tree, di-versioning bersama rilis, dan disertai panduan serta bukti source."
+  evidence={[
+    { text: "Manifest ekstensi bundel", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/package.json" },
+    { text: "Repositori Pi", url: "https://github.com/earendil-works/pi" }
+  ]}
+/>
+
+## Bundel sekilas
+
+Setiap kemampuan bundel, dikelompokkan berdasarkan kategori:
+
+{categories.map((category) => (
+  <section className="category-section" id={category.id}>
+    <h3>{category.indonesian}</h3>
+    <ul>
+      {capabilities
+        .filter((capability) => capability.category === category.id && capability.distribution === "bundled")
+        .map((capability) => (
+          <li>
+            <strong>{capability.id.displayName}</strong> — {capability.id.benefit}
+          </li>
+        ))}
+    </ul>
+  </section>
+))}
+
 ## Apa yang ditambahkan atau dibundel Selesai
 
-| Area | Tambahan Selesai | Bukti |
-| --- | --- | --- |
-| Delegasi subagent | Peran fokus in-tree (`architect`, `builder`, `commentator`, `explorer`, `recapper`, `researcher`), run foreground/background/paralel/berantai, tool/turn budget, komunikasi supervisor, worktree isolation | [source pi-subagents](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-subagents/) |
-| Workflow tahan lama | Mode `prototype`, `quicktype`, `task`, dan `loop` langsung dengan state persisten, fase yang dapat dilanjutkan, dan siklus hidup eksplisit | [source workflow](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/workflow/) |
-| Riset web | Tool `web_explore` dengan pencarian terbatas, fetch, peringkat sumber, dan eskalasi headless | [source pi-web-agent](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-web-agent/) |
-| Pertanyaan interaktif | TUI dengan single/multi-select, freeform text, navigasi keyboard, filtering, pembatalan | [source question](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/question/) |
-| Ruang kerja terminal | Footer powerline, tata letak editor tetap, tur `/guide` berulang, bash persisten, stash/restore | [source pi-powerline-footer](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-powerline-footer/) |
-| Kontinuitas | Checkpoint rewind, `/undo`, `/handoff-new`, pengingat konteks, copy-turn, dan intercom antar sesi lokal | [bagian recovery README](https://github.com/SelesaiInTech/selesai-code/blob/main/README.md) |
-| Skill dibundel | ponytail, pi-subagents, grill-me, implanger, planger, handoff, improve-codebase, dan workflow-creation dipanggil inline dengan `$skill-name` | [src/skills](https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/) |
+Daftar lengkap: semua {capabilities.length} kemampuan yang dikelompokkan berdasarkan kategori, masing-masing menautkan ke panduannya. Ekstensi bundel dimuat otomatis; ekstensi opsional dan built-in inti ditandai.
+
+{categories.map((category) => (
+  <section className="category-section" id={category.id}>
+    <h3>{category.indonesian}</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Kemampuan</th>
+          <th>Panduan</th>
+        </tr>
+      </thead>
+      <tbody>
+        {capabilities
+          .filter((capability) => capability.category === category.id)
+          .map((capability) => (
+            <tr>
+              <td>
+                {capability.id.displayName}
+                {capability.distribution === "optional" && <em> (opsional)</em>}
+                {capability.distribution === "core" && <em> (inti)</em>}
+              </td>
+              <td>
+                <a href={`${import.meta.env.BASE_URL}id/${capability.guideRoute}/`}>Baca panduan</a>
+              </td>
+            </tr>
+          ))}
+      </tbody>
+    </table>
+  </section>
+))}
 
 ## Mengapa *bundling* penting
 
@@ -54,8 +108,9 @@ Ini membuat source tetap terlihat, dapat direview, dan diaudit di satu tempat. I
 
 ## Hasil praktis
 
-- **Lebih sedikit gesekan setup:** instal `@selesai/code` dan dapatkan subagent, workflow, riset web, pertanyaan interaktif, tool recovery, skill, dan UI yang lebih kaya dalam satu package.
-- **Pengeluaran token lebih kecil:** `/handoff-new`, pengingat konteks, dan footer powerline membantu menjaga konteks tetap kecil dan fokus.
-- **Pemulihan lebih baik:** rewind yang didukung git, undo per turn, dan handoff sesi mengurangi biaya kesalahan.
+- **Lebih sedikit gesekan setup:** instal `@selesai/code` dan dapatkan subagent, workflow, riset web, pertanyaan interaktif, pencarian kode, tool recovery, skill, dan UI yang lebih kaya dalam satu package — tanpa berburu plugin.
+- **Pengeluaran token lebih kecil:** `/handoff-new`, pengingat konteks, rewrite RTK, dan footer powerline menjaga konteks tetap kecil, tenang, dan fokus.
+- **Pemulihan lebih baik:** checkpoint rewind berbasis git, undo per turn, handoff sesi, dan koordinasi antar sesi mengurangi biaya kesalahan.
+- **Lebih sedikit kejutan:** setiap kemampuan dikirim dengan panduan, referensi konfigurasi, dan bukti source — tanpa plugin kotak hitam.
 
 <SourceEvidence slug="pi-subagents" />

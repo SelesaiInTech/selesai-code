@@ -45,6 +45,7 @@ export const navigation: SidebarConfig = [
     translations: { id: "Kustomisasi" },
     link: "/customization/",
   },
+  { label: "Settings", translations: { id: "Pengaturan" }, link: "/settings/" },
   {
     label: "Guides",
     translations: { id: "Panduan" },

@@ -4,6 +4,7 @@ title: Skill Agent Browser
 ---
 
 import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 
 Skill `agent-browser` yang dibundel menyediakan instruksi otomasi browser melalui CLI eksternal `agent-browser`.
 
@@ -26,6 +27,8 @@ Skill `agent-browser` yang dibundel menyediakan instruksi otomasi browser melalu
 - Skill discovery yang mengarahkan agent untuk memuat workflow dari `agent-browser skills get core`.
 
 ## Yang dapat dikonfigurasi
+
+<ExtensionCustomization slug="agent-browser" locale="id" />
 
 - Gunakan `SELESAI_SKIP_AGENT_BROWSER_SETUP=1` untuk melewati prompt setup otomatis.
 - Jalankan `/setup-agent-browser` untuk mencoba lagi setelah menolak atau memperbaiki permission npm.

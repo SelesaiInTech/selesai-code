@@ -24,12 +24,19 @@ const statusLabels: Record<Distribution, string> = {
   <ul class="capability-list">
     {items.map((capability) => {
       const path = locale === "en" ? capability.guideRoute : `id/${capability.guideRoute}`;
+      const comparisonBadge =
+        capability.piComparison === "core-differentiator"
+          ? locale === "en" ? "Selesai difference" : "Perbedaan Selesai"
+          : capability.piComparison === "bundled"
+            ? locale === "en" ? "Bundled" : "Dibundel"
+            : locale === "en" ? "Ergonomics" : "Ergonomi";
       return (
         <li>
           <a href={`${import.meta.env.BASE_URL}${path}/`}>
             <strong>
               {capability[locale].displayName}
               {capability.distribution !== "bundled" && <span class="status-badge" data-distribution={capability.distribution}>{statusLabels[capability.distribution]}</span>}
+              <span class="comparison-badge" data-comparison={capability.piComparison}>{comparisonBadge}</span>
             </strong>
             <span>{capability[locale].benefit}</span>
             <span class="arrow" aria-hidden="true">→</span>
@@ -86,6 +93,25 @@ const statusLabels: Record<Distribution, string> = {
   }
   .status-badge[data-distribution="core"] {
     color: var(--sl-color-accent-high);
+  }
+
+  .comparison-badge {
+    font-size: var(--sl-text-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.08rem 0.4rem;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    color: var(--sl-color-gray-2);
+  }
+
+  .comparison-badge[data-comparison="core-differentiator"] {
+    color: var(--sl-color-accent-high);
+    background: var(--sl-color-accent-low);
+  }
+
+  .comparison-badge[data-comparison="bundled"] {
+    color: var(--selesai-status-ok);
   }
 
   a > span:not(.arrow) {

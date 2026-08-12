@@ -7,7 +7,23 @@ description: Explore the tools, workflows, recovery features, and productivity i
 import CapabilityList from "../../components/CapabilityList.astro";
 import { categories, capabilities } from "../../data/capabilities.ts";
 
-Selesai ships the bundled capabilities below as part of the `@selesai/code` package. Optional extensions are listed separately at the bottom of the page. Core built-in extensions are documented on the [Customization](../customization/) page. Each entry links to a guide with examples, configuration, limits, and source evidence.
+<div className="home-section__heading capabilities-intro">
+  <p className="eyebrow">{capabilities.length} capabilities, one install</p>
+  <h2>Everything Selesai ships, tested together.</h2>
+  <p>
+    `@selesai/code` installs <strong>{capabilities.filter((capability) => capability.distribution === "bundled").length} bundled extensions</strong> that load automatically, plus {capabilities.filter((capability) => capability.distribution === "optional").length} optional extension and {capabilities.filter((capability) => capability.distribution === "core").length} core built-in. Optional extensions are listed separately at the bottom of the page; core built-ins are also covered on the [Customization](../customization/) page. Every entry below links to a guide with examples, configuration, limits, and source evidence.
+  </p>
+</div>
+
+<div className="comparison-legend">
+  <h2>What the badges mean</h2>
+  <p>Each capability carries a badge that says how it relates to the Pi baseline:</p>
+  <ul>
+    <li><span className="legend-badge legend-badge--difference">Selesai difference</span> Core differentiators — not part of Pi's baseline; Selesai builds them in-tree.</li>
+    <li><span className="legend-badge legend-badge--bundled">Bundled</span> Shipped and maintained by Selesai; similar ideas may exist in Pi's ecosystem as separate packages.</li>
+    <li><span className="legend-badge legend-badge--ergonomics">Ergonomics</span> Incremental quality-of-life improvements on the shared Pi baseline.</li>
+  </ul>
+</div>
 
 {categories.map((category) => (
   <section className="category-section" id={category.id}>
@@ -34,3 +50,4 @@ Selesai ships the bundled capabilities below as part of the `@selesai/code` pack
     ))}
   </section>
 )}
+

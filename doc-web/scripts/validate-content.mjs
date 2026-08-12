@@ -193,6 +193,7 @@ const corePages = [
   "get-started.mdx",
   "why-selesai.mdx",
   "capabilities.mdx",
+  "settings.mdx",
   "evidence.mdx",
   "changelog.mdx",
   "accessibility.mdx",

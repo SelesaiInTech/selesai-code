@@ -1,0 +1,81 @@
+---
+draft: false
+title: Settings
+description: The settings most people change, grouped by what they do, with a copy-paste JSON example.
+---
+
+Selesai stores settings as JSON in two files: `~/.selesai/agent/settings.json` (global, applies to every project) and `.selesai/settings.json` (project, overrides global for the current directory). Edit the files directly, or run `/settings` inside a session to change common options interactively.
+
+This page covers the settings most people actually touch. The exhaustive reference lives in [docs/settings.md](https://github.com/SelesaiInTech/selesai-code/blob/main/docs/settings.md) on GitHub, and per-extension options are on the [Customization](../customization/) page.
+
+## Model
+
+| Setting | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `defaultProvider` | string | — | Default provider, e.g. `"anthropic"` or `"openai"`. |
+| `defaultModel` | string | — | Default model ID used for new sessions. |
+| `defaultThinkingLevel` | string | — | How much the agent thinks before answering: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, or `"xhigh"`. |
+| `enabledModels` | string[] | — | Model patterns for Ctrl+P cycling, e.g. `["claude-*", "gpt-4o"]`. |
+
+## Appearance
+
+| Setting | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `theme` | string | `"dark"` | `"dark"`, `"light"`, or a custom theme name. |
+| `quietStartup` | boolean | `false` | Hide the startup header for a calmer launch. |
+| `tuiMode` | string | `"fullscreen"` | `"fullscreen"` (default dock layout) or `"regular"` (classic Pi layout). |
+| `powerline` | string | `"default"` | Status-bar preset for the powerline footer: `"default"`, `"minimal"`, `"compact"`, `"full"`, `"nerd"`, or `"ascii"`. |
+
+## Context
+
+| Setting | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `compaction.enabled` | boolean | `true` | Auto-compact old context when a conversation grows large. |
+| `compaction.reserveTokens` | number | `16384` | Tokens kept free for the model's reply. |
+| `compaction.keepRecentTokens` | number | `20000` | Recent tokens that are never summarized. |
+
+## Trust and safety
+
+| Setting | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `defaultProjectTrust` | string | `"ask"` | Fallback for trusting a project in non-interactive runs: `"ask"`, `"always"`, or `"never"`. Global setting only. |
+
+## Extensibility
+
+| Setting | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `packages` | array | `[]` | npm/git packages that load extensions, skills, prompts, and themes. |
+| `extensions` | string[] | `[]` | Local extension files or directories to load. |
+| `skills` | string[] | `[]` | Local skill files or directories to load. |
+
+## Where things live
+
+| Location | Scope |
+| --- | --- |
+| `~/.selesai/agent/settings.json` | Global — applies to every project. |
+| `.selesai/settings.json` | Project — overrides global values for the current directory. |
+
+Nested objects are merged, so a project file only needs to override the keys it cares about.
+
+## One combined example
+
+```json
+{
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-sonnet-4-20250514",
+  "defaultThinkingLevel": "medium",
+  "theme": "dark",
+  "quietStartup": false,
+  "tuiMode": "fullscreen",
+  "powerline": "minimal",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
+  "defaultProjectTrust": "ask",
+  "packages": ["pi-skills"]
+}
+```
+
+For the full list of every setting, see [docs/settings.md](https://github.com/SelesaiInTech/selesai-code/blob/main/docs/settings.md). For extension-level configuration, see the [Customization](../customization/) page.

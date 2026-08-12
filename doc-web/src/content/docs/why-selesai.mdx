@@ -5,6 +5,7 @@ title: Why Selesai
 
 import ComparisonCallout from "../../components/ComparisonCallout.astro";
 import SourceEvidence from "../../components/SourceEvidence.astro";
+import { categories, capabilities } from "../../data/capabilities.ts";
 
 Selesai is a fork of the [Pi coding agent](https://github.com/earendil-works/pi). It keeps Pi's terminal-first, hackable core and adds a coordinated set of bundled extensions, skills, and workspace improvements. This page separates what Pi already provides from what Selesai adds or bundles, and links every material Selesai claim to evidence.
 
@@ -27,23 +28,76 @@ Pi remains a small, capable coding harness. Selesai preserves these baseline cap
   ]}
 />
 
+## Compare at a glance
+
+Pi has a broad ecosystem of optional extensions and skills. Selesai's bet is different: install one package and get a coordinated set of **{capabilities.length} capabilities** — {capabilities.filter((capability) => capability.distribution === "bundled").length} bundled extensions that load automatically, {capabilities.filter((capability) => capability.distribution === "optional").length} optional extension, and {capabilities.filter((capability) => capability.distribution === "core").length} core built-in — tested together and shipped with every release.
+
+<ComparisonCallout
+  claim="Pi has an ecosystem; Selesai bundles a coordinated, tested set. Every bundled capability lives in-tree, is versioned with the release, and ships with a guide and source evidence."
+  evidence={[
+    { text: "Bundled extensions manifest", url: "https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/package.json" },
+    { text: "Pi repository", url: "https://github.com/earendil-works/pi" }
+  ]}
+/>
+
+## Bundled at a glance
+
+Every bundled capability, grouped by category:
+
+{categories.map((category) => (
+  <section className="category-section" id={category.id}>
+    <h3>{category.en}</h3>
+    <ul>
+      {capabilities
+        .filter((capability) => capability.category === category.id && capability.distribution === "bundled")
+        .map((capability) => (
+          <li>
+            <strong>{capability.en.displayName}</strong> — {capability.en.benefit}
+          </li>
+        ))}
+    </ul>
+  </section>
+))}
+
 ## What Selesai adds or bundles
 
-| Area | Selesai adds | Evidence |
-| --- | --- | --- |
-| Subagent delegation | In-tree focused roles (`architect`, `builder`, `commentator`, `explorer`, `recapper`, `researcher`), foreground/background/parallel/chained runs, tool/turn budgets, supervisor communication, worktree isolation | [pi-subagents source](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-subagents/) |
-| Durable workflows | `prototype`, `quicktype`, `task`, and direct `loop` modes with persisted state, resumable phases, and explicit lifecycle | [workflow source](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/workflow/) |
-| Web research | `web_explore` tool with bounded search, fetch, source ranking, and headless escalation | [pi-web-agent source](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-web-agent/) |
-| Interactive questions | TUI with single/multi-select, freeform text, keyboard navigation, filtering, cancellation | [question source](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/question/) |
-| Terminal workspace | Native fullscreen dock, Powerline footer, recurring `/guide` tour, persistent bash, stash/restore | [pi-powerline-footer source](https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/pi-powerline-footer/) |
-| Continuity | Rewind checkpoints, `/undo`, `/handoff-new`, context reminder, copy-turn, and intercom between local sessions | [README recovery section](https://github.com/SelesaiInTech/selesai-code/blob/main/README.md) |
-| Bundled skills | ponytail, pi-subagents, grill-me, implanger, planger, handoff, improve-codebase, and workflow-creation invoked inline with `$skill-name` | [src/skills](https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/) |
+The complete list: all {capabilities.length} capabilities grouped by category, each linking to its guide. Bundled extensions load automatically; the optional extension and the core built-in are tagged.
+
+{categories.map((category) => (
+  <section className="category-section" id={category.id}>
+    <h3>{category.en}</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Capability</th>
+          <th>Guide</th>
+        </tr>
+      </thead>
+      <tbody>
+        {capabilities
+          .filter((capability) => capability.category === category.id)
+          .map((capability) => (
+            <tr>
+              <td>
+                {capability.en.displayName}
+                {capability.distribution === "optional" && <em> (optional)</em>}
+                {capability.distribution === "core" && <em> (core)</em>}
+              </td>
+              <td>
+                <a href={`${import.meta.env.BASE_URL}${capability.guideRoute}/`}>Read the guide</a>
+              </td>
+            </tr>
+          ))}
+      </tbody>
+    </table>
+  </section>
+))}
 
 ## Why bundling matters
 
 Pi has a broad extension ecosystem. Installing many separate packages means tracking their maintenance, compatibility, and supply-chain boundaries. Selesai carries the extensions that define its experience in `src/extensions/`, tests them with the application, and ships them with each release.
 
-This keeps the source visible, reviewable, and auditable in one place. It does not eliminate supply-chain risk—Selesai still has runtime dependencies—but it removes the need to install many unrelated extensions before Selesai is useful.
+This keeps the source visible, reviewable, and auditable in one place. It does not eliminate supply-chain risk — Selesai still has runtime dependencies — but it removes the need to install many unrelated extensions before Selesai is useful.
 
 <ComparisonCallout
   claim="Selesai is a coordinated fork, not a loose plugin installer. Core capabilities are in-tree, versioned, and tested together."
@@ -54,8 +108,9 @@ This keeps the source visible, reviewable, and auditable in one place. It does n
 
 ## Practical outcomes
 
-- **Lower setup friction:** install `@selesai/code` and get subagents, workflows, web research, questions, recovery tools, skills, and a richer UI in one package.
-- **Smaller token spend:** `/handoff-new`, context reminders, and the powerline footer help keep context small and focused.
-- **Better recoverability:** git-backed rewind, turn-level undo, and session handoffs reduce the cost of mistakes.
+- **Lower setup friction:** install `@selesai/code` and get subagents, workflows, web research, questions, code search, recovery tools, skills, and a richer UI in one package — no plugin scavenger hunt.
+- **Smaller token spend:** `/handoff-new`, context reminders, RTK rewrites, and the powerline footer keep context small, quiet, and focused.
+- **Better recoverability:** git-backed rewind checkpoints, turn-level undo, session handoffs, and inter-session coordination reduce the cost of mistakes.
+- **Fewer surprises:** every capability ships with a guide, configuration reference, and source evidence — no black-box plugins.
 
 <SourceEvidence slug="pi-subagents" />

@@ -7,7 +7,23 @@ description: Jelajahi tools, workflow, fitur pemulihan, dan peningkatan produkti
 import CapabilityList from "../../../components/CapabilityList.astro";
 import { categories, capabilities } from "../../../data/capabilities.ts";
 
-Selesai mengirimkan kemampuan bundel di bawah ini sebagai bagian dari package `@selesai/code`. Ekstensi opsional dicantumkan terpisah di bagian bawah halaman. Ekstensi built-in inti didokumentasikan di halaman [Kustomisasi](../customization/). Setiap entri menautkan ke panduan dengan contoh, konfigurasi, batasan, dan bukti source.
+<div className="home-section__heading capabilities-intro">
+  <p className="eyebrow">{capabilities.length} kemampuan, satu instalasi</p>
+  <h2>Semua yang dikirim Selesai, diuji bersama.</h2>
+  <p>
+    `@selesai/code` menginstal <strong>{capabilities.filter((capability) => capability.distribution === "bundled").length} ekstensi bundel</strong> yang dimuat otomatis, plus {capabilities.filter((capability) => capability.distribution === "optional").length} ekstensi opsional dan {capabilities.filter((capability) => capability.distribution === "core").length} built-in inti. Ekstensi opsional dicantumkan terpisah di bagian bawah halaman; built-in inti juga dibahas di halaman [Kustomisasi](../customization/). Setiap entri menautkan ke panduan dengan contoh, konfigurasi, batasan, dan bukti source.
+  </p>
+</div>
+
+<div className="comparison-legend">
+  <h2>Arti lencana</h2>
+  <p>Setiap kemampuan membawa lencana yang menjelaskan hubungannya dengan baseline Pi:</p>
+  <ul>
+    <li><span className="legend-badge legend-badge--difference">Perbedaan Selesai</span> Diferensiator inti — bukan bagian dari baseline Pi; Selesai membangunnya in-tree.</li>
+    <li><span className="legend-badge legend-badge--bundled">Dibundel</span> Dikirim dan dipelihara oleh Selesai; ide serupa mungkin ada di ekosistem Pi sebagai package terpisah.</li>
+    <li><span className="legend-badge legend-badge--ergonomics">Ergonomi</span> Perbaikan kualitas hidup inkremental di atas baseline Pi bersama.</li>
+  </ul>
+</div>
 
 {categories.map((category) => (
   <section className="category-section" id={category.id}>
@@ -35,3 +51,4 @@ Selesai mengirimkan kemampuan bundel di bawah ini sebagai bagian dari package `@
     ))}
   </section>
 )}
+
