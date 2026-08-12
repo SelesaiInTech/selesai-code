@@ -4,6 +4,11 @@ All notable changes to `@selesai/code` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-08-13
+
+### Fixed
+- **Slash-launched workflows now surface live progress.** The pi-subagents slash bridge was dropping the workflow trace and chat-progress projection, so foreground scripted workflows (`/run` without `--bg`, `/chain`, `/parallel`, `/run-chain`) showed a static "Running…" card until completion. The bridge now forwards `details.workflow` and `details.chatProgress`, and the slash live-state holds a workflow-shaped snapshot, so the in-chat card shows per-child status, phases, and durations as children run.
+
 ## [0.8.3] - 2026-08-12
 
 ### Added

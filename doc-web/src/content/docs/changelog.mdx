@@ -5,6 +5,10 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.8.4 — Live workflow progress on slash launches
+
+- Slash-launched scripted workflows now show a live progress card (per-child status, phases, and durations) instead of a static "Running…" placeholder. The pi-subagents slash bridge was dropping the workflow trace and chat-progress projection; it now forwards both, and the slash live-state renders a workflow-shaped snapshot, so `/run` (without `--bg`), `/chain`, `/parallel`, and `/run-chain` update in place while children run.
+
 ## 0.8.3 — Native fullscreen TUI and Pi 0.84.1
 
 - Selesai now defaults to Pi 0.84.1's native fullscreen TUI: the transcript scrolls in an alternate-screen viewport while the editor, status, extension widgets, and footer remain in a fixed dock. Mouse/trackpad scrolling and `PageUp`/`PageDown`/`Home`/`End` navigate the transcript; `tuiMode: "regular"` or `--tui-mode regular` opts out.

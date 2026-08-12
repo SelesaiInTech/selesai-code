@@ -5,6 +5,10 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.8.4 — Progress workflow langsung pada peluncuran slash
+
+- Workflow berskrip yang diluncurkan lewat slash kini menampilkan kartu progress langsung (status per child, fase, dan durasi) alih-alih placeholder "Running…" yang statis. Jembatan slash pi-subagents sebelumnya membuang trace workflow dan proyeksi chat-progress; kini keduanya diteruskan dan live-state slash merender snapshot berbentuk workflow, sehingga `/run` (tanpa `--bg`), `/chain`, `/parallel`, dan `/run-chain` memperbarui tampilan saat child berjalan.
+
 ## 0.8.3 — TUI fullscreen native dan Pi 0.84.1
 
 - Selesai kini secara default memakai TUI fullscreen native Pi 0.84.1: transkrip dapat digulir di viewport layar alternatif, sementara editor, status, widget ekstensi, dan footer tetap berada di dock tetap. Scroll mouse/trackpad dan `PageUp`/`PageDown`/`Home`/`End` menavigasi transkrip; `tuiMode: "regular"` atau `--tui-mode regular` digunakan untuk opt-out.
