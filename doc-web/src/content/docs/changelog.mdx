@@ -5,6 +5,12 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.8.3 — Native fullscreen TUI and Pi 0.84.1
+
+- Selesai now defaults to Pi 0.84.1's native fullscreen TUI: the transcript scrolls in an alternate-screen viewport while the editor, status, extension widgets, and footer remain in a fixed dock. Mouse/trackpad scrolling and `PageUp`/`PageDown`/`Home`/`End` navigate the transcript; `tuiMode: "regular"` or `--tui-mode regular` opts out.
+- Removed Powerline's unsupported terminal-split compositor and its fixed-editor, mouse-scroll, and chat-jump controls. Powerline now uses the native dock through standard extension APIs.
+- `/settings` can switch TUI modes immediately and configure the fullscreen scrollbar. The Pi AI, TUI, and agent-core runtimes now use 0.84.1.
+
 ## 0.8.2 — Guide version marking no longer pins the default mode
 
 - Marking a new guide version as seen no longer persists the implicit `compact` mode into `settings.json`; an explicit `full`, `compact`, or `off` choice is still preserved, so the guide keeps following the current default until you opt in.

@@ -5,6 +5,12 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.8.3 — TUI fullscreen native dan Pi 0.84.1
+
+- Selesai kini secara default memakai TUI fullscreen native Pi 0.84.1: transkrip dapat digulir di viewport layar alternatif, sementara editor, status, widget ekstensi, dan footer tetap berada di dock tetap. Scroll mouse/trackpad dan `PageUp`/`PageDown`/`Home`/`End` menavigasi transkrip; `tuiMode: "regular"` atau `--tui-mode regular` digunakan untuk opt-out.
+- Menghapus compositor terminal-split Powerline yang tidak didukung beserta kontrol fixed-editor, mouse-scroll, dan lompatan chat. Powerline kini menggunakan dock native melalui API ekstensi standar.
+- `/settings` dapat langsung mengganti mode TUI dan mengatur scrollbar fullscreen. Runtime Pi AI, TUI, dan agent-core kini menggunakan 0.84.1.
+
 ## 0.8.2 — Penandaan versi panduan tidak lagi mengunci mode default
 
 - Menandai versi panduan baru sebagai terlihat tidak lagi menyimpan mode `compact` implisit ke `settings.json`; pilihan eksplisit `full`, `compact`, atau `off` tetap dipertahankan, sehingga panduan terus mengikuti default saat ini sampai Anda memilih sendiri.
