@@ -86,4 +86,11 @@ The `workflow` extension provides durable, resumable project workflows. Four mod
 - Completed workflow runs remain resumable until `end_workflow` writes `status: completed` to the run file.
 - Runs are never auto-resumed after reload. You must explicitly call `resume`.
 
+### Scripted subagent steps
+
+- The workflow extension is the durable shell: a phase may call `subagent({ workflowScript, output: false })` as one step instead of a single-agent call.
+- In loop phase, a scripted call counts as one review round; the script must return or emit the aggregated review text containing the `WORKFLOW_REVIEW_STATUS: clean|blocking` marker.
+- Per-child `output:` inside the script string is not rewritten — scripts should omit it. The adapter forces `output: false` on the call itself so children stay inline.
+- Scripted steps remain child-level and ephemeral: they carry no durable process state. The workflow run file (`workflow.json`) remains the source of truth for resume.
+
 <SourceEvidence slug="workflow" />

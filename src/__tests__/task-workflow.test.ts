@@ -520,4 +520,52 @@ describe("task workflow", () => {
     await resumeWorkflow(h2, runId);
     expect(JSON.parse(readFileSync(statePath, "utf8")).phase).toBe("loop");
   });
+
+  it("scripted subagent call in a non-loop phase is ignored by the engine; parent still writes the artifact", async () => {
+    const h = await createHarness();
+    await startWorkflow(h, "build X");
+    const dir = h.entries.at(-1)!.data.artifactDir;
+
+    await h.events.get("tool_result")({
+      toolName: "subagent",
+      toolCallId: "scripted-plan",
+      input: { workflowScript: "return runs.all([{ key: 'p', agent: 'architect', task: 'plan' }])" },
+      content: [{ type: "text", text: "# Plan\nWORKFLOW_PLAN_STATUS: ready" }],
+      isError: false,
+    }, h.ctx);
+    expect(h.entries.at(-1)?.data.phase).toBe("plan");
+    expect(existsSync(join(dir, "plan.md"))).toBe(false);
+
+    await h.tools.get("write_workflow_artifact").execute("write-plan", { content: "# Plan\nWORKFLOW_PLAN_STATUS: ready" }, undefined, undefined, h.ctx);
+    expect(h.entries.at(-1)?.data.phase).toBe("reuse");
+    expect(existsSync(join(dir, "plan.md"))).toBe(true);
+  });
+
+  it("clean scripted review wave makes the task loop terminal-ready and end_workflow closes it", async () => {
+    const h = await createHarness();
+    await startWorkflow(h, "build X");
+    await h.tools.get("write_workflow_artifact").execute("write-plan", { content: "WORKFLOW_PLAN_STATUS: ready" }, undefined, undefined, h.ctx);
+    await h.tools.get("write_workflow_artifact").execute("write-reuse", { content: "skip" }, undefined, undefined, h.ctx);
+    await h.tools.get("write_workflow_artifact").execute("write-handoff", { content: "WORKFLOW_HANDOFF_STATUS: ready" }, undefined, undefined, h.ctx);
+    const dir = h.entries.at(-1)!.data.artifactDir;
+    expect(h.entries.at(-1)?.data.phase).toBe("loop");
+
+    await h.events.get("tool_result")({
+      toolName: "subagent", toolCallId: "builder", input: { agent: "builder" },
+      content: [{ type: "text", text: "implemented" }], isError: false,
+    }, h.ctx);
+    const reviewResult = await h.events.get("tool_result")({
+      toolName: "subagent", toolCallId: "scripted-wave",
+      input: { workflowScript: "return runs.all([{ key: 'r', agent: 'commentator', task: 'review' }])" },
+      content: [{ type: "text", text: "No blockers\nWORKFLOW_REVIEW_STATUS: clean" }], isError: false,
+    }, h.ctx);
+
+    expect(reviewResult).toMatchObject({ terminate: true });
+    expect(readFileSync(join(dir, "loop-complete.md"), "utf8")).toContain("WORKFLOW_LOOP_STATUS: clean");
+    expect(h.entries.at(-1)?.data).toMatchObject({ phase: "loop", done: false });
+
+    const end = await h.tools.get("end_workflow").execute("end", { mode: "task" }, undefined, undefined, h.ctx);
+    expect(end.terminate).toBe(true);
+    expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"))).toMatchObject({ status: "completed", phase: "loop" });
+  });
 });

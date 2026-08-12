@@ -54,6 +54,24 @@ async function result(h: Awaited<ReturnType<typeof createHarness>>, agent: strin
   }, h.ctx);
 }
 
+async function scriptedResult(h: Awaited<ReturnType<typeof createHarness>>, id: string, text: string) {
+  return h.events.get("tool_result")({
+    toolName: "subagent",
+    toolCallId: id,
+    input: { workflowScript: "return runs.all([{ key: 'r1', agent: 'commentator', task: 'review' }])" },
+    content: [{ type: "text", text }],
+    isError: false,
+  }, h.ctx);
+}
+
+async function reachLoop(h: Awaited<ReturnType<typeof createHarness>>): Promise<string> {
+  const dir = await start(h);
+  writeArtifact(dir, "handoff.md", "handoff\nWORKFLOW_HANDOFF_STATUS: ready");
+  await h.tools.get("write_workflow_artifact").execute("wf-handoff", { content: readFileSync(join(dir, "handoff.md"), "utf8") }, undefined, undefined, h.ctx);
+  expect(h.entries.at(-1)?.data).toMatchObject({ mode: "loop", phase: "loop" });
+  return dir;
+}
+
 describe("loop workflow", () => {
   let cwd: string;
   let tmp: string;
@@ -162,5 +180,86 @@ describe("loop workflow", () => {
       loopState: { reviewRound: 3, maxIterations: 3, stage: "maxed" },
     });
     expect(h.notifies.at(-1)?.text).toContain("max iterations (3)");
+  });
+
+  it("scripted loop review: clean wave writes loop-review + loop-complete and closes via end_workflow", async () => {
+    const h = await createHarness();
+    const dir = await reachLoop(h);
+
+    const review = await scriptedResult(h, "wave-1", "aggregated: no blockers\nWORKFLOW_REVIEW_STATUS: clean");
+
+    expect(review).toMatchObject({ terminate: true });
+    expect(readFileSync(join(dir, "loop-review-1.md"), "utf8")).toContain("WORKFLOW_REVIEW_STATUS: clean");
+    expect(readFileSync(join(dir, "loop-complete.md"), "utf8")).toContain("WORKFLOW_LOOP_STATUS: clean");
+    expect(h.entries.at(-1)?.data).toMatchObject({ mode: "loop", phase: "loop", done: false });
+
+    const end = await h.tools.get("end_workflow").execute("end", { mode: "loop" }, undefined, undefined, h.ctx);
+    expect(end).toMatchObject({ terminate: true });
+    expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"))).toMatchObject({ mode: "loop", phase: "loop", status: "completed" });
+  });
+
+  it("scripted loop review: blocking wave persists feedback and advances to the next round", async () => {
+    const h = await createHarness();
+    const dir = await reachLoop(h);
+
+    await scriptedResult(h, "wave-1", "found issues\nWORKFLOW_REVIEW_STATUS: blocking");
+    expect(existsSync(join(dir, "loop-complete.md"))).toBe(false);
+    expect(readFileSync(join(dir, "loop-review-1.md"), "utf8")).toContain("WORKFLOW_REVIEW_STATUS: blocking");
+    expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"))).toMatchObject({
+      phase: "loop",
+      loopState: { reviewRound: 1, maxIterations: 3, stage: "building", reviewPath: "loop-review-1.md" },
+    });
+
+    // next round: builder then a clean scripted wave still completes.
+    await result(h, "builder", "builder-2", "fixed");
+    await scriptedResult(h, "wave-2", "all good\nWORKFLOW_REVIEW_STATUS: clean");
+    expect(existsSync(join(dir, "loop-complete.md"))).toBe(true);
+    expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"))).toMatchObject({ loopState: { reviewRound: 2, stage: "clean" } });
+  });
+
+  it("scripted loop review: three blocking waves hit the cap and notify exactly once", async () => {
+    const h = await createHarness();
+    const dir = await reachLoop(h);
+
+    for (let round = 1; round <= 3; round++) {
+      await result(h, "builder", `builder-${round}`, "implemented fixes");
+      await scriptedResult(h, `wave-${round}`, `fix this\nWORKFLOW_REVIEW_STATUS: blocking`);
+    }
+
+    expect(existsSync(join(dir, "loop-complete.md"))).toBe(false);
+    expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"))).toMatchObject({
+      phase: "loop",
+      loopState: { reviewRound: 3, maxIterations: 3, stage: "maxed" },
+    });
+    const maxedNotifies = h.notifies.filter((n) => /max iterations/i.test(n.text) && n.level === "warning");
+    expect(maxedNotifies).toHaveLength(1);
+  });
+
+  it("scripted loop review: a scripted call batched with another tool call is blocked", async () => {
+    const h = await createHarness();
+    await reachLoop(h);
+    const batch = (ids: string[]) => ({
+      getBranch: () => [{ type: "message", message: { role: "assistant", content: ids.map((id) => ({ type: "toolCall", id })) } }],
+    });
+    const res = await h.events.get("tool_call")(
+      {
+        toolName: "subagent",
+        toolCallId: "wave",
+        input: { workflowScript: "return runs.run('r', { agent: 'commentator', task: 'x' })" },
+      },
+      { ...h.ctx, sessionManager: batch(["wave", "other"]) },
+    );
+    expect(res).toMatchObject({ block: true });
+    expect(res.reason).toMatch(/called alone/i);
+  });
+
+  it("scripted loop review with no marker is treated as blocking", async () => {
+    const h = await createHarness();
+    const dir = await reachLoop(h);
+    await scriptedResult(h, "wave-1", "some review text without a status line");
+    expect(existsSync(join(dir, "loop-complete.md"))).toBe(false);
+    expect(JSON.parse(readFileSync(join(dir, "workflow.json"), "utf8"))).toMatchObject({
+      loopState: { reviewRound: 1, stage: "building" },
+    });
   });
 });

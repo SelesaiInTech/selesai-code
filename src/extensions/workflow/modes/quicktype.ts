@@ -101,6 +101,8 @@ After the builder returns, call the subagent tool with { agent: "commentator", t
   OR
   WORKFLOW_REVIEW_STATUS: blocking
 
+Alternatively, run the review as ONE scripted wave: call the subagent tool with \`{ workflowScript: "...", output: false }\` that fans out parallel reviewer children via \`runs.all([...])\` and returns a single aggregated review text ending with exactly one line \`WORKFLOW_REVIEW_STATUS: clean\` or \`WORKFLOW_REVIEW_STATUS: blocking\`. Do not set \`output\` inside \`runs.run\` params (the adapter forces \`output: false\`); the script must return or emit the review text inline. Use either the single commentator call or one scripted wave per round, not both.
+
 If a review is blocking, call the builder again with the recorded issues. This repeats up to ${loopMaxIterations ?? 3} round(s). When a review is clean, the engine writes loop-complete.md and advances to audit. Do NOT write loop-complete.md yourself.`,
   audit: ({ artifactDir }) =>
     `You are in the AUDIT (review) phase.

@@ -84,6 +84,12 @@ async function textFromSubagentResult(event: any): Promise<string | undefined> {
 // preserves the normal inline result, which the parent must write explicitly.
 function disableSubagentOutput(input: Record<string, unknown>): void {
   if (typeof input.agent === "string") input.output = false;
+  // ponytail: a scripted call's own result is always inline text, but top-level
+  // output is forwarded to the script's children as a default (subagent-executor
+  // destructures it into workflowChildDefaults). Force it off so children stay
+  // inline. Per-child `output:` inside the workflowScript string cannot be
+  // rewritten here; the mode prompts carry that contract.
+  if (typeof input.workflowScript === "string") input.output = false;
   if (Array.isArray(input.tasks)) {
     for (const task of input.tasks) {
       if (task && typeof task === "object") task.output = false;
@@ -299,7 +305,7 @@ async function resumeController(
       }
       const ls = controller.loopState;
       continueAgent(pi, ctx, ls.stage === "reviewing"
-        ? `Resume the loop at review round ${ls.reviewRound + 1}: call the subagent tool now with { agent: "commentator", task: "..." }. Have the commentator read ${sm.snapshot.artifactDir}/handoff.md and inspect the current uncommitted diff against the handoff acceptance criteria. End the review with WORKFLOW_REVIEW_STATUS: clean or WORKFLOW_REVIEW_STATUS: blocking.`
+        ? `Resume the loop at review round ${ls.reviewRound + 1}: call the subagent tool now with { agent: "commentator", task: "..." }. Have the commentator read ${sm.snapshot.artifactDir}/handoff.md and inspect the current uncommitted diff against the handoff acceptance criteria. End the review with WORKFLOW_REVIEW_STATUS: clean or WORKFLOW_REVIEW_STATUS: blocking (or run a scripted review wave with { workflowScript, output: false }).`
         : `Resume the loop at review round ${ls.reviewRound}: call the subagent tool now with { agent: "builder", task: "..." } to address the feedback in ${sm.snapshot.artifactDir}/${ls.reviewPath ?? "loop-review-<round>.md"}, using ${sm.snapshot.artifactDir}/handoff.md as the source of truth for the goal and acceptance criteria.`);
     } else {
       applyControllerEffect(controller, ctx, current);
@@ -710,9 +716,12 @@ export function createWorkflowExtension(
       const tool = event.toolName;
       const snap = sm.snapshot;
       if (!snap.active) return;
-      const commentatorTransition = tool === "subagent" &&
-        event.input?.agent === "commentator" && snap.phase === "loop" &&
+      const scriptedLoopCall = tool === "subagent" &&
+        typeof event.input?.workflowScript === "string" && snap.phase === "loop" &&
         !isSubagentManagementAction(event.input);
+      const commentatorTransition = (tool === "subagent" &&
+        event.input?.agent === "commentator" && snap.phase === "loop" &&
+        !isSubagentManagementAction(event.input)) || scriptedLoopCall;
       const endTransition = tool === "end_workflow" && event.input?.mode === mode;
       if (tool === WORKFLOW_ARTIFACT_TOOL || endTransition || commentatorTransition) {
         const blocked = transitionBatchBlock(ctx, event.toolCallId);
@@ -756,12 +765,13 @@ export function createWorkflowExtension(
         }
         const ls = controller.loopState;
         const agent = event.input?.agent;
+        const scripted = typeof event.input?.workflowScript === "string";
 
         if (agent === "builder") {
           // The normal subagent result resumes the parent turn; record the
           // next loop stage but do not inject a duplicate follow-up message.
           ls.stage = "reviewing";
-        } else if (agent === "commentator") {
+        } else if (agent === "commentator" || scripted) {
           const reviewRound = ls.reviewRound + 1;
           const reviewText = await textFromSubagentResult(event);
           if (reviewText) {

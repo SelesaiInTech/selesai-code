@@ -38,6 +38,8 @@ Use read to inspect ${artifactDir}/handoff.md. Using that handoff context — no
    WORKFLOW_REVIEW_STATUS: clean
    OR
    WORKFLOW_REVIEW_STATUS: blocking
+
+Alternatively, run the review as ONE scripted wave: call the subagent tool with \`{ workflowScript: "...", output: false }\` that fans out parallel reviewer children via \`runs.all([...])\` and returns a single aggregated review text ending with exactly one line \`WORKFLOW_REVIEW_STATUS: clean\` or \`WORKFLOW_REVIEW_STATUS: blocking\`. Do not set \`output\` inside \`runs.run\` params (the adapter forces \`output: false\`); the script must return or emit the review text inline. Use either the single commentator call or one scripted wave per round, not both.
 3. For blocking feedback, call the builder again with the persisted issues and required fixes. Do not declare success yourself. The engine repeats this for up to ${loopMaxIterations ?? 3} blocking review round(s), then pauses for inspection.
 
 When review is clean, the engine writes ${artifactDir}/loop-complete.md and makes the workflow terminal-ready. Do NOT write that file. Verify the result, then call end_workflow with { mode: "loop" } to complete the workflow.`,

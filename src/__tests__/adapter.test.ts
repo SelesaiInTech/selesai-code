@@ -397,6 +397,24 @@ describe("prototype adapter (pi wiring smoke)", () => {
 		expect(input.tasks[0].context).toBeUndefined();
 	});
 
+	it("tool_call forces output false on scripted subagent calls and leaves the script text untouched", async () => {
+		const pi = await createHarness();
+		const c = ctx(pi, true);
+		await startWorkflow(pi, "build X", "workflow-prototype");
+		await pi.tools.get("write_workflow_artifact").execute("w1", { content: "# reqs" }, undefined, undefined, c);
+		await pi.tools.get("write_workflow_artifact").execute("w2", { content: "# research" }, undefined, undefined, c);
+		expect(pi.entries.at(-1)?.data.phase).toBe("plan");
+		const script = "return runs.all([{ key: 'a', agent: 'commentator', task: 'x' }])";
+		const input: any = { workflowScript: script, output: resolve(tmp, "elsewhere", "wave.md") };
+		const res = await pi.events.get("tool_call")(
+			{ type: "tool_call", toolCallId: "tc1", toolName: "subagent", input },
+			c,
+		);
+		expect(res).toBeUndefined();
+		expect(input.output).toBe(false);
+		expect(input.workflowScript).toBe(script);
+	});
+
 	it("tool_call ignores subagent management actions (list/get/doctor)", async () => {
 		const pi = await createHarness();
 		const c = ctx(pi, true);

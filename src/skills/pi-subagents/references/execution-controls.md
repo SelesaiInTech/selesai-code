@@ -55,6 +55,8 @@ its resolved launch context as `[fresh]` or `[fork]`. Aggregate headers show
 
 `workflowScript` is the scripted orchestration surface. Use `runs.run(key, { agent, task, ... })` for one child, `runs.all([...])` for parallel children, and ordinary JavaScript for sequence, branching, filtering, retries, and aggregation. Scripts are ordinary JavaScript statement bodies, so use an explicit return such as `workflowScript: "return runs.run('main', { agent: 'worker', task: '...' })"` for a useful one-child result. Prefer a single scripted workflow whenever the parent is starting a coordinated wave, such as multiple reviews, review plus gate monitor, worker then monitor setup, cross-repo prep lanes, or a fanout that the parent will consume together; use the declarative `chain` / `tasks` modes when the shape is known up front.
 
+**Durable-shell integration.** The bundled workflow extension may drive a script as one step inside a phase; it forces `output: false` on the call (children stay inline). Per-child `output:` inside the script string is not rewritten — omit it. In the workflow's loop phase, a scripted call counts as ONE review round; the script must return/emit the aggregated review text containing `WORKFLOW_REVIEW_STATUS: clean|blocking` inline. `workflowScript` remains child-level and ephemeral; the workflow extension's `workflow.json` is the durable process state.
+
 ```js
 subagent({
   workflowScript: `

@@ -102,5 +102,6 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 - Task-aware routing advice is advisory and heuristic: it never launches or schedules work, and launch-time preflight remains the enforcement point.
 - Agent file discovery is ordered; project agents override user agents, and user agents override builtins of the same name.
 - The `pi-subagents` skill is documentation/prompt guidance, not an independently installed extension entrypoint. It ships both inside the extension and as a top-level bundled skill (`src/skills/pi-subagents/`) that loads from the package at boot and seeds into the agent dir on first run.
+- The bundled workflow extension can drive a `workflowScript` as a phase step; `workflowScript` stays child-level/ephemeral and is not resumable as a process — pair it with the workflow extension when durable, resumable, human-gated execution is needed.
 
 <SourceEvidence slug="pi-subagents" />
