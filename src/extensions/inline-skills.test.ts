@@ -59,6 +59,7 @@ describe("inline-skills", () => {
 		expect(text.match(/<skill name=/g)).toHaveLength(2);
 		expect(text).toContain("Research instructions.");
 		expect(text).toContain("Grill instructions.");
+		expect(text).toContain("do not read its file again");
 		expect(text.endsWith(prompt)).toBe(true);
 	});
 

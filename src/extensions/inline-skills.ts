@@ -76,7 +76,7 @@ export function expandInlineSkills(text: string, pi: ExtensionAPI): string {
 		try {
 			const body = stripFrontmatter(readFileSync(command.sourceInfo.path, "utf-8")).trim();
 			const location = command.sourceInfo.path;
-			return [`<skill name="${getSkillName(command)}" location="${location}">\nReferences are relative to ${dirname(location)}.\n\n${body}\n</skill>`];
+			return [`<skill name="${getSkillName(command)}" location="${location}">\nThe full instructions for this skill are embedded inline below; do not read its file again.\nReferences are relative to ${dirname(location)}.\n\n${body}\n</skill>`];
 		} catch {
 			return [];
 		}
