@@ -3,6 +3,7 @@ import type { Transport } from "@earendil-works/pi-ai";
 import {
 	type Component,
 	Container,
+	type ScrollViewScrollbar,
 	getCapabilities,
 	type SelectItem,
 	SelectList,
@@ -13,7 +14,7 @@ import {
 	Text,
 } from "@earendil-works/pi-tui";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
-import type { DefaultProjectTrust, WarningSettings } from "../../../core/settings-manager.ts";
+import type { DefaultProjectTrust, TuiMode, WarningSettings } from "../../../core/settings-manager.ts";
 import {
 	getSelectListTheme,
 	getSettingsListTheme,
@@ -80,6 +81,8 @@ export interface SettingsConfig {
 	defaultProjectTrust: DefaultProjectTrust;
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
+	tuiMode: TuiMode;
+	fullscreenScrollbar: ScrollViewScrollbar;
 	warnings: WarningSettings;
 }
 
@@ -112,6 +115,8 @@ export interface SettingsCallbacks {
 	onDefaultProjectTrustChange: (defaultProjectTrust: DefaultProjectTrust) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
+	onTuiModeChange: (mode: TuiMode) => void;
+	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
 	onCancel: () => void;
 }
@@ -627,6 +632,20 @@ export class SettingsSelectorComponent extends Container {
 					),
 			},
 			{
+				id: "tui-mode",
+				label: "TUI mode",
+				description: "Switches immediately; fullscreen is the Selesai default",
+				currentValue: config.tuiMode,
+				values: ["fullscreen", "regular"],
+			},
+			{
+				id: "fullscreen-scrollbar",
+				label: "Fullscreen scrollbar",
+				description: "Scrollbar behavior in fullscreen mode; has no effect in regular mode",
+				currentValue: config.fullscreenScrollbar,
+				values: ["auto", "always", "hidden"],
+			},
+			{
 				id: "theme",
 				label: "Theme",
 				description: "Color theme for the interface",
@@ -827,6 +846,12 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "terminal-progress":
 						callbacks.onShowTerminalProgressChange(newValue === "true");
+						break;
+					case "tui-mode":
+						callbacks.onTuiModeChange(newValue as TuiMode);
+						break;
+					case "fullscreen-scrollbar":
+						callbacks.onFullscreenScrollbarChange(newValue as ScrollViewScrollbar);
 						break;
 					case "theme":
 						callbacks.onThemeChange(newValue);

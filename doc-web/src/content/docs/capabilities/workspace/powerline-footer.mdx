@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powerline-style status bar, fixed-editor layout, recurring guide tour, editor stash/history shortcuts, sticky bash mode, file-backed queue/inbox, session-aware directory switching, AI-generated working vibes, and Nerd Font detection.
+The `pi-powerline-footer` extension customizes Selesai's native fullscreen terminal UI with a powerline-style status bar, recurring guide tour, editor stash/history shortcuts, sticky bash mode, file-backed queue/inbox, session-aware directory switching, AI-generated working vibes, and Nerd Font detection.
 
 <ExtensionStatus
   distribution="bundled"
@@ -28,8 +28,8 @@ The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powe
 - Replaces the default footer/header/editor chrome with powerline-styled segments.
 - Registers the `/powerline`, `/guide`, `/stash-history`, `/bash-mode`, `/bash-reset`, `/vibe`, `/idea`, `/ideas`, `/queue`, and `/cd` commands.
 - Adds a file-backed queue and idea inbox so you can capture thoughts or safely hold prompts through compaction without interrupting the current agent.
-- Registers keyboard shortcuts for editor stash, copy/cut, chat jumps, bash-mode toggle, and stash history.
-- Sets up a fixed-editor cluster when enabled so the editor and status rows stay on screen while chat content scrolls.
+- Registers keyboard shortcuts for editor stash, copy/cut, bash-mode toggle, and stash history.
+- Its status, editor, and widgets render inside Pi's native fullscreen dock while the transcript scrolls independently.
 
 ## What you can configure
 
@@ -40,8 +40,8 @@ The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powe
 
 - Toggle powerline on/off: `/powerline`.
 - Switch preset: `/powerline nerd`.
-- Toggle fixed editor: `/powerline fixed-editor on|off|toggle`.
-- Toggle mouse scroll: `/powerline mouse-scroll on|off|toggle`.
+- Fullscreen is Selesai's default; set `"tuiMode": "regular"` to opt out.
+- Scroll the native transcript with a mouse wheel or trackpad.
 - Open the recurring guide: `/guide` (compact by default; use `/guide full`, `/guide compact`, `/guide off`, or `/guide reset`).
 - Stash or restore editor text: `Alt+S`.
 - Open prompt history: `Ctrl+Alt+H` or `/stash-history`.
@@ -60,8 +60,6 @@ The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powe
 | --- | --- |
 | `/powerline` | Toggle the powerline UI. |
 | `/powerline <preset>` | Switch status preset. |
-| `/powerline fixed-editor on\|off\|toggle` | Toggle fixed-editor cluster. |
-| `/powerline mouse-scroll on\|off\|toggle` | Toggle app mouse scroll. |
 | `/cd [path]` | Show or change the current session directory. |
 | `/idea [@target] <text>` | Save a deferred idea without sending it to the current agent. |
 | `/ideas [next\|send\|issue]` | Browse saved ideas, deliver one, or hand one to the agent for guarded issue triage. |
@@ -77,11 +75,9 @@ The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powe
 | `Ctrl+Alt+X` | Cut full editor text. |
 | `Ctrl+Alt+Q` | Open the queued-prompt picker. |
 | `Ctrl+Shift+B` | Toggle bash mode. |
-| `Ctrl+Shift+U` / `Ctrl+Shift+I` | Jump to previous/next user message. |
-| `Ctrl+Alt+,` / `Ctrl+Alt+.` | Jump to previous/next LLM message. |
-| `Ctrl+Shift+G` | Jump chat to bottom. |
-| `Cmd+Up` / `Cmd+Down` | Scroll chat up/down (when fixed editor is on). |
-| `PageUp` / `PageDown` | Scroll chat only while the main editor has focus; focused custom views receive these keys instead. |
+| Mouse wheel / trackpad | Scroll the native transcript, including while the pointer is over the dock. |
+| `PageUp` / `PageDown` | Scroll the transcript in fullscreen mode. Use `Ctrl+PageUp` / `Ctrl+PageDown` for the editor. |
+| `Home` / `End` | Navigate the transcript in fullscreen mode. Use `Ctrl+Home` / `Ctrl+End` for the editor. |
 
 ## Limits and safety
 
@@ -89,7 +85,7 @@ The `pi-powerline-footer` extension customizes Selesai's terminal UI with a powe
 - Sticky bash mode keeps a managed shell for the current Selesai session. Shell `cd` and exported variables persist across commands, but the shell and its transcript are lost when the session ends.
 - `# <idea>` captures an idea only when `#` is followed by whitespace; set `powerline.queue.captureSigil` to `false` if markdown headings are more common, then use `/idea` instead. Prompts held during compaction are delivered only after successful compaction; failed or cancelled work remains visible in the queue.
 - Generated vibe messages use the configured model and are rate-limited. Pre-generate vibe files with `/vibe generate <theme> <count>` to avoid API latency and cost.
-- Fixed-editor chat jump shortcuts may need terminal remapping on terminals such as Ghostty.
+- Powerline does not own terminal scrolling; select `"tuiMode": "regular"` if your terminal is incompatible with fullscreen mode.
 - Custom shortcut conflicts with reserved keys are automatically resolved to safe defaults.
 
 <SourceEvidence slug="pi-powerline-footer" />

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { initTheme, theme } from "../../../modes/interactive/theme/theme.ts";
 
 /**
- * The powerline fixed-editor render draws its own border. It must respect the
+ * The powerline editor render draws its own border. It must respect the
  * editor's `borderColor` (set by interactive-mode to the bash-mode / thinking
  * color) instead of always using the gray "sep" color, so typing `!` visibly
  * switches the input field to bash mode.
@@ -13,7 +13,7 @@ function powerlineBorderColor(editor: { borderColor: unknown }, s: string): stri
     : `\x1b[38;5;244m${s}\x1b[0m`;
 }
 
-describe("powerline fixed-editor border respects editor.borderColor", () => {
+describe("powerline editor border respects editor.borderColor", () => {
   it("uses the bash-mode color when interactive-mode sets it (typing !)", () => {
     initTheme("dark");
     const editorWithBashBorder = {

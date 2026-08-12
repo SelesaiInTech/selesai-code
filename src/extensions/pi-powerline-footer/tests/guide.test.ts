@@ -36,7 +36,7 @@ test("guide dismissal and compact preferences change automatic display", () => {
   assert.equal(resolveGuideDisplayMode({ reason: "startup", hasUI: false, guideMode: "full" }), "none");
 });
 
-test("guide defaults to a compact header so fixed-editor mode stays active", () => {
+test("guide defaults to a compact header so the native dock stays uncluttered", () => {
   const preferences = getGuidePreferences({});
   assert.equal(preferences.mode, "compact");
   assert.equal(resolveGuideDisplayMode({ reason: "startup", hasUI: true, guideMode: preferences.mode }), "compact");

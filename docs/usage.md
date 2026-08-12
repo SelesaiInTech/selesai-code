@@ -15,6 +15,10 @@ The interface has four main areas:
 
 The editor can be replaced temporarily by built-in UI such as `/settings` or by custom extension UI.
 
+### TUI Mode
+
+Selesai runs its terminal interface in **fullscreen TUI mode** by default: the chat scrolls inside Pi's native alternate-screen viewport while the input editor, status line, and extension widgets stay fixed in a dock at the bottom. The `TUI mode` entry in `/settings` (or `tuiMode` in `settings.json`) switches between `fullscreen` and `regular` immediately and picks the default for future sessions. The `--tui-mode fullscreen|regular` flag overrides it for a single run. In regular mode, output renders inline into the terminal scrollback. See [Keybindings](keybindings.md) for the fullscreen transcript scrolling keys.
+
 ### Editor Features
 
 | Feature | How |
@@ -236,6 +240,7 @@ pi --no-extensions -e ./my-extension.ts
 |--------|-------------|
 | `--system-prompt <text>` | Replace default prompt; context files and skills are still appended |
 | `--append-system-prompt <text>` | Append to system prompt |
+| `--tui-mode <mode>` | TUI mode: `fullscreen` (default) or `regular` |
 | `--verbose` | Force verbose startup |
 | `-a`, `--approve` | Trust project-local files for this run |
 | `-na`, `--no-approve` | Ignore project-local files for this run |

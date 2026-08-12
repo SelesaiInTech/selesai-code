@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar bergaya powerline, tata letak editor tetap, tur panduan berulang, shortcut stash/riwayat editor, bash mode lengket, queue/inbox berbasis file, perpindahan direktori yang mengikuti sesi, vibe working bertema, dan deteksi Nerd Font.
+Extension `pi-powerline-footer` menyesuaikan TUI fullscreen native Selesai dengan status bar bergaya powerline, tur panduan berulang, shortcut stash/riwayat editor, bash mode lengket, queue/inbox berbasis file, perpindahan direktori yang mengikuti sesi, vibe working bertema, dan deteksi Nerd Font.
 
 <ExtensionStatus
   distribution="bundled"
@@ -28,8 +28,8 @@ Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar berga
 - Mengganti footer/header/editor chrome default dengan segment bergaya powerline.
 - Mendaftarkan command `/powerline`, `/guide`, `/stash-history`, `/bash-mode`, `/bash-reset`, `/vibe`, `/idea`, `/ideas`, `/queue`, dan `/cd`.
 - Menambahkan queue dan inbox berbasis file agar Anda dapat menyimpan ide atau menahan prompt dengan aman selama compaction tanpa mengganggu agent saat ini.
-- Mendaftarkan keyboard shortcut untuk editor stash, copy/cut, lompat chat, toggle bash-mode, dan riwayat stash.
-- Menyiapkan fixed-editor cluster saat diaktifkan sehingga editor dan baris status tetap di layar saat konten chat di-scroll.
+- Mendaftarkan keyboard shortcut untuk editor stash, copy/cut, toggle bash-mode, dan riwayat stash.
+- Status, editor, dan widget-nya dirender di dock fullscreen native Pi sementara transkrip dapat di-scroll secara independen.
 
 ## Yang dapat dikonfigurasi
 
@@ -40,8 +40,8 @@ Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar berga
 
 - Toggle powerline on/off: `/powerline`.
 - Ganti preset: `/powerline nerd`.
-- Toggle fixed editor: `/powerline fixed-editor on|off|toggle`.
-- Toggle mouse scroll: `/powerline mouse-scroll on|off|toggle`.
+- Fullscreen adalah default Selesai; atur `"tuiMode": "regular"` untuk memilih keluar.
+- Scroll transkrip native dengan mouse wheel atau trackpad.
 - Buka panduan berulang: `/guide` (default compact; gunakan `/guide full`, `/guide compact`, `/guide off`, atau `/guide reset`).
 - Stash atau restore teks editor: `Alt+S`.
 - Buka riwayat prompt: `Ctrl+Alt+H` atau `/stash-history`.
@@ -60,8 +60,6 @@ Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar berga
 | --- | --- |
 | `/powerline` | Toggle UI powerline. |
 | `/powerline <preset>` | Ganti status preset. |
-| `/powerline fixed-editor on\|off\|toggle` | Toggle fixed-editor cluster. |
-| `/powerline mouse-scroll on\|off\|toggle` | Toggle app mouse scroll. |
 | `/cd [path]` | Tampilkan atau ubah direktori sesi saat ini. |
 | `/idea [@target] <text>` | Simpan ide tertunda tanpa mengirimkannya ke agent saat ini. |
 | `/ideas [next\|send\|issue]` | Telusuri ide tersimpan, kirim satu, atau serahkan satu kepada agent untuk triage issue yang terjaga. |
@@ -77,11 +75,9 @@ Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar berga
 | `Ctrl+Alt+X` | Cut seluruh teks editor. |
 | `Ctrl+Alt+Q` | Buka pemilih prompt yang terantre. |
 | `Ctrl+Shift+B` | Toggle bash mode. |
-| `Ctrl+Shift+U` / `Ctrl+Shift+I` | Lompat ke pesan user sebelumnya/berikutnya. |
-| `Ctrl+Alt+,` / `Ctrl+Alt+.` | Lompat ke pesan LLM sebelumnya/berikutnya. |
-| `Ctrl+Shift+G` | Lompat chat ke bawah. |
-| `Cmd+Up` / `Cmd+Down` | Scroll chat naik/turun (saat fixed editor aktif). |
-| `PageUp` / `PageDown` | Hanya scroll chat saat editor utama memiliki fokus; tampilan kustom yang fokus menerima tombol ini. |
+| Mouse wheel / trackpad | Scroll transkrip native, termasuk saat pointer berada di atas dock. |
+| `PageUp` / `PageDown` | Scroll transkrip dalam mode fullscreen. Gunakan `Ctrl+PageUp` / `Ctrl+PageDown` untuk editor. |
+| `Home` / `End` | Navigasi transkrip dalam mode fullscreen. Gunakan `Ctrl+Home` / `Ctrl+End` untuk editor. |
 
 ## Batasan dan keamanan
 
@@ -89,7 +85,7 @@ Extension `pi-powerline-footer` menyesuaikan TUI Selesai dengan status bar berga
 - Sticky bash mode menyimpan shell yang dikelola untuk sesi Selesai saat ini. Shell `cd` dan variabel yang diekspor bertahan antar command, tetapi shell dan transkripnya hilang saat sesi berakhir.
 - `# <idea>` hanya menangkap ide bila `#` diikuti spasi; atur `powerline.queue.captureSigil` ke `false` bila heading Markdown lebih sering digunakan, lalu gunakan `/idea`. Prompt yang ditahan selama compaction hanya dikirim setelah compaction berhasil; pekerjaan yang gagal atau dibatalkan tetap terlihat di queue.
 - Pesan vibe yang dihasilkan menggunakan model yang dikonfigurasi dan di-rate-limit. Pre-generate file vibe dengan `/vibe generate <theme> <count>` untuk menghindari latency dan biaya API.
-- Shortcut lompat chat fixed-editor mungkin perlu di-remap pada terminal seperti Ghostty.
+- Powerline tidak mengendalikan scrolling terminal; pilih `"tuiMode": "regular"` bila terminal Anda tidak kompatibel dengan mode fullscreen.
 - Konflik shortcut custom dengan key yang dicadangkan secara otomatis diresolve ke default yang aman.
 
 <SourceEvidence slug="pi-powerline-footer" />

@@ -1,4 +1,4 @@
-import { ProcessTerminal, setKeybindings, TUI } from "@earendil-works/pi-tui";
+import { ProcessTerminal, setKeybindings, type TUI, TuiMainScreen } from "@earendil-works/pi-tui";
 import { existsSync } from "fs";
 import { ENV_AGENT_DIR, getAgentDir, getFirstRunMarkerPath, markFirstRunComplete } from "../config.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
@@ -60,7 +60,7 @@ export async function createStartupTui(settingsManager: SettingsManager): Promis
 	const terminalTheme = detectTerminalBackgroundFromEnv().theme;
 	initTheme(resolveThemeSetting(settingsManager.getThemeSetting(), terminalTheme) ?? terminalTheme);
 	setKeybindings(KeybindingsManager.create());
-	const ui = new TUI(new ProcessTerminal(), settingsManager.getShowHardwareCursor(), getAgentDir());
+	const ui: TUI = new TuiMainScreen(new ProcessTerminal(), settingsManager.getShowHardwareCursor(), getAgentDir());
 	ui.setClearOnShrink(settingsManager.getClearOnShrink());
 	return ui;
 }

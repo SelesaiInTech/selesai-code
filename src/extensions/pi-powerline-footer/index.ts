@@ -70,8 +70,6 @@ import {
 } from "./working-vibes.ts";
 import { setupTpsTracker } from "./tps.ts";
 import { readAsyncSubagentUsage } from "./session-usage.ts";
-import { renderFixedEditorCluster } from "./fixed-editor/cluster.ts";
-import { emergencyTerminalModeReset, TerminalSplitCompositor } from "./fixed-editor/terminal-split.ts";
 import { PowerlineQueueStore, currentQueueContext, formatIdeaIssuePrompt, formatQueueDeliveryText, parseCompactQueuedPrompt, parseSigilIdeaCapture, parseTargetPrefix, targetForIdea } from "./queue/store.ts";
 import type { PowerlineQueueItem, QueueContext, QueueIntent, QueueTarget } from "./queue/types.ts";
 
@@ -82,8 +80,6 @@ import type { PowerlineQueueItem, QueueContext, QueueIntent, QueueTarget } from 
 let config: PowerlineConfig = {
   preset: "default",
   customItems: [],
-  mouseScroll: true,
-  fixedEditor: true,
   fixedEditorPromptGlyph: "",
   disabledSegments: [],
   invalidDisabledSegments: [],
@@ -109,38 +105,18 @@ export interface PowerlineShortcuts {
   cutEditor: ShortcutBinding;
   ideaCapture: ShortcutBinding;
   queueOpen: ShortcutBinding;
-  jumpPreviousUserMessage: ShortcutBinding;
-  jumpNextUserMessage: ShortcutBinding;
-  jumpPreviousLlmMessage: ShortcutBinding;
-  jumpNextLlmMessage: ShortcutBinding;
-  jumpChatBottom: ShortcutBinding;
-  scrollChatUp: ShortcutBinding;
-  scrollChatDown: ShortcutBinding;
   editorStart: ShortcutBinding;
   editorEnd: ShortcutBinding;
 }
 
 type PowerlineShortcutKey = keyof PowerlineShortcuts;
-type ChatJumpShortcutKey = Extract<PowerlineShortcutKey,
-  | "jumpPreviousUserMessage"
-  | "jumpNextUserMessage"
-  | "jumpPreviousLlmMessage"
-  | "jumpNextLlmMessage"
-  | "jumpChatBottom"
->;
-type ChatJumpRole = "user" | "assistant";
-type ChatJumpDirection = "previous" | "next";
-type ChatJumpShortcutAction =
-  | { kind: "message"; role: ChatJumpRole; direction: ChatJumpDirection }
-  | { kind: "bottom" };
 type PowerlineShortcutAction =
   | { kind: "stashHistory" }
   | { kind: "copyEditor" }
   | { kind: "cutEditor" }
   | { kind: "ideaCapture" }
   | { kind: "queueOpen" }
-  | { kind: "bashMode" }
-  | { kind: "chat"; action: ChatJumpShortcutAction };
+  | { kind: "bashMode" };
 const STASH_HISTORY_LIMIT = 12;
 const PROJECT_PROMPT_HISTORY_LIMIT = 50;
 const STASH_PREVIEW_WIDTH = 72;
@@ -150,13 +126,6 @@ const DEFAULT_SHORTCUTS: PowerlineShortcuts = {
   cutEditor: "ctrl+alt+x",
   ideaCapture: null,
   queueOpen: "ctrl+alt+q",
-  jumpPreviousUserMessage: "ctrl+shift+u",
-  jumpNextUserMessage: "ctrl+shift+i",
-  jumpPreviousLlmMessage: "ctrl+alt+,",
-  jumpNextLlmMessage: "ctrl+alt+.",
-  jumpChatBottom: "ctrl+shift+g",
-  scrollChatUp: "super+up",
-  scrollChatDown: "super+down",
   editorStart: "super+shift+up",
   editorEnd: "super+shift+down",
 };
@@ -165,38 +134,7 @@ const DEFAULT_BASH_MODE_SETTINGS = {
   transcriptMaxLines: 2000,
   transcriptMaxBytes: 512 * 1024,
 } as const satisfies BashModeSettings;
-const SHORTCUT_KEYS: PowerlineShortcutKey[] = ["stashHistory", "copyEditor", "cutEditor", "ideaCapture", "queueOpen", "jumpPreviousUserMessage", "jumpNextUserMessage", "jumpPreviousLlmMessage", "jumpNextLlmMessage", "jumpChatBottom", "scrollChatUp", "scrollChatDown", "editorStart", "editorEnd"];
-const CHAT_JUMP_SHORTCUTS: Array<{
-  shortcutKey: ChatJumpShortcutKey;
-  description: string;
-  action: ChatJumpShortcutAction;
-}> = [
-  {
-    shortcutKey: "jumpPreviousUserMessage",
-    description: "Jump to previous user message",
-    action: { kind: "message", role: "user", direction: "previous" },
-  },
-  {
-    shortcutKey: "jumpNextUserMessage",
-    description: "Jump to next user message",
-    action: { kind: "message", role: "user", direction: "next" },
-  },
-  {
-    shortcutKey: "jumpPreviousLlmMessage",
-    description: "Jump to previous LLM message",
-    action: { kind: "message", role: "assistant", direction: "previous" },
-  },
-  {
-    shortcutKey: "jumpNextLlmMessage",
-    description: "Jump to next LLM message",
-    action: { kind: "message", role: "assistant", direction: "next" },
-  },
-  {
-    shortcutKey: "jumpChatBottom",
-    description: "Jump chat to bottom",
-    action: { kind: "bottom" },
-  },
-];
+const SHORTCUT_KEYS: PowerlineShortcutKey[] = ["stashHistory", "copyEditor", "cutEditor", "ideaCapture", "queueOpen", "editorStart", "editorEnd"];
 const APP_RESERVED_SHORTCUTS = [
   "escape",
   "ctrl+c",
@@ -1070,11 +1008,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   let bashTranscript = new BashTranscriptStore(bashModeSettings);
   let bashCompletionEngine = new BashCompletionEngine();
   let shellSession: ManagedShellSession | null = null;
-  let fixedEditorCompositor: TerminalSplitCompositor | null = null;
-  let fixedStatusContainer: any = null;
-  let fixedEditorContainer: any = null;
-  let fixedWidgetContainerAbove: any = null;
-  let fixedWidgetContainerBelow: any = null;
   const queueStore = new PowerlineQueueStore();
   let powerlineCompacting = false;
   let deliverAfterRetrySettles = false;
@@ -2100,12 +2033,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
       return { kind: "bashMode" };
     }
 
-    const chatJumpAction = getChatJumpShortcutAction(data);
-    return chatJumpAction ? { kind: "chat", action: chatJumpAction } : null;
-  }
-
-  function getChatJumpShortcutAction(data: string): ChatJumpShortcutAction | null {
-    return CHAT_JUMP_SHORTCUTS.find(({ shortcutKey }) => matchesConfiguredShortcut(data, resolvedShortcuts[shortcutKey]))?.action ?? null;
+    return null;
   }
 
   function runPowerlineShortcut(ctx: any, action: PowerlineShortcutAction): void {
@@ -2146,13 +2074,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
       void setBashModeActive(!bashModeActive, ctx);
       return;
     }
-
-    if (action.action.kind === "bottom") {
-      jumpChatToBottom(ctx);
-      return;
-    }
-
-    jumpToChatMessage(ctx, action.action.role, action.action.direction);
   }
 
   function stashOrRestoreEditorText(ctx: any): void {
@@ -2988,192 +2909,6 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     return [truncateToWidth(line, width, "…")];
   }
 
-  function teardownFixedEditorCompositor(options?: { resetExtendedKeyboardModes?: boolean }) {
-    const hadCompositor = fixedEditorCompositor !== null;
-    fixedEditorCompositor?.dispose(options);
-    if (!hadCompositor && options?.resetExtendedKeyboardModes) {
-      try {
-        process.stdout.write(emergencyTerminalModeReset());
-      } catch {
-        // Shutdown cleanup cannot surface useful terminal write failures.
-      }
-    }
-    fixedEditorCompositor = null;
-    fixedStatusContainer = null;
-    fixedEditorContainer = null;
-    fixedWidgetContainerAbove = null;
-    fixedWidgetContainerBelow = null;
-  }
-
-  function findContainerWithChild(tui: any, child: any): { container: any; index: number } | null {
-    const children = Array.isArray(tui?.children) ? tui.children : [];
-    const index = children.findIndex((candidate: any) => Array.isArray(candidate?.children) && candidate.children.includes(child));
-    if (index === -1) return null;
-
-    return { container: children[index], index };
-  }
-
-  function installFixedEditorCompositor(ctx: any, tui: any) {
-    teardownFixedEditorCompositor();
-
-    if (!ctx.hasUI || !config.fixedEditor) return;
-    if (!tui?.terminal || typeof tui.terminal.write !== "function") {
-      throw new Error("[powerline-footer] Fixed editor compositor could not find tui.terminal.write()");
-    }
-    if (!currentEditor) {
-      throw new Error("[powerline-footer] Fixed editor compositor expected the custom editor to be installed first");
-    }
-
-    const editorContainerMatch = findContainerWithChild(tui, currentEditor);
-    if (!editorContainerMatch) {
-      throw new Error("[powerline-footer] Fixed editor compositor could not find the editor container in TUI children");
-    }
-
-    const tuiChildren = Array.isArray(tui.children) ? tui.children : [];
-    fixedEditorContainer = editorContainerMatch.container;
-    const statusContainerCandidate = tuiChildren[editorContainerMatch.index - 2] ?? null;
-    fixedStatusContainer = statusContainerCandidate && typeof statusContainerCandidate.render === "function"
-      ? statusContainerCandidate
-      : null;
-    fixedWidgetContainerAbove = tuiChildren[editorContainerMatch.index - 1] ?? null;
-    fixedWidgetContainerBelow = tuiChildren[editorContainerMatch.index + 1] ?? null;
-
-    let compositor: TerminalSplitCompositor;
-    compositor = new TerminalSplitCompositor({
-      tui,
-      terminal: tui.terminal,
-      mouseScroll: config.mouseScroll,
-      keyboardScrollShortcuts: {
-        up: resolvedShortcuts.scrollChatUp ?? "super+up",
-        down: resolvedShortcuts.scrollChatDown ?? "super+down",
-      },
-      shouldCaptureKeyboardScroll: () => Reflect.get(tui, "focusedComponent") === currentEditor,
-      onCopySelection: (text) => copyTextToClipboard(ctx, text),
-      getShowHardwareCursor: () => typeof tui.getShowHardwareCursor === "function" && tui.getShowHardwareCursor(),
-      renderCluster: (width, terminalRows) => {
-        const theme = currentCtx?.ui?.theme ?? ctx.ui.theme;
-        const statusContainerLines = fixedStatusContainer
-          ? compositor.renderHidden(fixedStatusContainer, width).filter((line) => visibleWidth(line) > 0)
-          : [];
-        const aboveWidgetLines = fixedWidgetContainerAbove ? compositor.renderHidden(fixedWidgetContainerAbove, width) : [];
-        const belowWidgetLines = fixedWidgetContainerBelow ? compositor.renderHidden(fixedWidgetContainerBelow, width) : [];
-        return renderFixedEditorCluster({
-          width,
-          terminalRows,
-          statusLines: [...aboveWidgetLines, ...renderPowerlineStatusLines(width), ...statusContainerLines],
-          topLines: renderPowerlinePrimaryLines(width, theme),
-          editorLines: fixedEditorContainer ? compositor.renderHidden(fixedEditorContainer, width) : [],
-          secondaryLines: [...renderPowerlineSecondaryLines(width, theme), ...belowWidgetLines],
-          transcriptLines: renderBashTranscriptLines(width, theme),
-          lastPromptLines: renderLastPromptLines(width),
-        });
-      },
-    });
-
-    fixedEditorCompositor = compositor;
-    if (fixedStatusContainer?.render) compositor.hideRenderable(fixedStatusContainer);
-    if (fixedWidgetContainerAbove?.render) compositor.hideRenderable(fixedWidgetContainerAbove);
-    compositor.hideRenderable(fixedEditorContainer);
-    if (fixedWidgetContainerBelow?.render) compositor.hideRenderable(fixedWidgetContainerBelow);
-    compositor.install();
-    tui.requestRender(true);
-  }
-
-  function isChatMessageComponentForRole(component: unknown, role: ChatJumpRole): boolean {
-    const componentName = typeof component === "object" && component !== null ? component.constructor?.name : undefined;
-    if (role === "assistant") {
-      return componentName === "AssistantMessageComponent";
-    }
-
-    return componentName === "UserMessageComponent" || componentName === "SkillInvocationMessageComponent";
-  }
-
-  function renderLineCount(component: unknown, width: number): number {
-    if (typeof component !== "object" || component === null) return 0;
-
-    const render = Reflect.get(component, "render");
-    if (typeof render !== "function") return 0;
-
-    const lines = render.call(component, width);
-    return Array.isArray(lines) ? lines.length : 0;
-  }
-
-  function collectMessageStartLines(component: unknown, width: number, role: ChatJumpRole, offset: number): {
-    targets: number[];
-    lineCount: number;
-  } {
-    const lineCount = renderLineCount(component, width);
-    if (isChatMessageComponentForRole(component, role)) {
-      return { targets: [offset], lineCount };
-    }
-
-    const children = typeof component === "object" && component !== null ? Reflect.get(component, "children") : null;
-    if (!Array.isArray(children) || children.length === 0) {
-      return { targets: [], lineCount };
-    }
-
-    const targets: number[] = [];
-    let childOffset = offset;
-    let childrenLineCount = 0;
-    for (const child of children) {
-      const result = collectMessageStartLines(child, width, role, childOffset);
-      targets.push(...result.targets);
-      childOffset += result.lineCount;
-      childrenLineCount += result.lineCount;
-    }
-
-    return { targets, lineCount: Math.max(lineCount, childrenLineCount) };
-  }
-
-  function collectChatMessageStartLines(role: ChatJumpRole): number[] {
-    const children = Array.isArray(tuiRef?.children) ? tuiRef.children : [];
-    const width = Math.max(1, tuiRef?.terminal?.columns ?? 80);
-    const targets: number[] = [];
-    let offset = 0;
-
-    for (const child of children) {
-      const result = collectMessageStartLines(child, width, role, offset);
-      targets.push(...result.targets);
-      offset += result.lineCount;
-    }
-
-    return [...new Set(targets)].sort((a, b) => a - b);
-  }
-
-  function jumpToChatMessage(ctx: any, role: ChatJumpRole, direction: ChatJumpDirection): void {
-    if (!fixedEditorCompositor) {
-      ctx.ui.notify("Chat message jumps require /powerline fixed-editor on", "warning");
-      return;
-    }
-
-    const targets = collectChatMessageStartLines(role);
-    const label = role === "assistant" ? "LLM" : "user";
-    if (targets.length === 0) {
-      ctx.ui.notify(`No ${label} messages found`, "info");
-      return;
-    }
-
-    const jumped = direction === "previous"
-      ? fixedEditorCompositor.jumpToPreviousRootTarget(targets)
-      : fixedEditorCompositor.jumpToNextRootTarget(targets);
-    if (!jumped) {
-      ctx.ui.notify(`No ${direction} ${label} message`, "info");
-    }
-  }
-
-  function jumpChatToBottom(ctx: any): void {
-    if (!fixedEditorCompositor) {
-      ctx.ui.notify("Chat bottom jump requires /powerline fixed-editor on", "warning");
-      return;
-    }
-
-    fixedEditorCompositor.jumpToRootBottom();
-  }
-
-  function followSubmittedEditorToBottom(): void {
-    fixedEditorCompositor?.jumpToRootBottom();
-  }
-
   function installPowerlineWidgets(ctx: any) {
     ctx.ui.setWidget("powerline-status", () => ({
       dispose() {},
@@ -3424,12 +3159,8 @@ export default function powerlineFooter(pi: ExtensionAPI) {
         }
 
         attachAutocompleteProvider();
-        const followUpText = keybindings.matches(data, "app.message.followUp") ? getCurrentEditorText(ctx, editor) : "";
         scheduleDismissWelcome(ctx);
         originalHandleInput(data);
-        if (hasNonWhitespaceText(followUpText) && !hasNonWhitespaceText(getCurrentEditorText(ctx, editor))) {
-          followSubmittedEditorToBottom();
-        }
       };
 
       const originalRender = editor.render.bind(editor);

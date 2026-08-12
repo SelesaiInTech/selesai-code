@@ -1,6 +1,6 @@
 # Keybindings
 
-All keyboard shortcuts can be customized via `~/.pi/agent/keybindings.json`. Each action can be bound to one or more keys.
+All keyboard shortcuts can be customized via `~/.selesai/agent/keybindings.json`. Each action can be bound to one or more keys.
 
 The config file uses the same namespaced keybinding ids that pi uses internally and that extension authors use in `keyHint()` and injected `keybindings` managers.
 
@@ -10,7 +10,7 @@ After editing `keybindings.json`, run `/reload` in pi to apply the changes witho
 
 ## Key Format
 
-`modifier+key` where modifiers are `ctrl`, `shift`, `alt` (combinable) and keys are:
+`modifier+key` where modifiers are `ctrl`, `shift`, `alt`, `super` (combinable) and keys are:
 
 - **Letters:** `a-z`
 - **Digits:** `0-9`
@@ -18,7 +18,9 @@ After editing `keybindings.json`, run `/reload` in pi to apply the changes witho
 - **Function:** `f1`-`f12`
 - **Symbols:** `` ` ``, `-`, `=`, `[`, `]`, `\`, `;`, `'`, `,`, `.`, `/`, `!`, `@`, `#`, `$`, `%`, `^`, `&`, `*`, `(`, `)`, `_`, `+`, `|`, `~`, `{`, `}`, `:`, `<`, `>`, `?`
 
-Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1`, etc.
+Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `super+k`, `ctrl+super+k`, `ctrl+1`, etc.
+
+`super` bindings require a terminal that reports the modifier separately, typically through the Kitty keyboard protocol. They may not work in terminals without that support.
 
 ## All Actions
 
@@ -78,16 +80,42 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 | `tui.select.confirm` | `enter` | Confirm selection |
 | `tui.select.cancel` | `escape`, `ctrl+c` | Cancel selection |
 
+### TUI Fullscreen Viewport
+
+These actions apply when interactive mode uses fullscreen TUI mode (the Selesai default; `tuiMode: "fullscreen"` in settings or `--tui-mode fullscreen`) and target the primary transcript scroll region. Two-finger trackpad and mouse-wheel input scroll the region under the pointer, falling back to the transcript over the fixed editor/status/footer dock. Clicking an OSC 8 hyperlink opens it in the default handler. Dragging with the primary mouse button selects text and copies it to the clipboard; holding at the transcript's top or bottom edge auto-scrolls into off-screen content.
+
+Fullscreen transcript bindings take precedence over editor bindings. The default unmodified navigation keys therefore control the transcript in fullscreen mode, while their `ctrl` variants continue to control the editor. Outside fullscreen mode, both variants control the editor.
+
+| Key | Default mode | Fullscreen mode |
+|-----|--------------|-----------------|
+| `home`, `end` | Editor | Transcript |
+| `ctrl+home`, `ctrl+end` | Editor | Editor |
+| `pageUp`, `pageDown` | Editor | Transcript |
+| `ctrl+pageUp`, `ctrl+pageDown` | Editor | Editor |
+
+This routing remains configurable through the ordinary action bindings. For example, `"tui.altScreen.pageUp": "ctrl+pageUp"` makes `pageUp` control the editor and `ctrl+pageUp` control the transcript in fullscreen mode. Bind `tui.altScreen.halfPageUp` and `tui.altScreen.halfPageDown` for smaller transcript steps while keeping the full-page bindings. Setting `"tui.altScreen.pageUp": []` disables that transcript shortcut entirely. User bindings replace the defaults for that action.
+
+| Keybinding id | Default | Description |
+|--------|---------|-------------|
+| `tui.altScreen.pageUp` | `pageUp` | Scroll the transcript up by one page |
+| `tui.altScreen.pageDown` | `pageDown` | Scroll the transcript down by one page |
+| `tui.altScreen.halfPageUp` | *(none)* | Scroll the transcript up by half a page |
+| `tui.altScreen.halfPageDown` | *(none)* | Scroll the transcript down by half a page |
+| `tui.altScreen.previousPrompt` | `ctrl+shift+up` | Jump to the previous marked message |
+| `tui.altScreen.nextPrompt` | `ctrl+shift+down` | Jump to the next marked message |
+| `tui.altScreen.top` | `home` | Scroll to the beginning of the transcript |
+| `tui.altScreen.bottom` | `end` | Scroll to the transcript end and follow new output |
+
 ### Application
 
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
 | `app.interrupt` | `escape` | Cancel / abort |
-| `app.clear` | `ctrl+c` | Clear editor |
+| `app.clear` | `ctrl+c` | Clear editor (first) / exit (second) |
 | `app.exit` | `ctrl+d` | Exit (when editor empty) |
 | `app.suspend` | `ctrl+z` (none on Windows) | Suspend to background |
 | `app.editor.external` | `ctrl+g` | Open in external editor (`$VISUAL` or `$EDITOR`) |
-| `app.clipboard.pasteImage` | `ctrl+v` (`alt+v` on Windows) | Paste image from clipboard |
+| `app.clipboard.pasteImage` | `ctrl+v` (`alt+v` on Windows) | Paste image or text from clipboard |
 
 ### Sessions
 
@@ -153,7 +181,7 @@ Used inside the scoped models selector (opened via `/scoped-models`).
 
 ## Custom Configuration
 
-Create `~/.pi/agent/keybindings.json`:
+Create `~/.selesai/agent/keybindings.json`:
 
 ```json
 {
@@ -165,7 +193,7 @@ Create `~/.pi/agent/keybindings.json`:
 
 Each action can have a single key or an array of keys. User config overrides defaults.
 
-On native Windows, `app.suspend` has no default binding because Windows terminals do not support Unix job control. If you bind it manually, pi shows a status message instead of suspending. In WSL, the normal Linux `ctrl+z`/`fg` behavior still applies.
+On native Windows, `app.suspend` has no default binding because Windows terminals do not support Unix job control. If you bind it manually, Selesai shows a status message instead of suspending. In WSL, the normal Linux `ctrl+z`/`fg` behavior still applies.
 
 ### Emacs Example
 

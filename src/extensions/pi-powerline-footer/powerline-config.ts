@@ -6,8 +6,6 @@ import type { ColorValue, CustomItemPosition, CustomStatusItem, PowerlinePlaceme
 export interface PowerlineConfig {
   preset: StatusLinePreset;
   customItems: CustomStatusItem[];
-  mouseScroll: boolean;
-  fixedEditor: boolean;
   fixedEditorPromptGlyph: string;
   disabledSegments: StatusLineSegmentId[];
   invalidDisabledSegments: string[];
@@ -305,8 +303,6 @@ export function parsePowerlineConfig(value: unknown, presets: readonly StatusLin
   const defaultConfig: PowerlineConfig = {
     preset: "default",
     customItems: [],
-    mouseScroll: true,
-    fixedEditor: true,
     fixedEditorPromptGlyph: "",
     disabledSegments: [],
     invalidDisabledSegments: [],
@@ -337,8 +333,6 @@ export function parsePowerlineConfig(value: unknown, presets: readonly StatusLin
   return {
     preset: normalizePreset(value.preset, presets) ?? defaultConfig.preset,
     customItems,
-    mouseScroll: value.mouseScroll !== false,
-    fixedEditor: value.fixedEditor !== false,
     fixedEditorPromptGlyph: typeof value.fixedEditorPromptGlyph === "string" ? value.fixedEditorPromptGlyph : defaultConfig.fixedEditorPromptGlyph,
     disabledSegments,
     invalidDisabledSegments,

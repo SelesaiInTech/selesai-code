@@ -2,6 +2,14 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Pi v0.84.1 migration with fullscreen TUI by default.** Selesai now runs Pi's native fullscreen TUI mode (`tuiMode: "fullscreen"`) by default, with an alternate-screen viewport, a fixed dock for the input editor/status/widgets/footer, a scrollable transcript, and fullscreen-specific keybindings. `--tui-mode regular`, the `tuiMode` setting, or the `TUI mode` entry in `/settings` opt back into regular mode. The powerline extension's unsupported terminal-split compositor and mouse-scroll/chat-jump machinery were removed; its status, editor, and widgets now live in Pi's native dock through the standard extension APIs.
+
+### Changed
+- **Runtime dependencies updated to Pi v0.84.1.** `@earendil-works/pi-ai`, `@earendil-works/pi-tui`, and `@earendil-works/pi-agent-core` moved to 0.84.1 and `undici` to 8.9.0, matching upstream `@earendil-works/pi-coding-agent` 0.84.1. The model-runtime/refresh APIs were ported to the new pi-ai publication model, and the interactive renderer now selects between Pi's `TuiMainScreen` (regular) and `TuiAltScreen` (fullscreen).
+
 ## [0.8.2] - 2026-08-11
 
 ### Fixed

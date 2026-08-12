@@ -45,8 +45,9 @@ const ThemeJsonSchema = Type.Object({
 		dim: ColorValueSchema,
 		text: ColorValueSchema,
 		thinkingText: ColorValueSchema,
-		// Backgrounds & Content Text (11 colors)
+		// Backgrounds & Content Text (11 required, 1 optional)
 		selectedBg: ColorValueSchema,
+		scrollbarThumb: Type.Optional(ColorValueSchema),
 		userMessageBg: ColorValueSchema,
 		userMessageText: ColorValueSchema,
 		customMessageBg: ColorValueSchema,
@@ -156,6 +157,7 @@ export type ThemeColor =
 
 export type ThemeBg =
 	| "selectedBg"
+	| "scrollbarThumb"
 	| "userMessageBg"
 	| "customMessageBg"
 	| "toolPendingBg"
@@ -319,8 +321,14 @@ function resolveThemeColors<T extends Record<string, ColorValue>>(
 	return resolved as Record<keyof T, string | number>;
 }
 
-function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors"] & { thinkingMax: ColorValue } {
-	return { ...colors, thinkingMax: colors.thinkingMax ?? colors.thinkingXhigh };
+function withThemeColorFallbacks(
+	colors: ThemeJson["colors"],
+): ThemeJson["colors"] & { thinkingMax: ColorValue; scrollbarThumb: ColorValue } {
+	return {
+		...colors,
+		thinkingMax: colors.thinkingMax ?? colors.thinkingXhigh,
+		scrollbarThumb: colors.scrollbarThumb ?? colors.selectedBg,
+	};
 }
 
 // ============================================================================
@@ -337,7 +345,7 @@ export class Theme {
 
 	constructor(
 		fgColors: Record<ThemeColor, string | number>,
-		bgColors: Record<ThemeBg, string | number>,
+		bgColors: Record<Exclude<ThemeBg, "scrollbarThumb">, string | number> & Partial<Record<"scrollbarThumb", string | number>>,
 		mode: ColorMode,
 		options: { name?: string; sourcePath?: string; sourceInfo?: SourceInfo } = {},
 	) {
@@ -351,7 +359,11 @@ export class Theme {
 			this.fgColors.set(key, fgAnsi(value, mode));
 		}
 		this.bgColors = new Map();
-		for (const [key, value] of Object.entries(bgColors) as [ThemeBg, string | number][]) {
+		const backgrounds = {
+			...bgColors,
+			scrollbarThumb: bgColors.scrollbarThumb ?? bgColors.selectedBg,
+		};
+		for (const [key, value] of Object.entries(backgrounds) as [ThemeBg, string | number][]) {
 			this.bgColors.set(key, bgAnsi(value, mode));
 		}
 	}
@@ -601,6 +613,7 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 	const bgColors: Record<ThemeBg, string | number> = {} as Record<ThemeBg, string | number>;
 	const bgColorKeys: Set<string> = new Set([
 		"selectedBg",
+		"scrollbarThumb",
 		"userMessageBg",
 		"customMessageBg",
 		"toolPendingBg",
@@ -779,13 +792,21 @@ export async function detectTerminalThemeForAuto({
 	timeoutMs,
 	env,
 }: TerminalAutoThemeDetectionOptions): Promise<TerminalTheme> {
+	let colorSchemePromise: Promise<TerminalTheme | undefined> | undefined;
 	try {
-		const colorScheme = await ui.queryTerminalColorScheme?.({ timeoutMs });
+		colorSchemePromise = ui.queryTerminalColorScheme?.({ timeoutMs });
+	} catch {
+		// Fall back to OSC 11 / COLORFGBG detection when starting the color-scheme query fails.
+	}
+	const backgroundThemePromise = detectTerminalBackgroundTheme({ ui, timeoutMs, env });
+
+	try {
+		const colorScheme = await colorSchemePromise;
 		if (colorScheme) return colorScheme;
 	} catch {
-		// Fall back to OSC 11 / COLORFGBG detection when color-scheme DSR is unsupported.
+		// Fall back to the concurrently queried OSC 11 / COLORFGBG detection.
 	}
-	return (await detectTerminalBackgroundTheme({ ui, timeoutMs, env })).theme;
+	return (await backgroundThemePromise).theme;
 }
 
 export function getDefaultTheme(): string {
