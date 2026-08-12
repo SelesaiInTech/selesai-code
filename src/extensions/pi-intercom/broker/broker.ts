@@ -3,6 +3,7 @@ import { writeFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { writeMessage, createMessageReader } from "./framing.ts";
+import { isMessage, isMessageReceipt, isSessionId, isSessionRegistration } from "./protocol.ts";
 import {
   ensureIntercomRuntimeDir,
   getBrokerListenTarget,
@@ -17,7 +18,7 @@ import {
 import { getAskTimeoutMs } from "../config.ts";
 import { sameCwd } from "../cwd.ts";
 import { EXTENSION_BUS_FEATURE } from "../types.ts";
-import type { SessionInfo, Message, Attachment, BrokerMessage, SessionRegistration, ExtensionCapability, MessageControl, MessageReceipt, MessageReceiptStatus } from "../types.ts";
+import type { SessionInfo, Message, BrokerMessage, ExtensionCapability, MessageControl } from "../types.ts";
 import { ExtensionStateManager } from "./extension-state.ts";
 import { assertNoLiveBroker } from "./runtime-claim.ts";
 
@@ -91,124 +92,6 @@ interface MailboxMessage {
   target: SessionInfo;
   message: Message;
   queuedAt: number;
-}
-
-function isMessageReceiptStatus(value: unknown): value is MessageReceiptStatus {
-  return value === "receiver_received"
-    || value === "queued"
-    || value === "injected"
-    || value === "acknowledged"
-    || value === "expired"
-    || value === "cancelled"
-    || value === "superseded"
-    || value === "cancellation_requested";
-}
-
-function isMessageReceipt(value: unknown): value is MessageReceipt {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const receipt = value as Record<string, unknown>;
-  if (typeof receipt.messageId !== "string" || !isMessageReceiptStatus(receipt.status) || typeof receipt.timestamp !== "number") {
-    return false;
-  }
-  return receipt.detail === undefined || typeof receipt.detail === "string";
-}
-
-function isAttachment(value: unknown): value is Attachment {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const attachment = value as Record<string, unknown>;
-
-  if (
-    attachment.type !== "file"
-    && attachment.type !== "snippet"
-    && attachment.type !== "context"
-  ) {
-    return false;
-  }
-
-  if (typeof attachment.name !== "string" || typeof attachment.content !== "string") {
-    return false;
-  }
-
-  return attachment.language === undefined || typeof attachment.language === "string";
-}
-
-function isMessage(value: unknown): value is Message {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const message = value as Record<string, unknown>;
-
-  if (typeof message.id !== "string" || typeof message.timestamp !== "number") {
-    return false;
-  }
-
-  for (const key of ["senderSequence", "brokerReceivedAt", "brokerDeliveredAt", "receiverReceivedAt", "injectedAt"] as const) {
-    if (message[key] !== undefined && typeof message[key] !== "number") {
-      return false;
-    }
-  }
-
-  if (message.supersedes !== undefined && typeof message.supersedes !== "string") {
-    return false;
-  }
-
-  if (message.retryOf !== undefined && typeof message.retryOf !== "string") {
-    return false;
-  }
-
-  if (message.replyTo !== undefined && typeof message.replyTo !== "string") {
-    return false;
-  }
-
-  if (message.expectsReply !== undefined && typeof message.expectsReply !== "boolean") {
-    return false;
-  }
-
-  if (typeof message.content !== "object" || message.content === null) {
-    return false;
-  }
-
-  const content = message.content as Record<string, unknown>;
-  if (typeof content.text !== "string") {
-    return false;
-  }
-
-  return content.attachments === undefined
-    || (Array.isArray(content.attachments) && content.attachments.every(isAttachment));
-}
-
-function isSessionId(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function isSessionRegistration(value: unknown): value is SessionRegistration {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  const session = value as Record<string, unknown>;
-
-  if (
-    typeof session.cwd !== "string"
-    || typeof session.model !== "string"
-    || typeof session.pid !== "number"
-    || typeof session.startedAt !== "number"
-    || typeof session.lastActivity !== "number"
-  ) {
-    return false;
-  }
-
-  if (session.name !== undefined && typeof session.name !== "string") {
-    return false;
-  }
-
-  return session.status === undefined || typeof session.status === "string";
 }
 
 class IntercomBroker {
@@ -472,6 +355,7 @@ class IntercomBroker {
         const info: SessionInfo = {
           id,
           ...(session.name !== undefined ? { name: session.name } : {}),
+          ...(session.runtimeFallbackAlias !== undefined ? { runtimeFallbackAlias: session.runtimeFallbackAlias } : {}),
           cwd: session.cwd,
           model: session.model,
           pid: session.pid,
@@ -745,20 +629,15 @@ class IntercomBroker {
             });
             break;
           }
-          const liveMailboxTarget = this.findUniqueLiveSessionForDisconnectedSession(target);
-          const effectiveTargetId = liveMailboxTarget?.info.id ?? target.id;
           if (message.expectsReply) {
-            const reverseEdge = Array.from(this.askEdges.entries()).find(([edgeMessageId, edge]) => edgeMessageId !== message.replyTo && edge.from === effectiveTargetId && edge.to === currentId);
-            if (reverseEdge) {
-              writeMessage(socket, {
-                type: "delivery_failed",
-                messageId: message.id,
-                reason: "Mutual ask refused: target session is already waiting for a reply from this session.",
-              });
-              break;
-            }
-            this.askEdges.set(message.id, { from: currentId, to: effectiveTargetId, createdAt: Date.now() });
+            writeMessage(socket, {
+              type: "delivery_failed",
+              messageId: message.id,
+              reason: "Target session is not currently connected; blocking asks are not queued",
+            });
+            break;
           }
+          const liveMailboxTarget = this.findUniqueLiveSessionForDisconnectedSession(target, currentId);
           if (liveMailboxTarget) {
             const deliveredMessage: Message = {
               ...message,
@@ -897,6 +776,15 @@ class IntercomBroker {
               changed = true;
             }
           }
+          if (clientMessage.runtimeFallbackAlias !== undefined) {
+            if (typeof clientMessage.runtimeFallbackAlias !== "boolean") {
+              throw new Error("Invalid presence runtimeFallbackAlias");
+            }
+            if (session.info.runtimeFallbackAlias !== clientMessage.runtimeFallbackAlias) {
+              session.info.runtimeFallbackAlias = clientMessage.runtimeFallbackAlias;
+              changed = true;
+            }
+          }
           if (clientMessage.status !== undefined) {
             if (typeof clientMessage.status !== "string") {
               throw new Error("Invalid presence status");
@@ -1025,9 +913,15 @@ class IntercomBroker {
     for (let index = 0; index < this.mailboxMessages.length;) {
       const entry = this.mailboxMessages[index]!;
       const matchesId = entry.target.id === session.info.id;
+      const matchesSenderIdentity = Boolean(
+        sessionName
+        && entry.from.name?.toLowerCase() === sessionName
+        && sameCwd(entry.from.cwd, session.info.cwd),
+      );
       const matchesUniqueName = Boolean(
         uniqueMailboxIdentity
         && sessionName
+        && !matchesSenderIdentity
         && entry.target.name?.toLowerCase() === sessionName
         && sameCwd(entry.target.cwd, session.info.cwd),
       );
@@ -1125,26 +1019,32 @@ class IntercomBroker {
       .map(([, session]) => session);
   }
 
-  private findUniqueLiveSessionForDisconnectedSession(info: SessionInfo): ConnectedSession | null {
-    const matches = this.findLiveSessionsSharingMailboxIdentity(info);
+  private findUniqueLiveSessionForDisconnectedSession(info: SessionInfo, senderId?: string): ConnectedSession | null {
+    const matches = this.findLiveSessionsSharingMailboxIdentity(info)
+      .filter((session) => session.info.id !== senderId);
     return matches.length === 1 ? matches[0]! : null;
   }
 
   /**
-   * Mailbox identity is name plus directory, never name alone. A name on its own
-   * is display metadata that unrelated projects reuse, so matching on it would
-   * hand one project's queued mail to a same-named session in another project.
+   * Mailbox identity is an explicit name plus directory, never name alone. A
+   * runtime fallback alias is derived from the session id rather than chosen as
+   * a durable identity, so it must not transfer mail to another process. This
+   * also prevents two unnamed UUIDv7 sessions started close together from
+   * inheriting each other's mailbox through a shared short alias.
+   *
    * Directories compare through sameCwd so a relaunch that reports the same
    * directory differently (trailing slash, "."/"..", or a symlink such as macOS
    * /tmp vs /private/tmp) still matches.
    */
   private findLiveSessionsSharingMailboxIdentity(info: SessionInfo): ConnectedSession[] {
     const lowerName = info.name?.toLowerCase();
-    if (!lowerName) {
+    if (!lowerName || info.runtimeFallbackAlias) {
       return [];
     }
     return Array.from(this.sessions.values()).filter(session =>
-      session.info.name?.toLowerCase() === lowerName && sameCwd(session.info.cwd, info.cwd)
+      !session.info.runtimeFallbackAlias
+      && session.info.name?.toLowerCase() === lowerName
+      && sameCwd(session.info.cwd, info.cwd)
     );
   }
 
@@ -1228,12 +1128,10 @@ class IntercomBroker {
       const winner = candidates[0];
       const existing = this.namespaceOwners.get(namespace);
 
-      // Check if owner changed or socket changed
       const ownerChanged = !existing || existing.sessionId !== winner.sessionId;
       const socketChanged = existing && existing.socket !== winner.session.socket;
 
       if (ownerChanged || socketChanged) {
-        // Generate new epoch
         const epoch = randomUUID();
         this.namespaceOwners.set(namespace, {
           sessionId: winner.sessionId,
@@ -1241,7 +1139,6 @@ class IntercomBroker {
           epoch,
         });
 
-        // Broadcast owner change to all capable sessions
         for (const session of this.sessions.values()) {
           if (session.extensions?.length) {
             const isCapable = session.extensions.some((ext) => ext.namespace === namespace);

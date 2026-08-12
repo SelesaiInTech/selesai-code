@@ -23,6 +23,7 @@ This skill covers how to handle those orchestrator-side escalations.
 - **Context handoffs**: Send findings from a research session to an execution session
 - **Clarification loops**: Worker asks questions, planner answers, work continues
 - **Multi-session workflows**: Coordinate between specialized sessions (frontend/backend, research/implementation)
+- **Cross-codebase peer messages**: Message an explicit live peer in another project, or open a visible Herdr project pane when a long-lived conversation is needed
 
 ## Core Patterns
 
@@ -126,7 +127,39 @@ intercom({
 })
 ```
 
-### Pattern 6: Handle Subagent Escalations (Orchestrator Side)
+### Pattern 6: Cross-Codebase Peer Messages
+
+Use `to` alone to message any explicit live peer on the machine, even when it is
+in another codebase. Use `cwd` alone when there should be exactly one live peer
+in that repo. Use `to` plus `cwd` when the directory is a safety guard.
+
+```typescript
+intercom({
+  action: "ask",
+  cwd: "/path/to/other-repo",
+  to: "workbench-agent",
+  message: "Which module owns workbench source slices?"
+})
+```
+
+Only open a Herdr project pane when you need a durable visible peer session in
+that repo. For bounded work, prefer `pi-subagents` with an explicit `cwd`; the
+child can use `contact_supervisor` for owner decisions and regular `intercom`
+for explicit peer coordination.
+
+```typescript
+intercom({
+  action: "send",
+  cwd: "/path/to/other-repo",
+  openProjectPaneIfMissing: true,
+  message: "Let's discuss the workbench API ergonomics in this repo."
+})
+```
+
+If a live session already exists in that `cwd`, intercom reuses it. If multiple
+sessions are active there, pass `to` to select one by name or session ID.
+
+### Pattern 7: Handle Subagent Escalations (Orchestrator Side)
 
 When `pi-subagents` spawns a delegated child and supplies child bridge metadata,
 that child can reach you through `contact_supervisor`. You receive a formatted
@@ -190,13 +223,15 @@ intercom({ action: "reply", to: "subagent-worker-78f659a3-1", message: "Use the 
 **Important:** Only sessions where `pi-subagents` supplied child bridge metadata
 get the `contact_supervisor` tool. Normal sessions use the regular `intercom`
 tool. If you see the formatted supervisor decision/progress update message, treat
-it as a `contact_supervisor` escalation.
+it as a `contact_supervisor` escalation. A subagent may use regular `intercom` for
+peer coordination, including peers in other directories, but owner decisions and
+new visible project panes should go through the supervisor.
 
 ## Key Differences
 
 | Action | Behavior | Use When |
 |--------|----------|----------|
-| `send` | Fire-and-forget | You don't need a response |
+| `send` | Fire-and-forget; infers the sole pending ask as its reply | You don't need a response |
 | `ask` | Blocks until reply (10 min default, configurable with `PI_INTERCOM_ASK_TIMEOUT_MS`) | You need an answer to continue |
 | `reply` | Responds to the active or pending inbound ask | You were asked something and need to answer naturally |
 | `pending` | Lists unresolved inbound asks | You need to see who is waiting before replying |
@@ -301,9 +336,10 @@ If neither `cmux` nor `tmux` is available, skip this path and use normal `interc
 
 ### `ask` Limitations
 
+- **Connected targets only**: `ask` fails immediately when the target is not in the live intercom roster. Use `list` before asking when liveness is uncertain; use `send` for non-blocking mailbox delivery.
 - **Configurable timeout**: If no reply arrives before the shared ask timeout, the ask fails. The default is 10 minutes; set `PI_INTERCOM_ASK_TIMEOUT_MS` to a positive millisecond value to change it.
 - **One at a time**: Cannot have multiple pending asks from the same session
-- **Cannot self-target**: A session cannot ask itself
+- **Cannot self-target**: A session cannot ask itself, including through disconnected-mailbox remapping
 
 ```typescript
 // Check if already waiting before asking
@@ -316,8 +352,10 @@ if (result.isError && result.content[0].text.includes("Already waiting")) {
 ### `send` Behavior
 
 - **No timeout**: Message is delivered or fails immediately
-- **Confirmation dialogs**: If `confirmSend: true` in config, interactive sessions show a confirmation dialog
-- **Replies skip confirmation**: Messages with `replyTo` never show confirmation dialogs
+- **Sole pending ask inference**: If the destination has exactly one pending inbound ask, `send` attaches its `replyTo` and reports `Reply sent to <target> (inferred from pending ask)`
+- **Ambiguity stays unthreaded**: Zero or multiple matching asks leave the send as an ordinary message
+- **Confirmation dialogs**: If `confirmSend: true` in config, interactive sessions confirm ordinary and inferred sends
+- **Explicit replies skip confirmation**: A caller-supplied `replyTo` skips the dialog
 
 ## Best Practices
 
@@ -351,7 +389,9 @@ intercom({
 
 ### Include reply hints in messages
 
-Make it easy for recipients to respond:
+Make it easy for recipients to respond. Busy recipients receive your message
+through Selesai's steering queue at the next safe model boundary without aborting
+their active turn, so a reply hint keeps the conversation actionable:
 
 ```typescript
 // GOOD: Recipient sees exact command to reply
@@ -402,7 +442,7 @@ if (!result.delivered) {
   await intercom({ action: "list" });
 }
 ```
-Replies to recently disconnected named senders can be queued by the broker and delivered if that sender reconnects with the same name. New sends still need a known live or recently disconnected target.
+Replies to recently disconnected explicitly named senders can be queued by the broker and delivered if that sender reconnects with the same name and directory. Runtime-only `subagent-chat-...` aliases are not reconnect identities. New `send` calls may target a known live or recently disconnected session; blocking `ask` calls require a live target.
 
 **Ask timeout**
 ```typescript
@@ -432,7 +472,7 @@ if (!result.delivered) {
 
 ### Connection lost
 
-Sessions automatically reconnect if the broker restarts. If persistently disconnected:
+Sessions automatically reconnect if the broker restarts. A liveness heartbeat round-trips a lightweight request and tears down half-open sockets (for example after the broker is killed without a clean shutdown), so the `disconnected` → reconnect path fires within a bounded window. If persistently disconnected:
 
 ```typescript
 intercom({ action: "status" })

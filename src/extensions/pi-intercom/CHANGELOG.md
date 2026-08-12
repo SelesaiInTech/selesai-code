@@ -2,7 +2,29 @@
 
 All notable changes to the `pi-intercom` extension will be documented in this file.
 
-## [Unreleased]
+## [0.10.0] - 2026-08-09
+
+### Added
+- Added cwd-scoped `send` and `ask` targeting plus `openProjectPaneIfMissing` for visible cross-codebase peer conversations through Herdr project panes.
+
+### Changed
+- Cleaned intercom tool copy, visible-peer skill guidance, and broker protocol validation structure.
+
+### Fixed
+- Resolve the default broker `tsx` launcher from flat plugin-store installs when package resolution fails, and include broker stderr when startup exits early. Thanks to Eduardo Marquez (`DocksDocks`) for issue #97.
+- Surface malformed intercom config errors with path context instead of silently falling back to defaults.
+- Fail blocking `ask` and supervisor-decision requests immediately when the target is not connected instead of accepting a mailbox delivery that can wait until timeout.
+- Prevent disconnected mailbox routing from delivering a message back to its sender or transferring mail through runtime-only unnamed-session aliases. Thanks to ELA718 for PR #93.
+- Extend unnamed-session fallback aliases with enough session-ID characters to distinguish UUIDv7 sessions started close together.
+
+## [0.9.3] - 2026-08-08
+
+### Fixed
+- Allow replies to target pending asks by a unique sender session-ID prefix. Thanks to Benjamin Jesuiter (`bjesuiter`) for PR #85.
+- Detect half-open broker sockets and reconnect clients. Thanks to Nicolas Marchildon (`elecnix`) for issue #89 and PR #88.
+- Hand busy interactive inbound messages directly to Selesai's safe steering queue instead of waiting for aggregate idle, preventing stale coordination from appearing hours after it was received. Thanks to Xiangzhe (`xz-dev`) for issue #86 and PR #87.
+- Treat a public send to the sole pending asker as its reply. Thanks to Grant Hutchins (`nertzy`) for PR #90.
+- Display session-ID prefixes that distinguish listed sessions. Thanks to Chris Goddard (`chrisgoddard`) for issue #83.
 
 ## [0.9.2] - 2026-08-03
 
@@ -39,7 +61,7 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 - Documented `PI_INTERCOM_ASK_TIMEOUT_MS` for configurable ask/supervisor timeouts. Thanks to wiansapu for issue #14.
 - Clarified session addressing copy so the short IDs shown by `list` are documented as usable prefixes. Thanks to Grant Hutchins for PR #66.
 - Updated Pi runtime peer metadata and tool schemas for the `@earendil-works` package scope and Pi-bundled `typebox`/`pi-ai` packages.
-- Centralized pi-intercom runtime and config paths under `PI_CODING_AGENT_DIR` when set, defaulting to `~/.pi/agent`.
+- Centralized pi-intercom runtime and config paths under `SELESAI_CODING_AGENT_DIR` when set, defaulting to `~/.selesai/agent`.
 - Hardened default broker auto-spawn to launch the resolved bundled `tsx` CLI through the current Node executable instead of resolving `npx` through `PATH`; custom `brokerCommand`/`brokerArgs` remain available as advanced trusted config.
 - Added an `inboundTrigger` policy (`always`, `replies`, or `never`) so users can reduce inbound auto-trigger risk while preserving existing behavior by default.
 - Made inline intercom messages collapse and expand with Pi's `Ctrl+O` custom-message toggle while keeping sender, preview, reply, and attachment cues visible. Thanks to RyanKim17920 for PR #32.
@@ -177,7 +199,7 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 ## [0.1.5] - 2026-04-13
 
 ### Changed
-- Switched intercom send confirmation to opt-in. `send` now delivers immediately by default, and interactive confirmation only appears when `confirmSend: true` is set in `~/.pi/agent/intercom/config.json`.
+- Switched intercom send confirmation to opt-in. `send` now delivers immediately by default, and interactive confirmation only appears when `confirmSend: true` is set in `~/.selesai/agent/intercom/config.json`.
 - Replaced the old inverted `autoSend` config with `confirmSend` to make the behavior easier to understand.
 
 ## [0.1.4] - 2026-04-13

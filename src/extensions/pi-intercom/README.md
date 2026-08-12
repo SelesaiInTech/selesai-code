@@ -56,7 +56,7 @@ A session becomes intercom-connected when all of these are true:
 
 The session list only shows intercom-connected sessions, not every open Selesai process on the machine.
 
-If a session is unnamed, pi-intercom now exposes a runtime-only fallback alias like `subagent-chat-1a2b3c4d` so other sessions can still target it. That alias is not persisted as the Selesai session title, so `selesai --resume` can keep showing the transcript snippet instead of a generic `session-...` name.
+If a session is unnamed, pi-intercom exposes a collision-resistant runtime-only fallback alias like `subagent-chat-1a2b3c4d-5e6f-7a8b` so other connected sessions can target it. That alias is not persisted as the Selesai session title or treated as a reconnect identity, so `selesai --resume` can keep showing the transcript snippet without allowing a different unnamed process to inherit queued mail.
 
 ## Quick Start
 
@@ -86,6 +86,15 @@ intercom({ action: "list-cwd" })
 // Send a message
 intercom({ action: "send", to: "research", message: "Check if UserService.validate() handles null" })
 // → Message sent to research
+
+// Send to a visible peer session in another codebase, opening a Herdr project pane if needed
+intercom({
+  action: "send",
+  cwd: "/Users/me/projects/billing",
+  openProjectPaneIfMissing: true,
+  message: "Let's discuss the billing retry design in this repo."
+})
+// → Opened Herdr project pane pane-... for /Users/me/projects/billing and sent message to subagent-chat-...
 
 // Check connection status
 intercom({ action: "status" })
@@ -118,7 +127,7 @@ Found the issue — UserService.validate() doesn't check for null input.
 See auth.ts:142-156.
 ```
 
-The reply hint (enabled by default) points to `intercom({ action: "reply", ... })`, so recipients do not need raw sender or `replyTo` IDs. Idle recipients get a new turn immediately; busy interactive recipients receive the message once they go idle. Attachment content is included in the agent-visible body, and messages are rendered inline and stored in Selesai session history.
+The reply hint (enabled by default) points to `intercom({ action: "reply", ... })`, so recipients do not need raw sender or `replyTo` IDs. Idle recipients get a new turn immediately; busy interactive recipients receive the message through Selesai's steering queue at the next safe model boundary without aborting the active turn. Attachment content is included in the agent-visible body, and messages are rendered inline and stored in Selesai session history.
 
 ## Workflow: Planner-Worker Coordination
 
@@ -205,21 +214,21 @@ To reply, use the intercom tool: intercom({ action: "reply", message: "..." })
 Only GET/PUT/DELETE — never POST. Max 3 retries with exponential backoff starting at 100ms.
 ```
 
-This matters because the agent receiving the message doesn't need to reconstruct raw `to` and `replyTo` IDs — the hint is right there. Combined with idle-gated `triggerTurn` delivery, it enables real back-and-forth conversation without interrupting work in progress. If the reply happens later instead of in the triggered turn, `intercom({ action: "reply" })` falls back to the single unresolved inbound ask, and `intercom({ action: "pending" })` shows who is still waiting.
+This matters because the agent receiving the message doesn't need to reconstruct raw `to` and `replyTo` IDs — the hint is right there. Combined with immediate idle triggering and safe busy-turn steering, it enables real back-and-forth conversation without aborting work in progress or delaying messages until they become stale. If the reply happens later instead of in the triggered turn, `intercom({ action: "reply" })` falls back to the single unresolved inbound ask, and `intercom({ action: "pending" })` shows who is still waiting.
 
 ### `send` vs `ask`
 
-`send` is fire-and-forget — the tool returns immediately after delivery. By default, it sends immediately even in interactive sessions. If you want an approval dialog before non-reply sends, set `confirmSend: true` in config. Replies that include `replyTo` still skip confirmation so reply-hint flows can continue without an extra approval step.
+`send` is fire-and-forget — the tool returns immediately after delivery. When the destination has exactly one pending inbound ask, `send` infers that it is the answer, attaches the ask's `replyTo`, and reports `Reply sent to <target> (inferred from pending ask)`. With zero or multiple matching asks, it remains an ordinary unthreaded send. An inferred answer still uses the `confirmSend` dialog when configured; only a caller-supplied `replyTo` skips confirmation.
 
-`ask` sends the message and blocks until the recipient responds (10-minute timeout by default; set `PI_INTERCOM_ASK_TIMEOUT_MS` to a positive millisecond value to change it). The reply comes back as the tool result, so the agent continues in the same turn with full context. No confirmation dialog — if you're asking and waiting, the intent is clear.
+`ask` requires a currently connected recipient, then blocks until it responds (10-minute timeout by default; set `PI_INTERCOM_ASK_TIMEOUT_MS` to a positive millisecond value to change it). If the target is disconnected, `ask` fails immediately; use `send` when queued, non-blocking mailbox delivery is appropriate. The reply comes back as the tool result, so the agent continues in the same turn with full context. No confirmation dialog — if you're asking and waiting, the intent is clear.
 
 `reply` is receiver-side sugar for replying to an inbound ask. In the turn triggered by an incoming intercom ask, `intercom({ action: "reply", message: "..." })` targets that exact sender and message automatically. If you reply later, it falls back to the single unresolved inbound ask. If multiple asks are pending, use `intercom({ action: "pending" })` to inspect them and then call `reply` with `to` to disambiguate.
 
-The broker keeps a bounded in-memory mailbox for recently disconnected named sessions. If a lightweight CLI sender asks a long-running session something and exits before the answer, the later `reply` is accepted into that mailbox instead of failing with `Session not found`; a process that reconnects with the same name receives the queued reply. This is per-broker runtime state, not durable storage across broker restarts.
+The broker keeps a bounded in-memory mailbox for recently disconnected explicitly named sessions. If a lightweight CLI sender asks a long-running session something and exits before the answer, the later `reply` is accepted into that mailbox instead of failing with `Session not found`; a process that reconnects with the same explicit name and directory receives the queued reply. Runtime-only unnamed-session aliases never transfer mailbox ownership, and routing never remaps mail back to its sender. This is per-broker runtime state, not durable storage across broker restarts.
 
-Incoming messages now carry diagnostic metadata end to end: stable message ID, sender sequence, sender timestamp, broker receive/delivery timestamps, receiver receive timestamp, and injection timestamp. Receivers emit lifecycle receipts for `receiver_received`, `acknowledged`, `queued`, `injected`, `expired`, `cancelled`, `superseded`, and `cancellation_requested`; duplicate message IDs are acknowledged but injected at most once per receiving session. If an `ask` times out, the timeout names the message ID and last known delivery state. Timeout is not cancellation: the recipient may still have the message queued or actionable unless an explicit cancellation path says otherwise.
+Incoming messages carry diagnostic metadata end to end: stable message ID, sender sequence, sender timestamp, broker receive/delivery timestamps, receiver receive timestamp, and injection timestamp. Connected interactive receivers emit `receiver_received`, `acknowledged`, and `injected` as they hand messages to Pi; duplicate IDs are acknowledged but injected at most once per receiving session. Broker mailbox delivery for temporarily disconnected targets can still report queued delivery. If an `ask` times out, the timeout names the message ID and last known delivery state. Timeout is not cancellation: an injected or broker-queued message may remain actionable unless an explicit cancellation path says otherwise.
 
-Cancellation is explicit: call `intercom({ action: "cancel", messageId })` to request cancellation of a message you originally sent. If the receiver has not injected it yet, it is removed from the queue and reported as `cancelled`; if it is already injected or processed, the receiver reports `cancellation_requested` instead of hiding it. Supersede is also explicit: pass `supersedes: "old-message-id"` on a new `send` or `ask`. The broker only allows same sender → same receiver supersedes, marks the old message `superseded`, and sends the replacement with a new message ID. Retries are never automatic; a retry should be a new authored message, optionally linked with `retryOf`.
+Cancellation is explicit: call `intercom({ action: "cancel", messageId })` to request cancellation of a message you originally sent. Connected interactive messages are injected immediately, so the receiver normally reports `cancellation_requested` rather than pretending it removed work from a private queue. Supersede is also explicit: pass `supersedes: "old-message-id"` on a new `send` or `ask`. The broker only allows same sender → same receiver supersedes, marks the old message `superseded`, and sends the replacement with a new ID; an already-steered old message may still be processed. Retries are never automatic; a retry should be a new authored message, optionally linked with `retryOf`.
 
 The planner typically uses `send`. If you prefer manual approval for outgoing non-reply messages, turn on `confirmSend: true`. The worker uses `ask` for everything (no confirmation needed, gets answers inline), so it can operate autonomously either way.
 
@@ -247,6 +256,10 @@ If any are missing, the session falls back to the regular `intercom` tool.
 | `progress_update` | Fire-and-forget update to the supervisor | Meaningful progress or unexpected discoveries that change the plan |
 
 Do not use `contact_supervisor` for routine completion handoffs. Return the final subagent result normally through `pi-subagents`.
+
+A child subagent can still use the regular `intercom` tool to coordinate with an explicit peer session. Use `to` alone for any live peer on the machine, `cwd` alone for the sole live peer in another codebase, or `to` plus `cwd` when the directory is a safety guard. Use `contact_supervisor` instead when the answer changes the task contract, needs owner approval, or would require opening a new visible project pane.
+
+For bounded work in another codebase, prefer `pi-subagents` with an explicit `cwd`. Intercom project panes are for durable visible peer conversations, not ordinary delegated work.
 
 ### Example: Blocked Subagent Asks for Guidance
 
@@ -322,13 +335,16 @@ The supervisor can reply with plain JSON or a fenced `json` block. If the reply 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `action` | string | `"list"`, `"list-cwd"`, `"send"`, `"ask"`, `"reply"`, `"pending"`, `"status"`, or `"cancel"` |
-| `to` | string | Target session name or ID (for send/ask, or to disambiguate reply) |
+| `to` | string | Target session name or ID. Without `cwd`, send/ask resolve it globally. With `cwd`, send/ask require the target to be in that directory. Also disambiguates reply. |
 | `message` | string | Message text (for send/ask/reply) |
 | `attachments` | array | Optional `file`, `snippet`, or `context` attachments |
 | `replyTo` | string | Optional message ID for threading or replying to an `ask` |
 | `messageId` | string | Optional explicit message ID for send/ask, or required message ID for `cancel` |
 | `supersedes` | string | Optional previous message ID that this send/ask explicitly replaces |
 | `retryOf` | string | Optional previous message ID that this send/ask explicitly retries |
+| `cwd` | string | Working directory filter for `list-cwd`. For send/ask, scopes target lookup to that directory; without `to`, selects the sole live peer there. |
+| `openProjectPaneIfMissing` | boolean | For `send`/`ask` with `cwd`, open a visible Herdr project pane and launch Selesai when no matching live session exists |
+| `focus` | boolean | For `openProjectPaneIfMissing`, focus the new Herdr pane. Defaults to true |
 
 ### contact_supervisor
 
@@ -350,9 +366,9 @@ Only registered in sessions where `pi-subagents` supplied the required child bri
 
 **`list`** — Returns the current session plus other active intercom-connected sessions with name, short ID, working directory, model, and live status. Status is derived automatically from Selesai lifecycle events: `idle`, `thinking`, or `tool:<name>`.
 
-**`send`** — Sends a message to the specified session. By default it sends immediately, including in interactive sessions. Set `confirmSend: true` in config if you want a confirmation dialog for non-reply sends. Replies that include `replyTo` skip confirmation. Returns delivery confirmation.
+**`send`** — Sends a message to the specified session and returns immediately after delivery. If the destination has exactly one pending inbound ask, `send` infers the message is its answer and returns `Reply sent to <target> (inferred from pending ask)`; zero or multiple matches remain unthreaded sends. Set `confirmSend: true` to confirm ordinary and inferred sends. A caller-supplied `replyTo` skips confirmation. `to` alone resolves globally across all live sessions. `cwd` alone targets the sole live peer in that directory. `to` plus `cwd` requires that peer to be in the directory. With `openProjectPaneIfMissing: true`, pi-intercom opens a visible Herdr project pane, starts Selesai there, waits for that session to register, then delivers the message through normal intercom routing.
 
-**`ask`** — Sends a message and waits for the recipient to reply (10-minute timeout by default; configurable with `PI_INTERCOM_ASK_TIMEOUT_MS`). The reply is returned as the tool result. No confirmation dialog. Only one pending `ask` is allowed per session at a time. Use this when the agent needs the answer to continue working.
+**`ask`** — Requires a currently connected recipient, sends a message, and waits for the recipient to reply (10-minute timeout by default; configurable with `PI_INTERCOM_ASK_TIMEOUT_MS`). A disconnected target fails immediately rather than queueing a blocking request. The reply is returned as the tool result. No confirmation dialog. Only one pending `ask` is allowed per session at a time. Use this when the agent needs the answer to continue working. The same `to`, `cwd`, and `openProjectPaneIfMissing` targeting rules apply.
 
 **`reply`** — Replies to the current intercom-triggered message if there is one. Otherwise it falls back to the single unresolved inbound ask. If multiple asks are pending, pass `to` or inspect them with `pending` first. Under the hood this is still a normal `send` with the exact `replyTo` value.
 
@@ -391,13 +407,13 @@ Create `~/.selesai/agent/intercom/config.json`:
 |---------|---------|-------------|
 | `brokerCommand` | `"npx"` | Advanced trusted override for the broker executable. The default value is hardened internally to launch the resolved bundled `tsx` CLI through the current Node executable instead of resolving `npx` through `PATH`. |
 | `brokerArgs` | `["--no-install", "tsx"]` | Advanced trusted arguments passed to custom `brokerCommand` before the broker script path |
-| `confirmSend` | false | Show a confirmation dialog before non-reply sends from an interactive session with UI |
+| `confirmSend` | false | Show a confirmation dialog before ordinary or inferred sends from an interactive session with UI; caller-supplied `replyTo` skips it |
 | `inboundTrigger` | `"always"` | Auto-trigger policy for inbound broker messages: `"always"`, `"replies"`, or `"never"`. Local in-process subagent relay events still trigger the addressed session. |
 | `enabled` | true | Enable/disable intercom entirely |
 | `replyHint` | true | Include reply instruction in incoming messages |
 | `status` | — | Optional custom status suffix shown after the automatic lifecycle status, for example `thinking · researching` |
 
-If `config.json` cannot be parsed or contains an invalid value, pi-intercom logs the error and fails closed for inbound broker auto-triggering by using `inboundTrigger: "never"` until the config is fixed.
+If `config.json` cannot be parsed or contains an invalid value, pi-intercom fails to load the config and throws an error, so the misconfiguration is surfaced immediately instead of silently changing behavior.
 
 Custom broker commands are trusted local configuration: anyone who can edit this config can choose the executable used for future broker auto-spawns. For example, if you have Bun installed and want it to start the broker directly, use:
 
@@ -408,7 +424,7 @@ Custom broker commands are trusted local configuration: anyone who can edit this
 }
 ```
 
-pi-intercom publishes live session status automatically. Sessions register as `idle`, switch to `thinking` while the agent is running, show `tool:<name>` during tool execution, and return to `idle` on agent completion. If `status` is set in config, it is appended as context instead of replacing the lifecycle status.
+Pi-intercom publishes live session status automatically. Sessions register as `idle`, switch to `thinking` while the agent is running, show `tool:<name>` during tool execution, and return to `idle` on agent completion. If `status` is set in config, it is appended as context instead of replacing the lifecycle status.
 
 By default, runtime state and config live under `~/.selesai/agent/intercom`. If Selesai is launched with `SELESAI_CODING_AGENT_DIR`, pi-intercom uses `$SELESAI_CODING_AGENT_DIR/intercom` instead, including `config.json`, broker PID/lock files, sockets, and launcher state.
 
@@ -477,9 +493,11 @@ graph TB
 
 The broker is a standalone TypeScript process that manages session registration and message routing. It auto-spawns when the first intercom-enabled session needs it and exits after 5 seconds when the last connected session disconnects. Clients now reconnect automatically if the broker disappears and later comes back.
 
+**Liveness heartbeat.** A client whose broker is killed without a clean shutdown (SIGKILL, crash, or host loss) is left on a half-open socket: the OS never delivers a `close` event, so the client cannot tell it is alone and silently drops out of the roster forever. To close that gap, each registered client runs a liveness heartbeat that round-trips a lightweight `list` request and tears down the socket if the broker does not respond within the timeout, letting the existing `disconnected` → reconnect path fire. The interval defaults to 30s and the probe timeout to 5s; override them with `PI_INTERCOM_LIVENESS_INTERVAL_MS` and `PI_INTERCOM_LIVENESS_TIMEOUT_MS` (the timeout is clamped to the interval).
+
 Messages use length-prefixed JSON over a local socket/pipe transport (4-byte length + JSON payload) to handle fragmentation properly. The protocol includes request correlation for session listing, explicit delivery failures, validation for malformed or out-of-order messages, a frame-size cap, per-connection local rate limiting, and no-op presence coalescing.
 
-Session IDs are the trusted addressing key. Duplicate names remain allowed for same-user workflows, but sends to ambiguous names fail and users should target the stable session ID shown by `list`/`status` in trust-sensitive flows. Mail queued for a disconnected session is redelivered to a session that reconnects under the same session ID, or to a session that matches both its name and its directory, so a same-named session in a different project never inherits another project's queued messages. Set `PI_INTERCOM_STABLE_ID` or `stableId` in `config.json` to pin a session's intercom ID across full process relaunches; `config.json` is machine-global, so a fixed `stableId` there applies to every session on the machine and the newest registration takes over that identity. The broker owns local trust metadata such as `trustedLocal`; `peerUid` is reserved for runtimes that can expose real peer credentials and is left unset otherwise. Client-supplied cwd/model/pid/status are display metadata, not authentication.
+Session IDs are the trusted addressing key. Duplicate names remain allowed for same-user workflows, but sends to ambiguous names fail and users should target the stable session ID shown by `list`/`status` in trust-sensitive flows. Mail queued for a disconnected session is redelivered to a session that reconnects under the same session ID, or to a session that matches both its explicit name and its directory, so a same-named session in a different project never inherits another project's queued messages. Runtime-only `subagent-chat-...` aliases are excluded from name-based mailbox reconnection, and a disconnected mailbox is never remapped to the sender. Set `PI_INTERCOM_STABLE_ID` or `stableId` in `config.json` to pin a session's intercom ID across full process relaunches; `config.json` is machine-global, so a fixed `stableId` there applies to every session on the machine and the newest registration takes over that identity. The broker owns local trust metadata such as `trustedLocal`; `peerUid` is reserved for runtimes that can expose real peer credentials and is left unset otherwise. Client-supplied cwd/model/pid/status are display metadata, not authentication.
 
 Async extension work (startup, inbound flushes, reconnects, overlays, and relays) no-ops if the session shuts down or reloads before it settles.
 
@@ -521,6 +539,7 @@ Use pi-messenger for multi-agent swarms working on a shared task. Use pi-interco
 ├── index.ts              # Extension entry point
 ├── types.ts              # SessionInfo, Message, protocol types
 ├── config.ts             # Config loading
+├── project-agent.ts      # Herdr project-pane launch and cwd target resolution
 ├── broker/
 │   ├── broker.ts         # Broker process
 │   ├── client.ts         # IntercomClient class

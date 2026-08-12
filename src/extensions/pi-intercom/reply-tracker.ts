@@ -8,11 +8,40 @@ export interface IntercomContext {
 }
 
 function matchesPendingSender(context: IntercomContext, to: string): boolean {
-  if (context.from.id === to) {
+  if (context.from.id === to || context.from.id.startsWith(to)) {
     return true;
   }
 
   return context.from.name?.toLowerCase() === to.toLowerCase();
+}
+
+function resolvePendingSender(pending: IntercomContext[], to: string): IntercomContext {
+  const exactIdMatches = pending.filter((context) => context.from.id === to);
+  if (exactIdMatches.length === 1) {
+    return exactIdMatches[0]!;
+  }
+  if (exactIdMatches.length > 1) {
+    throw new Error(`Multiple pending asks from session ID "${to}" — specify \`replyTo\``);
+  }
+
+  const lowerTo = to.toLowerCase();
+  const exactNameMatches = pending.filter((context) => context.from.name?.toLowerCase() === lowerTo);
+  if (exactNameMatches.length === 1) {
+    return exactNameMatches[0]!;
+  }
+  if (exactNameMatches.length > 1) {
+    throw new Error(`Multiple pending asks match sender name "${to}" — specify a full session ID or \`replyTo\``);
+  }
+
+  const idPrefixMatches = pending.filter((context) => context.from.id.startsWith(to));
+  if (idPrefixMatches.length === 1) {
+    return idPrefixMatches[0]!;
+  }
+  if (idPrefixMatches.length > 1) {
+    throw new Error(`Multiple pending asks match ID prefix "${to}" — use a longer session ID prefix or specify \`replyTo\``);
+  }
+
+  throw new Error(`No pending ask from "${to}"`);
 }
 
 export class ReplyTracker {
@@ -65,14 +94,7 @@ export class ReplyTracker {
 
     const pending = Array.from(this.pendingAsks.values());
     if (options.to) {
-      const matches = pending.filter((context) => matchesPendingSender(context, options.to!));
-      if (matches.length === 1) {
-        return matches[0]!;
-      }
-      if (matches.length > 1) {
-        throw new Error(`Multiple pending asks from "${options.to}" — use the sender session ID instead.`);
-      }
-      throw new Error(`No pending ask from "${options.to}"`);
+      return resolvePendingSender(pending, options.to);
     }
 
     if (this.currentTurnContext) {
@@ -87,6 +109,16 @@ export class ReplyTracker {
     }
 
     throw new Error("Multiple pending asks — specify `to`");
+  }
+
+  findUniquePendingAskFrom(to: string, now = Date.now()): IntercomContext | null {
+    const candidates = Array.from(this.pendingAsks.values()).filter((context) => {
+      if (now - context.receivedAt > this.askTimeoutMs) {
+        return false;
+      }
+      return context.from.id === to || context.from.name?.toLowerCase() === to.toLowerCase();
+    });
+    return candidates.length === 1 ? candidates[0]! : null;
   }
 
   markReplied(replyTo: string): void {
