@@ -42,9 +42,10 @@ export function extractReadableContent(html: string, maxLength = 4000): Extracte
 }
 
 function decodeHtmlEntities(text: string): string {
+  // Decode &amp; last so an already-encoded entity like &amp;lt; does not get
+  // double-unescaped into <, which would let encoded markup through.
   return text
     .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
@@ -52,7 +53,8 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&#x27;/gi, "'")
     .replace(/&#x2F;/gi, '/')
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-    .replace(/&#x([\da-f]+);/gi, (_, code) => String.fromCharCode(parseInt(code, 16)));
+    .replace(/&#x([\da-f]+);/gi, (_, code) => String.fromCharCode(parseInt(code, 16)))
+    .replace(/&amp;/gi, '&');
 }
 
 function extractTitle(html: string): string | undefined {

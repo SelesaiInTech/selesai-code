@@ -1,12 +1,12 @@
 import type { SearchResult } from '../types.js';
-import { classifySourceProfile } from './source-profile.js';
+import { classifySourceProfile, hostOf } from './source-profile.js';
 
 function wantsDiscussionSources(query = '') {
   return /reddit|forum|forums|discussion|thread|comments|community|user experience|people recommend/i.test(query);
 }
 
 function candidateScore(result: SearchResult, query?: string) {
-  const url = result.url.toLowerCase();
+  const isGithub = hostOf(result.url) === 'github.com';
   const profile = classifySourceProfile(result.url);
   const wantsThreads = wantsDiscussionSources(query);
 
@@ -16,13 +16,13 @@ function candidateScore(result: SearchResult, query?: string) {
   if (wantsThreads) {
     if (profile.kind === 'forum-thread') return 2;
     if (profile.kind === 'issue-thread') return 3;
-    if (url.includes('github.com/')) return 4;
+    if (isGithub) return 4;
     if (profile.kind === 'package-page') return 6;
     return 5;
   }
 
   if (profile.kind === 'issue-thread') return 2;
-  if (url.includes('github.com/')) return 3;
+  if (isGithub) return 3;
   if (profile.kind === 'package-page') return 5;
   return 4;
 }
