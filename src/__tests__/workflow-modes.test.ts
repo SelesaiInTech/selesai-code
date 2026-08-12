@@ -1,93 +1,55 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@selesai/code";
-import type { ChainStep } from "../extensions/pi-subagents/src/shared/settings.ts";
-import { loopChain, prototypeChain, quicktypeChain, taskChain } from "../extensions/workflow/modes.ts";
+import { buildLoopScript, buildPrototypeScript, buildQuicktypeScript, buildTaskScript } from "../extensions/workflow/modes.ts";
 import workflowModesExtension from "../extensions/workflow/extension.ts";
 
-// The Selesai roster used by the four workflow chains.
-const ROSTER = new Set(["architect", "builder", "commentator", "explorer", "recapper", "researcher"]);
+describe("workflow mode script builders", () => {
+  it("buildLoopScript contains the auto-loop runs, agents, and marker", () => {
+    const script = buildLoopScript("any goal");
+    expect(script).toContain("'build-'");
+    expect(script).toContain("'review-'");
+    expect(script).toContain("agent: 'builder'");
+    expect(script).toContain("agent: 'commentator'");
+    expect(script).toContain("while (true)");
+    expect(script).toContain("WORKFLOW_REVIEW_STATUS");
+  });
 
-function agentsOf(chain: ChainStep[]): string[] {
-	return chain
-		.filter((step) => "agent" in step && typeof step.agent === "string")
-		.map((step) => (step as { agent: string }).agent);
-}
+  it("injects the goal as a JSON.stringify'd JS literal without breaking on quotes/backslashes", () => {
+    const goal = 'it\'s "quoted" \\ path';
+    const script = buildLoopScript(goal);
+    expect(script).toContain(`const goal = ${JSON.stringify(goal)};`);
+    const match = script.match(/const goal = (.*);\n/);
+    expect(match).not.toBeNull();
+    expect(JSON.parse(match![1])).toBe(goal);
+  });
 
-function checkpointsOf(chain: ChainStep[]): Array<{ checkpoint: string; message?: string }> {
-	return chain.filter((step) => "checkpoint" in step) as Array<{ checkpoint: string; message?: string }>;
-}
+  it("buildTaskScript has plan/reuse/handoff runs and no research/audit keys", () => {
+    const script = buildTaskScript("any goal");
+    expect(script).toContain("'plan'");
+    expect(script).toContain("'reuse'");
+    expect(script).toContain("'handoff'");
+    expect(script).not.toContain("'research'");
+    expect(script).not.toContain("'audit'");
+  });
 
-function buildersOf(chain: ChainStep[]): Array<{ agent: string; acceptance?: unknown }> {
-	return chain.filter(
-		(step) => "agent" in step && step.agent === "builder",
-	) as Array<{ agent: string; acceptance?: unknown }>;
-}
+  it("buildPrototypeScript has research and audit runs", () => {
+    const script = buildPrototypeScript("any goal");
+    expect(script).toContain("'research'");
+    expect(script).toContain("'audit'");
+  });
 
-describe("workflow mode chains", () => {
-	const chains: Record<string, ChainStep[]> = {
-		task: taskChain,
-		prototype: prototypeChain,
-		quicktype: quicktypeChain,
-		loop: loopChain,
-	};
+  it("buildQuicktypeScript has audit but no research", () => {
+    const script = buildQuicktypeScript("any goal");
+    expect(script).toContain("'audit'");
+    expect(script).not.toContain("'research'");
+  });
 
-	it("defines all four chains as non-empty step arrays", () => {
-		for (const [name, chain] of Object.entries(chains)) {
-			expect(chain.length, name).toBeGreaterThan(0);
-		}
-	});
-
-	it("uses only Selesai roster agents", () => {
-		for (const [name, chain] of Object.entries(chains)) {
-			for (const agent of agentsOf(chain)) {
-				expect(ROSTER.has(agent), `${name} chain uses unknown agent '${agent}'`).toBe(true);
-			}
-		}
-	});
-
-	it("orders the task chain as plan → reuse → handoff → build → review", () => {
-		expect(agentsOf(taskChain)).toEqual(["architect", "explorer", "recapper", "builder", "commentator"]);
-		expect(taskChain.map((s) => ("checkpoint" in s ? s.checkpoint : undefined))).toEqual([
-			undefined,
-			"approve-plan",
-			undefined,
-			undefined,
-			"approve-handoff",
-			undefined,
-			undefined,
-			"approve-implementation",
-		]);
-	});
-
-	it("has a researcher step in prototype but not in quicktype", () => {
-		expect(agentsOf(prototypeChain)).toContain("researcher");
-		expect(agentsOf(quicktypeChain)).not.toContain("researcher");
-	});
-
-	it("gives every builder step checked acceptance with command/change evidence", () => {
-		for (const [name, chain] of Object.entries(chains)) {
-			expect(buildersOf(chain).length, `${name} chain must contain a builder`).toBeGreaterThan(0);
-			for (const builder of buildersOf(chain)) {
-				expect(builder.acceptance).toEqual({ level: "checked", evidence: ["commands-run", "changed-files"] });
-			}
-		}
-	});
-
-	it("gives every checkpoint step a non-empty message", () => {
-		for (const [name, chain] of Object.entries(chains)) {
-			for (const checkpoint of checkpointsOf(chain)) {
-				expect(checkpoint.checkpoint.length, name).toBeGreaterThan(0);
-				expect(checkpoint.message?.trim().length ?? 0, `${name} checkpoint '${checkpoint.checkpoint}' has no message`).toBeGreaterThan(0);
-			}
-		}
-	});
-
-	it("ends task and loop chains with an approval checkpoint; prototype/quicktype with the audit reviewer", () => {
-		expect(taskChain.at(-1)).toMatchObject({ checkpoint: "approve-implementation" });
-		expect(loopChain.at(-1)).toMatchObject({ checkpoint: "approve-implementation" });
-		expect(prototypeChain.at(-1)).toMatchObject({ agent: "commentator" });
-		expect(quicktypeChain.at(-1)).toMatchObject({ agent: "commentator" });
-	});
+  it("buildLoopScript has no plan/handoff/audit keys", () => {
+    const script = buildLoopScript("any goal");
+    expect(script).not.toContain("'plan'");
+    expect(script).not.toContain("'handoff'");
+    expect(script).not.toContain("'audit'");
+  });
 });
 
 describe("workflow extension registration", () => {

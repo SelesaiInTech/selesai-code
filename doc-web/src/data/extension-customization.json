@@ -99,8 +99,8 @@
       "slug": "workflow",
       "distribution": "bundled",
       "overview": {
-        "en": "Workflow modes are pi-subagents saved chains defined in source. Users pick a mode and pass a goal; the chains, checkpoint gates, and acceptance criteria are not edited through config files.",
-        "id": "Mode workflow adalah saved chain pi-subagents yang didefinisikan source. User memilih mode dan memberikan goal; chain, gate checkpoint, dan kriteria acceptance tidak diedit melalui file konfigurasi."
+        "en": "Workflow modes are pi-subagents scripted workflows defined in source. Users pick a mode and pass a goal; the modes' scripts and phases are not edited through config files.",
+        "id": "Mode workflow adalah workflow scripted pi-subagents yang didefinisikan source. User memilih mode dan memberikan goal; skrip dan fase mode tidak diedit melalui file konfigurasi."
       },
       "sourcePaths": [
         "src/extensions/workflow/extension.ts",
@@ -111,18 +111,18 @@
           "label": { "en": "Mode-owned source", "id": "Source milik mode" },
           "path": "src/extensions/workflow/modes.ts (source-owned)",
           "precedence": {
-            "en": "Chain steps, checkpoint gates, and acceptance criteria are defined in source, not user files.",
-            "id": "Langkah chain, gate checkpoint, dan kriteria acceptance didefinisikan di source, bukan file user."
+            "en": "Scripted workflow phases and the auto-loop (until clean) are defined in source, not user files.",
+            "id": "Fase workflow scripted dan auto-loop (hingga bersih) didefinisikan di source, bukan file user."
           }
         }
       ],
       "settings": [
         { "key": "mode", "type": "string", "default": "(selected by command)", "allowedValues": "\"prototype\", \"quicktype\", \"task\", \"loop\"", "description": { "en": "Selected at runtime by invoking /workflow-prototype, /workflow-quicktype, /workflow-task, or /workflow-loop.", "id": "Dipilih saat runtime dengan memanggil /workflow-prototype, /workflow-quicktype, /workflow-task, atau /workflow-loop." }, "persistence": "invocation only" },
-        { "key": "goal argument", "type": "string", "description": { "en": "Passed as a command argument (the chain's {task}); not stored in a config file.", "id": "Diberikan sebagai argumen command ({task} chain); tidak disimpan di file konfigurasi." }, "persistence": "command argument" }
+        { "key": "goal argument", "type": "string", "description": { "en": "Passed as a command argument (the mode's goal); not stored in a config file.", "id": "Diberikan sebagai argumen command (goal mode); tidak disimpan di file konfigurasi." }, "persistence": "command argument" }
       ],
       "envVars": [],
       "controls": [
-        { "name": "/workflow-prototype, /workflow-quicktype, /workflow-task, /workflow-loop", "description": { "en": "Launch the selected mode's pi-subagents chain with the goal as its {task}.", "id": "Meluncurkan chain pi-subagents mode yang dipilih dengan goal sebagai {task}." } }
+        { "name": "/workflow-prototype, /workflow-quicktype, /workflow-task, /workflow-loop", "description": { "en": "Launch the selected mode's pi-subagents scripted workflow with the goal.", "id": "Meluncurkan workflow scripted pi-subagents mode yang dipilih dengan goal." } }
       ],
       "noConfig": true
     },

@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-The `workflow` extension ships the four workflow mode shapes as **pi-subagents saved chains**. Four commands are bundled: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, and `/workflow-loop`. Each launches its chain through pi-subagents — phases are chain steps, human gates are `checkpoint` steps, verified acceptance is the chain `acceptance` gate, durable state lives in the auto-created mission, and resumability comes from pi-subagents' retained children.
+The `workflow` extension ships the four workflow mode shapes as **pi-subagents scripted auto-loop workflows**. Four commands are bundled: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, and `/workflow-loop`. Each launches a `workflowScript` through pi-subagents — the mode's phases run as `runs.run` steps, and the build↔review round auto-repeats until the commentator reports clean. A `workflowScript` has no checkpoints, so there are no human gates. Durable state lives in the auto-created mission per launch.
 
 <ExtensionStatus
   distribution="bundled"
@@ -19,14 +19,14 @@ The `workflow` extension ships the four workflow mode shapes as **pi-subagents s
 ## Setup and prerequisites
 
 - This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
-- It launches chains through the `pi-subagents` extension, which must be loaded (it is bundled too).
+- It launches scripted workflows through the `pi-subagents` extension, which must be loaded (it is bundled too).
 - Requires an interactive TUI session.
-- The Selesai agent roster (`architect`, `builder`, `commentator`, `explorer`, `recapper`, `researcher`) provides the chain steps.
+- The Selesai agent roster (`architect`, `builder`, `commentator`, `explorer`, `recapper`, `researcher`) provides the workflow phases.
 
 ## What it sets up
 
 - Registers one slash command per mode: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, `/workflow-loop`.
-- Each command launches a pi-subagents chain (`launchSlashSubagent`) with the goal as the chain's `{task}`.
+- Each command launches a pi-subagents scripted workflow (`launchSlashSubagent`) with the goal injected into the mode's `workflowScript`.
 
 ## What you can configure
 
@@ -43,35 +43,35 @@ The `workflow` extension ships the four workflow mode shapes as **pi-subagents s
   <span class="copy-status" role="status" aria-live="polite"></span>
 </div>
 
-### Mode chains
+### Mode scripts
 
-| Mode | Chain steps |
+| Mode | Scripted phases |
 | --- | --- |
-| `task` | architect (plan) → checkpoint → explorer (reuse) → recapper (handoff) → checkpoint → builder (implementation, verified acceptance) → commentator (review) → checkpoint |
-| `prototype` | researcher (research) → architect (plan) → checkpoint → explorer (reuse) → recapper (handoff) → checkpoint → builder (implementation, verified acceptance) → commentator (review) → checkpoint → commentator (audit of uncommitted diff) |
+| `task` | architect (plan) → explorer (reuse) → recapper (handoff) → auto build↔review loop (builder ↔ commentator, until clean) |
+| `prototype` | researcher (research) → architect (plan) → explorer (reuse) → recapper (handoff) → auto build↔review loop (builder ↔ commentator, until clean) → commentator (audit of uncommitted diff) |
 | `quicktype` | same as `prototype` minus the researcher step |
-| `loop` | builder (implementation, verified acceptance) → commentator (review) → checkpoint — direct build↔review rounds for an already-agreed plan |
+| `loop` | auto build↔review loop (builder ↔ commentator, until clean) — direct rounds for an already-agreed plan |
 
-- Human gates are `checkpoint` steps: approve with `subagent({ action: "approve-checkpoint", id })`, reject with `reject-checkpoint`. A rejected checkpoint stops the chain.
-- Builder steps carry a chain `acceptance` gate (verified `checked` level with `commands-run` and `changed-files` evidence).
+- Each mode's phases run as `runs.run` steps inside a `workflowScript`. There are no checkpoints: the script is one-shot-and-sleep, and the commentator's independent review is the loop's gate.
+- The build↔review round auto-repeats until the reviewer's output matches the `WORKFLOW_REVIEW_STATUS: clean` marker; `runs.run` keys are unique per round (`build-1`, `review-1`, `build-2`, …).
 - Durable process state lives in the auto-created **mission** per launch (state, artifacts, decisions, receipts); inspect with `mission.list` / `mission.show`.
-- Resumability is pi-subagents' retained children: `children.list` plus `runs.run({ resume })` to continue a run.
+- Workflows launch asynchronously; recover or continue via `mission.list` and the async run `status`.
 
 ## Commands, tools, and shortcuts
 
 | Command | Description |
 | --- | --- |
-| `/workflow-prototype <goal>` | Run the full prototype chain (research → plan → reuse → handoff → loop → audit). |
-| `/workflow-quicktype <goal>` | Run the quicker prototype chain without research. |
-| `/workflow-task <goal>` | Run the task chain (plan → reuse → handoff → build↔review). |
-| `/workflow-loop <goal>` | Run direct builder/reviewer rounds for an already-agreed plan. |
+| `/workflow-prototype <goal>` | Run the full prototype scripted workflow (research → plan → reuse → handoff → auto loop → audit). |
+| `/workflow-quicktype <goal>` | Run the quicker prototype scripted workflow without research. |
+| `/workflow-task <goal>` | Run the task scripted workflow (plan → reuse → handoff → auto loop). |
+| `/workflow-loop <goal>` | Run a direct auto build↔review loop for an already-agreed plan. |
 
 ## Limits and safety
 
-- Chains launch asynchronously; the live result card, snapshots, and notifications come from pi-subagents' slash UX.
+- Workflows launch asynchronously (`async: true`); the live result card, snapshots, and notifications come from pi-subagents' slash UX.
 - Each command needs a non-empty goal; an empty invocation shows usage instead of launching.
-- The previous durable engine (state machine, `workflow.json` run state, `write_workflow_artifact` / `end_workflow` tools, and marker-validated phase artifacts) is gone. The four modes are chains; phase markers and parent-owned artifact writes are not part of this design.
-- Build↔review rounds are driven by the `builder → commentator → checkpoint` segment: a blocking review rejects the checkpoint, and you re-run `/workflow-<mode>` (or resume/append) for another round. There is no automatic iteration cap.
+- The previous durable engine (state machine, `workflow.json` run state, `write_workflow_artifact` / `end_workflow` tools, and marker-validated phase artifacts) is gone. The four modes are scripted auto-loop workflows: the build↔review round is capped at 3, and there are no human gates.
+- The old `workflow.json` resume note stays as the migration note: active runs from the old engine are not resumable.
 
 ## Migration
 

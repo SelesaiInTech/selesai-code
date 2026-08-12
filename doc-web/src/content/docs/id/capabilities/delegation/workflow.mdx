@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-Extension `workflow` menyediakan empat bentuk mode workflow sebagai **saved chain pi-subagents**. Empat perintah dibundel: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, dan `/workflow-loop`. Setiap perintah meluncurkan chain-nya melalui pi-subagents — fase adalah langkah chain, gate manusia adalah langkah `checkpoint`, acceptance terverifikasi adalah gate `acceptance` chain, state tahan lama berada di mission yang dibuat otomatis, dan resumability berasal dari retained children pi-subagents.
+Extension `workflow` menyediakan empat bentuk mode workflow sebagai **workflow auto-loop scripted pi-subagents**. Empat perintah dibundel: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, dan `/workflow-loop`. Setiap perintah meluncurkan `workflowScript` melalui pi-subagents — fase mode berjalan sebagai langkah `runs.run`, dan putaran build↔review berulang otomatis hingga commentator melaporkan bersih. `workflowScript` tidak memiliki checkpoint, jadi tidak ada gate manusia. State tahan lama berada di mission yang dibuat otomatis per peluncuran.
 
 <ExtensionStatus
   distribution="bundled"
@@ -19,14 +19,14 @@ Extension `workflow` menyediakan empat bentuk mode workflow sebagai **saved chai
 ## Penyiapan dan prasyarat
 
 - Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
-- Chain diluncurkan melalui extension `pi-subagents`, yang juga dibundel dan harus dimuat.
+- Workflow scripted diluncurkan melalui extension `pi-subagents`, yang juga dibundel dan harus dimuat.
 - Memerlukan sesi TUI interaktif.
-- Roster agent Selesai (`architect`, `builder`, `commentator`, `explorer`, `recapper`, `researcher`) menyediakan langkah-langkah chain.
+- Roster agent Selesai (`architect`, `builder`, `commentator`, `explorer`, `recapper`, `researcher`) menyediakan fase-fase workflow.
 
 ## Yang disiapkan
 
 - Mendaftarkan satu slash command per mode: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, `/workflow-loop`.
-- Setiap command meluncurkan chain pi-subagents (`launchSlashSubagent`) dengan goal sebagai `{task}` chain.
+- Setiap command meluncurkan workflow scripted pi-subagents (`launchSlashSubagent`) dengan goal disuntikkan ke `workflowScript` mode tersebut.
 
 ## Yang dapat dikonfigurasi
 
@@ -43,35 +43,35 @@ Extension `workflow` menyediakan empat bentuk mode workflow sebagai **saved chai
   <span class="copy-status" role="status" aria-live="polite"></span>
 </div>
 
-### Chain mode
+### Skrip mode
 
-| Mode | Langkah chain |
+| Mode | Fase scripted |
 | --- | --- |
-| `task` | architect (plan) → checkpoint → explorer (reuse) → recapper (handoff) → checkpoint → builder (implementasi, acceptance terverifikasi) → commentator (review) → checkpoint |
-| `prototype` | researcher (research) → architect (plan) → checkpoint → explorer (reuse) → recapper (handoff) → checkpoint → builder (implementasi, acceptance terverifikasi) → commentator (review) → checkpoint → commentator (audit diff yang belum di-commit) |
+| `task` | architect (plan) → explorer (reuse) → recapper (handoff) → auto loop build↔review (builder ↔ commentator, hingga bersih) |
+| `prototype` | researcher (research) → architect (plan) → explorer (reuse) → recapper (handoff) → auto loop build↔review (builder ↔ commentator, hingga bersih) → commentator (audit diff yang belum di-commit) |
 | `quicktype` | sama dengan `prototype` tanpa langkah researcher |
-| `loop` | builder (implementasi, acceptance terverifikasi) → commentator (review) → checkpoint — putaran build↔review langsung untuk rencana yang sudah disepakati |
+| `loop` | auto loop build↔review (builder ↔ commentator, hingga bersih) — putaran langsung untuk rencana yang sudah disepakati |
 
-- Gate manusia adalah langkah `checkpoint`: setujui dengan `subagent({ action: "approve-checkpoint", id })`, tolak dengan `reject-checkpoint`. Checkpoint yang ditolak menghentikan chain.
-- Langkah builder membawa gate `acceptance` chain (level `checked` dengan bukti `commands-run` dan `changed-files`).
+- Fase setiap mode berjalan sebagai langkah `runs.run` di dalam `workflowScript`. Tidak ada checkpoint: skrip bersifat one-shot-and-sleep, dan review independen commentator adalah gate dari loop.
+- Putaran build↔review berulang otomatis hingga output reviewer cocok dengan marker `WORKFLOW_REVIEW_STATUS: clean`; kunci `runs.run` unik per putaran (`build-1`, `review-1`, `build-2`, …).
 - State proses tahan lama berada di **mission** yang dibuat otomatis per peluncuran (state, artifact, keputusan, receipt); periksa dengan `mission.list` / `mission.show`.
-- Resumability adalah retained children pi-subagents: `children.list` plus `runs.run({ resume })` untuk melanjutkan run.
+- Workflow diluncurkan secara asinkron; pulihkan atau lanjutkan melalui `mission.list` dan `status` run async.
 
 ## Perintah, tool, dan shortcut
 
 | Perintah | Deskripsi |
 | --- | --- |
-| `/workflow-prototype <goal>` | Jalankan chain prototype penuh (research → plan → reuse → handoff → loop → audit). |
-| `/workflow-quicktype <goal>` | Jalankan chain prototype lebih cepat tanpa research. |
-| `/workflow-task <goal>` | Jalankan chain task (plan → reuse → handoff → build↔review). |
-| `/workflow-loop <goal>` | Jalankan putaran builder/reviewer langsung untuk rencana yang sudah disepakati. |
+| `/workflow-prototype <goal>` | Jalankan workflow scripted prototype penuh (research → plan → reuse → handoff → auto loop → audit). |
+| `/workflow-quicktype <goal>` | Jalankan workflow scripted prototype lebih cepat tanpa research. |
+| `/workflow-task <goal>` | Jalankan workflow scripted task (plan → reuse → handoff → auto loop). |
+| `/workflow-loop <goal>` | Jalankan auto loop build↔review langsung untuk rencana yang sudah disepakati. |
 
 ## Batasan dan keamanan
 
-- Chain diluncurkan secara asinkron; kartu hasil langsung, snapshot, dan notifikasi berasal dari UX slash pi-subagents.
+- Workflow diluncurkan secara asinkron (`async: true`); kartu hasil langsung, snapshot, dan notifikasi berasal dari UX slash pi-subagents.
 - Setiap command membutuhkan goal yang tidak kosong; pemanggilan kosong menampilkan usage alih-alih meluncurkan.
-- Engine tahan lama sebelumnya (state machine, run state `workflow.json`, tool `write_workflow_artifact` / `end_workflow`, dan artifact fase yang divalidasi marker) sudah dihapus. Empat mode adalah chain; marker fase dan penulisan artifact milik parent bukan bagian dari desain ini.
-- Putaran build↔review didorong oleh segmen `builder → commentator → checkpoint`: review blocking menolak checkpoint, dan Anda menjalankan ulang `/workflow-<mode>` (atau resume/append) untuk putaran berikutnya. Tidak ada cap iterasi otomatis.
+- Engine tahan lama sebelumnya (state machine, run state `workflow.json`, tool `write_workflow_artifact` / `end_workflow`, dan artifact fase yang divalidasi marker) sudah dihapus. Empat mode adalah workflow auto-loop scripted: putaran build↔review dibatasi maksimal 3, dan tidak ada gate manusia.
+- Catatan resume `workflow.json` lama tetap sebagai catatan migrasi: run aktif dari engine lama tidak dapat dilanjutkan.
 
 ## Migrasi
 
