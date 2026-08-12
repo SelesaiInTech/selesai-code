@@ -16,7 +16,7 @@ import { complete, type Context } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@selesai/code";
 import { BorderedLoader, convertToLlm, serializeConversation } from "@selesai/code";
 
-const SYSTEM_PROMPT = `Write a handoff document for a fresh agent to continue the current conversation. Return only the handoff document text; do not save a file or describe saving one. No question, no fluff, just write the handoff.
+const SYSTEM_PROMPT = `Write a handoff document for a fresh agent to continue the current conversation. Return only the handoff document text; do not save a file or describe saving one. No question, no fluff, just write the handoff. Do not reproduce, quote, or reformat the conversation history or its tool calls — distill it into what matters; never emit transcript-style markup or raw tool-call text.
 
 Include a "suggested skills" section in the document, which suggests skills that the agent should invoke.
 
