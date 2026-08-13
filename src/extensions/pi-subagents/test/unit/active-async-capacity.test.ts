@@ -1,0 +1,317 @@
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { describe, it } from "node:test";
+import {
+	acquireActiveAsyncCapacity,
+	ActiveAsyncCapacityError,
+	getActiveAsyncCapacitySnapshot,
+	transferActiveAsyncCapacity,
+} from "../../src/runs/background/active-async-capacity.ts";
+
+function tempRoot(): string {
+	return fs.mkdtempSync(path.join(os.tmpdir(), "active-async-capacity-"));
+}
+
+function writeJson(filePath: string, value: unknown): void {
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	fs.writeFileSync(filePath, JSON.stringify(value));
+}
+
+function observedProof(runId: string, runnerProcessInstanceId: string) {
+	return {
+		version: 1,
+		state: "observed",
+		runId,
+		runnerProcessInstanceId,
+		observedAt: 300,
+		instances: [{
+			kind: "runner",
+			processInstanceId: runnerProcessInstanceId,
+			closeObservedAt: 300,
+			exitCode: 0,
+			signal: null,
+		}],
+	};
+}
+
+describe("active async capacity", () => {
+	it("admits exactly to the limit and rolls back only its own unstarted slot", () => {
+		const rootDir = tempRoot();
+		try {
+			const first = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "run-a", kind: "runner", asyncDir: path.join(rootDir, "run-a") }, { rootDir, token: () => "token-a" });
+			assert.ok(first);
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
+			assert.throws(
+				() => acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "run-b", kind: "runner", asyncDir: path.join(rootDir, "run-b") }, { rootDir, token: () => "token-b" }),
+				(error: unknown) => error instanceof ActiveAsyncCapacityError && error.message === "Active async run capacity exhausted: 1/1 used.",
+			);
+			assert.equal(first.rollback(), true);
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 0, limit: 1 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("counts corrupt slot metadata as occupied", () => {
+		const rootDir = tempRoot();
+		try {
+			// Create a valid occupied slot, then corrupt only its owner metadata.
+			const handle = acquireActiveAsyncCapacity({ sessionId: "session-corrupt", limit: 1, runId: "run-a", kind: "runner", asyncDir: path.join(rootDir, "run-a") }, { rootDir });
+			assert.ok(handle);
+			fs.writeFileSync(path.join(rootDir, handle.owner.ownerSessionKey, "slot-0", "owner.json"), "not json");
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-corrupt", 1, { rootDir }), { used: 1, limit: 1 });
+			assert.throws(() => acquireActiveAsyncCapacity({ sessionId: "session-corrupt", limit: 1, runId: "run-b", kind: "runner", asyncDir: path.join(rootDir, "run-b") }, { rootDir }), ActiveAsyncCapacityError);
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("uses the injected clock for reservation and start timestamps", () => {
+		const rootDir = tempRoot();
+		let now = 100;
+		try {
+			const runner = acquireActiveAsyncCapacity({ sessionId: "session-clock", limit: 2, runId: "runner", kind: "runner", asyncDir: path.join(rootDir, "runner") }, { rootDir, now: () => now });
+			assert.ok(runner);
+			assert.equal(runner.owner.reservedAt, 100);
+			now = 200;
+			runner.markStarted("runner-process");
+			assert.equal(runner.owner.runnerStartedAt, 200);
+
+			now = 300;
+			const workflow = acquireActiveAsyncCapacity({ sessionId: "session-clock", limit: 2, runId: "workflow", kind: "workflow", asyncDir: path.join(rootDir, "workflow") }, { rootDir, now: () => now });
+			assert.ok(workflow);
+			workflow.markWorkflowStarted();
+			assert.equal(workflow.owner.runnerStartedAt, 300);
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not roll back when runner start was recorded only in memory", () => {
+		const rootDir = tempRoot();
+		try {
+			const handle = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "run-a", kind: "runner", asyncDir: path.join(rootDir, "runs", "run-a") }, { rootDir });
+			assert.ok(handle);
+			handle.owner.runnerProcessInstanceId = "runner-a";
+			handle.owner.runnerStartedAt = Date.now();
+
+			assert.equal(handle.rollback(), false);
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("retains active and unknown runner proof, then releases matching observed proof", () => {
+		const rootDir = tempRoot();
+		const asyncDir = path.join(rootDir, "runs", "run-a");
+		try {
+			const handle = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 2, runId: "run-a", kind: "runner", asyncDir }, { rootDir });
+			assert.ok(handle);
+			handle.markStarted("runner-a");
+			writeJson(path.join(asyncDir, "status.json"), { runId: "run-a", sessionId: "session-a", mode: "single", state: "running", startedAt: 100, processTerminal: { version: 1, state: "pending", runId: "run-a", runnerProcessInstanceId: "runner-a" } });
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 2, { rootDir }), { used: 1, limit: 2 });
+			writeJson(path.join(asyncDir, "status.json"), { runId: "run-a", sessionId: "session-a", mode: "single", state: "complete", startedAt: 100, processTerminal: { version: 1, state: "unknown", runId: "run-a", runnerProcessInstanceId: "runner-a", reason: "process-tree-unverified" } });
+			writeJson(path.join(asyncDir, "process-terminal.json"), { version: 1, state: "unknown", runId: "run-a", runnerProcessInstanceId: "runner-a", reason: "process-tree-unverified" });
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 2, { rootDir }), { used: 1, limit: 2 });
+			writeJson(path.join(asyncDir, "process-terminal.json"), observedProof("run-a", "runner-a"));
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 2, { rootDir }), { used: 0, limit: 2 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not delete a slot recreated while a terminal owner is released", () => {
+		const rootDir = tempRoot();
+		const asyncDir = path.join(rootDir, "runs", "run-a");
+		try {
+			const handle = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "run-a", kind: "runner", asyncDir }, { rootDir, token: () => "token-a" });
+			assert.ok(handle);
+			handle.markStarted("runner-a");
+			writeJson(path.join(asyncDir, "status.json"), { runId: "run-a", sessionId: "session-a", mode: "single", state: "complete", startedAt: 100 });
+			writeJson(path.join(asyncDir, "process-terminal.json"), observedProof("run-a", "runner-a"));
+
+			let replacement: ReturnType<typeof acquireActiveAsyncCapacity>;
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, {
+				rootDir,
+				afterSlotRename: () => {
+					replacement = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "run-b", kind: "runner", asyncDir: path.join(rootDir, "runs", "run-b") }, { rootDir, token: () => "token-b" });
+				},
+			}), { used: 1, limit: 1 });
+			assert.equal(replacement!.owner.runId, "run-b");
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not delete a slot recreated during pre-start rollback", () => {
+		const rootDir = tempRoot();
+		try {
+			const first = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "run-a", kind: "runner", asyncDir: path.join(rootDir, "runs", "run-a") }, {
+				rootDir,
+				token: () => "token-a",
+				afterSlotRename: () => {
+					const replacement = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "run-b", kind: "runner", asyncDir: path.join(rootDir, "runs", "run-b") }, { rootDir, token: () => "token-b" });
+					assert.ok(replacement);
+				},
+			});
+			assert.ok(first);
+			assert.equal(first.rollback(), true);
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
+			assert.equal(first.rollback(), false);
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("releases a transferred failure that never started", () => {
+		const rootDir = tempRoot();
+		const sourceDir = path.join(rootDir, "runs", "source");
+		const failedDir = path.join(rootDir, "runs", "failed-revival");
+		try {
+			const source = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "source", kind: "runner", asyncDir: sourceDir }, { rootDir });
+			assert.ok(source);
+			source.markStarted("source-runner");
+			writeJson(path.join(sourceDir, "status.json"), { runId: "source", sessionId: "session-a", mode: "single", state: "paused", startedAt: 100 });
+			const transferred = transferActiveAsyncCapacity({ sessionId: "session-a", limit: 1, sourceRunId: "source", runId: "failed-revival", asyncDir: failedDir }, { rootDir });
+			assert.ok(transferred);
+			transferred.markStarted("failed-runner");
+			writeJson(path.join(failedDir, "status.json"), { runId: "failed-revival", sessionId: "session-a", mode: "single", state: "failed", startedAt: 200, error: "Failed before startup proceed", processTerminal: { version: 1, state: "not-started", runId: "failed-revival", runnerProcessInstanceId: "failed-runner" } });
+
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 0, limit: 1 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not restore old source proof after a transferred runner starts", () => {
+		const rootDir = tempRoot();
+		const sourceDir = path.join(rootDir, "runs", "source");
+		const revivedDir = path.join(rootDir, "runs", "revived");
+		try {
+			const source = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "source", kind: "runner", asyncDir: sourceDir }, { rootDir });
+			assert.ok(source);
+			source.markStarted("source-runner");
+			writeJson(path.join(sourceDir, "status.json"), { runId: "source", sessionId: "session-a", mode: "single", state: "complete", startedAt: 100 });
+			writeJson(path.join(sourceDir, "process-terminal.json"), observedProof("source", "source-runner"));
+			const transferred = transferActiveAsyncCapacity({ sessionId: "session-a", limit: 1, sourceRunId: "source", runId: "revived", asyncDir: revivedDir }, { rootDir });
+			assert.ok(transferred);
+			writeJson(path.join(revivedDir, "status.json"), { runId: "revived", sessionId: "session-a", mode: "single", state: "failed", startedAt: 200, processTerminal: { version: 1, state: "not-started", runId: "revived", runnerProcessInstanceId: "revived-runner" } });
+			transferred.markStarted("revived-runner");
+			assert.equal(transferred.rollback(), false);
+
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
+			writeJson(path.join(revivedDir, "process-terminal.json"), observedProof("revived", "revived-runner"));
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 0, limit: 1 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("transfers a paused reservation without changing usage", () => {
+		const rootDir = tempRoot();
+		const sourceDir = path.join(rootDir, "runs", "source");
+		try {
+			const source = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "source", kind: "runner", asyncDir: sourceDir }, { rootDir });
+			assert.ok(source);
+			source.markStarted("runner-source");
+			writeJson(path.join(sourceDir, "status.json"), { runId: "source", sessionId: "session-a", mode: "single", state: "paused", startedAt: 100 });
+			const next = transferActiveAsyncCapacity({ sessionId: "session-a", limit: 1, sourceRunId: "source", runId: "next", asyncDir: path.join(rootDir, "runs", "next") }, { rootDir });
+			assert.ok(next);
+			assert.equal(next.owner.sourceRunId, "source");
+			assert.equal(next.owner.generation, 1);
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("transfers an existing reservation after the cap is disabled", () => {
+		const rootDir = tempRoot();
+		const sourceDir = path.join(rootDir, "runs", "source");
+		try {
+			const source = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "source", kind: "runner", asyncDir: sourceDir }, { rootDir });
+			assert.ok(source);
+			source.markStarted("runner-source");
+			writeJson(path.join(sourceDir, "status.json"), { runId: "source", sessionId: "session-a", mode: "single", state: "paused", startedAt: 100 });
+			const next = transferActiveAsyncCapacity({ sessionId: "session-a", limit: undefined, sourceRunId: "source", runId: "next", asyncDir: path.join(rootDir, "runs", "next") }, { rootDir });
+			assert.ok(next);
+			assert.equal(next.owner.runId, "next");
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", undefined, { rootDir }), { used: 1, limit: 0 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("releases terminal workflows only after the controller is gone and async children have observed proof", () => {
+		const rootDir = tempRoot();
+		const asyncRoot = path.join(rootDir, "runs");
+		const workflowDir = path.join(asyncRoot, "workflow");
+		const childDir = path.join(asyncRoot, "child");
+		try {
+			const workflow = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "workflow", kind: "workflow", asyncDir: workflowDir }, { rootDir });
+			assert.ok(workflow);
+			workflow.markWorkflowStarted();
+			writeJson(path.join(workflowDir, "status.json"), { runId: "workflow", sessionId: "session-a", mode: "workflow", state: "complete", startedAt: 100, steps: [{ agent: "worker", workflowKey: "foreground", async: false, status: "completed" }] });
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir, liveWorkflowRunIds: new Set(["workflow"]) }), { used: 1, limit: 1 });
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 0, limit: 1 });
+
+			const second = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "workflow-2", kind: "workflow", asyncDir: workflowDir }, { rootDir });
+			assert.ok(second);
+			second.markWorkflowStarted();
+			writeJson(path.join(workflowDir, "status.json"), { runId: "workflow-2", sessionId: "session-a", mode: "workflow", state: "complete", startedAt: 100, steps: [{ agent: "worker", workflowKey: "async", runId: "child", async: true, status: "completed" }] });
+			writeJson(path.join(childDir, "status.json"), { runId: "child", sessionId: "session-a", mode: "single", state: "complete", startedAt: 100, processTerminal: { version: 1, state: "unknown", runId: "child", runnerProcessInstanceId: "runner-child", reason: "process-tree-unverified" } });
+			writeJson(path.join(childDir, "process-terminal.json"), { version: 1, state: "unknown", runId: "child", runnerProcessInstanceId: "runner-child", reason: "process-tree-unverified" });
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
+			writeJson(path.join(childDir, "process-terminal.json"), observedProof("child", "runner-child"));
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 0, limit: 1 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("retains terminal workflows while a resumed async child lacks observed proof", () => {
+		const rootDir = tempRoot();
+		const asyncRoot = path.join(rootDir, "runs");
+		const workflowDir = path.join(asyncRoot, "workflow");
+		const childDir = path.join(asyncRoot, "revived-child");
+		try {
+			const workflow = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "workflow", kind: "workflow", asyncDir: workflowDir }, { rootDir });
+			assert.ok(workflow);
+			workflow.markWorkflowStarted();
+			writeJson(path.join(workflowDir, "status.json"), { runId: "workflow", sessionId: "session-a", mode: "workflow", state: "failed", startedAt: 100, steps: [{ agent: "worker", workflowKey: "resume", runId: "revived-child", async: true, status: "failed" }] });
+			writeJson(path.join(childDir, "status.json"), { runId: "revived-child", sessionId: "session-a", mode: "single", state: "failed", startedAt: 100, processTerminal: { version: 1, state: "not-started", runId: "revived-child", runnerProcessInstanceId: "runner-child" } });
+
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
+			writeJson(path.join(childDir, "process-terminal.json"), observedProof("revived-child", "runner-child"));
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 0, limit: 1 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("releases terminal workflows when a child is marked failed before launch identity exists", () => {
+		const rootDir = tempRoot();
+		const workflowDir = path.join(rootDir, "runs", "workflow");
+		try {
+			const workflow = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "workflow", kind: "workflow", asyncDir: workflowDir }, { rootDir });
+			assert.ok(workflow);
+			workflow.markWorkflowStarted();
+			writeJson(path.join(workflowDir, "status.json"), {
+				runId: "workflow",
+				sessionId: "session-a",
+				mode: "workflow",
+				state: "failed",
+				startedAt: 100,
+				steps: [{ agent: "worker", workflowKey: "prep-failure", status: "failed", async: false, error: "gate cannot be combined with acceptance" }],
+			});
+
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 0, limit: 1 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+});

@@ -12,6 +12,8 @@ import {
 } from "../../src/runs/background/chain-append.ts";
 import type { AsyncStatus } from "../../src/shared/types.ts";
 import type { RunnerStep } from "../../src/runs/shared/parallel-utils.ts";
+import { claimRunFanoutBatchWithCommit, createRunFanoutBudget, getRunFanoutBudgetSnapshot } from "../../src/runs/shared/run-fanout-budget.ts";
+import { PROMPT_REDACTED } from "../../src/shared/utils.ts";
 import { createTempDir, removeTempDir } from "../support/helpers.ts";
 
 function writeStatus(asyncDir: string, status: Partial<AsyncStatus> & Pick<AsyncStatus, "runId" | "mode" | "state" | "startedAt">): void {
@@ -67,6 +69,75 @@ describe("chain append requests", () => {
 			assert.equal(consumed[0]!.id, result.request.id);
 			assert.equal(countPendingChainAppendRequests(asyncDir), 0);
 		} finally {
+			removeTempDir(root);
+		}
+	});
+
+	it("persists the request inside the admission callback", () => {
+		const root = createTempDir("pi-chain-append-admission-");
+		try {
+			const asyncDir = path.join(root, "run-admission");
+			writeStatus(asyncDir, {
+				runId: "run-admission",
+				mode: "chain",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "scout", status: "running" }],
+			});
+			let admitted = false;
+			const result = enqueueChainAppendRequest({
+				asyncDir,
+				runId: "run-admission",
+				steps: [runnerStep("worker")],
+				now: 200,
+				admit: (persist) => {
+					assert.equal(countPendingChainAppendRequests(asyncDir), 0);
+					persist();
+					admitted = true;
+				},
+			});
+
+			assert.equal(admitted, true);
+			assert.equal(result.pendingCount, 1);
+		} finally {
+			removeTempDir(root);
+		}
+	});
+
+	it("reports accepted appends and keeps admission claims when bookkeeping fails after persistence", () => {
+		const root = createTempDir("pi-chain-append-bookkeeping-");
+		const budget = createRunFanoutBudget("append-bookkeeping", 1);
+		try {
+			const asyncDir = path.join(root, "run-bookkeeping");
+			writeStatus(asyncDir, {
+				runId: "run-bookkeeping",
+				mode: "chain",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "scout", status: "running" }],
+			});
+			const statusPath = path.join(asyncDir, "status.json");
+			fs.mkdirSync(path.join(asyncDir, "events.jsonl"));
+
+			const result = enqueueChainAppendRequest({
+				asyncDir,
+				runId: "run-bookkeeping",
+				steps: [runnerStep("worker")],
+				now: 200,
+				admit: (persist) => claimRunFanoutBatchWithCommit(budget, ["chain[1]"], () => {
+					persist();
+					fs.rmSync(statusPath, { force: true });
+					fs.mkdirSync(statusPath);
+				}),
+			});
+
+			assert.equal(result.pendingCount, 1);
+			assert.match(result.bookkeepingError ?? "", /status update failed/);
+			assert.match(result.bookkeepingError ?? "", /event append failed/);
+			assert.equal(readPendingChainAppendRequests(asyncDir).length, 1);
+			assert.deepEqual(getRunFanoutBudgetSnapshot(budget), { used: 1, limit: 1, remaining: 0 });
+		} finally {
+			fs.rmSync(budget.directory, { recursive: true, force: true });
 			removeTempDir(root);
 		}
 	});
@@ -198,11 +269,11 @@ describe("chain append requests", () => {
 			"reviewer:pending",
 			"auditor:pending",
 		]);
-		// Appended steps must carry their own bounded task description for fleet display.
+		// Appended steps must not carry raw task text into durable status.
 		assert.deepEqual(status.steps?.slice(1).map((step) => step.description), [
-			"Use {previous}",
-			"Use {previous}",
-			"Use {previous}",
+			PROMPT_REDACTED,
+			PROMPT_REDACTED,
+			PROMPT_REDACTED,
 		]);
 		assert.deepEqual(status.parallelGroups, [{ start: 2, count: 2, stepIndex: 2 }]);
 		assert.equal(status.workflowGraph?.nodes[1]?.id, "step-1");

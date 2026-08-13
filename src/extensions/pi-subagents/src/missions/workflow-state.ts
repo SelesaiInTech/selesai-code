@@ -95,8 +95,12 @@ function stateLockIsStale(lockPath: string, now = Date.now()): boolean {
 	const owner = readStateLockOwner(lockPath);
 	if (owner) {
 		if (!isProcessAlive(owner.pid)) return true;
-		const currentProcessKey = processStartKey(owner.pid);
-		return Boolean(owner.processKey && currentProcessKey && owner.processKey !== currentProcessKey);
+		if (owner.processKey) {
+			const currentProcessKey = owner.pid === process.pid ? CURRENT_PROCESS_KEY : processStartKey(owner.pid);
+			if (currentProcessKey) return owner.processKey !== currentProcessKey;
+			if (owner.pid === process.pid) return true;
+		}
+		return false;
 	}
 	try {
 		return now - fs.statSync(lockPath).mtimeMs > STATE_LOCK_STALE_MS;

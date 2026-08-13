@@ -131,11 +131,11 @@ function hostCall(method, args, observation) {
     : promise;
 }
 
-function runHostCall(key, params, collectFailure) {
+function runHostCall(key, params, collectFailure, batch) {
   const callId = ++nextCallId;
   const promise = new Promise((resolve, reject) => {
     pending.set(callId, { resolve, reject });
-    parentPort.postMessage({ type: "call", callId, method: "run", args: { key, params, ...(collectFailure ? { collectFailure: true } : {}) } });
+    parentPort.postMessage({ type: "call", callId, method: "run", args: { key, params, ...(collectFailure ? { collectFailure: true } : {}), ...(batch ? { batch } : {}) } });
   });
   return { key, callId, promise };
 }
@@ -188,7 +188,8 @@ const runs = Object.freeze({
       calls.push({ key, params });
     }
     for (const { key, params } of calls) runFingerprints.set(key, stableRunJson(params));
-    const launched = calls.map(({ key, params }) => runHostCall(key, params, true));
+    const batch = { id: "batch-" + (++nextCallId), calls };
+    const launched = calls.map(({ key, params }) => runHostCall(key, params, true, batch));
     return trackRunObservation(launched.map(({ key, callId }) => ({ key, callId })), Promise.all(launched.map(({ promise }) => promise)));
   },
   status(keyOrRunId) { return hostCall("status", { keyOrRunId }); },
@@ -363,7 +364,8 @@ export interface RunWorkflowScriptOptions {
 	script: string;
 	timeoutMs?: number;
 	signal?: AbortSignal;
-	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
+	admit?: (calls: Array<{ key: string; params: Record<string, unknown> }>) => void | Promise<void>;
+	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal, admission: { admitted: boolean }) => Promise<WorkflowScriptChildResult>;
 	status: (keyOrRunId: string, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
 	state?: {
 		get: (key: string) => unknown | Promise<unknown>;
@@ -490,6 +492,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const children = new Map<string, WorkflowScriptChildResult>();
 	const childOrder: string[] = [];
 	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult>; observed: boolean }>();
+	const batchAdmissions = new Map<string, Promise<void>>();
 	const observedRunCalls = new Set<number>();
 	const childController = new AbortController();
 	let settled = false;
@@ -680,7 +683,21 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			childOrder.push(key);
 			trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(params) });
 			traceChanged();
-			const promise = Promise.resolve().then(() => options.launch(key, { ...params, async: params.async ?? false }, childController.signal)).then((result) => {
+			const batch = isRecord(message.args.batch) && typeof message.args.batch.id === "string" && Array.isArray(message.args.batch.calls)
+				? { id: message.args.batch.id, calls: message.args.batch.calls.filter((call): call is { key: string; params: Record<string, unknown> } => isRecord(call) && typeof call.key === "string" && isRecord(call.params)) }
+				: undefined;
+			let admission = batch ? batchAdmissions.get(batch.id) : undefined;
+			if (!admission) {
+				const seenKeys = new Set<string>();
+				const calls = (batch?.calls ?? [{ key, params }]).filter((call) => {
+					if (seenKeys.has(call.key) || launches.has(call.key) || call.params.resume !== undefined) return false;
+					seenKeys.add(call.key);
+					return true;
+				});
+				admission = Promise.resolve().then(() => options.admit?.(calls));
+				if (batch) batchAdmissions.set(batch.id, admission);
+			}
+			const promise = admission.then(() => options.launch(key, { ...params, async: params.async ?? false }, childController.signal, { admitted: true })).then((result) => {
 				const normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
 				children.set(key, normalized);
 				trace.push({ operation: "run", key, state: normalized.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });

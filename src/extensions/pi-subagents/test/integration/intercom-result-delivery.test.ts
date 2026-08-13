@@ -5,8 +5,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { ASYNC_DIR, INTERCOM_DETACH_REQUEST_EVENT, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
+import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey, getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
-import { sessionLeaseDir } from "../../src/runs/shared/session-lease.ts";
+import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
+import { acquireSessionLease, sessionLeaseDir } from "../../src/runs/shared/session-lease.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
 	createMockPi,
@@ -82,6 +84,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 	let mockPi: MockPi;
 	let originalHome: string | undefined;
 	let originalUserProfile: string | undefined;
+	let budgetDirectories: string[] = [];
 
 	before(() => {
 		originalHome = process.env.HOME;
@@ -112,6 +115,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 	afterEach(() => {
 		removeTempDir(tempDir);
+		for (const directory of budgetDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
 	});
 
 	async function readMockCallArgs(index: number): Promise<string[]> {
@@ -162,7 +166,39 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	}
 
-	function makeExecutor(options: { bridgeMode?: "always" | "off"; resultDelivery?: boolean; agents?: ReturnType<typeof makeAgent>[]; acknowledgeResults?: boolean; kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean } = {}) {
+	async function waitForStatus(filePath: string, predicate: (status: any) => boolean, timeoutMs = 10_000): Promise<any> {
+		const deadline = Date.now() + timeoutMs;
+		let lastStatus: any;
+		while (Date.now() <= deadline) {
+			if (fs.existsSync(filePath)) {
+				lastStatus = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+				if (predicate(lastStatus)) return lastStatus;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		assert.fail(`Timed out waiting for status at ${filePath}; last status: ${JSON.stringify(lastStatus)}`);
+	}
+
+	function writeRecoveryDescriptor(asyncDir: string, runId: string, agent = "worker", overrides: Record<string, unknown> = {}): void {
+		const runFanoutBudget = createRunFanoutBudget(runId, 64);
+		budgetDirectories.push(runFanoutBudget.directory);
+		fs.writeFileSync(path.join(asyncDir, "recovery-descriptor.json"), JSON.stringify({
+			version: 1,
+			runFanoutBudget,
+			sourceRunId: runId,
+			agent,
+			cwd: tempDir,
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
+			inheritSkills: false,
+			outputMode: "inline",
+			maxSubagentDepth: 2,
+			share: false,
+			...overrides,
+		}, null, 2), "utf-8");
+	}
+
+	function makeExecutor(options: { bridgeMode?: "always" | "off"; resultDelivery?: boolean; agents?: ReturnType<typeof makeAgent>[]; acknowledgeResults?: boolean; kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean; maxActiveAsyncRunsPerSession?: number } = {}) {
 		const events = createRecordingEventBus({ acknowledgeResults: options.acknowledgeResults ?? true });
 		const state = {
 			baseCwd: tempDir,
@@ -194,6 +230,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 					mode: options.bridgeMode ?? "always",
 					...(options.resultDelivery === undefined ? {} : { resultDelivery: options.resultDelivery }),
 				},
+				...(options.maxActiveAsyncRunsPerSession === undefined ? {} : { maxActiveAsyncRunsPerSession: options.maxActiveAsyncRunsPerSession }),
 			},
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
@@ -270,6 +307,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				sessionFile,
 				steps: [{ agent: "worker", status: "complete", sessionFile }],
 			}, null, 2), "utf-8");
+			writeRecoveryDescriptor(sourceAsyncDir, sourceRunId);
 			const { executor } = makeExecutor();
 
 			const result = await executor.execute(
@@ -744,7 +782,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.deepEqual(startedEvent?.agents, ["worker", "reviewer"]);
 			assert.deepEqual(startedEvent?.chain, ["worker", "reviewer"]);
 			assert.equal(startedEvent?.chainStepCount, 2);
-			assert.equal(startedEvent?.goal, "Review this root result: {previous}");
+			assert.equal(startedEvent?.goal, "[prompt redacted]");
 			const attachedId = result.details?.asyncId;
 			assert.ok(attachedId, "expected attached chain async id");
 			assert.match(result.details?.asyncDir ?? "", new RegExp(`${attachedId}$`));
@@ -846,6 +884,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 					{ agent: "b", status: "complete", sessionFile: secondSession, model: "anthropic/claude-sonnet-4", thinking: "high" },
 				],
 			}, null, 2), "utf-8");
+			writeRecoveryDescriptor(asyncDir, runId, "b", { model: "anthropic/claude-sonnet-4:high" });
 			const { executor } = makeExecutor({ agents: [makeAgent("a"), makeAgent("b")] });
 
 			const result = await executor.execute(
@@ -887,6 +926,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				sessionFile,
 				steps: [{ agent: "worker", status: "complete", launchContractDigest: "source-launch-contract-digest" }],
 			}, null, 2), "utf-8");
+			writeRecoveryDescriptor(asyncDir, runId, "worker", { launchContractDigest: "source-launch-contract-digest" });
 			const { executor, events } = makeExecutor();
 
 			const result = await executor.execute(
@@ -907,7 +947,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.ok(revivedId, "expected revived async id");
 			assert.equal(result.details?.sourceLaunchContractDigest, "source-launch-contract-digest");
 			const startedEvent = events.emitted.find((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT && (entry.payload as { id?: string }).id === revivedId)?.payload as { goal?: string } | undefined;
-			assert.equal(startedEvent?.goal, "What changed?");
+			assert.equal(startedEvent?.goal, "[prompt redacted]");
 			const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
 			const deadline = Date.now() + 10_000;
 			while (!fs.existsSync(resultPath)) {
@@ -932,21 +972,12 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				runId, sessionId: "session-123", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: tempDir,
 				steps: [{ agent: "removed-worker", status: "paused", sessionFile }],
 			}, null, 2), "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "recovery-descriptor.json"), JSON.stringify({
-				version: 1,
-				sourceRunId: runId,
-				agent: "removed-worker",
-				cwd: tempDir,
+			writeRecoveryDescriptor(asyncDir, runId, "removed-worker", {
 				model: "anthropic/claude-sonnet-4:high",
 				tools: ["read"],
 				systemPrompt: "Original persisted prompt",
-				systemPromptMode: "replace",
-				inheritProjectContext: false,
-				inheritSkills: false,
-				outputMode: "inline",
 				maxSubagentDepth: 1,
-				share: false,
-			}, null, 2), "utf-8");
+			});
 			const { executor } = makeExecutor({ agents: [] });
 
 			const result = await executor.execute(
@@ -992,6 +1023,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			sessionFile,
 			steps: [{ agent: "worker", status: "complete" }],
 		}, null, 2), "utf-8");
+		writeRecoveryDescriptor(sourceAsyncDir, sourceRunId);
 		try {
 			const { executor } = makeExecutor();
 			const first = await executor.execute(
@@ -1032,6 +1064,170 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			await waitForFile(path.join(RESULTS_DIR, `${afterRelease.details.asyncId}.json`));
 		} finally {
 			fs.writeFileSync(releasePath, "release", "utf-8");
+			fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
+		}
+	});
+
+	it("marks a resumed workflow child async when its runner starts and fails before proceed", async () => {
+		const parentSessionId = `session-workflow-resume-start-${Date.now()}`;
+		const sourceRunId = `workflow-resume-start-source-${Date.now()}`;
+		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
+		const sessionFile = path.join(tempDir, "workflow-resume-start-session.jsonl");
+		let workflowRunId: string | undefined;
+		let revivedRunId: string | undefined;
+		try {
+			fs.mkdirSync(sourceAsyncDir, { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
+				runId: sourceRunId,
+				sessionId: parentSessionId,
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				cwd: tempDir,
+				sessionFile,
+				steps: [{ agent: "worker", status: "complete", sessionFile }],
+			}, null, 2), "utf-8");
+			writeRecoveryDescriptor(sourceAsyncDir, sourceRunId);
+			const competingLease = acquireSessionLease({ sessionFile, runId: "workflow-competing-revival", sourceRunId, parentSessionId });
+			const { executor } = makeExecutor({ maxActiveAsyncRunsPerSession: 1 });
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionId = () => parentSessionId;
+			try {
+				const failed = await executor.execute(
+					"workflow-resume-start-failure",
+					{ workflowScript: `return await runs.run("resume-child", { resume: "${sourceRunId}", task: "Continue" });`, async: true },
+					new AbortController().signal,
+					undefined,
+					ctx,
+				);
+				workflowRunId = failed.details?.asyncId;
+				assert.ok(workflowRunId, "expected async workflow id");
+				await waitForFile(path.join(RESULTS_DIR, `${workflowRunId}.json`));
+				const workflowStatusPath = path.join(ASYNC_DIR, workflowRunId, "status.json");
+				const workflowStatus = await waitForStatus(workflowStatusPath, (value) => value?.state === "failed") as { steps?: Array<{ async?: boolean; runId?: string }>; error?: string };
+				revivedRunId = workflowStatus.steps?.[0]?.runId;
+
+				assert.equal(workflowStatus.steps?.[0]?.async, true);
+				assert.ok(revivedRunId, "expected the workflow step to keep revived run identity");
+				assert.match(workflowStatus.error ?? "", /already owned by run 'workflow-competing-revival'/);
+				assert.deepEqual(getActiveAsyncCapacitySnapshot(parentSessionId, 1), { used: 0, limit: 1 });
+			} finally {
+				competingLease.release();
+			}
+		} finally {
+			fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
+			if (workflowRunId) fs.rmSync(path.join(ASYNC_DIR, workflowRunId), { recursive: true, force: true });
+			if (revivedRunId) fs.rmSync(path.join(ASYNC_DIR, revivedRunId), { recursive: true, force: true });
+			fs.rmSync(path.join(ACTIVE_ASYNC_CAPACITY_DIR, activeAsyncCapacitySessionKey(parentSessionId)), { recursive: true, force: true });
+		}
+	});
+
+	it("releases async workflow capacity after child launch preparation fails", async () => {
+		const parentSessionId = `session-workflow-prep-${Date.now()}`;
+		try {
+			const { executor } = makeExecutor({ maxActiveAsyncRunsPerSession: 1 });
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionId = () => parentSessionId;
+			const failed = await executor.execute(
+				"workflow-prep-capacity-release",
+				{
+					workflowScript: `return await runs.run("gated", { agent: "worker", task: "run", gate: "npm test" });`,
+					async: true,
+					acceptance: false,
+				},
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+			const workflowRunId = failed.details?.asyncId;
+			assert.ok(workflowRunId, "expected async workflow id");
+			await waitForFile(path.join(RESULTS_DIR, `${workflowRunId}.json`));
+			const statusPath = path.join(ASYNC_DIR, workflowRunId, "status.json");
+			const status = await waitForStatus(statusPath, (value) => value?.state === "failed") as { state?: string; steps?: Array<{ async?: boolean }>; error?: string };
+
+			assert.equal(status.state, "failed");
+			assert.equal(status.steps?.[0]?.async, false);
+			assert.match(status.error ?? "", /gate cannot be combined with acceptance/);
+			assert.deepEqual(getActiveAsyncCapacitySnapshot(parentSessionId, 1), { used: 0, limit: 1 });
+
+			const next = await executor.execute(
+				"workflow-prep-capacity-next",
+				{ workflowScript: `return "ok";`, async: true },
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+			assert.equal(next.isError, undefined);
+			const nextWorkflowRunId = next.details?.asyncId;
+			assert.ok(nextWorkflowRunId, "expected the next async workflow to acquire capacity");
+			await waitForFile(path.join(RESULTS_DIR, `${nextWorkflowRunId}.json`));
+		} finally {
+			fs.rmSync(path.join(ACTIVE_ASYNC_CAPACITY_DIR, activeAsyncCapacitySessionKey(parentSessionId)), { recursive: true, force: true });
+		}
+	});
+
+	it("restores active capacity when revival fails before startup proceed", async () => {
+		const parentSessionId = `session-resume-handshake-${Date.now()}`;
+		const sourceRunId = `resume-handshake-source-${Date.now()}`;
+		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
+		const sessionFile = path.join(tempDir, "resume-handshake-child.jsonl");
+		fs.mkdirSync(sourceAsyncDir, { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
+			runId: sourceRunId,
+			sessionId: parentSessionId,
+			mode: "single",
+			state: "complete",
+			startedAt: 100,
+			lastUpdate: 200,
+			cwd: tempDir,
+			sessionFile,
+			steps: [{ agent: "worker", status: "complete", sessionFile }],
+		}, null, 2), "utf-8");
+		writeRecoveryDescriptor(sourceAsyncDir, sourceRunId);
+		const sourceCapacity = acquireActiveAsyncCapacity({ sessionId: parentSessionId, limit: 1, runId: sourceRunId, kind: "runner", asyncDir: sourceAsyncDir });
+		assert.ok(sourceCapacity);
+		sourceCapacity.markStarted("source-runner");
+		fs.writeFileSync(path.join(sourceAsyncDir, "process-terminal.json"), JSON.stringify({
+			version: 1,
+			state: "observed",
+			runId: sourceRunId,
+			runnerProcessInstanceId: "source-runner",
+			observedAt: Date.now(),
+			instances: [{ kind: "runner", processInstanceId: "source-runner", closeObservedAt: Date.now(), exitCode: 0, signal: null }],
+		}), "utf-8");
+		const competingLease = acquireSessionLease({ sessionFile, runId: "competing-revival", sourceRunId, parentSessionId });
+		try {
+			const { executor } = makeExecutor({ maxActiveAsyncRunsPerSession: 1 });
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionId = () => parentSessionId;
+			const failed = await executor.execute(
+				"resume-handshake-failure",
+				{ action: "resume", id: sourceRunId, message: "Retry safely" },
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+			assert.equal(failed.isError, true);
+			assert.match(failed.content[0]?.text ?? "", /already owned by run 'competing-revival'/);
+			const revivedStatusDirs = fs.readdirSync(ASYNC_DIR)
+				.map((name) => path.join(ASYNC_DIR, name))
+				.filter((dir) => {
+					try {
+						const status = JSON.parse(fs.readFileSync(path.join(dir, "status.json"), "utf-8"));
+						return status.sessionId === parentSessionId && status.runId !== sourceRunId && status.processTerminal?.runnerProcessInstanceId;
+					} catch {
+						return false;
+					}
+				});
+			assert.equal(revivedStatusDirs.length, 1, "expected one failed revived run with runner identity");
+			fs.rmSync(path.join(revivedStatusDirs[0]!, "process-terminal.json"), { force: true });
+			assert.deepEqual(getActiveAsyncCapacitySnapshot(parentSessionId, 1), { used: 0, limit: 1 });
+		} finally {
+			competingLease.release();
+			getActiveAsyncCapacitySnapshot(parentSessionId, 1);
 			fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
 		}
 	});

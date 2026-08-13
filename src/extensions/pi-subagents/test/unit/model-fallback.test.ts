@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
 	buildModelCandidates,
+	formatModelRetryNote,
 	fuzzyResolveModel,
 	isRetryableModelFailure,
+	MODEL_RETRY_DELAYS_MS,
 	normalizeModelSegment,
 	resolveEffectiveSubagentModel,
 	resolveModelCandidate,
@@ -74,6 +76,18 @@ describe("model fallback helpers", () => {
 		assert.equal(isRetryableModelFailure("model load failed"), true);
 		assert.equal(isRetryableModelFailure("Stream ended without finish_reason"), true);
 		assert.equal(isRetryableModelFailure("Request timed out."), true);
+		assert.equal(isRetryableModelFailure("503 Service Unavailable"), true);
+		assert.equal(isRetryableModelFailure("No body returned for response"), true);
+		assert.equal(isRetryableModelFailure("no response body"), true);
+		assert.equal(isRetryableModelFailure("ECONNRESET"), true);
+	});
+
+	it("ships a bounded same-model retry schedule and note", () => {
+		assert.deepEqual(MODEL_RETRY_DELAYS_MS, [500, 1500, 4000]);
+		assert.match(
+			formatModelRetryNote({ model: "anthropic/claude-sonnet-4", attempt: 1, maxAttempts: 4, delayMs: 500 }),
+			/\[model-retry\] anthropic\/claude-sonnet-4.*attempt 1\/4.*500ms/,
+		);
 	});
 
 	it("does not treat ordinary task/tool failures as retryable model failures", () => {

@@ -314,8 +314,22 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/cold.?start/i,
 	/empty response/i,
 	/no output/i,
+	/no response body/i,
+	/no body/i,
+	/empty body/i,
+	/econnreset/i,
 	/model.*(?:load|fail|error)/i,
 ];
+
+/**
+ * Bounded same-model retry schedule for transient provider errors (503, 429,
+ * overloaded, dropped/empty response bodies, etc.). Fallback models still
+ * switch first to preserve existing behavior; this schedule retries the final
+ * candidate on the same model when no fallback remains. Transient outages
+ * usually clear without a model change. The schedule stays short and bounded so
+ * persistent failures fail fast instead of amplifying a broken provider.
+ */
+export const MODEL_RETRY_DELAYS_MS = [500, 1500, 4000] as const;
 
 /**
  * Failures reported as `<tool> failed (exit N): ...` or `<tool> failed with
@@ -337,4 +351,13 @@ export function formatModelAttemptNote(attempt: ModelAttemptSummary, nextModel?:
 	return nextModel
 		? `[fallback] ${attempt.model} failed: ${failure}. Retrying with ${nextModel}.`
 		: `[fallback] ${attempt.model} failed: ${failure}.`;
+}
+
+export function formatModelRetryNote(input: {
+	model: string;
+	attempt: number;
+	maxAttempts: number;
+	delayMs: number;
+}): string {
+	return `[model-retry] ${input.model} failed with a transient provider error (attempt ${input.attempt}/${input.maxAttempts}). Retrying the same model in ${input.delayMs}ms.`;
 }

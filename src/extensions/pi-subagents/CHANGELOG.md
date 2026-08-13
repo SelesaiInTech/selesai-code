@@ -2,9 +2,9 @@
 
 ## [Unreleased]
 
-## Selesai fork (0.47.1)
+## Selesai fork (0.48.0)
 
-Selesai vendors pi-subagents 0.47.1 and layers its own branding and additions on top:
+Selesai vendors pi-subagents 0.48.0 and layers its own branding and additions on top:
 
 ### Branding
 - Host package renamed from `@earendil-works/pi-coding-agent` to `@selesai/code`.
@@ -12,7 +12,7 @@ Selesai vendors pi-subagents 0.47.1 and layers its own branding and additions on
 - Extension env vars renamed `PI_SUBAGENT*` → `SELESAI_SUBAGENT*` (legacy `PI_SUBAGENT*` values still honored via `src/shared/env.ts`).
 - Home directory is never treated as a project root for subagent config resolution.
 
-### Selesai additions (upstream 0.47.1 features are all preserved)
+### Selesai additions (upstream 0.48.0 features are all preserved)
 - Agent roster extended with Selesai personas: `architect`, `builder`, `commentator`, `explorer`, `recapper` (upstream `worker`, `reviewer`, `scout`, `oracle`, `delegate`, `researcher` remain). `researcher` is the Selesai host-compatible brief generator.
 - Declarative `chain` / `tasks` execution and saved `.chain.md` / `.chain.json` workflows promoted to first-class documented surfaces (machinery ships in 0.47.1).
 - New slash commands: `/chain`, `/parallel`, `/run-chain`, `/chain-prompts`.
@@ -21,6 +21,29 @@ Selesai vendors pi-subagents 0.47.1 and layers its own branding and additions on
 - Friendly chain parameter validation before TypeBox (`src/extension/chain-validation.ts`).
 - Prompt templates: `parallel-context-build`, `parallel-handoff-plan`.
 - `chatProgress` extended with `terminal` / `milestones` projections.
+
+## [0.48.0] - 2026-08-13
+
+### Added
+- Add a durable per-run child fan-out budget with a default cap of 64 across static, dynamic, workflow, and nested child admissions. Thanks to @asjer for #1031.
+- Add an opt-in per-session cap for concurrently active top-level async runs, with atomic admission, resume transfer, status/Fleet/RPC/doctor visibility, and release gated by the verified process-terminal behavior from #1030. Thanks to @asjer for #1029.
+- Add a live Prompt Audit drawer to Fleet for current-session foreground children. Prompt text is visible in the drawer, kept outside serializable Fleet state, and redacted from foreground input, transcript, metadata, result, progress, and run-history artifacts (#1021).
+- Add a global `timeoutMs` config option that sets the default run deadline for single, parallel, and chain launches (foreground, plus plain single-agent async) when neither the call nor the selected agent provides a timeout. It reaches parallel (`tasks: [...]`) and chain launches, which never adopt an agent's frontmatter `timeoutMs` (that default applies to single-agent launches only), so a long fan-out no longer falls back to the built-in 30-minute default and gets killed mid-run. Explicit call `timeoutMs`/`maxRuntimeMs` and agent frontmatter defaults still win; composite async runs stay unbounded at the top level by design. Thanks to @shaharmor for #1018.
+- Add a `SELESAI_SUBAGENT_TASK_DELIVERY` environment setting (`auto` | `file`, default `auto`) controlling how the task text reaches child Pi processes. `file` writes the task to a temp `task.md` referenced as `@<path>` instead of embedding it in argv, for hosts where endpoint protection (EDR) pre-execution command-line scanning denies children whose argv embeds a long natural-language task. Thanks to @yanqianglu for #1028.
+- Escalate startup retries to file task delivery after an unexplained zero-activity `SIGKILL` child exit, so EDR-denied launches self-heal on retry in both foreground and background runs. Thanks to @yanqianglu for #1028.
+
+### Fixed
+- Open Fleet Prompt Audit with the authored task visible by default and show a short live task summary in the normal Fleet detail pane (#1021).
+- Use full task-text hashes for LLM intent arbiter memoization so same-prefix review and implementation tasks cannot share a cached verdict.
+- Terminate async Pi writers as owned POSIX process groups on stop and timeout, and keep terminal process proof unknown until process-tree exit is verified. Thanks to @asjer for #1030.
+- Explain when a requested mission is scoped to another worktree by naming the current project root and mission directory (#1024).
+- Preserve the configured output reference when explicit acceptance rejects an otherwise completed foreground child, so useful reports remain available (#1023).
+- Reject configured worktree base directories inside the agent extensions directory, including symlink aliases (#1014).
+- Align unnamed intercom fallback orchestrator targets with pi-intercom's 18-character registered presence names so subagents without an explicit session name can reach their orchestrator. Thanks to @mystery4f for #1017.
+- Stop reading hyphenated adjectives like "must-fix items" or "should-fix tests" as implementation intent, which made the completion mutation guard hard-fail read-only review runs with a false "completed without making edits" error. Severity compounds (must|should|needs + dash + verb) are stripped before verb matching across every mutation pattern (incl. update/add/apply/make/do siblings), the acceptance-level write-capability check, and the patch-scope pattern, while CLI flags ("eslint --fix", "prettier --write") and clause-level dashes ("branch—fix it") keep their write intent. Thanks to @MarcusNeufeldt for #1020.
+- Add an optional LLM intent arbiter: when the completion guard is about to hard-fail a run that made no edits, a model decides — from the task text alone, never the child's own report — whether the task actually instructed file changes; only a confident read-only verdict rescues the run, before any failure state is published. Covers single, parallel, and chain foreground runs; enabled by default; set `SELESAI_SUBAGENTS_LLM_INTENT_ARBITER=0` to disable. Thanks to @MarcusNeufeldt for #1020.
+- Tolerate empty-string entries in acceptance-report string-array fields instead of rejecting the whole report. Thanks to @hjiang for #1015.
+- Let single external-cli workflow children ignore inherited Pi models so model-less external runners start instead of failing preflight. Thanks to @twosunnus for #1016.
 
 ## [0.47.1] - 2026-08-12
 

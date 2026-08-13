@@ -125,6 +125,67 @@ describe("worktree", () => {
 		}
 	});
 
+	it("rejects worktree base directories inside Selesai extensions", () => {
+		const repoDir = createRepo("selesai-worktree-extension-dir-");
+		const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "selesai-worktree-home-"));
+		const previousAgentDir = process.env.SELESAI_CODING_AGENT_DIR;
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+		const extensionsDir = path.join(tempHome, ".selesai", "agent", "extensions");
+		try {
+			process.env.HOME = tempHome;
+			process.env.USERPROFILE = tempHome;
+			delete process.env.SELESAI_CODING_AGENT_DIR;
+			assert.throws(
+				() => createWorktrees(repoDir, "extension-dir", 1, { baseDir: extensionsDir }),
+				/worktree base directory cannot be inside Pi extensions directory/i,
+			);
+			assert.throws(
+				() => createWorktrees(repoDir, "extension-subdir", 1, { baseDir: path.join(extensionsDir, "checkout") }),
+				/worktree base directory cannot be inside Pi extensions directory/i,
+			);
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.SELESAI_CODING_AGENT_DIR;
+			else process.env.SELESAI_CODING_AGENT_DIR = previousAgentDir;
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+			cleanupRepo(repoDir);
+			fs.rmSync(tempHome, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects symlinked worktree base directories inside Selesai extensions", () => {
+		const repoDir = createRepo("selesai-worktree-extension-symlink-");
+		const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "selesai-worktree-home-"));
+		const previousAgentDir = process.env.SELESAI_CODING_AGENT_DIR;
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+		const extensionsDir = path.join(tempHome, ".selesai", "agent", "extensions");
+		const aliasDir = path.join(tempHome, "extension-alias");
+		try {
+			process.env.HOME = tempHome;
+			process.env.USERPROFILE = tempHome;
+			delete process.env.SELESAI_CODING_AGENT_DIR;
+			fs.mkdirSync(extensionsDir, { recursive: true });
+			fs.symlinkSync(extensionsDir, aliasDir, process.platform === "win32" ? "junction" : "dir");
+			assert.throws(
+				() => createWorktrees(repoDir, "extension-symlink", 1, { baseDir: path.join(aliasDir, "checkout") }),
+				/worktree base directory cannot be inside Pi extensions directory/i,
+			);
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.SELESAI_CODING_AGENT_DIR;
+			else process.env.SELESAI_CODING_AGENT_DIR = previousAgentDir;
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+			cleanupRepo(repoDir);
+			fs.rmSync(tempHome, { recursive: true, force: true });
+		}
+	});
+
 	it("uses SELESAI_SUBAGENTS_WORKTREE_DIR when no base directory is configured", () => {
 		const repoDir = createRepo("pi-worktree-env-base-dir-");
 		const previous = process.env.SELESAI_SUBAGENTS_WORKTREE_DIR;

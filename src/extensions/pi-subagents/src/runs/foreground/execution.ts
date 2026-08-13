@@ -54,22 +54,25 @@ import {
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
+import { arbitrateCompletionGuardRescue } from "../shared/llm-intent-arbiter.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { resolvePermissionRules } from "../shared/permissions.ts";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
 import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
-import { captureSingleOutputSnapshot, extractChildWrittenOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	buildModelCandidates,
 	formatModelAttemptNote,
+	formatModelRetryNote,
 	isRetryableModelFailure,
+	MODEL_RETRY_DELAYS_MS,
 } from "../shared/model-fallback.ts";
 import {
 	SUBAGENT_STARTUP_RETRY_DELAYS_MS,
@@ -90,6 +93,7 @@ import {
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
 import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput } from "../shared/acceptance.ts";
+import { PROMPT_REDACTED } from "../../shared/utils.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
@@ -117,6 +121,12 @@ function withRunContext<T extends SingleResult>(result: T, context: RunSyncOptio
 	return result;
 }
 
+function redactResultPrompt<T extends SingleResult>(result: T): T {
+	result.task = PROMPT_REDACTED;
+	if (result.progress) result.progress.task = PROMPT_REDACTED;
+	return result;
+}
+
 function sumUsage(target: Usage, source: Usage): void {
 	target.input += source.input;
 	target.output += source.output;
@@ -139,7 +149,7 @@ function persistSingleResultMetadata(input: {
 	writeMetadata(input.metadataPath, {
 		runId: input.runId,
 		agent: input.agent,
-		task: input.task,
+		task: PROMPT_REDACTED,
 		exitCode: target.exitCode,
 		processSignal: target.processSignal,
 		usage: target.usage,
@@ -231,6 +241,7 @@ function stripAcceptanceReportsFromMessages(messages: Message[] | undefined): vo
 function snapshotProgress(progress: AgentProgress): AgentProgress {
 	return {
 		...progress,
+		task: PROMPT_REDACTED,
 		skills: progress.skills ? [...progress.skills] : undefined,
 		recentTools: boundStreamedRecentTools(progress.recentTools),
 		recentOutput: boundStreamedRecentOutput(progress.recentOutput),
@@ -240,6 +251,7 @@ function snapshotProgress(progress: AgentProgress): AgentProgress {
 function snapshotResult(result: SingleResult, progress: AgentProgress): SingleResult {
 	return {
 		...result,
+		task: PROMPT_REDACTED,
 		messages: result.outputMode === "file-only" && result.savedOutputPath ? undefined : result.messages ? [...result.messages] : undefined,
 		usage: { ...result.usage },
 		skills: result.skills ? [...result.skills] : undefined,
@@ -291,6 +303,7 @@ async function runSingleAttempt(
 		attemptNotes: string[];
 		outputSnapshot?: SingleOutputSnapshot;
 		originalTask?: string;
+		taskDelivery?: SubagentTaskDelivery;
 	},
 ): Promise<SingleResult> {
 	const effectiveThinking = options.thinkingOverride ?? agent.thinking;
@@ -312,6 +325,7 @@ async function runSingleAttempt(
 	const { args, env: sharedEnv, tempDir, toolDiagnosticPath, runtimeAcknowledgedExtensionsPath, capabilityAudit } = buildPiArgs({
 		baseArgs: ["--mode", "json", "-p"],
 		task,
+		taskDelivery: shared.taskDelivery,
 		sessionEnabled: shared.sessionEnabled,
 		sessionDir: options.sessionDir,
 		sessionFile: options.sessionFile,
@@ -337,6 +351,7 @@ async function runSingleAttempt(
 		parentControlInbox: options.nestedRoute?.controlInbox,
 		parentRootRunId: options.nestedRoute?.rootRunId,
 		parentCapabilityToken: options.nestedRoute?.capabilityToken,
+		runFanoutBudget: options.runFanoutBudget,
 		parentSessionId: options.parentSessionId,
 		steerInboxDir: options.steerInboxDir,
 		steerCapabilityPath: options.steerCapabilityPath,
@@ -1277,15 +1292,38 @@ async function runSingleAttempt(
 			mcpDirectTools: agent.mcpDirectTools,
 		})
 		: undefined;
-	const completionGuardTriggered = completionGuard?.triggered === true && !observedMutationAttempt;
+	let completionGuardTriggered = completionGuard?.triggered === true && !observedMutationAttempt;
+	// The classifier is deliberately narrow, so a read-only review task can
+	// still be misread as implementation. Arbitrate BEFORE any failure side
+	// effect is published (effects, exit code, progress, notifications,
+	// acceptance, output persistence): only a confident read-only verdict
+	// rescues, and the task text alone is evidence — never the child's own
+	// final message.
+	let arbiterRescued = false;
+	if (completionGuardTriggered) {
+		const arbitration = await arbitrateCompletionGuardRescue({
+			guardTriggered: true,
+			task: shared.originalTask ?? task,
+			arbiter: options.llmIntentArbiter,
+		});
+		completionGuardTriggered = arbitration.triggered;
+		arbiterRescued = arbitration.rescued;
+	}
 	if (completionGuard) {
 		result.effects = {
 			...(result.effects ?? {}),
 			fileMutation: {
-				status: completionGuard.expectedMutation ? completionGuardTriggered ? "missing" : "observed" : "not-applicable",
+				status: completionGuard.expectedMutation
+					? completionGuardTriggered
+						? "missing"
+						: arbiterRescued
+							? "not-applicable"
+							: "observed"
+					: "not-applicable",
 				expected: completionGuard.expectedMutation,
 				attempted: completionGuard.attemptedMutation || observedMutationAttempt,
 				...(completionGuardTriggered ? { message: "Subagent completed without making edits for an implementation task." } : {}),
+				...(arbiterRescued ? { resolvedBy: "llm-intent-arbiter" } : {}),
 			},
 		};
 	}
@@ -1355,7 +1393,7 @@ async function runSyncCompletion(
 	};
 	const agent = agents.find((a) => a.name === agentName);
 	if (!agent) {
-		return withRunContext({
+		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
 			agent: agentName,
 			task,
@@ -1363,12 +1401,12 @@ async function runSyncCompletion(
 			messages: [],
 			usage: emptyUsage(),
 			error: `Unknown agent: ${agentName}`,
-		}, options.context);
+		}, options.context));
 	}
 	try {
 		assertAgentAllowedByCapabilityCeiling(agent.name, options.capabilityCeiling);
 	} catch (error) {
-		return withRunContext({
+		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
 			agent: agent.name,
 			task,
@@ -1377,11 +1415,11 @@ async function runSyncCompletion(
 			usage: emptyUsage(),
 			error: error instanceof Error ? error.message : String(error),
 			...(options.capabilityCeiling ? { capabilityCeiling: options.capabilityCeiling } : {}),
-		}, options.context);
+		}, options.context));
 	}
 	const acceptanceErrors = validateAcceptanceInput(options.acceptance);
 	if (acceptanceErrors.length > 0) {
-		return withRunContext({
+		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
 			agent: agentName,
 			task,
@@ -1389,11 +1427,11 @@ async function runSyncCompletion(
 			messages: [],
 			usage: emptyUsage(),
 			error: acceptanceErrors.join(" "),
-		}, options.context);
+		}, options.context));
 	}
 	const outputModeValidationError = validateFileOnlyOutputMode(options.outputMode, options.outputPath, `Single run (${agentName})`);
 	if (outputModeValidationError) {
-		return withRunContext({
+		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
 			agent: agentName,
 			task,
@@ -1402,7 +1440,7 @@ async function runSyncCompletion(
 			usage: emptyUsage(),
 			outputMode: options.outputMode,
 			error: outputModeValidationError,
-		}, options.context);
+		}, options.context));
 	}
 
 	const shareEnabled = options.share === true;
@@ -1419,6 +1457,7 @@ async function runSyncCompletion(
 	});
 	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract) });
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
+	options.onEffectivePrompt?.(taskWithAcceptance);
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
 	if (options.context === "fork" && options.sessionFile && existsSync(options.sessionFile)) {
 		alignForkedSessionCwd(options.sessionFile, options.cwd ?? runtimeCwd);
@@ -1433,7 +1472,7 @@ async function runSyncCompletion(
 		agent.filePath ? path.dirname(agent.filePath) : skillCwd,
 	);
 	if (skillNames.some((skill) => skill.trim() === "pi-subagents") && missingSkills.includes("pi-subagents")) {
-		return withRunContext({
+		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
 			agent: agentName,
 			task,
@@ -1441,7 +1480,7 @@ async function runSyncCompletion(
 			messages: [],
 			usage: emptyUsage(),
 			error: "Skills not found: pi-subagents",
-		}, options.context);
+		}, options.context));
 	}
 	let systemPrompt = agent.systemPrompt?.trim() || "";
 	if (resolvedSkills.length > 0) {
@@ -1476,7 +1515,7 @@ async function runSyncCompletion(
 		artifactPathsResult = getArtifactPaths(options.artifactsDir, options.runId, agentName, options.index);
 		ensureArtifactsDir(options.artifactsDir);
 		if (options.artifactConfig?.includeInput !== false) {
-				writeArtifact(artifactPathsResult.inputPath, `# Task for ${agentName}\n\n${taskWithAcceptance}`);
+			writeArtifact(artifactPathsResult.inputPath, `# Task for ${agentName}\n\n${PROMPT_REDACTED}; live Prompt Audit only.\n`);
 		}
 		if (options.artifactConfig?.includeJsonl !== false) {
 			jsonlPath = artifactPathsResult.jsonlPath;
@@ -1490,7 +1529,7 @@ async function runSyncCompletion(
 				childIndex: options.index,
 				cwd: options.cwd ?? runtimeCwd,
 			});
-			transcriptWriter.writeInitialUserMessage(taskWithAcceptance);
+			transcriptWriter.writeInitialUserMessage(`${PROMPT_REDACTED}; live Prompt Audit only.`);
 		}
 	}
 
@@ -1526,6 +1565,10 @@ async function runSyncCompletion(
 	};
 	let lastResult: SingleResult | undefined;
 	const modelsToTry = candidates.length > 0 ? candidates : [undefined];
+	let modelRetryIndex = 0;
+	// Escalated to "file" after an unexplained zero-activity startup failure so
+	// retries keep the task text out of argv (endpoint pre-exec scans may deny it).
+	let taskDeliveryOverride: SubagentTaskDelivery | undefined;
 	modelAttemptsLoop: for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
 		const candidate = modelsToTry[modelIndex];
 		for (let startupAttemptIndex = 0; ; startupAttemptIndex++) {
@@ -1544,6 +1587,7 @@ async function runSyncCompletion(
 					.filter((modelCandidate): modelCandidate is string => Boolean(modelCandidate)),
 				outputSnapshot,
 				originalTask: task,
+				taskDelivery: taskDeliveryOverride,
 			});
 			lastResult = result;
 			if (startupAttemptIndex === 0) {
@@ -1612,6 +1656,10 @@ async function runSyncCompletion(
 					}
 					break modelAttemptsLoop;
 				}
+				if (!taskDeliveryOverride && result.processSignal === "SIGKILL") {
+					taskDeliveryOverride = "file";
+					attemptNotes.push("[startup-retry] retrying with file task delivery to keep the task text out of the child process argv.");
+				}
 				attempt.error = retryNote;
 				attemptNotes.push(retryNote);
 				continue;
@@ -1630,9 +1678,48 @@ async function runSyncCompletion(
 				attempt.error = startupError;
 				break modelAttemptsLoop;
 			}
-			if (!isRetryableModelFailure(result.error) || modelIndex === modelsToTry.length - 1) break modelAttemptsLoop;
-			attemptNotes.push(formatModelAttemptNote(attempt, modelsToTry[modelIndex + 1]));
-			break;
+			if (isRetryableModelFailure(result.error)) {
+				if (modelIndex < modelsToTry.length - 1) {
+					attemptNotes.push(formatModelAttemptNote(attempt, modelsToTry[modelIndex + 1]));
+					modelRetryIndex = 0;
+					break;
+				}
+				const modelRetryDelayMs = MODEL_RETRY_DELAYS_MS[modelRetryIndex];
+				if (modelRetryDelayMs !== undefined) {
+					const retryNote = formatModelRetryNote({
+						model: attempt.model,
+						attempt: modelRetryIndex + 1,
+						maxAttempts: MODEL_RETRY_DELAYS_MS.length + 1,
+						delayMs: modelRetryDelayMs,
+					});
+					const shouldRetry = await waitForSubagentStartupRetry(modelRetryDelayMs, [options.signal, options.interruptSignal]);
+					if (!shouldRetry) {
+						if (options.interruptSignal?.aborted) {
+							result.exitCode = 0;
+							result.interrupted = true;
+							result.error = undefined;
+							result.finalOutput = "Interrupted. Waiting for explicit next action.";
+							if (result.progress) {
+								result.progress.status = "running";
+								result.progress.error = undefined;
+							}
+						} else {
+							const cancellationError = "Subagent model retry cancelled before relaunch.";
+							result.error = cancellationError;
+							result.finalOutput = cancellationError;
+							attempt.error = cancellationError;
+							if (result.progress) result.progress.error = cancellationError;
+						}
+						break modelAttemptsLoop;
+					}
+					attempt.error = retryNote;
+					attemptNotes.push(retryNote);
+					modelRetryIndex += 1;
+					startupAttemptIndex = -1;
+					continue;
+				}
+			}
+			break modelAttemptsLoop;
 		}
 	}
 
@@ -1726,13 +1813,39 @@ async function runSyncCompletion(
 	stripAcceptanceReportsFromMessages(result.messages);
 	if (acceptanceFailure && result.acceptance.explicit && result.exitCode === 0 && !result.interrupted && !result.timedOut && !isAgentContractV1(options.agentContract)) {
 		result.exitCode = 1;
+		if (result.savedOutputPath) {
+			result.finalOutput = finalizeSingleOutput({
+				fullOutput: result.finalOutput ?? "",
+				outputPath: options.outputPath,
+				outputMode: result.outputMode,
+				exitCode: result.exitCode,
+				preserveSavedOutput: true,
+				savedPath: result.savedOutputPath,
+				outputReference: result.outputReference,
+			}).displayOutput;
+			artifactOutputByResult.set(result, result.finalOutput);
+		}
 		result.error = result.error ? `${result.error}\n${acceptanceFailure}` : acceptanceFailure;
+		if (artifactPathsResult && options.artifactConfig?.enabled !== false && options.artifactConfig?.includeOutput !== false) {
+			try {
+				writeArtifact(artifactPathsResult.outputPath, formatOutputArtifactContent({
+					output: artifactOutputByResult.get(result) ?? result.finalOutput ?? "",
+					error: result.error,
+					transcriptPath: result.transcriptPath,
+					metadataPath: options.artifactConfig?.includeMetadata === false ? undefined : artifactPathsResult.metadataPath,
+				}));
+			} catch (error) {
+				const message = `Artifact output post-processing failed: ${error instanceof Error ? error.message : String(error)}`;
+				result.outputSaveError = result.outputSaveError ? `${result.outputSaveError}\n${message}` : message;
+			}
+		}
 		if (result.progress) {
 			result.progress.status = "failed";
 			result.progress.error = result.error;
 		}
 	}
 	if (isAgentContractV1(options.agentContract)) attachContractProjections(result);
+	redactResultPrompt(result);
 	try {
 		persistResultMetadata(result);
 	} catch (error) {
@@ -1817,7 +1930,7 @@ export async function runSync(
 				durationMs: publishedReceipt.progressSummary?.durationMs ?? 0,
 				error: failureMessage,
 			};
-		const failedResult: SingleResult = {
+		const failedResult: SingleResult = redactResultPrompt({
 			...publishedReceipt,
 			detached: undefined,
 			detachedReason,
@@ -1833,7 +1946,7 @@ export async function runSync(
 			acceptance: publishedReceipt.acceptance
 				? buildSkippedAcceptanceLedger(publishedReceipt.acceptance.effectiveAcceptance, { id: "completion-pipeline", message: failureMessage })
 				: undefined,
-		};
+		});
 		if (strictContract) attachContractProjections(failedResult);
 		try {
 			// Replace the provisional detach receipt metadata with the authoritative

@@ -7,11 +7,12 @@ import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from 
 import { pruneStatusCacheForAsyncRoot, readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, findNestedRouteForRootId, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
+import { formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { contextModeLabel, summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { readProcessTerminal, sanitizeProcessTerminal } from "./process-terminal.ts";
-import { ACTIVE_RUN_INDEX_DIR, isActiveAsyncState, readActiveRunIndex, updateActiveRunIndex } from "./active-run-index.ts";
+import { ACTIVE_RUN_INDEX_DIR, isActiveAsyncState, readActiveRunIndex, releaseActiveRunIndex, updateActiveRunIndex } from "./active-run-index.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -106,6 +107,7 @@ export interface AsyncRunSummary {
 	nestedChildren?: NestedRunSummary[];
 	nestedWarnings?: string[];
 	processTerminal?: AsyncStatus["processTerminal"];
+	runFanoutBudget?: AsyncStatus["runFanoutBudget"];
 	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
@@ -222,6 +224,8 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 	const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
 	const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
 		?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
+	const runFanoutBudgetDescriptor = readRunFanoutBudgetDescriptor(asyncDir);
+	const runFanoutBudget = runFanoutBudgetDescriptor ? getRunFanoutBudgetSnapshot(runFanoutBudgetDescriptor) : status.runFanoutBudget;
 	const steps = status.steps ?? [];
 	const chainStepCount = status.chainStepCount ?? steps.length;
 	const parallelGroups = normalizeParallelGroups(status.parallelGroups, steps.length, chainStepCount);
@@ -327,6 +331,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		...(nestedChildren.length ? { nestedChildren } : {}),
 		...(nestedWarnings.length ? { nestedWarnings } : {}),
 		...(processTerminal ? { processTerminal } : {}),
+		...(runFanoutBudget ? { runFanoutBudget } : {}),
 		...(status.launchContractDigest ? { launchContractDigest: status.launchContractDigest } : {}),
 		...(status.launchResolvedExtensions ? { launchResolvedExtensions: status.launchResolvedExtensions } : {}),
 		...(status.runtimeAcknowledgedExtensions ? { runtimeAcknowledgedExtensions: status.runtimeAcknowledgedExtensions } : {}),
@@ -452,11 +457,11 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			if (usedActiveIndex) updateActiveRunIndex(asyncDir, "failed");
 			continue;
 		}
-		if (status.displayDismissedAt !== undefined) {
-			if (usedActiveIndex) updateActiveRunIndex(asyncDir, "complete");
-			continue;
+		if (usedActiveIndex && !isActiveAsyncState(status.state)) {
+			const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId });
+			if (processTerminal?.state === "observed") releaseActiveRunIndex(asyncDir);
 		}
-		if (usedActiveIndex && !isActiveAsyncState(status.state)) updateActiveRunIndex(asyncDir, status.state);
+		if (status.displayDismissedAt !== undefined) continue;
 		// Filter before the nested-route lookup: the lookup builds an index over
 		// the nested-events directory, so deferring it for filtered-out runs keeps
 		// restoration at load from scanning that directory when no active runs
@@ -559,6 +564,7 @@ export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active as
 		const attached = new Set(run.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
 		const unattached = run.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
 		lines.push(...formatNestedRunStatusLines(unattached, { indent: "  ", maxLines: 12 }));
+		if (run.runFanoutBudget) lines.push(`  ${formatRunFanoutBudget(run.runFanoutBudget)}`);
 		if (run.error) lines.push(`  Error: ${run.error}`);
 		for (const warning of run.nestedWarnings ?? []) lines.push(`  Warning: ${warning}`);
 		const outputPath = formatAsyncRunOutputPath(run);

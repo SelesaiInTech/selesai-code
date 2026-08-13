@@ -1,0 +1,374 @@
+import { createHash, randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
+import { TEMP_ROOT_DIR, type ActiveAsyncCapacitySnapshot, type AsyncStatus } from "../../shared/types.ts";
+import { readStatus } from "../../shared/utils.ts";
+import { readProcessTerminal } from "./process-terminal.ts";
+
+export const ACTIVE_ASYNC_CAPACITY_DIR = path.join(TEMP_ROOT_DIR, "session-active-async-capacity");
+
+export interface ActiveAsyncCapacityOwnerV1 {
+	version: 1;
+	reservationToken: string;
+	ownerSessionId: string;
+	ownerSessionKey: string;
+	slot: number;
+	runId: string;
+	sourceRunId?: string;
+	generation: number;
+	kind: "runner" | "workflow";
+	asyncDir: string;
+	reservedAt: number;
+	runnerProcessInstanceId?: string;
+	runnerStartedAt?: number;
+}
+
+export interface ActiveAsyncCapacityHandle {
+	readonly owner: ActiveAsyncCapacityOwnerV1;
+	markStarted(runnerProcessInstanceId: string): void;
+	markWorkflowStarted(): void;
+	rollback(): boolean;
+	reconcile(liveWorkflowRunIds?: ReadonlySet<string>): ActiveAsyncCapacitySnapshot;
+}
+
+interface CapacityOptions {
+	rootDir?: string;
+	now?: () => number;
+	token?: () => string;
+	afterSlotRename?: (releasedDir: string) => void;
+}
+
+export class ActiveAsyncCapacityError extends Error {
+	readonly snapshot: ActiveAsyncCapacitySnapshot;
+
+	constructor(snapshot: ActiveAsyncCapacitySnapshot) {
+		super(`Active async run capacity exhausted: ${snapshot.used}/${snapshot.limit} used.`);
+		this.name = "ActiveAsyncCapacityError";
+		this.snapshot = snapshot;
+	}
+}
+
+export function resolveMaxActiveAsyncRunsPerSession(value: unknown): number | undefined {
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return undefined;
+	return value === 0 ? undefined : value;
+}
+
+export function activeAsyncCapacitySessionKey(sessionId: string): string {
+	return createHash("sha256").update(sessionId).digest("hex");
+}
+
+function sessionDir(sessionId: string, rootDir: string): string {
+	return path.join(rootDir, activeAsyncCapacitySessionKey(sessionId));
+}
+
+function slotDir(poolDir: string, slot: number): string {
+	return path.join(poolDir, `slot-${slot}`);
+}
+
+function parseOwner(value: unknown): ActiveAsyncCapacityOwnerV1 | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const owner = value as Partial<ActiveAsyncCapacityOwnerV1>;
+	if (owner.version !== 1
+		|| typeof owner.reservationToken !== "string" || !owner.reservationToken
+		|| typeof owner.ownerSessionId !== "string" || !owner.ownerSessionId
+		|| typeof owner.ownerSessionKey !== "string" || !owner.ownerSessionKey
+		|| typeof owner.slot !== "number" || !Number.isInteger(owner.slot) || owner.slot < 0
+		|| typeof owner.runId !== "string" || !owner.runId
+		|| typeof owner.generation !== "number" || !Number.isInteger(owner.generation) || owner.generation < 0
+		|| (owner.kind !== "runner" && owner.kind !== "workflow")
+		|| typeof owner.asyncDir !== "string" || !owner.asyncDir
+		|| typeof owner.reservedAt !== "number" || !Number.isFinite(owner.reservedAt)) return undefined;
+	if (owner.sourceRunId !== undefined && typeof owner.sourceRunId !== "string") return undefined;
+	if (owner.runnerProcessInstanceId !== undefined && (typeof owner.runnerProcessInstanceId !== "string" || !owner.runnerProcessInstanceId)) return undefined;
+	if (owner.runnerStartedAt !== undefined && (typeof owner.runnerStartedAt !== "number" || !Number.isFinite(owner.runnerStartedAt))) return undefined;
+	return owner as ActiveAsyncCapacityOwnerV1;
+}
+
+function readOwner(dir: string): ActiveAsyncCapacityOwnerV1 | undefined {
+	try {
+		return parseOwner(JSON.parse(fs.readFileSync(path.join(dir, "owner.json"), "utf-8")));
+	} catch {
+		return undefined;
+	}
+}
+
+function occupiedSlots(poolDir: string): string[] {
+	try {
+		return fs.readdirSync(poolDir, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory() && /^slot-\d+$/.test(entry.name))
+			.map((entry) => path.join(poolDir, entry.name));
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		throw error;
+	}
+}
+
+function snapshotFor(sessionId: string, limit: number | undefined, rootDir: string): ActiveAsyncCapacitySnapshot {
+	return { used: occupiedSlots(sessionDir(sessionId, rootDir)).length, limit: limit ?? 0 };
+}
+
+function matchingOwner(dir: string, expected: ActiveAsyncCapacityOwnerV1): ActiveAsyncCapacityOwnerV1 | undefined {
+	const owner = readOwner(dir);
+	return owner?.reservationToken === expected.reservationToken
+		&& owner.runId === expected.runId
+		&& owner.generation === expected.generation
+		? owner
+		: undefined;
+}
+
+function withSlotClaim<T>(dir: string, operation: () => T): { acquired: true; value: T } | { acquired: false } {
+	const claimPath = path.join(dir, "capacity.claim");
+	const claimToken = randomUUID();
+	let claim: number | undefined;
+	try {
+		claim = fs.openSync(claimPath, "wx", 0o600);
+		fs.writeFileSync(claim, claimToken, "utf-8");
+		fs.closeSync(claim);
+		claim = undefined;
+	} catch (error) {
+		if (claim !== undefined) fs.closeSync(claim);
+		if ((error as NodeJS.ErrnoException).code === "EEXIST" || (error as NodeJS.ErrnoException).code === "ENOENT") return { acquired: false };
+		throw error;
+	}
+	try {
+		return { acquired: true, value: operation() };
+	} finally {
+		try {
+			if (fs.readFileSync(claimPath, "utf-8") === claimToken) fs.rmSync(claimPath, { force: true });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		}
+	}
+}
+
+function removeOwnedSlot(dir: string, expected: ActiveAsyncCapacityOwnerV1, options: CapacityOptions, requireUnstarted = false): boolean {
+	if (requireUnstarted && (expected.runnerProcessInstanceId || expected.runnerStartedAt)) return false;
+	const claimed = withSlotClaim(dir, () => {
+		const current = matchingOwner(dir, expected);
+		if (!current || (requireUnstarted && (current.runnerProcessInstanceId || current.runnerStartedAt))) return false;
+		const releasedDir = path.join(path.dirname(dir), `.${path.basename(dir)}.released-${randomUUID()}`);
+		fs.renameSync(dir, releasedDir);
+		options.afterSlotRename?.(releasedDir);
+		fs.rmSync(releasedDir, { recursive: true, force: true });
+		return true;
+	});
+	return claimed.acquired && claimed.value;
+}
+
+function terminalState(state: AsyncStatus["state"]): boolean {
+	return state !== "queued" && state !== "running" && state !== "paused";
+}
+
+function runnerCanRelease(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus): boolean {
+	if (!owner.runnerProcessInstanceId
+		|| status.sessionId !== owner.ownerSessionId
+		|| status.runId !== owner.runId
+		|| !terminalState(status.state)) return false;
+	if (status.processTerminal?.state === "not-started"
+		&& status.processTerminal.runId === owner.runId
+		&& status.processTerminal.runnerProcessInstanceId === owner.runnerProcessInstanceId
+		&& typeof status.error === "string"
+		&& status.error) return true;
+	const proof = readProcessTerminal(owner.asyncDir, {
+		runId: owner.runId,
+		runnerProcessInstanceId: owner.runnerProcessInstanceId,
+	});
+	return proof?.state === "observed"
+		&& proof.runId === owner.runId
+		&& proof.runnerProcessInstanceId === owner.runnerProcessInstanceId;
+}
+
+function workflowCanRelease(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus, liveWorkflowRunIds: ReadonlySet<string>): boolean {
+	if (status.sessionId !== owner.ownerSessionId
+		|| status.runId !== owner.runId
+		|| status.mode !== "workflow"
+		|| !terminalState(status.state)
+		|| liveWorkflowRunIds.has(owner.runId)) return false;
+	for (const step of status.steps ?? []) {
+		if (step.status === "pending" || step.status === "running" || step.status === "paused") return false;
+		if (typeof step.async !== "boolean") return false;
+		if (!step.async) continue;
+		if (!step.runId) return false;
+		const childDir = path.join(path.dirname(owner.asyncDir), step.runId);
+		if (!fs.existsSync(childDir)) return false;
+		const childStatus = readStatus(childDir);
+		if (!childStatus || !terminalState(childStatus.state) || !childStatus.processTerminal?.runnerProcessInstanceId) return false;
+		const proof = readProcessTerminal(childDir, {
+			runId: step.runId,
+			runnerProcessInstanceId: childStatus.processTerminal.runnerProcessInstanceId,
+		});
+		if (proof?.state !== "observed" || proof.runId !== step.runId) return false;
+	}
+	return true;
+}
+
+function ownerCanRelease(owner: ActiveAsyncCapacityOwnerV1, liveWorkflowRunIds: ReadonlySet<string>): boolean {
+	const status = readStatus(owner.asyncDir);
+	if (!status) return false;
+	return owner.kind === "runner"
+		? runnerCanRelease(owner, status)
+		: workflowCanRelease(owner, status, liveWorkflowRunIds);
+}
+
+export function reconcileActiveAsyncCapacity(
+	sessionId: string,
+	limit: number | undefined,
+	options: CapacityOptions & { liveWorkflowRunIds?: ReadonlySet<string> } = {},
+): ActiveAsyncCapacitySnapshot {
+	const rootDir = options.rootDir ?? ACTIVE_ASYNC_CAPACITY_DIR;
+	const poolDir = sessionDir(sessionId, rootDir);
+	const liveWorkflowRunIds = options.liveWorkflowRunIds ?? new Set<string>();
+	for (const dir of occupiedSlots(poolDir)) {
+		const owner = readOwner(dir);
+		if (!owner
+			|| owner.ownerSessionId !== sessionId
+			|| owner.ownerSessionKey !== activeAsyncCapacitySessionKey(sessionId)
+			|| path.basename(dir) !== `slot-${owner.slot}`
+			|| !ownerCanRelease(owner, liveWorkflowRunIds)) continue;
+		removeOwnedSlot(dir, owner, options);
+	}
+	return snapshotFor(sessionId, limit, rootDir);
+}
+
+export function getActiveAsyncCapacitySnapshot(
+	sessionId: string,
+	limit: number | undefined,
+	options: CapacityOptions & { liveWorkflowRunIds?: ReadonlySet<string> } = {},
+): ActiveAsyncCapacitySnapshot {
+	return reconcileActiveAsyncCapacity(sessionId, limit, options);
+}
+
+function createSlot(poolDir: string, owner: ActiveAsyncCapacityOwnerV1): boolean {
+	const destination = slotDir(poolDir, owner.slot);
+	fs.mkdirSync(poolDir, { recursive: true, mode: 0o700 });
+	try {
+		fs.mkdirSync(destination, { mode: 0o700 });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+		throw error;
+	}
+	// If owner persistence fails, the corrupt occupied directory remains and
+	// fails closed instead of becoming available to another admission.
+	fs.writeFileSync(path.join(destination, "owner.json"), `${JSON.stringify(owner, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
+	return true;
+}
+
+function handleFor(owner: ActiveAsyncCapacityOwnerV1, limit: number, options: CapacityOptions, rollbackOwner?: ActiveAsyncCapacityOwnerV1): ActiveAsyncCapacityHandle {
+	const rootDir = options.rootDir ?? ACTIVE_ASYNC_CAPACITY_DIR;
+	const dir = slotDir(sessionDir(owner.ownerSessionId, rootDir), owner.slot);
+	return {
+		owner,
+		markStarted(runnerProcessInstanceId) {
+			const claimed = withSlotClaim(dir, () => {
+				const current = matchingOwner(dir, owner);
+				if (!current) return false;
+				const next = { ...current, runnerProcessInstanceId, runnerStartedAt: options.now?.() ?? Date.now() };
+				// Mark memory first. If persistence fails after the process starts, caller
+				// cleanup must retain the occupied slot instead of rolling it back.
+				Object.assign(owner, next);
+				try {
+					writePrivateAtomicJson(path.join(dir, "owner.json"), next);
+				} catch (error) {
+					console.error(`Failed to bind active async capacity to runner '${runnerProcessInstanceId}'; capacity will remain occupied:`, error);
+				}
+				return true;
+			});
+			if (!claimed.acquired || !claimed.value) throw new Error(`Active async capacity ownership changed for run '${owner.runId}'.`);
+		},
+		markWorkflowStarted() {
+			const claimed = withSlotClaim(dir, () => {
+				const current = matchingOwner(dir, owner);
+				if (!current || current.kind !== "workflow") return false;
+				const next = { ...current, runnerStartedAt: options.now?.() ?? Date.now() };
+				Object.assign(owner, next);
+				try {
+					writePrivateAtomicJson(path.join(dir, "owner.json"), next);
+				} catch (error) {
+					console.error(`Failed to mark async workflow '${owner.runId}' started; capacity will remain occupied:`, error);
+				}
+				return true;
+			});
+			if (!claimed.acquired || !claimed.value) throw new Error(`Active async capacity ownership changed for workflow '${owner.runId}'.`);
+		},
+		rollback() {
+			if (!rollbackOwner) return removeOwnedSlot(dir, owner, options, true);
+			if (owner.runnerProcessInstanceId || owner.runnerStartedAt) return false;
+			const claimed = withSlotClaim(dir, () => {
+				const current = matchingOwner(dir, owner);
+				if (!current || current.runnerProcessInstanceId || current.runnerStartedAt) return false;
+				writePrivateAtomicJson(path.join(dir, "owner.json"), rollbackOwner);
+				Object.assign(owner, rollbackOwner);
+				return true;
+			});
+			return claimed.acquired && claimed.value;
+		},
+		reconcile(liveWorkflowRunIds) {
+			return reconcileActiveAsyncCapacity(owner.ownerSessionId, limit, { ...options, rootDir, liveWorkflowRunIds });
+		},
+	};
+}
+
+export function acquireActiveAsyncCapacity(
+	input: { sessionId: string; limit: number | undefined; runId: string; kind: "runner" | "workflow"; asyncDir: string },
+	options: CapacityOptions & { liveWorkflowRunIds?: ReadonlySet<string> } = {},
+): ActiveAsyncCapacityHandle | undefined {
+	if (input.limit === undefined) return undefined;
+	const rootDir = options.rootDir ?? ACTIVE_ASYNC_CAPACITY_DIR;
+	const reconciled = reconcileActiveAsyncCapacity(input.sessionId, input.limit, options);
+	if (reconciled.used >= input.limit) throw new ActiveAsyncCapacityError(reconciled);
+	const poolDir = sessionDir(input.sessionId, rootDir);
+	const token = options.token?.() ?? randomUUID();
+	for (let slot = 0; slot < input.limit; slot++) {
+		const owner: ActiveAsyncCapacityOwnerV1 = {
+			version: 1,
+			reservationToken: token,
+			ownerSessionId: input.sessionId,
+			ownerSessionKey: activeAsyncCapacitySessionKey(input.sessionId),
+			slot,
+			runId: input.runId,
+			generation: 0,
+			kind: input.kind,
+			asyncDir: input.asyncDir,
+			reservedAt: options.now?.() ?? Date.now(),
+		};
+		if (createSlot(poolDir, owner)) return handleFor(owner, input.limit, { ...options, rootDir });
+	}
+	throw new ActiveAsyncCapacityError(snapshotFor(input.sessionId, input.limit, rootDir));
+}
+
+export function transferActiveAsyncCapacity(
+	input: { sessionId: string; limit: number | undefined; sourceRunId: string; runId: string; asyncDir: string },
+	options: CapacityOptions = {},
+): ActiveAsyncCapacityHandle | undefined {
+	const limit = input.limit ?? 0;
+	const rootDir = options.rootDir ?? ACTIVE_ASYNC_CAPACITY_DIR;
+	const poolDir = sessionDir(input.sessionId, rootDir);
+	for (const dir of occupiedSlots(poolDir)) {
+		const source = readOwner(dir);
+		if (!source || source.ownerSessionId !== input.sessionId || source.runId !== input.sourceRunId) continue;
+		const claimed = withSlotClaim(dir, () => {
+			const current = matchingOwner(dir, source);
+			const status = readStatus(source.asyncDir);
+			if (!current || !status || status.runId !== input.sourceRunId || status.state === "queued" || status.state === "running") {
+				throw new Error(`Active async capacity source '${input.sourceRunId}' is not transferable.`);
+			}
+			const next: ActiveAsyncCapacityOwnerV1 = {
+				...current,
+				runId: input.runId,
+				sourceRunId: input.sourceRunId,
+				generation: current.generation + 1,
+				kind: "runner",
+				asyncDir: input.asyncDir,
+				reservedAt: options.now?.() ?? Date.now(),
+			};
+			delete next.runnerProcessInstanceId;
+			delete next.runnerStartedAt;
+			writePrivateAtomicJson(path.join(dir, "owner.json"), next);
+			return handleFor(next, limit, { ...options, rootDir }, current);
+		});
+		if (!claimed.acquired) throw new Error(`Active async capacity transfer is already in progress for run '${input.sourceRunId}'.`);
+		return claimed.value;
+	}
+	return acquireActiveAsyncCapacity({ sessionId: input.sessionId, limit: input.limit, runId: input.runId, kind: "runner", asyncDir: input.asyncDir }, options);
+}

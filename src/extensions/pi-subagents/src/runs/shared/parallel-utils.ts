@@ -61,6 +61,8 @@ export interface RunnerSubagentStep {
 	toolBudget?: import("../../shared/types.ts").ResolvedToolBudget;
 	capabilityCeiling?: import("./capability-ceiling.ts").ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: import("./capability-ceiling.ts").SubagentCapabilityAudit;
+	/** Private stable logical-child path for inherited run fan-out accounting. */
+	runFanoutPath?: string;
 }
 
 export interface RunnerCheckpointStep {

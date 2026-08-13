@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
+import { claimRunFanoutBatch, createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { TEMP_ROOT_DIR, type SubagentState } from "../../src/shared/types.ts";
 
 function errno(code: string): NodeJS.ErrnoException {
@@ -22,6 +23,7 @@ function textContent(result: ReturnType<typeof inspectSubagentStatus>): string {
 describe("async run status inspection", () => {
 	it("repairs stale running status and reports diagnosis plus result path", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-stale-"));
+		let budgetDirectory: string | undefined;
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const resultsDir = path.join(root, "results");
@@ -40,6 +42,10 @@ describe("async run status inspection", () => {
 				sessionFile,
 				steps: [{ agent: "scout", status: "running", startedAt: 100, sessionFile }],
 			}, null, 2), "utf-8");
+			const descriptor = createRunFanoutBudget("run-stale", 64);
+			budgetDirectory = descriptor.directory;
+			writeRunFanoutBudgetDescriptor(asyncDir, descriptor);
+			claimRunFanoutBatch(descriptor, ["single"]);
 
 			const result = inspectSubagentStatus({ id: "run-stale" }, {
 				asyncDirRoot: asyncRoot,
@@ -51,6 +57,8 @@ describe("async run status inspection", () => {
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
 			assert.match(text, /State: failed/);
+			assert.match(text, /Run fan-out: 1\/64 used, 63 remaining/);
+			assert.deepEqual(result.details.runFanoutBudget, { used: 1, limit: 64, remaining: 63 });
 			assert.match(text, /Diagnosis: Async runner process 12345 exited or disappeared/);
 			assert.match(text, new RegExp(`Result: ${path.join(resultsDir, "run-stale.json").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 			assert.match(text, /Step 1: scout failed, error: Async runner process 12345 exited or disappeared/);
@@ -60,6 +68,7 @@ describe("async run status inspection", () => {
 			assert.equal(resultJson.results[0].sessionFile, sessionFile);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
+			if (budgetDirectory) fs.rmSync(budgetDirectory, { recursive: true, force: true });
 		}
 	});
 

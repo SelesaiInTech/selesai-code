@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { writeAtomicJson, writePrivateAtomicJson } from "../../src/shared/atomic-json.ts";
 import { closeSteerInbox, interruptRequestPath, steerRequestsDir, writeSteerAck, type SteerRequest } from "../../src/runs/background/control-channel.ts";
 import { steerAsyncRun } from "../../src/runs/foreground/async-steering-action.ts";
 import { createSteeringStatus, recordSteeringRequest, updateSteeringTarget } from "../../src/runs/background/steering.ts";
+import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { ASYNC_DIR, type AsyncStatus, type Details, type SteeringRecoveryDescriptor, type SteeringTargetState, type SubagentState } from "../../src/shared/types.ts";
 
 function createState(): SubagentState {
@@ -29,6 +30,11 @@ function createState(): SubagentState {
 }
 
 let statusWriteMtimeMs = Date.now();
+const budgetDirectories: string[] = [];
+
+afterEach(() => {
+	for (const directory of budgetDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+});
 
 function writeStatus(asyncDir: string, status: AsyncStatus): void {
 	fs.mkdirSync(asyncDir, { recursive: true });
@@ -91,8 +97,11 @@ async function readRequest(asyncDir: string): Promise<SteerRequest> {
 }
 
 function recoveryDescriptor(runId: string): SteeringRecoveryDescriptor {
+	const runFanoutBudget = createRunFanoutBudget(runId, 64);
+	budgetDirectories.push(runFanoutBudget.directory);
 	return {
 		version: 1,
+		runFanoutBudget,
 		sourceRunId: runId,
 		agent: "worker-0",
 		cwd: os.tmpdir(),

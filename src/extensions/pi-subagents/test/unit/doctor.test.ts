@@ -69,7 +69,7 @@ describe("buildDoctorReport", () => {
 
 			const report = buildDoctorReport({
 				cwd: root,
-				config: { defaultSessionDir: "~/subagent-sessions", intercomBridge: { mode: "always" }, maxSubagentSpawnsPerSession: 4 },
+				config: { defaultSessionDir: "~/subagent-sessions", intercomBridge: { mode: "always" }, maxSubagentSpawnsPerSession: 4, maxActiveAsyncRunsPerSession: 2 },
 				state,
 				currentSessionFile: path.join(root, "sessions", "parent.jsonl"),
 				currentSessionId: "session-abc123",
@@ -116,11 +116,39 @@ describe("buildDoctorReport", () => {
 			assert.match(report, /Spawn budget\n- usage: 3\/5 used, 2 remaining \(configured 4; granted 1; grant allowance 3\)/);
 			assert.match(report, /- recent grants: \+1 at 1970-01-01T00:00:00\.000Z \(4 → 5\)/);
 			assert.match(report, /new parent session resets usage and grants; compaction does not/);
+			assert.match(report, /Run fan-out budget\n- configured limit: 64 \(default\)/);
+			assert.match(report, /cumulative claims are never released; a new top-level run creates a new budget/);
+			assert.match(report, /Active async capacity\n- usage: 0\/2 used/);
+			assert.match(report, /missing or unknown cleanup proof retains capacity/);
 			assert.match(report, /- skills: total 2 \(project 1, user-package 1\)/);
 			assert.match(report, /- bridge: active/);
 			assert.match(report, /- supervisor channel: available \(native:pi-subagents-supervisor-channel\)/);
 			assert.doesNotMatch(report, /Companion packages/);
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reports the effective source when the run fan-out environment value is invalid", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-fanout-source-"));
+		const previous = process.env.SELESAI_SUBAGENT_MAX_SPAWNS_PER_RUN;
+		try {
+			process.env.SELESAI_SUBAGENT_MAX_SPAWNS_PER_RUN = "invalid";
+			const report = buildDoctorReport({
+				cwd: root,
+				config: { maxSubagentSpawnsPerRun: 12 },
+				state: makeState(root),
+				deps: {
+					isAsyncAvailable: () => true,
+					discoverAgentsAll: () => ({ builtin: [], user: [], project: [], chains: [], userDir: root, projectDir: root, userChainDir: root, projectChainDir: root, userSettingsPath: path.join(root, "user.json"), projectSettingsPath: path.join(root, "project.json") }),
+					discoverAvailableSkills: () => [],
+					diagnoseIntercomBridge: () => ({ active: false, mode: "off", wantsIntercom: false, supervisorChannelAvailable: false, extensionDir: "none" }),
+				},
+			});
+			assert.match(report, /Run fan-out budget\n- configured limit: 12 \(config\)/);
+		} finally {
+			if (previous === undefined) delete process.env.SELESAI_SUBAGENT_MAX_SPAWNS_PER_RUN;
+			else process.env.SELESAI_SUBAGENT_MAX_SPAWNS_PER_RUN = previous;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

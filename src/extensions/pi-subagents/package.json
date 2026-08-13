@@ -1,6 +1,6 @@
 {
   "name": "pi-subagents",
-  "version": "0.47.1",
+  "version": "0.48.0",
   "description": "Selesai extension for single-agent delegation, chains, parallel groups, and scripted multi-agent workflows",
   "author": "Nico Bailon",
   "license": "MIT",

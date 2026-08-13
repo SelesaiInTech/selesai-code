@@ -16,6 +16,14 @@ export function isActiveAsyncState(state: AsyncStatus["state"]): boolean {
 	return state === "queued" || state === "running";
 }
 
+export function releaseActiveRunIndex(asyncDir: string): void {
+	try {
+		fs.rmSync(markerPath(asyncDir));
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+}
+
 export function updateActiveRunIndex(asyncDir: string, state: AsyncStatus["state"]): void {
 	const marker = markerPath(asyncDir);
 	if (isActiveAsyncState(state)) {
@@ -23,11 +31,7 @@ export function updateActiveRunIndex(asyncDir: string, state: AsyncStatus["state
 		fs.writeFileSync(marker, "", { flag: "a" });
 		return;
 	}
-	try {
-		fs.rmSync(marker);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-	}
+	releaseActiveRunIndex(asyncDir);
 }
 
 export function readActiveRunIndex(asyncDirRoot: string): string[] | undefined {

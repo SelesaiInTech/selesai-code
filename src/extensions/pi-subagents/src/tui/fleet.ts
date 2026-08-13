@@ -17,12 +17,14 @@ import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.
 import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
 import { handleHerdrInspectorAction } from "../inspectors/herdr/actions.ts";
+import { getLivePromptAudit, type LivePromptAudit, type PromptAuditView } from "../runs/foreground/prompt-audit.ts";
 
 const REFRESH_MS = 750;
 const MAX_RECENT_ASYNC_RUNS = 20;
 const MAX_FLEET_HISTORY_CANDIDATES = 100;
 const TRANSCRIPT_LINES = 200;
 const OUTPUT_TAIL_BYTES = 64 * 1024;
+const PROMPT_AUDIT_SUMMARY_WIDTH = 160;
 
 export const DEFAULT_FLEET_KEYBINDINGS: Record<FleetKeybindingAction, string[]> = {
 	close: ["escape", "ctrl+c", "q"],
@@ -91,6 +93,7 @@ export interface FleetActionHandlers {
 	steer(input: { runId: string; asyncDir: string; index?: number; message: string; mode: SteerDeliveryMode }): Promise<FleetActionResult>;
 	stop(input: { runId: string; asyncDir: string; index?: number }): Promise<FleetActionResult> | FleetActionResult;
 	inspect?(input: { runId: string; asyncDir: string; index?: number }): Promise<FleetActionResult>;
+	redoPrompt?(input: { runId: string; index: number; guidance: string; control?: ForegroundRunControl }): Promise<FleetActionResult>;
 }
 
 export interface FleetViewOptions {
@@ -101,6 +104,7 @@ export interface FleetViewOptions {
 	markdownTheme?: MarkdownTheme;
 	fleetKeybindings?: FleetKeybindingsConfig;
 	actions?: FleetActionHandlers;
+	copyText?: (text: string) => Promise<void> | void;
 }
 
 function belongsToCurrentSession(sessionId: string | undefined, currentSessionId: string | null): boolean {
@@ -280,23 +284,62 @@ function statusGlyph(item: FleetItem, theme: Theme): string {
 	return theme.fg("error", "✗");
 }
 
-function foregroundActiveDetail(item: Extract<FleetItem, { kind: "foreground-active" }>): string[] {
+function foregroundPromptAuditCount(item: Extract<FleetItem, { kind: "foreground-active" }>, state: SubagentState): number {
+	if (!state.currentSessionId || item.control.sessionId !== state.currentSessionId) return 0;
+	if (!item.control.activeChildren) return getLivePromptAudit(item.control, item.index ?? 0) ? 1 : 0;
+	return [...item.control.activeChildren.keys()].filter((index) => getLivePromptAudit(item.control, index)).length;
+}
+
+function authoredPromptSummary(text: string): string | undefined {
+	const summary = text.replace(/\s+/g, " ").trim();
+	return summary ? truncateToWidth(summary, PROMPT_AUDIT_SUMMARY_WIDTH, "…") : undefined;
+}
+
+function foregroundAuthoredPromptSummary(item: Extract<FleetItem, { kind: "foreground-active" }>, state: SubagentState): string | undefined {
+	if (!state.currentSessionId || item.control.sessionId !== state.currentSessionId) return undefined;
+	const prompt = getLivePromptAudit(item.control, item.index ?? 0);
+	return prompt ? authoredPromptSummary(prompt.authoredTask) : undefined;
+}
+
+function promptAuditText(prompt: LivePromptAudit, view: PromptAuditView): string {
+	switch (view) {
+		case "authored": return prompt.authoredTask;
+		case "runtime": return prompt.runtimeAdditions;
+		case "effective": return prompt.finalEffectivePrompt;
+	}
+}
+
+function promptAuditViewLabel(view: PromptAuditView): string {
+	switch (view) {
+		case "authored": return "[1] Authored task";
+		case "runtime": return "[2] Runtime additions";
+		case "effective": return "[3] Final effective prompt";
+	}
+}
+
+function foregroundActiveDetail(item: Extract<FleetItem, { kind: "foreground-active" }>, state: SubagentState): string[] {
 	const { control } = item;
 	const live = item.activeChild ?? control;
 	const modelThinking = formatModelThinking(live.model, live.thinking);
+	const promptAuditCount = foregroundPromptAuditCount(item, state);
+	const promptSummary = foregroundAuthoredPromptSummary(item, state);
 	const lines = [
 		`Run: ${item.runId}`,
 		"Source: foreground",
 		`State: running`,
 		`Mode: ${control.mode}`,
 		control.parentWorkflowRunId ? `Workflow child of: ${control.parentWorkflowRunId}${control.workflowKey ? ` (${control.workflowKey})` : ""}` : undefined,
+		control.sourceRunId ? `Redo source: ${control.sourceRunId}` : undefined,
+		control.supersededByRunId ? `Superseded by: ${control.supersededByRunId}` : undefined,
 		item.index !== undefined ? `Child: ${item.index} (${item.agent})` : `Agent: ${item.agent}`,
 		modelThinking ? `Model: ${modelThinking}` : undefined,
+		promptSummary ? `Task: ${promptSummary}` : undefined,
 		`Started: ${new Date(live.startedAt).toISOString()}`,
 		live.currentTool ? `Current tool: ${live.currentTool}${live.currentPath ? ` · ${shortenPath(live.currentPath)}` : ""}` : undefined,
 		live.turnCount !== undefined ? `Turns: ${live.turnCount}` : undefined,
 		live.toolCount !== undefined ? `Tools: ${live.toolCount}` : undefined,
 		live.tokens !== undefined ? `Tokens: ${formatTokens(live.tokens)}` : undefined,
+		promptAuditCount > 0 ? `Prompt audit: ${promptAuditCount} live · 3 views · p opens` : undefined,
 		"",
 		"Transcript",
 		"Live foreground output remains in the expanded subagent tool result. Persisted output and session paths appear here after the child settles.",
@@ -404,7 +447,7 @@ function asyncDetail(item: Extract<FleetItem, { kind: "async" }>): string[] {
 function detailLines(item: FleetItem | undefined, error: string | undefined, state: SubagentState): string[] {
 	if (!item) return [error ? `Fleet scan failed: ${error}` : "No current-session foreground or recent async children.", "", "New runs appear here automatically while this inspector remains open."];
 	const lines = item.kind === "foreground-active"
-		? foregroundActiveDetail(item)
+		? foregroundActiveDetail(item, state)
 		: item.kind === "foreground-recent"
 			? foregroundRecentDetail(item, state)
 			: asyncDetail(item);
@@ -517,7 +560,7 @@ function itemStats(item: FleetItem): string[] {
 	].filter((value): value is string => Boolean(value));
 }
 
-function structuredHeader(item: FleetItem, width: number, theme: Theme, conversationState: string): string[] {
+function structuredHeader(item: FleetItem, width: number, theme: Theme, conversationState: string, promptSummary?: string): string[] {
 	const lines: string[] = [];
 	lines.push(rightAligned(` ${statusGlyph(item, theme)} ${theme.bold(item.agent)}`, theme.fg("dim", item.state), width));
 	const child = item.index !== undefined ? ` · child ${item.index + 1}` : "";
@@ -526,10 +569,7 @@ function structuredHeader(item: FleetItem, width: number, theme: Theme, conversa
 	lines.push(`  ${theme.fg("dim", identity)}`);
 	const stats = itemStats(item);
 	if (stats.length) lines.push(`  ${theme.fg("muted", stats.join(" · "))}`);
-	if (item.description) {
-		const task = item.description.replace(/\s+/g, " ").trim();
-		lines.push(`  ${theme.fg("dim", "Task")}  ${task}`);
-	}
+	if (promptSummary) lines.push(`  ${theme.fg("muted", `Task: ${promptSummary}`)}`);
 	lines.push(`${theme.fg("accent", "Conversation")} ${theme.fg("dim", `· ${conversationState}`)}`);
 	return lines.map((line) => truncateToWidth(line, width));
 }
@@ -578,8 +618,11 @@ export class SubagentFleetComponent implements Component {
 	private detailViewportHeight = 8;
 	private bodyHeight = 8;
 	private expandedTools = false;
+	private promptAuditOpen = false;
+	private promptAuditView: PromptAuditView = "authored";
 	private actionNotice: FleetActionResult | undefined;
 	private steerDraft: string | undefined;
+	private redoGuidanceDraft: string | undefined;
 	private steerMode: SteerDeliveryMode = "steer";
 	private stopConfirming = false;
 	private actionBusy = false;
@@ -635,8 +678,45 @@ export class SubagentFleetComponent implements Component {
 		this.tui.requestRender();
 	}
 
+	private selectedPromptAudit(): LivePromptAudit | undefined {
+		const item = this.snapshot.items[this.selected];
+		if (item?.kind !== "foreground-active") return undefined;
+		if (!this.state.currentSessionId || item.control.sessionId !== this.state.currentSessionId) return undefined;
+		return getLivePromptAudit(item.control, item.index ?? 0);
+	}
+
+	private promptAuditItems(): Array<{ item: Extract<FleetItem, { kind: "foreground-active" }>; prompt: LivePromptAudit }> {
+		const selected = this.snapshot.items[this.selected];
+		if (selected?.kind !== "foreground-active" || !this.state.currentSessionId || selected.control.sessionId !== this.state.currentSessionId) return [];
+		return this.snapshot.items.flatMap((item) => {
+			if (item.kind !== "foreground-active" || item.control !== selected.control) return [];
+			const prompt = getLivePromptAudit(item.control, item.index ?? 0);
+			return prompt ? [{ item, prompt }] : [];
+		});
+	}
+
+	private selectedPromptText(): string | undefined {
+		const prompt = this.selectedPromptAudit();
+		return prompt ? promptAuditText(prompt, this.promptAuditView) : undefined;
+	}
+
+	private movePromptSelection(delta: number): void {
+		const items = this.promptAuditItems();
+		if (items.length === 0) return;
+		const currentKey = this.snapshot.items[this.selected]?.key;
+		const current = Math.max(0, items.findIndex(({ item }) => item.key === currentKey));
+		const target = items[Math.max(0, Math.min(items.length - 1, current + delta))]?.item;
+		if (!target) return;
+		this.selected = this.snapshot.items.findIndex((item) => item.key === target.key);
+		this.selectedKey = target.key;
+		this.detailScroll = 0;
+		this.detailAutoFollow = false;
+		this.tui.requestRender();
+	}
+
 	private resetActionInput(): void {
 		this.steerDraft = undefined;
+		this.redoGuidanceDraft = undefined;
 		this.steerMode = "steer";
 		this.stopConfirming = false;
 	}
@@ -668,6 +748,9 @@ export class SubagentFleetComponent implements Component {
 		if (this.steerDraft !== undefined) {
 			lines.push(this.theme.fg("accent", `Steer message (${this.steerMode}): ${this.steerDraft}${this.theme.fg("dim", "▌")}`));
 			lines.push(this.theme.fg("dim", "Enter sends · Tab changes mode · Esc cancels · Backspace edits"));
+		} else if (this.redoGuidanceDraft !== undefined) {
+			lines.push(this.theme.fg("accent", `Redo guidance: ${this.redoGuidanceDraft}${this.theme.fg("dim", "▌")}`));
+			lines.push(this.theme.fg("dim", "Enter rewrites and reruns · Esc cancels · Backspace edits"));
 		} else if (this.stopConfirming) {
 			const selected = this.snapshot.items[this.selected];
 			lines.push(this.theme.fg("warning", `Confirm stop for async run ${selected?.runId ?? "selected run"}?`));
@@ -714,6 +797,82 @@ export class SubagentFleetComponent implements Component {
 	}
 
 	handleInput(data: string): void {
+		if (this.promptAuditOpen && this.redoGuidanceDraft !== undefined) {
+			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+				this.resetActionInput();
+				this.tui.requestRender();
+				return;
+			}
+			if (matchesKey(data, "return") || data === "\r" || data === "\n") {
+				const guidance = this.redoGuidanceDraft.trim();
+				if (!guidance) {
+					this.setActionNotice({ text: "Redo guidance cannot be empty.", isError: true });
+					return;
+				}
+				const selected = this.snapshot.items[this.selected];
+				if (selected?.kind !== "foreground-active" || !this.options.actions?.redoPrompt) {
+					this.setActionNotice({ text: "Redo is unavailable for this prompt.", isError: true });
+					return;
+				}
+				this.runAction(() => this.options.actions!.redoPrompt!({ runId: selected.runId, index: selected.index ?? 0, guidance, control: selected.control }));
+				return;
+			}
+			if (matchesKey(data, "backspace") || data === "\x7f") {
+				this.redoGuidanceDraft = this.redoGuidanceDraft.slice(0, -1);
+				this.tui.requestRender();
+				return;
+			}
+			if (data.length === 1 && data >= " " && data !== "\x7f") {
+				this.redoGuidanceDraft += data;
+				this.tui.requestRender();
+			}
+			return;
+		}
+		if (this.promptAuditOpen) {
+			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+				this.promptAuditOpen = false;
+				this.detailAutoFollow = true;
+				this.tui.requestRender();
+				return;
+			}
+			if (data === "j") return this.movePromptSelection(1);
+			if (data === "k") return this.movePromptSelection(-1);
+			if (data === "1" || data === "2" || data === "3") {
+				this.promptAuditView = data === "1" ? "authored" : data === "2" ? "runtime" : "effective";
+				this.detailScroll = 0;
+				this.tui.requestRender();
+				return;
+			}
+			if (data === "g") {
+				const prompt = this.selectedPromptAudit();
+				if (!prompt) this.setActionNotice({ text: "Prompt Audit is available only for a live child owned by this session.", isError: true });
+				else if (!prompt.rerun) this.setActionNotice({ text: "Redo is not safe for this prompt in this slice.", isError: true });
+				else if (!this.options.actions?.redoPrompt) this.setActionNotice({ text: "Redo controls are unavailable in this context.", isError: true });
+				else {
+					this.actionNotice = undefined;
+					this.redoGuidanceDraft = "";
+					this.detailAutoFollow = false;
+					this.detailScroll = 0;
+					this.tui.requestRender();
+				}
+				return;
+			}
+			if (data === "c") {
+				const text = this.selectedPromptText();
+				if (!text) this.setActionNotice({ text: "No prompt view is available to copy.", isError: true });
+				else if (!this.options.copyText) this.setActionNotice({ text: "Clipboard is unavailable in this context.", isError: true });
+				else this.runAction(async () => {
+					await this.options.copyText!(text);
+					return { text: "Copied visible prompt view." };
+				});
+				return;
+			}
+			if (matchesFleetAction(data, this.keybindings, "scrollUp")) return this.scrollDetail(-1);
+			if (matchesFleetAction(data, this.keybindings, "scrollDown")) return this.scrollDetail(1);
+			if (matchesFleetAction(data, this.keybindings, "pageUp")) return this.scrollDetail(-this.detailViewportHeight);
+			if (matchesFleetAction(data, this.keybindings, "pageDown")) return this.scrollDetail(this.detailViewportHeight);
+			return;
+		}
 		if (this.steerDraft !== undefined) {
 			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
 				this.resetActionInput();
@@ -785,6 +944,18 @@ export class SubagentFleetComponent implements Component {
 			this.tui.requestRender();
 			return;
 		}
+		if (data === "p") {
+			if (!this.selectedPromptAudit()) this.setActionNotice({ text: "Prompt Audit is available only for a live child owned by this session.", isError: true });
+			else {
+				this.promptAuditOpen = true;
+				this.promptAuditView = "authored";
+				this.detailScroll = 0;
+				this.detailAutoFollow = false;
+				this.actionNotice = undefined;
+				this.tui.requestRender();
+			}
+			return;
+		}
 		if (matchesFleetAction(data, this.keybindings, "steer")) {
 			const target = this.selectedAsyncAction();
 			if ("reason" in target || !this.options.actions) this.setActionNotice({ text: "reason" in target ? target.reason : "Fleet controls are unavailable in this context.", isError: true });
@@ -830,7 +1001,7 @@ export class SubagentFleetComponent implements Component {
 			const marker = index === this.selected ? this.theme.fg("accent", "›") : " ";
 			const context = item.kind === "async" ? contextModeBadge(this.theme, item.step?.context ?? item.run.context) : item.kind === "foreground-recent" ? contextModeBadge(this.theme, item.child.context) : "";
 			const agent = index === this.selected ? this.theme.bold(item.agent) : item.agent;
-			const identity = item.description?.replace(/\s+/g, " ").trim() || item.runId.slice(0, 8);
+			const identity = item.runId.slice(0, 8);
 			const left = `${marker} ${statusGlyph(item, this.theme)} ${agent}${context} ${this.theme.fg("dim", `· ${identity}`)}`;
 			return rightAligned(left, this.theme.fg("dim", item.state), width);
 		});
@@ -853,7 +1024,35 @@ export class SubagentFleetComponent implements Component {
 		return { transcript, body: [...body] };
 	}
 
+	private promptAuditDetail(width: number): FleetDetailSections {
+		const selected = this.snapshot.items[this.selected];
+		const prompt = this.selectedPromptAudit();
+		const items = this.promptAuditItems();
+		const selectedPosition = selected ? items.findIndex(({ item }) => item.key === selected.key) : -1;
+		const live = selected?.kind === "foreground-active" ? selected.activeChild ?? selected.control : undefined;
+		const viewLabel = promptAuditViewLabel(this.promptAuditView);
+		const promptText = this.selectedPromptText()
+			?? this.theme.fg("muted", "Selected prompt unavailable.");
+		const raw = [
+			this.theme.bold("Prompt Audit"),
+			this.theme.fg("dim", "Retention: live memory only · no storage"),
+			selected?.kind === "foreground-active" ? `Run: ${selected.runId}${selected.index !== undefined ? ` · Child: ${selected.index}` : ""} · Agent: ${selected.agent}` : "Selected prompt unavailable",
+			live ? `Started: ${new Date(live.startedAt).toISOString()}` : undefined,
+			live ? `Model: ${formatModelThinking(live.model, live.thinking) || "default"}` : undefined,
+			prompt?.cwd ? `Cwd: ${prompt.cwd}` : undefined,
+			prompt?.outputPath ? `Output: ${prompt.outputPath}` : undefined,
+			this.theme.fg("dim", `Live children: ${items.map(({ item }) => item.agent).join(", ") || "none"}`),
+			this.theme.fg("dim", selectedPosition >= 0 ? `Selected: ${selectedPosition + 1}/${items.length}` : "Selected prompt unavailable"),
+			"",
+			this.theme.fg("accent", viewLabel),
+			promptText,
+		];
+		const body = raw.filter((line): line is string => line !== undefined).flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width)));
+		return { header: [], body: this.withActionLines(body) };
+	}
+
 	private wrappedDetail(width: number): FleetDetailSections {
+		if (this.promptAuditOpen) return this.promptAuditDetail(width);
 		const selected = this.snapshot.items[this.selected];
 		let transcriptWarning: string | undefined;
 		if (selected) {
@@ -871,7 +1070,8 @@ export class SubagentFleetComponent implements Component {
 							: latest?.kind === "tool"
 								? `${latest.name} · ${latest.status}`
 								: "activity";
-					return { header: structuredHeader(selected, width, this.theme, conversationState), body: this.withActionLines(body) };
+					const promptSummary = selected.kind === "foreground-active" ? foregroundAuthoredPromptSummary(selected, this.state) : undefined;
+					return { header: structuredHeader(selected, width, this.theme, conversationState, promptSummary), body: this.withActionLines(body) };
 				}
 			}
 		}
@@ -880,7 +1080,7 @@ export class SubagentFleetComponent implements Component {
 		if (transcriptWarning) raw.unshift(`Transcript preview warning: ${transcriptWarning}`, "");
 		const lines: string[] = [];
 		for (const line of raw) {
-			const styled = /^(Run|State|Mode|Source|Child|Agent|Model):/.test(line)
+			const styled = /^(Run|State|Mode|Source|Child|Agent|Model|Task):/.test(line)
 				? this.theme.bold(line)
 				: /^(Transcript|Result transcript tail)/.test(line)
 					? this.theme.fg("accent", line)
@@ -933,7 +1133,9 @@ export class SubagentFleetComponent implements Component {
 		}
 		lines.push(this.theme.fg("border", `├${"─".repeat(rosterWidth)}┴${"─".repeat(detailWidth)}┤`));
 		const position = this.snapshot.items.length ? `${this.selected + 1}/${this.snapshot.items.length}` : "0/0";
-		const footer = ` ${bindingLabel(this.keybindings, "selectUp")}/${bindingLabel(this.keybindings, "selectDown")} agent · ${bindingLabel(this.keybindings, "inspect")} Herdr · ${bindingLabel(this.keybindings, "steer")} steer · ${bindingLabel(this.keybindings, "stop")} stop · ${bindingLabel(this.keybindings, "toggleTools")} tools · ${bindingLabel(this.keybindings, "refresh")} refresh · ${bindingLabel(this.keybindings, "close")} close · ${position}`;
+		const footer = this.promptAuditOpen
+			? ` j/k child · 1/2/3 view · g redo with guidance · c copy · Esc close Prompt Audit · ${position}`
+			: ` ${bindingLabel(this.keybindings, "selectUp")}/${bindingLabel(this.keybindings, "selectDown")} agent · p Prompt Audit · ${bindingLabel(this.keybindings, "inspect")} Herdr · ${bindingLabel(this.keybindings, "steer")} steer · ${bindingLabel(this.keybindings, "stop")} stop · ${bindingLabel(this.keybindings, "toggleTools")} tools · ${bindingLabel(this.keybindings, "refresh")} refresh · ${bindingLabel(this.keybindings, "close")} close · ${position}`;
 		lines.push(this.theme.fg("border", "│") + fit(this.theme.fg("dim", footer), innerWidth) + this.theme.fg("border", "│"));
 		lines.push(this.theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
 		return lines.map((line) => truncateToWidth(line, width));
@@ -954,6 +1156,12 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 	const wasOpen = state.fleetInspectorOpen === true;
 	state.fleetInspectorOpen = true;
 	if (typeof ctx.ui.setWidget === "function") ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
+	const copyText = options.copyText ?? (async (text: string) => {
+		const module = await import("@selesai/code");
+		const copyToClipboard = (module as { copyToClipboard?: (value: string) => Promise<void> | void }).copyToClipboard;
+		if (!copyToClipboard) throw new Error("Clipboard is unavailable in this Pi version.");
+		await copyToClipboard(text);
+	});
 	const actions = options.actions ?? {
 		steer: async (input: { runId: string; asyncDir: string; index?: number; message: string; mode: SteerDeliveryMode }) => firstToolResultText(await steerAsyncRun({
 			state,
@@ -974,10 +1182,15 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 			...(state.authorityPolicy ? { authorityPolicy: state.authorityPolicy } : {}),
 			...(state.missionStoreConfig ? { missions: state.missionStoreConfig } : {}),
 		}), `Failed to open Herdr inspector for async run ${input.runId}.`),
+		redoPrompt: async (input: { runId: string; index: number; guidance: string; control?: ForegroundRunControl }) => {
+			const control = input.control ?? state.foregroundControls.get(input.runId);
+			if (!control?.promptAuditRedo) return { text: "Redo is not available for this live child.", isError: true };
+			return control.promptAuditRedo(input.index, input.guidance);
+		},
 	} satisfies FleetActionHandlers;
 	try {
 		await ctx.ui.custom<undefined>(
-			(tui, theme, _keybindings, done) => new SubagentFleetComponent(tui, theme, state, done, { ...options, actions }),
+			(tui, theme, _keybindings, done) => new SubagentFleetComponent(tui, theme, state, done, { ...options, actions, copyText }),
 			{
 				overlay: true,
 				overlayOptions: { anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 },

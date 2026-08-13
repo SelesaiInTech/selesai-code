@@ -318,7 +318,7 @@ export class SubagentFleetStatus {
 			this.clearWidget();
 			return;
 		}
-		if (this.entries.length === 0) {
+		if (this.entries.length === 0 && !(this.state.activeAsyncCapacity?.used)) {
 			this.active = false;
 			this.selectedKey = "main";
 			this.lastRenderKey = "";
@@ -413,10 +413,13 @@ export class SubagentFleetStatus {
 	}
 
 	render(width: number, theme: Theme): string[] {
-		if (this.entries.length === 0) return [];
+		if (this.entries.length === 0 && !(this.state.activeAsyncCapacity?.used)) return [];
 		if (!this.active) {
 			const tokens = this.entries.reduce((total, entry) => total + entry.tokens, 0);
-			const label = `${this.entries.length} active ${this.entries.length === 1 ? "agent" : "agents"}`;
+			const capacity = this.state.activeAsyncCapacity;
+			const asyncRuns = capacity ? `Async runs ${capacity.used}/${capacity.limit || "∞"}` : "";
+			const agents = this.entries.length > 0 ? `${this.entries.length} active ${this.entries.length === 1 ? "agent" : "agents"}` : "";
+			const label = [agents, asyncRuns].filter(Boolean).join(" · ");
 			return [truncateToWidth(`  ${theme.fg("muted", label)} · ${theme.fg("dim", `${formatFleetTokens(tokens)} · ↓/← to inspect`)}`, width)];
 		}
 		const roster = this.rosterKeys();
@@ -444,9 +447,8 @@ export class SubagentFleetStatus {
 	}
 
 	private renderEntry(rosterIndex: number, selectedIndex: number, entry: FleetStatusEntry, width: number, theme: Theme): string {
-		const description = entry.description?.replace(/\s+/g, " ").trim();
 		const agent = entry.modelThinking ? `${entry.agent} (${entry.modelThinking})` : entry.agent;
-		const left = `  ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg("muted", agent)} · ${entry.state}${description ? `  ${description}` : ""}`;
+		const left = `  ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg("muted", agent)} · ${entry.state}`;
 		const elapsed = Date.now() - entry.startedAt;
 		const right = theme.fg("dim", `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(entry.tokens)}`);
 		return rightAlign(left, right, width);

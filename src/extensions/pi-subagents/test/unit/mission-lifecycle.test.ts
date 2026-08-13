@@ -11,6 +11,7 @@ import {
 	syncMissionFromAsyncCompletion,
 } from "../../src/missions/lifecycle.ts";
 import { readMission } from "../../src/missions/store.ts";
+import { PROMPT_REDACTED } from "../../src/shared/utils.ts";
 
 function projectFixture() {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-mission-lifecycle-"));
@@ -52,7 +53,8 @@ describe("mission launch lifecycle", () => {
 			});
 			assert.ok(binding);
 			const mission = readMission(binding.location, binding.missionId);
-			assert.equal(mission.objective, "Map the auth flow");
+			assert.equal(mission.objective, PROMPT_REDACTED);
+			assert.equal(mission.title, PROMPT_REDACTED);
 			assert.equal(mission.status, "active");
 			const result = attachMissionToLaunchResult({
 				binding,
@@ -80,7 +82,7 @@ describe("mission launch lifecycle", () => {
 				config: test.missionConfig,
 			});
 			assert.ok(parallelOnly);
-			assert.equal(readMission(parallelOnly.location, parallelOnly.missionId).objective, "Review parallel work");
+			assert.equal(readMission(parallelOnly.location, parallelOnly.missionId).objective, PROMPT_REDACTED);
 
 			assert.throws(() => prepareMissionLaunch({
 				params: { missionId: "" },
@@ -107,7 +109,7 @@ describe("mission launch lifecycle", () => {
 				config: { ...test.missionConfig, enabled: false },
 			});
 			assert.ok(explicit);
-			assert.equal(readMission(explicit.location, explicit.missionId).objective, "Tiny one-off");
+			assert.equal(readMission(explicit.location, explicit.missionId).objective, "Explicit mission");
 
 			const summaryAlias = prepareMissionLaunch({
 				params: { mission: { summary: "Review active backlog", labels: ["review"] }, task: "Review the current diff" },
@@ -117,7 +119,31 @@ describe("mission launch lifecycle", () => {
 			assert.ok(summaryAlias);
 			assert.deepEqual(readMission(summaryAlias.location, summaryAlias.missionId).labels, ["review"]);
 			assert.equal(readMission(summaryAlias.location, summaryAlias.missionId).title, "Review active backlog");
-			assert.equal(readMission(summaryAlias.location, summaryAlias.missionId).objective, "Review the current diff");
+			assert.equal(readMission(summaryAlias.location, summaryAlias.missionId).objective, "Review active backlog");
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("explains when an explicit mission belongs to another worktree", () => {
+		const test = projectFixture();
+		const worktreeRoot = path.join(test.root, "worktree");
+		fs.mkdirSync(worktreeRoot, { recursive: true });
+		try {
+			const binding = prepareMissionLaunch({
+				params: { mission: { title: "Root mission" }, task: "Prepare root work" },
+				projectRoot: test.projectRoot,
+				config: test.missionConfig,
+			});
+			assert.ok(binding);
+			const missionDir = path.join(worktreeRoot, ".pi-subagents", "missions");
+			assert.throws(() => prepareMissionLaunch({
+				params: { missionId: binding.missionId, task: "Prepare worktree work" },
+				projectRoot: worktreeRoot,
+				config: test.missionConfig,
+			}), {
+				message: `Mission '${binding.missionId}' was not found in mission directory '${missionDir}' for project root '${worktreeRoot}'. If it was created in another worktree, run the request from that worktree.`,
+			});
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}

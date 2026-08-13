@@ -10,6 +10,7 @@ import {
 	type ProcessTerminalV1,
 } from "../../shared/types.ts";
 import { canonicalSessionId, inspectSessionLease } from "../shared/session-lease.ts";
+import { releaseActiveRunIndex } from "./active-run-index.ts";
 
 export interface ProcessTerminalCandidate {
 	version: 1;
@@ -40,9 +41,19 @@ function validProcessInstance(value: unknown, kind?: "runner" | "pi-writer"): va
 	if (typeof value.closeObservedAt !== "number" || !Number.isFinite(value.closeObservedAt)) return false;
 	if (typeof value.exitCode !== "number" && value.exitCode !== null) return false;
 	if (typeof value.signal !== "string" && value.signal !== null) return false;
-	return value.kind === "runner"
-		? value.attempt === undefined
-		: typeof value.attempt === "number" && Number.isInteger(value.attempt) && value.attempt >= 0;
+	if (value.kind === "runner") return value.attempt === undefined;
+	if (typeof value.attempt !== "number" || !Number.isInteger(value.attempt) || value.attempt < 0 || !isRecord(value.processTree)) return false;
+	if (value.processTree.state === "observed") {
+		return value.processTree.mechanism === "posix-process-group"
+			&& typeof value.processTree.processGroupId === "number"
+			&& Number.isInteger(value.processTree.processGroupId)
+			&& value.processTree.processGroupId > 0
+			&& typeof value.processTree.verifiedAt === "number"
+			&& Number.isFinite(value.processTree.verifiedAt);
+	}
+	return value.processTree.state === "unknown"
+		&& ["unsupported-platform", "signal-failed", "verification-failed"].includes(String(value.processTree.reason))
+		&& (value.processTree.diagnostic === undefined || typeof value.processTree.diagnostic === "string");
 }
 
 function validInstance(value: unknown): value is ProcessInstanceExitV1 {
@@ -249,6 +260,8 @@ export function finalizeProcessTerminal(
 				proof = unknownProof(runId, runnerClose.processInstanceId, "canonical-session-release-unverified");
 			} else if (inconsistentWriters || (allWriters.length === 0 && expectedEntries.length === 0)) {
 				proof = unknownProof(runId, runnerClose.processInstanceId, "writer-close-unverified");
+			} else if (allWriters.some((writer) => writer.kind === "pi-writer" && writer.processTree.state !== "observed")) {
+				proof = unknownProof(runId, runnerClose.processInstanceId, "process-tree-unverified");
 			} else {
 				const runner: ProcessInstanceExitV1 = { kind: "runner", ...runnerClose };
 				const canonicalSession = session && sessionProjection(candidate, session);
@@ -271,6 +284,7 @@ export function finalizeProcessTerminal(
 	try {
 		writeAtomicJson(processTerminalPath(asyncDir), proof);
 		durable = true;
+		if (proof.state === "observed") releaseActiveRunIndex(asyncDir);
 		overlayStatus(asyncDir, proof, candidateForOverlay);
 		fs.appendFileSync(path.join(asyncDir, "events.jsonl"), `${JSON.stringify({ type: "subagent.run.process_terminal", lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, ts: Date.now(), runId, processTerminal: proof })}\n`, "utf-8");
 	} catch {

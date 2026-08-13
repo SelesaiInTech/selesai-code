@@ -19,6 +19,7 @@ import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-
 import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegistryForRoot, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 import { readMissionBinding } from "../../missions/lifecycle.ts";
 import { formatWorkflowJsonPreview } from "../../workflows/scripted-workflow.ts";
+import { formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 
 interface RunStatusParams {
 	action?: string;
@@ -389,6 +390,8 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			const steeringText = formatSteeringSummary(status);
 			const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
 				?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
+			const runFanoutBudgetDescriptor = readRunFanoutBudgetDescriptor(asyncDir);
+			const runFanoutBudget = runFanoutBudgetDescriptor ? getRunFanoutBudgetSnapshot(runFanoutBudgetDescriptor) : status.runFanoutBudget;
 			let missionId: string | undefined;
 			try {
 				missionId = readMissionBinding(asyncDir)?.missionId;
@@ -410,6 +413,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				statusActivityText ? `Activity: ${statusActivityText}` : undefined,
 				steeringText ? `Steering: ${steeringText}` : undefined,
 				`Mode: ${status.mode}`,
+				runFanoutBudget ? formatRunFanoutBudget(runFanoutBudget) : undefined,
 				status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}${status.workflowKey ? ` (${status.workflowKey})` : ""}` : undefined,
 				status.mode === "workflow" && workflowReturnPreview !== undefined ? `Return: ${workflowReturnPreview}` : undefined,
 				status.mode === "workflow" && workflowEmitPreview !== undefined ? `Latest emit: ${workflowEmitPreview}` : undefined,
@@ -466,7 +470,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (fs.existsSync(logPath)) lines.push(`Log: ${logPath}`);
 			if (fs.existsSync(eventsPath)) lines.push(`Events: ${eventsPath}`);
 
-			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
+			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(runFanoutBudget ? { runFanoutBudget } : {}), ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
 		}
 	}
 

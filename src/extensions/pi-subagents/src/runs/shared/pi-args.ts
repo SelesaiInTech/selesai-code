@@ -23,8 +23,10 @@ import {
 	type JsonSchemaObject,
 	type LaunchResolvedChildExtensionsV1,
 	type ResolvedToolBudget,
+	type RunFanoutBudgetDescriptor,
 } from "../../shared/types.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
+import { encodeRunFanoutBudgetDescriptor, RUN_FANOUT_BUDGET_ENV } from "./run-fanout-budget.ts";
 import {
 	TOOL_BUDGET_ENV,
 	TOOL_BUDGET_ZERO_AUTH_ENV,
@@ -63,6 +65,32 @@ import {
 } from "./capability-ceiling.ts";
 
 const TASK_ARG_LIMIT = 8000;
+
+/**
+ * Env override for how the task text reaches the child process. Endpoint
+ * protection (EDR) pre-execution command-line scanning may deny exec of
+ * children whose argv embeds a long natural-language task, which surfaces
+ * as an immediate zero-activity SIGKILL. File delivery keeps the task out
+ * of argv entirely.
+ */
+export const SUBAGENT_TASK_DELIVERY_ENV = "SELESAI_SUBAGENT_TASK_DELIVERY";
+
+export type SubagentTaskDelivery = "auto" | "file";
+
+export function resolveSubagentTaskDelivery(
+	env: NodeJS.ProcessEnv = process.env,
+): SubagentTaskDelivery {
+	return env[SUBAGENT_TASK_DELIVERY_ENV]?.trim().toLowerCase() === "file"
+		? "file"
+		: "auto";
+}
+
+function shouldDeliverTaskViaFile(
+	task: string,
+	delivery: SubagentTaskDelivery,
+): boolean {
+	return delivery === "file" || task.length > TASK_ARG_LIMIT;
+}
 const MAX_LAUNCH_RESOLVED_EXTENSION_IDS = 32;
 const PROMPT_RUNTIME_EXTENSION_PATH = path.join(
 	path.dirname(fileURLToPath(import.meta.url)),
@@ -136,6 +164,7 @@ export interface BuildPiArgsInput {
 	parentDepth?: number;
 	parentPath?: NestedPathEntry[];
 	parentCapabilityToken?: string;
+	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	steerInboxDir?: string;
 	steerCapabilityPath?: string;
 	steerAckDir?: string;
@@ -149,6 +178,12 @@ export interface BuildPiArgsInput {
 	permissionRules?: PermissionRules;
 	permissionAuditPath?: string;
 	childWatchdog?: ChildWatchdogConfig;
+	/**
+	 * Per-launch override of the task delivery mode. Startup-retry paths set
+	 * this to "file" after an unexplained zero-activity SIGKILL so the retry
+	 * keeps the task text out of the child's argv.
+	 */
+	taskDelivery?: SubagentTaskDelivery;
 	waitToolEnabled?: boolean;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 }
@@ -585,7 +620,12 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		);
 	}
 
-	if (input.task.length > TASK_ARG_LIMIT) {
+	if (
+		shouldDeliverTaskViaFile(
+			input.task,
+			input.taskDelivery ?? resolveSubagentTaskDelivery(),
+		)
+	) {
 		if (!tempDir) {
 			tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 		}
@@ -694,6 +734,9 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 			process.env[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV] ??
 			"")
 		: "";
+	env[RUN_FANOUT_BUDGET_ENV] = toolPlan.fanoutAuthorized
+		? (input.runFanoutBudget ? encodeRunFanoutBudgetDescriptor(input.runFanoutBudget) : process.env[RUN_FANOUT_BUDGET_ENV])
+		: undefined;
 	env.SELESAI_SUBAGENT_INHERIT_PROJECT_CONTEXT = input.inheritProjectContext
 		? "1"
 		: "0";

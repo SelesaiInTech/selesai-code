@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 
 function writeJson(filePath: string, value: object): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -97,7 +98,7 @@ describe("async resume lookup", () => {
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
 			});
 			const descriptor = {
-				version: 1, sourceRunId: "run-descriptor", agent: "worker", cwd: root, systemPromptMode: "replace",
+				version: 1, runFanoutBudget: createRunFanoutBudget("run-descriptor", 64), sourceRunId: "run-descriptor", agent: "worker", cwd: root, systemPromptMode: "replace",
 				inheritProjectContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
 			};
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, token: "must-not-be-accepted" });
@@ -141,6 +142,7 @@ describe("async resume lookup", () => {
 			});
 			const descriptor = {
 				version: 1,
+				runFanoutBudget: createRunFanoutBudget("run-turn-budget", 64),
 				sourceRunId: "run-turn-budget",
 				agent: "worker",
 				cwd: root,
@@ -195,6 +197,7 @@ describe("async resume lookup", () => {
 			});
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				version: 1,
+				runFanoutBudget: createRunFanoutBudget("run-acceptance", 64),
 				sourceRunId: "run-acceptance",
 				agent: "worker",
 				cwd: root,
@@ -244,6 +247,7 @@ describe("async resume lookup", () => {
 			});
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				version: 1,
+				runFanoutBudget: createRunFanoutBudget("run-reviewed-acceptance", 64),
 				sourceRunId: "run-reviewed-acceptance",
 				agent: "worker",
 				cwd: root,
@@ -288,6 +292,7 @@ describe("async resume lookup", () => {
 			});
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				version: 1,
+				runFanoutBudget: createRunFanoutBudget("run-inferred-acceptance", 64),
 				sourceRunId: "run-inferred-acceptance",
 				agent: "worker",
 				cwd: root,

@@ -328,6 +328,7 @@ export interface FileMutationEffect {
 	expected: boolean;
 	attempted: boolean;
 	message?: string;
+	resolvedBy?: "llm-intent-arbiter";
 }
 
 export interface EffectsProjection {
@@ -343,6 +344,7 @@ export type ProcessTerminalReason =
 	| "runner-candidate-missing"
 	| "runner-instance-mismatch"
 	| "writer-close-unverified"
+	| "process-tree-unverified"
 	| "canonical-session-unavailable"
 	| "canonical-session-lease-active"
 	| "canonical-session-release-unverified"
@@ -357,6 +359,19 @@ export interface RunnerProcessInstanceExitV1 {
 	signal: string | null;
 }
 
+export type ProcessTreeTerminalV1 =
+	| {
+		state: "observed";
+		mechanism: "posix-process-group";
+		processGroupId: number;
+		verifiedAt: number;
+	}
+	| {
+		state: "unknown";
+		reason: "unsupported-platform" | "signal-failed" | "verification-failed";
+		diagnostic?: string;
+	};
+
 export interface PiWriterProcessInstanceExitV1 {
 	processInstanceId: string;
 	kind: "pi-writer";
@@ -364,6 +379,7 @@ export interface PiWriterProcessInstanceExitV1 {
 	closeObservedAt: number;
 	exitCode: number | null;
 	signal: string | null;
+	processTree: ProcessTreeTerminalV1;
 }
 
 export type ProcessInstanceExitV1 = RunnerProcessInstanceExitV1 | PiWriterProcessInstanceExitV1;
@@ -462,9 +478,30 @@ export interface SteeringNotice {
 	currentSessionId?: string;
 }
 
+export interface RunFanoutBudgetDescriptor {
+	version: 1;
+	rootRunId: string;
+	directory: string;
+	limit: number;
+	parentPath?: string;
+}
+
+export interface RunFanoutBudgetSnapshot {
+	used: number;
+	limit: number;
+	remaining: number;
+}
+
+export interface RunFanoutRejection extends RunFanoutBudgetSnapshot {
+	code: "RUN_FANOUT_LIMIT";
+	path: string;
+	requested: number;
+}
+
 export interface SteeringRecoveryDescriptor {
 	version: 1;
 	launchContractDigest?: string;
+	runFanoutBudget: RunFanoutBudgetDescriptor;
 	sourceRunId: string;
 	agentContract?: AgentContract;
 	agent: string;
@@ -1024,6 +1061,9 @@ export interface Details {
 	// Aggregated cost across all agents in the run
 	totalCost?: CostSummary;
 	spawnBudget?: SpawnBudgetSnapshot;
+	runFanoutBudget?: RunFanoutBudgetSnapshot;
+	runFanoutRejection?: RunFanoutRejection;
+	activeAsyncCapacity?: ActiveAsyncCapacitySnapshot;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
 	parallelHandoff?: ParallelHandoffReference;
@@ -1323,6 +1363,8 @@ export interface AsyncStatus {
 	workflowGraph?: WorkflowGraphSnapshot;
 	checkpoint?: ChainCheckpointState;
 	processTerminal?: ProcessTerminalV1;
+	runFanoutBudget?: RunFanoutBudgetSnapshot;
+	runFanoutBudgetDescriptor?: RunFanoutBudgetDescriptor;
 	launchContractDigest?: string;
 	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
@@ -1342,6 +1384,10 @@ export interface AsyncStatus {
 		phase?: string;
 		label?: string;
 		workflowKey?: string;
+		/** Child run identity for workflow capacity reconciliation. */
+		runId?: string;
+		/** True only when this workflow child owns a detached async runner. */
+		async?: boolean;
 		parentWorkflowRunId?: string;
 		outputName?: string;
 		structured?: boolean;
@@ -1574,6 +1620,12 @@ export interface ForegroundRunControl {
 	toolCount?: number;
 	/** Independently tracked children for foreground parallel work and fleet inspection. */
 	activeChildren?: Map<number, ForegroundChildControl>;
+	/** Live Prompt Audit redo callback. It is current-session memory only. */
+	promptAuditRedo?: (index: number, guidance: string) => Promise<{ text: string; isError?: boolean }>;
+	/** Memory-only source run for Prompt Audit redo. */
+	sourceRunId?: string;
+	/** Memory-only replacement run started by Prompt Audit redo. */
+	supersededByRunId?: string;
 	/** Scheduling owners that may still launch another child. Removal is safe only at zero. */
 	schedulingOwners?: number;
 	nestedRoute?: NestedRouteInfo;
@@ -1591,6 +1643,12 @@ export interface WaitSubscriptionRecord {
 	requestedId: string;
 	createdAt: number;
 	expiresAt: number;
+}
+
+export interface ActiveAsyncCapacitySnapshot {
+	used: number;
+	/** Zero means the opt-in cap is disabled. */
+	limit: number;
 }
 
 export interface SubagentState {
@@ -1613,6 +1671,8 @@ export interface SubagentState {
 		granted?: number;
 		grantHistory?: SpawnBudgetGrant[];
 	};
+	/** Current-session top-level async capacity projection. */
+	activeAsyncCapacity?: ActiveAsyncCapacitySnapshot;
 	asyncJobs: Map<string, AsyncJobState>;
 	/** Current-session active and recent async runs for the native fleet inspector. */
 	fleetJobs?: Map<string, AsyncJobState>;
@@ -1730,9 +1790,12 @@ export interface RunSyncOptions {
 	/** Effective parent wait-tool setting propagated to the child runtime. */
 	waitToolEnabled?: boolean;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
+	/** LLM intent arbiter for the completion mutation guard (rescues read-only review runs). */
+	llmIntentArbiter?: import("../runs/shared/llm-intent-arbiter.ts").TaskMutationArbiter;
 	/** Override the agent's default thinking level for this run */
 	thinkingOverride?: AgentConfig["thinking"];
 	/** Registry models available for heuristic bare-model resolution */
@@ -1756,6 +1819,8 @@ export interface RunSyncOptions {
 		dynamic?: boolean;
 		dynamicGroup?: boolean;
 	};
+	/** Private live callback for the exact child prompt after runtime acceptance injection. */
+	onEffectivePrompt?: (prompt: string) => void;
 }
 
 export type IntercomBridgeMode = "off" | "fork-only" | "always";
@@ -1840,8 +1905,22 @@ export interface ExtensionConfig {
 	maxSubagentDepth?: number;
 	/** Optional cumulative session cap. Unset or 0 means unlimited. */
 	maxSubagentSpawnsPerSession?: number;
+	/** Cumulative logical-child cap for one top-level run tree. Defaults to 64. */
+	maxSubagentSpawnsPerRun?: number;
+	/** Optional active top-level async run cap per parent session. Unset or 0 means unlimited. */
+	maxActiveAsyncRunsPerSession?: number;
 	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
 	globalConcurrencyLimit?: number;
+	/**
+	 * Global default runtime deadline in milliseconds. It replaces the built-in
+	 * 30-minute backstop for single, parallel, and chain launches (foreground, plus
+	 * plain single-agent async runs) when neither the call (`timeoutMs`/`maxRuntimeMs`)
+	 * nor the selected agent provides a timeout. Explicit call values and agent
+	 * frontmatter defaults still win. Composite async runs (chain/parallel/workflow)
+	 * stay unbounded at the top level by design — their children are bounded individually.
+	 * Must be a positive integer; invalid values are ignored.
+	 */
+	timeoutMs?: number;
 	control?: ControlConfig;
 	completionBatch?: CompletionBatchConfig;
 	turnBudget?: TurnBudgetConfig;
@@ -2055,6 +2134,19 @@ export function resolveMaxSubagentSpawnsPerSession(configMaxSpawns?: number): nu
 	if (envMaxSpawns !== undefined) return envMaxSpawns === 0 ? undefined : envMaxSpawns;
 	const configuredMaxSpawns = normalizeMaxSubagentSpawnsPerSession(configMaxSpawns);
 	return configuredMaxSpawns === 0 ? undefined : configuredMaxSpawns;
+}
+
+export const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN = 64;
+
+export function normalizeMaxSubagentSpawnsPerRun(value: unknown): number | undefined {
+	const normalized = normalizeNonNegativeInteger(value);
+	return normalized !== undefined && normalized > 0 ? normalized : undefined;
+}
+
+export function resolveMaxSubagentSpawnsPerRun(configMaxSpawns?: number): number {
+	return normalizeMaxSubagentSpawnsPerRun(process.env.SELESAI_SUBAGENT_MAX_SPAWNS_PER_RUN)
+		?? normalizeMaxSubagentSpawnsPerRun(configMaxSpawns)
+		?? DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN;
 }
 
 // ============================================================================

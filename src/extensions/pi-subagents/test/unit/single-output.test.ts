@@ -309,4 +309,32 @@ describe("finalizeSingleOutput", () => {
 
 		assert.equal(result.displayOutput, "truncated output");
 	});
+
+	it("preserves the saved-output reference for acceptance-only failures", () => {
+		const result = finalizeSingleOutput({
+			fullOutput: "useful output",
+			outputPath: "/tmp/review.md",
+			outputMode: "file-only",
+			exitCode: 1,
+			preserveSavedOutput: true,
+			savedPath: "/tmp/review.md",
+		});
+
+		assert.match(result.displayOutput, /^Output saved to:/);
+		assert.doesNotMatch(result.displayOutput, /useful output/);
+	});
+
+	it("does not duplicate an existing saved-output reference", () => {
+		const outputReference = formatSavedOutputReference("/tmp/review.md", "useful output");
+		const result = finalizeSingleOutput({
+			fullOutput: `useful output\n\n${outputReference.message}`,
+			outputPath: "/tmp/review.md",
+			exitCode: 1,
+			preserveSavedOutput: true,
+			savedPath: "/tmp/review.md",
+			outputReference,
+		});
+
+		assert.equal(result.displayOutput.match(/Output saved to:/g)?.length, 1);
+	});
 });

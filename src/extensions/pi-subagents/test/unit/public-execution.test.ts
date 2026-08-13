@@ -19,7 +19,18 @@ describe("public subagent execution normalization", () => {
 		);
 	});
 
-	it("rejects malformed public execution shapes", () => {
+	it("rejects private run fan-out fields at the public boundary", () => {
+		for (const params of [
+			{ workflowScript: "return 1", runFanoutBudget: { version: 1 } },
+			{ workflowScript: "return 1", runFanoutAdmitted: true },
+		] as const) {
+			const result = normalizePublicSubagentExecution(params);
+			assert.equal(result.ok, false);
+			if (!result.ok) assert.match(result.error, /does not accept internal run fan-out fields/);
+		}
+	});
+
+	it("rejects removed public execution shapes", () => {
 		for (const params of [
 			{ action: " " },
 			{ action: "single" },

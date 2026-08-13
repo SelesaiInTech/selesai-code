@@ -1024,7 +1024,10 @@ function applyBuiltinOverride(
 	};
 
 	if (override.description !== undefined) next.description = override.description;
-	if (override.model !== undefined) { if (override.model === false) delete next.model; else next.model = override.model; }
+	if (override.model !== undefined) {
+		if (override.model === false) delete next.model; else next.model = override.model;
+		delete next.modelSource;
+	}
 	if (override.fallbackModels !== undefined) { if (override.fallbackModels === false) delete next.fallbackModels; else next.fallbackModels = [...override.fallbackModels]; }
 	if (override.thinking !== undefined) { if (override.thinking === false) delete next.thinking; else next.thinking = override.thinking; }
 	if (override.systemPromptMode !== undefined) next.systemPromptMode = override.systemPromptMode;
@@ -1142,8 +1145,11 @@ function applyCustomAgentOverride(
 		mutable().description = override.description;
 		anyFilled = true;
 	}
-	if (override.model !== undefined) {
-		fill("model", ["model"], override.model === false ? undefined : override.model);
+	if (override.model !== undefined && !agentHasFrontmatterField(agent, "model")) {
+		const target = mutable();
+		if (override.model === false) delete target.model; else target.model = override.model;
+		delete target.modelSource;
+		anyFilled = true;
 	}
 	if (override.fallbackModels !== undefined) {
 		fill(

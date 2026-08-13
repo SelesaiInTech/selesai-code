@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { formatAsyncRunList, listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { claimRunFanoutBatch, createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 
 function createAsyncDir(root: string, id: string, status: Record<string, unknown>): string {
 	const dir = path.join(root, id);
@@ -17,9 +18,10 @@ function createAsyncDir(root: string, id: string, status: Record<string, unknown
 describe("async status helpers", () => {
 	it("lists only requested states and includes flattened step summaries", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-"));
+		let budgetDirectory: string | undefined;
 		try {
 			const outputFile = path.join(root, "run-a", "output-1.log");
-			createAsyncDir(root, "run-a", {
+			const runDir = createAsyncDir(root, "run-a", {
 				runId: "run-a",
 				mode: "chain",
 				state: "running",
@@ -27,12 +29,17 @@ describe("async status helpers", () => {
 				lastUpdate: 200,
 				cwd: "/repo-a",
 				currentStep: 1,
+				runFanoutBudget: { used: 2, limit: 64, remaining: 62 },
 				outputFile,
 				steps: [
 					{ agent: "scout", status: "complete", durationMs: 10, description: "Inspect auth only" },
 					{ agent: "worker", status: "running", durationMs: 20, description: "Patch billing only" },
 				],
 			});
+			const descriptor = createRunFanoutBudget("run-a", 64);
+			budgetDirectory = descriptor.directory;
+			writeRunFanoutBudgetDescriptor(runDir, descriptor);
+			claimRunFanoutBatch(descriptor, ["chain[0]", "chain[1]", "chain[1]/single"]);
 			createAsyncDir(root, "run-b", {
 				runId: "run-b",
 				mode: "single",
@@ -51,9 +58,12 @@ describe("async status helpers", () => {
 			assert.equal(runs[0]?.steps[1]?.status, "running");
 			assert.equal(runs[0]?.steps[0]?.description, "Inspect auth only");
 			assert.equal(runs[0]?.steps[1]?.description, "Patch billing only");
-			assert.match(formatAsyncRunList(runs), /output: .*output-1\.log/);
+			const text = formatAsyncRunList(runs);
+			assert.match(text, /Run fan-out: 3\/64 used, 61 remaining/);
+			assert.match(text, /output: .*output-1\.log/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
+			if (budgetDirectory) fs.rmSync(budgetDirectory, { recursive: true, force: true });
 		}
 	});
 
@@ -597,7 +607,7 @@ describe("async status helpers", () => {
 		}
 	});
 
-	it("prunes terminal active markers while preserving history listing", () => {
+	it("keeps terminal active markers until observed process-terminal proof releases them", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-index-prune-"));
 		try {
 			const asyncDir = createAsyncDir(root, "finished", {
@@ -606,13 +616,26 @@ describe("async status helpers", () => {
 				state: "complete",
 				startedAt: 100,
 				lastUpdate: 200,
+				displayDismissedAt: 250,
+				processTerminal: { version: 1, state: "unknown", runId: "finished", runnerProcessInstanceId: "runner", reason: "process-tree-unverified" },
 				steps: [{ agent: "worker", status: "complete" }],
 			});
 			updateActiveRunIndex(asyncDir, "running");
+			const markerPath = path.join(root, ACTIVE_RUN_INDEX_DIR, "finished");
 
 			assert.deepEqual(listAsyncRuns(root, { states: ["running"], reconcile: false }), []);
-			assert.equal(fs.existsSync(path.join(root, ACTIVE_RUN_INDEX_DIR, "finished")), false);
-			assert.deepEqual(listAsyncRuns(root, { states: ["complete"], reconcile: false }).map((run) => run.id), ["finished"]);
+			assert.equal(fs.existsSync(markerPath), true);
+
+			fs.writeFileSync(path.join(asyncDir, "process-terminal.json"), JSON.stringify({
+				version: 1,
+				state: "observed",
+				runId: "finished",
+				runnerProcessInstanceId: "runner",
+				observedAt: 300,
+				instances: [{ kind: "runner", processInstanceId: "runner", closeObservedAt: 300, exitCode: 0, signal: null }],
+			}), "utf-8");
+			assert.deepEqual(listAsyncRuns(root, { states: ["running"], reconcile: false }), []);
+			assert.equal(fs.existsSync(markerPath), false);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

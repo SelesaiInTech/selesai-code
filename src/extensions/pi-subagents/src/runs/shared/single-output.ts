@@ -214,17 +214,19 @@ export function finalizeSingleOutput(params: {
 	outputPath?: string;
 	outputMode?: OutputMode;
 	exitCode: number;
+	/** Keep the saved-output reference when a post-run acceptance gate rejects an otherwise completed child. */
+	preserveSavedOutput?: boolean;
 	savedPath?: string;
 	outputReference?: SavedOutputReference;
 	saveError?: string;
 }): { displayOutput: string; savedPath?: string; outputReference?: SavedOutputReference; saveError?: string } {
 	let displayOutput = params.truncatedOutput || params.fullOutput;
-	if (params.exitCode === 0 && params.savedPath) {
+	if ((params.exitCode === 0 || params.preserveSavedOutput) && params.savedPath) {
 		const outputReference = params.outputReference ?? formatSavedOutputReference(params.savedPath, params.fullOutput);
 		if (params.outputMode === "file-only") {
 			return { displayOutput: outputReference.message, savedPath: params.savedPath, outputReference };
 		}
-		displayOutput += `\n\n${outputReference.message}`;
+		if (!displayOutput.includes(outputReference.message)) displayOutput += `\n\n${outputReference.message}`;
 		return { displayOutput, savedPath: params.savedPath, outputReference };
 	}
 	if (params.exitCode === 0 && params.saveError && params.outputPath) {

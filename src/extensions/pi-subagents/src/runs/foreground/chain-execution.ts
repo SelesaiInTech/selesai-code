@@ -34,6 +34,7 @@ import {
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { INTERCOM_BRIDGE_MARKER } from "../../intercom/intercom-bridge.ts";
 import { runSync } from "./execution.ts";
+import { createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
 import { workflowForegroundSteeringLaunchOptions } from "./workflow-foreground-steering.ts";
 import {
 	beginForegroundChild,
@@ -42,6 +43,7 @@ import {
 	settleForegroundSchedulingOwner,
 	updateForegroundChild,
 } from "./foreground-control.ts";
+import { updateLiveEffectivePrompt } from "./prompt-audit.ts";
 import { buildChainSummary } from "../../shared/formatters.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
@@ -71,6 +73,7 @@ import {
 	type ResolvedControlConfig,
 	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
+	type RunFanoutBudgetDescriptor,
 	type SingleResult,
 	type ToolBudgetConfig,
 	type ChainCheckpointState,
@@ -86,6 +89,7 @@ import { ChainOutputValidationError, outputEntryFromResult, resolveOutputReferen
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection, type DynamicCollectedResult } from "../shared/dynamic-fanout.ts";
 import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
+import { claimRunFanoutBatch, RunFanoutLimitError } from "../shared/run-fanout-budget.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import type { ChainOutputMap } from "../../shared/types.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
@@ -167,6 +171,7 @@ interface ParallelChainRunInput {
 	configToolBudget?: ToolBudgetConfig;
 	globalSemaphore?: Semaphore;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	permissions?: PermissionConfig;
 	dynamic?: boolean;
 }
@@ -368,7 +373,11 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				beginForegroundChild(input.foregroundControl, {
 					index: childIndex,
 					agent: task.agent,
-					description: cleanTask.trim(),
+					authoredTask: cleanTask,
+					effectivePrompt: taskStr,
+					cwd: taskCwd,
+					...(outputPath ? { outputPath } : {}),
+					description: `${task.agent} child`,
 					...(effectiveModel ? { model: effectiveModel } : {}),
 					...(thinking ? { thinking } : {}),
 					interrupt: () => {
@@ -388,8 +397,10 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				result = await runSync(input.ctx.cwd, input.agents, task.agent, taskStr, {
 				permissions: input.permissions,
 				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+				llmIntentArbiter: createTaskMutationArbiter(input.ctx),
 				...workflowForegroundSteeringLaunchOptions(input.foregroundControl, childIndex),
 				capabilityCeiling: input.capabilityCeiling,
+				runFanoutBudget: input.runFanoutBudget ? { ...input.runFanoutBudget, parentPath: `${input.runFanoutBudget.parentPath ? `${input.runFanoutBudget.parentPath}/` : ""}chain[${input.stepIndex}]${input.dynamic ? `.expand[${taskIndex}]` : `.parallel[${taskIndex}]`}` } : undefined,
 				context: input.contextForAgent?.(task.agent),
 				cwd: taskCwd,
 				signal: input.signal,
@@ -422,6 +433,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				agentContract,
 				acceptance: task.acceptance,
 				acceptanceContext: { mode: "chain", dynamic: input.dynamic && task.acceptance === undefined },
+				onEffectivePrompt: input.foregroundControl ? (prompt) => updateLiveEffectivePrompt(input.foregroundControl!, childIndex, prompt) : undefined,
 				timeoutMs: input.timeoutMs,
 				deadlineAt: input.deadlineAt,
 				turnBudget: input.turnBudget,
@@ -540,6 +552,7 @@ interface ChainExecutionParams {
 	/** Global cap on simultaneously-running tasks within this chain. Defaults to DEFAULT_GLOBAL_CONCURRENCY_LIMIT. */
 	globalConcurrencyLimit?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	runFanoutBudget?: RunFanoutBudgetDescriptor;
 }
 
 interface ChainExecutionResult {
@@ -876,6 +889,7 @@ ${step.message}` : ""}` }],
 					configToolBudget: params.configToolBudget,
 					globalSemaphore,
 					permissions: params.permissions,
+					runFanoutBudget: params.runFanoutBudget,
 				});
 				globalTaskIndex += step.parallel.length;
 
@@ -1000,6 +1014,19 @@ ${step.message}` : ""}` }],
 				const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
 				dynamicGroupStatuses[stepIndex] = { status: "failed", error: message };
 				return buildChainExecutionErrorResult(message, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex }));
+			}
+
+			try {
+				if (params.runFanoutBudget) claimRunFanoutBatch(params.runFanoutBudget, materialized.parallel.map((_, itemIndex) => `chain[${stepIndex}].expand[${itemIndex}]`));
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				dynamicGroupStatuses[stepIndex] = { status: "failed", error: message };
+				const result = buildChainExecutionErrorResult(message, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex }));
+				if (error instanceof RunFanoutLimitError) {
+					result.details.runFanoutBudget = error.snapshot;
+					result.details.runFanoutRejection = error.rejection;
+				}
+				return result;
 			}
 
 			dynamicChildren[stepIndex] = materialized.items.map((item, itemIndex) => ({
@@ -1137,6 +1164,7 @@ ${step.message}` : ""}` }],
 				configToolBudget: params.configToolBudget,
 				globalSemaphore,
 				permissions: params.permissions,
+				runFanoutBudget: params.runFanoutBudget,
 				dynamic: true,
 			});
 			globalTaskIndex = dynamicStartIndex + reservedDynamicItems;
@@ -1332,7 +1360,11 @@ ${step.message}` : ""}` }],
 				beginForegroundChild(foregroundControl, {
 					index: childIndex,
 					agent: seqStep.agent,
-					description: cleanTask.trim(),
+					authoredTask: cleanTask,
+					effectivePrompt: stepTask,
+					cwd,
+					...(outputPath ? { outputPath } : {}),
+					description: `${seqStep.agent} child`,
 					...(effectiveModel ? { model: effectiveModel } : {}),
 					...(thinking ? { thinking } : {}),
 					interrupt: () => {
@@ -1369,8 +1401,10 @@ ${step.message}` : ""}` }],
 				r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
 				permissions: params.permissions,
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+				llmIntentArbiter: createTaskMutationArbiter(ctx),
 				...workflowForegroundSteeringLaunchOptions(params.foregroundControl, childIndex),
 				capabilityCeiling: params.capabilityCeiling,
+				runFanoutBudget: params.runFanoutBudget ? { ...params.runFanoutBudget, parentPath: `${params.runFanoutBudget.parentPath ? `${params.runFanoutBudget.parentPath}/` : ""}chain[${stepIndex}]` } : undefined,
 				context: params.contextForAgent?.(seqStep.agent),
 				cwd: resolveChildCwd(cwd ?? ctx.cwd, seqStep.cwd),
 				signal,
@@ -1403,6 +1437,7 @@ ${step.message}` : ""}` }],
 				agentContract,
 				acceptance: seqStep.acceptance,
 				acceptanceContext: { mode: "chain" },
+				onEffectivePrompt: foregroundControl ? (prompt) => updateLiveEffectivePrompt(foregroundControl, childIndex, prompt) : undefined,
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				turnBudget: params.turnBudget,

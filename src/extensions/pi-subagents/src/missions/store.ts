@@ -396,11 +396,11 @@ export class MissionNotFoundError extends Error {
 	readonly missionId: string;
 	readonly missionDir: string;
 
-	constructor(missionId: string, missionDir: string) {
-		super(`Mission '${missionId}' was not found in ${missionDir}`);
+	constructor(missionId: string, location: MissionStoreLocation) {
+		super(`Mission '${missionId}' was not found in mission directory '${location.missionDir}' for project root '${location.projectRoot}'. If it was created in another worktree, run the request from that worktree.`);
 		this.name = "MissionNotFoundError";
 		this.missionId = missionId;
-		this.missionDir = missionDir;
+		this.missionDir = location.missionDir;
 	}
 }
 
@@ -410,7 +410,7 @@ export function readMission(location: MissionStoreLocation, missionId: string): 
 	try {
 		raw = fs.readFileSync(filePath, "utf-8");
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new MissionNotFoundError(missionId, location.missionDir);
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new MissionNotFoundError(missionId, location);
 		throw error;
 	}
 	try {

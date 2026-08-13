@@ -235,6 +235,8 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 
 			assert.equal(result.acceptance?.status, "rejected");
 			assert.equal(result.exitCode, 1);
+			assert.match(result.finalOutput ?? "", /Output saved to:/);
+			assert.match(result.finalOutput ?? "", new RegExp(outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 			assert.match(result.error ?? "", /Acceptance rejected: Required criterion 'criterion-1' was reported as not-satisfied\./);
 			assert.ok(result.artifactPaths);
 			const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as { exitCode?: number; error?: string; acceptance?: AcceptanceSummary };
@@ -242,6 +244,91 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 			assert.match(metadata.error ?? "", /Acceptance rejected/);
 			assert.equal(metadata.acceptance?.status, "rejected");
 			assert.equal(metadata.acceptance?.runtimeChecks?.find((check) => check.id === "criterion:criterion-1")?.status, "failed");
+			const outputArtifact = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+			assert.match(outputArtifact, /Output saved to:/);
+			assert.match(outputArtifact, new RegExp(outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		});
+
+		it("inline mode keeps one saved output reference after rejection", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+			const outputPath = path.join(tempDir, "report.md");
+			const artifactsDir = path.join(tempDir, "rejected-inline-artifacts");
+			conflictingReportsCall(outputPath, "satisfied", "not-satisfied");
+			const executor = createSubagentExecutor!({
+				pi: { events: createEventBus(), getSessionName: () => undefined },
+				state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+				config: { artifactDir: "temp" },
+				asyncByDefault: false,
+				tempArtifactsDir: artifactsDir,
+				getSubagentSessionRoot: () => tempDir,
+				expandTilde: (p: string) => p,
+				discoverAgents: () => ({ agents: [makeAgent("worker", { completionGuard: false })] }),
+			});
+
+			const result = await executor.execute(
+				"acceptance-inline-single-reference-rejection",
+				{
+					agent: "worker",
+					task: "Write the findings report.",
+					output: outputPath,
+					acceptance: { level: "checked", criteria: ["Report the findings"] },
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			const content = result.content[0]?.text ?? "";
+			assert.equal(content.match(/Output saved to:/g)?.length, 1);
+			assert.match(content, new RegExp(outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			assert.equal(result.details?.results?.[0]?.acceptance?.status, "rejected");
+			assert.match(result.details?.results?.[0]?.finalOutput ?? "", /Output saved to:/);
+		});
+
+		it("inline mode keeps the saved output visible after maxOutput truncation on rejection", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+			const outputPath = path.join(tempDir, "report.md");
+			const artifactsDir = path.join(tempDir, "rejected-max-output-artifacts");
+			const fileReport = `# Findings\n${"Saved report detail. ".repeat(300)}\n${acceptanceReport("satisfied", "from child-written file")}`;
+			mockPi.onCall({
+				jsonl: [
+					...events.completedWrite(outputPath, fileReport),
+					events.assistantMessage(`Report written to the output file.\n${acceptanceReport("not-satisfied", "from assistant text")}`),
+				],
+				writeFiles: [{ path: outputPath, content: fileReport }],
+			});
+			const executor = createSubagentExecutor!({
+				pi: { events: createEventBus(), getSessionName: () => undefined },
+				state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+				config: { artifactDir: "temp" },
+				asyncByDefault: false,
+				tempArtifactsDir: artifactsDir,
+				getSubagentSessionRoot: () => tempDir,
+				expandTilde: (p: string) => p,
+				discoverAgents: () => ({ agents: [makeAgent("worker", { completionGuard: false })] }),
+			});
+
+			const result = await executor.execute(
+				"acceptance-inline-max-output-rejection",
+				{
+					agent: "worker",
+					task: "Write the findings report.",
+					output: outputPath,
+					acceptance: { level: "checked", criteria: ["Report the findings"] },
+					maxOutput: { bytes: 40, lines: 1 },
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			const content = result.content[0]?.text ?? "";
+			assert.match(content, /\[TRUNCATED:/);
+			assert.match(content, /Output saved to:/);
+			assert.match(content, new RegExp(outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			assert.doesNotMatch(content, /Saved report detail/);
+			assert.equal(result.details?.results?.[0]?.acceptance?.status, "rejected");
+			assert.match(result.details?.results?.[0]?.finalOutput ?? "", /Output saved to:/);
 		});
 
 		it("inline mode accepts on the text report regardless of a failing file report", async () => {

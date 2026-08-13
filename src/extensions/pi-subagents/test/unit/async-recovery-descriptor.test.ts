@@ -2,8 +2,21 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { readAsyncRecoveryDescriptor } from "../../src/runs/background/async-resume.ts";
+import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
+
+const budgetDirectories: string[] = [];
+
+function runFanoutBudget(runId: string) {
+	const descriptor = createRunFanoutBudget(runId, 64);
+	budgetDirectories.push(descriptor.directory);
+	return descriptor;
+}
+
+afterEach(() => {
+	for (const directory of budgetDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+});
 
 describe("async recovery descriptor", () => {
 	it("accepts launchContractDigest written by async execution", () => {
@@ -13,6 +26,7 @@ describe("async recovery descriptor", () => {
 			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({
 				version: 1,
 				launchContractDigest: digest,
+				runFanoutBudget: runFanoutBudget("run-digest"),
 				sourceRunId: "run-digest",
 				agent: "worker",
 				cwd: root,
@@ -38,6 +52,7 @@ describe("async recovery descriptor", () => {
 			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({
 				version: 1,
 				launchContractDigest: {},
+				runFanoutBudget: runFanoutBudget("run-bad-digest"),
 				sourceRunId: "run-digest",
 				agent: "worker",
 				cwd: root,

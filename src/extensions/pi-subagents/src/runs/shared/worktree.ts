@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { resolveAuthorityDecision, type AuthorityPolicyConfig } from "../../policy/authority.ts";
 import { PROJECT_SUBAGENTS_RELATIVE_DIR } from "../../shared/artifacts.ts";
+import { getAgentDir } from "../../shared/utils.ts";
 
 export interface WorktreeSetup {
 	cwd: string;
@@ -149,11 +150,17 @@ function resolveRepoState(cwd: string): RepoState {
 
 function normalizeComparableCwd(cwd: string): string {
 	const resolved = path.resolve(cwd);
-	try {
-		return fs.realpathSync(resolved);
-	} catch {
-		// Use the unresolved absolute path when realpath resolution is unavailable.
-		return resolved;
+	let existing = resolved;
+	const missingSegments: string[] = [];
+	while (true) {
+		try {
+			return path.join(fs.realpathSync(existing), ...missingSegments.reverse());
+		} catch {
+			const parent = path.dirname(existing);
+			if (parent === existing) return resolved;
+			missingSegments.push(path.basename(existing));
+			existing = parent;
+		}
 	}
 }
 
@@ -196,6 +203,11 @@ function resolveWorktreeBaseDir(configuredBaseDir: string | undefined, repoRoot:
 
 	const expanded = trimmed.startsWith("~/") ? path.join(os.homedir(), trimmed.slice(2)) : trimmed;
 	const resolved = path.isAbsolute(expanded) ? expanded : path.resolve(repoRoot, expanded);
+	const extensionsDir = normalizeComparableCwd(path.join(getAgentDir(), "extensions"));
+	const relativeToExtensions = path.relative(extensionsDir, normalizeComparableCwd(resolved));
+	if (!relativeToExtensions || (!relativeToExtensions.startsWith(`..${path.sep}`) && relativeToExtensions !== ".." && !path.isAbsolute(relativeToExtensions))) {
+		throw new Error(`worktree base directory cannot be inside Pi extensions directory: ${extensionsDir}. Choose a directory outside it.`);
+	}
 	try {
 		fs.mkdirSync(resolved, { recursive: true });
 	} catch (error) {

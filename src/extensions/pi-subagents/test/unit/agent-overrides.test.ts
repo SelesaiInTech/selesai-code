@@ -80,8 +80,27 @@ describe("builtin agent overrides", () => {
 		assert.equal(scout?.modelSource?.type, "subagents.defaultModel");
 		assert.equal(scout?.modelSource?.scope, "user");
 		assert.equal(builtins.find((agent) => agent.name === "worker")?.model, "deepseek-v4-flash");
-		assert.equal(builtins.find((agent) => agent.name === "oracle")?.model, "deepseek-v4-pro");
-		assert.equal(builtins.find((agent) => agent.name === "reviewer")?.model, undefined);
+		const oracle = builtins.find((agent) => agent.name === "oracle");
+		assert.equal(oracle?.model, "deepseek-v4-pro");
+		assert.equal(oracle?.modelSource, undefined);
+		const reviewer = builtins.find((agent) => agent.name === "reviewer");
+		assert.equal(reviewer?.model, undefined);
+		assert.equal(reviewer?.modelSource, undefined);
+	});
+
+	it("clears subagents.defaultModel provenance for same-value agent model overrides", () => {
+		writeJson(path.join(tempHome, ".selesai", "agent", "settings.json"), {
+			subagents: {
+				defaultModel: "deepseek-v4-flash",
+				agentOverrides: {
+					worker: { model: "deepseek-v4-flash" },
+				},
+			},
+		});
+
+		const worker = discoverAgentsAll(tempProject).builtin.find((agent) => agent.name === "worker");
+		assert.equal(worker?.model, "deepseek-v4-flash");
+		assert.equal(worker?.modelSource, undefined);
 	});
 
 	it("prefers project subagents.defaultModel over user defaultModel", () => {

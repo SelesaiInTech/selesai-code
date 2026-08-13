@@ -21,7 +21,7 @@ import type { ContextMode } from "../shared/context-mode.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
-import { SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.ts";
+import { SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV, PROMPT_REDACTED, resolveChildCwd } from "../../shared/utils.ts";
 import { buildModelCandidates, resolveEffectiveSubagentModel, resolveModelCandidate, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -30,9 +30,11 @@ import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import {
 	type AcceptanceInput,
 	type AgentContract,
+	type AsyncStatus,
 	type ArtifactConfig,
 	type Details,
 	type JsonSchemaObject,
@@ -41,6 +43,7 @@ import {
 	type ResolvedControlConfig,
 	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
+	type RunFanoutBudgetDescriptor,
 	type ToolBudgetConfig,
 	type SubagentRunMode,
 	type SteeringRecoveryDescriptor,
@@ -59,6 +62,7 @@ import { usageBudgetState } from "../shared/usage-budget.ts";
 import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
 import type { SessionLeaseRequest } from "../shared/session-lease.ts";
 import { finalizeProcessTerminal, readProcessTerminal } from "./process-terminal.ts";
+import type { ActiveAsyncCapacityHandle } from "./active-async-capacity.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
@@ -171,8 +175,10 @@ interface AsyncChainParams {
 	/** Global cap on simultaneously-running subagent tasks within the async run. */
 	globalConcurrencyLimit?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
+	activeAsyncCapacity?: ActiveAsyncCapacityHandle;
 }
 
 interface AsyncSingleParams {
@@ -220,8 +226,10 @@ interface AsyncSingleParams {
 	configToolBudget?: ResolvedToolBudget;
 	allowZeroToolBudget?: boolean;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
+	activeAsyncCapacity?: ActiveAsyncCapacityHandle;
 }
 
 interface AsyncExecutionResult {
@@ -343,7 +351,7 @@ type RunnerStartupState = "ready" | "acknowledged";
 
 type RunnerStartupWaitResult =
 	| { ok: true; token: string }
-	| { ok: false; error: string };
+	| { ok: false; error: string; startupDidNotProceed?: boolean };
 
 function waitForStartupInterval(delayMs = 20): void {
 	if (RUNNER_STARTUP_WAIT_VIEW) {
@@ -360,14 +368,14 @@ function readRunnerStartup(startupPath: string, expectedState: RunnerStartupStat
 	if (!fs.existsSync(startupPath)) return undefined;
 	try {
 		const payload = JSON.parse(fs.readFileSync(startupPath, "utf-8")) as { state?: unknown; token?: unknown; error?: unknown };
-		if (payload.state === "error" && typeof payload.error === "string") return { ok: false, error: payload.error };
+		if (payload.state === "error" && typeof payload.error === "string") return { ok: false, error: payload.error, startupDidNotProceed: true };
 		if (payload.state !== expectedState) return undefined;
 		if (typeof payload.token !== "string" || (expectedToken !== undefined && payload.token !== expectedToken)) {
-			return { ok: false, error: `Async runner wrote an invalid ${expectedState} startup handshake: ${startupPath}` };
+			return { ok: false, error: `Async runner wrote an invalid ${expectedState} startup handshake: ${startupPath}`, startupDidNotProceed: true };
 		}
 		return { ok: true, token: payload.token };
 	} catch (error) {
-		return { ok: false, error: `Failed to read async runner startup handshake '${startupPath}': ${error instanceof Error ? error.message : String(error)}` };
+		return { ok: false, error: `Failed to read async runner startup handshake '${startupPath}': ${error instanceof Error ? error.message : String(error)}`, startupDidNotProceed: true };
 	}
 }
 
@@ -381,7 +389,7 @@ function waitForRunnerStartup(startupPath: string, expectedState: RunnerStartupS
 	}
 	const finalResult = readRunnerStartup(startupPath, expectedState, expectedToken);
 	if (finalResult) return finalResult;
-	return { ok: false, error: `Timed out after ${timeoutMs}ms waiting for the async runner startup state '${expectedState}'.` };
+	return { ok: false, error: `Timed out after ${timeoutMs}ms waiting for the async runner startup state '${expectedState}'.`, startupDidNotProceed: true };
 }
 
 function writeRunnerStartupControl(filePath: string, payload: { action: "ack" | "proceed"; token: string }): void {
@@ -402,20 +410,63 @@ function runnerIsAlive(pid: number): boolean {
 	}
 }
 
-function terminateRunnerBeforeProceed(pid: number): void {
+function terminateRunnerBeforeProceed(pid: number): boolean {
 	for (const signal of ["SIGTERM", "SIGKILL"] as const) {
-		if (!runnerIsAlive(pid)) return;
+		if (!runnerIsAlive(pid)) return true;
 		try {
 			process.kill(pid, signal);
 		} catch {
-			if (!runnerIsAlive(pid)) return;
+			if (!runnerIsAlive(pid)) return true;
 		}
 		const deadline = Date.now() + 1000;
 		while (runnerIsAlive(pid) && Date.now() < deadline) waitForStartupInterval();
 	}
+	return !runnerIsAlive(pid);
 }
 
-function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal?: (proof: unknown) => void): { pid?: number; error?: string } {
+function persistPreProceedStartupFailure(asyncDir: string, runId: string, runnerProcessInstanceId: string, sessionId: string | undefined, message: string): void {
+	const now = Date.now();
+	try {
+		const statusPath = path.join(asyncDir, "status.json");
+		let status: Partial<AsyncStatus> = {};
+		try {
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as Partial<AsyncStatus>;
+		} catch {}
+		writePrivateAtomicJson(statusPath, {
+			...status,
+			runId,
+			...(sessionId ? { sessionId } : {}),
+			state: "failed",
+			lastUpdate: now,
+			error: message,
+			processTerminal: {
+				version: 1,
+				state: "not-started",
+				runId,
+				runnerProcessInstanceId,
+			},
+		});
+		writePrivateAtomicJson(path.join(asyncDir, "process-terminal-candidate.json"), {
+			version: 1,
+			runId,
+			runnerProcessInstanceId,
+			writers: {},
+			expectedWriters: { 0: 0 },
+		});
+	} catch {
+		// Startup failures must still return the original launch error.
+	}
+}
+
+interface SpawnRunnerResult {
+	pid?: number;
+	runnerProcessInstanceId?: string;
+	error?: string;
+	terminationObserved?: boolean;
+	startupDidNotProceed?: boolean;
+}
+
+function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal?: (proof: unknown) => void): SpawnRunnerResult {
 	if (!jitiCliPath) {
 		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
 	}
@@ -436,8 +487,10 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 	fs.writeFileSync(cfgPath, JSON.stringify(launchConfig));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveAsyncRunnerNodeCommand();
-	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; revivalLease?: unknown };
+	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; id?: unknown; sessionId?: unknown; revivalLease?: unknown };
 	const launchAsyncDir = typeof launchForStartup.asyncDir === "string" ? launchForStartup.asyncDir : undefined;
+	const launchRunId = typeof launchForStartup.id === "string" ? launchForStartup.id : suffix;
+	const launchSessionId = typeof launchForStartup.sessionId === "string" ? launchForStartup.sessionId : undefined;
 	const startupPath = typeof launchForStartup.revivalLease === "object" && launchAsyncDir
 		? path.join(launchAsyncDir, "runner-startup.json")
 		: undefined;
@@ -526,27 +579,36 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 		}
 		proc.unref();
 		if (startupPath && startupAckPath && startupProceedPath) {
+			const persistStartupFailure = (message: string) => {
+				if (launchAsyncDir) persistPreProceedStartupFailure(launchAsyncDir, launchRunId, runnerProcessInstanceId, launchSessionId, message);
+			};
 			const ready = waitForRunnerStartup(startupPath, "ready", RUNNER_STARTUP_TIMEOUT_MS);
 			if (ready.ok === false) {
-				terminateRunnerBeforeProceed(proc.pid);
-				return { error: ready.error };
+				persistStartupFailure(ready.error);
+				const terminationObserved = terminateRunnerBeforeProceed(proc.pid);
+				return { pid: proc.pid, runnerProcessInstanceId, error: ready.error, terminationObserved, startupDidNotProceed: ready.startupDidNotProceed };
 			}
 			try {
 				writeRunnerStartupControl(startupAckPath, { action: "ack", token: ready.token });
 			} catch (error) {
-				terminateRunnerBeforeProceed(proc.pid);
-				return { error: `Failed to acknowledge async runner startup: ${error instanceof Error ? error.message : String(error)}` };
+				const message = `Failed to acknowledge async runner startup: ${error instanceof Error ? error.message : String(error)}`;
+				persistStartupFailure(message);
+				const terminationObserved = terminateRunnerBeforeProceed(proc.pid);
+				return { pid: proc.pid, runnerProcessInstanceId, error: message, terminationObserved, startupDidNotProceed: true };
 			}
 			const acknowledged = waitForRunnerStartup(startupPath, "acknowledged", RUNNER_STARTUP_TIMEOUT_MS, ready.token);
 			if (acknowledged.ok === false) {
-				terminateRunnerBeforeProceed(proc.pid);
-				return { error: acknowledged.error };
+				persistStartupFailure(acknowledged.error);
+				const terminationObserved = terminateRunnerBeforeProceed(proc.pid);
+				return { pid: proc.pid, runnerProcessInstanceId, error: acknowledged.error, terminationObserved, startupDidNotProceed: acknowledged.startupDidNotProceed };
 			}
 			try {
 				writeRunnerStartupControl(startupProceedPath, { action: "proceed", token: ready.token });
 			} catch (error) {
-				terminateRunnerBeforeProceed(proc.pid);
-				return { error: `Failed to authorize async runner startup: ${error instanceof Error ? error.message : String(error)}` };
+				const message = `Failed to authorize async runner startup: ${error instanceof Error ? error.message : String(error)}`;
+				persistStartupFailure(message);
+				const terminationObserved = terminateRunnerBeforeProceed(proc.pid);
+				return { pid: proc.pid, runnerProcessInstanceId, error: message, terminationObserved, startupDidNotProceed: true };
 			}
 			try {
 				fs.rmSync(startupPath, { force: true });
@@ -554,7 +616,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 				// Proceed is the commit point; handshake cleanup cannot turn a running revival into a start error.
 			}
 		}
-		return { pid: proc.pid };
+		return { pid: proc.pid, runnerProcessInstanceId };
 	} catch (error) {
 		closeFd(stdoutFd);
 		closeFd(stderrFd);
@@ -648,7 +710,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			...(s.model !== undefined ? { model: s.model } : {}),
 		};
 	};
-	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior, flatIndex?: number, parallelOutputNamespace?: { stepIndex: number; taskIndex?: number }) => {
+	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior, flatIndex?: number, parallelOutputNamespace?: { stepIndex: number; taskIndex?: number }, runFanoutPath?: string) => {
 		const a = agents.find((x) => x.name === s.agent)!;
 		const externalRunner = a.runner?.type === "external-cli";
 		if (externalRunner) {
@@ -748,6 +810,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
 			permissionRules,
 			...(params.capabilityCeiling ? { capabilityCeiling: params.capabilityCeiling } : {}),
+			...(runFanoutPath ? { runFanoutPath } : {}),
 			agent: s.agent,
 			task,
 			...(a.runner ? { runner: a.runner } : {}),
@@ -839,7 +902,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 							}
 						}
 						const staticStep = nextFlatStep();
-						return buildSeqStep({ ...t, agentContract: t.agentContract ?? s.agentContract, gateOn: t.gateOn ?? s.gateOn }, staticStep.sessionFile, behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex], staticStep.index, { stepIndex, taskIndex });
+						return buildSeqStep({ ...t, agentContract: t.agentContract ?? s.agentContract, gateOn: t.gateOn ?? s.gateOn }, staticStep.sessionFile, behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex], staticStep.index, { stepIndex, taskIndex }, resultMode === "parallel" ? `tasks[${taskIndex}]` : `chain[${stepIndex}].parallel[${taskIndex}]`);
 					}),
 					concurrency: s.concurrency,
 					failFast: s.failFast,
@@ -884,7 +947,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				};
 			}
 			const staticStep = nextFlatStep();
-			return buildSeqStep(s as SequentialStep, staticStep.sessionFile, undefined, false, undefined, staticStep.index);
+			return buildSeqStep(s as SequentialStep, staticStep.sessionFile, undefined, false, undefined, staticStep.index, undefined, `chain[${stepIndex}]`);
 		});
 		const steps = params.attachRoot
 			? [{
@@ -966,8 +1029,11 @@ export function executeAsyncChain(
 	const asyncDir = inheritedNestedRoute
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
 		: path.join(DIRS.async, id);
+	let runFanoutBudget: RunFanoutBudgetDescriptor;
 	try {
+		runFanoutBudget = params.runFanoutBudget ?? createRunFanoutBudget(id, 64);
 		fs.mkdirSync(asyncDir, { recursive: true });
+		writeRunFanoutBudgetDescriptor(asyncDir, runFanoutBudget);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return {
@@ -1030,7 +1096,7 @@ export function executeAsyncChain(
 		return "agent" in step ? [childIntercomTarget(step.agent, childTargetIndex++)] : [undefined];
 	}) : undefined;
 
-	let spawnResult: { pid?: number; error?: string } = {};
+	let spawnResult: SpawnRunnerResult = {};
 	try {
 		spawnResult = spawnRunner(
 			{
@@ -1063,6 +1129,7 @@ export function executeAsyncChain(
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				globalConcurrencyLimit: params.globalConcurrencyLimit,
+				runFanoutBudget,
 				workflowGraph,
 				...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}),
 				...(params.workflowKey ? { workflowKey: params.workflowKey } : {}),
@@ -1079,13 +1146,21 @@ export function executeAsyncChain(
 			(proof) => ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof),
 		);
 	} catch (error) {
+		params.activeAsyncCapacity?.rollback();
 		const message = error instanceof Error ? error.message : String(error);
 		return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': ${message}`);
 	}
 
 	if (spawnResult.error) {
+		if (!spawnResult.pid || !spawnResult.runnerProcessInstanceId || (spawnResult.startupDidNotProceed && spawnResult.terminationObserved)) params.activeAsyncCapacity?.rollback();
+		else params.activeAsyncCapacity?.markStarted(spawnResult.runnerProcessInstanceId);
 		return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': ${spawnResult.error}`);
 	}
+	if (!spawnResult.pid || !spawnResult.runnerProcessInstanceId) {
+		params.activeAsyncCapacity?.rollback();
+		return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': runner identity unavailable`);
+	}
+	params.activeAsyncCapacity?.markStarted(spawnResult.runnerProcessInstanceId);
 
 	if (spawnResult.pid) {
 		const eventFirstStep = eventChain[0];
@@ -1166,8 +1241,8 @@ export function executeAsyncChain(
 			mode: resultMode,
 			agent: firstAgents[0],
 			agents: flatAgents,
-			task: firstTask?.slice(0, 50),
-			goal: workflowGoal?.slice(0, 120),
+			task: firstTask?.trim() ? PROMPT_REDACTED : undefined,
+			goal: workflowGoal?.trim() ? PROMPT_REDACTED : undefined,
 			chain: eventChain.map((s) =>
 				isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : isDynamicParallelStep(s) ? `expand:${s.parallel.agent}` : (s as SequentialStep).agent,
 			),
@@ -1279,8 +1354,11 @@ export function executeAsyncSingle(
 	const asyncDir = inheritedNestedRoute
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
 		: path.join(DIRS.async, id);
+	let runFanoutBudget: RunFanoutBudgetDescriptor;
 	try {
+		runFanoutBudget = params.runFanoutBudget ?? createRunFanoutBudget(id, 64);
 		fs.mkdirSync(asyncDir, { recursive: true });
+		writeRunFanoutBudgetDescriptor(asyncDir, runFanoutBudget);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return {
@@ -1376,6 +1454,7 @@ export function executeAsyncSingle(
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
 		version: 1,
 		launchContractDigest,
+		runFanoutBudget,
 		sourceRunId: id,
 		...(params.agentContract ? { agentContract: params.agentContract } : {}),
 		agent,
@@ -1421,7 +1500,7 @@ export function executeAsyncSingle(
 			return formatAsyncStartError("single", `Failed to persist async recovery descriptor for '${id}': ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
-	let spawnResult: { pid?: number; error?: string } = {};
+	let spawnResult: SpawnRunnerResult = {};
 	try {
 		spawnResult = spawnRunner(
 			{
@@ -1494,6 +1573,7 @@ export function executeAsyncSingle(
 				resultMode: "single",
 				launchContractDigest,
 				launchResolvedExtensions,
+				runFanoutBudget,
 				...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}),
 				...(params.workflowKey ? { workflowKey: params.workflowKey } : {}),
 				...(params.revivalLease ? { revivalLease: params.revivalLease } : {}),
@@ -1510,13 +1590,21 @@ export function executeAsyncSingle(
 			(proof) => ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof),
 		);
 	} catch (error) {
+		params.activeAsyncCapacity?.rollback();
 		const message = error instanceof Error ? error.message : String(error);
 		return formatAsyncStartError("single", `Failed to start async run '${id}': ${message}`);
 	}
 
 	if (spawnResult.error) {
+		if (!spawnResult.pid || !spawnResult.runnerProcessInstanceId || (spawnResult.startupDidNotProceed && spawnResult.terminationObserved)) params.activeAsyncCapacity?.rollback();
+		else params.activeAsyncCapacity?.markStarted(spawnResult.runnerProcessInstanceId);
 		return formatAsyncStartError("single", `Failed to start async run '${id}': ${spawnResult.error}`);
 	}
+	if (!spawnResult.pid || !spawnResult.runnerProcessInstanceId) {
+		params.activeAsyncCapacity?.rollback();
+		return formatAsyncStartError("single", `Failed to start async run '${id}': runner identity unavailable`);
+	}
+	params.activeAsyncCapacity?.markStarted(spawnResult.runnerProcessInstanceId);
 
 	if (spawnResult.pid) {
 		if (inheritedNestedRoute && nestedAddress) {
@@ -1562,8 +1650,8 @@ export function executeAsyncSingle(
 			sessionId: ctx.currentSessionId,
 			mode: "single",
 			agent,
-			task: task?.slice(0, 50),
-			goal: (params.goal ?? task).slice(0, 120),
+			task: task?.trim() ? PROMPT_REDACTED : undefined,
+			goal: (params.goal ?? task).trim() ? PROMPT_REDACTED : undefined,
 			cwd: runnerCwd,
 			asyncDir,
 			launchContractDigest,

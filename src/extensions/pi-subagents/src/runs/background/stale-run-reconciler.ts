@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import { updateActiveRunIndex } from "./active-run-index.ts";
+import { releaseActiveRunIndex, updateActiveRunIndex } from "./active-run-index.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { DIRS, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type SubagentRunMode } from "../../shared/types.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -261,7 +261,7 @@ function writeFailedRepair(asyncDir: string, status: AsyncStatus, resultPath: st
 	const repair = buildFailedRepair(status, asyncDir, now, reason);
 	writeAtomicJson(resultPath, repair.result);
 	writeAtomicJson(path.join(asyncDir, "status.json"), repair.status);
-	updateActiveRunIndex(asyncDir, repair.status.state);
+	if (repair.status.processTerminal?.state === "observed") releaseActiveRunIndex(asyncDir);
 	appendJsonlBestEffort(path.join(asyncDir, "events.jsonl"), {
 		type: "subagent.run.repaired_stale",
 		ts: now,
@@ -351,7 +351,7 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 			: undefined;
 		if (terminalStatus) {
 			writeAtomicJson(path.join(asyncDir, "status.json"), terminalStatus);
-			updateActiveRunIndex(asyncDir, terminalStatus.state);
+			if (terminalStatus.processTerminal?.state === "observed") releaseActiveRunIndex(asyncDir);
 			return { status: terminalStatus, repaired: true, resultPath, message: "Existing async result file was used to repair stale running status." };
 		}
 		if (effectiveStatus.displayDismissedAt === undefined) return { status: effectiveStatus, repaired: false, resultPath };
