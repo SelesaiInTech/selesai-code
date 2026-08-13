@@ -57,6 +57,10 @@ This page covers the settings most people actually touch. The exhaustive referen
 
 Nested objects are merged, so a project file only needs to override the keys it cares about.
 
+## Factory reset
+
+To restore your global settings to the bundled factory defaults, run `/settings-factory-reset` inside a session. It warns before replacing `~/.selesai/agent/settings.json`, saves a `.bak` backup next to the file, and leaves credentials (`auth.json`), sessions, extensions, skills, and themes untouched.
+
 ## One combined example
 
 ```json

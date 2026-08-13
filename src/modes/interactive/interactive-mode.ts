@@ -50,6 +50,7 @@ import {
 	CONFIG_DIR_NAME,
 	getAgentDir,
 	getAuthPath,
+	getBundledDefaultsDir,
 	getDebugLogPath,
 	getDocsPath,
 	getShareViewerUrl,
@@ -2907,6 +2908,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/settings-factory-reset") {
+				this.editor.setText("");
+				await this.handleSettingsFactoryReset();
+				return;
+			}
 			if (text === "/scoped-models") {
 				this.editor.setText("");
 				await this.showModelsSelector();
@@ -5586,6 +5592,53 @@ export class InteractiveMode {
 	// =========================================================================
 	// Command handlers
 	// =========================================================================
+
+	private async handleSettingsFactoryReset(): Promise<void> {
+		if (this.session.isStreaming) {
+			this.showWarning("Wait for the current response to finish before resetting settings.");
+			return;
+		}
+		if (this.session.isCompacting) {
+			this.showWarning("Wait for compaction to finish before resetting settings.");
+			return;
+		}
+
+		const settingsPath = path.join(getAgentDir(), "settings.json");
+		const confirmed = await this.showExtensionConfirm(
+			"Factory reset settings",
+			`This replaces ${settingsPath} with the bundled factory defaults.\n\n`
+				+ "Your credentials (auth.json), sessions, extensions, skills, and themes are NOT touched.\n"
+				+ "A backup is saved next to the file before resetting.\n\n"
+				+ "Continue?",
+		);
+		if (!confirmed) {
+			this.showStatus("Settings factory reset cancelled.");
+			return;
+		}
+
+		const bundledDefaultsDir = getBundledDefaultsDir();
+		const bundledPath = path.join(bundledDefaultsDir, "settings.json");
+		if (!fs.existsSync(bundledPath)) {
+			this.showError(`Bundled defaults not found at ${bundledPath}`);
+			return;
+		}
+
+		try {
+			if (fs.existsSync(settingsPath)) {
+				fs.copyFileSync(settingsPath, `${settingsPath}.bak`);
+			}
+			fs.copyFileSync(bundledPath, settingsPath);
+			try {
+				fs.chmodSync(settingsPath, 0o600);
+			} catch {
+				// chmod is best-effort (no-op on platforms that don't support it).
+			}
+			await this.session.reload();
+			this.showStatus(`Settings reset to factory defaults (backup: ${settingsPath}.bak)`);
+		} catch (error) {
+			this.showError(`Settings factory reset failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
 
 	private async handleReloadCommand(): Promise<void> {
 		if (this.session.isStreaming) {

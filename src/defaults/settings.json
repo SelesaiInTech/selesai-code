@@ -28,7 +28,7 @@
   "quietStartup": true,
   "retry": {
     "enabled": true,
-    "maxRetries": 5
+    "maxRetries": 7
   },
   "steeringMode": "all",
   "terminal": {

@@ -4,6 +4,16 @@ All notable changes to `@selesai/code` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-08-14
+
+### Added
+- **`/settings-factory-reset` slash command.** Restores `~/.selesai/agent/settings.json` to the bundled factory defaults after a warning and confirmation. A backup is saved as `settings.json.bak` before the reset, credentials (`auth.json`), sessions, extensions, skills, and themes are untouched, and settings reload live without a restart.
+- **Install from the public repository.** `npm install -g github:SelesaiInTech/selesai-code` now works: the package gained a `prepare` script that builds `dist` from source on install.
+
+### Changed
+- **Simplified install guide.** The documented install command is now plain `npm install -g @selesai/code`. The previous `--ignore-scripts` advice was actively harmful: `@ast-grep/cli` (a runtime dependency) requires its `postinstall` to fetch its platform binary. Quickstart, README, and doc-web install pages updated, and quickstart no longer references the upstream `pi` binary or `~/.pi` paths.
+- **Bumped default `retry.maxRetries` from 5 to 7** in bundled defaults.
+
 ## [0.8.4] - 2026-08-13
 
 ### Fixed

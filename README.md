@@ -7,7 +7,7 @@ The goal is simple: make a capable coding agent useful out of the box, maximize 
 ## Install
 
 ```bash
-npm install -g --ignore-scripts @selesai/code
+npm install -g @selesai/code
 selesai
 ```
 
@@ -15,6 +15,12 @@ For a one-off run using the latest published package:
 
 ```bash
 npx @selesai/code
+```
+
+To install directly from the public repository (builds the latest `main` from source):
+
+```bash
+npm install -g github:SelesaiInTech/selesai-code
 ```
 
 The published npm package is **`@selesai/code`** and its executable is **`selesai`**. Selesai uses `~/.selesai/agent` for user state and `.selesai/` for project-local settings and resources.

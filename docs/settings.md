@@ -322,3 +322,7 @@ Project settings (`.selesai/settings.json`) override global settings. Nested obj
   "compaction": { "enabled": true, "reserveTokens": 8192 }
 }
 ```
+
+## Factory Reset
+
+Run `/settings-factory-reset` inside a session to restore the global settings file (`~/.selesai/agent/settings.json`) to the bundled factory defaults. The command warns before replacing the file, saves a backup as `settings.json.bak` next to it, and leaves credentials (`auth.json`), sessions, extensions, skills, and themes untouched. Settings take effect immediately after the reset (equivalent to `/reload`).

@@ -43,6 +43,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
+| `/settings-factory-reset` | Reset settings to factory defaults (with confirmation) |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |

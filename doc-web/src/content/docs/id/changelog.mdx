@@ -5,6 +5,13 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.8.5 — Reset pabrik pengaturan, instalasi lebih sederhana, dan instal dari repositori
+
+- Perintah slash baru `/settings-factory-reset`: memberi peringatan sebelum mengganti `~/.selesai/agent/settings.json` dengan default pabrik bawaan, menyimpan cadangan `settings.json.bak`, tidak menyentuh kredensial (`auth.json`), sesi, ekstensi, skill, maupun tema, dan memuat ulang pengaturan secara langsung.
+- Panduan instalasi kini satu perintah sederhana: `npm install -g @selesai/code`. Saran `--ignore-scripts` lama dihapus karena `@ast-grep/cli` (dependensi runtime) membutuhkan script instalasinya untuk mengunduh binary platform.
+- Kini Anda dapat memasang langsung dari repositori publik — `npm install -g github:SelesaiInTech/selesai-code` membangun `main` terbaru dari source (package kini memiliki script build `prepare`).
+- Default bawaan kini menetapkan `retry.maxRetries` ke 7.
+
 ## 0.8.4 — Progress workflow langsung pada peluncuran slash
 
 - Workflow berskrip yang diluncurkan lewat slash kini menampilkan kartu progress langsung (status per child, fase, dan durasi) alih-alih placeholder "Running…" yang statis. Jembatan slash pi-subagents sebelumnya membuang trace workflow dan proyeksi chat-progress; kini keduanya diteruskan dan live-state slash merender snapshot berbentuk workflow, sehingga `/run` (tanpa `--bg`), `/chain`, `/parallel`, dan `/run-chain` memperbarui tampilan saat child berjalan.

@@ -5,6 +5,13 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.8.5 — Factory reset settings, simpler install, and repo installs
+
+- New `/settings-factory-reset` slash command: warns before replacing `~/.selesai/agent/settings.json` with the bundled factory defaults, saves a `settings.json.bak` backup, leaves credentials (`auth.json`), sessions, extensions, skills, and themes untouched, and reloads settings live.
+- The install guide is now a single plain command: `npm install -g @selesai/code`. The old `--ignore-scripts` advice was removed because `@ast-grep/cli` (a runtime dependency) needs its install script to fetch its platform binary.
+- You can now install straight from the public repository — `npm install -g github:SelesaiInTech/selesai-code` builds the latest `main` from source (the package gained a `prepare` build script).
+- Bundled defaults now set `retry.maxRetries` to 7.
+
 ## 0.8.4 — Live workflow progress on slash launches
 
 - Slash-launched scripted workflows now show a live progress card (per-child status, phases, and durations) instead of a static "Running…" placeholder. The pi-subagents slash bridge was dropping the workflow trace and chat-progress projection; it now forwards both, and the slash live-state renders a workflow-shaped snapshot, so `/run` (without `--bg`), `/chain`, `/parallel`, and `/run-chain` update in place while children run.
