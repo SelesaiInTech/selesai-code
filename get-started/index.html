@@ -77,6 +77,10 @@
 Copy
 </button> <span class="copy-status" role="status" aria-live="polite"></span> </div> <script type="module">document.addEventListener("click",async n=>{const e=n.target.closest(".copy-button");if(!(e instanceof HTMLButtonElement))return;const o=e.getAttribute("data-command")||"";try{await navigator.clipboard.writeText(o);const t=e.nextElementSibling;t&&(t.textContent="Copied"),setTimeout(()=>{t&&(t.textContent="")},1500)}catch{const t=e.nextElementSibling;t&&(t.textContent="Copy failed")}});</script> 
 <p>The published package is <code dir="auto">@selesai/code</code> and the binary is <code dir="auto">selesai</code>.</p>
+<p>To install directly from the public repository (builds the latest <code dir="auto">main</code> from source):</p>
+<div class="install-command"> <pre><code>npm install -g github:SelesaiInTech/selesai-code</code></pre> <button type="button" class="copy-button" data-command="npm install -g github:SelesaiInTech/selesai-code" aria-label="Copy command to clipboard">
+Copy
+</button> <span class="copy-status" role="status" aria-live="polite"></span> </div>  
 <h2 id="update-often">Update often</h2>
 <p>Selesai and the Pi ecosystem move quickly. Important fixes, capabilities, and behavior changes can land daily, so update your installation often:</p>
 <div class="install-command"> <pre><code>npm install -g @selesai/code@latest</code></pre> <button type="button" class="copy-button" data-command="npm install -g @selesai/code@latest" aria-label="Copy command to clipboard">

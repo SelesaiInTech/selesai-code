@@ -77,6 +77,10 @@
 Copy
 </button> <span class="copy-status" role="status" aria-live="polite"></span> </div> <script type="module">document.addEventListener("click",async n=>{const e=n.target.closest(".copy-button");if(!(e instanceof HTMLButtonElement))return;const o=e.getAttribute("data-command")||"";try{await navigator.clipboard.writeText(o);const t=e.nextElementSibling;t&&(t.textContent="Copied"),setTimeout(()=>{t&&(t.textContent="")},1500)}catch{const t=e.nextElementSibling;t&&(t.textContent="Copy failed")}});</script> 
 <p>Package yang dipublikasikan adalah <code dir="auto">@selesai/code</code> dan binarinya adalah <code dir="auto">selesai</code>.</p>
+<p>Untuk memasang langsung dari repositori publik (membangun <code dir="auto">main</code> terbaru dari source):</p>
+<div class="install-command"> <pre><code>npm install -g github:SelesaiInTech/selesai-code</code></pre> <button type="button" class="copy-button" data-command="npm install -g github:SelesaiInTech/selesai-code" aria-label="Copy command to clipboard">
+Copy
+</button> <span class="copy-status" role="status" aria-live="polite"></span> </div>  
 <h2 id="sering-perbarui">Sering perbarui</h2>
 <p>Selesai dan ekosistem Pi berkembang cepat. Perbaikan penting, kemampuan baru, dan perubahan perilaku dapat hadir setiap hari, jadi sering perbarui instalasi Anda:</p>
 <div class="install-command"> <pre><code>npm install -g @selesai/code@latest</code></pre> <button type="button" class="copy-button" data-command="npm install -g @selesai/code@latest" aria-label="Copy command to clipboard">
