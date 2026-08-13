@@ -1,7 +1,7 @@
 {
   "autoHandoff": {
-    "enabled": false,
-    "thresholdTokens": 128000
+    "enabled": true,
+    "thresholdTokens": 256000
   },
   "collapseChangelog": true,
   "compaction": {
@@ -9,19 +9,18 @@
     "keepRecentTokens": 32000,
     "reserveTokens": 64000
   },
-  "defaultModel": "glm-5.2",
+  "defaultModel": "deepseek-v4-flash",
   "defaultProvider": "tokenin",
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "max",
   "doubleEscapeAction": "tree",
   "editorPaddingX": 0,
   "outputPad": 0,
-  "showCacheMissNotices": true,
+  "showCacheMissNotices": false,
   "followUpMode": "one-at-a-time",
   "hideThinkingBlock": false,
   "images": {
     "autoResize": true
   },
-  "lastChangelogVersion": "0.80.2",
   "packages": [
     "git:github.com/MasuRii/pi-tool-display",
     "git:github.com/omaclaren/pi-markdown-preview"
@@ -29,7 +28,7 @@
   "quietStartup": true,
   "retry": {
     "enabled": true,
-    "maxRetries": 3
+    "maxRetries": 5
   },
   "steeringMode": "all",
   "terminal": {
@@ -39,7 +38,7 @@
   "subagents": {
     "agentOverrides": {
       "architect": {
-        "model": "tokenin/kimi-k3:high"
+        "model": "tokenin/deepseek-v4-pro:max"
       },
       "builder": {
         "model": "tokenin/deepseek-v4-flash:max"
