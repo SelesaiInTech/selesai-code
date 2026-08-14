@@ -508,7 +508,7 @@ export function applySettingsValue(
 
   if (id === 'backend:search:fanout:mode') {
     if (newValue === 'off') {
-      delete currentBackends.search.fanout;
+      currentBackends.search.fanout = { mode: 'off' };
     } else if (newValue === 'on' || newValue === 'auto') {
       currentBackends.search.fanout = {
         mode: newValue,
@@ -532,7 +532,10 @@ export function applySettingsValue(
     if (newValue === 'excluded') {
       // Remove the provider from the list
       const filtered: SearchProviderName[] = currentProviders.filter((p) => p !== providerName);
-      currentBackends.search.fanout.providers = filtered;
+      // never allow an empty set: keep at least one provider (empty would be read as "all")
+      if (filtered.length > 0) {
+        currentBackends.search.fanout.providers = filtered;
+      }
     } else if (newValue === 'included') {
       // Add the provider back, maintaining canonical order
       const result: SearchProviderName[] = allProviders.filter((p) => currentProviders.includes(p) || p === providerName);

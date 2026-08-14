@@ -175,7 +175,7 @@ describe('web-agent config draft helpers', () => {
     expect(fanoutAutoState.backends.search.fanout).toEqual({ mode: 'auto', providers: undefined });
 
     const fanoutOffState = applySettingsValue(fanoutOnState, 'backend:search:fanout:mode', 'off');
-    expect(fanoutOffState.backends.search.fanout).toBeUndefined();
+    expect(fanoutOffState.backends.search.fanout).toEqual({ mode: 'off' });
   });
 
   it('applies brave backend draft values without preserving searxng-only fields', () => {
@@ -516,6 +516,100 @@ describe('web-agent config draft helpers', () => {
     const braveIncludedState = applySettingsValue(state, 'backend:search:fanout:provider:brave', 'included');
 
     expect(braveIncludedState.backends.search.fanout?.providers).toEqual(['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily']);
+  });
+
+  it('persists explicit off mode across scopes when global has fanout on', () => {
+    // Simulates: global config has fanout ON, project override sets it OFF
+    const loaded = {
+      global: {
+        path: '/global/config.json',
+        exists: true,
+        rawConfig: { tools: {} },
+        rawBackends: {
+          search: { provider: 'duckduckgo' as const, fanout: { mode: 'on' as const } }
+        }
+      },
+      project: {
+        path: '/project/config.json',
+        exists: false
+      },
+      effectiveConfig: DEFAULT_PRESENTATION_CONFIG,
+      effectiveBackends: {
+        search: { provider: 'duckduckgo' as const, fanout: { mode: 'on' as const } },
+        fetch: { provider: 'http' as const },
+        headless: { provider: 'local-browser' as const }
+      }
+    };
+
+    const state = createSettingsDraftState(loaded, 'project');
+    const fanoutOffState = applySettingsValue(state, 'backend:search:fanout:mode', 'off');
+
+    // The draft should have explicit off, not undefined
+    expect(fanoutOffState.backends.search.fanout).toEqual({ mode: 'off' });
+
+    // When collapsed, the override should include the explicit off
+    const inherited: typeof fanoutOffState.backends = { search: { provider: 'duckduckgo', fanout: { mode: 'on' } }, fetch: { provider: 'http' }, headless: { provider: 'local-browser' } };
+    const override = collapseBackendConfigToOverride(fanoutOffState.backends, inherited);
+
+    // The override should explicitly contain the off mode so it persists
+    expect(override.search?.fanout).toEqual({ mode: 'off' });
+  });
+
+  it('prevents excluding the last remaining provider in fanout', () => {
+    const loaded = {
+      global: { path: '/global/config.json', exists: false },
+      project: {
+        path: '/project/config.json',
+        exists: true,
+        rawConfig: { tools: {} },
+        rawBackends: {
+          search: { provider: 'duckduckgo' as const, fanout: { mode: 'on' as const, providers: ['duckduckgo' as const] } }
+        }
+      },
+      effectiveConfig: DEFAULT_PRESENTATION_CONFIG,
+      effectiveBackends: {
+        search: { provider: 'duckduckgo' as const, fanout: { mode: 'on' as const, providers: ['duckduckgo' as const] } },
+        fetch: { provider: 'http' as const },
+        headless: { provider: 'local-browser' as const }
+      }
+    };
+
+    const state = createSettingsDraftState(loaded, 'project');
+    // Try to exclude the last provider
+    const excludeState = applySettingsValue(state, 'backend:search:fanout:provider:duckduckgo', 'excluded');
+
+    // The providers list should still contain duckduckgo (not become empty)
+    expect(excludeState.backends.search.fanout?.providers).toEqual(['duckduckgo']);
+  });
+
+  it('prevents excluding the last remaining provider when starting from all-included', () => {
+    const loaded = {
+      global: { path: '/global/config.json', exists: false },
+      project: { path: '/project/config.json', exists: false },
+      effectiveConfig: DEFAULT_PRESENTATION_CONFIG,
+      effectiveBackends: {
+        search: { provider: 'duckduckgo' as const, fanout: { mode: 'on' as const } },
+        fetch: { provider: 'http' as const },
+        headless: { provider: 'local-browser' as const }
+      }
+    };
+
+    const allProviders = ['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily'] as const;
+    let state = createSettingsDraftState(loaded, 'project');
+
+    // Exclude 5 providers one by one
+    for (const provider of allProviders.slice(1)) {
+      state = applySettingsValue(state, `backend:search:fanout:provider:${provider}`, 'excluded');
+    }
+
+    // At this point, should only have duckduckgo left
+    expect(state.backends.search.fanout?.providers).toEqual(['duckduckgo']);
+
+    // Try to exclude the last one (duckduckgo)
+    const finalState = applySettingsValue(state, 'backend:search:fanout:provider:duckduckgo', 'excluded');
+
+    // Should still have duckduckgo (can't go to zero)
+    expect(finalState.backends.search.fanout?.providers).toEqual(['duckduckgo']);
   });
 
   it('validates backend urls for interactive prompts', () => {
