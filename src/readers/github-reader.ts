@@ -14,9 +14,39 @@ function parseGithub(url: string): URL | undefined {
   }
 }
 
-function isGithubHost(host: string): boolean {
-  const h = host.toLowerCase();
-  return h === 'github.com' || h === 'gist.github.com';
+type GithubShape = 'blob' | 'issue' | 'pull' | 'repo-root';
+
+function classifyGithubShape(url: string): { shape: GithubShape; owner: string; repo: string; ref?: string; path?: string; num?: string } | undefined {
+  const parsed = parseGithub(url);
+  if (!parsed || parsed.hostname.toLowerCase() !== 'github.com') {
+    return undefined;
+  }
+
+  const segments = parsed.pathname.split('/').filter(Boolean);
+  const [owner, repo, type, ...rest] = segments;
+
+  // blob: [owner, repo, 'blob', ref, ...path] with rest.length >= 2
+  if (owner && repo && type === 'blob' && rest.length >= 2) {
+    const [ref, ...pathParts] = rest;
+    return { shape: 'blob', owner, repo, ref, path: pathParts.join('/') };
+  }
+
+  // issue: [owner, repo, 'issues', N]
+  if (owner && repo && type === 'issues' && rest[0]) {
+    return { shape: 'issue', owner, repo, num: rest[0] };
+  }
+
+  // pull: [owner, repo, 'pull', N]
+  if (owner && repo && type === 'pull' && rest[0]) {
+    return { shape: 'pull', owner, repo, num: rest[0] };
+  }
+
+  // repo-root: exactly [owner, repo]
+  if (owner && repo && !type) {
+    return { shape: 'repo-root', owner, repo };
+  }
+
+  return undefined;
 }
 
 function fail(url: string, message: string): WebFetchResponse {
@@ -85,29 +115,23 @@ export function createGithubReader({ fetchImpl = fetch, token = process.env.GITH
   return {
     name: 'github',
     canHandle(url: string): boolean {
-      const parsed = parseGithub(url);
-      return parsed ? isGithubHost(parsed.hostname) : false;
+      return classifyGithubShape(url) !== undefined;
     },
     async read(url: string): Promise<WebFetchResponse> {
-      const parsed = parseGithub(url);
-      if (!parsed) return fail(url, 'Unparseable GitHub URL.');
-      const segments = parsed.pathname.split('/').filter(Boolean);
+      const shape = classifyGithubShape(url);
+      if (!shape) return fail(url, 'Unsupported GitHub URL shape for the reader.');
+
       try {
-        const [owner, repo, type, ...rest] = segments;
-        if (owner && repo && type === 'blob' && rest.length >= 2) {
-          const [ref, ...pathParts] = rest;
-          return await readBlob(url, owner, repo, ref, pathParts.join('/'));
+        switch (shape.shape) {
+          case 'blob':
+            return await readBlob(url, shape.owner, shape.repo, shape.ref!, shape.path!);
+          case 'issue':
+            return await readThread(url, shape.owner, shape.repo, 'issues', shape.num!);
+          case 'pull':
+            return await readThread(url, shape.owner, shape.repo, 'pulls', shape.num!);
+          case 'repo-root':
+            return await readRepoRoot(url, shape.owner, shape.repo);
         }
-        if (owner && repo && (type === 'issues' || type === 'discussions') && rest[0]) {
-          return await readThread(url, owner, repo, 'issues', rest[0]);
-        }
-        if (owner && repo && type === 'pull' && rest[0]) {
-          return await readThread(url, owner, repo, 'pulls', rest[0]);
-        }
-        if (owner && repo && !type) {
-          return await readRepoRoot(url, owner, repo);
-        }
-        return fail(url, 'Unsupported GitHub URL shape for the reader.');
       } catch (err) {
         return fail(url, err instanceof Error ? err.message : 'GitHub read failed.');
       }

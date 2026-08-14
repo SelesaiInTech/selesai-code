@@ -6,10 +6,21 @@ function ok(body: string, contentType = 'text/plain') {
 }
 
 describe('createGithubReader', () => {
-  it('handles github.com urls only', () => {
+  it('claims only the supported github.com shapes', () => {
     const reader = createGithubReader({ fetchImpl: vi.fn() });
-    expect(reader.canHandle('https://github.com/a/b')).toBe(true);
-    expect(reader.canHandle('https://gist.github.com/a/b')).toBe(true);
+    // supported
+    expect(reader.canHandle('https://github.com/o/r/blob/main/src/x.ts')).toBe(true);
+    expect(reader.canHandle('https://github.com/o/r/blob/feature/foo/src/x.ts')).toBe(true); // slash branch
+    expect(reader.canHandle('https://github.com/o/r/issues/12')).toBe(true);
+    expect(reader.canHandle('https://github.com/o/r/pull/12')).toBe(true);
+    expect(reader.canHandle('https://github.com/o/r')).toBe(true);
+    // NOT claimed -> fall through to normal fetch
+    expect(reader.canHandle('https://github.com/o/r/discussions/5')).toBe(false);
+    expect(reader.canHandle('https://gist.github.com/user/abc')).toBe(false);
+    expect(reader.canHandle('https://github.com/o/r/tree/main/src')).toBe(false);
+    expect(reader.canHandle('https://github.com/o/r/commits/main')).toBe(false);
+    expect(reader.canHandle('https://github.com/o')).toBe(false);
+    expect(reader.canHandle('https://github.com/o/r/blob/main')).toBe(false); // no path
     expect(reader.canHandle('https://example.com/github.com/a')).toBe(false);
   });
 
@@ -36,6 +47,13 @@ describe('createGithubReader', () => {
       expect.anything()
     );
     expect(res.status).toBe('ok');
+  });
+
+  it('builds the correct raw url for a slash-containing branch', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => 'x', json: async () => ({}), headers: new Headers() });
+    const reader = createGithubReader({ fetchImpl });
+    await reader.read('https://github.com/o/r/blob/feature/foo/src/x.ts');
+    expect(fetchImpl).toHaveBeenCalledWith('https://raw.githubusercontent.com/o/r/feature/foo/src/x.ts', expect.anything());
   });
 
   it('reads an issue body plus comments from the api', async () => {
