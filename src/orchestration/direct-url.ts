@@ -13,7 +13,7 @@ function stripTrailingPunctuation(raw: string): string {
 }
 
 function normalizeDirectUrl(raw: string): string | undefined {
-  return canonicalizeUrl(stripTrailingPunctuation(raw));
+  return canonicalizeUrl(stripTrailingPunctuation(raw), { canonicalizeHost: false });
 }
 
 export function extractDirectUrls(query: string): string[] {

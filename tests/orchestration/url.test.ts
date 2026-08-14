@@ -19,4 +19,9 @@ describe('canonicalizeUrl', () => {
     expect(canonicalizeUrl('mailto:x@y.com')).toBeUndefined();
     expect(canonicalizeUrl('not a url')).toBeUndefined();
   });
+
+  it('preserves www and host case when canonicalizeHost is false', () => {
+    expect(canonicalizeUrl('https://www.Example.com/A/?utm_source=x', { canonicalizeHost: false }))
+      .toBe('https://www.Example.com/A');
+  });
 });
