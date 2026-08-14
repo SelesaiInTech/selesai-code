@@ -27,6 +27,17 @@ describe('createGithubReader', () => {
     expect(res.content?.title).toBe('owner/repo/src/x.ts');
   });
 
+  it('encodes path segments with percent-encoded characters in blob urls', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(ok('file content'));
+    const reader = createGithubReader({ fetchImpl });
+    const res = await reader.read('https://github.com/owner/repo/blob/main/my%20file.ts');
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://raw.githubusercontent.com/owner/repo/main/my%20file.ts',
+      expect.anything()
+    );
+    expect(res.status).toBe('ok');
+  });
+
   it('reads an issue body plus comments from the api', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(ok(JSON.stringify({ title: 'Bug', body: 'It breaks' }), 'application/json'))

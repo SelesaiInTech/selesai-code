@@ -59,7 +59,9 @@ export function createGithubReader({ fetchImpl = fetch, token = process.env.GITH
   }
 
   async function readBlob(url: string, owner: string, repo: string, ref: string, path: string): Promise<WebFetchResponse> {
-    const raw = `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${path}`;
+    const decodedPath = decodeURIComponent(path);
+    const encodedPath = decodedPath.split('/').map(encodeURIComponent).join('/');
+    const raw = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${encodedPath}`;
     const text = await getText(raw);
     return okResponse(url, `${owner}/${repo}/${path}`, text);
   }
