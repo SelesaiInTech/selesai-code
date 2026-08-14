@@ -1,6 +1,7 @@
 import { extractText, getDocumentProxy, getMeta } from 'unpdf';
 import type { WebFetchResponse } from '../types.js';
 import type { SpecialContentReader } from './types.js';
+import { READER_TEXT_CAP } from './limits.js';
 
 type PdfReaderDeps = {
   fetchImpl?: typeof fetch;
@@ -70,8 +71,8 @@ export function createPdfReader({ fetchImpl = fetch, extractPdfText = defaultExt
         return {
           status: 'ok',
           url,
-          content: { title: extracted.title ?? filenameFromUrl(url), text: text.slice(0, 4000) },
-          metadata: { method: 'pdf', cacheHit: false, contentType: 'application/pdf', truncated: text.length >= 4000 }
+          content: { title: extracted.title ?? filenameFromUrl(url), text: text.slice(0, READER_TEXT_CAP) },
+          metadata: { method: 'pdf', cacheHit: false, contentType: 'application/pdf', truncated: text.length >= READER_TEXT_CAP }
         };
       } catch (err) {
         return {

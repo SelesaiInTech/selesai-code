@@ -1,6 +1,7 @@
 import { getSubtitles, getVideoDetails } from 'youtube-caption-extractor';
 import type { WebFetchResponse } from '../types.js';
 import type { SpecialContentReader } from './types.js';
+import { READER_TEXT_CAP } from './limits.js';
 
 type Subtitle = { start: string; dur: string; text: string };
 type YoutubeReaderDeps = {
@@ -62,8 +63,8 @@ export function createYoutubeReader({ fetchSubtitles = getSubtitles, fetchDetail
         return {
           status: 'ok',
           url,
-          content: { title: details.title ?? `YouTube ${videoID}`, text: transcript.slice(0, 4000) },
-          metadata: { method: 'youtube', cacheHit: false, truncated: transcript.length >= 4000 }
+          content: { title: details.title ?? `YouTube ${videoID}`, text: transcript.slice(0, READER_TEXT_CAP) },
+          metadata: { method: 'youtube', cacheHit: false, truncated: transcript.length >= READER_TEXT_CAP }
         };
       } catch (err) {
         return {
