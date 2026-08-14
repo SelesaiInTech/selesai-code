@@ -20,6 +20,7 @@ Internally, `web_explore` can do a few things:
 - strip common tracking params from direct links
 - plan search queries
 - run web search through the configured search backend: DuckDuckGo, SearXNG, Brave, You.com, Exa, or Tavily
+- optionally fan search across multiple configured providers at once when fanout is enabled, dedupe and rerank the merged results
 - read GitHub, PDF, and YouTube links through dedicated readers instead of scraping the page
 - pick candidate pages
 - prefer forum/thread sources when the query asks for discussions
@@ -60,7 +61,7 @@ In preview or verbose mode, findings include where the evidence came from intern
 Internal research: web_search ×2, web_fetch ×5, web_fetch_headless ×1
 ```
 
-The label reflects which reader produced the finding, so you'll also see `[github]`, `[pdf]`, or `[youtube]` when one of those handled a link.
+The label reflects which reader produced the finding, so you'll also see `[github]`, `[pdf]`, or `[youtube]` when one of those handled a link. When fanout is enabled, the research summary shows which providers were queried, for example `web_search ×2 (fanout: duckduckgo, brave, exa)`.
 
 That is meant to be transparent, not an invitation to call those internal steps directly.
 

@@ -295,6 +295,39 @@ Supported Firecrawl options can stay in config:
 
 These are sent in the Firecrawl scrape request body. The supported set is intentionally small for now.
 
+## Search fanout
+
+Search fanout queries several configured search providers at once, dedupes the merged results by URL, and reranks so URLs multiple providers agree on rank higher. Then the normal research loop continues.
+
+Fanout has three modes:
+
+- `off`: Default. Search uses a single provider (configured via **Settings → Backends → Search backend**).
+- `on`: Every search queries all configured providers and merges the results.
+- `auto`: Runs the primary provider first. If its results look thin (too few, or all from one host), fans out to configured providers for better coverage.
+
+When fanout runs, the provider list defaults to all configured providers in your backend config. Providers without API keys (or SearXNG without a baseUrl) are skipped. To curate which providers fan out, edit `backends.search.fanout.providers` in the config file directly; the settings UI does not yet expose the provider list.
+
+Set fanout mode from **Settings → Backends**. The equivalent config is:
+
+```json
+{
+  "backends": {
+    "search": {
+      "provider": "brave",
+      "fanout": { "mode": "auto", "providers": ["duckduckgo", "brave", "exa"] }
+    }
+  }
+}
+```
+
+In preview and verbose modes, fanout visibility shows which providers were queried, for example:
+
+```text
+web_search ×2 (fanout: duckduckgo, brave, exa)
+```
+
+Trade-off: fanout costs extra latency and API calls, which is why it is off by default and `auto` exists. Use `on` when you want maximum source diversity at the cost of longer research times. Use `auto` when you want a safety net without paying the latency cost most of the time.
+
 ## Explicit fallback
 
 Fallback is opt-in. `pi-web-agent` does not silently leave a self-hosted backend unless you configure it. You can turn fallback on from **Settings → Backends**. The equivalent config is:

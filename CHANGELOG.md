@@ -7,7 +7,7 @@ The format is intentionally simple and release-oriented.
 ## Unreleased
 
 ### Added
-- None.
+- Optional search fanout: query several configured providers at once, dedupe and rerank the merged results so cross-provider agreement wins. Off by default; set it to on or auto in backend settings. Preview/verbose output shows which providers were queried. (#35)
 
 ### Changed
 - None.
