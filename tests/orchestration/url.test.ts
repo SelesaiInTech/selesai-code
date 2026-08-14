@@ -20,8 +20,8 @@ describe('canonicalizeUrl', () => {
     expect(canonicalizeUrl('not a url')).toBeUndefined();
   });
 
-  it('preserves www and host case when canonicalizeHost is false', () => {
+  it('preserves www when canonicalizeHost is false (host still lowercased by URL parser)', () => {
     expect(canonicalizeUrl('https://www.Example.com/A/?utm_source=x', { canonicalizeHost: false }))
-      .toBe('https://www.Example.com/A');
+      .toBe('https://www.example.com/A');
   });
 });
