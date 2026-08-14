@@ -49,6 +49,16 @@ function classifyGithubShape(url: string): { shape: GithubShape; owner: string; 
   return undefined;
 }
 
+function encodeSegment(segment: string): string {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    decoded = segment;
+  }
+  return encodeURIComponent(decoded);
+}
+
 function fail(url: string, message: string): WebFetchResponse {
   return {
     status: 'error',
@@ -89,9 +99,8 @@ export function createGithubReader({ fetchImpl = fetch, token = process.env.GITH
   }
 
   async function readBlob(url: string, owner: string, repo: string, ref: string, path: string): Promise<WebFetchResponse> {
-    const decodedPath = decodeURIComponent(path);
-    const encodedPath = decodedPath.split('/').map(encodeURIComponent).join('/');
-    const raw = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${encodedPath}`;
+    const encodedPath = path.split('/').map(encodeSegment).join('/');
+    const raw = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeSegment(ref)}/${encodedPath}`;
     const text = await getText(raw);
     return okResponse(url, `${owner}/${repo}/${path}`, text);
   }

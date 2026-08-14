@@ -56,6 +56,13 @@ describe('createGithubReader', () => {
     expect(fetchImpl).toHaveBeenCalledWith('https://raw.githubusercontent.com/o/r/feature/foo/src/x.ts', expect.anything());
   });
 
+  it('single-encodes a percent-encoded (slash) ref instead of double-encoding', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => 'x', json: async () => ({}), headers: new Headers() });
+    const reader = createGithubReader({ fetchImpl });
+    await reader.read('https://github.com/o/r/blob/feature%2Fone/src/x.ts');
+    expect(fetchImpl).toHaveBeenCalledWith('https://raw.githubusercontent.com/o/r/feature%2Fone/src/x.ts', expect.anything());
+  });
+
   it('reads an issue body plus comments from the api', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(ok(JSON.stringify({ title: 'Bug', body: 'It breaks' }), 'application/json'))
