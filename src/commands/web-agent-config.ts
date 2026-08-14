@@ -6,6 +6,7 @@ import {
   type BackendConfigOverride
 } from '../backends/config.js';
 import { checkBackendHealth } from '../backends/doctor.js';
+import type { SearchProviderName } from '../types.js';
 import {
   DynamicBorder,
   getSettingsListTheme,
@@ -261,6 +262,10 @@ function buildBackendSettingsItems(
   theme: any,
   onUrlEditorOpenChange?: (open: boolean) => void
 ): SettingItem[] {
+  const allProviders: SearchProviderName[] = ['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily'];
+  const fanoutMode = backends.search.fanout?.mode ?? 'off';
+  const fanoutProviders = backends.search.fanout?.providers ?? allProviders;
+
   return [
     {
       id: 'scope',
@@ -289,9 +294,15 @@ function buildBackendSettingsItems(
     {
       id: 'backend:search:fanout:mode',
       label: 'Search fanout',
-      currentValue: backends.search.fanout?.mode ?? 'off',
+      currentValue: fanoutMode,
       values: ['off', 'on', 'auto']
     },
+    ...(fanoutMode !== 'off' ? allProviders.map((provider) => ({
+      id: `backend:search:fanout:provider:${provider}`,
+      label: `  ${provider}`,
+      currentValue: fanoutProviders.includes(provider) ? 'included' : 'excluded',
+      values: ['included', 'excluded']
+    })) : []),
     {
       id: 'backend:secret:brave',
       label: 'Brave API key',
@@ -503,6 +514,29 @@ export function applySettingsValue(
         mode: newValue,
         providers: undefined
       };
+    }
+  }
+
+  if (id.startsWith('backend:search:fanout:provider:')) {
+    const providerName = id.slice('backend:search:fanout:provider:'.length) as SearchProviderName;
+    const allProviders: SearchProviderName[] = ['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily'];
+
+    // Ensure fanout exists
+    if (!currentBackends.search.fanout) {
+      currentBackends.search.fanout = { mode: 'on', providers: undefined };
+    }
+
+    // Materialize the provider list if it's currently undefined
+    const currentProviders = currentBackends.search.fanout.providers ?? allProviders;
+
+    if (newValue === 'excluded') {
+      // Remove the provider from the list
+      const filtered: SearchProviderName[] = currentProviders.filter((p) => p !== providerName);
+      currentBackends.search.fanout.providers = filtered;
+    } else if (newValue === 'included') {
+      // Add the provider back, maintaining canonical order
+      const result: SearchProviderName[] = allProviders.filter((p) => currentProviders.includes(p) || p === providerName);
+      currentBackends.search.fanout.providers = result;
     }
   }
 

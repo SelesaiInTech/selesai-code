@@ -305,9 +305,11 @@ Fanout has three modes:
 - `on`: Every search queries all configured providers and merges the results.
 - `auto`: Runs the primary provider first. If its results look thin (too few, or all from one host), fans out to configured providers for better coverage.
 
-When fanout runs, the provider list defaults to all configured providers in your backend config. Providers without API keys (or SearXNG without a baseUrl) are skipped. To curate which providers fan out, edit `backends.search.fanout.providers` in the config file directly; the settings UI does not yet expose the provider list.
+When fanout runs, the provider list defaults to all configured providers in your backend config. Providers without API keys (or SearXNG without a baseUrl) are skipped.
 
-Set fanout mode from **Settings → Backends**. The equivalent config is:
+To select which providers fan out, set the fanout mode from **Settings → Backends**, then toggle individual providers on or off. You can also edit `backends.search.fanout.providers` directly in the config file.
+
+The equivalent config is:
 
 ```json
 {

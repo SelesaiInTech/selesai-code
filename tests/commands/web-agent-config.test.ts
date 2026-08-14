@@ -462,6 +462,62 @@ describe('web-agent config draft helpers', () => {
     expect(applySettingsValue(state, 'backend:fetch:fallback', 'http').backends.fetch.fallback).toBeUndefined();
   });
 
+  it('excludes a provider when toggled from default (included)', () => {
+    const loaded = {
+      global: { path: '/global/config.json', exists: false },
+      project: { path: '/project/config.json', exists: false },
+      effectiveConfig: DEFAULT_PRESENTATION_CONFIG,
+      effectiveBackends: {
+        search: { provider: 'duckduckgo' as const, fanout: { mode: 'on' as const } },
+        fetch: { provider: 'http' as const },
+        headless: { provider: 'local-browser' as const }
+      }
+    };
+
+    const state = createSettingsDraftState(loaded, 'project');
+    const duckExcludedState = applySettingsValue(state, 'backend:search:fanout:provider:duckduckgo', 'excluded');
+
+    // When we exclude one provider, fanout.providers should be materialized to all providers except the excluded one
+    expect(duckExcludedState.backends.search.fanout).toBeDefined();
+    expect(duckExcludedState.backends.search.fanout?.providers).toEqual(['searxng', 'brave', 'youcom', 'exa', 'tavily']);
+  });
+
+  it('excludes a provider when toggled from explicitly included', () => {
+    const loaded = {
+      global: { path: '/global/config.json', exists: false },
+      project: { path: '/project/config.json', exists: false },
+      effectiveConfig: DEFAULT_PRESENTATION_CONFIG,
+      effectiveBackends: {
+        search: { provider: 'duckduckgo' as const, fanout: { mode: 'on' as const, providers: ['duckduckgo' as const, 'searxng' as const, 'brave' as const, 'youcom' as const, 'exa' as const, 'tavily' as const] } },
+        fetch: { provider: 'http' as const },
+        headless: { provider: 'local-browser' as const }
+      }
+    };
+
+    const state = createSettingsDraftState(loaded, 'project');
+    const braveExcludedState = applySettingsValue(state, 'backend:search:fanout:provider:brave', 'excluded');
+
+    expect(braveExcludedState.backends.search.fanout?.providers).toEqual(['duckduckgo', 'searxng', 'youcom', 'exa', 'tavily']);
+  });
+
+  it('includes a previously-excluded provider when toggled back', () => {
+    const loaded = {
+      global: { path: '/global/config.json', exists: false },
+      project: { path: '/project/config.json', exists: false },
+      effectiveConfig: DEFAULT_PRESENTATION_CONFIG,
+      effectiveBackends: {
+        search: { provider: 'duckduckgo' as const, fanout: { mode: 'on' as const, providers: ['duckduckgo' as const, 'searxng' as const, 'youcom' as const, 'exa' as const, 'tavily' as const] } },
+        fetch: { provider: 'http' as const },
+        headless: { provider: 'local-browser' as const }
+      }
+    };
+
+    const state = createSettingsDraftState(loaded, 'project');
+    const braveIncludedState = applySettingsValue(state, 'backend:search:fanout:provider:brave', 'included');
+
+    expect(braveIncludedState.backends.search.fanout?.providers).toEqual(['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily']);
+  });
+
   it('validates backend urls for interactive prompts', () => {
     expect(validateBackendUrl('localhost:8080')).toEqual({ ok: false, message: 'Invalid URL. Include http:// or https://.' });
     expect(validateBackendUrl('ftp://localhost:8080')).toEqual({ ok: false, message: 'Invalid URL. Include http:// or https://.' });
