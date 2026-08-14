@@ -2,6 +2,8 @@ import type { ResearchEvidence } from './research-types.js';
 
 function sourceRank(sourceKind: ResearchEvidence['sourceKind']) {
   switch (sourceKind) {
+    case 'primary-content':
+      return -1;
     case 'official-docs':
       return 0;
     case 'official-api':

@@ -12,6 +12,20 @@ const evidence = (sourceKind: ResearchEvidence['sourceKind'], url: string): Rese
 });
 
 describe('rankEvidence', () => {
+  it('ranks primary-content above all other sources', () => {
+    const ranked = rankEvidence([
+      evidence('official-docs', 'https://vitest.dev/guide/coverage.html'),
+      evidence('primary-content', 'https://example.com/primary'),
+      evidence('official-api', 'https://vitest.dev/config/')
+    ]);
+
+    expect(ranked.map((item) => item.sourceKind)).toEqual([
+      'primary-content',
+      'official-docs',
+      'official-api'
+    ]);
+  });
+
   it('ranks official sources above community and package pages', () => {
     const ranked = rankEvidence([
       evidence('community', 'https://example.com/post'),

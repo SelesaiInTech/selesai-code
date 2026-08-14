@@ -27,6 +27,7 @@ const quality = (overrides: {
     community: 1,
     thread: 0,
     packagePage: 0,
+    primaryContent: 0,
     distinctHosts: 2,
     ...overrides.counts
   },

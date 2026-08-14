@@ -1,6 +1,7 @@
 import type { SearchProviderName } from '../types.js';
 
 export type ResearchSourceKind =
+  | 'primary-content'
   | 'official-docs'
   | 'official-api'
   | 'official-discussion'

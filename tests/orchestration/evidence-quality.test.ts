@@ -33,6 +33,7 @@ describe('analyzeEvidenceQuality', () => {
       community: 1,
       thread: 0,
       packagePage: 0,
+      primaryContent: 0,
       distinctHosts: 2
     });
     expect(report.flags.hasOfficialEvidence).toBe(true);
@@ -91,5 +92,32 @@ describe('analyzeEvidenceQuality', () => {
     const report = analyzeEvidenceQuality({ evidence: [], gaps: [], lowValueOutcomes });
 
     expect(report.caveatReasons).toContain('bot-check');
+  });
+
+  it('primary-content suppresses community-only and low-diversity caveats', () => {
+    const report = analyzeEvidenceQuality({
+      evidence: [
+        evidence('primary-content', 'https://example.com/primary'),
+        evidence('community', 'https://example.com/other')
+      ],
+      gaps: [],
+      lowValueOutcomes: []
+    });
+
+    expect(report.caveatReasons).not.toContain('community-only');
+    expect(report.caveatReasons).not.toContain('low-diversity');
+  });
+
+  it('community evidence still triggers community-only caveat without primary-content', () => {
+    const report = analyzeEvidenceQuality({
+      evidence: [
+        evidence('community', 'https://example.com/a'),
+        evidence('community', 'https://example.com/b')
+      ],
+      gaps: [],
+      lowValueOutcomes: []
+    });
+
+    expect(report.caveatReasons).toContain('community-only');
   });
 });
