@@ -56,4 +56,27 @@ describe('buildExplorePresentation', () => {
 
     expect(presentation.views.compact).toBe('Research failed: Query must not be empty.');
   });
+
+  it('labels github/pdf/youtube sources with their reader name', () => {
+    const presentation = buildExplorePresentation({
+      status: 'ok',
+      findings: ['a', 'b', 'c'],
+      sources: [
+        { title: 'x', url: 'https://github.com/a/b', method: 'github' },
+        { title: 'y', url: 'https://h/x.pdf', method: 'pdf' },
+        { title: 'z', url: 'https://youtu.be/abc', method: 'youtube' }
+      ],
+      metadata: {
+        searchPasses: 1,
+        fetchedPages: 3,
+        headlessAttempts: 0,
+        exhaustedBudget: false
+      }
+    });
+
+    const preview = presentation.views.preview as string;
+    expect(preview).toContain('[github]');
+    expect(preview).toContain('[pdf]');
+    expect(preview).toContain('[youtube]');
+  });
 });

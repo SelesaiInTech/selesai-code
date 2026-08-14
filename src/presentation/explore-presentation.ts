@@ -1,10 +1,13 @@
-import type { WebExploreResponse } from '../types.js';
+import type { FetchMethod, WebExploreResponse } from '../types.js';
 import type { PresentationEnvelope } from './types.js';
 
-function internalReaderLabel(method?: 'http' | 'headless' | 'firecrawl') {
+function internalReaderLabel(method?: FetchMethod) {
   if (method === 'headless') return 'web_fetch_headless';
   if (method === 'firecrawl') return 'firecrawl';
   if (method === 'http') return 'web_fetch';
+  if (method === 'github') return 'github';
+  if (method === 'pdf') return 'pdf';
+  if (method === 'youtube') return 'youtube';
   return 'web_explore';
 }
 

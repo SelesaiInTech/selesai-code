@@ -7,7 +7,7 @@ The format is intentionally simple and release-oriented.
 ## Unreleased
 
 ### Added
-- None.
+- Read the content behind GitHub, PDF, and YouTube links directly instead of the page shell. GitHub files, issues and PRs come from the API/raw endpoints (optional `GITHUB_TOKEN` raises the rate limit), PDFs are parsed with unpdf, and YouTube links return the transcript. All keyless. Scanned PDFs and caption-less videos are caveated rather than failing. (#39, #40, #41)
 
 ### Changed
 - None.

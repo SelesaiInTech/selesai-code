@@ -42,6 +42,8 @@ That should still go through `web_explore`. If the first pass is thin, Pi can ca
 
 You can also include direct links in the prompt. `web_explore` reads HTTP/HTTPS links first, strips common tracking params, and then searches if it still needs more evidence.
 
+For GitHub, PDF, and YouTube links, `web_explore` fetches the real content automatically: GitHub files and issues come from the API/raw endpoints, PDFs are extracted to text, and YouTube links return the transcript. All keyless. Scanned PDFs and videos without captions are noted rather than failing.
+
 ## Presentation defaults
 
 The package renders web research output in `compact` mode by default.

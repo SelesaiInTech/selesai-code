@@ -1,8 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createBackendSet } from '../../src/backends/factory.js';
 import { DEFAULT_BACKEND_CONFIG } from '../../src/backends/config.js';
 
 describe('backend factory', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
   it('creates the existing search/fetch/headless tools by default', () => {
     const backends = createBackendSet();
 
@@ -300,5 +303,21 @@ describe('backend factory', () => {
     expect(result.status).toBe('ok');
     expect(result.metadata.fallbackFrom).toBe('tavily');
     expect(result.metadata.fallbackReason).toBe('Tavily failed');
+  });
+
+  it('routes github urls through the github reader, not http', async () => {
+    // Stub global fetch so the github reader resolves offline. A 404 makes the reader
+    // return a caveated response whose method is still 'github' — proving the resolver wired it.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: async () => 'Not Found',
+      json: async () => ({}),
+      headers: new Headers()
+    }));
+
+    const backends = createBackendSet();
+    const res = await backends.fetchPage({ url: 'https://github.com/owner/repo/blob/main/does-not-exist-xyz.ts' });
+    expect(res.metadata.method).toBe('github');
   });
 });
