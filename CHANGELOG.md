@@ -13,7 +13,7 @@ The format is intentionally simple and release-oriented.
 - None.
 
 ### Fixed
-- None.
+- web_explore now returns the full content when it reads a GitHub, PDF, or YouTube link directly, instead of a short snippet tagged as weak "community" context. Summarizing a pasted video, PDF, or repo file works now. (#40, #41)
 
 ### Breaking
 - None.
