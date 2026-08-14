@@ -223,4 +223,42 @@ describe('research worker', () => {
       }
     ]);
   });
+
+  it('captures fanout providers from search metadata', async () => {
+    const worker = createResearchWorker({
+      search: vi.fn().mockResolvedValue({
+        status: 'ok',
+        results: [
+          {
+            title: 'Playwright Browsers',
+            url: 'https://playwright.dev/docs/browsers',
+            snippet: 'Playwright supports Chrome and Edge.'
+          }
+        ],
+        metadata: {
+          backend: 'duckduckgo',
+          cacheHit: false,
+          fanout: { mode: 'on', providers: ['duckduckgo', 'brave', 'exa'] }
+        }
+      }),
+      fetchPage: vi.fn().mockResolvedValue({
+        status: 'ok',
+        url: 'https://playwright.dev/docs/browsers',
+        content: {
+          title: 'Playwright Browsers',
+          text: 'Playwright can operate against Chrome and Edge browsers available on the machine.'
+        },
+        metadata: { method: 'http', cacheHit: false, contentType: 'text/html', truncated: false }
+      })
+    });
+
+    const result = await worker.run({
+      query: 'playwright browser support',
+      maxSearchRounds: 1,
+      maxFetches: 1
+    });
+
+    expect(result.fanoutProviders).toEqual(['duckduckgo', 'brave', 'exa']);
+    expect(result.evidence).toHaveLength(1);
+  });
 });

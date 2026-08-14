@@ -1,4 +1,4 @@
-import type { WebFetchHeadlessResponse, WebFetchResponse } from '../types.js';
+import type { SearchProviderName, WebFetchHeadlessResponse, WebFetchResponse } from '../types.js';
 import { rankEvidence } from './evidence-ranker.js';
 import { planSearchQueries } from './query-planner.js';
 import { classifySourceProfile } from './source-profile.js';
@@ -101,7 +101,8 @@ function buildMetadata({
   allLowValueOutcomes,
   headlessAttempts,
   exhaustedBudget,
-  caveatReasons = []
+  caveatReasons = [],
+  fanoutProviders
 }: {
   previousQueries: string[];
   allEvidence: ResearchEvidence[];
@@ -110,13 +111,15 @@ function buildMetadata({
   headlessAttempts: number;
   exhaustedBudget: boolean;
   caveatReasons?: EvidenceCaveatReason[];
+  fanoutProviders?: SearchProviderName[];
 }) {
   return {
     searchPasses: previousQueries.length,
     fetchedPages: allEvidence.length + allGaps.length + allLowValueOutcomes.length,
     headlessAttempts,
     exhaustedBudget,
-    caveatReasons
+    caveatReasons,
+    fanoutProviders
   };
 }
 
@@ -287,7 +290,8 @@ export function createResearchOrchestrator({
                   allLowValueOutcomes,
                   headlessAttempts,
                   exhaustedBudget,
-                  caveatReasons: updatedQuality.caveatReasons
+                  caveatReasons: updatedQuality.caveatReasons,
+                  fanoutProviders: lastPass?.fanoutProviders
                 })
               };
             }
@@ -314,7 +318,8 @@ export function createResearchOrchestrator({
                 allLowValueOutcomes,
                 headlessAttempts,
                 exhaustedBudget: false,
-                caveatReasons: quality.caveatReasons
+                caveatReasons: quality.caveatReasons,
+                fanoutProviders: lastPass?.fanoutProviders
               })
             };
           }
@@ -338,7 +343,8 @@ export function createResearchOrchestrator({
                 allLowValueOutcomes,
                 headlessAttempts,
                 exhaustedBudget,
-                caveatReasons: quality.caveatReasons
+                caveatReasons: quality.caveatReasons,
+                fanoutProviders: lastPass?.fanoutProviders
               })
             };
           }
@@ -368,7 +374,8 @@ export function createResearchOrchestrator({
           allLowValueOutcomes,
           headlessAttempts,
           exhaustedBudget: true,
-          caveatReasons: quality.caveatReasons
+          caveatReasons: quality.caveatReasons,
+          fanoutProviders: lastPass?.fanoutProviders
         })
       };
     }

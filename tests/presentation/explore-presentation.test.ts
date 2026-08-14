@@ -79,4 +79,15 @@ describe('buildExplorePresentation', () => {
     expect(preview).toContain('[pdf]');
     expect(preview).toContain('[youtube]');
   });
+
+  it('shows the fanout providers on the internal-research summary line', () => {
+    const presentation = buildExplorePresentation({
+      status: 'ok',
+      findings: ['a'],
+      sources: [{ title: 't', url: 'https://a.com', method: 'http' }],
+      metadata: { searchPasses: 2, fetchedPages: 3, headlessAttempts: 0, exhaustedBudget: false, fanoutProviders: ['duckduckgo', 'brave', 'exa'] }
+    });
+    const preview = presentation.views.preview as string;
+    expect(preview).toContain('fanout: duckduckgo, brave, exa');
+  });
 });

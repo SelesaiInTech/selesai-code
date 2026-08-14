@@ -98,6 +98,7 @@ export function createResearchWorker({
       }
 
       const searchResult = await search({ query });
+      const fanoutProviders = searchResult.metadata.fanout?.providers;
       if (searchResult.status !== 'ok') {
         return {
           searchQueries,
@@ -174,7 +175,8 @@ export function createResearchWorker({
         gaps,
         lowValueOutcomes,
         suggestedHeadlessUrl,
-        exhaustedBudget: false
+        exhaustedBudget: false,
+        fanoutProviders
       };
     }
   };
