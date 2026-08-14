@@ -96,4 +96,29 @@ describe('createFanoutSearch', () => {
     await search({ query: 'q' });
     expect(others).toHaveBeenCalled();
   });
+
+  it('on: does not treat a single-provider duplicate as cross-provider agreement', async () => {
+    const providers = [
+      { name: 'duckduckgo' as const, search: vi.fn().mockResolvedValue(ok('duckduckgo', ['https://u.com/1', 'https://u.com/1'])) },
+      { name: 'brave' as const, search: vi.fn().mockResolvedValue(ok('brave', ['https://w.com/2'])) },
+      { name: 'exa' as const, search: vi.fn().mockResolvedValue(ok('exa', ['https://w.com/2'])) }
+    ];
+    const search = createFanoutSearch({ providers, mode: 'on' });
+    const res = await search({ query: 'q' });
+    // w.com is agreed by TWO distinct providers; u.com only appeared twice from ONE provider.
+    expect(res.results[0].url).toContain('w.com');
+    // u.com deduped to a single result
+    expect(res.results.filter((r) => r.url.includes('u.com')).length).toBe(1);
+  });
+
+  it('on: records skipped providers that errored or returned nothing', async () => {
+    const providers = [
+      { name: 'duckduckgo' as const, search: vi.fn().mockResolvedValue(ok('duckduckgo', ['https://a.com/1'])) },
+      { name: 'brave' as const, search: vi.fn().mockResolvedValue(err('brave')) }
+    ];
+    const search = createFanoutSearch({ providers, mode: 'on' });
+    const res = await search({ query: 'q' });
+    expect(res.metadata.fanout?.providers).toEqual(['duckduckgo']);
+    expect(res.metadata.fanout?.skipped).toEqual(['brave']);
+  });
 });

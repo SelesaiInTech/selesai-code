@@ -23,6 +23,7 @@ export type FanoutMode = 'off' | 'on' | 'auto';
 export type FanoutMetadata = {
   mode: Exclude<FanoutMode, 'off'>;
   providers: SearchProviderName[]; // providers that actually contributed results
+  skipped?: SearchProviderName[];  // providers queried but errored or returned nothing
 };
 
 export type ToolError = {
