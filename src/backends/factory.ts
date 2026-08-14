@@ -180,10 +180,15 @@ export function createBackendSet(
 
   const fanoutConfig = config.search.fanout;
   if (fanoutConfig && fanoutConfig.mode !== 'off') {
-    const providerNames =
+    const baseNames =
       fanoutConfig.providers && fanoutConfig.providers.length > 0
         ? fanoutConfig.providers
         : (['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily'] as SearchProviderName[]);
+    // A configured DuckDuckGo fallback must still be honored under fanout: fold it into the set.
+    const providerNames =
+      config.search.fallback === 'duckduckgo' && !baseNames.includes('duckduckgo')
+        ? [...baseNames, 'duckduckgo' as SearchProviderName]
+        : baseNames;
     const ordered = [config.search.provider, ...providerNames.filter((n) => n !== config.search.provider)].filter(
       (n, i, arr) => arr.indexOf(n) === i
     );

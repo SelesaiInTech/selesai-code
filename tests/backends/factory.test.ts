@@ -335,4 +335,15 @@ describe('backend factory', () => {
     expect(res.status).toBe('ok');
     expect(res.metadata.fanout?.mode).toBe('on');
   });
+
+  it('keeps duckduckgo in the fanout set when it is the configured fallback', async () => {
+    const duck = vi.fn(async () => ({ status: 'ok' as const, results: [{ title: 'd', url: 'https://d.com/1', snippet: 's' }], metadata: { backend: 'duckduckgo' as const, cacheHit: false } }));
+    const brave = async () => ({ status: 'ok' as const, results: [{ title: 'b', url: 'https://b.com/1', snippet: 's' }], metadata: { backend: 'brave' as const, cacheHit: false } });
+    const backends = createBackendSet(
+      { search: { provider: 'brave', fallback: 'duckduckgo', fanout: { mode: 'on', providers: ['brave'] } }, fetch: { provider: 'http' }, headless: { provider: 'local-browser' } },
+      { createDuckDuckGoSearch: () => duck, createBraveSearch: () => brave }
+    );
+    await backends.search({ query: 'q' });
+    expect(duck).toHaveBeenCalled();
+  });
 });
