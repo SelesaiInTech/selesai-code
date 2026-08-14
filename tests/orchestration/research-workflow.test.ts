@@ -191,4 +191,41 @@ describe('research workflow composition', () => {
     expect(result.decision.action).toBe('answer');
     expect(result.evidence.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('short-circuits research when direct url with reader method provides primary-content', async () => {
+    const fullPdfText =
+      'This is a comprehensive technical document extracted from a PDF that contains detailed implementation guides and best practices. The document is very long with much more than 180 characters of content that needs to be preserved in full for accurate research results.';
+
+    const search = vi.fn();
+    const fetchPage = vi.fn(async ({ url }) => ({
+      status: 'ok' as const,
+      url,
+      content: {
+        title: 'Technical Documentation',
+        text: fullPdfText
+      },
+      metadata: { method: 'pdf' as const, cacheHit: false, contentType: 'text/plain', truncated: false }
+    }));
+
+    const workflow = createResearchWorkflow({
+      search,
+      fetchPage,
+      headlessFetch: async () => ({
+        status: 'error',
+        url: 'https://example.com',
+        metadata: { method: 'headless', cacheHit: false },
+        error: { code: 'BROWSER_NOT_FOUND', message: 'No browser found.' }
+      })
+    });
+
+    const result = await workflow.run({ query: 'Read https://example.com/document.pdf' });
+
+    expect(result.decision.action).toBe('answer');
+    expect(result.evidence).toHaveLength(1);
+    expect(result.evidence[0]?.sourceKind).toBe('primary-content');
+    expect(result.evidence[0]?.method).toBe('pdf');
+    expect(result.evidence[0]?.summary).toBe(fullPdfText);
+    expect(result.metadata?.caveatReasons).toHaveLength(0);
+    expect(search).toHaveBeenCalledTimes(0);
+  });
 });

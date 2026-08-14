@@ -326,4 +326,45 @@ describe('research worker', () => {
     expect(result.gaps).toHaveLength(1);
     expect(result.gaps[0].kind).toBe('fetch-failed');
   });
+
+  it('returns reader method content as primary-content with full text, not summarized', async () => {
+    const fullYoutubeText =
+      'This is a very long transcript from a YouTube video that contains detailed technical information about the topic. It has more than 180 characters of content that should be preserved in full for primary-content evidence extraction.';
+
+    const worker = createResearchWorker({
+      search: vi.fn().mockResolvedValue({
+        status: 'ok',
+        results: [
+          {
+            title: 'Technical Discussion Video',
+            url: 'https://youtube.com/watch?v=example123',
+            snippet: 'Detailed technical discussion'
+          }
+        ],
+        metadata: { backend: 'duckduckgo', cacheHit: false }
+      }),
+      fetchPage: vi.fn().mockResolvedValue({
+        status: 'ok',
+        url: 'https://youtube.com/watch?v=example123',
+        content: {
+          title: 'Technical Discussion Video',
+          text: fullYoutubeText
+        },
+        metadata: { method: 'youtube', cacheHit: false, contentType: 'text/plain', truncated: false }
+      })
+    });
+
+    const result = await worker.run({
+      query: 'technical details from video',
+      maxSearchRounds: 1,
+      maxFetches: 1
+    });
+
+    expect(result.evidence).toHaveLength(1);
+    const evidence = result.evidence[0];
+    expect(evidence?.sourceKind).toBe('primary-content');
+    expect(evidence?.method).toBe('youtube');
+    expect(evidence?.summary).toBe(fullYoutubeText);
+    expect(evidence?.supports[0]).toBe(fullYoutubeText);
+  });
 });
