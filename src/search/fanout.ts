@@ -105,7 +105,7 @@ export function createFanoutSearch({
       const primaryOutcome = await primary.search({ query }).catch(() => undefined);
       const primaryResults = primaryOutcome?.status === 'ok' ? primaryOutcome.results : [];
       if (primaryResults.length > 0 && !primaryLooksWeak(primaryResults)) {
-        return primaryOutcome as WebSearchResponse; // strong primary: no fanout; metadata.fanout stays undefined
+        return withPresentation(primaryOutcome as WebSearchResponse); // strong primary: no fanout; metadata.fanout stays undefined
       }
       const contributing = await runAll(rest);
       const all = [
