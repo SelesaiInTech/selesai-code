@@ -320,4 +320,19 @@ describe('backend factory', () => {
     const res = await backends.fetchPage({ url: 'https://github.com/owner/repo/blob/main/does-not-exist-xyz.ts' });
     expect(res.metadata.method).toBe('github');
   });
+
+  it('builds a fanout search when mode is on (offline, injected providers)', async () => {
+    const duck = async () => ({
+      status: 'ok' as const,
+      results: [{ title: 't', url: 'https://a.com/x', snippet: 's' }],
+      metadata: { backend: 'duckduckgo' as const, cacheHit: false }
+    });
+    const backends = createBackendSet(
+      { search: { provider: 'duckduckgo', fanout: { mode: 'on', providers: ['duckduckgo'] } }, fetch: { provider: 'http' }, headless: { provider: 'local-browser' } },
+      { createDuckDuckGoSearch: () => duck }
+    );
+    const res = await backends.search({ query: 'q' });
+    expect(res.status).toBe('ok');
+    expect(res.metadata.fanout?.mode).toBe('on');
+  });
 });
