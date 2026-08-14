@@ -28,8 +28,10 @@ export type SearchMetadata = {
   fallbackReason?: string;
 };
 
+export type FetchMethod = 'http' | 'headless' | 'firecrawl' | 'github' | 'pdf' | 'youtube';
+
 export type FetchMetadata = {
-  method: 'http' | 'headless' | 'firecrawl';
+  method: FetchMethod;
   cacheHit: boolean;
   fallbackFrom?: 'firecrawl';
   fallbackReason?: string;
@@ -74,7 +76,7 @@ export type WebFetchHeadlessResponse = {
 export type WebExploreResponse = {
   status: 'ok' | 'error';
   findings: string[];
-  sources: Array<{ title: string; url: string; method?: 'http' | 'headless' | 'firecrawl' }>;
+  sources: Array<{ title: string; url: string; method?: FetchMethod }>;
   caveat?: string;
   metadata?: {
     searchPasses: number;
