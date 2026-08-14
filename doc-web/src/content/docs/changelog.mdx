@@ -5,6 +5,15 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.8.6 — Auto-relaunching workflows and goal visibility
+
+- The four `/workflow-*` modes (task, prototype, quicktype, loop) now run fully unattended: when a scripted workflow exhausts its per-run fan-out budget before the goal is clean, the async executor mints a fresh budget and re-runs the same script with the same mission and progress file, up to `maxWorkflowAutoRelaunches` (default 12; `0` = unlimited). Only `budget` results relaunch — real child failures still surface immediately.
+- Each `/workflow-*` launch emits its goal at start (visible in `subagent status` workflow emits) and names the auto-created mission after the goal (`mission.list` / `mission.show`).
+- The build→review→fix loop now works in bounded slices: the builder implements one small, self-contained step per round instead of the whole plan, with per-run timeouts (build/fix 45m, review 15m).
+- Reviews are scoped to a progress ledger: the builder appends a `## Round N` entry (files, summary, validation) to `.pi-subagents/progress/<mode>.md`, and the commentator reviews only the latest round plus the preceding fix entry, falling back to the full uncommitted diff when the ledger is missing. Blocking reviews list `Remaining work:` notes that seed the next build round — previous review feedback now actually reaches the next builder.
+- Packaged pi-subagents prompts (`review-loop.md`, `parallel-*.md`, `gather-context-and-clarify.md`) are now loaded via `resources_discover`; the `workflow-drive.md` prompt was removed as superseded by auto-relaunch.
+- Updated the delegation capability guides (EN/ID) and the pi-subagents configuration catalog with `maxWorkflowAutoRelaunches`.
+
 ## 0.8.5 — Factory reset settings, simpler install, and repo installs
 
 - New `/settings-factory-reset` slash command: warns before replacing `~/.selesai/agent/settings.json` with the bundled factory defaults, saves a `settings.json.bak` backup, leaves credentials (`auth.json`), sessions, extensions, skills, and themes untouched, and reloads settings live.

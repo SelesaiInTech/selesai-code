@@ -6,7 +6,7 @@ export interface Props {
   links?: { text: string; url: string }[];
   version?: string;
 }
-const { slug, links: explicitLinks, version = "0.8.2" } = Astro.props;
+const { slug, links: explicitLinks, version = "0.8.6" } = Astro.props;
 
 const capability = slug ? getCapability(slug) : undefined;
 const links = explicitLinks ?? capability?.sourceLinks ?? [];

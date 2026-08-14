@@ -1,6 +1,6 @@
 {
 	"name": "@selesai/code",
-	"version": "0.8.5",
+	"version": "0.8.6",
 	"description": "Maintained, extension-first Pi coding agent with built-in workflows, subagents, web research, questions, skills, and an enhanced terminal UI.",
 	"type": "module",
 	"repository": {
@@ -50,6 +50,8 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
+		"test": "vitest run src/extensions/undo.test.ts src/extensions/agent-browser.test.ts src/extensions/context-compaction-reminder.test.ts src/extensions/copy-turn.test.ts src/extensions/grep-app/index.test.ts src/extensions/inline-skills.test.ts src/extensions/rtk.test.ts src/extensions/web-agent-onboarding.test.ts src/extensions/handoff-new.test.ts src/extensions/question/tests src/extensions/ponytail/test src/__tests__/tokenin-onboarding.test.ts src/__tests__/workflow-modes.test.ts",
+		"test:coverage": "vitest run --coverage src/extensions/undo.test.ts src/extensions/agent-browser.test.ts src/extensions/context-compaction-reminder.test.ts src/extensions/copy-turn.test.ts src/extensions/grep-app/index.test.ts src/extensions/inline-skills.test.ts src/extensions/rtk.test.ts src/extensions/web-agent-onboarding.test.ts src/extensions/handoff-new.test.ts src/extensions/question/tests src/extensions/ponytail/test src/__tests__/tokenin-onboarding.test.ts src/__tests__/workflow-modes.test.ts",
 		"prepare": "npm run build",
 		"build": "npm run clean && tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js dist/rpc-entry.js && npm run copy-assets",
 		"copy-assets": "shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/ && shx mkdir -p dist/modes/interactive/assets && shx cp src/modes/interactive/assets/*.png dist/modes/interactive/assets/ && shx mkdir -p dist/core/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html/ && shx cp src/core/export-html/vendor/*.js dist/core/export-html/vendor/ && shx mkdir -p dist/defaults && shx cp src/defaults/* dist/defaults/ && shx mkdir -p dist/extensions && node scripts/copy-extensions.mjs && shx mkdir -p dist/themes && shx cp -r src/themes/. dist/themes/ && shx mkdir -p dist/skills && shx cp -r src/skills/. dist/skills/"
@@ -89,6 +91,7 @@
 		"@types/proper-lockfile": "4.1.4",
 		"@types/semver": "7.7.1",
 		"@typescript/native-preview": "^7.0.0-dev.20260120.1",
+		"@vitest/coverage-v8": "4.1.9",
 		"shx": "0.4.0",
 		"typescript": "5.9.3",
 		"vitest": "4.1.9"

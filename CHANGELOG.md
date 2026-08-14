@@ -4,6 +4,18 @@ All notable changes to `@selesai/code` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-08-15
+
+### Added
+- **Auto-relaunching workflows.** The four `/workflow-*` modes (task, prototype, quicktype, loop) now run fully unattended: when a scripted workflow exhausts its per-run fan-out budget before the goal is clean, the async executor mints a fresh budget and re-runs the same script with the same mission and progress file, up to `config.maxWorkflowAutoRelaunches` (default 12; `0` = unlimited). Only `budget` results relaunch — real child failures still surface immediately. `AsyncStatus` gained `workflowRelaunchCount`.
+- **Packaged prompts now load.** The pi-subagents extension registers `resources_discover`, so the bundled prompts (`review-loop.md`, `parallel-*.md`, `gather-context-and-clarify.md`) are actually discoverable. The `workflow-drive.md` prompt was removed as superseded by auto-relaunch.
+- **Goal visibility on workflow launches.** Each `/workflow-*` launch emits its goal at start (visible in `subagent status` workflow emits) and names the auto-created mission after the goal (`mission.list` / `mission.show`).
+
+### Changed
+- **Bounded build→review→fix rounds.** The workflow auto-loop now instructs the builder to implement one small, self-contained slice per round ("do not attempt the whole plan") instead of the entire plan at once, with per-run timeouts (build/fix 45m, review 15m).
+- **Progress-file scoped reviews.** Builder appends a `## Round N` ledger entry (files, summary, validation) to `.pi-subagents/progress/<mode>.md`; the commentator scopes its review to the latest round entry plus the immediately preceding fix entry, falling back to the full uncommitted diff when the file is missing or empty. Blocking reviews must list a `Remaining work:` section; the next build round picks up from it.
+- **Previous review feedback now reaches the next builder round** (previously it was dropped).
+
 ## [0.8.5] - 2026-08-14
 
 ### Added

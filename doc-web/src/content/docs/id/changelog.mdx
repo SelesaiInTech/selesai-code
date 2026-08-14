@@ -5,6 +5,15 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.8.6 — Workflow me-relaunch otomatis dan visibilitas goal
+
+- Empat mode `/workflow-*` (task, prototype, quicktype, loop) kini berjalan sepenuhnya tanpa pengawasan: saat workflow berskrip menghabiskan budget fan-out per-run sebelum goal bersih, executor async membuat budget baru dan menjalankan ulang script yang sama dengan mission dan progress file yang sama, hingga `maxWorkflowAutoRelaunches` (default 12; `0` = tak terbatas). Hanya hasil `budget` yang me-relaunch — kegagalan child yang nyata tetap langsung muncul.
+- Setiap peluncuran `/workflow-*` memancarkan goal-nya di awal (terlihat di emit workflow `subagent status`) dan menamai mission yang dibuat otomatis sesuai goal (`mission.list` / `mission.show`).
+- Loop build→review→fix kini bekerja dalam irisan terbatas: builder mengimplementasikan satu langkah kecil yang mandiri per putaran alih-alih seluruh rencana, dengan timeout per-run (build/fix 45m, review 15m).
+- Review dibatasi pada ledger progress: builder menambahkan entri `## Round N` (file, ringkasan, validasi) ke `.pi-subagents/progress/<mode>.md`, dan commentator hanya meninjau putaran terbaru plus entri fix sebelumnya, dengan fallback ke diff penuh yang belum di-commit saat ledger tidak ada. Review yang blocking mencantumkan catatan `Remaining work:` yang menjadi benih putaran build berikutnya — umpan balik review sebelumnya kini benar-benar sampai ke builder berikutnya.
+- Prompt pi-subagents bawaan (`review-loop.md`, `parallel-*.md`, `gather-context-and-clarify.md`) kini dimuat melalui `resources_discover`; prompt `workflow-drive.md` dihapus karena digantikan oleh auto-relaunch.
+- Memperbarui panduan kemampuan delegasi (EN/ID) dan katalog konfigurasi pi-subagents dengan `maxWorkflowAutoRelaunches`.
+
 ## 0.8.5 — Reset pabrik pengaturan, instalasi lebih sederhana, dan instal dari repositori
 
 - Perintah slash baru `/settings-factory-reset`: memberi peringatan sebelum mengganti `~/.selesai/agent/settings.json` dengan default pabrik bawaan, menyimpan cadangan `settings.json.bak`, tidak menyentuh kredensial (`auth.json`), sesi, ekstensi, skill, maupun tema, dan memuat ulang pengaturan secara langsung.
