@@ -42,7 +42,7 @@ That should still go through `web_explore`. If the first pass is thin, Pi can ca
 
 You can also include direct links in the prompt. `web_explore` reads HTTP/HTTPS links first, strips common tracking params, and then searches if it still needs more evidence.
 
-For GitHub, PDF, and YouTube links, `web_explore` fetches the real content automatically instead of scraping the page. GitHub files, issues, PRs, and repo READMEs come from the raw/API endpoints; PDFs are extracted to text; YouTube links return the transcript. All keyless. Set `GITHUB_TOKEN` in the environment if you want a higher GitHub rate limit, but it works without one. Scanned PDFs and videos without captions are noted rather than failing.
+For GitHub, PDF, and YouTube links, `web_explore` fetches the real content automatically instead of scraping the page. GitHub files, issues, PRs, and repo READMEs come from the raw/API endpoints; PDFs are extracted to text; YouTube links return the transcript. All keyless. Set `GITHUB_TOKEN` in the environment if you want a higher GitHub rate limit, but it works without one. Scanned PDFs and videos without captions are noted rather than failing. Pasting a link and asking to summarize returns the full content, so it's a reliable way to get summaries of videos, PDFs, or repo files.
 
 ## Presentation defaults
 

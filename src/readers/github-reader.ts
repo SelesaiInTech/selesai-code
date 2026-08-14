@@ -1,5 +1,6 @@
 import type { WebFetchResponse } from '../types.js';
 import type { SpecialContentReader } from './types.js';
+import { READER_TEXT_CAP } from './limits.js';
 
 type GithubReaderDeps = {
   fetchImpl?: typeof fetch;
@@ -69,12 +70,12 @@ function fail(url: string, message: string): WebFetchResponse {
 }
 
 function okResponse(url: string, title: string, text: string): WebFetchResponse {
-  const capped = text.slice(0, 4000);
+  const capped = text.slice(0, READER_TEXT_CAP);
   return {
     status: 'ok',
     url,
     content: { title, text: capped },
-    metadata: { method: 'github', cacheHit: false, truncated: text.length >= 4000 }
+    metadata: { method: 'github', cacheHit: false, truncated: text.length >= READER_TEXT_CAP }
   };
 }
 

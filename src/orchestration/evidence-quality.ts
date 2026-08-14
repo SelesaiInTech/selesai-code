@@ -15,6 +15,7 @@ export type EvidenceQualityReport = {
     community: number;
     thread: number;
     packagePage: number;
+    primaryContent: number;
     distinctHosts: number;
   };
   flags: {
@@ -65,11 +66,12 @@ export function analyzeEvidenceQuality({
   const community = evidence.filter((item) => item.sourceKind === 'community').length;
   const thread = evidence.filter((item) => item.sourceKind === 'issue-thread' || item.sourceKind === 'official-discussion').length;
   const packagePage = evidence.filter((item) => item.sourceKind === 'package-page').length;
+  const primaryContent = evidence.filter((item) => item.sourceKind === 'primary-content').length;
   const distinctHosts = new Set(evidence.map((item) => hostname(item.url))).size;
 
   const hasOfficialEvidence = official > 0;
-  const hasOnlyCommunityEvidence = evidence.length > 0 && official === 0;
-  const hasLowDiversity = evidence.length > 1 && distinctHosts <= 1;
+  const hasOnlyCommunityEvidence = evidence.length > 0 && official === 0 && primaryContent === 0;
+  const hasLowDiversity = evidence.length > 1 && distinctHosts <= 1 && primaryContent === 0;
   const hasUnreadableDirectSource = gaps.some((gap) => /Direct URL could not be read reliably/i.test(gap.message));
   const hasUnreadableThreadSource = gaps.some((gap) => /Thread source could not be read reliably/i.test(gap.message));
   const hasPossibleConflict = hasConflictMarkers(evidence);
@@ -90,6 +92,7 @@ export function analyzeEvidenceQuality({
       community,
       thread,
       packagePage,
+      primaryContent,
       distinctHosts
     },
     flags: {

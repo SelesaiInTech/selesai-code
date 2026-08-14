@@ -17,6 +17,10 @@ function summarizeText(text: string, maxLength = 180): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
+function isReaderMethod(method: string): boolean {
+  return method === 'github' || method === 'pdf' || method === 'youtube';
+}
+
 function isBotCheckContent({ title = '', text }: { title?: string; text: string }) {
   return /performing security verification|security service|verify you are not a bot|just a moment|checking your browser/i.test(
     `${title}\n${text}`
@@ -31,6 +35,17 @@ function evidenceFromFetch(fetched: WebFetchResponse, fallbackTitle: string) {
   const sourceKind = classifySource(fetched.url);
   if (sourceKind === 'package-page') {
     return null;
+  }
+
+  if (isReaderMethod(fetched.metadata.method)) {
+    return {
+      title: content.title ?? fallbackTitle,
+      url: fetched.url,
+      sourceKind: 'primary-content',
+      method: fetched.metadata.method,
+      summary: content.text,
+      supports: [content.text]
+    } satisfies ResearchEvidence;
   }
 
   return {

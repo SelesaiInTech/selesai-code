@@ -65,4 +65,16 @@ describe('createPdfReader', () => {
     expect(res.status).toBe('error');
     expect(res.error?.code).toBe('PDF_READ_FAILED');
   });
+
+  it('returns text longer than the old 4000-char cap', async () => {
+    const long = 'x'.repeat(10000);
+    const reader = createPdfReader({
+      fetchImpl: vi.fn().mockResolvedValue(pdfResponse()),
+      extractPdfText: vi.fn().mockResolvedValue({ text: long, title: undefined })
+    });
+    const res = await reader.read('https://h/big.pdf');
+    expect(res.status).toBe('ok');
+    expect(res.content?.text.length).toBe(10000);
+    expect(res.metadata.truncated).toBe(false);
+  });
 });
