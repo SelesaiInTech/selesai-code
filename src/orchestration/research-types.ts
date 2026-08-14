@@ -39,6 +39,7 @@ export type ResearchWorkerResult = {
   suggestedHeadlessUrl?: string;
   exhaustedBudget: boolean;
   fanoutProviders?: SearchProviderName[];
+  fanoutSkipped?: SearchProviderName[];
 };
 
 export type ResearchRunMetadata = {
@@ -47,6 +48,7 @@ export type ResearchRunMetadata = {
   headlessAttempts: number;
   exhaustedBudget: boolean;
   fanoutProviders?: SearchProviderName[];
+  fanoutSkipped?: SearchProviderName[];
 };
 
 export type ResearchOrchestratorDecision =

@@ -102,7 +102,8 @@ function buildMetadata({
   headlessAttempts,
   exhaustedBudget,
   caveatReasons = [],
-  fanoutProviders
+  fanoutProviders,
+  fanoutSkipped
 }: {
   previousQueries: string[];
   allEvidence: ResearchEvidence[];
@@ -112,6 +113,7 @@ function buildMetadata({
   exhaustedBudget: boolean;
   caveatReasons?: EvidenceCaveatReason[];
   fanoutProviders?: SearchProviderName[];
+  fanoutSkipped?: SearchProviderName[];
 }) {
   return {
     searchPasses: previousQueries.length,
@@ -119,7 +121,8 @@ function buildMetadata({
     headlessAttempts,
     exhaustedBudget,
     caveatReasons,
-    fanoutProviders
+    fanoutProviders,
+    fanoutSkipped
   };
 }
 
@@ -173,6 +176,14 @@ export function createResearchOrchestrator({
       const suggestedHeadlessUrls: string[] = [];
       let headlessAttempts = 0;
       let lastPass: ResearchWorkerResult | undefined;
+      const fanoutProvidersSeen = new Set<SearchProviderName>();
+      const fanoutSkippedSeen = new Set<SearchProviderName>();
+
+      function fanoutSnapshot() {
+        const providers = fanoutProvidersSeen.size ? [...fanoutProvidersSeen] : undefined;
+        const skipped = [...fanoutSkippedSeen].filter((p) => !fanoutProvidersSeen.has(p));
+        return { fanoutProviders: providers, fanoutSkipped: skipped.length ? skipped : undefined };
+      }
 
       if (fetchDirect) {
         for (const url of extractDirectUrls(query).slice(0, 3)) {
@@ -224,6 +235,8 @@ export function createResearchOrchestrator({
           });
 
           lastPass = pass;
+          pass.fanoutProviders?.forEach((p) => fanoutProvidersSeen.add(p));
+          pass.fanoutSkipped?.forEach((p) => fanoutSkippedSeen.add(p));
           allEvidence.push(...pass.evidence);
           allGaps.push(...pass.gaps);
           allLowValueOutcomes.push(...pass.lowValueOutcomes);
@@ -291,7 +304,7 @@ export function createResearchOrchestrator({
                   headlessAttempts,
                   exhaustedBudget,
                   caveatReasons: updatedQuality.caveatReasons,
-                  fanoutProviders: lastPass?.fanoutProviders
+                  ...fanoutSnapshot()
                 })
               };
             }
@@ -319,7 +332,7 @@ export function createResearchOrchestrator({
                 headlessAttempts,
                 exhaustedBudget: false,
                 caveatReasons: quality.caveatReasons,
-                fanoutProviders: lastPass?.fanoutProviders
+                ...fanoutSnapshot()
               })
             };
           }
@@ -344,7 +357,7 @@ export function createResearchOrchestrator({
                 headlessAttempts,
                 exhaustedBudget,
                 caveatReasons: quality.caveatReasons,
-                fanoutProviders: lastPass?.fanoutProviders
+                ...fanoutSnapshot()
               })
             };
           }
@@ -375,7 +388,7 @@ export function createResearchOrchestrator({
           headlessAttempts,
           exhaustedBudget: true,
           caveatReasons: quality.caveatReasons,
-          fanoutProviders: lastPass?.fanoutProviders
+          ...fanoutSnapshot()
         })
       };
     }

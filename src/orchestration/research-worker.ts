@@ -99,6 +99,7 @@ export function createResearchWorker({
 
       const searchResult = await search({ query });
       const fanoutProviders = searchResult.metadata.fanout?.providers;
+      const fanoutSkipped = searchResult.metadata.fanout?.skipped;
       if (searchResult.status !== 'ok') {
         return {
           searchQueries,
@@ -176,7 +177,8 @@ export function createResearchWorker({
         lowValueOutcomes,
         suggestedHeadlessUrl,
         exhaustedBudget: false,
-        fanoutProviders
+        fanoutProviders,
+        fanoutSkipped
       };
     }
   };

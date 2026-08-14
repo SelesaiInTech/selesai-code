@@ -96,6 +96,7 @@ export type WebExploreResponse = {
     exhaustedBudget: boolean;
     caveatReasons?: string[];
     fanoutProviders?: SearchProviderName[];
+    fanoutSkipped?: SearchProviderName[];
   };
   presentation?: PresentationEnvelope;
   error?: ToolError;
