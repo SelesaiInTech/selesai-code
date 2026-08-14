@@ -8,28 +8,32 @@ function js(value: string): string {
 }
 
 const AUTO_LOOP = String.raw`
-const autoLoop = async (goal, context) => {
+const autoLoop = async (goal, context, progressFile) => {
   let round = 1;
+  let previousReview = '';
   while (true) {
     const build = await runs.run('build-' + round, {
       agent: 'builder',
-      task: 'Implement the approved work in the workspace and run relevant checks.\n\nSource of truth (handoff/plan):\n' + context + '\n\nGoal:\n' + goal + (round > 1 ? '\n\nAddress the previous review feedback first.' : ''),
+      task: 'Implement the approved work in the workspace and run relevant checks.\n\nSource of truth (handoff/plan):\n' + context + '\n\nGoal:\n' + goal + (round > 1 ? '\n\nPrevious review feedback (address it first):\n' + previousReview : '') + '\n\nProgress ledger: append a "## Round ' + round + '" entry to the progress file at ' + progressFile + ' before finishing. List every file you changed and a short summary of the work.',
     });
     const review = await runs.run('review-' + round, {
       agent: 'commentator',
-      task: 'Independently review the uncommitted diff and report concrete evidence (what you inspected and what you ran). Do not modify the workspace.\n\nAcceptance criteria (source of truth):\n' + context + '\n\nBuilder completion summary:\n' + build.output + '\n\nEnd with exactly one line: WORKFLOW_REVIEW_STATUS: clean OR WORKFLOW_REVIEW_STATUS: blocking.',
+      task: 'Independently review the builder work for this round and report concrete evidence (what you inspected and what you ran). Do not modify the workspace.\n\nAcceptance criteria (source of truth):\n' + context + '\n\nProgress file (scope your review to its latest round entry; fall back to the full uncommitted diff if it is missing or empty):\n' + progressFile + '\n\nBuilder completion summary:\n' + build.output + '\n\nEnd with exactly one line: WORKFLOW_REVIEW_STATUS: clean OR WORKFLOW_REVIEW_STATUS: blocking.',
     });
     if (/WORKFLOW_REVIEW_STATUS\s*:\s*clean/i.test(review.output)) {
       return { result: 'clean', rounds: round };
     }
+    previousReview = review.output;
     round += 1;
   }
 };`;
 
+const PROGRESS_DIR = ".pi-subagents/progress/";
+
 export function buildLoopScript(goal: string): string {
   return String.raw`const goal = ${js(goal)};
 ${AUTO_LOOP}
-return await autoLoop(goal, goal);`;
+return await autoLoop(goal, goal, ${js(PROGRESS_DIR + "loop.md")});`;
 }
 
 export function buildTaskScript(goal: string): string {
@@ -38,7 +42,7 @@ const plan = await runs.run('plan', { agent: 'architect', task: 'Produce a concr
 const reuse = await runs.run('reuse', { agent: 'explorer', task: 'Explore the codebase for reusable patterns relevant to: ' + plan.output + '. Point at relevant areas and dependencies; skip cleanly if wholly new. Return inline.' });
 const handoff = await runs.run('handoff', { agent: 'recapper', task: 'Compile a self-contained handoff from the plan and reuse findings so fresh agents understand the goal, constraints, and acceptance criteria without re-planning.\n\nPlan:\n' + plan.output + '\n\nReuse findings:\n' + reuse.output + '\n\nReturn inline.' });
 ${AUTO_LOOP}
-return await autoLoop(goal, handoff.output);`;
+return await autoLoop(goal, handoff.output, ${js(PROGRESS_DIR + "task.md")});`;
 }
 
 export function buildPrototypeScript(goal: string): string {
@@ -48,7 +52,7 @@ const plan = await runs.run('plan', { agent: 'architect', task: 'Produce a concr
 const reuse = await runs.run('reuse', { agent: 'explorer', task: 'Explore the codebase for reusable patterns relevant to: ' + plan.output + '. Return inline.' });
 const handoff = await runs.run('handoff', { agent: 'recapper', task: 'Compile a self-contained handoff from the plan and reuse findings.\n\nPlan:\n' + plan.output + '\n\nReuse:\n' + reuse.output + '\n\nReturn inline.' });
 ${AUTO_LOOP}
-const loop = await autoLoop(goal, handoff.output);
+const loop = await autoLoop(goal, handoff.output, ${js(PROGRESS_DIR + "prototype.md")});
 const audit = await runs.run('audit', { agent: 'commentator', task: 'Final audit of the uncommitted changes for correctness, plan adherence, and over-engineering (cut bloat, dead flexibility, reinvented stdlib). Plan:\n' + plan.output + '\n\nReport concrete evidence. Do not modify the workspace.' });
 return { ...loop, audited: true };`;
 }
@@ -59,7 +63,7 @@ const plan = await runs.run('plan', { agent: 'architect', task: 'Produce a concr
 const reuse = await runs.run('reuse', { agent: 'explorer', task: 'Explore the codebase for reusable patterns relevant to: ' + plan.output + '. Return inline.' });
 const handoff = await runs.run('handoff', { agent: 'recapper', task: 'Compile a self-contained handoff from the plan and reuse findings.\n\nPlan:\n' + plan.output + '\n\nReuse:\n' + reuse.output + '\n\nReturn inline.' });
 ${AUTO_LOOP}
-const loop = await autoLoop(goal, handoff.output);
+const loop = await autoLoop(goal, handoff.output, ${js(PROGRESS_DIR + "quicktype.md")});
 const audit = await runs.run('audit', { agent: 'commentator', task: 'Final audit of the uncommitted changes for correctness, plan adherence, and over-engineering (cut bloat, dead flexibility, reinvented stdlib). Plan:\n' + plan.output + '\n\nReport concrete evidence. Do not modify the workspace.' });
 return { ...loop, audited: true };`;
 }

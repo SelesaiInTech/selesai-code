@@ -10,6 +10,7 @@ dist/
 # Local agent/runtime artifacts
 .pi-subagents/artifacts/
 .pi-subagents/missions/
+.pi-subagents/progress/
 .selesai/artifacts/
 .selesai/code-graph/
 .selesai/extensions/*

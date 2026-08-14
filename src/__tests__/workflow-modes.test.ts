@@ -50,6 +50,30 @@ describe("workflow mode script builders", () => {
     expect(script).not.toContain("'handoff'");
     expect(script).not.toContain("'audit'");
   });
+
+  it("injects a per-mode progress file into the auto loop", () => {
+    expect(buildLoopScript("g")).toContain(".pi-subagents/progress/loop.md");
+    expect(buildTaskScript("g")).toContain(".pi-subagents/progress/task.md");
+    expect(buildPrototypeScript("g")).toContain(".pi-subagents/progress/prototype.md");
+    expect(buildQuicktypeScript("g")).toContain(".pi-subagents/progress/quicktype.md");
+    expect(buildLoopScript("g")).not.toContain("progress/task.md");
+    expect(buildTaskScript("g")).not.toContain("progress/loop.md");
+  });
+
+  it("passes previous review feedback to the next builder round and scopes the reviewer to the progress file", () => {
+    const script = buildLoopScript("g");
+    expect(script).toContain("previousReview");
+    expect(script).toContain("Previous review feedback (address it first)");
+    expect(script).toContain("Progress ledger");
+    expect(script).toContain("Progress file (scope your review");
+    expect(script).toContain("WORKFLOW_REVIEW_STATUS");
+  });
+
+  it("generated scripts compile as a function body", () => {
+    for (const script of [buildLoopScript("g"), buildTaskScript("g"), buildPrototypeScript("g"), buildQuicktypeScript("g")]) {
+      expect(() => new Function(`return (async () => {\n${script}\n})`)).not.toThrow();
+    }
+  });
 });
 
 describe("workflow extension registration", () => {
