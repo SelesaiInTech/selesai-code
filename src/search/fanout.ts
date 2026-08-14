@@ -90,10 +90,12 @@ export function createFanoutSearch({
       resolvedMode: Exclude<FanoutMode, 'off'>
     ): WebSearchResponse {
       if (lists.length === 0) {
+        const fanout: FanoutMetadata = { mode: resolvedMode, providers: [] };
+        if (skipped.length > 0) fanout.skipped = skipped;
         return withPresentation({
           status: 'error',
           results: [],
-          metadata: { backend: primary.name, cacheHit: false },
+          metadata: { backend: primary.name, cacheHit: false, fanout },
           error: { code: 'FANOUT_NO_RESULTS', message: 'No fanout provider returned usable results.' }
         });
       }

@@ -121,4 +121,16 @@ describe('createFanoutSearch', () => {
     expect(res.metadata.fanout?.providers).toEqual(['duckduckgo']);
     expect(res.metadata.fanout?.skipped).toEqual(['brave']);
   });
+
+  it('on: all providers failing still reports skipped providers in metadata', async () => {
+    const providers = [
+      { name: 'brave' as const, search: vi.fn().mockResolvedValue(err('brave')) },
+      { name: 'exa' as const, search: vi.fn().mockResolvedValue(err('exa')) }
+    ];
+    const search = createFanoutSearch({ providers, mode: 'on' });
+    const res = await search({ query: 'q' });
+    expect(res.status).toBe('error');
+    expect(res.metadata.fanout?.skipped).toEqual(['brave', 'exa']);
+    expect(res.metadata.fanout?.providers).toEqual([]);
+  });
 });

@@ -112,7 +112,9 @@ export function createResearchWorker({
           ],
           lowValueOutcomes,
           suggestedHeadlessUrl,
-          exhaustedBudget: false
+          exhaustedBudget: false,
+          fanoutProviders,
+          fanoutSkipped
         };
       }
 
@@ -128,7 +130,9 @@ export function createResearchWorker({
             }
           ],
           suggestedHeadlessUrl,
-          exhaustedBudget: false
+          exhaustedBudget: false,
+          fanoutProviders,
+          fanoutSkipped
         };
       }
 

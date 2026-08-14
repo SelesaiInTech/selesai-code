@@ -300,4 +300,30 @@ describe('research worker', () => {
     expect(result.fanoutSkipped).toEqual(['exa', 'youcom']);
     expect(result.evidence).toHaveLength(1);
   });
+
+  it('captures fanout skipped providers from error search response with fanout metadata', async () => {
+    const worker = createResearchWorker({
+      search: vi.fn().mockResolvedValue({
+        status: 'error',
+        results: [],
+        metadata: {
+          backend: 'duckduckgo',
+          cacheHit: false,
+          fanout: { mode: 'on', providers: [], skipped: ['brave', 'exa'] }
+        },
+        error: { code: 'FANOUT_NO_RESULTS', message: 'No fanout provider returned usable results.' }
+      }),
+      fetchPage: vi.fn()
+    });
+
+    const result = await worker.run({
+      query: 'test query',
+      maxSearchRounds: 1,
+      maxFetches: 2
+    });
+
+    expect(result.fanoutSkipped).toEqual(['brave', 'exa']);
+    expect(result.gaps).toHaveLength(1);
+    expect(result.gaps[0].kind).toBe('fetch-failed');
+  });
 });
