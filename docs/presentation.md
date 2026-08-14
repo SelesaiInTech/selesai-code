@@ -25,9 +25,9 @@ If you want more detail inline, switch modes in `/web-agent` settings instead of
 
 `web_explore` can be shown in one visible mode at a time:
 
-- `compact` — the shortest useful summary
-- `preview` — findings with internal provenance
-- `verbose` — findings, sources, caveats, and internal provenance
+- `compact`: the shortest useful summary
+- `preview`: findings with internal provenance
+- `verbose`: findings, sources, caveats, and internal provenance
 
 The important part is that these are not stacked on top of each other.
 
@@ -92,8 +92,8 @@ These also work:
 
 `/web-agent` opens the action menu. Choose **Settings** to pick between:
 
-- **Presentation** — default output mode and the `web_explore` override
-- **Backends** — search/fetch providers, base URLs where relevant, fallback behavior, and env-var reminders for Brave/Firecrawl API keys
+- **Presentation**: default output mode and the `web_explore` override
+- **Backends**: search/fetch providers, base URLs where relevant, fallback behavior, and env-var reminders for Brave/Firecrawl API keys
 
 From either settings screen you can:
 

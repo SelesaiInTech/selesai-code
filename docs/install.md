@@ -103,12 +103,12 @@ Backend config also supports explicit fallback and a small set of provider optio
 
 Secrets live in the environment, not in config the settings UI writes. The ones the package reads:
 
-- `PI_WEB_AGENT_BRAVE_API_KEY` — Brave search
-- `YDC_API_KEY` — You.com search
-- `EXA_API_KEY` — Exa search
-- `TAVILY_API_KEY` — Tavily search
-- `PI_WEB_AGENT_FIRECRAWL_API_KEY` — Firecrawl fetch
-- `GITHUB_TOKEN` — optional, raises the GitHub reader's API rate limit (GitHub links work without it)
+- `PI_WEB_AGENT_BRAVE_API_KEY`: Brave search
+- `YDC_API_KEY`: You.com search
+- `EXA_API_KEY`: Exa search
+- `TAVILY_API_KEY`: Tavily search
+- `PI_WEB_AGENT_FIRECRAWL_API_KEY`: Firecrawl fetch
+- `GITHUB_TOKEN`: optional, raises the GitHub reader's API rate limit (GitHub links work without it)
 
 This package integrates with existing self-hosted services. SearXNG/Firecrawl installation, Docker Compose files, reverse proxies, TLS, and auth setup belong to those projects' docs.
 

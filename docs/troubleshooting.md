@@ -92,8 +92,8 @@ If you want the diagnostic report directly, use:
 
 The settings UI currently has two sections:
 
-- **Presentation** — `defaultMode` and `web_explore`
-- **Backends** — search/fetch providers, SearXNG and Firecrawl URLs, fallback toggles, and env-var reminders for Brave/Firecrawl API keys
+- **Presentation**: `defaultMode` and `web_explore`
+- **Backends**: search/fetch providers, SearXNG and Firecrawl URLs, fallback toggles, and env-var reminders for Brave/Firecrawl API keys
 
 Older config files may still contain keys for older low-level tools. They are ignored by the current UI.
 
