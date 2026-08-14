@@ -158,6 +158,26 @@ describe('web-agent config draft helpers', () => {
     expect(fetchUrlState.backends.fetch.baseUrl).toBe('http://localhost:3002');
   });
 
+  it('applies search fanout mode draft values', () => {
+    const loaded = {
+      global: { path: '/global/config.json', exists: false },
+      project: { path: '/project/config.json', exists: false },
+      effectiveConfig: DEFAULT_PRESENTATION_CONFIG,
+      effectiveBackends: DEFAULT_BACKEND_CONFIG
+    };
+
+    const state = createSettingsDraftState(loaded, 'project');
+
+    const fanoutOnState = applySettingsValue(state, 'backend:search:fanout:mode', 'on');
+    expect(fanoutOnState.backends.search.fanout).toEqual({ mode: 'on', providers: undefined });
+
+    const fanoutAutoState = applySettingsValue(state, 'backend:search:fanout:mode', 'auto');
+    expect(fanoutAutoState.backends.search.fanout).toEqual({ mode: 'auto', providers: undefined });
+
+    const fanoutOffState = applySettingsValue(fanoutOnState, 'backend:search:fanout:mode', 'off');
+    expect(fanoutOffState.backends.search.fanout).toBeUndefined();
+  });
+
   it('applies brave backend draft values without preserving searxng-only fields', () => {
     const loaded = {
       global: { path: '/global/config.json', exists: false },
@@ -619,6 +639,37 @@ describe('web-agent config commands', () => {
     expect(notify.mock.calls[0][0]).toContain('headless: local-browser');
     expect(notify.mock.calls[0][0]).not.toContain('web_search:');
     expect(notify.mock.calls[0][0]).not.toContain('web_fetch:');
+  });
+
+  it('renders search fanout in show command', async () => {
+    let handler: any;
+    const pi = {
+      registerCommand: vi.fn((_name: string, command: any) => {
+        handler = command.handler;
+      })
+    };
+
+    registerWebAgentConfigCommands(pi as never, {
+      load: vi.fn().mockResolvedValue({
+        global: { path: '/global/config.json', exists: false },
+        project: { path: '/project/config.json', exists: true },
+        effectiveConfig: { defaultMode: 'compact', tools: {} },
+        effectiveBackends: {
+          search: {
+            provider: 'duckduckgo',
+            fanout: { mode: 'on', providers: ['brave', 'exa'] }
+          },
+          fetch: { provider: 'http' },
+          headless: { provider: 'local-browser' }
+        }
+      }),
+      reset: vi.fn()
+    });
+
+    const notify = vi.fn();
+    await handler('show', { ui: { notify } });
+
+    expect(notify.mock.calls[0][0]).toContain('search: duckduckgo fanout on (brave, exa)');
   });
 
   it('shows the latest changelog entry on request', async () => {

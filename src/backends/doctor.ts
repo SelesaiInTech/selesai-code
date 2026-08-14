@@ -203,6 +203,37 @@ export async function checkBackendHealth(
     lines.push(`search fallback: ${config.search.fallback}`);
   }
 
+  if (config.search.fanout && config.search.fanout.mode !== 'off') {
+    const providers = config.search.fanout.providers || ['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily'];
+    lines.push(`search fanout: ${config.search.fanout.mode} (${providers.join(', ')})`);
+
+    for (const provider of providers) {
+      if (provider === 'searxng' && !config.search.baseUrl) {
+        lines.push('search fanout provider searxng warning (missing baseUrl)');
+      } else if (provider === 'brave') {
+        const apiKey = process.env.PI_WEB_AGENT_BRAVE_API_KEY;
+        if (!apiKey?.trim()) {
+          lines.push('search fanout provider brave warning (missing PI_WEB_AGENT_BRAVE_API_KEY)');
+        }
+      } else if (provider === 'youcom') {
+        const apiKey = process.env.YDC_API_KEY;
+        if (!apiKey?.trim()) {
+          lines.push('search fanout provider youcom warning (missing YDC_API_KEY)');
+        }
+      } else if (provider === 'exa') {
+        const apiKey = process.env.EXA_API_KEY;
+        if (!apiKey?.trim()) {
+          lines.push('search fanout provider exa warning (missing EXA_API_KEY)');
+        }
+      } else if (provider === 'tavily') {
+        const apiKey = process.env.TAVILY_API_KEY;
+        if (!apiKey?.trim()) {
+          lines.push('search fanout provider tavily warning (missing TAVILY_API_KEY)');
+        }
+      }
+    }
+  }
+
   if (config.fetch.provider === 'http') {
     lines.push('fetch backend: http');
   } else if (!config.fetch.baseUrl) {

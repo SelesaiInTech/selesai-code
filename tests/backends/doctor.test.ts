@@ -282,4 +282,73 @@ describe('backend doctor checks', () => {
       })
     );
   });
+
+  it('reports search fanout mode and providers', async () => {
+    const fetchImpl = vi.fn();
+
+    const result = await checkBackendHealth({
+      search: {
+        provider: 'duckduckgo',
+        fanout: { mode: 'on', providers: ['brave', 'exa'] }
+      },
+      fetch: { provider: 'http' },
+      headless: { provider: 'local-browser' }
+    }, { fetchImpl });
+
+    expect(result).toContain('search fanout: on (brave, exa)');
+  });
+
+  it('reports search fanout with auto mode and all providers', async () => {
+    const fetchImpl = vi.fn();
+
+    const result = await checkBackendHealth({
+      search: {
+        provider: 'duckduckgo',
+        fanout: { mode: 'auto', providers: ['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily'] }
+      },
+      fetch: { provider: 'http' },
+      headless: { provider: 'local-browser' }
+    }, { fetchImpl });
+
+    expect(result).toContain('search fanout: auto (duckduckgo, searxng, brave, youcom, exa, tavily)');
+  });
+
+  it('warns when fanout includes searxng without baseUrl', async () => {
+    const fetchImpl = vi.fn();
+
+    const result = await checkBackendHealth({
+      search: {
+        provider: 'duckduckgo',
+        fanout: { mode: 'on', providers: ['brave', 'searxng'] }
+      },
+      fetch: { provider: 'http' },
+      headless: { provider: 'local-browser' }
+    }, { fetchImpl });
+
+    expect(result).toContain('search fanout: on (brave, searxng)');
+    expect(result).toContain('search fanout provider searxng warning (missing baseUrl)');
+  });
+
+  it('warns when fanout includes hosted provider without API key', async () => {
+    const original = process.env.PI_WEB_AGENT_BRAVE_API_KEY;
+    delete process.env.PI_WEB_AGENT_BRAVE_API_KEY;
+
+    try {
+      const fetchImpl = vi.fn();
+
+      const result = await checkBackendHealth({
+        search: {
+          provider: 'duckduckgo',
+          fanout: { mode: 'on', providers: ['duckduckgo', 'brave'] }
+        },
+        fetch: { provider: 'http' },
+        headless: { provider: 'local-browser' }
+      }, { fetchImpl });
+
+      expect(result).toContain('search fanout: on (duckduckgo, brave)');
+      expect(result).toContain('search fanout provider brave warning (missing PI_WEB_AGENT_BRAVE_API_KEY)');
+    } finally {
+      if (original !== undefined) process.env.PI_WEB_AGENT_BRAVE_API_KEY = original;
+    }
+  });
 });

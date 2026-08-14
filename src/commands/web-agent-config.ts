@@ -87,7 +87,10 @@ function cloneBackendConfig(config: BackendConfig): BackendConfig {
   return {
     search: {
       ...config.search,
-      options: config.search.options ? { ...config.search.options } : undefined
+      options: config.search.options ? { ...config.search.options } : undefined,
+      fanout: config.search.fanout
+        ? { mode: config.search.fanout.mode, providers: config.search.fanout.providers ? [...config.search.fanout.providers] : undefined }
+        : undefined
     },
     fetch: {
       ...config.fetch,
@@ -124,12 +127,17 @@ async function defaultCheckTypebox(): Promise<boolean> {
 }
 
 function formatSearchOptions(config: BackendConfig['search']) {
-  return [
+  const parts = [
     config.fallback ? `fallback ${config.fallback}` : undefined,
     config.options?.categories?.length ? `categories ${config.options.categories.join(',')}` : undefined,
     config.options?.language ? `language ${config.options.language}` : undefined,
-    config.options?.safesearch !== undefined ? `safesearch ${config.options.safesearch}` : undefined
-  ].filter(Boolean).join(' ');
+    config.options?.safesearch !== undefined ? `safesearch ${config.options.safesearch}` : undefined,
+    config.fanout && config.fanout.mode !== 'off'
+      ? `fanout ${config.fanout.mode} (${(config.fanout.providers || ['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily']).join(', ')})`
+      : undefined
+  ].filter(Boolean);
+
+  return parts.join(' ');
 }
 
 function formatFetchOptions(config: BackendConfig['fetch']) {
@@ -277,6 +285,12 @@ function buildBackendSettingsItems(
       label: 'Search fallback',
       currentValue: backends.search.provider === 'searxng' || backends.search.provider === 'brave' || backends.search.provider === 'youcom' || backends.search.provider === 'exa' || backends.search.provider === 'tavily' ? backends.search.fallback ?? 'off' : 'off',
       values: backends.search.provider === 'searxng' || backends.search.provider === 'brave' || backends.search.provider === 'youcom' || backends.search.provider === 'exa' || backends.search.provider === 'tavily' ? ['off', 'duckduckgo'] : ['off']
+    },
+    {
+      id: 'backend:search:fanout:mode',
+      label: 'Search fanout',
+      currentValue: backends.search.fanout?.mode ?? 'off',
+      values: ['off', 'on', 'auto']
     },
     {
       id: 'backend:secret:brave',
@@ -481,6 +495,17 @@ export function applySettingsValue(
     }
   }
 
+  if (id === 'backend:search:fanout:mode') {
+    if (newValue === 'off') {
+      delete currentBackends.search.fanout;
+    } else if (newValue === 'on' || newValue === 'auto') {
+      currentBackends.search.fanout = {
+        mode: newValue,
+        providers: undefined
+      };
+    }
+  }
+
   if (id === 'backend:search:baseUrl') {
     if (newValue.trim()) {
       currentBackends.search.provider = 'searxng';
@@ -565,7 +590,8 @@ export function collapseBackendConfigToOverride(
       : {
           ...(config.search.baseUrl !== inheritedConfig.search.baseUrl ? { baseUrl: config.search.baseUrl } : {}),
           ...(config.search.fallback !== inheritedConfig.search.fallback ? { fallback: config.search.fallback } : {}),
-          ...(!sameJson(config.search.options, inheritedConfig.search.options) ? { options: config.search.options } : {})
+          ...(!sameJson(config.search.options, inheritedConfig.search.options) ? { options: config.search.options } : {}),
+          ...(!sameJson(config.search.fanout, inheritedConfig.search.fanout) ? { fanout: config.search.fanout } : {})
         };
 
     if (config.search.provider !== inheritedConfig.search.provider) {
