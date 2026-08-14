@@ -1,4 +1,4 @@
-import type { WebFetchHeadlessResponse, WebFetchResponse } from '../types.js';
+import type { SearchProviderName, WebFetchHeadlessResponse, WebFetchResponse } from '../types.js';
 import { rankEvidence } from './evidence-ranker.js';
 import { planSearchQueries } from './query-planner.js';
 import { classifySourceProfile } from './source-profile.js';
@@ -101,7 +101,9 @@ function buildMetadata({
   allLowValueOutcomes,
   headlessAttempts,
   exhaustedBudget,
-  caveatReasons = []
+  caveatReasons = [],
+  fanoutProviders,
+  fanoutSkipped
 }: {
   previousQueries: string[];
   allEvidence: ResearchEvidence[];
@@ -110,13 +112,17 @@ function buildMetadata({
   headlessAttempts: number;
   exhaustedBudget: boolean;
   caveatReasons?: EvidenceCaveatReason[];
+  fanoutProviders?: SearchProviderName[];
+  fanoutSkipped?: SearchProviderName[];
 }) {
   return {
     searchPasses: previousQueries.length,
     fetchedPages: allEvidence.length + allGaps.length + allLowValueOutcomes.length,
     headlessAttempts,
     exhaustedBudget,
-    caveatReasons
+    caveatReasons,
+    fanoutProviders,
+    fanoutSkipped
   };
 }
 
@@ -170,6 +176,14 @@ export function createResearchOrchestrator({
       const suggestedHeadlessUrls: string[] = [];
       let headlessAttempts = 0;
       let lastPass: ResearchWorkerResult | undefined;
+      const fanoutProvidersSeen = new Set<SearchProviderName>();
+      const fanoutSkippedSeen = new Set<SearchProviderName>();
+
+      function fanoutSnapshot() {
+        const providers = fanoutProvidersSeen.size ? [...fanoutProvidersSeen] : undefined;
+        const skipped = [...fanoutSkippedSeen].filter((p) => !fanoutProvidersSeen.has(p));
+        return { fanoutProviders: providers, fanoutSkipped: skipped.length ? skipped : undefined };
+      }
 
       if (fetchDirect) {
         for (const url of extractDirectUrls(query).slice(0, 3)) {
@@ -221,6 +235,8 @@ export function createResearchOrchestrator({
           });
 
           lastPass = pass;
+          pass.fanoutProviders?.forEach((p) => fanoutProvidersSeen.add(p));
+          pass.fanoutSkipped?.forEach((p) => fanoutSkippedSeen.add(p));
           allEvidence.push(...pass.evidence);
           allGaps.push(...pass.gaps);
           allLowValueOutcomes.push(...pass.lowValueOutcomes);
@@ -287,7 +303,8 @@ export function createResearchOrchestrator({
                   allLowValueOutcomes,
                   headlessAttempts,
                   exhaustedBudget,
-                  caveatReasons: updatedQuality.caveatReasons
+                  caveatReasons: updatedQuality.caveatReasons,
+                  ...fanoutSnapshot()
                 })
               };
             }
@@ -314,7 +331,8 @@ export function createResearchOrchestrator({
                 allLowValueOutcomes,
                 headlessAttempts,
                 exhaustedBudget: false,
-                caveatReasons: quality.caveatReasons
+                caveatReasons: quality.caveatReasons,
+                ...fanoutSnapshot()
               })
             };
           }
@@ -338,7 +356,8 @@ export function createResearchOrchestrator({
                 allLowValueOutcomes,
                 headlessAttempts,
                 exhaustedBudget,
-                caveatReasons: quality.caveatReasons
+                caveatReasons: quality.caveatReasons,
+                ...fanoutSnapshot()
               })
             };
           }
@@ -368,7 +387,8 @@ export function createResearchOrchestrator({
           allLowValueOutcomes,
           headlessAttempts,
           exhaustedBudget: true,
-          caveatReasons: quality.caveatReasons
+          caveatReasons: quality.caveatReasons,
+          ...fanoutSnapshot()
         })
       };
     }

@@ -1,13 +1,4 @@
-const TRACKING_PARAMS = new Set([
-  'utm_source',
-  'utm_medium',
-  'utm_campaign',
-  'utm_term',
-  'utm_content',
-  'utm_name',
-  'fbclid',
-  'gclid'
-]);
+import { canonicalizeUrl } from './url.js';
 
 function stripTrailingPunctuation(raw: string): string {
   let next = raw.trim();
@@ -22,21 +13,7 @@ function stripTrailingPunctuation(raw: string): string {
 }
 
 function normalizeDirectUrl(raw: string): string | undefined {
-  try {
-    const url = new URL(stripTrailingPunctuation(raw));
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
-
-    for (const key of [...url.searchParams.keys()]) {
-      if (TRACKING_PARAMS.has(key.toLowerCase())) {
-        url.searchParams.delete(key);
-      }
-    }
-
-    url.hash = '';
-    return url.toString().replace(/\/$/, '');
-  } catch {
-    return undefined;
-  }
+  return canonicalizeUrl(stripTrailingPunctuation(raw), { canonicalizeHost: false });
 }
 
 export function extractDirectUrls(query: string): string[] {

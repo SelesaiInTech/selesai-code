@@ -39,4 +39,23 @@ describe('buildSearchPresentation', () => {
 
     expect(presentation.views.compact).toBe('searxng failed; used duckduckgo fallback. Found 1 result');
   });
+
+  it('shows skipped providers on an all-failed fanout search', () => {
+    const p = buildSearchPresentation({
+      status: 'error',
+      results: [],
+      metadata: { backend: 'brave', cacheHit: false, fanout: { mode: 'on', providers: [], skipped: ['brave', 'exa'] } },
+      error: { code: 'FANOUT_NO_RESULTS', message: 'No fanout provider returned usable results.' }
+    });
+    expect(p.views.compact as string).toContain('(fanout; skipped: brave, exa)');
+  });
+
+  it('shows contributing providers on a successful fanout search', () => {
+    const p = buildSearchPresentation({
+      status: 'ok',
+      results: [{ title: 't', url: 'https://a.com', snippet: 's' }],
+      metadata: { backend: 'duckduckgo', cacheHit: false, fanout: { mode: 'on', providers: ['duckduckgo', 'brave'] } }
+    });
+    expect(p.views.compact as string).toContain('(fanout: duckduckgo, brave)');
+  });
 });

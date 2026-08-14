@@ -98,6 +98,8 @@ export function createResearchWorker({
       }
 
       const searchResult = await search({ query });
+      const fanoutProviders = searchResult.metadata.fanout?.providers;
+      const fanoutSkipped = searchResult.metadata.fanout?.skipped;
       if (searchResult.status !== 'ok') {
         return {
           searchQueries,
@@ -110,7 +112,9 @@ export function createResearchWorker({
           ],
           lowValueOutcomes,
           suggestedHeadlessUrl,
-          exhaustedBudget: false
+          exhaustedBudget: false,
+          fanoutProviders,
+          fanoutSkipped
         };
       }
 
@@ -126,7 +130,9 @@ export function createResearchWorker({
             }
           ],
           suggestedHeadlessUrl,
-          exhaustedBudget: false
+          exhaustedBudget: false,
+          fanoutProviders,
+          fanoutSkipped
         };
       }
 
@@ -174,7 +180,9 @@ export function createResearchWorker({
         gaps,
         lowValueOutcomes,
         suggestedHeadlessUrl,
-        exhaustedBudget: false
+        exhaustedBudget: false,
+        fanoutProviders,
+        fanoutSkipped
       };
     }
   };

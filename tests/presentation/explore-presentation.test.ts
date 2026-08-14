@@ -79,4 +79,37 @@ describe('buildExplorePresentation', () => {
     expect(preview).toContain('[pdf]');
     expect(preview).toContain('[youtube]');
   });
+
+  it('shows the fanout providers on the internal-research summary line', () => {
+    const presentation = buildExplorePresentation({
+      status: 'ok',
+      findings: ['a'],
+      sources: [{ title: 't', url: 'https://a.com', method: 'http' }],
+      metadata: { searchPasses: 2, fetchedPages: 3, headlessAttempts: 0, exhaustedBudget: false, fanoutProviders: ['duckduckgo', 'brave', 'exa'] }
+    });
+    const preview = presentation.views.preview as string;
+    expect(preview).toContain('fanout: duckduckgo, brave, exa');
+  });
+
+  it('shows both fanout providers and skipped providers when both are present', () => {
+    const presentation = buildExplorePresentation({
+      status: 'ok',
+      findings: ['a'],
+      sources: [{ title: 't', url: 'https://a.com', method: 'http' }],
+      metadata: { searchPasses: 2, fetchedPages: 3, headlessAttempts: 0, exhaustedBudget: false, fanoutProviders: ['duckduckgo', 'brave'], fanoutSkipped: ['exa'] }
+    });
+    const preview = presentation.views.preview as string;
+    expect(preview).toContain('fanout: duckduckgo, brave; skipped: exa');
+  });
+
+  it('shows skipped providers even when no fanout provider contributed (all failed)', () => {
+    const presentation = buildExplorePresentation({
+      status: 'ok',
+      findings: ['a'],
+      sources: [{ title: 't', url: 'https://a.com', method: 'http' }],
+      metadata: { searchPasses: 1, fetchedPages: 0, headlessAttempts: 0, exhaustedBudget: false, fanoutSkipped: ['brave', 'exa'] }
+    });
+    const preview = presentation.views.preview as string;
+    expect(preview).toContain('(fanout; skipped: brave, exa)');
+  });
 });

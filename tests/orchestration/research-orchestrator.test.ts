@@ -643,4 +643,68 @@ describe('research orchestrator types', () => {
     expect(result.decision.action).toBe('research-again');
     expect(headlessFetch).not.toHaveBeenCalled();
   });
+
+  it('accumulates fanout providers across multiple search passes', async () => {
+    const worker = {
+      run: vi
+        .fn()
+        .mockResolvedValueOnce({
+          searchQueries: ['vitest coverage'],
+          evidence: [
+            {
+              title: 'Blog',
+              url: 'https://example.com/blog',
+              sourceKind: 'community' as const,
+              method: 'http' as const,
+              summary: 'community summary',
+              supports: ['community support']
+            }
+          ],
+          gaps: [{ kind: 'needs-more-evidence' as const, message: 'Need official docs.' }],
+          lowValueOutcomes: [],
+          suggestedHeadlessUrl: undefined,
+          exhaustedBudget: false,
+          fanoutProviders: ['duckduckgo', 'brave'],
+          fanoutSkipped: ['exa']
+        })
+        .mockResolvedValueOnce({
+          searchQueries: ['site:vitest.dev vitest coverage docs'],
+          evidence: [
+            {
+              title: 'Coverage | Guide | Vitest',
+              url: 'https://vitest.dev/guide/coverage.html',
+              sourceKind: 'official-docs' as const,
+              method: 'http' as const,
+              summary: 'Official coverage docs',
+              supports: ['provider v8']
+            },
+            {
+              title: 'Config | Vitest',
+              url: 'https://vitest.dev/config/',
+              sourceKind: 'official-api' as const,
+              method: 'http' as const,
+              summary: 'Official config docs',
+              supports: ['coverage config']
+            }
+          ],
+          gaps: [],
+          lowValueOutcomes: [],
+          suggestedHeadlessUrl: undefined,
+          exhaustedBudget: false,
+          fanoutProviders: ['duckduckgo', 'exa'],
+          fanoutSkipped: ['youcom']
+        })
+    };
+
+    const orchestrator = createResearchOrchestrator({ worker, headlessFetch: vi.fn() });
+    const result = await orchestrator.run({ query: 'Find Vitest coverage V8 docs' });
+
+    expect(worker.run).toHaveBeenCalledTimes(2);
+    expect(result.decision.action).toBe('answer');
+    expect(result.metadata?.fanoutProviders).toEqual(expect.arrayContaining(['duckduckgo', 'brave', 'exa']));
+    expect(result.metadata?.fanoutProviders?.length).toBe(3);
+    expect(result.metadata?.fanoutSkipped).toEqual(expect.arrayContaining(['youcom']));
+    expect(result.metadata?.fanoutSkipped?.length).toBe(1);
+    expect(result.metadata?.fanoutSkipped).not.toContain('exa');
+  });
 });

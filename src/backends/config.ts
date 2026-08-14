@@ -1,7 +1,14 @@
+import type { FanoutMode, SearchProviderName } from '../types.js';
+
 export type SearxngOptions = {
   categories?: string[];
   language?: string;
   safesearch?: 0 | 1 | 2;
+};
+
+export type FanoutConfig = {
+  mode: FanoutMode;
+  providers?: SearchProviderName[];
 };
 
 export type FirecrawlOptions = {
@@ -14,6 +21,7 @@ export type SearchBackendConfig = {
   baseUrl?: string;
   fallback?: 'duckduckgo';
   options?: SearxngOptions;
+  fanout?: FanoutConfig;
 };
 
 export type FetchBackendConfig = {
@@ -39,7 +47,7 @@ export type BackendConfigOverride = {
 
 export type BackendConfigFile = {
   backends?: {
-    search?: { provider?: unknown; baseUrl?: unknown; fallback?: unknown; options?: unknown };
+    search?: { provider?: unknown; baseUrl?: unknown; fallback?: unknown; options?: unknown; fanout?: unknown };
     fetch?: { provider?: unknown; baseUrl?: unknown; apiKey?: unknown; fallback?: unknown; options?: unknown };
     headless?: { provider?: unknown };
   };
@@ -78,6 +86,23 @@ function extractFirecrawlOptions(value: unknown): FirecrawlOptions | undefined {
   return Object.keys(options).length > 0 ? options : undefined;
 }
 
+const PROVIDER_NAMES: SearchProviderName[] = ['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily'];
+
+function extractFanoutConfig(value: unknown): FanoutConfig | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as { mode?: unknown; providers?: unknown };
+  if (raw.mode !== 'off' && raw.mode !== 'on' && raw.mode !== 'auto') return undefined;
+  const config: FanoutConfig = { mode: raw.mode };
+  if (Array.isArray(raw.providers)) {
+    const providers = raw.providers.filter(
+      (p): p is SearchProviderName => typeof p === 'string' && (PROVIDER_NAMES as string[]).includes(p)
+    );
+    if (providers.length !== raw.providers.length) return undefined; // fail loud on any invalid entry
+    if (providers.length > 0) config.providers = providers;
+  }
+  return config;
+}
+
 export function extractBackendConfigOverride(
   file: BackendConfigFile | null | undefined
 ): BackendConfigOverride {
@@ -105,6 +130,11 @@ export function extractBackendConfigOverride(
         override.search.options = options;
       }
     }
+  }
+
+  const fanout = extractFanoutConfig(backends?.search?.fanout);
+  if (fanout) {
+    override.search = { ...(override.search ?? {}), fanout };
   }
 
   if (backends?.fetch?.provider === 'http' || backends?.fetch?.provider === 'firecrawl') {
@@ -167,6 +197,16 @@ export function validateBackendConfig(config: BackendConfig): string[] {
 
   if (config.fetch.options?.formats && config.fetch.options.formats.length === 0) {
     issues.push('fetch options.formats must contain at least one format when provided');
+  }
+
+  const fanout = config.search.fanout;
+  if (fanout) {
+    if (fanout.mode !== 'off' && fanout.mode !== 'on' && fanout.mode !== 'auto') {
+      issues.push('search fanout.mode must be off, on, or auto');
+    }
+    if (fanout.providers?.includes('searxng') && !config.search.baseUrl) {
+      issues.push('search fanout with searxng requires backends.search.baseUrl');
+    }
   }
 
   return issues;

@@ -21,8 +21,15 @@ export function buildExplorePresentation(result: WebExploreResponse): Presentati
     };
   }
 
+  const fanoutProviders = result.metadata?.fanoutProviders;
+  const fanoutSkipped = result.metadata?.fanoutSkipped;
+  const fanoutNote = fanoutProviders?.length
+    ? ` (fanout: ${fanoutProviders.join(', ')}${fanoutSkipped?.length ? `; skipped: ${fanoutSkipped.join(', ')}` : ''})`
+    : fanoutSkipped?.length
+      ? ` (fanout; skipped: ${fanoutSkipped.join(', ')})`
+      : '';
   const internalSummary = result.metadata
-    ? `Internal research: web_search ×${result.metadata.searchPasses}, web_fetch ×${result.metadata.fetchedPages}, web_fetch_headless ×${result.metadata.headlessAttempts}`
+    ? `Internal research: web_search ×${result.metadata.searchPasses}${fanoutNote}, web_fetch ×${result.metadata.fetchedPages}, web_fetch_headless ×${result.metadata.headlessAttempts}`
     : undefined;
   const hasEvidence = result.findings.length > 0 || result.sources.length > 0;
   const evidenceLines = hasEvidence

@@ -16,6 +16,16 @@ export type SearchResult = {
   snippet: string;
 };
 
+export type SearchProviderName = 'duckduckgo' | 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily';
+
+export type FanoutMode = 'off' | 'on' | 'auto';
+
+export type FanoutMetadata = {
+  mode: Exclude<FanoutMode, 'off'>;
+  providers: SearchProviderName[]; // providers that actually contributed results
+  skipped?: SearchProviderName[];  // providers queried but errored or returned nothing
+};
+
 export type ToolError = {
   code: string;
   message: string;
@@ -26,6 +36,7 @@ export type SearchMetadata = {
   cacheHit: boolean;
   fallbackFrom?: 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily';
   fallbackReason?: string;
+  fanout?: FanoutMetadata;
 };
 
 export type FetchMethod = 'http' | 'headless' | 'firecrawl' | 'github' | 'pdf' | 'youtube';
@@ -84,6 +95,8 @@ export type WebExploreResponse = {
     headlessAttempts: number;
     exhaustedBudget: boolean;
     caveatReasons?: string[];
+    fanoutProviders?: SearchProviderName[];
+    fanoutSkipped?: SearchProviderName[];
   };
   presentation?: PresentationEnvelope;
   error?: ToolError;

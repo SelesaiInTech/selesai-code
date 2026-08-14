@@ -195,3 +195,47 @@ describe('backend config', () => {
     })).toEqual([]);
   });
 });
+
+describe('fanout config', () => {
+  it('parses a valid fanout block', () => {
+    const override = extractBackendConfigOverride({
+      backends: { search: { provider: 'brave', fanout: { mode: 'auto', providers: ['duckduckgo', 'brave', 'exa'] } } }
+    });
+    expect(override.search?.fanout).toEqual({ mode: 'auto', providers: ['duckduckgo', 'brave', 'exa'] });
+  });
+
+  it('drops the fanout block on unknown provider names or invalid mode', () => {
+    const badMode = extractBackendConfigOverride({
+      backends: { search: { provider: 'brave', fanout: { mode: 'sideways', providers: ['brave'] } } }
+    });
+    expect(badMode.search?.fanout).toBeUndefined();
+
+    const badProvider = extractBackendConfigOverride({
+      backends: { search: { provider: 'brave', fanout: { mode: 'on', providers: ['brave', 'bogus'] } } }
+    });
+    expect(badProvider.search?.fanout).toBeUndefined();
+  });
+
+  it('flags searxng in the fanout set without a base url', () => {
+    const issues = validateBackendConfig({
+      ...DEFAULT_BACKEND_CONFIG,
+      search: { provider: 'duckduckgo', fanout: { mode: 'on', providers: ['duckduckgo', 'searxng'] } }
+    });
+    expect(issues.some((i) => i.includes('searxng'))).toBe(true);
+  });
+
+  it('parses fanout even when no provider is set (provider inherited)', () => {
+    const override = extractBackendConfigOverride({
+      backends: { search: { fanout: { mode: 'auto', providers: ['duckduckgo', 'brave'] } } }
+    });
+    expect(override.search?.provider).toBeUndefined();
+    expect(override.search?.fanout).toEqual({ mode: 'auto', providers: ['duckduckgo', 'brave'] });
+  });
+
+  it('project fanout off overrides an inherited global fanout on after reload', () => {
+    const globalOverride = extractBackendConfigOverride({ backends: { search: { provider: 'brave', fanout: { mode: 'on' } } } });
+    const projectOverride = extractBackendConfigOverride({ backends: { search: { fanout: { mode: 'off' } } } });
+    const effective = mergeBackendConfigLayers(DEFAULT_BACKEND_CONFIG, globalOverride, projectOverride);
+    expect(effective.search.fanout?.mode).toBe('off');
+  });
+});

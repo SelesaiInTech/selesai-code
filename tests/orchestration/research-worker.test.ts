@@ -223,4 +223,107 @@ describe('research worker', () => {
       }
     ]);
   });
+
+  it('captures fanout providers from search metadata', async () => {
+    const worker = createResearchWorker({
+      search: vi.fn().mockResolvedValue({
+        status: 'ok',
+        results: [
+          {
+            title: 'Playwright Browsers',
+            url: 'https://playwright.dev/docs/browsers',
+            snippet: 'Playwright supports Chrome and Edge.'
+          }
+        ],
+        metadata: {
+          backend: 'duckduckgo',
+          cacheHit: false,
+          fanout: { mode: 'on', providers: ['duckduckgo', 'brave', 'exa'] }
+        }
+      }),
+      fetchPage: vi.fn().mockResolvedValue({
+        status: 'ok',
+        url: 'https://playwright.dev/docs/browsers',
+        content: {
+          title: 'Playwright Browsers',
+          text: 'Playwright can operate against Chrome and Edge browsers available on the machine.'
+        },
+        metadata: { method: 'http', cacheHit: false, contentType: 'text/html', truncated: false }
+      })
+    });
+
+    const result = await worker.run({
+      query: 'playwright browser support',
+      maxSearchRounds: 1,
+      maxFetches: 1
+    });
+
+    expect(result.fanoutProviders).toEqual(['duckduckgo', 'brave', 'exa']);
+    expect(result.evidence).toHaveLength(1);
+  });
+
+  it('captures fanout skipped providers from search metadata', async () => {
+    const worker = createResearchWorker({
+      search: vi.fn().mockResolvedValue({
+        status: 'ok',
+        results: [
+          {
+            title: 'Playwright Browsers',
+            url: 'https://playwright.dev/docs/browsers',
+            snippet: 'Playwright supports Chrome and Edge.'
+          }
+        ],
+        metadata: {
+          backend: 'duckduckgo',
+          cacheHit: false,
+          fanout: { mode: 'on', providers: ['duckduckgo', 'brave'], skipped: ['exa', 'youcom'] }
+        }
+      }),
+      fetchPage: vi.fn().mockResolvedValue({
+        status: 'ok',
+        url: 'https://playwright.dev/docs/browsers',
+        content: {
+          title: 'Playwright Browsers',
+          text: 'Playwright can operate against Chrome and Edge browsers available on the machine.'
+        },
+        metadata: { method: 'http', cacheHit: false, contentType: 'text/html', truncated: false }
+      })
+    });
+
+    const result = await worker.run({
+      query: 'playwright browser support',
+      maxSearchRounds: 1,
+      maxFetches: 1
+    });
+
+    expect(result.fanoutProviders).toEqual(['duckduckgo', 'brave']);
+    expect(result.fanoutSkipped).toEqual(['exa', 'youcom']);
+    expect(result.evidence).toHaveLength(1);
+  });
+
+  it('captures fanout skipped providers from error search response with fanout metadata', async () => {
+    const worker = createResearchWorker({
+      search: vi.fn().mockResolvedValue({
+        status: 'error',
+        results: [],
+        metadata: {
+          backend: 'duckduckgo',
+          cacheHit: false,
+          fanout: { mode: 'on', providers: [], skipped: ['brave', 'exa'] }
+        },
+        error: { code: 'FANOUT_NO_RESULTS', message: 'No fanout provider returned usable results.' }
+      }),
+      fetchPage: vi.fn()
+    });
+
+    const result = await worker.run({
+      query: 'test query',
+      maxSearchRounds: 1,
+      maxFetches: 2
+    });
+
+    expect(result.fanoutSkipped).toEqual(['brave', 'exa']);
+    expect(result.gaps).toHaveLength(1);
+    expect(result.gaps[0].kind).toBe('fetch-failed');
+  });
 });

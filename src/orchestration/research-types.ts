@@ -1,3 +1,5 @@
+import type { SearchProviderName } from '../types.js';
+
 export type ResearchSourceKind =
   | 'official-docs'
   | 'official-api'
@@ -36,6 +38,8 @@ export type ResearchWorkerResult = {
   lowValueOutcomes: ResearchLowValueOutcome[];
   suggestedHeadlessUrl?: string;
   exhaustedBudget: boolean;
+  fanoutProviders?: SearchProviderName[];
+  fanoutSkipped?: SearchProviderName[];
 };
 
 export type ResearchRunMetadata = {
@@ -43,6 +47,8 @@ export type ResearchRunMetadata = {
   fetchedPages: number;
   headlessAttempts: number;
   exhaustedBudget: boolean;
+  fanoutProviders?: SearchProviderName[];
+  fanoutSkipped?: SearchProviderName[];
 };
 
 export type ResearchOrchestratorDecision =

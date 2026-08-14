@@ -4,12 +4,13 @@ import { createYouComSearchTool } from '../search/youcom.js';
 import { createExaSearchTool } from '../search/exa.js';
 import { createTavilySearchTool } from '../search/tavily.js';
 import { createSearxngSearchTool } from '../search/searxng.js';
+import { createFanoutSearch } from '../search/fanout.js';
 import { buildFetchPresentation } from '../presentation/fetch-presentation.js';
 import { buildSearchPresentation } from '../presentation/search-presentation.js';
 import { createWebFetchHeadlessTool } from '../tools/web-fetch-headless.js';
 import { createWebFetchTool } from '../tools/web-fetch.js';
 import { createWebSearchTool } from '../tools/web-search.js';
-import type { WebFetchHeadlessResponse, WebFetchResponse, WebSearchResponse } from '../types.js';
+import type { SearchProviderName, WebFetchHeadlessResponse, WebFetchResponse, WebSearchResponse } from '../types.js';
 import { DEFAULT_BACKEND_CONFIG, type BackendConfig } from './config.js';
 import { createSpecialContentResolver } from '../readers/resolver.js';
 import { createGithubReader } from '../readers/github-reader.js';
@@ -123,6 +124,26 @@ export function createBackendSet(
   const createFirecrawlFetch = deps.createFirecrawlFetch ?? createFirecrawlFetcher;
   const createHeadlessFetch = deps.createHeadlessFetch ?? createWebFetchHeadlessTool;
 
+  function buildProviderSearch(name: SearchProviderName): BackendSet['search'] {
+    switch (name) {
+      case 'searxng':
+        return config.search.baseUrl
+          ? createSearxngSearch({ baseUrl: config.search.baseUrl, options: config.search.options })
+          : invalidSearxngSearch();
+      case 'brave':
+        return createBraveSearch({ apiKey: process.env.PI_WEB_AGENT_BRAVE_API_KEY });
+      case 'youcom':
+        return createYouComSearch({ apiKey: process.env.YDC_API_KEY });
+      case 'exa':
+        return createExaSearch({ apiKey: process.env.EXA_API_KEY });
+      case 'tavily':
+        return createTavilySearch({ apiKey: process.env.TAVILY_API_KEY });
+      case 'duckduckgo':
+      default:
+        return createDuckDuckGoSearch();
+    }
+  }
+
   let search = config.search.provider === 'searxng'
     ? config.search.baseUrl
       ? createSearxngSearch({ baseUrl: config.search.baseUrl, options: config.search.options })
@@ -155,6 +176,26 @@ export function createBackendSet(
 
   if (config.search.provider === 'tavily' && config.search.fallback === 'duckduckgo') {
     search = withSearchFallback(search, createDuckDuckGoSearch(), 'tavily');
+  }
+
+  const fanoutConfig = config.search.fanout;
+  if (fanoutConfig && fanoutConfig.mode !== 'off') {
+    const baseNames =
+      fanoutConfig.providers && fanoutConfig.providers.length > 0
+        ? fanoutConfig.providers
+        : (['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily'] as SearchProviderName[]);
+    // A configured DuckDuckGo fallback must still be honored under fanout: fold it into the set.
+    const providerNames =
+      config.search.fallback === 'duckduckgo' && !baseNames.includes('duckduckgo')
+        ? [...baseNames, 'duckduckgo' as SearchProviderName]
+        : baseNames;
+    const ordered = [config.search.provider, ...providerNames.filter((n) => n !== config.search.provider)].filter(
+      (n, i, arr) => arr.indexOf(n) === i
+    );
+    search = createFanoutSearch({
+      providers: ordered.map((name) => ({ name, search: buildProviderSearch(name) })),
+      mode: fanoutConfig.mode
+    });
   }
 
   const httpFetch = createHttpFetch();
