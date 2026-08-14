@@ -223,4 +223,12 @@ describe('fanout config', () => {
     });
     expect(issues.some((i) => i.includes('searxng'))).toBe(true);
   });
+
+  it('parses fanout even when no provider is set (provider inherited)', () => {
+    const override = extractBackendConfigOverride({
+      backends: { search: { fanout: { mode: 'auto', providers: ['duckduckgo', 'brave'] } } }
+    });
+    expect(override.search?.provider).toBeUndefined();
+    expect(override.search?.fanout).toEqual({ mode: 'auto', providers: ['duckduckgo', 'brave'] });
+  });
 });

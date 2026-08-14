@@ -130,10 +130,11 @@ export function extractBackendConfigOverride(
         override.search.options = options;
       }
     }
-    const fanout = extractFanoutConfig(backends.search.fanout);
-    if (fanout) {
-      override.search.fanout = fanout;
-    }
+  }
+
+  const fanout = extractFanoutConfig(backends?.search?.fanout);
+  if (fanout) {
+    override.search = { ...(override.search ?? {}), fanout };
   }
 
   if (backends?.fetch?.provider === 'http' || backends?.fetch?.provider === 'firecrawl') {
