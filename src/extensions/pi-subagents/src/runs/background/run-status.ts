@@ -217,6 +217,8 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
 	const resultsDir = deps.resultsDir ?? DIRS.results;
 	const currentSessionId = deps.state?.currentSessionId ?? undefined;
+	const acceptedSessions = new Set<string>(deps.state?.sessionLineage?.length ? deps.state.sessionLineage : currentSessionId ? [currentSessionId] : []);
+	const ownsSession = (sessionId: string | undefined) => sessionId !== undefined && acceptedSessions.has(sessionId);
 	if (params.view && params.view !== "fleet" && params.view !== "transcript") {
 		return {
 			content: [{ type: "text", text: `Unknown status view: ${params.view}. Valid: fleet, transcript.` }],
@@ -236,7 +238,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			};
 		}
 		try {
-			const runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: currentSessionId, resultsDir, kill: deps.kill, now: deps.now });
+			const runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], ...(acceptedSessions.size ? { sessionIds: [...acceptedSessions] } : {}), resultsDir, kill: deps.kill, now: deps.now });
 			if (params.view === "transcript") {
 				if (runs.length === 1) return inspectSubagentStatus({ ...params, id: runs[0]!.id }, deps);
 				return {
@@ -332,9 +334,9 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		const status = reconciliation.status;
 		if (!status && diskStatus?.displayDismissedAt !== undefined) {
 			if (params.view === "transcript") {
-				if (currentSessionId && diskStatus.sessionId !== currentSessionId) {
+				if (currentSessionId && !ownsSession(diskStatus.sessionId)) {
 					return {
-						content: [{ type: "text", text: "Transcript view is only available for async runs owned by the current session." }],
+						content: [{ type: "text", text: "Transcript view is only available for async runs owned by the current session or its carried-over predecessors." }],
 						isError: true,
 						details: { mode: "single", results: [] },
 					};
@@ -351,9 +353,9 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		const eventsPath = path.join(asyncDir, "events.jsonl");
 		if (status) {
 			if (params.view === "transcript") {
-				if (currentSessionId && status.sessionId !== currentSessionId) {
+				if (currentSessionId && !ownsSession(status.sessionId)) {
 					return {
-						content: [{ type: "text", text: "Transcript view is only available for async runs owned by the current session." }],
+						content: [{ type: "text", text: "Transcript view is only available for async runs owned by the current session or its carried-over predecessors." }],
 						isError: true,
 						details: { mode: "single", results: [] },
 					};

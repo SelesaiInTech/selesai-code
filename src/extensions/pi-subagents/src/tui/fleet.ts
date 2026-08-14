@@ -239,7 +239,7 @@ export function collectFleetSnapshot(
 		if (options.asyncDirRoot !== undefined) {
 			const trackedIds = new Set(trackedRuns.map((run) => run.id));
 			const history = listAsyncRuns(options.asyncDirRoot, {
-				...(state.currentSessionId ? { sessionId: state.currentSessionId } : {}),
+				...(state.sessionLineage?.length ? { sessionIds: state.sessionLineage } : state.currentSessionId ? { sessionId: state.currentSessionId } : {}),
 				entryLimit: MAX_FLEET_HISTORY_CANDIDATES,
 				resultsDir: options.resultsDir ?? DIRS.results,
 				reconcile: false,

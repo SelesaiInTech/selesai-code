@@ -781,7 +781,8 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
 	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
-	const sessionRuns = [...state.foregroundRuns.values()].filter((run) => run.sessionId === state.currentSessionId);
+	const acceptedSessions = new Set(state.sessionLineage?.length ? state.sessionLineage : [state.currentSessionId]);
+	const sessionRuns = [...state.foregroundRuns.values()].filter((run) => run.sessionId !== undefined && acceptedSessions.has(run.sessionId));
 	const direct = sessionRuns.find((run) => run.runId === requested);
 	const matches = direct ? [direct] : sessionRuns.filter((run) => run.runId.startsWith(requested));
 	if (matches.length === 0) return undefined;
@@ -5326,7 +5327,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			if (action === "children.list") {
 				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-				const children = listRetainedChildren(DIRS.async, deps.state.currentSessionId);
+				const children = listRetainedChildren(DIRS.async, deps.state.sessionLineage?.length ? deps.state.sessionLineage : [deps.state.currentSessionId]);
 				return {
 					content: [{ type: "text", text: formatRetainedChildren(children) }],
 					details: { mode: "management", results: [] },

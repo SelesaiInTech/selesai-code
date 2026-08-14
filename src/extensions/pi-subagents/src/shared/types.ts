@@ -1460,6 +1460,8 @@ export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
 export interface AsyncJobState {
 	asyncId: string;
 	asyncDir: string;
+	/** True when the job was adopted from a previous session via lineage carry-over. */
+	adopted?: boolean;
 	/** Parent-resolved launch directory retained for trusted live artifact lookup. */
 	cwd?: string;
 	status: "queued" | "running" | "complete" | "failed" | "paused" | "stopped" | "rejected";
@@ -1654,6 +1656,12 @@ export interface ActiveAsyncCapacitySnapshot {
 export interface SubagentState {
 	baseCwd: string;
 	currentSessionId: string | null;
+	/** Ordered session identities (session file paths) whose workflow estate this session adopts, self first. */
+	sessionLineage?: string[];
+	/** Earliest result-file mtime eligible for adoption from lineage sessions (replay guard). */
+	adoptedResultWindowStart?: number;
+	/** Set when a session switch adopted live workflows; consumed on the first settled turn to inject a carry-over summary. */
+	handoffResumePending?: boolean;
 	/** Runtime-owned artifact resolution inputs used by Fleet transcript targeting. */
 	artifactDirPreference?: ArtifactDirPreference;
 	/** Runtime authority snapshot used by optional inspector controls. */

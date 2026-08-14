@@ -121,11 +121,14 @@ export function persistForegroundRunHistory(state: SubagentState, options: { res
 	writeAtomicJson(historyPath(resultsDir), { version: HISTORY_VERSION, runs });
 }
 
-export function restoreForegroundRunHistory(state: SubagentState, options: { resultsDir?: string; sessionId?: string | null; limit?: number } = {}): number {
-	const sessionId = options.sessionId ?? state.currentSessionId;
-	if (!sessionId) return 0;
+export function restoreForegroundRunHistory(state: SubagentState, options: { resultsDir?: string; sessionId?: string | null; sessionIds?: string[]; limit?: number } = {}): number {
+	const sessionIds = options.sessionIds
+		?? (options.sessionId ? [options.sessionId] : state.sessionLineage)
+		?? (state.currentSessionId ? [state.currentSessionId] : []);
+	if (sessionIds.length === 0) return 0;
+	const accepted = new Set(sessionIds);
 	const index = readIndex(options.resultsDir ?? DIRS.results);
-	const runs = sortAndBound(index.runs.filter((run) => run.sessionId === sessionId), options.limit ?? MAX_REMEMBERED_FOREGROUND_RUNS);
+	const runs = sortAndBound(index.runs.filter((run) => run.sessionId !== undefined && accepted.has(run.sessionId)), options.limit ?? MAX_REMEMBERED_FOREGROUND_RUNS);
 	state.foregroundRuns ??= new Map();
 	let restored = 0;
 	for (const run of runs) {

@@ -94,9 +94,10 @@ function toolCallIdAsyncLocations(toolCallId: string, asyncDirRoot: string, resu
 
 function foregroundIds(state: SubagentState | undefined): string[] {
 	if (!state) return [];
+	const acceptedSessions = new Set(state.sessionLineage?.length ? state.sessionLineage : state.currentSessionId ? [state.currentSessionId] : []);
 	const remembered = state.currentSessionId
 		? [...(state.foregroundRuns?.values() ?? [])]
-			.filter((run) => run.sessionId === state.currentSessionId)
+			.filter((run) => run.sessionId !== undefined && acceptedSessions.has(run.sessionId))
 			.map((run) => run.runId)
 		: [];
 	return [...new Set([...state.foregroundControls.keys(), ...remembered])];
@@ -106,7 +107,9 @@ function hasExactForegroundId(state: SubagentState | undefined, id: string): boo
 	if (!state) return false;
 	if (state.foregroundControls.has(id)) return true;
 	const remembered = state.foregroundRuns?.get(id);
-	return Boolean(remembered && state.currentSessionId && remembered.sessionId === state.currentSessionId);
+	if (!remembered || !state.currentSessionId || remembered.sessionId === undefined) return false;
+	const acceptedSessions = new Set(state.sessionLineage?.length ? state.sessionLineage : [state.currentSessionId]);
+	return acceptedSessions.has(remembered.sessionId);
 }
 
 function nestedScopeFromState(state: SubagentState | undefined): NestedRunResolutionScope | undefined {

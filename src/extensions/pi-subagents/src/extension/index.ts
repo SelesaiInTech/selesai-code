@@ -23,6 +23,7 @@ import { discoverAgents } from "../agents/agents.ts";
 import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
+import { resolveSessionLineage } from "../shared/session-lineage.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary } from "../tui/render.ts";
 import { openSubagentFleet } from "../tui/fleet.ts";
@@ -376,6 +377,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const artifactCleanupDays = config.artifactConfig?.cleanupDays ?? DEFAULT_ARTIFACT_CONFIG.cleanupDays;
 	cleanupAllArtifactDirs(artifactCleanupDays);
 
+	// Replay guard for lineage result adoption: accept result files written at
+	// most this long before the adoption window opened (covers completions that
+	// raced the session switch). Older files were left behind by a dead watcher
+	// and are ignored until their owning session is resumed.
+	const ADOPTED_RESULT_SLACK_MS = 60_000;
+
 	const state: SubagentState = {
 		baseCwd: "",
 		currentSessionId: null,
@@ -630,19 +637,26 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("agent_end", async (_event, ctx) => {
 		if (!ctx.hasUI) await drainOutstandingWork({ state, events: pi.events });
-		const ownerSessionId = state.currentSessionId;
-		if (!ownerSessionId) return;
+		const ownerSessionIds = state.sessionLineage?.length
+			? state.sessionLineage
+			: state.currentSessionId ? [state.currentSessionId] : [];
+		if (ownerSessionIds.length === 0) return;
 		goalTurnId += 1;
 		try {
 			const location = resolveMissionStoreLocation({ projectRoot: state.baseCwd, ...(config.missions ? { config: config.missions } : {}) });
-			const retainedChildren = listRetainedChildren(DIRS.async, ownerSessionId);
-			for (const notice of collectGoalContinuationNotices({ location, ownerSessionId, retainedChildren, turnId: goalTurnId })) {
-				handleSubagentControlNotice({
-					pi,
-					state,
-					visibleControlNotices: new Set(),
-					details: { source: "goal", event: notice.event, noticeText: notice.message },
-				});
+			const retainedChildren = listRetainedChildren(DIRS.async, ownerSessionIds);
+			const emittedMissions = new Set<string>();
+			for (const ownerSessionId of ownerSessionIds) {
+				for (const notice of collectGoalContinuationNotices({ location, ownerSessionId, retainedChildren, turnId: goalTurnId })) {
+					if (emittedMissions.has(notice.missionId)) continue;
+					emittedMissions.add(notice.missionId);
+					handleSubagentControlNotice({
+						pi,
+						state,
+						visibleControlNotices: new Set(),
+						details: { source: "goal", event: notice.event, noticeText: notice.message },
+					});
+				}
 			}
 		} catch (error) {
 			console.error("Failed to evaluate goal missions:", error);
@@ -758,14 +772,47 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			resolveMaxActiveAsyncRunsPerSession(config.maxActiveAsyncRunsPerSession),
 			{ liveWorkflowRunIds: new Set(state.workflowControllers?.keys() ?? []) },
 		);
+		const adoptedActive = [...state.asyncJobs.values()].filter((job) => job.adopted && (job.status === "queued" || job.status === "running")).length;
+		if (adoptedActive > 0) {
+			state.activeAsyncCapacity = {
+				...state.activeAsyncCapacity,
+				used: state.activeAsyncCapacity.used + adoptedActive,
+			};
+		}
 	};
 
-	const resetSessionState = (ctx: ExtensionContext, recovering: boolean) => {
+	const formatActiveWorkflowSummary = (target: SubagentState, intro: string): string => {
+		const active = [...target.asyncJobs.values()]
+			.filter((job) => job.status === "queued" || job.status === "running")
+			.sort((left, right) => (left.startedAt ?? 0) - (right.startedAt ?? 0));
+		const lines = active.map((job) => {
+			const label = job.mode === "workflow"
+				? `workflow[${job.workflowKey ?? "script"}]`
+				: `${job.mode ?? "run"}${job.agents?.length ? ` ${job.agents.join(", ")}` : ""}`;
+			const step = job.currentStep !== undefined
+				? ` · step ${job.currentStep + 1}/${job.chainStepCount ?? job.stepsTotal ?? "?"}`
+				: "";
+			const activity = job.currentTool ? ` · last: ${job.currentTool}` : "";
+			const adopted = job.adopted ? " (carried over from a previous session)" : "";
+			return `- ${job.asyncId} ${label}${step}${activity}${adopted}`;
+		});
+		return [
+			intro,
+			...lines,
+			"Monitor with subagent status <id>; interrupt/resume/steer by run id; children.list lists completed steps. Results arrive automatically.",
+		].join("\n");
+	};
+
+	const resetSessionState = (ctx: ExtensionContext, recovering: boolean, previousSessionFile?: string | null) => {
 		state.widgetsSuspended = false;
 		state.baseCwd = ctx.cwd;
 		goalTurnId = 0;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		state.parentSessionFile = ctx.sessionManager.getSessionFile();
+		state.sessionLineage = resolveSessionLineage({ sessionManager: ctx.sessionManager }, { parentHint: previousSessionFile ?? null });
+		state.handoffResumePending = false;
+		if (state.sessionLineage.length > 1) state.adoptedResultWindowStart = Date.now() - ADOPTED_RESULT_SLACK_MS;
+		else state.adoptedResultWindowStart = undefined;
 		state.subagentSpawns = {
 			sessionId: state.currentSessionId,
 			count: 0,
@@ -791,7 +838,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		state.lastForegroundControlId = null;
 		resetJobs(ctx);
 		restoreForegroundRunHistory(state, { resultsDir: DIRS.results });
-		restoreActiveJobs(ctx);
+		const adoptedJobs = restoreActiveJobs(ctx);
+		state.handoffResumePending = adoptedJobs > 0 && state.lastUiContext?.hasUI === true;
 		scheduledRunManager.bindSession(ctx);
 		restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
 		waitSubscriptionManager.restore();
@@ -807,6 +855,17 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("agent_settled", () => {
 		resumeWidgetsAfterCompaction();
+		if (state.handoffResumePending && state.lastUiContext?.hasUI === true) {
+			state.handoffResumePending = false;
+			pi.sendMessage(
+				{
+					customType: "subagent-handoff-resume",
+					content: formatActiveWorkflowSummary(state, "Session handoff detected. The previous session's background workflows were carried over:"),
+					display: false,
+				},
+				{ triggerTurn: true },
+			);
+		}
 	});
 
 	pi.on("session_before_compact", (event) => {
@@ -819,7 +878,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		pi.sendMessage(
 			{
 				customType: "subagent-compaction-resume",
-				content: "Compaction is complete. Resume the parent task now; background subagent results will arrive separately when ready.",
+				content: formatActiveWorkflowSummary(state, "Compaction is complete. Resume the parent task now; results for the runs below arrive separately when ready:"),
 				display: false,
 			},
 			{ triggerTurn: true },
@@ -828,7 +887,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", (event, ctx) => {
 		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
-		resetSessionState(ctx, recovering);
+		const previousSessionFile = event.reason === "new" || event.reason === "fork" ? event.previousSessionFile : null;
+		resetSessionState(ctx, recovering, previousSessionFile);
 		herdrStatusBridge.sessionStarted({
 			hasUI: ctx.hasUI === true,
 			runs: activeHerdrRuns(),
@@ -842,6 +902,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		stopResultWatcher();
 		state.currentSessionId = null;
 		state.parentSessionFile = null;
+		state.sessionLineage = undefined;
+		state.adoptedResultWindowStart = undefined;
+		state.handoffResumePending = false;
 		completionNotifier.dispose();
 		delete process.env[SUBAGENT_PARENT_SESSION_ENV];
 		for (const unsubscribe of eventUnsubscribes) {

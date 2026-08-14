@@ -245,7 +245,8 @@ export function createWaitSubscriptionManager(
 				try {
 					const record = parseRecord(JSON.parse(fs.readFileSync(path.join(subscriptionsDir, file), "utf-8")));
 					if (!record || file !== `${record.token}.json`) continue;
-					if (record.sessionId === state.currentSessionId) {
+					const acceptedSessions = new Set(state.sessionLineage?.length ? state.sessionLineage : [state.currentSessionId]);
+					if (acceptedSessions.has(record.sessionId)) {
 						subscriptions.set(record.token, record);
 						if (record.targetKind === "foreground" && !state.foregroundRuns?.has(record.runId)) unresolvedRestoredForegroundTokens.add(record.token);
 					}

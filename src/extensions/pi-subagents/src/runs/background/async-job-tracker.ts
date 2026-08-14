@@ -54,7 +54,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	handleStarted: (data: unknown) => void;
 	handleComplete: (data: unknown) => void;
 	resetJobs: (ctx?: ExtensionContext) => void;
-	restoreActiveJobs: (ctx?: ExtensionContext) => void;
+	restoreActiveJobs: (ctx?: ExtensionContext) => number;
 	dispose: () => void;
 } {
 	const completionRetentionMs = options.completionRetentionMs ?? 10000;
@@ -645,26 +645,32 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		}
 	};
 
-	const restoreActiveJobs = (ctx?: ExtensionContext) => {
+	const restoreActiveJobs = (ctx?: ExtensionContext): number => {
 		if (ctx?.hasUI) state.lastUiContext = ctx;
-		if (!state.currentSessionId) return;
+		if (!state.currentSessionId) return 0;
+		const sessionIds = state.sessionLineage?.length ? state.sessionLineage : [state.currentSessionId];
 		let runs: AsyncRunSummary[];
 		try {
-			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now });
+			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionIds, resultsDir, kill: options.kill, now: options.now });
 		} catch (error) {
 			console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
-			return;
+			return 0;
 		}
+		let adopted = 0;
 		for (const run of runs) {
+			if (state.asyncJobs.has(run.id)) continue;
 			const job = summaryToJob(run);
+			job.adopted = run.sessionId !== undefined && run.sessionId !== state.currentSessionId;
 			state.asyncJobs.set(run.id, job);
 			if (job.status === "running") runningJobIds.add(job.asyncId);
 			rememberFleetJob(state, job);
 			watchJob(job);
+			if (job.adopted) adopted += 1;
 		}
-		if (runs.length === 0) return;
+		if (runs.length === 0) return 0;
 		ensurePoller();
 		rerenderLastWidget();
+		return adopted;
 	};
 
 	return { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs, dispose };

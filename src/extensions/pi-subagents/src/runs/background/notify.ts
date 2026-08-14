@@ -239,7 +239,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 
 export default function registerSubagentNotify(
 	pi: ExtensionAPI,
-	state: Pick<SubagentState, "currentSessionId">,
+	state: Pick<SubagentState, "currentSessionId" | "sessionLineage">,
 	options: RegisterSubagentNotifyOptions = {},
 ): CompletionNotifier {
 	const seen = new Map<string, number>();
@@ -249,6 +249,9 @@ export default function registerSubagentNotify(
 	const batchConfig = resolveCompletionBatchConfig(options.batchConfig);
 	const batchers = new Map<string, CompletionBatcher<PendingCompletion>>();
 	let disposed = false;
+
+	const ownsSession = (sessionId: string) =>
+		sessionId === state.currentSessionId || state.sessionLineage?.includes(sessionId) === true;
 
 	const settle = (items: PendingCompletion[], accepted: boolean) => {
 		for (const item of items) {
@@ -274,7 +277,7 @@ export default function registerSubagentNotify(
 	};
 
 	const deliver = (result: CompletionNotification): Promise<boolean> => {
-		if (disposed || typeof result.sessionId !== "string" || result.sessionId !== state.currentSessionId) return Promise.resolve(false);
+		if (disposed || typeof result.sessionId !== "string" || !ownsSession(result.sessionId)) return Promise.resolve(false);
 		if (result.intercomDelivered === true) return Promise.resolve(true);
 		const key = buildCompletionKey(result, "notify");
 		const seenAt = seen.get(key);

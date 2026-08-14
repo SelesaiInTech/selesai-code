@@ -120,6 +120,8 @@ export interface AsyncRunSummary {
 interface AsyncRunListOptions {
 	states?: Array<AsyncRunSummary["state"]>;
 	sessionId?: string;
+	/** Accept runs owned by any of these session identities (union). */
+	sessionIds?: string[];
 	limit?: number;
 	/** Limits status-file reads after candidates are ordered by status mtime. */
 	entryLimit?: number;
@@ -468,6 +470,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		// match.
 		if (allowedStates && !allowedStates.has(status.state)) continue;
 		if (options.sessionId && status.sessionId !== options.sessionId) continue;
+		if (options.sessionIds && (status.sessionId === undefined || !options.sessionIds.includes(status.sessionId))) continue;
 		const nestedWarnings: string[] = [];
 		let nestedRoute: NestedRoute | undefined;
 		if (options.reconcile !== false) {

@@ -168,7 +168,24 @@ export function createResultWatcher(
 	const ownsSession = (sessionId: string, epoch: number) => {
 		if (!deliveryActive || epoch !== deliveryEpoch) return false;
 		if (!activeSessionId && state.currentSessionId) activeSessionId = state.currentSessionId;
-		return activeSessionId === sessionId && state.currentSessionId === sessionId;
+		if (activeSessionId !== state.currentSessionId) return false;
+		if (sessionId === state.currentSessionId) return true;
+		return (state.sessionLineage ?? []).includes(sessionId);
+	};
+
+	const lineageOwnsResult = (identity: ResultFileIdentity, file: string): boolean => {
+		const lineage = state.sessionLineage;
+		if (!identity.sessionId || !lineage || !lineage.includes(identity.sessionId)) return false;
+		// Replay guard: only accept lineage results written around or after the
+		// adoption window. The previous session's watcher deleted every result it
+		// delivered, so older files are stale leftovers, not missed deliveries.
+		const windowStart = state.adoptedResultWindowStart;
+		if (windowStart === undefined) return false;
+		try {
+			return fsApi.statSync(path.join(resultsDir, file)).mtimeMs >= windowStart;
+		} catch {
+			return false;
+		}
 	};
 
 	const scheduleResult = (file: string, triggerTurn: boolean, delayMs = 0) => {
@@ -210,6 +227,7 @@ export function createResultWatcher(
 		// files keep their existing diagnostics and compatibility behavior.
 		if (!identity.sessionId) return true;
 		if (identity.sessionId === state.currentSessionId) return true;
+		if (lineageOwnsResult(identity, file)) return true;
 		if (identity.asyncDir && fsApi.existsSync(path.join(identity.asyncDir, MISSION_BINDING_FILE))) return true;
 		if (identity.runId && (observed ?? observedRunIds()).has(identity.runId)) return true;
 		return Boolean(deps.observeCompletion && !deps.observedCompletionRunIds);
