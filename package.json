@@ -68,7 +68,8 @@
     "jsdom": "^26.0.0",
     "playwright": "^1.60.0",
     "typebox": "^1.1.37",
-    "unpdf": "^1.8.1"
+    "unpdf": "^1.8.1",
+    "youtube-caption-extractor": "^1.10.2"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.10",
