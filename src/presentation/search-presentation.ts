@@ -1,17 +1,29 @@
 import type { WebSearchResponse } from '../types.js';
 import type { PresentationEnvelope } from './types.js';
 
+function fanoutNote(result: WebSearchResponse): string {
+  const f = result.metadata.fanout;
+  if (!f) return '';
+  if (f.providers.length) {
+    return ` (fanout: ${f.providers.join(', ')}${f.skipped?.length ? `; skipped: ${f.skipped.join(', ')}` : ''})`;
+  }
+  if (f.skipped?.length) {
+    return ` (fanout; skipped: ${f.skipped.join(', ')})`;
+  }
+  return '';
+}
+
 function formatCompact(result: WebSearchResponse): string {
   const fallbackPrefix = result.metadata.fallbackFrom
     ? `${result.metadata.fallbackFrom} failed; used ${result.metadata.backend} fallback. `
     : '';
 
   if (result.status === 'error') {
-    return `${fallbackPrefix}Search failed: ${result.error?.message ?? 'Unknown search failure.'}`;
+    return `${fallbackPrefix}Search failed: ${result.error?.message ?? 'Unknown search failure.'}${fanoutNote(result)}`;
   }
 
   const suffix = result.results.length === 1 ? 'result' : 'results';
-  return `${fallbackPrefix}Found ${result.results.length} ${suffix}`;
+  return `${fallbackPrefix}Found ${result.results.length} ${suffix}${fanoutNote(result)}`;
 }
 
 export function buildSearchPresentation(result: WebSearchResponse): PresentationEnvelope {

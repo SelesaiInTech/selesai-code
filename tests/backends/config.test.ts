@@ -231,4 +231,11 @@ describe('fanout config', () => {
     expect(override.search?.provider).toBeUndefined();
     expect(override.search?.fanout).toEqual({ mode: 'auto', providers: ['duckduckgo', 'brave'] });
   });
+
+  it('project fanout off overrides an inherited global fanout on after reload', () => {
+    const globalOverride = extractBackendConfigOverride({ backends: { search: { provider: 'brave', fanout: { mode: 'on' } } } });
+    const projectOverride = extractBackendConfigOverride({ backends: { search: { fanout: { mode: 'off' } } } });
+    const effective = mergeBackendConfigLayers(DEFAULT_BACKEND_CONFIG, globalOverride, projectOverride);
+    expect(effective.search.fanout?.mode).toBe('off');
+  });
 });

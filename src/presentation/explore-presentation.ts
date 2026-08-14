@@ -25,7 +25,9 @@ export function buildExplorePresentation(result: WebExploreResponse): Presentati
   const fanoutSkipped = result.metadata?.fanoutSkipped;
   const fanoutNote = fanoutProviders?.length
     ? ` (fanout: ${fanoutProviders.join(', ')}${fanoutSkipped?.length ? `; skipped: ${fanoutSkipped.join(', ')}` : ''})`
-    : '';
+    : fanoutSkipped?.length
+      ? ` (fanout; skipped: ${fanoutSkipped.join(', ')})`
+      : '';
   const internalSummary = result.metadata
     ? `Internal research: web_search ×${result.metadata.searchPasses}${fanoutNote}, web_fetch ×${result.metadata.fetchedPages}, web_fetch_headless ×${result.metadata.headlessAttempts}`
     : undefined;

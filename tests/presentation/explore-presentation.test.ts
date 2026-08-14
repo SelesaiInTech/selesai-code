@@ -101,4 +101,15 @@ describe('buildExplorePresentation', () => {
     const preview = presentation.views.preview as string;
     expect(preview).toContain('fanout: duckduckgo, brave; skipped: exa');
   });
+
+  it('shows skipped providers even when no fanout provider contributed (all failed)', () => {
+    const presentation = buildExplorePresentation({
+      status: 'ok',
+      findings: ['a'],
+      sources: [{ title: 't', url: 'https://a.com', method: 'http' }],
+      metadata: { searchPasses: 1, fetchedPages: 0, headlessAttempts: 0, exhaustedBudget: false, fanoutSkipped: ['brave', 'exa'] }
+    });
+    const preview = presentation.views.preview as string;
+    expect(preview).toContain('(fanout; skipped: brave, exa)');
+  });
 });
