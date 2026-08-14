@@ -11,8 +11,10 @@ Hosted options:
 
 - Brave Search for API-backed source discovery
 - You.com Search for API-backed source discovery
+- Exa for API-backed source discovery
+- Tavily for API-backed source discovery
 
-Both are hosted, so they use an API key instead of a `baseUrl`.
+These are all hosted, so they use an API key instead of a `baseUrl`.
 
 This keeps the public Pi tool the same: the model still calls `web_explore`. The backend config only changes what `web_explore` uses internally.
 
@@ -57,14 +59,14 @@ Open:
 
 Choose **Backends**. From there you can:
 
-- switch search between DuckDuckGo, SearXNG, Brave, and You.com
+- switch search between DuckDuckGo, SearXNG, Brave, You.com, Exa, and Tavily
 - edit the SearXNG base URL
-- enable SearXNG/Brave/You.com → DuckDuckGo fallback
+- enable a hosted/SearXNG → DuckDuckGo fallback
 - switch fetch between plain HTTP and Firecrawl
 - edit the Firecrawl base URL
 - enable Firecrawl → HTTP fallback
 
-Brave, You.com, and Firecrawl API keys are intentionally not edited in the settings UI. Prefer `PI_WEB_AGENT_BRAVE_API_KEY`, `YDC_API_KEY`, and `PI_WEB_AGENT_FIRECRAWL_API_KEY` for secrets.
+Hosted search and Firecrawl API keys are intentionally not edited in the settings UI. Prefer environment variables for secrets: `PI_WEB_AGENT_BRAVE_API_KEY`, `YDC_API_KEY`, `EXA_API_KEY`, `TAVILY_API_KEY`, and `PI_WEB_AGENT_FIRECRAWL_API_KEY`.
 
 ## Config file locations
 
@@ -181,6 +183,56 @@ Equivalent config:
 
 You.com only improves source discovery. `web_explore` still fetches pages, ranks evidence, handles headless fallback, and writes caveats itself.
 
+## Exa
+
+To use Exa, set:
+
+```text
+EXA_API_KEY=...
+```
+
+Then choose **Settings → Backends → Search backend → exa**.
+
+Equivalent config:
+
+```json
+{
+  "backends": {
+    "search": {
+      "provider": "exa",
+      "fallback": "duckduckgo"
+    }
+  }
+}
+```
+
+Exa only improves source discovery. `web_explore` still fetches pages, ranks evidence, handles headless fallback, and writes caveats itself.
+
+## Tavily
+
+To use Tavily, set:
+
+```text
+TAVILY_API_KEY=...
+```
+
+Then choose **Settings → Backends → Search backend → tavily**.
+
+Equivalent config:
+
+```json
+{
+  "backends": {
+    "search": {
+      "provider": "tavily",
+      "fallback": "duckduckgo"
+    }
+  }
+}
+```
+
+Tavily only improves source discovery. `web_explore` still fetches pages, ranks evidence, handles headless fallback, and writes caveats itself.
+
 ## Firecrawl fetch
 
 To use Firecrawl for page reading, choose **Settings → Backends**, set fetch provider to `firecrawl`, and enter the base URL. The equivalent config is:
@@ -264,7 +316,7 @@ Fallback is opt-in. `pi-web-agent` does not silently leave a self-hosted backend
 }
 ```
 
-When fallback happens, output indicates which backend failed and which fallback was used. This keeps self-hosted privacy expectations explicit: if you do not configure fallback, SearXNG, Brave, You.com, and Firecrawl failures stay visible instead of silently switching to external/default backends.
+When fallback happens, output indicates which backend failed and which fallback was used. This keeps self-hosted privacy expectations explicit: if you do not configure fallback, SearXNG, Brave, You.com, Exa, Tavily, and Firecrawl failures stay visible instead of silently switching to external/default backends.
 
 ## Full self-hosted example
 
@@ -355,7 +407,7 @@ Then try a normal research prompt:
 Find current docs for configuring Vitest coverage with the v8 provider.
 ```
 
-The model should still use `web_explore`; it should not need separate SearXNG, Brave, You.com, or Firecrawl tool calls. If your prompt includes an HTTP/HTTPS URL, `web_explore` reads that URL before spending search passes.
+The model should still use `web_explore`; it should not need separate SearXNG, Brave, You.com, Exa, Tavily, or Firecrawl tool calls. If your prompt includes an HTTP/HTTPS URL, `web_explore` reads that URL before spending search passes.
 
 ## Troubleshooting
 
@@ -386,4 +438,4 @@ Check that:
 
 ### Self-hosted privacy expectations
 
-`pi-web-agent` does not silently fall back from SearXNG, Brave, or You.com to DuckDuckGo, or from Firecrawl to plain HTTP, when you choose those providers. Fallback only happens when `fallback` is configured because some users choose specific backends to control where requests go.
+`pi-web-agent` does not silently fall back from SearXNG, Brave, You.com, Exa, or Tavily to DuckDuckGo, or from Firecrawl to plain HTTP, when you choose those providers. Fallback only happens when `fallback` is configured because some users choose specific backends to control where requests go.

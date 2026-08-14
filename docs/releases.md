@@ -5,8 +5,12 @@
 1. update `CHANGELOG.md` under `## Unreleased`
 2. run `npm run release:dry-run`
 3. run `npm run release`
-4. push `main` and the new tag, for example `git push origin main v1.5.0`
+4. push `main` and the new tag, for example `git push origin main v1.8.0`
 5. let GitHub Actions publish the tagged release to npm and rebuild the docs site
+
+The bump is inferred from what's under `## Unreleased`: a `### Breaking` entry makes it major, `### Added` makes it minor, otherwise it's a patch. `npm run release` moves the Unreleased notes into a dated version section, bumps `package.json`, commits, and tags. The tag is lightweight, so if `git push --follow-tags` skips it, push the tag by name.
+
+On the tag push, the publish workflow runs two jobs. The first creates the GitHub release, pulling that version's notes out of `CHANGELOG.md` via `scripts/release-notes.mjs`. The second builds, tests, and publishes to npm with provenance.
 
 ## Trusted publishing
 

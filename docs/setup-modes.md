@@ -14,9 +14,9 @@ If you want to tune how tool output shows up in the transcript, see [Presentatio
 
 ## Hosted backend setups
 
-Brave Search and You.com are available as hosted search backends.
+Brave, You.com, Exa, and Tavily are available as hosted search backends.
 
-If you have a Brave Search API key, set `PI_WEB_AGENT_BRAVE_API_KEY`, then choose Brave from **Settings → Backends**. If you have a You.com API key, set `YDC_API_KEY`, then choose You.com from **Settings → Backends**. Each handles source discovery only; `web_explore` still fetches pages, ranks evidence, handles caveats, and synthesizes the answer itself.
+Each reads its key from the environment (`PI_WEB_AGENT_BRAVE_API_KEY`, `YDC_API_KEY`, `EXA_API_KEY`, `TAVILY_API_KEY`), then you pick that provider from **Settings → Backends**. They handle source discovery only; `web_explore` still fetches pages, ranks evidence, handles caveats, and synthesizes the answer itself.
 
 Other hosted research providers may be added later, but do not assume every provider-backed path is already wired in.
 

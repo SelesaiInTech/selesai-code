@@ -42,7 +42,7 @@ That should still go through `web_explore`. If the first pass is thin, Pi can ca
 
 You can also include direct links in the prompt. `web_explore` reads HTTP/HTTPS links first, strips common tracking params, and then searches if it still needs more evidence.
 
-For GitHub, PDF, and YouTube links, `web_explore` fetches the real content automatically: GitHub files and issues come from the API/raw endpoints, PDFs are extracted to text, and YouTube links return the transcript. All keyless. Scanned PDFs and videos without captions are noted rather than failing.
+For GitHub, PDF, and YouTube links, `web_explore` fetches the real content automatically instead of scraping the page. GitHub files, issues, PRs, and repo READMEs come from the raw/API endpoints; PDFs are extracted to text; YouTube links return the transcript. All keyless. Set `GITHUB_TOKEN` in the environment if you want a higher GitHub rate limit, but it works without one. Scanned PDFs and videos without captions are noted rather than failing.
 
 ## Presentation defaults
 
@@ -62,15 +62,15 @@ If you want the full details, see [Presentation and settings](/presentation).
 
 By default, `web_explore` uses DuckDuckGo HTML search, plain HTTP page reads, and local-browser headless rendering with managed Chromium fallback when needed.
 
-If you want hosted Brave Search, SearXNG, or Firecrawl, open:
+If you want a hosted search backend, SearXNG, or Firecrawl, open:
 
 ```text
 /web-agent settings
 ```
 
-Choose **Backends** to point search at Brave, You.com, or SearXNG, and page reading at Firecrawl. The settings UI can edit providers, base URLs where relevant, and fallback behavior.
+Choose **Backends** to point search at Brave, You.com, Exa, Tavily, or SearXNG, and page reading at Firecrawl. The settings UI can edit providers, base URLs where relevant, and fallback behavior.
 
-If you have a Brave Search API key, set `PI_WEB_AGENT_BRAVE_API_KEY` in the environment, then choose Brave under **Backends**. If you have a You.com API key, set `YDC_API_KEY` in the environment, then choose You.com under **Backends**. Both are hosted, so neither needs a `baseUrl`, and each only handles source discovery; `web_explore` still fetches pages, ranks evidence, and writes caveats itself.
+The hosted search backends each read a key from the environment: `PI_WEB_AGENT_BRAVE_API_KEY` for Brave, `YDC_API_KEY` for You.com, `EXA_API_KEY` for Exa, `TAVILY_API_KEY` for Tavily. Set the one you want, then choose that provider under **Backends**. They're hosted, so none needs a `baseUrl`, and each only handles source discovery; `web_explore` still fetches pages, ranks evidence, and writes caveats itself.
 
 Use `/web-agent show` to confirm the effective backend config. Use `/web-agent doctor` to check configured backend health.
 

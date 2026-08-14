@@ -22,7 +22,7 @@ Internally it can:
 - evaluate source quality, diversity, bot-checks, unreadable threads, and possible conflicts
 - stop with a specific caveat when the evidence is thin or uneven
 
-In `preview` or `verbose` mode, you can still see which internal reader produced each finding, for example `[web_fetch]` or `[web_fetch_headless]`. That gives you transparency without exposing a bunch of low-level public tools.
+In `preview` or `verbose` mode, you can still see which internal reader produced each finding, for example `[web_fetch]`, `[web_fetch_headless]`, or one of the special-content readers like `[github]`. That gives you transparency without exposing a bunch of low-level public tools.
 
 ## What you get right now
 
@@ -35,8 +35,9 @@ Right now it gives you:
 - preview/verbose modes that show internal research provenance
 - a `/web-agent` settings UI for presentation and backend config
 - direct-link and forum/thread-aware research handling
+- keyless GitHub, PDF, and YouTube readers that pull the real content behind those links
 - local-browser headless rendering with managed Chromium fallback
-- optional Brave Search or You.com hosted discovery without changing the public `web_explore` tool
+- optional hosted discovery through Brave, You.com, Exa, or Tavily without changing the public `web_explore` tool
 - bounded research behavior that is willing to say when evidence was weak, narrow, blocked, or cautionary
 
 ## Start here
