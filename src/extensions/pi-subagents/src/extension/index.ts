@@ -16,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@selesai/code";
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
@@ -664,6 +665,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	registerSlashCommands(pi, state, { fleetKeybindings: config.fleetKeybindings });
+	pi.on("resources_discover", () => {
+		return {
+			promptPaths: [fileURLToPath(new URL("../../prompts", import.meta.url))],
+		};
+	});
 
 	const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
 	const controlNoticeSeenStoreKey = "__piSubagentVisibleControlNotices";

@@ -1361,6 +1361,8 @@ export interface AsyncStatus {
 	pendingAppends?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
+	/** Auto-relaunch count when a workflow budget result triggered a fresh top-level run. */
+	workflowRelaunchCount?: number;
 	checkpoint?: ChainCheckpointState;
 	processTerminal?: ProcessTerminalV1;
 	runFanoutBudget?: RunFanoutBudgetSnapshot;
@@ -1915,6 +1917,12 @@ export interface ExtensionConfig {
 	maxSubagentSpawnsPerSession?: number;
 	/** Cumulative logical-child cap for one top-level run tree. Defaults to 64. */
 	maxSubagentSpawnsPerRun?: number;
+	/**
+	 * Max auto-relaunches when a scripted workflow ends with a fan-out budget
+	 * result before the goal is clean. Each relaunch is a fresh top-level run
+	 * with a new fan-out budget. Defaults to 12; 0 means unlimited.
+	 */
+	maxWorkflowAutoRelaunches?: number;
 	/** Optional active top-level async run cap per parent session. Unset or 0 means unlimited. */
 	maxActiveAsyncRunsPerSession?: number;
 	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */

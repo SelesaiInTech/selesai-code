@@ -59,6 +59,12 @@ function validateConfig(config: Record<string, unknown>): void {
 			|| config.maxActiveAsyncRunsPerSession < 0)) {
 		throw new Error("config.maxActiveAsyncRunsPerSession must be a non-negative integer");
 	}
+	if (config.maxWorkflowAutoRelaunches !== undefined
+		&& (typeof config.maxWorkflowAutoRelaunches !== "number"
+			|| !Number.isInteger(config.maxWorkflowAutoRelaunches)
+			|| config.maxWorkflowAutoRelaunches < 0)) {
+		throw new Error("config.maxWorkflowAutoRelaunches must be a non-negative integer");
+	}
 	validateMissionStoreConfig(config.missions);
 	validateAuthorityPolicy(config.authorityPolicy);
 	validatePermissionConfig(config.permissions);

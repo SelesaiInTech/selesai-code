@@ -155,6 +155,14 @@ Caps cumulative logical child admissions in one top-level run tree. The default 
 
 The budget counts single launches, expanded `tasks`/`count`, static chain steps and parallel groups, actual dynamic `expand` items, appended chain steps, workflow children, and nested child calls. Static and materialized dynamic groups are admitted atomically. Startup retries, model fallback, and retained-child resume reuse the original logical child claim. Claims are never released or refunded. This cap is independent from the session-wide cumulative spawn budget and `globalConcurrencyLimit`.
 
+## `maxWorkflowAutoRelaunches`
+
+```json
+{ "maxWorkflowAutoRelaunches": 12 }
+```
+
+Maximum automatic relaunches when an async scripted workflow ends with a fan-out `budget` result before the goal is clean. Each relaunch re-runs the same `workflowScript` as a fresh top-level run with a new fan-out budget, the same mission, and the same progress file, so the loop keeps building until the commentator reports clean. Defaults to 12; `0` means unlimited. When the cap is reached, the workflow completes as `failed` with a note to raise the cap or relaunch manually. Foreground workflows are unaffected — their budget results surface to the parent inline.
+
 ## `maxActiveAsyncRunsPerSession`
 
 ```json

@@ -1,7 +1,6 @@
 # Workflow auto-loop reference (implement exactly)
 
-> **Superseded:** the 3-round cap was later removed — the loop now runs until
-> clean. See `src/extensions/workflow/modes.ts` for the final implementation.
+> **Superseded:** the 3-round cap was later removed and a per-round fix step was added — the loop now runs build → review → fix until clean. See `src/extensions/workflow/modes.ts` for the final implementation.
 
 Convert the four `/workflow-*` modes from static chains to pi-subagents
 `workflowScript` auto-loops. One-shot-and-sleep: the phases run as `runs.run`

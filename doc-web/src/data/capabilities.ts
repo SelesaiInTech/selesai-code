@@ -57,8 +57,8 @@ export const capabilities: Capability[] = [
   {
     slug: "workflow",
     category: "delegation-and-workflows",
-    en: { displayName: "Durable workflows", benefit: "The four workflow modes (task, prototype, quicktype, loop) as pi-subagents scripted auto-loop workflows: phases run as workflowScript runs.run steps and the build↔review round auto-repeats until clean, with no checkpoints." },
-    id: { displayName: "Workflow tahan lama", benefit: "Empat mode alur kerja (task, prototype, quicktype, loop) sebagai workflow auto-loop scripted pi-subagents: fase berjalan sebagai langkah runs.run workflowScript dan putaran build↔review berulang otomatis hingga bersih, tanpa checkpoint." },
+    en: { displayName: "Durable workflows", benefit: "The four workflow modes (task, prototype, quicktype, loop) as pi-subagents scripted auto-loop workflows: phases run as workflowScript runs.run steps and the build→review→fix round auto-repeats until clean, with no checkpoints." },
+    id: { displayName: "Workflow tahan lama", benefit: "Empat mode alur kerja (task, prototype, quicktype, loop) sebagai workflow auto-loop scripted pi-subagents: fase berjalan sebagai langkah runs.run workflowScript dan putaran build→review→fix berulang otomatis hingga bersih, tanpa checkpoint." },
     sourcePaths: ["src/extensions/workflow/", "README.md"],
     sourceLinks: [
       links("Workflow source", "src/extensions/workflow/"),

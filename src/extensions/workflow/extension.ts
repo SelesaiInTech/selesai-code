@@ -15,12 +15,12 @@ export default function workflowModesExtension(pi: ExtensionAPI): void {
           ctx.ui.notify(`${description}\nUsage: /${name} <goal>`, "info");
           return;
         }
-        launchSlashSubagent(pi, ctx, { workflowScript: build(goal), async: true, agentScope: "both" });
+        launchSlashSubagent(pi, ctx, { workflowScript: build(goal), async: true, agentScope: "both", mission: { title: goal } });
       },
     });
 
-  register("workflow-task", "Run the task workflow (plan → reuse → handoff → auto build↔review loop) as a scripted workflow.", buildTaskScript);
+  register("workflow-task", "Run the task workflow (plan → reuse → handoff → auto build→review→fix loop) as a scripted workflow.", buildTaskScript);
   register("workflow-prototype", "Run the full prototype workflow (research → plan → reuse → handoff → auto loop → audit) as a scripted workflow.", buildPrototypeScript);
   register("workflow-quicktype", "Run the quicker prototype workflow without research (plan → reuse → handoff → auto loop → audit) as a scripted workflow.", buildQuicktypeScript);
-  register("workflow-loop", "Run a direct auto build↔review loop for an already-agreed plan as a scripted workflow.", buildLoopScript);
+  register("workflow-loop", "Run a direct auto build→review→fix loop for an already-agreed plan as a scripted workflow.", buildLoopScript);
 }

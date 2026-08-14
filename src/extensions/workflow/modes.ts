@@ -1,7 +1,7 @@
 // ponytail: four workflow modes as pi-subagents workflowScript builders.
-// One-shot-and-sleep: phases run as runs.run steps and the loop auto-repeats
-// until the reviewer reports clean. A workflowScript has no checkpoints, so
-// there are no human gates.
+// One-shot-and-sleep: phases run as runs.run steps and the build → review → fix
+// round auto-repeats until the reviewer reports clean. A workflowScript has no
+// checkpoints, so there are no human gates.
 
 function js(value: string): string {
   return JSON.stringify(value);
@@ -9,22 +9,40 @@ function js(value: string): string {
 
 const AUTO_LOOP = String.raw`
 const autoLoop = async (goal, context, progressFile) => {
+  emit({ phase: 'start', goal });
   let round = 1;
   let previousReview = '';
+  let completed = 0;
   while (true) {
-    const build = await runs.run('build-' + round, {
-      agent: 'builder',
-      task: 'Implement the approved work in the workspace and run relevant checks.\n\nSource of truth (handoff/plan):\n' + context + '\n\nGoal:\n' + goal + (round > 1 ? '\n\nPrevious review feedback (address it first):\n' + previousReview : '') + '\n\nProgress ledger: append a "## Round ' + round + '" entry to the progress file at ' + progressFile + ' before finishing. List every file you changed and a short summary of the work.',
-    });
-    const review = await runs.run('review-' + round, {
-      agent: 'commentator',
-      task: 'Independently review the builder work for this round and report concrete evidence (what you inspected and what you ran). Do not modify the workspace.\n\nAcceptance criteria (source of truth):\n' + context + '\n\nProgress file (scope your review to its latest round entry; fall back to the full uncommitted diff if it is missing or empty):\n' + progressFile + '\n\nBuilder completion summary:\n' + build.output + '\n\nEnd with exactly one line: WORKFLOW_REVIEW_STATUS: clean OR WORKFLOW_REVIEW_STATUS: blocking.',
-    });
-    if (/WORKFLOW_REVIEW_STATUS\s*:\s*clean/i.test(review.output)) {
-      return { result: 'clean', rounds: round };
+    try {
+      const build = await runs.run('build-' + round, {
+        agent: 'builder',
+        timeoutMs: 45 * 60 * 1000,
+        task: 'Implement the next bounded step of the approved work in the workspace and run relevant checks. Work on one small, self-contained slice this round; do not attempt the whole plan.\n\nSource of truth (handoff/plan):\n' + context + '\n\nGoal:\n' + goal + (round > 1 ? '\n\nPrevious review (its findings were addressed in the fix round; use its "Remaining work" notes to pick your next slice, do not re-apply findings):\n' + previousReview : '') + '\n\nRead the progress file first for prior-round context.\n\nProgress ledger: append a "## Round ' + round + '" entry to the progress file at ' + progressFile + ' before finishing. List every file you changed and a short summary of the work.',
+      });
+      const review = await runs.run('review-' + round, {
+        agent: 'commentator',
+        timeoutMs: 15 * 60 * 1000,
+        task: 'Independently review the builder work for this round and report concrete evidence (what you inspected and what you ran). Do not modify the workspace.\n\nAcceptance criteria (source of truth):\n' + context + '\n\nProgress file (scope your review to its latest round entry; also re-check the files from the immediately preceding fix entry if one exists; fall back to the full uncommitted diff if it is missing or empty):\n' + progressFile + '\n\nBuilder completion summary:\n' + build.output + '\n\nIf the plan is not yet complete, add a "Remaining work:" section listing the next concrete step(s). End with exactly one line: WORKFLOW_REVIEW_STATUS: clean OR WORKFLOW_REVIEW_STATUS: blocking.',
+      });
+      if (/WORKFLOW_REVIEW_STATUS\s*:\s*clean/i.test(review.output)) {
+        return { result: 'clean', rounds: completed + 1 };
+      }
+      previousReview = review.output;
+      await runs.run('fix-' + round, {
+        agent: 'builder',
+        timeoutMs: 45 * 60 * 1000,
+        task: 'Address ONLY the findings from the review below. The "Remaining work:" section (if present) is for the next round; do not act on it.\n\nProgress ledger: append a "## Round ' + round + ' fix" entry to the progress file at ' + progressFile + ' before finishing. List every file you changed and a short summary of the fixes.\n\nReviewer findings:\n' + review.output,
+      });
+      completed += 1;
+      round += 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/Run fan-out limit reached/i.test(message)) {
+        return { result: 'budget', rounds: completed, note: 'Run fan-out budget exhausted before the goal was reached. The progress file is current.' };
+      }
+      throw error;
     }
-    previousReview = review.output;
-    round += 1;
   }
 };`;
 

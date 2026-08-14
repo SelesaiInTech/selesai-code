@@ -115,6 +115,7 @@ import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
 import { previewSimpleWorkflowRun, runWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../workflows/scripted-workflow.ts";
+import { resolveAutoRelaunchDecision, resolveMaxWorkflowAutoRelaunches } from "../../workflows/workflow-auto-relaunch.ts";
 import { renderWorkflowPrompt } from "../../shared/prompt-resources.ts";
 import { resolveWorkflowChatProgress, type WorkflowChatProgressProjection } from "../../workflows/chat-progress.ts";
 import {
@@ -4890,8 +4891,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						appendWorkflowEvent({ type: "subagent.workflow.trace", trace });
 					};
 					try {
-						const workflow = await runWorkflowScript({
-							script: workflowScript,
+						const autoRelaunchCap = resolveMaxWorkflowAutoRelaunches(deps.config.maxWorkflowAutoRelaunches);
+						let relaunched = 0;
+						let capReached = false;
+						let workflow: Awaited<ReturnType<typeof runWorkflowScript>> | undefined;
+						while (true) {
+							if (relaunched > 0) {
+								workflowFanoutBudget = createRunFanoutBudget(`${workflowRunId}#${relaunched + 1}`, workflowFanoutBudget.limit);
+								status = { ...status, workflow: { trace: [], emits: [], console: [] } };
+							}
+							workflow = await runWorkflowScript({
+								script: workflowScript,
 							timeoutMs: timeout,
 							signal: controller.signal,
 							prompts: workflowPrompts,
@@ -4989,14 +4999,33 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							},
 							status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession)),
 						});
+							const decision = resolveAutoRelaunchDecision(workflow?.value, relaunched, autoRelaunchCap);
+							if (!decision.relaunch) {
+								capReached = decision.capped;
+								break;
+							}
+							relaunched += 1;
+							status = { ...status, workflowRelaunchCount: relaunched };
+							persist();
+							appendWorkflowEvent({ type: "subagent.workflow.relaunched", relaunched });
+						}
+						if (!workflow) throw new Error("Workflow script produced no result.");
 						const returnPreview = formatWorkflowValue(workflow.value).slice(0, 1_000);
 						const emitPreview = workflow.emits.length > 0 ? ` Emitted: ${workflow.emits.map(formatWorkflowValue).join(", ").slice(0, 1_000)}` : "";
-						const summary = `Workflow completed with ${workflow.children.length} child run(s). Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).`;
+						const relaunchNote = relaunched > 0 ? `Auto-relaunched ${relaunched} time(s) with a fresh fan-out budget. ` : "";
+						const summary = `${relaunchNote}Workflow completed with ${workflow.children.length} child run(s). Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).`;
 						const workflowUsage = sumResultsUsage(workflowResults);
-						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
-						writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary, output: summary, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
-						persist();
-						appendWorkflowEvent({ type: "subagent.workflow.completed", state: "complete" });
+						if (capReached) {
+							status = compactOptional<AsyncStatus>({ ...status, state: "failed", error: `Workflow auto-relaunch cap reached after ${relaunched} relaunch(es); the goal is not clean yet. The progress file is current; raise config.maxWorkflowAutoRelaunches or relaunch manually.`, endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console } });
+							writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: false, state: "failed", summary: status.error, error: status.error, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
+							persist();
+							appendWorkflowEvent({ type: "subagent.workflow.completed", state: "failed", error: status.error });
+						} else {
+							status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
+							writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary, output: summary, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
+							persist();
+							appendWorkflowEvent({ type: "subagent.workflow.completed", state: "complete" });
+						}
 					} catch (error) {
 						const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
 						const stopped = controller.signal.aborted;

@@ -47,14 +47,16 @@ The `workflow` extension ships the four workflow mode shapes as **pi-subagents s
 
 | Mode | Scripted phases |
 | --- | --- |
-| `task` | architect (plan) → explorer (reuse) → recapper (handoff) → auto build↔review loop (builder ↔ commentator, until clean) |
-| `prototype` | researcher (research) → architect (plan) → explorer (reuse) → recapper (handoff) → auto build↔review loop (builder ↔ commentator, until clean) → commentator (audit of uncommitted diff) |
+| `task` | architect (plan) → explorer (reuse) → recapper (handoff) → auto build→review→fix loop (builder → commentator → builder fix, until clean) |
+| `prototype` | researcher (research) → architect (plan) → explorer (reuse) → recapper (handoff) → auto build→review→fix loop (builder → commentator → builder fix, until clean) → commentator (audit of uncommitted diff) |
 | `quicktype` | same as `prototype` minus the researcher step |
-| `loop` | auto build↔review loop (builder ↔ commentator, until clean) — direct rounds for an already-agreed plan |
+| `loop` | auto build→review→fix loop (builder → commentator → builder fix, until clean) — direct rounds for an already-agreed plan |
 
 - Each mode's phases run as `runs.run` steps inside a `workflowScript`. There are no checkpoints: the script is one-shot-and-sleep, and the commentator's independent review is the loop's gate.
-- The build↔review round auto-repeats until the reviewer's output matches the `WORKFLOW_REVIEW_STATUS: clean` marker; `runs.run` keys are unique per round (`build-1`, `review-1`, `build-2`, …).
+- Each launch emits its goal at start (visible in `subagent status` → workflow emits and the live card) and names the mission after the goal (`mission.list` / `mission.show`).
+- The build→review→fix round auto-repeats until the reviewer's output matches the `WORKFLOW_REVIEW_STATUS: clean` marker; `runs.run` keys are unique per round (`build-1`, `review-1`, `fix-1`, `build-2`, …). A blocking review triggers a fix round that addresses only the reviewer's findings; the next build continues from the review's remaining-work notes.
 - Durable process state lives in the auto-created **mission** per launch (state, artifacts, decisions, receipts); inspect with `mission.list` / `mission.show`.
+- When the per-run fan-out budget (`maxSubagentSpawnsPerRun`) is exhausted mid-loop, the async workflow auto-relaunches as a fresh top-level run with a new budget and keeps looping until the commentator reports clean or the auto-relaunch cap (`maxWorkflowAutoRelaunches`, default 12; 0 = unlimited) is reached. The plan and progress file carry all state between relaunches.
 - Workflows launch asynchronously; recover or continue via `mission.list` and the async run `status`.
 
 ## Commands, tools, and shortcuts
@@ -64,13 +66,13 @@ The `workflow` extension ships the four workflow mode shapes as **pi-subagents s
 | `/workflow-prototype <goal>` | Run the full prototype scripted workflow (research → plan → reuse → handoff → auto loop → audit). |
 | `/workflow-quicktype <goal>` | Run the quicker prototype scripted workflow without research. |
 | `/workflow-task <goal>` | Run the task scripted workflow (plan → reuse → handoff → auto loop). |
-| `/workflow-loop <goal>` | Run a direct auto build↔review loop for an already-agreed plan. |
+| `/workflow-loop <goal>` | Run a direct auto build→review→fix loop for an already-agreed plan. |
 
 ## Limits and safety
 
 - Workflows launch asynchronously (`async: true`); the live result card, snapshots, and notifications come from pi-subagents' slash UX.
 - Each command needs a non-empty goal; an empty invocation shows usage instead of launching.
-- The previous durable engine (state machine, `workflow.json` run state, `write_workflow_artifact` / `end_workflow` tools, and marker-validated phase artifacts) is gone. The four modes are scripted auto-loop workflows: the build↔review round is capped at 3, and there are no human gates.
+- The previous durable engine (state machine, `workflow.json` run state, `write_workflow_artifact` / `end_workflow` tools, and marker-validated phase artifacts) is gone. The four modes are scripted auto-loop workflows: the build→review→fix round repeats until the commentator reports clean, and there are no human gates.
 - The old `workflow.json` resume note stays as the migration note: active runs from the old engine are not resumable.
 
 ## Migration

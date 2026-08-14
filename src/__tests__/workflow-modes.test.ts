@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@selesai/code";
 import { buildLoopScript, buildPrototypeScript, buildQuicktypeScript, buildTaskScript } from "../extensions/workflow/modes.ts";
+
+vi.mock("../extensions/pi-subagents/src/slash/slash-commands.ts", () => ({
+	launchSlashSubagent: vi.fn(),
+}));
+
+import { launchSlashSubagent } from "../extensions/pi-subagents/src/slash/slash-commands.ts";
 import workflowModesExtension from "../extensions/workflow/extension.ts";
 
 describe("workflow mode script builders", () => {
@@ -8,10 +14,12 @@ describe("workflow mode script builders", () => {
     const script = buildLoopScript("any goal");
     expect(script).toContain("'build-'");
     expect(script).toContain("'review-'");
+    expect(script).toContain("'fix-'");
     expect(script).toContain("agent: 'builder'");
     expect(script).toContain("agent: 'commentator'");
     expect(script).toContain("while (true)");
     expect(script).toContain("WORKFLOW_REVIEW_STATUS");
+    expect(script).toContain("emit({ phase: 'start', goal })");
   });
 
   it("injects the goal as a JSON.stringify'd JS literal without breaking on quotes/backslashes", () => {
@@ -63,10 +71,28 @@ describe("workflow mode script builders", () => {
   it("passes previous review feedback to the next builder round and scopes the reviewer to the progress file", () => {
     const script = buildLoopScript("g");
     expect(script).toContain("previousReview");
-    expect(script).toContain("Previous review feedback (address it first)");
+    expect(script).toContain("Previous review (its findings were addressed in the fix round");
     expect(script).toContain("Progress ledger");
     expect(script).toContain("Progress file (scope your review");
     expect(script).toContain("WORKFLOW_REVIEW_STATUS");
+  });
+
+  it("runs a fix round after a blocking review, scoped to the reviewer findings only", () => {
+    const script = buildLoopScript("g");
+    expect(script).toContain("'fix-' + round");
+    expect(script).toContain("Address ONLY the findings from the review below");
+    expect(script).toContain("Reviewer findings:");
+    expect(script).toContain("Remaining work");
+    expect(script).toContain("timeoutMs: 45 * 60 * 1000");
+  });
+
+  it("exits gracefully with a budget marker instead of crashing when the fan-out budget is exhausted", () => {
+    const script = buildLoopScript("g");
+    expect(script).toContain("try {");
+    expect(script).toContain("Run fan-out limit reached");
+    expect(script).toContain("result: 'budget'");
+    expect(script).toContain("The progress file is current");
+    expect(script).toContain("throw error");
   });
 
   it("generated scripts compile as a function body", () => {
@@ -115,6 +141,29 @@ describe("workflow extension registration", () => {
 		for (const command of captured) {
 			await command.handler("   ", ctx);
 			expect(notify).toHaveBeenCalledWith(expect.stringContaining(`Usage: /${command.name} <goal>`), "info");
+		}
+		expect(launchSlashSubagent).not.toHaveBeenCalled();
+	});
+
+	it("launches the workflow with a goal", async () => {
+		const captured: CapturedCommand[] = [];
+		const pi = {
+			registerCommand: (name: string, options: { description?: string; handler: CapturedCommand["handler"] }) => {
+				captured.push({ name, description: options.description, handler: options.handler });
+			},
+		} as unknown as ExtensionAPI;
+		workflowModesExtension(pi);
+
+		const ctx = { ui: { notify: vi.fn() } };
+		for (const command of captured) {
+			await command.handler("implement the feature", ctx);
+		}
+		expect(launchSlashSubagent).toHaveBeenCalledTimes(4);
+		for (const call of (launchSlashSubagent as any).mock.calls) {
+			expect(call[2]).toMatchObject({ async: true, agentScope: "both" });
+			expect(call[2].mission).toEqual({ title: "implement the feature" });
+			expect(typeof call[2].workflowScript).toBe("string");
+			expect(call[2].workflowScript.length).toBeGreaterThan(0);
 		}
 	});
 });

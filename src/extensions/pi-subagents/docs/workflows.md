@@ -62,7 +62,7 @@ return runs.run("test", { agent: "worker", task });
 
 A plain workflow creates one enclosing mission by default. Its children do not create separate missions. The result exposes the id as `details.missionId`, and human-readable output ends with `Mission: <id> (<status>)`. Pass `mission:false` for an ephemeral workflow with no mission or durable `state` global.
 
-For watched same-repo workflows, pass `async:false` to show the live in-chat workflow card. `chatProgress` can force `off` or `live-card` when the automatic policy is not what you want. Foreground workflows default to a 30-minute timeout; async workflows have no default timeout. See the [tool reference](tool-reference.md) for the full parameter list.
+For watched same-repo workflows, pass `async:false` to show the live in-chat workflow card. `chatProgress` can force `off` or `live-card` when the automatic policy is not what you want. Foreground workflows default to a 30-minute timeout; async workflows have no default timeout. Async workflows that end with a fan-out `budget` result auto-relaunch as a fresh top-level run (new fan-out budget, same mission and progress file) until the commentator reports clean or the `maxWorkflowAutoRelaunches` cap is reached (default 12; 0 = unlimited). See the [tool reference](tool-reference.md) for the full parameter list.
 
 The legacy `/chain`, `/parallel`, and `/run-chain` commands are not registered.
 

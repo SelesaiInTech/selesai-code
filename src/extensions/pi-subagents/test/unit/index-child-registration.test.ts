@@ -103,6 +103,28 @@ describe("subagent extension child mode", () => {
 		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
 	});
 
+	it("declares packaged prompts through resources_discover", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			import * as fs from "node:fs";
+			const handlers = new Map();
+			const fakePi = new Proxy({
+				events: { on() { return () => {}; }, emit() {} },
+				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
+				on(event, handler) { handlers.set(event, handler); },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			registerSubagentExtension(fakePi);
+			const handler = handlers.get("resources_discover");
+			if (!handler) throw new Error("resources_discover handler not registered");
+			const result = handler({ type: "resources_discover", cwd: process.cwd(), reason: "startup" });
+			if (!result || !Array.isArray(result.promptPaths) || result.promptPaths.length !== 1) throw new Error("expected one promptPath, got " + JSON.stringify(result));
+			const promptDir = result.promptPaths[0];
+			if (!fs.existsSync(promptDir + "/review-loop.md")) throw new Error("review-loop.md not found under " + promptDir);
+			if (!fs.existsSync(promptDir + "/parallel-review.md")) throw new Error("parallel-review.md not found under " + promptDir);
+		`;
+		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
+	});
+
 	it("shows omitted workflow async as background even when asyncByDefault is false", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-workflow-manifest-config-"));
 		try {
