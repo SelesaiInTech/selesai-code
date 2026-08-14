@@ -301,4 +301,13 @@ describe('backend factory', () => {
     expect(result.metadata.fallbackFrom).toBe('tavily');
     expect(result.metadata.fallbackReason).toBe('Tavily failed');
   });
+
+  it('routes github urls through the github reader, not http', async () => {
+    const backends = createBackendSet();
+    // A github blob url is read via raw.githubusercontent.com and reported as method 'github'.
+    // This makes a real network call to GitHub (404 -> caveated 'github' response); if the suite
+    // must stay fully offline, change this to it.skip. The point is to prove the wiring.
+    const res = await backends.fetchPage({ url: 'https://github.com/owner/repo/blob/main/does-not-exist-xyz.ts' });
+    expect(res.metadata.method).toBe('github');
+  });
 });

@@ -11,6 +11,10 @@ import { createWebFetchTool } from '../tools/web-fetch.js';
 import { createWebSearchTool } from '../tools/web-search.js';
 import type { WebFetchHeadlessResponse, WebFetchResponse, WebSearchResponse } from '../types.js';
 import { DEFAULT_BACKEND_CONFIG, type BackendConfig } from './config.js';
+import { createSpecialContentResolver } from '../readers/resolver.js';
+import { createGithubReader } from '../readers/github-reader.js';
+import { createPdfReader } from '../readers/pdf-reader.js';
+import { createYoutubeReader } from '../readers/youtube-reader.js';
 
 export type BackendSet = {
   search: (input: { query: string }) => Promise<WebSearchResponse>;
@@ -170,9 +174,14 @@ export function createBackendSet(
     fetchPage = withFetchFallback(fetchPage, httpFetch);
   }
 
+  const fetchPageWithReaders = createSpecialContentResolver({
+    readers: [createGithubReader(), createPdfReader(), createYoutubeReader()],
+    fallback: fetchPage
+  });
+
   return {
     search,
-    fetchPage,
+    fetchPage: fetchPageWithReaders,
     headlessFetch: createHeadlessFetch()
   };
 }
