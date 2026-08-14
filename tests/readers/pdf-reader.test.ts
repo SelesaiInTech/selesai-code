@@ -18,7 +18,7 @@ describe('createPdfReader', () => {
   it('extracts pdf text and caps it', async () => {
     const reader = createPdfReader({
       fetchImpl: vi.fn().mockResolvedValue(pdfResponse()),
-      extractPdfText: vi.fn().mockResolvedValue('Hello from the PDF.')
+      extractPdfText: vi.fn().mockResolvedValue({ text: 'Hello from the PDF.' })
     });
     const res = await reader.read('https://h/doc.pdf');
     expect(res.status).toBe('ok');
@@ -26,10 +26,30 @@ describe('createPdfReader', () => {
     expect(res.content?.text).toBe('Hello from the PDF.');
   });
 
+  it('uses filename fallback when no metadata title', async () => {
+    const reader = createPdfReader({
+      fetchImpl: vi.fn().mockResolvedValue(pdfResponse()),
+      extractPdfText: vi.fn().mockResolvedValue({ text: 'Hello from the PDF.' })
+    });
+    const res = await reader.read('https://h/doc.pdf?v=2');
+    expect(res.status).toBe('ok');
+    expect(res.content?.title).toBe('doc.pdf');
+  });
+
+  it('uses metadata title when provided', async () => {
+    const reader = createPdfReader({
+      fetchImpl: vi.fn().mockResolvedValue(pdfResponse()),
+      extractPdfText: vi.fn().mockResolvedValue({ text: 'Body', title: 'Real Title' })
+    });
+    const res = await reader.read('https://h/something.pdf');
+    expect(res.status).toBe('ok');
+    expect(res.content?.title).toBe('Real Title');
+  });
+
   it('caveats a scanned pdf with no text layer', async () => {
     const reader = createPdfReader({
       fetchImpl: vi.fn().mockResolvedValue(pdfResponse()),
-      extractPdfText: vi.fn().mockResolvedValue('   ')
+      extractPdfText: vi.fn().mockResolvedValue({ text: '   ' })
     });
     const res = await reader.read('https://h/scan.pdf');
     expect(res.status).toBe('unsupported');

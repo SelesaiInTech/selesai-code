@@ -1,17 +1,22 @@
-import { extractText, getDocumentProxy } from 'unpdf';
+import { extractText, getDocumentProxy, getMeta } from 'unpdf';
 import type { WebFetchResponse } from '../types.js';
 import type { SpecialContentReader } from './types.js';
 
 type PdfReaderDeps = {
   fetchImpl?: typeof fetch;
   /** Injectable for tests; defaults to unpdf. */
-  extractPdfText?: (bytes: Uint8Array) => Promise<string>;
+  extractPdfText?: (bytes: Uint8Array) => Promise<{ text: string; title?: string }>;
 };
 
-async function defaultExtract(bytes: Uint8Array): Promise<string> {
+async function defaultExtract(bytes: Uint8Array): Promise<{ text: string; title?: string }> {
   const pdf = await getDocumentProxy(bytes);
-  const { text } = await extractText(pdf, { mergePages: true });
-  return text;
+  const [{ text }, meta] = await Promise.all([
+    extractText(pdf, { mergePages: true }),
+    getMeta(pdf).catch(() => ({ info: undefined }))
+  ]);
+  const info = (meta as { info?: { Title?: string } }).info;
+  const rawTitle = info?.Title?.trim();
+  return { text, title: rawTitle ? rawTitle : undefined };
 }
 
 function isPdfUrl(url: string): boolean {
@@ -19,6 +24,15 @@ function isPdfUrl(url: string): boolean {
     return new URL(url).pathname.toLowerCase().endsWith('.pdf');
   } catch {
     return false;
+  }
+}
+
+function filenameFromUrl(url: string): string {
+  try {
+    const last = new URL(url).pathname.split('/').filter(Boolean).pop() ?? 'PDF';
+    return decodeURIComponent(last);
+  } catch {
+    return 'PDF';
   }
 }
 
@@ -41,7 +55,8 @@ export function createPdfReader({ fetchImpl = fetch, extractPdfText = defaultExt
           };
         }
         const bytes = new Uint8Array(await response.arrayBuffer());
-        const text = (await extractPdfText(bytes)).trim();
+        const extracted = await extractPdfText(bytes);
+        const text = extracted.text.trim();
 
         if (text.length === 0) {
           return {
@@ -55,7 +70,7 @@ export function createPdfReader({ fetchImpl = fetch, extractPdfText = defaultExt
         return {
           status: 'ok',
           url,
-          content: { title: url.split('/').pop() ?? 'PDF', text: text.slice(0, 4000) },
+          content: { title: extracted.title ?? filenameFromUrl(url), text: text.slice(0, 4000) },
           metadata: { method: 'pdf', cacheHit: false, contentType: 'application/pdf', truncated: text.length >= 4000 }
         };
       } catch (err) {
