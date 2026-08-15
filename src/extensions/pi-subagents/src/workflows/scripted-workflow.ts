@@ -4,15 +4,23 @@ const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 const WORKER_SOURCE = String.raw`
 const { parentPort } = require("node:worker_threads");
+const { promiseHooks } = require("node:v8");
 const vm = require("node:vm");
 const { inspect } = require("node:util");
 
+if (!promiseHooks || typeof promiseHooks.createHook !== "function") throw new Error("workflowScript requires node:v8 promiseHooks.createHook support.");
+
 let nextCallId = 0;
+let topLevelWorkflowPromise;
+let suppressNativePromiseConsumption = 0;
+const activeNativePromises = [];
 const pending = new Map();
 const runKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const trackedPromisePatch = Symbol("trackedPromisePatch");
-const trackedPromiseObservations = new WeakMap();
-let suppressRunObservation = 0;
+const trackedPromiseTrackers = new WeakMap();
+const trackedPromiseTargets = new WeakMap();
+let nativePromiseTrackers = new WeakMap();
+let nativePromiseParents = new WeakMap();
+const observedRunCallIds = new Set();
 
 function stableRunJson(value) {
   if (Array.isArray(value)) return "[" + value.map(stableRunJson).join(",") + "]";
@@ -23,15 +31,47 @@ function stableRunJson(value) {
 function isDirectWorkflowScriptPromiseHandlerCall() {
   const stack = new Error().stack;
   if (typeof stack !== "string") return false;
-  const frame = stack.split("\n").slice(1).map((line) => line.trim()).find((line) =>
-    line &&
-    !line.includes("isDirectWorkflowScriptPromiseHandlerCall") &&
-    !line.includes("markObserved") &&
-    !line.includes("promise.then") &&
-    !line.includes("promise.catch") &&
-    !line.includes("promise.finally")
-  );
-  return frame ? frame.includes("workflow-script.js") && !frame.includes("at async ") : false;
+  return stack.split("\n").some((line) => line.includes("workflow-script.js") && !line.includes("at async "));
+}
+
+function nativePromiseTracker(promise) {
+  if (!promise || (typeof promise !== "object" && typeof promise !== "function")) return undefined;
+  let tracker = nativePromiseTrackers.get(promise);
+  if (!tracker) {
+    tracker = { observations: [], consumed: false, dependencies: [] };
+    nativePromiseTrackers.set(promise, tracker);
+  }
+  return tracker;
+}
+
+function promiseObservationTracker(value) {
+  if (!value || (typeof value !== "object" && typeof value !== "function")) return undefined;
+  return trackedPromiseTrackers.get(value) ?? nativePromiseTrackers.get(value);
+}
+
+function addTrackerDependency(tracker, dependency) {
+  if (!dependency) return;
+  tracker.dependencies ??= [];
+  if (!tracker.dependencies.includes(dependency)) tracker.dependencies.push(dependency);
+  if (tracker.consumed) markTrackedObservationsConsumed(dependency);
+}
+
+function descendsFromTopLevelWorkflow(promise) {
+  const seen = new Set();
+  for (let current = promise; current && !seen.has(current); current = nativePromiseParents.get(current)) {
+    if (current === topLevelWorkflowPromise) return true;
+    seen.add(current);
+  }
+  return false;
+}
+
+function withSuppressedNativePromiseConsumption(callback) {
+  suppressNativePromiseConsumption++;
+  try {
+    return callback();
+  } finally {
+    suppressNativePromiseConsumption--;
+  }
 }
 
 function mergeObservations(...groups) {
@@ -47,63 +87,107 @@ function mergeObservations(...groups) {
   return merged;
 }
 
-function trackedObservations(value) {
-  return value && (typeof value === "object" || typeof value === "function") ? trackedPromiseObservations.get(value) ?? [] : [];
+function trackedObservationTracker(value) {
+  return value && (typeof value === "object" || typeof value === "function") ? trackedPromiseTrackers.get(value) : undefined;
 }
 
-function withSuppressedRunObservation(callback) {
-  suppressRunObservation += 1;
-  try {
-    return callback();
-  } finally {
-    suppressRunObservation -= 1;
+function trackedPromiseTarget(value) {
+  return value && (typeof value === "object" || typeof value === "function") ? trackedPromiseTargets.get(value) ?? value : value;
+}
+
+function addTrackedObservations(tracker, observations) {
+  tracker.observations = mergeObservations(tracker.observations, observations);
+  if (!tracker.consumed) return;
+  for (const observation of tracker.observations) {
+    if (observedRunCallIds.has(observation.callId)) continue;
+    observedRunCallIds.add(observation.callId);
+    parentPort.postMessage({ type: "runObserved", callId: observation.callId, key: observation.key });
   }
 }
 
-function trackRunObservation(observations, promise) {
-  const merged = mergeObservations(trackedObservations(promise), observations);
-  if (merged.length === 0 || !promise || typeof promise.then !== "function") return promise;
-  trackedPromiseObservations.set(promise, merged);
-  if (promise[trackedPromisePatch]) return promise;
+function markTrackedObservationsConsumed(tracker, seen = new Set()) {
+  if (seen.has(tracker)) return;
+  seen.add(tracker);
+  tracker.consumed = true;
+  addTrackedObservations(tracker, []);
+  for (const dependency of tracker.dependencies ?? []) markTrackedObservationsConsumed(dependency, seen);
+}
 
-  const observedCallIds = new Set();
-  const markObserved = () => {
-    if (suppressRunObservation > 0 || isDirectWorkflowScriptPromiseHandlerCall()) return;
-    for (const observation of trackedObservations(promise)) {
-      if (observedCallIds.has(observation.callId)) continue;
-      observedCallIds.add(observation.callId);
-      parentPort.postMessage({ type: "runObserved", callId: observation.callId, key: observation.key });
-    }
-  };
-  const originalThen = promise.then.bind(promise);
-  const originalCatch = promise.catch.bind(promise);
-  const originalFinally = promise.finally.bind(promise);
-  Object.defineProperty(promise, trackedPromisePatch, { value: true });
-  promise.then = (onFulfilled, onRejected) => {
-    markObserved();
-    return trackRunObservation(trackedObservations(promise), originalThen(onFulfilled, onRejected));
-  };
-  promise.catch = (onRejected) => {
-    markObserved();
-    return trackRunObservation(trackedObservations(promise), originalCatch(onRejected));
-  };
-  promise.finally = (onFinally) => {
-    markObserved();
-    return trackRunObservation(trackedObservations(promise), originalFinally(onFinally));
-  };
-  return promise;
+function consumeTrackedObservations(tracker) {
+  if (isDirectWorkflowScriptPromiseHandlerCall()) return;
+  const activePromise = activeNativePromises.at(-1);
+  if (activePromise === topLevelWorkflowPromise || descendsFromTopLevelWorkflow(activePromise)) {
+    markTrackedObservationsConsumed(tracker);
+  } else if (activePromise) {
+    addTrackerDependency(nativePromiseTracker(activePromise), tracker);
+  } else {
+    markTrackedObservationsConsumed(tracker);
+  }
+}
+
+function trackObservationTracker(tracker, promise, allowFutureObservations = false) {
+  const target = trackedPromiseTarget(promise);
+  if ((!allowFutureObservations && tracker.observations.length === 0) || !target || typeof target.then !== "function") return promise;
+
+  const tracked = new Proxy(target, {
+    get(promiseTarget, prop) {
+      if (prop === "then") return function promiseThen(onFulfilled, onRejected) {
+        consumeTrackedObservations(tracker);
+        return trackObservationTracker({ observations: tracker.observations, consumed: false, dependencies: [tracker] }, promiseTarget.then(onFulfilled, onRejected), true);
+      };
+      if (prop === "catch") return function promiseCatch(onRejected) {
+        consumeTrackedObservations(tracker);
+        return trackObservationTracker({ observations: tracker.observations, consumed: false, dependencies: [tracker] }, promiseTarget.catch(onRejected), true);
+      };
+      if (prop === "finally") return function promiseFinally(onFinally) {
+        consumeTrackedObservations(tracker);
+        return trackObservationTracker({ observations: tracker.observations, consumed: false, dependencies: [tracker] }, promiseTarget.finally(onFinally), true);
+      };
+      return Reflect.get(promiseTarget, prop, promiseTarget);
+    },
+  });
+  trackedPromiseTrackers.set(tracked, tracker);
+  trackedPromiseTargets.set(tracked, target);
+  return tracked;
+}
+
+function trackRunObservation(observations, promise) {
+  const tracker = trackedObservationTracker(promise) ?? { observations: [], consumed: false };
+  addTrackedObservations(tracker, observations);
+  return trackObservationTracker(tracker, promise);
 }
 
 function trackPromiseCombinator(items, createPromise) {
   const values = Array.from(items);
-  const observations = mergeObservations(...values.map(trackedObservations));
-  const promise = withSuppressedRunObservation(() => createPromise(values));
-  return observations.length > 0 ? trackRunObservation(observations, promise) : promise;
+  const dependencies = [...new Set(values.map(promiseObservationTracker).filter(Boolean))];
+  const promise = withSuppressedNativePromiseConsumption(() => createPromise(values.map(trackedPromiseTarget)));
+  if (dependencies.length === 0) return promise;
+  return trackObservationTracker({ observations: [], consumed: false, dependencies }, promise, true);
 }
 
 const workflowPromise = new Proxy(Promise, {
-  construct(target, args) {
-    return new target(...args);
+  construct(target, [executor]) {
+    if (typeof executor !== "function") return new target(executor);
+    const tracker = { observations: [], consumed: false };
+    const promise = new target((resolve, reject) => {
+      let settled = false;
+      try {
+        executor((value) => {
+          if (settled) return;
+          settled = true;
+          addTrackerDependency(tracker, promiseObservationTracker(value));
+          resolve(trackedPromiseTarget(value));
+        }, (reason) => {
+          if (settled) return;
+          settled = true;
+          reject(reason);
+        });
+      } catch (error) {
+        settled = true;
+        throw error;
+      }
+    });
+    return trackObservationTracker(tracker, promise, true);
   },
   get(target, prop) {
     if (prop === "all") return (items) => trackPromiseCombinator(items, (values) => target.all(values));
@@ -111,9 +195,10 @@ const workflowPromise = new Proxy(Promise, {
     if (prop === "race") return (items) => trackPromiseCombinator(items, (values) => target.race(values));
     if (prop === "any") return (items) => trackPromiseCombinator(items, (values) => target.any(values));
     if (prop === "resolve") return (value) => {
-      const observations = trackedObservations(value);
-      const promise = withSuppressedRunObservation(() => target.resolve(value));
-      return observations.length > 0 ? trackRunObservation(observations, promise) : promise;
+      const dependency = promiseObservationTracker(value);
+      const promise = withSuppressedNativePromiseConsumption(() => target.resolve(trackedPromiseTarget(value)));
+      if (!dependency) return promise;
+      return trackObservationTracker({ observations: [], consumed: false, dependencies: [dependency] }, promise, true);
     };
     const value = target[prop];
     return typeof value === "function" ? value.bind(target) : value;
@@ -289,7 +374,11 @@ parentPort.on("message", async (message) => {
     if (!entry) return;
     pending.delete(message.callId);
     if (message.ok) entry.resolve(message.value);
-    else entry.reject(new Error(message.error));
+    else {
+      const error = new Error(message.error);
+      if (message.errorKind === "detached-child") error.workflowErrorKind = "detached-child";
+      entry.reject(error);
+    }
     return;
   }
   if (message.type !== "start") return;
@@ -306,12 +395,68 @@ parentPort.on("message", async (message) => {
       parentPort.postMessage({ type: "error", error: formatWorkflowScriptSyntaxError(error) });
       return;
     }
-    const value = await compiled.runInContext(context);
+    const nativePromisePrototype = vm.runInContext("(async () => {})().constructor.prototype", context);
+    const nativeThenDescriptor = Object.getOwnPropertyDescriptor(nativePromisePrototype, "then");
+    if (!nativeThenDescriptor || typeof nativeThenDescriptor.value !== "function") throw new Error("workflowScript could not inspect the VM Promise.prototype.then method.");
+    const nativeThen = nativeThenDescriptor.value;
+    let stopWorkflowPromiseHook;
+    let value;
+    try {
+      Object.defineProperty(nativePromisePrototype, "then", {
+        ...nativeThenDescriptor,
+        value: function workflowPromiseThen(...args) {
+          if (isDirectWorkflowScriptPromiseHandlerCall() || suppressNativePromiseConsumption > 0) {
+            return withSuppressedNativePromiseConsumption(() => Reflect.apply(nativeThen, this, args));
+          }
+          return Reflect.apply(nativeThen, this, args);
+        },
+      });
+      stopWorkflowPromiseHook = promiseHooks.createHook({
+        before(promise) {
+          activeNativePromises.push(promise);
+        },
+        after(promise) {
+          const index = activeNativePromises.lastIndexOf(promise);
+          if (index !== -1) activeNativePromises.splice(index, 1);
+        },
+        init(promise, parent) {
+          const childTracker = nativePromiseTracker(promise);
+          if (!parent) return;
+          nativePromiseParents.set(promise, parent);
+          const parentTracker = nativePromiseTracker(parent);
+          addTrackerDependency(childTracker, parentTracker);
+          const activePromise = activeNativePromises.at(-1);
+          if (activePromise && activePromise !== parent) {
+            addTrackerDependency(nativePromiseTracker(activePromise), parentTracker);
+          } else if (!activePromise && suppressNativePromiseConsumption === 0) {
+            markTrackedObservationsConsumed(parentTracker);
+          }
+        },
+      });
+      const workflowResultPromise = compiled.runInContext(context);
+      topLevelWorkflowPromise = workflowResultPromise;
+      markTrackedObservationsConsumed(nativePromiseTracker(workflowResultPromise));
+      value = await workflowResultPromise;
+    } finally {
+      try {
+        stopWorkflowPromiseHook?.();
+      } finally {
+        try {
+          Object.defineProperty(nativePromisePrototype, "then", nativeThenDescriptor);
+        } finally {
+          topLevelWorkflowPromise = undefined;
+          activeNativePromises.length = 0;
+          suppressNativePromiseConsumption = 0;
+          nativePromiseTrackers = new WeakMap();
+          nativePromiseParents = new WeakMap();
+        }
+      }
+    }
     const persistedValue = value === undefined ? null : omitUndefinedWorkflowValues(value);
     assertJsonValue(persistedValue, "return");
     parentPort.postMessage({ type: "complete", value: persistedValue });
   } catch (error) {
-    parentPort.postMessage({ type: "error", error: error && error.stack ? error.stack : String(error) });
+    parentPort.postMessage({ type: "error", error: error && error.stack ? error.stack : String(error), ...(error && error.workflowErrorKind === "detached-child" ? { errorKind: "detached-child" } : {}) });
   }
 });
 `;
@@ -324,6 +469,7 @@ export interface WorkflowScriptChildResult {
 	runId?: string;
 	output: string;
 	error?: string;
+	detached?: boolean;
 	structuredOutput?: unknown;
 	artifactPaths: string[];
 	results?: unknown[];
@@ -332,7 +478,7 @@ export interface WorkflowScriptChildResult {
 export interface WorkflowScriptTraceEntry {
 	operation: "run" | "status";
 	key: string;
-	state: "started" | "completed" | "failed" | "reused";
+	state: "started" | "completed" | "failed" | "detached" | "stopped" | "reused";
 	/** Canonical child agent name when resolved launch or result data is available. */
 	agent?: string;
 	runId?: string;
@@ -352,11 +498,13 @@ export interface WorkflowScriptResult {
 
 export class WorkflowScriptError extends Error {
 	readonly partial: Omit<WorkflowScriptResult, "value">;
+	readonly errorKind?: "detached-child";
 
-	constructor(message: string, partial: Omit<WorkflowScriptResult, "value">) {
+	constructor(message: string, partial: Omit<WorkflowScriptResult, "value">, errorKind?: "detached-child") {
 		super(message);
 		this.name = "WorkflowScriptError";
 		this.partial = partial;
+		this.errorKind = errorKind;
 	}
 }
 
@@ -492,6 +640,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const children = new Map<string, WorkflowScriptChildResult>();
 	const childOrder: string[] = [];
 	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult>; observed: boolean }>();
+	const stoppedLaunches = new Set<string>();
 	const batchAdmissions = new Map<string, Promise<void>>();
 	const observedRunCalls = new Set<number>();
 	const childController = new AbortController();
@@ -504,7 +653,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const traceChanged = () => options.onTrace?.([...trace]);
 
 	return await new Promise<WorkflowScriptResult>((resolve, reject) => {
-		const finish = (outcome: { value: unknown } | { error: Error }) => {
+		const finish = (outcome: { value: unknown } | { error: Error & { workflowErrorKind?: unknown } }) => {
 			if (settled) return;
 			settled = true;
 			if (timer) clearTimeout(timer);
@@ -515,11 +664,34 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				? new Error(`workflowScript completed with unawaited runs.run launch(es): ${unobservedKeys.map((key) => `'${key}'`).join(", ")}. Await or return each launch.`)
 				: undefined;
 			childController.abort("error" in outcome ? outcome.error : completionError ?? new Error("Workflow script completed."));
-			if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial()));
+			if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial(), outcome.error.workflowErrorKind === "detached-child" ? "detached-child" : undefined));
 			else if (completionError) reject(new WorkflowScriptError(completionError.message, partial()));
 			else resolve({ value: outcome.value, ...partial() });
 		};
-		const onAbort = () => finish({ error: new Error("Workflow script aborted.") });
+		const onAbort = () => {
+			const signalReason = options.signal?.reason;
+			const error = signalReason instanceof Error
+				? signalReason
+				: typeof signalReason === "string"
+					? new Error(signalReason)
+					: new Error("Workflow script aborted.");
+			for (const key of launches.keys()) {
+				if (children.has(key)) continue;
+				stoppedLaunches.add(key);
+				const started = trace.findLast((entry) => entry.operation === "run" && entry.key === key && entry.state === "started");
+				trace.push({
+					operation: "run",
+					key,
+					state: "stopped",
+					...(started?.agent ? { agent: started.agent } : {}),
+					...(started?.phase ? { phase: started.phase } : {}),
+					...(started?.label ? { label: started.label } : {}),
+					error: error.message,
+				});
+			}
+			traceChanged();
+			finish({ error });
+		};
 		const timer = options.timeoutMs === undefined
 			? undefined
 			: setTimeout(() => finish({ error: new Error(`Workflow script timed out after ${options.timeoutMs}ms.`) }), options.timeoutMs);
@@ -531,6 +703,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (!settled && code !== 0) finish({ error: new Error(`Workflow worker exited with code ${code}.`) });
 		});
 		worker.on("message", (message: Record<string, unknown>) => {
+			if (settled) return;
 			if (message.type === "emit") {
 				try {
 					assertWorkflowJsonValue(message.value, "emit");
@@ -560,7 +733,11 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				}
 				return finish({ value: message.value });
 			}
-			if (message.type === "error") return finish({ error: new Error(typeof message.error === "string" ? message.error : "Workflow script failed.") });
+			if (message.type === "error") {
+				const workflowError = new Error(typeof message.error === "string" ? message.error : "Workflow script failed.") as Error & { workflowErrorKind?: "detached-child" };
+				if (message.errorKind === "detached-child") workflowError.workflowErrorKind = "detached-child";
+				return finish({ error: workflowError });
+			}
 			if (message.type === "runObserved" && typeof message.callId === "number") {
 				const key = typeof message.key === "string" ? message.key : undefined;
 				const launch = key ? launches.get(key) : undefined;
@@ -576,7 +753,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 						if (!settled) worker.postMessage({ type: "response", callId: message.callId, ok: true, value: omitUndefinedWorkflowValues(value) });
 					},
 					(error: unknown) => {
-						if (!settled) worker.postMessage({ type: "response", callId: message.callId, ok: false, error: error instanceof Error ? error.message : String(error) });
+						if (!settled) worker.postMessage({ type: "response", callId: message.callId, ok: false, error: error instanceof Error ? error.message : String(error), ...(error instanceof Error && (error as { workflowErrorKind?: unknown }).workflowErrorKind === "detached-child" ? { errorKind: "detached-child" } : {}) });
 					},
 				);
 			};
@@ -617,7 +794,9 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				const target = known?.runId ?? keyOrRunId;
 				trace.push({ operation: "status", key: keyOrRunId, state: "started", ...(known?.runId ? { runId: known.runId } : {}) });
 				traceChanged();
+				if (settled) return;
 				respond(options.status(target, childController.signal).then((result) => {
+					if (settled) return result;
 					trace.push({ operation: "status", key: keyOrRunId, state: result.ok ? "completed" : "failed", ...(result.runId ? { runId: result.runId } : {}), ...(!result.ok ? { error: result.output } : {}) });
 					traceChanged();
 					if (!result.ok) throw new Error(`Status '${keyOrRunId}' failed: ${result.output}`);
@@ -666,7 +845,11 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			const deliver = (promise: Promise<WorkflowScriptChildResult>) => collectFailure
 				? promise
 				: promise.then((result) => {
-					if (!result.ok) throw new Error(`Run '${key}' failed: ${result.error ?? result.output}`);
+					if (!result.ok) {
+						const childError = new Error(result.detached ? `Run '${key}' detached: ${result.error ?? result.output}` : `Run '${key}' failed: ${result.error ?? result.output}`) as Error & { workflowErrorKind?: "detached-child" };
+						if (result.detached) childError.workflowErrorKind = "detached-child";
+						throw childError;
+					}
 					return result;
 				});
 			const fingerprint = stableJson(params);
@@ -680,9 +863,6 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			}
 
 			const startedAt = Date.now();
-			childOrder.push(key);
-			trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(params) });
-			traceChanged();
 			const batch = isRecord(message.args.batch) && typeof message.args.batch.id === "string" && Array.isArray(message.args.batch.calls)
 				? { id: message.args.batch.id, calls: message.args.batch.calls.filter((call): call is { key: string; params: Record<string, unknown> } => isRecord(call) && typeof call.key === "string" && isRecord(call.params)) }
 				: undefined;
@@ -694,24 +874,40 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					seenKeys.add(call.key);
 					return true;
 				});
-				admission = Promise.resolve().then(() => options.admit?.(calls));
+				admission = Promise.resolve().then(() => {
+					if (settled) return;
+					return options.admit?.(calls);
+				});
 				if (batch) batchAdmissions.set(batch.id, admission);
 			}
-			const promise = admission.then(() => options.launch(key, { ...params, async: params.async ?? false }, childController.signal, { admitted: true })).then((result) => {
+			const promise = admission.then(() => {
+				if (settled || stoppedLaunches.has(key)) {
+					const reason = childController.signal.reason;
+					const text = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "Workflow script aborted.";
+					return { key, ok: false, output: text, error: text, artifactPaths: [] };
+				}
+				return options.launch(key, { ...params, async: params.async ?? false }, childController.signal, { admitted: true });
+			}).then((result) => {
 				const normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
+				if (stoppedLaunches.has(key)) return normalized;
 				children.set(key, normalized);
-				trace.push({ operation: "run", key, state: normalized.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
+				const state = normalized.ok ? "completed" : normalized.detached ? "detached" : "failed";
+				trace.push({ operation: "run", key, state, durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
 				traceChanged();
 				return normalized;
 			}, (error: unknown) => {
 				const text = error instanceof Error ? error.message : String(error);
 				const failure: WorkflowScriptChildResult = { key, ok: false, output: text, error: text, artifactPaths: [] };
+				if (stoppedLaunches.has(key)) return failure;
 				children.set(key, failure);
 				trace.push({ operation: "run", key, state: "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), error: text });
 				traceChanged();
 				return failure;
 			});
 			launches.set(key, { fingerprint, promise, observed: callObserved });
+			childOrder.push(key);
+			trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(params) });
+			traceChanged();
 			respond(deliver(promise));
 		});
 

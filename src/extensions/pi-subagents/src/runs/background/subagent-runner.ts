@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { writeAsyncResultFile, writePendingAsyncResultFile } from "./result-files.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
 import { isActiveAsyncState, updateActiveRunIndex } from "./active-run-index.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
@@ -57,6 +58,7 @@ import {
 	claimControlNotification,
 	formatControlIntercomMessage,
 	formatControlNoticeMessage,
+	shouldEmitOpenToolAttention,
 } from "../shared/subagent-control.ts";
 import {
 	type RunnerSubagentStep as SubagentStep,
@@ -83,6 +85,7 @@ import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDi
 import { formatModelAttemptNote, formatModelRetryNote, isRetryableModelFailure, MODEL_RETRY_DELAYS_MS } from "../shared/model-fallback.ts";
 import {
 	SUBAGENT_STARTUP_RETRY_DELAYS_MS,
+	formatSubagentExtensionConflictError,
 	formatSubagentStartupRetryExhaustedError,
 	formatSubagentStartupRetryNote,
 	isRetryableSubagentStartupFailure,
@@ -126,12 +129,14 @@ import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests, statusStepDescription } from "./chain-append.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
+import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
+import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
@@ -142,6 +147,8 @@ import {
 	resolveChildWatchdogConfig,
 	type ChildWatchdogStateSnapshot,
 } from "../../watchdog/child-status.ts";
+
+const INTERCOM_DETACH_RECEIPT = "Detached for intercom coordination before task completion.";
 
 interface SubagentRunConfig {
 	id: string;
@@ -174,6 +181,8 @@ interface SubagentRunConfig {
 	nestedSelf?: { parentRunId: string; parentStepIndex?: number; depth: number; path?: Array<{ runId: string; stepIndex?: number; agent?: string }> };
 	timeoutMs?: number;
 	deadlineAt?: number;
+	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
+	toolTimeoutMs?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
@@ -539,6 +548,9 @@ function runPiStreaming(
 	stopMessage?: string,
 	registerTurnBudgetAbort?: (abort: ((message: string, state?: TurnBudgetState) => void) | undefined) => void,
 	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void,
+	toolTimeoutMs?: number,
+	runDeadlineAt?: number,
+	orcaProgressTab?: OrcaProgressTab,
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
 		const startedAt = Date.now();
@@ -595,6 +607,7 @@ function runPiStreaming(
 		const writeOutputLine = (line: string) => {
 			if (!line.trim()) return;
 			outputStream.write(`${line}\n`);
+			orcaProgressTab?.append(`${line}\n`);
 		};
 
 		const writeOutputText = (text: string) => {
@@ -672,8 +685,14 @@ function runPiStreaming(
 
 			onChildEvent?.(event);
 
+			if (event.type === "tool_execution_end") {
+				clearActiveToolTimeout(event);
+				return;
+			}
+
 			if (event.type === "tool_execution_start" && event.toolName) {
 				toolCount += 1;
+				armToolTimeout({ toolCallId: (event as { toolCallId?: unknown }).toolCallId, toolName: event.toolName });
 				if (event.toolName === "structured_output") {
 					structuredOutputToolInvoked = true;
 					structuredOutputMessageStartIndex = messages.length;
@@ -769,6 +788,7 @@ function runPiStreaming(
 			stderrTail.push(chunk);
 			stderrReader.push(chunk);
 			outputStream.write(chunk);
+			orcaProgressTab?.append(chunk.toString("utf-8"));
 		});
 		registerInterrupt?.(() => {
 			if (settled || timedOut || stopped) return;
@@ -779,14 +799,60 @@ function runPiStreaming(
 				if (!settled && !timedOut && !stopped) trySignalChild(child, "SIGTERM");
 			}, 1000).unref?.();
 		});
-		registerTimeout?.(() => {
+		const terminateForTimeout = (message: string): void => {
 			if (settled || timedOut || stopped) return;
 			timedOut = true;
+			// runPiStreaming's terminal result derives the timeout error from this
+			// message, so retain the tool-specific reason through finalization.
+			timeoutMessage = message;
 			interrupted = false;
-			error = timeoutMessage ?? "Subagent timed out.";
+			error = message;
 			if (processTreeController) void processTreeController.terminate();
 			else trySignalChild(child, "SIGTERM");
-		});
+		};
+		let toolTimeoutSequence = 0;
+		const activeToolTimeouts = new Map<string, { toolName: string; timer: ReturnType<typeof setTimeout> }>();
+		const activeToolTimeoutKeysByName = new Map<string, string[]>();
+		const removeToolTimeoutKey = (key: string): void => {
+			const active = activeToolTimeouts.get(key);
+			if (!active) return;
+			clearTimeout(active.timer);
+			activeToolTimeouts.delete(key);
+			const keys = activeToolTimeoutKeysByName.get(active.toolName)?.filter((candidate) => candidate !== key) ?? [];
+			if (keys.length > 0) activeToolTimeoutKeysByName.set(active.toolName, keys);
+			else activeToolTimeoutKeysByName.delete(active.toolName);
+		};
+		const clearActiveToolTimeout = (event: { toolCallId?: unknown; toolName?: unknown }): void => {
+			const key = typeof event.toolCallId === "string" && event.toolCallId.length > 0
+				? `id:${event.toolCallId}`
+				: typeof event.toolName === "string"
+					? activeToolTimeoutKeysByName.get(event.toolName)?.[0]
+					: activeToolTimeouts.size === 1
+						? [...activeToolTimeouts.keys()][0]
+						: undefined;
+			if (key) removeToolTimeoutKey(key);
+		};
+		const clearAllToolTimeouts = (): void => {
+			for (const key of [...activeToolTimeouts.keys()]) removeToolTimeoutKey(key);
+		};
+		const armToolTimeout = (event: { toolCallId?: unknown; toolName: string }): void => {
+			const timeoutForTool = effectiveToolTimeoutMs(event.toolName, toolTimeoutMs);
+			if (timeoutForTool === undefined) return;
+			const runRemaining = runDeadlineAt === undefined ? undefined : Math.max(0, runDeadlineAt - Date.now());
+			if (runRemaining !== undefined && timeoutForTool >= runRemaining) return;
+			const key = toolTimeoutCallKey(event, ++toolTimeoutSequence);
+			const toolName = event.toolName;
+			const timer = setTimeout(() => {
+				removeToolTimeoutKey(key);
+				terminateForTimeout(formatToolTimeoutMessage(toolName, timeoutForTool));
+			}, timeoutForTool);
+			timer.unref?.();
+			activeToolTimeouts.set(key, { toolName, timer });
+			const keys = activeToolTimeoutKeysByName.get(toolName) ?? [];
+			keys.push(key);
+			activeToolTimeoutKeysByName.set(toolName, keys);
+		};
+		registerTimeout?.(() => terminateForTimeout(timeoutMessage ?? "Subagent timed out."));
 		registerStop?.(() => {
 			if (settled || timedOut || stopped) return;
 			stopped = true;
@@ -813,6 +879,7 @@ function runPiStreaming(
 			turnBudgetHardKillTimer.unref?.();
 		});
 		const clearDrainTimers = () => {
+			clearAllToolTimeouts();
 			if (finalDrainTimer) {
 				clearTimeout(finalDrainTimer);
 				finalDrainTimer = undefined;
@@ -1102,6 +1169,10 @@ interface SingleStepContext {
 	stopSignal?: AbortSignal;
 	timeoutMessage?: string;
 	stopMessage?: string;
+	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
+	toolTimeoutMs?: number;
+	/** Effective step deadline (Date.now() + effective timeout) when a run budget exists. */
+	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	childIntercomTarget?: string;
 	orchestratorIntercomTarget?: string;
@@ -1113,10 +1184,11 @@ interface SingleStepContext {
 	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void;
 	onExternalProcess?: (process: ExternalProcessStatus) => void;
 	skipAcceptance?: () => boolean;
+	orcaProgressTab?: OrcaProgressTab;
 }
 
 /** Run a single pi agent step, returning output and metadata */
-async function runSingleStep(
+async function runSingleStepInner(
 	step: SubagentStep,
 	ctx: SingleStepContext,
 ): Promise<StepResult & { completionGuardTriggered?: boolean }> {
@@ -1245,6 +1317,8 @@ async function runSingleStep(
 			timeoutMessage: ctx.timeoutMessage,
 			stopMessage: ctx.stopMessage,
 			onProcess: ctx.onExternalProcess,
+			onStdout: (chunk) => ctx.orcaProgressTab?.append(chunk.toString("utf-8")),
+			onStderr: (chunk) => ctx.orcaProgressTab?.append(chunk.toString("utf-8")),
 		}));
 		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
 		const resolvedOutput = step.outputPath && external.exitCode === 0
@@ -1432,6 +1506,9 @@ async function runSingleStep(
 			ctx.stopMessage,
 			ctx.registerTurnBudgetAbort,
 			ctx.onWriterProcess,
+			ctx.toolTimeoutMs,
+			ctx.deadlineAt,
+			ctx.orcaProgressTab,
 		);
 		if (run.processCloseObservedAt !== undefined) {
 			writerProcesses.push({
@@ -1539,15 +1616,21 @@ async function runSingleStep(
 			stopped: run.stopped,
 			turnBudgetExceeded: run.turnBudgetExceeded,
 		})) ? formatProcessSignalError(run.processSignal!) : undefined;
-		const error = toolAvailabilityError
-			?? completionGuardError
-			?? structuredError
-			?? emptyOutputError
-			?? (hiddenError?.hasError
-				? hiddenError.details
-					? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
-					: `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
-				: run.error || signalError || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined));
+		const error = formatSubagentExtensionConflictError(
+			toolAvailabilityError
+				?? completionGuardError
+				?? structuredError
+				?? emptyOutputError
+				?? (hiddenError?.hasError
+					? hiddenError.details
+						? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
+						: `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
+					: run.error || signalError || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined)),
+			{
+				agent: step.agent,
+				ambientExtensionsEnabled: launchResolvedExtensions?.disableAmbientExtensions === false,
+			},
+		);
 		const attempt: ModelAttempt = omitUndefinedProperties({
 			model: candidate ?? run.model ?? step.model ?? "default",
 			success: effectiveExitCode === 0 && !error,
@@ -1716,15 +1799,16 @@ async function runSingleStep(
 	const acceptanceFailure = effectiveAcceptance ? acceptanceFailureMessage(effectiveAcceptance) : undefined;
 	const acceptanceCanFailRun = acceptanceFailure && effectiveAcceptance?.explicit && (finalResult?.exitCode ?? 1) === 0 && !finalResult?.interrupted && !timedOutAfterAcceptance && !stoppedAfterAcceptance && !turnBudgetExceeded && !isAgentContractV1(step.agentContract);
 	const effectiveFinalExitCode = timedOutAfterAcceptance || stoppedAfterAcceptance || turnBudgetExceeded ? 1 : acceptanceCanFailRun ? 1 : finalResult?.exitCode ?? 1;
+	const intercomDetachReceipt = finalResult?.finalOutput === INTERCOM_DETACH_RECEIPT;
 	const effectiveFinalError = stoppedAfterAcceptance
 		? ctx.stopMessage ?? "Subagent stopped by user."
 		: timedOutAfterAcceptance
-			? ctx.timeoutMessage ?? "Subagent timed out."
+			? finalResult?.error ?? ctx.timeoutMessage ?? "Subagent timed out."
 			: turnBudgetExceeded
 				? finalResult?.error ?? (turnBudget ? turnBudgetExceededMessage(turnBudget, turnBudget.turnCount) : "Subagent exceeded turn budget.")
 				: acceptanceCanFailRun
 					? (finalResult?.error ? `${finalResult.error}\n${acceptanceFailure}` : acceptanceFailure)
-					: finalResult?.error;
+					: finalResult?.error ?? (intercomDetachReceipt ? INTERCOM_DETACH_RECEIPT : undefined);
 
 	const artifactErrors = artifactPaths && ctx.artifactConfig?.enabled !== false
 		? persistStepArtifacts({
@@ -1802,6 +1886,27 @@ async function runSingleStep(
 		writerAttemptCount,
 	});
 	return isAgentContractV1(step.agentContract) ? attachContractProjections(result as unknown as import("../../shared/types.ts").SingleResult) as unknown as typeof result : result;
+}
+
+async function runSingleStep(
+	step: SubagentStep,
+	ctx: SingleStepContext,
+): Promise<StepResult & { completionGuardTriggered?: boolean }> {
+	if (step.importAsyncRoot) return runSingleStepInner(step, ctx);
+	const orcaProgressTab = createOrcaProgressTab({
+		cwd: step.cwd ?? ctx.cwd,
+		runId: ctx.id,
+		agent: step.agent,
+		index: ctx.flatIndex,
+	});
+	try {
+		const result = await runSingleStepInner(step, { ...ctx, orcaProgressTab });
+		orcaProgressTab?.finish(result.stopped ? "stopped" : result.exitCode === 0 && !result.error ? "completed" : "failed", result.sessionFile);
+		return result;
+	} catch (error) {
+		orcaProgressTab?.finish("failed");
+		throw error;
+	}
 }
 
 type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
@@ -2028,6 +2133,7 @@ async function runSingleStepWithTimeout(
 		return await runSingleStep(step, {
 			...ctx,
 			registerTimeout,
+			deadlineAt: Date.now() + timeoutMs,
 			timeoutSignal: combinedAbortSignal([ctx.timeoutSignal, timeoutController.signal]),
 			timeoutMessage,
 		});
@@ -2222,7 +2328,7 @@ async function runSubagent(
 
 	fs.mkdirSync(asyncDir, { recursive: true });
 	writeAtomicJson(statusPath, statusPayload);
-	updateActiveRunIndex(asyncDir, statusPayload.state);
+	updateActiveRunIndex(asyncDir, statusPayload.state, statusPayload.toolCallId);
 	let pendingParallelUsageCost: CostSummary = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
 	const currentUsageTotals = (): CostSummary => {
 		const cost = results.reduce<CostSummary>((sum, result) => ({
@@ -2295,13 +2401,70 @@ async function runSubagent(
 		for (const node of graph.nodes) updateNode(node);
 		statusPayload.workflowGraph = graph;
 	};
+	let finalResultCommitted = false;
 	let lastIndexedActiveState = isActiveAsyncState(statusPayload.state);
+	const statusResultState = (): AsyncStatus["state"] | undefined => {
+		if (statusPayload.state === "running" || statusPayload.state === "queued") return undefined;
+		if (statusPayload.state === "paused" && statusPayload.checkpoint?.status === "pending") return undefined;
+		return statusPayload.state;
+	};
+	const statusResultSummary = (state: AsyncStatus["state"]): string => {
+		if (statusPayload.error) return statusPayload.error;
+		if (state === "paused") return "Paused after interrupt. Waiting for explicit next action.";
+		if (state === "stopped") return stopMessage;
+		if (state === "rejected") return statusPayload.checkpoint?.name ? `Checkpoint '${statusPayload.checkpoint.name}' rejected.` : "Subagent rejected.";
+		return state === "complete" ? "Subagent completed." : "Subagent failed.";
+	};
+	const statusResultSuccess = (state: AsyncStatus["state"], step: RunnerStatusStep): boolean | undefined => {
+		if (step.status === "complete" || step.status === "completed") return true;
+		if (step.status === "failed" || step.status === "stopped" || step.status === "rejected") return false;
+		if (state === "complete") return true;
+		if (state === "failed" || state === "stopped" || state === "rejected") return false;
+		return undefined;
+	};
+	const writeRecoverableStatusResult = (): void => {
+		const state = statusResultState();
+		if (!state || finalResultCommitted || !config.sessionId) return;
+		const now = statusPayload.endedAt ?? statusPayload.lastUpdate ?? Date.now();
+		const summary = statusResultSummary(state);
+		writePendingAsyncResultFile(resultPath, omitUndefinedProperties({
+			lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+			id,
+			runId: id,
+			agent: statusPayload.steps.length === 1 ? statusPayload.steps[0]!.agent : statusPayload.mode === "parallel" ? `parallel:${statusPayload.steps.map((step) => step.agent).join("+")}` : `chain:${statusPayload.steps.map((step) => step.agent).join("->")}`,
+			mode: statusPayload.mode,
+			success: state === "complete",
+			state,
+			summary,
+			error: state === "failed" || state === "stopped" || state === "rejected" ? summary : undefined,
+			stopped: state === "stopped" ? true : undefined,
+			checkpoint: statusPayload.checkpoint,
+			results: statusPayload.steps.map((step) => omitUndefinedProperties({
+				agent: step.agent,
+				output: step.status === "complete" || step.status === "completed" ? "" : step.error ?? summary,
+				error: step.error,
+				success: statusResultSuccess(state, step),
+				sessionFile: step.sessionFile,
+				model: step.model,
+				attemptedModels: step.attemptedModels,
+				modelAttempts: step.modelAttempts,
+			})),
+			exitCode: state === "complete" || state === "paused" ? 0 : 1,
+			timestamp: now,
+			durationMs: Math.max(0, now - overallStartTime),
+			asyncDir,
+			cwd,
+			sessionId: config.sessionId,
+			sessionFile: statusPayload.sessionFile ?? latestSessionFile,
+		}));
+	};
 	const writeStatusPayloadNow = (): void => {
 		refreshWorkflowGraph();
+		writeRecoverableStatusResult();
 		writeAtomicJson(statusPath, statusPayload);
 		const activeState = isActiveAsyncState(statusPayload.state);
-		if (activeState && activeState !== lastIndexedActiveState) {
-			updateActiveRunIndex(asyncDir, statusPayload.state);
+		if (activeState !== lastIndexedActiveState) {
+			updateActiveRunIndex(asyncDir, statusPayload.state, statusPayload.toolCallId);
 		}
 		lastIndexedActiveState = activeState;
 		emitNestedSelfEvent(statusPayload.state === "running" || statusPayload.state === "queued" ? "subagent.nested.updated" : "subagent.nested.completed");
@@ -2546,6 +2709,72 @@ async function runSubagent(
 	const activeLongRunningSteps = new Set<number>();
 	const mutatingFailureStates = initialStatusSteps.map(() => createMutatingFailureState());
 	const pendingToolResults: Array<{ tool: string; path?: string; mutates: boolean; startedAt?: number } | undefined> = initialStatusSteps.map(() => undefined);
+	type ActiveToolCall = { key: string; tool: string; args: string; startedAt: number; path?: string; blocksSupervisor: boolean };
+	const activeToolCalls = initialStatusSteps.map(() => new Map<string, ActiveToolCall>());
+	const activeToolKeysByName = initialStatusSteps.map(() => new Map<string, string[]>());
+	const activeToolSequences = initialStatusSteps.map(() => 0);
+	const latestActiveToolCall = (flatIndex: number): ActiveToolCall | undefined => [...(activeToolCalls[flatIndex]?.values() ?? [])].sort((left, right) => right.startedAt - left.startedAt)[0];
+	const refreshStepCurrentTool = (flatIndex: number): void => {
+		const step = statusPayload.steps[flatIndex];
+		if (!step) return;
+		const active = latestActiveToolCall(flatIndex);
+		if (!active) {
+			delete step.currentTool;
+			delete step.currentToolArgs;
+			delete step.currentToolStartedAt;
+			delete step.currentPath;
+			return;
+		}
+		step.currentTool = active.tool;
+		step.currentToolArgs = active.args;
+		step.currentToolStartedAt = active.startedAt;
+		setOptionalProperty(step, "currentPath", active.path);
+	};
+	const recordActiveToolCall = (flatIndex: number, event: { toolCallId?: unknown; toolName: string }, input: { argsPreview: string; currentPath?: string; blocksSupervisor: boolean; now: number }): ActiveToolCall => {
+		const sequence = (activeToolSequences[flatIndex] ?? 0) + 1;
+		activeToolSequences[flatIndex] = sequence;
+		const key = toolTimeoutCallKey(event, sequence);
+		const active: ActiveToolCall = {
+			key,
+			tool: event.toolName,
+			args: input.argsPreview,
+			startedAt: input.now,
+			blocksSupervisor: input.blocksSupervisor,
+			...(input.currentPath !== undefined ? { path: input.currentPath } : {}),
+		};
+		activeToolCalls[flatIndex]?.set(key, active);
+		const keysByName = activeToolKeysByName[flatIndex];
+		const keys = keysByName?.get(active.tool) ?? [];
+		keys.push(key);
+		keysByName?.set(active.tool, keys);
+		refreshStepCurrentTool(flatIndex);
+		return active;
+	};
+	const removeActiveToolCallKey = (flatIndex: number, key: string): ActiveToolCall | undefined => {
+		const calls = activeToolCalls[flatIndex];
+		const active = calls?.get(key);
+		if (!active) return undefined;
+		calls?.delete(key);
+		const keysByName = activeToolKeysByName[flatIndex];
+		const keys = keysByName?.get(active.tool)?.filter((candidate) => candidate !== key) ?? [];
+		if (keys.length > 0) keysByName?.set(active.tool, keys);
+		else keysByName?.delete(active.tool);
+		return active;
+	};
+	const removeActiveToolCall = (flatIndex: number, event: { toolCallId?: unknown; toolName?: unknown }): ActiveToolCall | undefined => {
+		const calls = activeToolCalls[flatIndex];
+		const key = typeof event.toolCallId === "string" && event.toolCallId.length > 0
+			? `id:${event.toolCallId}`
+			: typeof event.toolName === "string"
+				? activeToolKeysByName[flatIndex]?.get(event.toolName)?.[0]
+				: calls?.size === 1
+					? [...calls.keys()][0]
+					: undefined;
+		return key ? removeActiveToolCallKey(flatIndex, key) : undefined;
+	};
+	const openToolAttentionTarget = (flatIndex: number, now: number): ActiveToolCall | undefined => [...(activeToolCalls[flatIndex]?.values() ?? [])]
+		.filter((active) => shouldEmitOpenToolAttention({ config: controlConfig, currentTool: active.tool, currentToolStartedAt: active.startedAt, now }))
+		.sort((left, right) => left.startedAt - right.startedAt)[0];
 	const supervisorAttentionSteps = new Map<number, ActivityState | undefined>();
 	const mutatingFailureWindowMs = 5 * 60_000;
 	const appendControlEvent = (event: ReturnType<typeof buildControlEvent>) => {
@@ -2585,6 +2814,34 @@ async function runSubagent(
 				: undefined;
 		currentActivityState = nextRunState;
 		setOptionalProperty(statusPayload, "activityState", nextRunState);
+	};
+	const maybeEmitOpenToolAttention = (flatIndex: number, now: number): boolean => {
+		const step = statusPayload.steps[flatIndex];
+		if (!step || step.status !== "running" || step.activityState === "needs_attention") return false;
+		const target = openToolAttentionTarget(flatIndex, now);
+		if (!target) return false;
+		const previous = step.activityState;
+		step.activityState = "needs_attention";
+		statusPayload.activityState = "needs_attention";
+		const toolDurationMs = Math.max(0, now - target.startedAt);
+		appendControlEvent(buildControlEvent(omitUndefinedProperties({
+			type: "needs_attention",
+			from: previous,
+			to: "needs_attention",
+			runId: id,
+			agent: step.agent,
+			index: flatIndex,
+			ts: now,
+			message: `${step.agent} has had tool '${target.tool}' open for ${Math.floor(toolDurationMs / 1000)}s`,
+			reason: "tool_open_threshold",
+			turns: step.turnCount,
+			tokens: step.tokens?.total,
+			toolCount: step.toolCount,
+			currentTool: target.tool,
+			currentToolDurationMs: toolDurationMs,
+			currentPath: target.path,
+		})));
+		return true;
 	};
 	const maybeEmitActiveLongRunning = (flatIndex: number, now: number): boolean => {
 		if (!controlConfig.enabled || activeLongRunningSteps.has(flatIndex)) return false;
@@ -2846,20 +3103,19 @@ async function runSubagent(
 		if (event.type === "tool_execution_start" && event.toolName) {
 			const mutates = isMutatingTool(event.toolName, event.args);
 			const currentPath = resolveCurrentPath(event.toolName, event.args);
+			const argsPreview = extractToolArgsPreview(event.args ?? {});
+			const blocksSupervisor = isBlockingSupervisorTool(event.toolName, event.args);
 			step.toolCount = (step.toolCount ?? 0) + 1;
 			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
 			if (configuredToolBudget) {
 				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount);
 				statusPayload.toolBudget = step.toolBudget;
 			}
-			step.currentTool = event.toolName;
-			step.currentToolArgs = extractToolArgsPreview(event.args ?? {});
-			step.currentToolStartedAt = now;
-			setOptionalProperty(step, "currentPath", currentPath);
+			recordActiveToolCall(flatIndex, { toolCallId: (event as { toolCallId?: unknown }).toolCallId, toolName: event.toolName }, { argsPreview, currentPath, blocksSupervisor, now });
 			pendingToolResults[flatIndex] = omitUndefinedProperties({ tool: event.toolName, path: currentPath, mutates, startedAt: now });
 			statusPayload.toolCount = (statusPayload.toolCount ?? 0) + 1;
 			syncTopLevelCurrentTool();
-			if (controlConfig.enabled && isBlockingSupervisorTool(event.toolName, event.args) && step.activityState !== "needs_attention") {
+			if (controlConfig.enabled && blocksSupervisor && step.activityState !== "needs_attention") {
 				const previous = step.activityState;
 				step.activityState = "needs_attention";
 				supervisorAttentionSteps.set(flatIndex, previous);
@@ -2884,16 +3140,15 @@ async function runSubagent(
 				})));
 			}
 		} else if (event.type === "tool_execution_end") {
-			if (step.currentTool) {
+			const endedTool = removeActiveToolCall(flatIndex, event);
+			if (endedTool) {
 				step.recentTools ??= [];
-				step.recentTools.push({ tool: step.currentTool, args: step.currentToolArgs || "", endMs: now });
+				step.recentTools.push({ tool: endedTool.tool, args: endedTool.args, endMs: now });
 			}
+			refreshStepCurrentTool(flatIndex);
 			const supervisorPreviousActivity = supervisorAttentionSteps.get(flatIndex);
-			const clearedSupervisorAttention = supervisorAttentionSteps.delete(flatIndex);
-			delete step.currentTool;
-			delete step.currentToolArgs;
-			delete step.currentToolStartedAt;
-			delete step.currentPath;
+			const stillBlockingSupervisor = [...(activeToolCalls[flatIndex]?.values() ?? [])].some((active) => active.blocksSupervisor);
+			const clearedSupervisorAttention = endedTool?.blocksSupervisor && !stillBlockingSupervisor ? supervisorAttentionSteps.delete(flatIndex) : false;
 			if (clearedSupervisorAttention && step.activityState === "needs_attention") {
 				setOptionalProperty(step, "activityState", supervisorPreviousActivity);
 				syncAggregateActivityState();
@@ -3013,6 +3268,8 @@ async function runSubagent(
 					})));
 					changed = true;
 				}
+			} else if (maybeEmitOpenToolAttention(index, now)) {
+				changed = true;
 			} else if (maybeEmitActiveLongRunning(index, now)) {
 				changed = true;
 			}
@@ -3575,6 +3832,7 @@ async function runSubagent(
 					timeoutMessage,
 					stopMessage,
 					turnBudget: config.turnBudget,
+					toolTimeoutMs: task.toolTimeoutMs ?? config.toolTimeoutMs,
 					onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 					onChildEvent: (event) => updateStepFromChildEvent(fi, event),
 					onWriterProcess,
@@ -3958,6 +4216,7 @@ async function runSubagent(
 							timeoutMessage,
 							stopMessage,
 							turnBudget: config.turnBudget,
+							toolTimeoutMs: taskForRun.toolTimeoutMs ?? config.toolTimeoutMs,
 							onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
 							onWriterProcess,
@@ -4248,6 +4507,7 @@ async function runSubagent(
 				timeoutMessage,
 				stopMessage,
 				turnBudget: config.turnBudget,
+				toolTimeoutMs: seqStep.toolTimeoutMs ?? config.toolTimeoutMs,
 				onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking),
 				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
 				onWriterProcess,
@@ -4545,9 +4805,8 @@ async function runSubagent(
 			statusPayload.error = `Step failed: ${failedStep.agent}`;
 		}
 	}
-	writeStatusPayload();
 	try {
-		writeAtomicJson(resultPath, {
+		writeAsyncResultFile(resultPath, {
 			lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 			id,
 			agent: agentName,
@@ -4642,9 +4901,15 @@ async function runSubagent(
 			...(taskIndex !== undefined && { taskIndex }),
 			...(totalTasks !== undefined && { totalTasks }),
 		});
+		finalResultCommitted = true;
 	} catch (err) {
-		console.error(`Failed to write result file ${resultPath}:`, err);
+		const message = `Failed to write result file ${resultPath}: ${err instanceof Error ? err.message : String(err)}`;
+		console.error(message, err);
+		statusPayload.state = "failed";
+		statusPayload.error = message;
+		statusPayload.lastUpdate = Date.now();
 	}
+	writeStatusPayload();
 	appendJsonl(
 		eventsPath,
 		JSON.stringify({

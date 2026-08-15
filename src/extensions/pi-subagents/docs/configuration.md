@@ -44,6 +44,61 @@ Defaults to `false`. The default registered model-facing tool schema and descrip
 
 Controls the `subagent` tool result shown inline in chat. The default, `"rich"`, shows live child activity and expands to detailed output. `"summary"` keeps the inline result at one stable row for running, completed, failed, stopped, and paused runs; it does not animate, show elapsed time, preview child output, or change when Selesai's expand key is pressed. FleetView remains available for live progress and detailed inspection.
 
+## `mainWindowRenderer`
+
+```json
+{
+  "mainWindowRenderer": {
+    "horizontalSpacing": 0,
+    "compactResultMaxLines": 4
+  }
+}
+```
+
+Controls only the main chat `subagent` call/result renderer. It does not change child execution, orchestration, FleetView, artifacts, transcripts, or model-facing content.
+
+`horizontalSpacing` is an integer from `0` to `4`. The default preserves current spacing. Set it to `0` to remove the extra spaces before compact result details and between parts of the call row.
+
+`compactResultMaxLines` is a positive integer. It caps only collapsed rich-result rows and adds an expand hint when rows are hidden. Expanded output remains uncapped.
+
+With `"summary"`, a tool result looks like this:
+
+```text
+✓ reviewer · completed
+```
+
+## `foregroundDetachShortcut`
+
+```json
+{ "foregroundDetachShortcut": "ctrl+b" }
+```
+
+Optionally binds a shortcut that detaches the active foreground single-subagent run without terminating it. The running foreground card shows the configured shortcut beside its live-detail hint. The default is unset, so pi-subagents does not reserve a global key.
+
+Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes precedence, but Selesai reports the conflict at startup. To reserve the key without that warning, override the editor action in `~/.selesai/agent/keybindings.json`:
+
+```json
+{
+  "tui.editor.cursorLeft": "left"
+}
+```
+
+## `orcaProgressTabs` (experimental)
+
+```json
+{
+  "orcaProgressTabs": {
+    "enabled": true
+  }
+}
+```
+
+Opt in to a best-effort Orca observer that creates one Orca terminal tab for each subagent child and mirrors its live tool, assistant, stdout, and stderr progress. Tab titles use a persistent worktree-local sequence (`subagent · <agent> · 1`, `... · 2`, and so on), so separate workflows and concurrent children do not reuse the same number. This does **not** replace Selesai as the child runner: native Selesai children keep the same process, lifecycle, status, control, artifact, and result paths. External CLI profiles also keep their existing runner and can mirror their stdout/stderr.
+
+The integration is off by default and supports macOS and Linux. It is disabled on Windows. When enabled, `pi-subagents` looks for executable `orca` on `PATH`, or uses the executable path in `SELESAI_SUBAGENT_ORCA_BINARY`. If no executable is available, Orca is not running, the cwd is not an Orca-managed worktree, or `terminal create` fails, the authoritative subagent still runs normally. Tab creation is deliberately best-effort and never changes the child result.
+
+Set `enabled` to `false` (or remove the block) as a kill switch. In that state, `pi-subagents` does not invoke `orca` and creates no Orca tabs. The temporary mirror files contain child output, use private file modes where supported, and are removed shortly after the child finishes. Each mirror is capped at 1 MiB. The observer stops accepting progress when the cap or stream backpressure is reached and appends a truncation notice. The viewer removes terminal control sequences with parser state that persists across file reads. On completion, the viewer exits back to the Orca terminal's shell prompt; the tab and its terminal scrollback remain open until the user closes the tab. A successfully completed native Selesai child with a recorded session ends with a safely quoted `rm -- <exact-session-path>` command; failed, stopped, timed-out, and sessionless children do not show the removal command.
+
 ## `asyncByDefault`
 
 ```json
@@ -127,6 +182,18 @@ Use it when foreground orchestration or plain async single-agent runs need a lon
 
 Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design. Their runner children are bounded individually by their own agent or runner defaults, so this value does not cap them. Must be a positive integer no greater than `2147483647` (the largest delay a Node.js timer can honor, roughly 24.8 days); invalid or out-of-range values are ignored and the built-in defaults apply.
 
+## `toolTimeoutMs`
+
+```json
+{ "toolTimeoutMs": 600000 }
+```
+
+Optional hard per-tool-call deadline in milliseconds. When configured, a child that emits `tool_execution_start` but not `tool_execution_end` is terminated with `timedOut: true` and a tool-specific error. The effective value is resolved per child: explicit `subagent` call value, then agent frontmatter, then this config value, then `SELESAI_SUBAGENT_TOOL_TIMEOUT_MS`.
+
+Without a configured value, Selesai still applies a five-minute hard timeout to known-fast built-in tools: `read`, `grep`, `find`, `ls`, `edit`, `write`, and `structured_output`. Long-running tools such as `bash`, custom tools, and MCP tools do not get a hard default. They get the normal open-tool attention notice after `activeNoticeAfterMs` and remain bounded by the run-level deadline.
+
+The tool timer tracks each active `toolCallId` separately and never extends the run-level deadline: when the remaining run budget is shorter, the ordinary run-level timeout wins. `contact_supervisor`, `intercom`, and `subagent_wait` are exempt because their legitimate purpose can be to wait for a human, supervisor, or child run. Use hard tool timeouts only for wedge protection; an elapsed timeout is not a mutation-safe boundary. Configured values must be positive integers no greater than `2147483647`; invalid or out-of-range values are rejected with a visible error rather than silently ignored.
+
 ## `globalConcurrencyLimit`
 
 ```json
@@ -154,14 +221,6 @@ Optionally caps the total number of child subagent launches during one parent se
 Caps cumulative logical child admissions in one top-level run tree. The default is `64`. `SELESAI_SUBAGENT_MAX_SPAWNS_PER_RUN` overrides the config when it is a positive integer. Invalid, zero, or missing values fall back to the configured positive value or `64`.
 
 The budget counts single launches, expanded `tasks`/`count`, static chain steps and parallel groups, actual dynamic `expand` items, appended chain steps, workflow children, and nested child calls. Static and materialized dynamic groups are admitted atomically. Startup retries, model fallback, and retained-child resume reuse the original logical child claim. Claims are never released or refunded. This cap is independent from the session-wide cumulative spawn budget and `globalConcurrencyLimit`.
-
-## `maxWorkflowAutoRelaunches`
-
-```json
-{ "maxWorkflowAutoRelaunches": 12 }
-```
-
-Maximum automatic relaunches when an async scripted workflow ends with a fan-out `budget` result before the goal is clean. Each relaunch re-runs the same `workflowScript` as a fresh top-level run with a new fan-out budget, the same mission, and the same progress file, so the loop keeps building until the commentator reports clean. Defaults to 12; `0` means unlimited. When the cap is reached, the workflow completes as `failed` with a note to raise the cap or relaunch manually. Foreground workflows are unaffected — their budget results surface to the parent inline.
 
 ## `maxActiveAsyncRunsPerSession`
 
@@ -244,7 +303,7 @@ Overrides the command used to launch child Selesai processes. Package wrappers c
 export SELESAI_SUBAGENT_TASK_DELIVERY=file   # auto | file (default: auto)
 ```
 
-Controls how the task text reaches the child Pi process. `auto` (default) passes short tasks as an inline argv token and writes tasks longer than 8000 characters to a temp `task.md` referenced as `@<path>`. `file` always uses a temp file, keeping the task out of argv entirely.
+Controls how the task text reaches the child Selesai process. `auto` (default) passes short tasks as an inline argv token and writes tasks longer than 8000 characters to a temp `task.md` referenced as `@<path>`. `file` always uses a temp file, keeping the task out of argv entirely.
 
 Use `file` on hosts where endpoint protection (EDR) pre-execution scanning denies child processes whose command line embeds a long natural-language task — that denial surfaces as an immediate zero-activity `SIGKILL`. Independently of this setting, startup retries automatically escalate to file delivery after an unexplained zero-activity `SIGKILL`. Empty, whitespace-only, or unrecognized values fall back to `auto`.
 
@@ -260,7 +319,7 @@ Use `file` on hosts where endpoint protection (EDR) pre-execution scanning denie
 }
 ```
 
-Controls whether subagents receive runtime intercom coordination instructions and whether `intercom` and `contact_supervisor` are auto-added to their tool allowlist when needed.
+Controls whether subagents receive runtime coordination instructions and whether `contact_supervisor` is auto-added to their tool allowlist when needed.
 
 Fields:
 
@@ -268,9 +327,9 @@ Fields:
 - `instructionFile`: optional Markdown template replacing the default bridge instructions. `{orchestratorTarget}` is interpolated. Relative paths resolve from `~/.selesai/agent/extensions/subagent/`.
 - `resultDelivery`: default `false`; set `true` only when an external listener consumes `subagent:result-intercom` and acknowledges the grouped completion payload. This is optional external result delivery, not native supervisor messaging. Enabled delivery waits for acknowledgement and reports acknowledgement failures. It does not change supervisor asks or progress updates.
 
-Bridge activation requires a targetable current parent session id, which `pi-subagents` passes to children automatically. Native supervisor messaging does not require an external `pi-intercom` installation or per-agent extension allowlists: children use `contact_supervisor`, and parents use `subagent_supervisor` to inspect or reply. The external `intercom` tool is fallback plumbing when present.
+Bridge activation requires a targetable current parent session id, which `pi-subagents` passes to children automatically. Native supervisor messaging does not require an external `pi-intercom` installation or per-agent extension allowlists: children use `contact_supervisor`, and parents use `subagent_supervisor` to inspect or reply. Agents can still use an external `intercom` tool when they explicitly request a provider that supplies it.
 
-The default injected guidance tells children to use `contact_supervisor` with `reason: "need_decision"` when blocked or needing a decision, `reason: "progress_update"` only for meaningful blocked/progress updates, generic `intercom` as fallback plumbing, and avoid routine completion handoffs.
+The default injected guidance tells children to use `contact_supervisor` with `reason: "need_decision"` when blocked or needing a decision, `reason: "progress_update"` only for meaningful blocked/progress updates, and avoid routine completion handoffs.
 
 ## `worktreeBaseDir`
 
@@ -305,7 +364,6 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 {
   "missions": {
     "enabled": true,
-    "directory": ".pi-subagents/missions",
     "globalIndex": true,
     "retainTerminal": 200
   }
@@ -314,7 +372,8 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 
 Automatic missions are enabled by default for ordinary launches with a task. Use per-launch `mission: false` for intentionally ephemeral work, or set `enabled: false` to disable automatic creation globally; explicit mission actions and `missionId`/`mission` launch fields still work.
 
-- `directory` may be absolute, `~/...`, or project-relative.
+- Mission records default to a project-keyed directory under pi's agent directory (`~/.selesai/agent/missions/projects/<project-hash>/`). This keeps the project worktree clean.
+- `directory` may be absolute, `~/...`, or project-relative. Set it to `.pi-subagents/missions` to opt in to project-scoped records.
 - `retainTerminal` is a positive count (default `200`); pruning removes only the oldest completed, failed, or cancelled records and their pointers, never planned, active, waiting, needs-decision, or corrupt records.
 - The user-global index contains pointers only; missing-record pointers self-heal when globally listed. Set `globalIndex: false` to disable writes or `globalIndexDir` to redirect it.
 
@@ -343,11 +402,11 @@ Each fixed action resolves to `"auto"`, `"confirm"`, or `"forbid"`. This is inte
 
 Controls where subagent artifact files (inputs, outputs, transcripts, metadata) are stored:
 
-- `"project"` (default): writes to `<cwd>/.pi-subagents/artifacts/`.
-- `"session"`: stores artifacts under pi's session directory (`~/.selesai/agent/sessions/<session>/subagent-artifacts/`), keeping the working directory clean.
+- `"project"`: writes to `<cwd>/.pi-subagents/artifacts/`.
+- `"session"` (default): stores artifacts under pi's session directory (`~/.selesai/agent/sessions/<session>/subagent-artifacts/`), keeping the working directory clean. It falls back to the OS temp directory when no session file exists.
 - `"temp"`: uses the OS temp directory.
 
-This preference also controls the default chain scratch directory. `"project"` uses `<cwd>/.pi-subagents/chain-runs/`, while `"session"` and `"temp"` use the user-scoped temp chain directory.
+This preference also controls the default chain scratch directory. `"project"` uses `<cwd>/.pi-subagents/chain-runs/`, while the default `"session"` and `"temp"` use the user-scoped temp chain directory.
 
 The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically. Temporary chain directories are cleaned up separately after 24 hours.
 

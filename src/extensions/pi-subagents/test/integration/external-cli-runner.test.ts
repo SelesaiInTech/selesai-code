@@ -40,6 +40,7 @@ describe("external CLI async lifecycle", () => {
 			}],
 			resultPath,
 			cwd: dir,
+			sessionId: "session-external",
 			placeholder: "{previous}",
 			artifactConfig: { enabled: false },
 			asyncDir,

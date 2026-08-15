@@ -4,7 +4,7 @@ import { createRequire, syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { cleanupCompletionReplay, completionArchivePath, readCompletionArchive, readCompletionReplay, writeCompletionArchive } from "../../src/runs/background/completion-replay.ts";
+import { cleanupCompletionReplay, completionArchivePath, completionReplayPath, readCompletionArchive, readCompletionReplay, writeCompletionReplay, writeCompletionArchive } from "../../src/runs/background/completion-replay.ts";
 import { utf8Tail } from "../../src/shared/utf8.ts";
 import { collectWaitCompletions, recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import type { AsyncRunSummary } from "../../src/runs/background/async-status.ts";
@@ -156,6 +156,46 @@ describe("completion replay", () => {
 			assert.equal(fs.existsSync(archivePath), true);
 		} finally {
 			fsCjs.rmSync = originalRmSync;
+			syncBuiltinESMExports();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("throttles cleanup while writing completion replay records", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-completion-replay-throttle-"));
+		const originalReaddirSync = fsCjs.readdirSync;
+		let cleanupScans = 0;
+		try {
+			fsCjs.readdirSync = ((target: Parameters<typeof fs.readdirSync>[0], options?: Parameters<typeof fs.readdirSync>[1]) => {
+				if (String(target).includes(`${path.sep}completion-replay`)) cleanupScans += 1;
+				return originalReaddirSync(target, options as never);
+			}) as typeof fs.readdirSync;
+			syncBuiltinESMExports();
+
+			writeCompletionReplay({
+				resultsDir: root,
+				runId: "run-a",
+				sessionId: "session-a",
+				completion: { runId: "run-a" },
+				data: { summary: "done" },
+				now: 10_000,
+				ttlMs: 60_000,
+			});
+			writeCompletionReplay({
+				resultsDir: root,
+				runId: "run-b",
+				sessionId: "session-a",
+				completion: { runId: "run-b" },
+				data: { summary: "done" },
+				now: 10_001,
+				ttlMs: 60_000,
+			});
+
+			assert.equal(cleanupScans, 1);
+			assert.equal(fs.existsSync(completionReplayPath(root, "run-a")), true);
+			assert.equal(fs.existsSync(completionReplayPath(root, "run-b")), true);
+		} finally {
+			fsCjs.readdirSync = originalReaddirSync;
 			syncBuiltinESMExports();
 			fs.rmSync(root, { recursive: true, force: true });
 		}

@@ -93,7 +93,7 @@ const AcceptanceOverride = Type.Unsafe({
 });
 
 const AgentContractOverride = Type.Object({
-	version: Type.Integer({ enum: [1], description: "Enable compatibility behavior for this run/child." }),
+	version: Type.Integer({ minimum: 1, maximum: 1, description: "Enable compatibility behavior for this run/child." }),
 }, { additionalProperties: false, description: "Compatibility behavior. Omit for the default behavior." });
 
 const ChainGateOverride = Type.String({
@@ -255,22 +255,22 @@ const ControlOverrides = Type.Object({
 });
 
 const SubagentParamProperties = {
-	agent: Type.Optional(Type.String({ description: "Agent target for management actions such as get, update, delete, and models." })),
-	task: Type.Optional(Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" })),
+	agent: Type.Optional(Type.String({ description: "Agent for one-child execution, or target for agent management actions." })),
+	task: Type.Optional(Type.String({ description: "Optional one-child task. Requires agent; cannot combine with action or workflowScript." })),
 	resume: Type.Optional(Type.String({ description: "Retained child run id for a workflowScript runs.run/runs.all item. Mutually exclusive with agent; task supplies the follow-up." })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({ minLength: 1,
-		description: "Optional management/control action. Omit this field for workflowScript execution; use it only for management/control actions."
+		description: "Optional management/control action. Omit this field for structured single-child or workflowScript execution; use it only for management/control actions."
 	})),
 	name: Type.Optional(Type.String({ description: "Human-readable name for action='schedule.create'." })),
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for status, interrupt, stop, dismiss, resume, steer, append-step, approve-checkpoint, reject-checkpoint, mission.attach-run, or the decision id for mission.resolve-decision."
+		description: "Run id/prefix for status/debug.run, interrupt, steer, append-step, approve-checkpoint, reject-checkpoint, or mission."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for interrupt, stop, dismiss, resume, steer, append-step, approve-checkpoint, reject-checkpoint, or mission.attach-run. Prefer id for new calls."
+		description: "Target run ID for debug.run, interrupt, steer, append-step, or mission.attach-run. Prefer id."
 	})),
 	dir: Type.Optional(Type.String({
-		description: "Async run directory for action='status', action='stop', action='resume', or action='steer'."
+		description: "Async run directory for status/debug.run, stop, resume, or steer."
 	})),
 	handoffPath: Type.Optional(Type.String({ description: "worktree.discard manifest." })),
 	index: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based child index for actions that target a specific child or transcript." })),
@@ -339,6 +339,7 @@ const SubagentParamProperties = {
 	clarify: Type.Optional(Type.Boolean({ description: "Show TUI to preview/edit before execution. Explicit clarify: true keeps the run foreground for the clarify UI; omitted clarify can still run in the background when async: true is set." })),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Timeout. Foreground and single async runs use config timeoutMs, else 30m; async composites have no default parent deadline. Alias maxRuntimeMs." })),
 	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias timeoutMs. Foreground and single async runs use config timeoutMs, else 30m; async composites have no default parent deadline." })),
+	toolTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Optional hard per-tool-call timeout in milliseconds; known-fast built-in tools have a five-minute default." })),
 	turnBudget: Type.Optional(TurnBudgetOverride),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	usageBudget: Type.Optional(UsageBudgetOverride),
@@ -372,10 +373,10 @@ const { step: _legacyChainStep, ...subagentParamPropertiesWithoutStep } = Subage
 const trimmedSubagentParamProperties = {
 	...subagentParamPropertiesWithoutStep,
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for status, interrupt, stop, resume, steer, mission.attach-run, or the decision id for mission.resolve-decision."
+		description: "Run id/prefix for status/debug.run, interrupt, steer, or mission.attach-run."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for interrupt, stop, resume, steer, or mission.attach-run. Prefer id for new calls."
+		description: "Target run ID for debug.run, interrupt, steer, or mission.attach-run. Prefer id."
 	})),
 };
 const SubagentParamsSchema = Type.Object(SubagentParamProperties);

@@ -80,6 +80,50 @@ test("multiline rendering omits two-column graphemes at one-column width", () =>
 	}
 });
 
+test("running single-subagent cards show the configured detach shortcut", () => {
+	const running = {
+		...result("reviewer", ""),
+		progress: { status: "running", index: 0, agent: "reviewer", toolCount: 0, tokens: 0, durationMs: 0 },
+	};
+	const toolResult = {
+		content: [{ type: "text", text: "running" }],
+		details: { mode: "single", results: [running] },
+	};
+
+	const configured = componentText(renderSubagentResult(
+		toolResult as never,
+		{ expanded: false },
+		theme as any,
+		undefined,
+		undefined,
+		"ctrl+b",
+	));
+	assert.match(configured, /Ctrl\+B to run in background/);
+
+	const unconfigured = componentText(renderSubagentResult(toolResult as never, { expanded: false }, theme as any));
+	assert.doesNotMatch(unconfigured, /run in background/);
+
+	const alreadyBackground = componentText(renderSubagentResult(
+		{ ...toolResult, details: { ...toolResult.details, asyncId: "async-123" } } as never,
+		{ expanded: false },
+		theme as any,
+		undefined,
+		undefined,
+		"ctrl+b",
+	));
+	assert.doesNotMatch(alreadyBackground, /run in background/);
+
+	const pendingBackground = componentText(renderSubagentResult(
+		{ ...toolResult, details: { ...toolResult.details, background: true } } as never,
+		{ expanded: false },
+		theme as any,
+		undefined,
+		undefined,
+		"ctrl+b",
+	));
+	assert.doesNotMatch(pendingBackground, /run in background/);
+});
+
 test("compact chain rendering uses workflow graph spans for dynamic fanout results", () => {
 	const component = renderSubagentResult({
 		content: [{ type: "text", text: "done" }],
@@ -237,4 +281,52 @@ test("static sequential and static parallel chain rendering keep existing labels
 	assert.match(parallel, /Agent 1\/2: reviewer/);
 	assert.match(parallel, /Agent 2\/2: auditor/);
 	assert.match(parallel, /Step 3: writer/);
+});
+
+test("main-window renderer config removes compact result indentation without changing status glyphs", () => {
+	const component = renderSubagentResult({
+		content: [{ type: "text", text: "done" }],
+		details: {
+			mode: "parallel",
+			results: [result("scout", "a"), { ...result("reviewer", ""), exitCode: 1, error: "failed" }],
+		},
+	}, { expanded: false }, theme as any, undefined, { horizontalSpacing: 0 });
+
+	const text = componentText(component);
+	assert.match(text, /^✗ parallel/m);
+	assert.match(text, /^✓ Agent 1\/2: scout/m);
+	assert.match(text, /^✗ Agent 2\/2: reviewer/m);
+	assert.match(text, /^⎿  Error: failed/m);
+});
+
+test("main-window renderer config caps only collapsed rich result rows", () => {
+	const rendered = renderSubagentResult({
+		content: [{ type: "text", text: "done" }],
+		details: {
+			mode: "parallel",
+			results: [
+				result("scout", "a"),
+				result("reviewer", "b"),
+				result("writer", "c"),
+			],
+		},
+	}, { expanded: false }, theme as any, undefined, { compactResultMaxLines: 3 }).render(120);
+
+	assert.equal(rendered.length, 3);
+	assert.match(rendered[2]!, /rows hidden/);
+
+	const expanded = renderSubagentResult({
+		content: [{ type: "text", text: "done" }],
+		details: {
+			mode: "parallel",
+			results: [
+				result("scout", "a"),
+				result("reviewer", "b"),
+				result("writer", "c"),
+			],
+		},
+	}, { expanded: true }, theme as any, undefined, { compactResultMaxLines: 3 }).render(120);
+
+	assert.ok(expanded.length > 3);
+	assert.doesNotMatch(expanded.join("\n"), /rows hidden/);
 });

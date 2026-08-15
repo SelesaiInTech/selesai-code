@@ -160,6 +160,55 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 		assert.ok(result.error?.includes("connection refused"));
 	});
 
+	it("kills a wedged foreground tool at the configured per-tool timeout", { skip: process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("bash")] },
+				{ delay: 30_000 },
+			],
+		});
+		const agents = makeAgentConfigs(["slow"]);
+
+		const result = await runSync(tempDir, agents, "slow", "Wait", {
+			toolTimeoutMs: 1_000,
+			timeoutMs: 8_000,
+		});
+
+		assert.equal(result.timedOut, true);
+		assert.match(result.error ?? "", /Tool 'bash' exceeded its timeout of 1000ms\./);
+	});
+
+	it("emits foreground open-tool attention for an earlier overlapping tool", async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [{ type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "sleep 2" } }] },
+				{ delay: 50, jsonl: [
+					{ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "README.md" } },
+					{ type: "tool_execution_end", toolCallId: "read-1", toolName: "read" },
+				] },
+				{ delay: 1_200, jsonl: [
+					{ type: "tool_execution_end", toolCallId: "bash-1", toolName: "bash" },
+					events.toolResult("bash", "done"),
+					events.assistantMessage("Done"),
+				] },
+			],
+		});
+		const agents = makeAgentConfigs(["slow"]);
+		const controlEvents: Array<{ type?: string; reason?: string; currentTool?: string; message?: string }> = [];
+
+		const result = await runSync(tempDir, agents, "slow", "Wait", {
+			runId: "foreground-overlap-attention",
+			controlConfig: { enabled: true, needsAttentionAfterMs: 999_999, activeNoticeAfterMs: 100, notifyOn: ["needs_attention"] },
+			onControlEvent: (event: { type?: string; reason?: string; currentTool?: string; message?: string }) => controlEvents.push(event),
+		});
+
+		const attention = controlEvents.find((event) => event.reason === "tool_open_threshold");
+		assert.equal(result.exitCode, 0);
+		assert.equal(attention?.type, "needs_attention");
+		assert.equal(attention?.currentTool, "bash");
+		assert.match(attention?.message ?? "", /tool 'bash' open/);
+	});
+
 	it("handles abort signal (completes faster than delay)", async () => {
 		mockPi.onCall({ delay: 10000 });
 		const agents = makeAgentConfigs(["slow"]);

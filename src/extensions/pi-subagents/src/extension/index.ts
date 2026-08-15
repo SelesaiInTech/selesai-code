@@ -34,6 +34,7 @@ import { validateChainInput } from "./chain-validation.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { getActiveAsyncCapacitySnapshot, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
+import { cleanupResultIndexes } from "../runs/background/result-files.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
@@ -62,6 +63,7 @@ import { resolveMissionStoreLocation } from "../missions/store.ts";
 import { listRetainedChildren } from "../runs/background/retained-children.ts";
 import {
 	type Details,
+	type MainWindowRendererConfig,
 	type SubagentState,
 	DIRS,
 	DEFAULT_ARTIFACT_CONFIG,
@@ -83,6 +85,13 @@ import {
 } from "./control-notices.ts";
 
 export { loadConfig, resolveAsyncByDefault } from "./config.ts";
+
+const SLOW_RELOAD_PHASE_MS = 250;
+
+function logSlowPhase(label: string, startedAt: number): void {
+	const elapsed = Date.now() - startedAt;
+	if (elapsed >= SLOW_RELOAD_PHASE_MS) console.error(`Subagent reload phase '${label}' took ${elapsed}ms.`);
+}
 
 function workflowLaneKeys(script: string): string[] {
 	const keys: string[] = [];
@@ -260,12 +269,14 @@ function rebuildSlashResultContainer(
 	result: AgentToolResult<Details>,
 	options: { expanded: boolean },
 	theme: ExtensionContext["ui"]["theme"],
+	rendererConfig?: MainWindowRendererConfig,
+	foregroundDetachShortcut?: string,
 ): void {
 	container.clear();
 	container.addChild(new Spacer(1));
 	const boxTheme = isSlashResultRunning(result) ? "toolPendingBg" : isSlashResultError(result) ? "toolErrorBg" : "toolSuccessBg";
 	const box = new Box(1, 1, (text: string) => theme.bg(boxTheme, text));
-	box.addChild(renderSubagentResult(result, options, theme));
+	box.addChild(renderSubagentResult(result, options, theme, undefined, rendererConfig, foregroundDetachShortcut));
 	container.addChild(box);
 }
 
@@ -273,6 +284,8 @@ function createSlashResultComponent(
 	details: SlashMessageDetails,
 	options: { expanded: boolean },
 	theme: ExtensionContext["ui"]["theme"],
+	rendererConfig?: MainWindowRendererConfig,
+	foregroundDetachShortcut?: string,
 ): Container {
 	const container = new Container();
 	let lastVersion = -1;
@@ -280,7 +293,7 @@ function createSlashResultComponent(
 		const snapshot = getSlashRenderableSnapshot(details);
 		if (snapshot.version !== lastVersion || isSlashResultRunning(snapshot.result)) {
 			lastVersion = snapshot.version;
-			rebuildSlashResultContainer(container, snapshot.result, options, theme);
+			rebuildSlashResultContainer(container, snapshot.result, options, theme, rendererConfig, foregroundDetachShortcut);
 		}
 		return Container.prototype.render.call(container, width);
 	};
@@ -377,6 +390,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const tempArtifactsDir = getArtifactsDir(null);
 	const artifactCleanupDays = config.artifactConfig?.cleanupDays ?? DEFAULT_ARTIFACT_CONFIG.cleanupDays;
 	cleanupAllArtifactDirs(artifactCleanupDays);
+	const resultIndexCleanupTimer = setTimeout(() => {
+		try {
+			cleanupResultIndexes(DIRS.results);
+		} catch (error) {
+			console.error("Failed to clean stale subagent result indexes:", error);
+		}
+	}, 30_000);
+	resultIndexCleanupTimer.unref?.();
 
 	// Replay guard for lineage result adoption: accept result files written at
 	// most this long before the adoption window opened (covers completions that
@@ -391,6 +412,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		...(config.authorityPolicy ? { authorityPolicy: config.authorityPolicy } : {}),
 		...(config.missions ? { missionStoreConfig: config.missions } : {}),
 		parentSessionFile: null,
+		trustedSessionRoots: [],
 		subagentInProgress: false,
 		subagentSpawns: {
 			sessionId: null,
@@ -464,6 +486,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	);
 
 	const runtimeCleanup = () => {
+		clearTimeout(resultIndexCleanupTimer);
 		stopResultWatcher();
 		state.currentSessionId = null;
 		completionNotifier.dispose();
@@ -494,7 +517,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.registerMessageRenderer<SlashMessageDetails>(SLASH_RESULT_TYPE, (message, options, theme) => {
 		const details = resolveSlashMessageDetails(message.details);
 		if (!details) return undefined;
-		return createSlashResultComponent(details, options, theme);
+		return createSlashResultComponent(details, options, theme, config.mainWindowRenderer, config.foregroundDetachShortcut);
 	});
 
 	pi.registerMessageRenderer<undefined>(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
@@ -594,22 +617,24 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 
 		renderCall(args, theme) {
+			const gap = " ".repeat(config.mainWindowRenderer?.horizontalSpacing ?? 1);
+			const title = theme.fg("toolTitle", theme.bold("subagent"));
 			if (args.action) {
 				const target = args.agent || args.chainName || "";
 				return new Text(
-					`${theme.fg("toolTitle", theme.bold("subagent "))}${args.action}${target ? ` ${theme.fg("accent", target)}` : ""}`,
+					`${title}${gap}${args.action}${target ? `${gap}${theme.fg("accent", target)}` : ""}`,
 					0, 0,
 				);
 			}
 			if (args.workflowScript)
 				return new Text(
-					`${theme.fg("toolTitle", theme.bold("subagent "))}${formatWorkflowManifest(args.workflowScript, args.async, false)}`,
+					`${title}${gap}${formatWorkflowManifest(args.workflowScript, args.async, false)}`,
 					0,
 					0,
 				);
-			const asyncLabel = args.async === true ? theme.fg("warning", " [async]") : "";
+			const asyncLabel = args.async === true ? `${gap}${theme.fg("warning", "[async]")}` : "";
 			return new Text(
-				`${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", args.agent || "?")}${asyncLabel}`,
+				`${title}${gap}${theme.fg("accent", args.agent || "?")}${asyncLabel}`,
 				0,
 				0,
 			);
@@ -620,7 +645,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			const renderedResult = { ...result, isError: context.isError };
 			return summaryInlineToolDisplay
 				? renderSubagentSummary(renderedResult, options, theme)
-				: renderSubagentResult(renderedResult, options, theme);
+				: renderSubagentResult(renderedResult, options, theme, undefined, config.mainWindowRenderer, config.foregroundDetachShortcut);
 		},
 
 	};
@@ -664,7 +689,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	registerSlashCommands(pi, state, { fleetKeybindings: config.fleetKeybindings });
+	registerSlashCommands(pi, state, {
+		fleetKeybindings: config.fleetKeybindings,
+		foregroundDetachShortcut: config.foregroundDetachShortcut,
+	});
 	pi.on("resources_discover", () => {
 		return {
 			promptPaths: [fileURLToPath(new URL("../../prompts", import.meta.url))],
@@ -810,15 +838,19 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	const resetSessionState = (ctx: ExtensionContext, recovering: boolean, previousSessionFile?: string | null) => {
+		state.sessionLineage = resolveSessionLineage({ sessionManager: ctx.sessionManager }, { parentHint: previousSessionFile ?? null });
+		state.handoffResumePending = false;
+		if (state.sessionLineage.length > 1) state.adoptedResultWindowStart = Date.now() - ADOPTED_RESULT_SLACK_MS;
+		else state.adoptedResultWindowStart = undefined;
 		state.widgetsSuspended = false;
 		state.baseCwd = ctx.cwd;
 		goalTurnId = 0;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		state.parentSessionFile = ctx.sessionManager.getSessionFile();
-		state.sessionLineage = resolveSessionLineage({ sessionManager: ctx.sessionManager }, { parentHint: previousSessionFile ?? null });
-		state.handoffResumePending = false;
-		if (state.sessionLineage.length > 1) state.adoptedResultWindowStart = Date.now() - ADOPTED_RESULT_SLACK_MS;
-		else state.adoptedResultWindowStart = undefined;
+		state.trustedSessionRoots = [...new Set([
+			...(config.defaultSessionDir ? [path.resolve(expandTilde(config.defaultSessionDir))] : []),
+			...(state.parentSessionFile ? [getSubagentSessionRoot(state.parentSessionFile)] : []),
+		])];
 		state.subagentSpawns = {
 			sessionId: state.currentSessionId,
 			count: 0,
@@ -838,19 +870,39 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			}
 		}
 		state.lastUiContext = ctx;
+		let phaseStartedAt = Date.now();
 		refreshActiveAsyncCapacity();
+		logSlowPhase("active-capacity", phaseStartedAt);
+		phaseStartedAt = Date.now();
 		cleanupSessionArtifacts(ctx);
+		logSlowPhase("session-artifact-cleanup", phaseStartedAt);
 		state.foregroundControls.clear();
 		state.lastForegroundControlId = null;
+		phaseStartedAt = Date.now();
 		resetJobs(ctx);
+		logSlowPhase("reset-jobs", phaseStartedAt);
+		phaseStartedAt = Date.now();
 		restoreForegroundRunHistory(state, { resultsDir: DIRS.results });
+		logSlowPhase("foreground-history", phaseStartedAt);
+		phaseStartedAt = Date.now();
 		const adoptedJobs = restoreActiveJobs(ctx);
+		logSlowPhase("active-job-restore", phaseStartedAt);
 		state.handoffResumePending = adoptedJobs > 0 && state.lastUiContext?.hasUI === true;
+		phaseStartedAt = Date.now();
 		scheduledRunManager.bindSession(ctx);
+		logSlowPhase("scheduled-runs", phaseStartedAt);
+		phaseStartedAt = Date.now();
 		restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
+		logSlowPhase("slash-snapshots", phaseStartedAt);
+		phaseStartedAt = Date.now();
 		waitSubscriptionManager.restore();
+		logSlowPhase("wait-subscriptions", phaseStartedAt);
+		phaseStartedAt = Date.now();
 		startResultWatcher();
+		logSlowPhase("result-watcher-start", phaseStartedAt);
+		phaseStartedAt = Date.now();
 		primeExistingResults({ triggerTurn: !recovering });
+		logSlowPhase("result-prime", phaseStartedAt);
 		fleetStatus?.setContext(ctx);
 	};
 
@@ -905,6 +957,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", async () => {
 		state.widgetsSuspended = false;
+		clearTimeout(resultIndexCleanupTimer);
 		stopResultWatcher();
 		state.currentSessionId = null;
 		state.parentSessionFile = null;

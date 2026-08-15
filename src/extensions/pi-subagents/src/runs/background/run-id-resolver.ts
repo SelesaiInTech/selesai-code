@@ -3,6 +3,8 @@ import * as path from "node:path";
 import { DIRS, type SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { findAsyncRunPrefixMatches, type AsyncRunLocation } from "./async-resume.ts";
+import { resultFilePath, resultFilesForToolCall } from "./result-files.ts";
+import { readActiveRunToolCallIndex } from "./active-run-index.ts";
 import { assertSafeNestedId, findNestedRunMatchesById, type NestedRoute, type NestedRunMatch, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 
 export type ResolvedSubagentRunId =
@@ -19,7 +21,7 @@ export interface ResolveSubagentRunIdDeps {
 
 function exactAsyncLocation(id: string, asyncDirRoot: string, resultsDir: string): AsyncRunLocation | undefined {
 	const asyncDir = path.join(asyncDirRoot, id);
-	const resultPath = path.join(resultsDir, `${id}.json`);
+	const resultPath = resultFilePath(resultsDir, id);
 	if (!fs.existsSync(asyncDir) && !fs.existsSync(resultPath)) return undefined;
 	return {
 		asyncDir: fs.existsSync(asyncDir) ? asyncDir : null,
@@ -52,39 +54,28 @@ function readWorkflowResultIdentity(resultPath: string): WorkflowResultIdentity 
 	};
 }
 
-function directoryEntries(root: string): string[] {
-	try {
-		return fs.readdirSync(root);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-		throw error;
-	}
-}
-
 function resultPathFor(resultsDir: string, runId: string): string | null {
-	const resultPath = path.join(resultsDir, `${runId}.json`);
+	const resultPath = resultFilePath(resultsDir, runId);
 	return fs.existsSync(resultPath) ? resultPath : null;
 }
 
-function toolCallIdMatches(value: string | undefined, query: string, options: { prefix?: boolean }): boolean {
-	if (value === undefined) return false;
-	return options.prefix === true ? value.startsWith(query) : value === query;
+function toolCallIdMatches(value: string | undefined, query: string): boolean {
+	return value === query;
 }
 
-function toolCallIdAsyncLocations(toolCallId: string, asyncDirRoot: string, resultsDir: string, options: { prefix?: boolean } = {}): AsyncRunMatch[] {
+function indexedToolCallIdAsyncLocations(toolCallId: string, asyncDirRoot: string, resultsDir: string): AsyncRunMatch[] {
 	const byId = new Map<string, AsyncRunLocation>();
-	for (const entry of directoryEntries(asyncDirRoot)) {
+	for (const entry of readActiveRunToolCallIndex(asyncDirRoot, toolCallId)) {
 		const asyncDir = path.join(asyncDirRoot, entry);
 		const status = readStatus(asyncDir);
-		if (!status || !toolCallIdMatches(status.toolCallId, toolCallId, options)) continue;
+		if (!status || !toolCallIdMatches(status.toolCallId, toolCallId)) continue;
 		const runId = status.runId || entry;
 		byId.set(runId, { asyncDir, resultPath: resultPathFor(resultsDir, runId), resolvedId: runId });
 	}
-	for (const entry of directoryEntries(resultsDir)) {
-		if (!entry.endsWith(".json")) continue;
+	for (const entry of resultFilesForToolCall(resultsDir, toolCallId)) {
 		const resultPath = path.join(resultsDir, entry);
 		const identity = readWorkflowResultIdentity(resultPath);
-		if (!identity || !toolCallIdMatches(identity.toolCallId, toolCallId, options)) continue;
+		if (!identity || !toolCallIdMatches(identity.toolCallId, toolCallId)) continue;
 		const runId = identity.runId ?? identity.id ?? entry.slice(0, -".json".length);
 		const asyncDir = path.join(asyncDirRoot, runId);
 		byId.set(runId, { asyncDir: fs.existsSync(asyncDir) ? asyncDir : null, resultPath, resolvedId: runId });
@@ -110,6 +101,22 @@ function hasExactForegroundId(state: SubagentState | undefined, id: string): boo
 	if (!remembered || !state.currentSessionId || remembered.sessionId === undefined) return false;
 	const acceptedSessions = new Set(state.sessionLineage?.length ? state.sessionLineage : [state.currentSessionId]);
 	return acceptedSessions.has(remembered.sessionId);
+}
+
+function exactLiveAsyncToolCallMatch(state: SubagentState | undefined, toolCallId: string, asyncDirRoot: string, resultsDir: string): AsyncRunMatch | undefined {
+	if (!state?.asyncJobs) return undefined;
+	const matches = [...state.asyncJobs.values()].filter((job) => job.toolCallId === toolCallId);
+	if (matches.length > 1) throw new Error(`Subagent tool-call id '${toolCallId}' is ambiguous across async runs. Use the returned asyncId instead.`);
+	const match = matches[0];
+	if (!match) return undefined;
+	return {
+		id: match.asyncId,
+		location: {
+			asyncDir: fs.existsSync(match.asyncDir) ? match.asyncDir : path.join(asyncDirRoot, match.asyncId),
+			resultPath: resultPathFor(resultsDir, match.asyncId),
+			resolvedId: match.asyncId,
+		},
+	};
 }
 
 function nestedScopeFromState(state: SubagentState | undefined): NestedRunResolutionScope | undefined {
@@ -141,7 +148,9 @@ export function resolveSubagentRunId(id: string, deps: ResolveSubagentRunIdDeps 
 	if (hasExactForegroundId(deps.state, id)) return { kind: "foreground", id };
 	const exactAsync = exactAsyncLocation(id, asyncDirRoot, resultsDir);
 	if (exactAsync) return { kind: "async", id, location: exactAsync };
-	const exactToolCallIdMatches = toolCallIdAsyncLocations(id, asyncDirRoot, resultsDir);
+	const exactLiveToolCallMatch = exactLiveAsyncToolCallMatch(deps.state, id, asyncDirRoot, resultsDir);
+	if (exactLiveToolCallMatch) return { kind: "async", id: exactLiveToolCallMatch.id, location: exactLiveToolCallMatch.location };
+	const exactToolCallIdMatches = indexedToolCallIdAsyncLocations(id, asyncDirRoot, resultsDir);
 	if (exactToolCallIdMatches.length > 1) throw new Error(`Subagent tool-call id '${id}' is ambiguous across async runs. Use the returned asyncId instead.`);
 	if (exactToolCallIdMatches[0]) return { kind: "async", id: exactToolCallIdMatches[0].id, location: exactToolCallIdMatches[0].location };
 	const exactNested = findNestedRunMatchesById(id, nestedScope ? { scope: nestedScope } : {});
@@ -153,9 +162,6 @@ export function resolveSubagentRunId(id: string, deps: ResolveSubagentRunIdDeps 
 		matches.push({ kind: "foreground", id: foregroundId });
 	}
 	for (const match of asyncPrefixMatches(id, asyncDirRoot, resultsDir)) {
-		matches.push({ kind: "async", id: match.id, location: match.location });
-	}
-	for (const match of toolCallIdAsyncLocations(id, asyncDirRoot, resultsDir, { prefix: true })) {
 		matches.push({ kind: "async", id: match.id, location: match.location });
 	}
 	for (const match of findNestedRunMatchesById(id, nestedScope ? { prefix: true, scope: nestedScope } : { prefix: true })) {

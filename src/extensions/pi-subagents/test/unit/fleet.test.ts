@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { EXTERNAL_RUN_REGISTRY_KEY, EXTERNAL_RUN_REGISTRY_VERSION, registerExternalRun } from "../../src/api/external-runs.ts";
 import { collectFleetSnapshot, openSubagentFleet, SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { persistForegroundRunHistory, restoreForegroundRunHistory } from "../../src/runs/foreground/foreground-history.ts";
 import { FLEET_STATUS_WIDGET_KEY } from "../../src/tui/fleet-status.ts";
@@ -12,6 +13,10 @@ import { getArtifactPaths, getArtifactsDir, getProjectArtifactsDir } from "../..
 import type { SubagentState } from "../../src/shared/types.ts";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+
+function clearExternalRuns(): void {
+	delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_RUN_REGISTRY_KEY)];
+}
 
 function stateForTest(): SubagentState {
 	return {
@@ -165,6 +170,138 @@ describe("native subagent fleet", () => {
 			assert.equal(snapshot.error, undefined);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("shows cached external jobs as display-only without reading paths or invoking controls", async () => {
+		clearExternalRuns();
+		registerExternalRun({
+			id: "external-review",
+			sessionId: "session-current",
+			source: "interactive-shell",
+			label: "Dependency review",
+			state: "completed",
+			startedAt: 100,
+			updatedAt: 200,
+			currentAction: "Inspecting package metadata",
+			preview: "No dependency blockers found.",
+			reportPath: "/outside/trusted/roots/report.md",
+			transcriptPath: "/outside/trusted/roots/transcript.jsonl",
+		});
+		const state = stateForTest();
+		const snapshot = collectFleetSnapshot(state);
+		assert.equal(snapshot.error, undefined);
+		assert.deepEqual(snapshot.items.map((item) => ({ key: item.key, kind: item.kind, agent: item.agent })), [{
+			key: "external:external-review",
+			kind: "external",
+			agent: "Dependency review",
+		}]);
+		let steerCalls = 0;
+		let stopCalls = 0;
+		let inspectCalls = 0;
+		const component = new SubagentFleetComponent(
+			{ terminal: { rows: 32, columns: 120 }, requestRender() {} } as never,
+			theme as never,
+			state,
+			() => {},
+			{
+				refreshMs: 60_000,
+				markdownTheme,
+				actions: {
+					async steer() { steerCalls++; return { text: "unexpected" }; },
+					stop() { stopCalls++; return { text: "unexpected" }; },
+					async inspect() { inspectCalls++; return { text: "unexpected" }; },
+				},
+			},
+		);
+		try {
+			const initial = component.render(120).join("\n");
+			assert.match(initial, /Fleet inspector.*external display-only/);
+			assert.match(initial, /Source: external · display-only/);
+			assert.match(initial, /Owner: interactive-shell/);
+			assert.match(initial, /Inspecting package metadata/);
+			assert.match(initial, /Elapsed: 100ms/);
+			assert.match(initial, /No dependency blockers found/);
+			assert.match(initial, /Report path: \/outside\/trusted\/roots\/report\.md/);
+			assert.match(initial, /Transcript path: \/outside\/trusted\/roots\/transcript\.jsonl/);
+			assert.doesNotMatch(initial, /Herdr ·|steer ·|stop ·/);
+			component.handleInput("H");
+			assert.match(component.render(120).join("\n"), /display-only and have no Herdr controls/);
+			component.handleInput("s");
+			assert.match(component.render(120).join("\n"), /display-only and remain controlled/);
+			component.handleInput("D");
+			assert.match(component.render(120).join("\n"), /display-only and remain controlled/);
+			await new Promise((resolve) => setImmediate(resolve));
+			assert.deepEqual({ steerCalls, stopCalls, inspectCalls }, { steerCalls: 0, stopCalls: 0, inspectCalls: 0 });
+		} finally {
+			component.dispose();
+			clearExternalRuns();
+		}
+	});
+
+	it("keeps running external elapsed time live when endedAt is present", () => {
+		clearExternalRuns();
+		try {
+			const startedAt = Date.now() - 5_000;
+			registerExternalRun({
+				id: "external-running",
+				sessionId: "session-current",
+				source: "interactive-shell",
+				label: "Running external job",
+				state: "running",
+				startedAt,
+				updatedAt: startedAt + 100,
+				endedAt: startedAt + 100,
+			});
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 32, columns: 120 }, requestRender() {} } as never,
+				theme as never,
+				stateForTest(),
+				() => {},
+				{ refreshMs: 60_000, markdownTheme },
+			);
+			try {
+				const rendered = component.render(120).join("\n");
+				assert.match(rendered, /Elapsed: 5\.0s/);
+				assert.doesNotMatch(rendered, /Elapsed: 100ms/);
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			clearExternalRuns();
+		}
+	});
+
+	it("ignores malformed cached external jobs while rendering Fleet", () => {
+		clearExternalRuns();
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => warnings.push(String(message));
+		(globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_RUN_REGISTRY_KEY)] = {
+			version: EXTERNAL_RUN_REGISTRY_VERSION,
+			runs: new Map<string, unknown>([[
+				"session-current\0bad",
+				{ id: "bad", sessionId: "session-current", source: "tool", label: "Bad external", state: "running", startedAt: Number.NaN },
+			]]),
+		};
+		const state = stateForTest();
+		const component = new SubagentFleetComponent(
+			{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+			theme as never,
+			state,
+			() => {},
+			{ refreshMs: 60_000, markdownTheme },
+		);
+		try {
+			const snapshot = collectFleetSnapshot(state);
+			assert.equal(snapshot.error, undefined);
+			assert.deepEqual(snapshot.items, []);
+			assert.match(warnings[0]!, /Removed Malformed cached external run/);
+			assert.match(component.render(100).join("\n"), /No current-session Fleet jobs/);
+		} finally {
+			console.warn = originalWarn;
+			component.dispose();
+			clearExternalRuns();
 		}
 	});
 
@@ -367,15 +504,25 @@ describe("native subagent fleet", () => {
 		assert.equal(snapshot.items[0]?.agent, "workflow");
 	});
 
-	it("labels workflow-owned foreground children and opens their parent Herdr inspector", async () => {
+	it("hides workflow-owned foreground duplicates and opens the workflow parent inspector", async () => {
 		const state = stateForTest();
 		state.asyncJobs.set("workflow-1", {
 			asyncId: "workflow-1",
 			asyncDir: "/tmp/workflow-1",
+			sessionId: "session-current",
 			status: "running",
 			mode: "workflow",
 			startedAt: 10,
 			updatedAt: 20,
+		});
+		state.asyncJobs.set("unrelated", {
+			asyncId: "unrelated",
+			asyncDir: "/tmp/unrelated",
+			sessionId: "session-current",
+			status: "running",
+			mode: "single",
+			startedAt: 5,
+			updatedAt: 30,
 		});
 		state.foregroundControls.set("child-1", {
 			runId: "child-1",
@@ -387,8 +534,7 @@ describe("native subagent fleet", () => {
 			activeChildren: new Map([[0, { index: 0, agent: "reviewer", startedAt: 10, updatedAt: 20 }]]),
 		});
 		const snapshot = collectFleetSnapshot(state);
-		const child = snapshot.items.find((item) => item.key === "foreground-active:child-1:0");
-		assert.equal(child?.kind, "foreground-active");
+		assert.deepEqual(snapshot.items.map((item) => item.key), ["async:unrelated", "async:workflow-1"]);
 		const calls: Array<{ runId: string; asyncDir: string; index?: number }> = [];
 		const component = new SubagentFleetComponent(
 			{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
@@ -406,7 +552,7 @@ describe("native subagent fleet", () => {
 			},
 		);
 		try {
-			assert.ok(component.render(100).some((line) => line.includes("Workflow child of: workflow-1 (review)")));
+			assert.ok(component.render(100).some((line) => line.includes("workflow")));
 			component.handleInput("H");
 			await new Promise((resolve) => setImmediate(resolve));
 			assert.deepEqual(calls, [{ runId: "workflow-1", asyncDir: "/tmp/workflow-1" }]);
@@ -536,6 +682,7 @@ describe("native subagent fleet", () => {
 			fs.writeFileSync(outputPath, "restored foreground output", "utf-8");
 
 			const state = stateForTest();
+			state.artifactDirPreference = "project";
 			state.foregroundRuns!.set("restored", {
 				runId: "restored",
 				mode: "single",
@@ -556,6 +703,7 @@ describe("native subagent fleet", () => {
 
 			const restored = stateForTest();
 			restored.baseCwd = cwd;
+			restored.artifactDirPreference = "project";
 			assert.equal(restoreForegroundRunHistory(restored, { resultsDir }), 1);
 			const snapshot = collectFleetSnapshot(restored);
 			assert.deepEqual(snapshot.items.map((item) => item.key), ["foreground-recent:restored:0"]);
@@ -636,6 +784,7 @@ describe("native subagent fleet", () => {
 			const cwd = path.join(root, "project");
 			const artifactsRoot = getProjectArtifactsDir(cwd);
 			const state = stateForTest();
+			state.artifactDirPreference = "project";
 			for (let index = 0; index < 3; index++) {
 				const outputPath = path.join(artifactsRoot, "outputs", `run-${index}`, "output.md");
 				fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -654,6 +803,7 @@ describe("native subagent fleet", () => {
 
 			const restored = stateForTest();
 			restored.baseCwd = cwd;
+			restored.artifactDirPreference = "project";
 			assert.equal(restoreForegroundRunHistory(restored, { resultsDir, limit: 2 }), 2);
 			assert.deepEqual([...restored.foregroundRuns!.keys()], ["run-2", "run-1"]);
 
@@ -802,6 +952,7 @@ describe("native subagent fleet", () => {
 			fs.writeFileSync(path.join(asyncDir, "status.json"), "{in-flight status", "utf-8");
 			const state = stateForTest();
 			state.baseCwd = path.join(root, "parent-cwd");
+			state.artifactDirPreference = "project";
 			state.asyncJobs.set("async-custom-cwd", {
 				asyncId: "async-custom-cwd",
 				asyncDir,
@@ -883,6 +1034,7 @@ describe("native subagent fleet", () => {
 		try {
 			const state = stateForTest();
 			state.baseCwd = path.join(root, "parent-cwd");
+			state.artifactDirPreference = "project";
 			const effectiveCwd = path.join(root, "effective-cwd");
 			const now = Date.now();
 			state.foregroundControls.set("foreground-live", {
@@ -1282,6 +1434,40 @@ describe("native subagent fleet", () => {
 		}
 	});
 
+	it("periodically redraws only while the overlay remains open", (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const state = stateForTest();
+		let renderRequests = 0;
+		let closed = false;
+		const tui = { terminal: { rows: 28, columns: 90 }, requestRender: () => { renderRequests++; } };
+		const component = new SubagentFleetComponent(
+			tui as never,
+			theme as never,
+			state,
+			() => { closed = true; },
+			{ refreshMs: 10 },
+		);
+		t.mock.timers.tick(249);
+		assert.equal(renderRequests, 0, "refresh cadence is bounded away from a hot loop");
+		t.mock.timers.tick(1);
+		assert.equal(renderRequests, 1);
+		component.handleInput("\x1b");
+		assert.equal(closed, true);
+		t.mock.timers.tick(1_000);
+		assert.equal(renderRequests, 1, "closing cancels periodic redraws");
+
+		const disposed = new SubagentFleetComponent(
+			tui as never,
+			theme as never,
+			state,
+			() => {},
+			{ refreshMs: 250 },
+		);
+		disposed.dispose();
+		t.mock.timers.tick(1_000);
+		assert.equal(renderRequests, 1, "disposing cancels periodic redraws");
+	});
+
 	it("refreshes the roster while the overlay remains open", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-refresh-"));
 		try {
@@ -1293,7 +1479,7 @@ describe("native subagent fleet", () => {
 				theme as never,
 				state,
 				() => {},
-				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 10 },
+				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 250 },
 			);
 			let invalidations = 0;
 			const originalInvalidate = component.invalidate.bind(component);
@@ -1305,7 +1491,7 @@ describe("native subagent fleet", () => {
 				assert.ok(component.render(90).some((line) => line.includes("No tracked children")));
 				const initialOutput = Array.from({ length: 40 }, (_, index) => `output line ${index}`).join("\n");
 				const asyncDir = writeAsyncRun(root, { id: "appeared-live", output: initialOutput });
-				await new Promise((resolve) => setTimeout(resolve, 35));
+				await new Promise((resolve) => setTimeout(resolve, 275));
 				let lines = component.render(90);
 				assert.ok(lines.some((line) => line.includes("appeared")));
 				assert.ok(lines.some((line) => line.includes("output line 39")));

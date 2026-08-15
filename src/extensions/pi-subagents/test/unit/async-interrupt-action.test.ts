@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { acquireActiveAsyncCapacity } from "../../src/runs/background/active-async-capacity.ts";
 import { consumeSteerRequests, consumeSteerRequestsFromDir, stepSteerInboxDir, writeSteerAck } from "../../src/runs/background/control-channel.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
@@ -125,6 +126,74 @@ function text(result: { content: Array<{ type: string; text?: string }> }): stri
 }
 
 describe("async interrupt action", () => {
+	it("routes debug.run to async lifecycle debug, not live foreground status", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `debug-foreground-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session" });
+		state.foregroundControls.set(runId, {
+			runId,
+			sessionId: "session",
+			mode: "single",
+			startedAt: 100,
+			updatedAt: 100,
+			cwd: os.tmpdir(),
+			agent: "worker",
+			status: "running",
+			controller: new AbortController(),
+		});
+		try {
+			const result = await executorWithKill(state, () => true)
+				.execute("debug.run", { action: "debug.run", id: runId }, new AbortController().signal, undefined, ctx());
+			const output = text(result);
+
+			assert.equal(result.isError, undefined);
+			assert.match(output, /Run lifecycle debug/);
+			assert.doesNotMatch(output, /Live foreground/);
+		} finally {
+			state.foregroundControls.delete(runId);
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("renders run lifecycle debug without transcript content", () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `debug-run-${Date.now().toString(36)}`;
+		const activeCapacityRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-debug-capacity-"));
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		try {
+			const capacity = acquireActiveAsyncCapacity({ sessionId: "session", limit: 1, runId, kind: "workflow", asyncDir }, { rootDir: activeCapacityRoot });
+			assert.ok(capacity);
+			capacity.markWorkflowStarted();
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId,
+				sessionId: "session",
+				mode: "workflow",
+				state: "complete",
+				startedAt: 100,
+				processTerminal: { version: 1, state: "pending", runId, runnerProcessInstanceId: "workflow-runner" },
+				steps: [{ agent: "worker", workflowKey: "review", status: "completed", async: false }],
+			});
+			fs.writeFileSync(path.join(asyncDir, "output-0.log"), "SECRET_TRANSCRIPT_TEXT", "utf-8");
+
+			const result = inspectSubagentStatus({ action: "debug.run", id: runId }, { state, activeCapacityRoot });
+			const output = text(result);
+
+			assert.match(output, /Run lifecycle debug/);
+			assert.match(output, new RegExp(`Run: ${runId}`));
+			assert.match(output, /Status process terminal: pending · runner workflow-runner/);
+			assert.match(output, /Sidecar process terminal: missing/);
+			assert.match(output, /Active capacity: releasable/);
+			assert.match(output, /Workflow children: 1/);
+			assert.match(output, /key review · worker · completed · async no/);
+			assert.doesNotMatch(output, /SECRET_TRANSCRIPT_TEXT/);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(activeCapacityRoot, { recursive: true, force: true });
+		}
+	});
+
 	it("steers a live workflow-owned foreground child by child id", async () => {
 		const state = createState();
 		const workflowRunId = `workflow-child-${Date.now().toString(36)}`;
@@ -489,6 +558,13 @@ describe("async interrupt action", () => {
 			assert.match(statusText, /State: display-dismissed/);
 			assert.match(statusText, /No running work was terminated/);
 			assert.doesNotMatch(statusText, /Steer/);
+			const debugResult = inspectSubagentStatus({ action: "debug.run", id: runId }, { state, kill: () => {
+				throw new Error("dismissed workflow debug must not inspect the pid");
+			} });
+			const debugText = text(debugResult);
+			assert.match(debugText, /Run lifecycle debug/);
+			assert.match(debugText, /State: running/);
+			assert.match(debugText, /Active capacity: not-owned/);
 			const transcriptResult = inspectSubagentStatus({ action: "status", id: runId, view: "transcript" }, { state, kill: () => {
 				throw new Error("dismissed workflow transcript must not inspect the pid");
 			} });

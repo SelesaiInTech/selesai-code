@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import type { ArtifactPaths, SubagentState, WaitCompletion, WaitCompletionChild } from "../../shared/types.ts";
 import type { AsyncRunSummary } from "./async-status.ts";
 import { readCompletionReplay, writeCompletionReplay } from "./completion-replay.ts";
+import { resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
 
 function asNonEmptyString(value: unknown): string | undefined {
 	return typeof value === "string" && value ? value : undefined;
@@ -114,7 +114,10 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 			completions.push(recorded.completion);
 			continue;
 		}
-		const resultPath = path.join(resultsDir, `${run.id}.json`);
+		const publicResultPath = resultFilePath(resultsDir, run.id);
+		const resultPath = run.sessionId
+			? resultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id) ?? publicResultPath
+			: publicResultPath;
 		try {
 			const raw = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as Record<string, unknown>;
 			completions.push(toWaitCompletion(raw, run.id));

@@ -214,6 +214,7 @@ Package skill content.
 	it("resolves configured artifact directory preferences", () => {
 		const sessionFile = path.join(agentDir, "sessions", "session-1", "session.jsonl");
 
+		// Selesai fork default: project-scoped .pi-subagents artifacts.
 		assert.equal(getArtifactsDir(sessionFile, cwd), getProjectArtifactsDir(cwd));
 		assert.equal(getArtifactsDir(sessionFile, cwd, "project"), getProjectArtifactsDir(cwd));
 		assert.equal(getArtifactsDir(sessionFile, cwd, "session"), path.join(path.dirname(sessionFile), "subagent-artifacts"));
@@ -239,6 +240,39 @@ Package skill content.
 
 		writeFile(configPath, JSON.stringify({ fleetKeybindings: { pageUp: [""] } }));
 		assert.throws(() => updateConfig((config) => config), /config\.fleetKeybindings\.pageUp entries must be non-empty strings/);
+	});
+
+	it("loads and validates the foreground detach shortcut", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ foregroundDetachShortcut: "ctrl+b" }));
+		assert.equal(loadConfig().foregroundDetachShortcut, "ctrl+b");
+
+		writeFile(configPath, JSON.stringify({ foregroundDetachShortcut: "banana" }));
+		assert.throws(() => updateConfig((config) => config), /config\.foregroundDetachShortcut must be a valid keybinding string/);
+	});
+
+	it("loads and validates main-window renderer density config", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ mainWindowRenderer: { horizontalSpacing: 0, compactResultMaxLines: 4 } }));
+		assert.deepEqual(loadConfig().mainWindowRenderer, { horizontalSpacing: 0, compactResultMaxLines: 4 });
+
+		writeFile(configPath, JSON.stringify({ mainWindowRenderer: { horizontalSpacing: -1 } }));
+		assert.throws(() => updateConfig((config) => config), /config\.mainWindowRenderer\.horizontalSpacing must be an integer from 0 to 4/);
+
+		writeFile(configPath, JSON.stringify({ mainWindowRenderer: { compactResultMaxLines: 0 } }));
+		assert.throws(() => updateConfig((config) => config), /config\.mainWindowRenderer\.compactResultMaxLines must be a positive integer/);
+	});
+
+	it("loads and validates experimental Orca progress-tab config", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { enabled: true } }));
+		assert.deepEqual(loadConfig().orcaProgressTabs, { enabled: true });
+
+		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { enabled: "yes" } }));
+		assert.throws(() => updateConfig((config) => config), /config\.orcaProgressTabs\.enabled must be a boolean/);
+
+		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { enabled: true, focus: true } }));
+		assert.throws(() => updateConfig((config) => config), /config\.orcaProgressTabs\.focus is not supported/);
 	});
 
 	it("hardens and redacts existing run history while recording", () => {

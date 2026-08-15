@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
@@ -218,6 +219,32 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("tells blocking callers to reply and wait for intercom-detached failed runs", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-intercom-detach-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "worker-session.jsonl");
+			fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-detached", "running", { sessionId: "sess-1", pid: 999999 });
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => writeStatus(asyncRoot, "run-detached", "failed", {
+					sessionId: "sess-1",
+					error: "Step failed: worker",
+					steps: [{ agent: "worker", status: "failed", sessionFile, error: "Detached for intercom coordination before task completion." }],
+				}),
+			}));
+
+			const text = textOf(result);
+			assert.match(text, /Reply to the supervisor request first/);
+			assert.match(text, /wait with subagent_wait/);
+			assert.match(text, /do not resume or launch a replacement/);
+			assert.doesNotMatch(text, /Resume-first/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("surfaces terminal completion payloads from the result file in details.completions", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-completions-file-"));
 		try {
@@ -266,6 +293,45 @@ describe("subagent_wait tool", () => {
 			// The result file is the watcher's to consume; the wait must not delete it.
 			assert.equal(fs.existsSync(path.join(resultsDir, "run-a.json")), true);
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("surfaces terminal completion payloads from an indexed pending result file", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-completions-pending-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const publicResultPath = path.join(resultsDir, "run-pending.json");
+			fs.mkdirSync(publicResultPath, { recursive: true });
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-pending", "running", { sessionId: "sess-1", pid: 999999 });
+
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => {
+					writeStatus(asyncRoot, "run-pending", "complete", { sessionId: "sess-1" });
+					assert.deepEqual(writeAsyncResultFile(publicResultPath, {
+						id: "run-pending",
+						runId: "run-pending",
+						sessionId: "sess-1",
+						agent: "worker",
+						mode: "single",
+						state: "complete",
+						success: true,
+						results: [{ agent: "worker", success: true, outputState: "present" }],
+					}), { state: "pending" });
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.equal(result.details.completions?.[0]?.runId, "run-pending");
+			assert.equal(result.details.completions?.[0]?.success, true);
+			assert.equal(result.details.completions?.[0]?.results?.[0]?.agent, "worker");
+			assert.equal(fs.statSync(publicResultPath).isDirectory(), true);
+		} finally {
+			console.error = originalError;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
@@ -949,33 +1015,31 @@ describe("subagent_wait tool", () => {
 				},
 			};
 
-			// A real timer-based sleep with a LONG poll interval; if wait waited for
-			// the poll it would take ~10s. The event should wake it in ~10ms.
 			let sleepCalls = 0;
-			const realSleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve) => {
+			let sleepArmed!: () => void;
+			const armed = new Promise<void>((resolve) => { sleepArmed = resolve; });
+			const sleep = (_ms: number, signal?: AbortSignal) => new Promise<void>((resolve) => {
 				sleepCalls += 1;
-				const t = setTimeout(resolve, ms);
-				signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+				signal?.addEventListener("abort", resolve, { once: true });
+				sleepArmed();
 			});
 
-			const startedAt = Date.now();
 			const p = waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
 				events,
 				pollIntervalMs: 10_000,
-				sleep: realSleep,
+				sleep,
 			}));
 
-			// After a short delay, flip the run terminal and emit a completion event.
-			setTimeout(() => {
-				writeStatus(asyncRoot, "run-a", "complete", { sessionId: "sess-1" });
-				events.emit("subagent:async-complete", { id: "run-a" });
-			}, 15);
+			await armed;
+			writeStatus(asyncRoot, "run-a", "complete", { sessionId: "sess-1" });
+			events.emit("subagent:async-complete", { id: "run-a" });
 
-			const result = await p;
-			const elapsed = Date.now() - startedAt;
+			const result = await Promise.race([
+				p,
+				new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("event wake did not resolve subagent_wait")), 1_000)),
+			]);
 			assert.equal(result.isError, undefined);
 			assert.match(textOf(result), /done/i);
-			assert.ok(elapsed < 5_000, `should wake via event, not the 10s poll; took ${elapsed}ms`);
 			assert.ok(sleepCalls >= 1, "poll-interval sleep still armed as fallback");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

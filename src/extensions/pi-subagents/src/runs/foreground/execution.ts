@@ -38,6 +38,7 @@ import {
 	buildControlEvent,
 	claimControlNotification,
 	deriveActivityState,
+	shouldEmitOpenToolAttention,
 	shouldNotifyControlEvent,
 } from "../shared/subagent-control.ts";
 import {
@@ -53,10 +54,12 @@ import {
 } from "../../shared/utils.ts";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
+import { effectiveToolTimeoutMs, formatToolTimeoutMessage, resolveToolTimeoutMs, toolTimeoutCallKey, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
 import { arbitrateCompletionGuardRescue } from "../shared/llm-intent-arbiter.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
+import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { resolvePermissionRules } from "../shared/permissions.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
@@ -76,6 +79,7 @@ import {
 } from "../shared/model-fallback.ts";
 import {
 	SUBAGENT_STARTUP_RETRY_DELAYS_MS,
+	formatSubagentExtensionConflictError,
 	formatSubagentStartupRetryExhaustedError,
 	formatSubagentStartupRetryNote,
 	isRetryableSubagentStartupFailure,
@@ -304,6 +308,7 @@ async function runSingleAttempt(
 		outputSnapshot?: SingleOutputSnapshot;
 		originalTask?: string;
 		taskDelivery?: SubagentTaskDelivery;
+		orcaProgressTab?: OrcaProgressTab;
 	},
 ): Promise<SingleResult> {
 	const effectiveThinking = options.thinkingOverride ?? agent.thinking;
@@ -672,6 +677,7 @@ async function runSingleAttempt(
 			clearWatchdogTailTimer();
 			clearStdioGuard();
 			clearTimeoutTimers();
+			clearAllToolTimeouts();
 			clearTurnBudgetTimers();
 			if (protocolHardKillTimer) {
 				clearTimeout(protocolHardKillTimer);
@@ -696,6 +702,64 @@ async function runSingleAttempt(
 
 		let activeLongRunningNotified = false;
 		let pendingToolResult: { tool: string; path?: string; mutates: boolean; startedAt?: number } | undefined;
+		type ActiveToolCall = { key: string; tool: string; args: string; startedAt: number; path?: string };
+		let activeToolSequence = 0;
+		const activeToolCalls = new Map<string, ActiveToolCall>();
+		const activeToolKeysByName = new Map<string, string[]>();
+		const latestActiveToolCall = (): ActiveToolCall | undefined => [...activeToolCalls.values()].sort((left, right) => right.startedAt - left.startedAt)[0];
+		const refreshCurrentTool = (): void => {
+			const active = latestActiveToolCall();
+			if (!active) {
+				progress.currentTool = undefined;
+				progress.currentToolArgs = undefined;
+				progress.currentToolStartedAt = undefined;
+				progress.currentPath = undefined;
+				return;
+			}
+			progress.currentTool = active.tool;
+			progress.currentToolArgs = active.args;
+			progress.currentToolStartedAt = active.startedAt;
+			progress.currentPath = active.path;
+		};
+		const recordActiveToolCall = (event: { toolCallId?: unknown; toolName: string }, args: Record<string, unknown>, now: number): ActiveToolCall => {
+			const key = toolTimeoutCallKey(event, ++activeToolSequence);
+			const path = resolveCurrentPath(event.toolName, args);
+			const active: ActiveToolCall = {
+				key,
+				tool: event.toolName,
+				args: extractToolArgsPreview(args),
+				startedAt: now,
+				...(path !== undefined ? { path } : {}),
+			};
+			activeToolCalls.set(key, active);
+			const keys = activeToolKeysByName.get(active.tool) ?? [];
+			keys.push(key);
+			activeToolKeysByName.set(active.tool, keys);
+			refreshCurrentTool();
+			return active;
+		};
+		const removeActiveToolCallKey = (key: string): ActiveToolCall | undefined => {
+			const active = activeToolCalls.get(key);
+			if (!active) return undefined;
+			activeToolCalls.delete(key);
+			const keys = activeToolKeysByName.get(active.tool)?.filter((candidate) => candidate !== key) ?? [];
+			if (keys.length > 0) activeToolKeysByName.set(active.tool, keys);
+			else activeToolKeysByName.delete(active.tool);
+			return active;
+		};
+		const removeActiveToolCall = (event: { toolCallId?: unknown; toolName?: unknown }): ActiveToolCall | undefined => {
+			const key = typeof event.toolCallId === "string" && event.toolCallId.length > 0
+				? `id:${event.toolCallId}`
+				: typeof event.toolName === "string"
+					? activeToolKeysByName.get(event.toolName)?.[0]
+					: activeToolCalls.size === 1
+						? [...activeToolCalls.keys()][0]
+						: undefined;
+			return key ? removeActiveToolCallKey(key) : undefined;
+		};
+		const openToolAttentionTarget = (now: number): ActiveToolCall | undefined => [...activeToolCalls.values()]
+			.filter((active) => shouldEmitOpenToolAttention({ config: controlConfig, currentTool: active.tool, currentToolStartedAt: active.startedAt, now }))
+			.sort((left, right) => left.startedAt - right.startedAt)[0];
 		const mutatingFailures = createMutatingFailureState();
 		const mutatingFailureWindowMs = 5 * 60_000;
 		const currentToolDurationMs = (now: number) => progress.currentToolStartedAt ? Math.max(0, now - progress.currentToolStartedAt) : undefined;
@@ -813,6 +877,17 @@ async function runSingleAttempt(
 			if (idleState === "needs_attention") {
 				return progress.activityState === "needs_attention" ? false : emitNeedsAttention(now);
 			}
+			const toolAttentionTarget = progress.activityState !== "needs_attention" ? openToolAttentionTarget(now) : undefined;
+			if (toolAttentionTarget) {
+				const durationMs = Math.max(0, now - toolAttentionTarget.startedAt);
+				return emitNeedsAttention(now, {
+					message: `${agent.name} has had tool '${toolAttentionTarget.tool}' open for ${Math.floor(durationMs / 1000)}s`,
+					reason: "tool_open_threshold",
+					currentTool: toolAttentionTarget.tool,
+					currentPath: toolAttentionTarget.path,
+					currentToolDurationMs: durationMs,
+				});
+			}
 			const activeReason = nextLongRunningTrigger(controlConfig, {
 				startedAt: startTime,
 				now,
@@ -850,16 +925,18 @@ async function runSingleAttempt(
 		const processLine = (line: string) => {
 			if (!line.trim()) return;
 			jsonlWriter.writeLine(line);
-			let evt: { type?: string; message?: Message; toolName?: string; args?: unknown; willRetry?: unknown };
+			let evt: { type?: string; message?: Message; toolName?: string; toolCallId?: string; args?: unknown; willRetry?: unknown };
 			try {
-				evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown; willRetry?: unknown };
+				evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; toolCallId?: string; args?: unknown; willRetry?: unknown };
 			} catch {
 				rawStdoutTail.push(`${line}\n`);
 				shared.transcriptWriter?.writeStdoutLine(line);
+				shared.orcaProgressTab?.append(`${line}\n`);
 				// Non-JSON stdout lines are expected; only structured events are parsed.
 				return;
 			}
 			shared.transcriptWriter?.writeChildEvent(evt);
+			shared.orcaProgressTab?.event(evt);
 			if (evt.type === "agent_settled") agentSettledReceived = true;
 			applyChildLifecycle(projectChildLifecycle(evt));
 
@@ -894,6 +971,8 @@ async function runSingleAttempt(
 				const toolArgs = evt.args && typeof evt.args === "object" && !Array.isArray(evt.args)
 					? evt.args as Record<string, unknown>
 					: {};
+				const activeTool = evt.toolName !== undefined ? recordActiveToolCall(evt as { toolCallId?: unknown; toolName: string }, toolArgs, now) : undefined;
+				if (evt.toolName !== undefined) armToolTimeout(evt as { toolCallId?: unknown; toolName: string });
 				if (options.structuredOutput && evt.toolName === "structured_output") {
 					structuredOutputToolInvoked = true;
 					structuredOutputMessageStartIndex = result.messages?.length ?? 0;
@@ -905,28 +984,23 @@ async function runSingleAttempt(
 				if (options.toolBudget) {
 					result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount);
 				}
-				progress.currentTool = evt.toolName;
-				progress.currentToolArgs = extractToolArgsPreview(toolArgs);
-				progress.currentToolStartedAt = now;
-				progress.currentPath = resolveCurrentPath(evt.toolName, toolArgs);
 				const mutates = isMutatingTool(evt.toolName, toolArgs);
 				observedMutationAttempt = observedMutationAttempt || mutates;
-				pendingToolResult = { tool: evt.toolName ?? "tool", path: progress.currentPath, mutates, startedAt: now };
+				pendingToolResult = { tool: evt.toolName ?? "tool", path: activeTool?.path, mutates, startedAt: now };
 				fireUpdate();
 			}
 
 			if (evt.type === "tool_execution_end") {
-				if (progress.currentTool) {
+				clearActiveToolTimeout(evt);
+				const endedTool = removeActiveToolCall(evt);
+				if (endedTool) {
 					progress.recentTools.push({
-						tool: progress.currentTool,
-						args: progress.currentToolArgs || "",
+						tool: endedTool.tool,
+						args: endedTool.args,
 						endMs: now,
 					});
 				}
-				progress.currentTool = undefined;
-				progress.currentToolArgs = undefined;
-				progress.currentToolStartedAt = undefined;
-				progress.currentPath = undefined;
+				refreshCurrentTool();
 				fireUpdate();
 			}
 
@@ -1024,6 +1098,7 @@ async function runSingleAttempt(
 			timeoutTimer = setTimeout(() => {
 				if (processClosed || lifecycleFinished || interruptedByControl) return;
 				result.timedOut = true;
+				clearAllToolTimeouts();
 				result.error = attemptTimeout.message;
 				result.finalOutput = attemptTimeout.message;
 				progress.status = "failed";
@@ -1044,6 +1119,81 @@ async function runSingleAttempt(
 			}, attemptTimeout.remainingMs);
 			timeoutTimer.unref?.();
 		}
+
+		let toolTimeoutSequence = 0;
+		const activeToolTimeouts = new Map<string, { toolName: string; timer: ReturnType<typeof setTimeout> }>();
+		const activeToolTimeoutKeysByName = new Map<string, string[]>();
+		let toolTimeoutTerminationTimer: ReturnType<typeof setTimeout> | undefined;
+		let toolTimeoutHardKillTimer: ReturnType<typeof setTimeout> | undefined;
+		const removeToolTimeoutKey = (key: string): void => {
+			const active = activeToolTimeouts.get(key);
+			if (!active) return;
+			clearTimeout(active.timer);
+			activeToolTimeouts.delete(key);
+			const keys = activeToolTimeoutKeysByName.get(active.toolName)?.filter((candidate) => candidate !== key) ?? [];
+			if (keys.length > 0) activeToolTimeoutKeysByName.set(active.toolName, keys);
+			else activeToolTimeoutKeysByName.delete(active.toolName);
+		};
+		const clearActiveToolTimeout = (event: { toolCallId?: unknown; toolName?: unknown }): void => {
+			const key = typeof event.toolCallId === "string" && event.toolCallId.length > 0
+				? `id:${event.toolCallId}`
+				: typeof event.toolName === "string"
+					? activeToolTimeoutKeysByName.get(event.toolName)?.[0]
+					: activeToolTimeouts.size === 1
+						? [...activeToolTimeouts.keys()][0]
+						: undefined;
+			if (key) removeToolTimeoutKey(key);
+		};
+		const clearAllToolTimeouts = (): void => {
+			for (const key of [...activeToolTimeouts.keys()]) removeToolTimeoutKey(key);
+			if (toolTimeoutTerminationTimer) {
+				clearTimeout(toolTimeoutTerminationTimer);
+				toolTimeoutTerminationTimer = undefined;
+			}
+			if (toolTimeoutHardKillTimer) {
+				clearTimeout(toolTimeoutHardKillTimer);
+				toolTimeoutHardKillTimer = undefined;
+			}
+		};
+		const terminateForToolTimeout = (message: string): void => {
+			if (processClosed || lifecycleFinished || interruptedByControl) return;
+			result.timedOut = true;
+			result.error = message;
+			result.finalOutput = message;
+			progress.status = "failed";
+			progress.error = message;
+			progress.durationMs = Date.now() - startTime;
+			fireUpdate();
+			trySignalChild(proc, "SIGINT");
+			toolTimeoutTerminationTimer = setTimeout(() => {
+				if (processClosed || lifecycleFinished) return;
+				trySignalChild(proc, "SIGTERM");
+			}, 1000);
+			toolTimeoutTerminationTimer.unref?.();
+			toolTimeoutHardKillTimer = setTimeout(() => {
+				if (processClosed || lifecycleFinished) return;
+				trySignalChild(proc, "SIGKILL");
+			}, 4000);
+			toolTimeoutHardKillTimer.unref?.();
+		};
+		const armToolTimeout = (event: { toolCallId?: unknown; toolName: string }): void => {
+			const timeoutForTool = effectiveToolTimeoutMs(event.toolName, options.toolTimeoutMs);
+			if (timeoutForTool === undefined) return;
+			const elapsed = Date.now() - startTime;
+			const runRemaining = attemptTimeout ? Math.max(0, attemptTimeout.remainingMs - elapsed) : undefined;
+			if (runRemaining !== undefined && timeoutForTool >= runRemaining) return;
+			const key = toolTimeoutCallKey(event, ++toolTimeoutSequence);
+			const toolName = event.toolName;
+			const timer = setTimeout(() => {
+				removeToolTimeoutKey(key);
+				terminateForToolTimeout(formatToolTimeoutMessage(toolName, timeoutForTool));
+			}, timeoutForTool);
+			timer.unref?.();
+			activeToolTimeouts.set(key, { toolName, timer });
+			const keys = activeToolTimeoutKeysByName.get(toolName) ?? [];
+			keys.push(key);
+			activeToolTimeoutKeysByName.set(toolName, keys);
+		};
 
 		const stderrTail = createBoundedByteTail();
 		const failProtocol = (limit: ProtocolOutputLimit): void => {
@@ -1079,6 +1229,7 @@ async function runSingleAttempt(
 		proc.stderr.on("data", (chunk: Buffer) => {
 			stderrTail.push(chunk);
 			stderrReader.push(chunk);
+			shared.orcaProgressTab?.append(chunk.toString("utf-8"));
 		});
 		proc.on("exit", () => {
 			childExited = true;
@@ -1158,6 +1309,7 @@ async function runSingleAttempt(
 				if (result.timedOut) return;
 				interruptedByControl = true;
 				clearTimeoutTimers();
+				clearAllToolTimeouts();
 				progress.status = "running";
 				progress.durationMs = Date.now() - startTime;
 				result.interrupted = true;
@@ -1203,6 +1355,10 @@ async function runSingleAttempt(
 		};
 		return result;
 	}
+	result.error = formatSubagentExtensionConflictError(result.error, {
+		agent: agent.name,
+		ambientExtensionsEnabled: !launchResolvedExtensions.disableAmbientExtensions,
+	});
 	if (result.error && result.exitCode === 0) {
 		result.exitCode = 1;
 	}
@@ -1380,7 +1536,7 @@ async function runSingleAttempt(
 /**
  * Run a subagent synchronously (blocking until complete)
  */
-async function runSyncCompletion(
+async function runSyncCompletionInner(
 	runtimeCwd: string,
 	agents: AgentConfig[],
 	agentName: string,
@@ -1429,6 +1585,24 @@ async function runSyncCompletion(
 			error: acceptanceErrors.join(" "),
 		}, options.context));
 	}
+	const toolTimeout = resolveToolTimeoutMs({
+		callValue: options.toolTimeoutMs,
+		agentValue: agent.defaultToolTimeoutMs,
+		configValue: options.configToolTimeoutMs,
+		envValue: toolTimeoutFromEnv(),
+	});
+	if (toolTimeout.error) {
+		return redactResultPrompt(withRunContext({
+			index: options.index ?? 0,
+			agent: agentName,
+			task,
+			exitCode: 1,
+			messages: [],
+			usage: emptyUsage(),
+			error: toolTimeout.error,
+		}, options.context));
+	}
+	options = { ...options, toolTimeoutMs: toolTimeout.toolTimeoutMs };
 	const outputModeValidationError = validateFileOnlyOutputMode(options.outputMode, options.outputPath, `Single run (${agentName})`);
 	if (outputModeValidationError) {
 		return redactResultPrompt(withRunContext({
@@ -1533,6 +1707,14 @@ async function runSyncCompletion(
 		}
 	}
 
+	const orcaProgressTab = createOrcaProgressTab({
+		cwd: options.cwd ?? runtimeCwd,
+		runId: options.runId,
+		agent: agentName,
+		index: options.index ?? 0,
+	});
+	if (orcaProgressTab) options.onOrcaProgressTabCreated?.(orcaProgressTab);
+
 	const persistResultMetadata = (target: SingleResult): void => {
 		persistSingleResultMetadata({
 			metadataPath: artifactPathsResult?.metadataPath,
@@ -1588,6 +1770,7 @@ async function runSyncCompletion(
 				outputSnapshot,
 				originalTask: task,
 				taskDelivery: taskDeliveryOverride,
+				orcaProgressTab,
 			});
 			lastResult = result;
 			if (startupAttemptIndex === 0) {
@@ -1853,6 +2036,27 @@ async function runSyncCompletion(
 	}
 
 	return result;
+}
+
+async function runSyncCompletion(
+	runtimeCwd: string,
+	agents: AgentConfig[],
+	agentName: string,
+	task: string,
+	options: RunSyncOptions,
+): Promise<SingleResult> {
+	let orcaProgressTab: OrcaProgressTab | undefined;
+	try {
+		const result = await runSyncCompletionInner(runtimeCwd, agents, agentName, task, {
+			...options,
+			onOrcaProgressTabCreated: (tab) => { orcaProgressTab = tab; },
+		});
+		orcaProgressTab?.finish(result.stopped ? "stopped" : result.exitCode === 0 && !result.error ? "completed" : "failed", result.sessionFile);
+		return result;
+	} catch (error) {
+		orcaProgressTab?.finish("failed");
+		throw error;
+	}
 }
 
 /**

@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { isSameGitRepository, resolveWorkflowChatProgress } from "../../src/workflows/chat-progress.ts";
+import { buildWorkflowChatProgressRows, isSameGitRepository, resolveWorkflowChatProgress } from "../../src/workflows/chat-progress.ts";
 import { renderSubagentResult } from "../../src/tui/render.ts";
 import { bindMissionWorkflowChildAsyncLaunch, createSubagentExecutor, foregroundResultIntercomStatus, missionWorkflowChildStatus, runMissionWorkflowChild, shouldSuppressRoutineResultIntercom } from "../../src/runs/foreground/subagent-executor.ts";
 import { readMissionBinding } from "../../src/missions/lifecycle.ts";
@@ -202,6 +202,38 @@ describe("workflow chat progress rendering", () => {
 		}
 	});
 
+	it("warns once when a workflow child outlives its mission record", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-workflow-missing-mission-"));
+		const originalWarn = console.warn;
+		const warnings: string[] = [];
+		try {
+			const location = {
+				projectRoot: root,
+				missionDir: path.join(root, ".pi/subagents", "missions"),
+				globalIndexDir: path.join(root, ".pi/subagents", "mission-index"),
+				writeGlobalIndex: false,
+			};
+			const mission = createMission(location, { title: "Workflow", objective: "Track child" });
+			fs.rmSync(path.join(location.missionDir, `${mission.id}.json`));
+			console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+
+			for (const key of ["first", "second"]) {
+				await assert.rejects(
+					() => runMissionWorkflowChild({ missionId: mission.id, location, autoCreated: false }, "wf-missing-mission", key, "Prep", async () => {
+						throw new Error("child failed");
+					}),
+					/child failed/,
+				);
+			}
+
+			assert.equal(warnings.length, 1);
+			assert.match(warnings[0] ?? "", new RegExp(`Mission '${mission.id}' is no longer in the mission store`));
+		} finally {
+			console.warn = originalWarn;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("renders stable rows keyed by workflow trace entries", () => {
 		const text = componentText(renderSubagentResult({
 			content: [{ type: "text", text: "Workflow running." }],
@@ -215,6 +247,7 @@ describe("workflow chat progress rendering", () => {
 						{ operation: "run", key: "scout", state: "completed", runId: "run-scout", phase: "Validation", label: "Found renderer seam", durationMs: 12 },
 						{ operation: "run", key: "tests", state: "started", phase: "Validation", label: "focused integration suite" },
 						{ operation: "run", key: "review", state: "failed", phase: "Validation", label: "fresh-context UX review", error: "needs fixes" },
+						{ operation: "run", key: "stale", state: "stopped", phase: "Validation", label: "superseded exact-head review", error: "Workflow stopped by user." },
 					],
 					emits: [],
 					console: [],
@@ -228,6 +261,66 @@ describe("workflow chat progress rendering", () => {
 		assert.match(text, /complete\s+scout Found renderer seam/);
 		assert.match(text, /running\s+tests focused integration suite/);
 		assert.match(text, /failed\s+review fresh-context UX review .* needs fixes/);
+		assert.match(text, /stopped\s+stale superseded exact-head review .* Workflow stopped by user/);
+	});
+
+	it("renders detached workflow trace rows as paused attention", () => {
+		const trace: NonNullable<Details["workflow"]>["trace"] = [{
+			operation: "run",
+			key: "detaches",
+			state: "detached",
+			phase: "Decision",
+			label: "supervisor handoff",
+			error: "Detached for intercom coordination. Reply to the supervisor request first.",
+		}];
+		const rows = buildWorkflowChatProgressRows(trace);
+		assert.equal(rows[0]?.state, "detached");
+
+		const text = componentText(renderSubagentResult({
+			content: [{ type: "text", text: "Workflow paused." }],
+			details: {
+				mode: "workflow",
+				runId: "wf_detached",
+				results: [],
+				chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
+				workflow: { trace, emits: [], console: [] },
+			},
+		}, { expanded: false }, theme as any));
+
+		assert.match(text, /workflow wf_detached .* same repo .* paused/);
+		assert.match(text, /Phase  Decision/);
+		assert.match(text, /detached\s+detaches supervisor handoff .* Detached for intercom coordination/);
+		assert.doesNotMatch(text, /running\s+detaches/);
+		assert.doesNotMatch(text, /failed\s+detaches/);
+	});
+
+	it("applies main-window density settings to collapsed workflow live cards", () => {
+		const trace = Array.from({ length: 10 }, (_, index) => ({
+			operation: "run" as const,
+			key: `step-${index}`,
+			state: "started" as const,
+			label: `review ${index}`,
+		}));
+		const result = {
+			content: [{ type: "text" as const, text: "Workflow running." }],
+			details: {
+				mode: "workflow" as const,
+				runId: "wf_density",
+				results: [],
+				chatProgress: { mode: "live-card" as const, repoRelation: "same" as const, repoLabel: "pi-subagents" },
+				workflow: { trace, emits: [], console: [] },
+			},
+		};
+
+		const compact = renderSubagentResult(result, { expanded: false }, theme as any, undefined, { horizontalSpacing: 0, compactResultMaxLines: 3 }).render(120);
+		assert.equal(compact.length, 3);
+		assert.match(compact[1]!, /^Repo   pi-subagents\s*$/);
+		assert.match(compact[2]!, /rows hidden/);
+
+		const expanded = renderSubagentResult(result, { expanded: true }, theme as any, undefined, { horizontalSpacing: 0, compactResultMaxLines: 3 }).render(120);
+		assert.ok(expanded.length > 3);
+		assert.match(expanded[1]!, /^  Repo   pi-subagents\s*$/);
+		assert.doesNotMatch(expanded.join("\n"), /rows hidden · .* expands/);
 	});
 
 	it("bounds workflow live-card rows and keeps old failed children visible", () => {

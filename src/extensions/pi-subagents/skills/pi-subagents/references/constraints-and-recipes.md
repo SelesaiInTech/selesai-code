@@ -1,4 +1,4 @@
-# Pi Subagents: Constraints And Recipes
+# Selesai Subagents: Constraints And Recipes
 
 This file is a detailed reference loaded from `skills/pi-subagents/SKILL.md`.
 
@@ -29,7 +29,7 @@ Launch every subagent asynchronously by default. Use `async: true` for scouts, r
 
 ### Use subagent_wait() to block until async runs finish
 
-In an interactive chat, do not call `subagent_wait()` merely to wait after launching background work; return control to the user and Pi will wake the session on completion. Override that default when the current request is run-to-completion — for example, the user asked you to stay with the task and report results back this turn or a skill must finish in one turn. In a headless run, Pi auto-drains exact current-session work at `agent_end`; call `subagent_wait()` when this turn must receive results before it ends. In either case, `subagent_wait()` blocks the current turn until the next run completes or needs attention, keeps the turn alive for normal notification delivery, then returns.
+In an interactive chat, do not call `subagent_wait()` merely to wait after launching background work; return control to the user and Selesai will wake the session on completion. Override that default when the current request is run-to-completion — for example, the user asked you to stay with the task and report results back this turn or a skill must finish in one turn. In a headless run, Selesai auto-drains exact current-session work at `agent_end`; call `subagent_wait()` when this turn must receive results before it ends. In either case, `subagent_wait()` blocks the current turn until the next run completes or needs attention, keeps the turn alive for normal notification delivery, then returns.
 
 - `subagent_wait()` — return when the next initially active async run or registered provider item finishes, or a subagent needs attention.
 - `subagent_wait({ all: true })` — block until every async run and provider item active at call time finishes, or a subagent needs attention.
@@ -61,7 +61,7 @@ Give subagents specific tasks rather than vague mandates.
 
 ### Escalate decisions upward
 
-If a subagent encounters an unapproved product, architecture, scope, merge, release, credential, or authority choice, it should use `contact_supervisor` and wait for the reply instead of deciding alone. Generic `intercom` is a fallback only when the bridge-provided supervisor tool is unavailable. External checks, receipts, and review bots provide evidence only; they do not grant authority.
+If a subagent encounters an unapproved product, architecture, scope, merge, release, credential, or authority choice, it should use `contact_supervisor` and wait for the reply instead of deciding alone. Generic `intercom` is external or provider-supplied only. Use it only when external bridge instructions provide an explicit safe target. External checks, receipts, and review bots provide evidence only; they do not grant authority.
 
 ### Intervene only on clear control signals
 
@@ -211,7 +211,8 @@ Use distinct keys, prompts, and output paths. Do not launch parallel writers int
 **"Unknown agent"**
 ```typescript
 subagent({ action: "list" })
-// Check available agents and chains, then confirm scope/precedence.
+// Check available agents, then confirm scope/precedence. Saved chains are not a
+// public execution surface; author orchestration with workflowScript.
 ```
 
 **Setup, discovery, or intercom confusion**

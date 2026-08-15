@@ -19,10 +19,12 @@ import { buildChainInstructions, isCheckpointStep, isDynamicParallelStep, isPara
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
+import { resolveNodeExecutable } from "../../shared/node-executable.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV, PROMPT_REDACTED, resolveChildCwd } from "../../shared/utils.ts";
 import { buildModelCandidates, resolveEffectiveSubagentModel, resolveModelCandidate, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
+import { resolveToolTimeoutMs, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
@@ -37,6 +39,7 @@ import {
 	type AsyncStatus,
 	type ArtifactConfig,
 	type Details,
+	type IntercomBridgeConfig,
 	type JsonSchemaObject,
 	type MaxOutputConfig,
 	type NestedRouteInfo,
@@ -56,6 +59,7 @@ import {
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
 import { nestedResultsPath, nestedSummaryFromAsyncStatus, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent } from "../shared/nested-events.ts";
+import { resultFilePath } from "./result-files.ts";
 import { appendTurnBudgetSystemPrompt, initialTurnBudgetState } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetState } from "../shared/usage-budget.ts";
@@ -172,6 +176,12 @@ interface AsyncChainParams {
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ResolvedToolBudget;
+	/** Optional per-call hard toolTimeoutMs override (highest precedence). */
+	callToolTimeoutMs?: number;
+	/** Global config.toolTimeoutMs (third precedence, after agent frontmatter). */
+	configToolTimeoutMs?: number;
+	/** SELESAI_SUBAGENT_TOOL_TIMEOUT_MS override (lowest precedence). */
+	toolTimeoutMsEnv?: string | undefined;
 	/** Global cap on simultaneously-running subagent tasks within the async run. */
 	globalConcurrencyLimit?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
@@ -187,6 +197,8 @@ interface AsyncSingleParams {
 	/** Raw caller-facing goal used only by the started event. */
 	goal?: string;
 	agentConfig: AgentConfig;
+	/** Agent contract before per-run bridge injection, used only for recovery persistence. */
+	recoveryAgentConfig?: AgentConfig;
 	ctx: AsyncExecutionContext;
 	cwd?: string;
 	maxOutput?: MaxOutputConfig;
@@ -214,16 +226,23 @@ interface AsyncSingleParams {
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
 	controlConfig?: ResolvedControlConfig;
+	intercomBridge?: IntercomBridgeConfig;
 	controlIntercomTarget?: string;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	nestedRoute?: NestedRouteInfo;
 	acceptance?: AcceptanceInput;
 	timeoutMs?: number;
 	absoluteDeadlineAt?: number;
+	/** Optional per-call hard toolTimeoutMs override (highest precedence). */
+	toolTimeoutMs?: number;
 	turnBudget?: { maxTurns: number; graceTurns?: number };
 	toolBudget?: ResolvedToolBudget | ToolBudgetConfig;
 	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ResolvedToolBudget;
+	/** Global config.toolTimeoutMs (third precedence, after agent frontmatter). */
+	configToolTimeoutMs?: number;
+	/** SELESAI_SUBAGENT_TOOL_TIMEOUT_MS override (lowest precedence). */
+	toolTimeoutMsEnv?: string | undefined;
 	allowZeroToolBudget?: boolean;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
@@ -262,6 +281,12 @@ export interface AsyncRunnerStepBuildParams {
 	validateOutputBindings?: boolean;
 	toolBudget?: ResolvedToolBudget;
 	configToolBudget?: ResolvedToolBudget;
+	/** Optional per-call hard toolTimeoutMs override from the subagent invocation. */
+	callToolTimeoutMs?: number;
+	/** Global config.toolTimeoutMs (third precedence, after agent frontmatter). */
+	configToolTimeoutMs?: number;
+	/** SELESAI_SUBAGENT_TOOL_TIMEOUT_MS override (lowest precedence). */
+	toolTimeoutMsEnv?: string | undefined;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 }
 
@@ -297,27 +322,6 @@ export function formatAsyncStartedMessage(headline: string, interactive: boolean
  */
 export function isAsyncAvailable(): boolean {
 	return jitiCliPath !== undefined;
-}
-
-function isNodeExecutableName(execPath: string): boolean {
-	const basename = path.basename(execPath).toLowerCase();
-	return basename === "node" || basename === "node.exe" || basename === "nodejs" || basename === "nodejs.exe";
-}
-
-function canUseCurrentNodeExecutable(execPath: string): boolean {
-	try {
-		fs.accessSync(execPath, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function resolveAsyncRunnerNodeCommand(): string {
-	if (isNodeExecutableName(process.execPath) && canUseCurrentNodeExecutable(process.execPath)) {
-		return process.execPath;
-	}
-	return process.platform === "win32" ? "node.exe" : "node";
 }
 
 export function resolveAsyncRunnerLogPaths(cfg: object): { stdoutPath: string; stderrPath: string } | undefined {
@@ -486,7 +490,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 	const launchConfig = { ...cfg, runnerProcessInstanceId };
 	fs.writeFileSync(cfgPath, JSON.stringify(launchConfig));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
-	const nodeCommand = resolveAsyncRunnerNodeCommand();
+	const nodeCommand = resolveNodeExecutable();
 	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; id?: unknown; sessionId?: unknown; revivalLease?: unknown };
 	const launchAsyncDir = typeof launchForStartup.asyncDir === "string" ? launchForStartup.asyncDir : undefined;
 	const launchRunId = typeof launchForStartup.id === "string" ? launchForStartup.id : suffix;
@@ -730,6 +734,13 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const toolBudgetInput = s.toolBudget ?? params.toolBudget ?? a.toolBudget ?? params.configToolBudget;
 		const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, s.toolBudget ? "toolBudget" : a.toolBudget ? "agent.toolBudget" : "config.toolBudget");
 		if (resolvedToolBudget.error) throw new AsyncStartValidationError(resolvedToolBudget.error);
+		const resolvedToolTimeout = resolveToolTimeoutMs({
+			callValue: params.callToolTimeoutMs,
+			agentValue: a.defaultToolTimeoutMs,
+			configValue: params.configToolTimeoutMs,
+			envValue: params.toolTimeoutMsEnv ?? toolTimeoutFromEnv(),
+		});
+		if (resolvedToolTimeout.error) throw new AsyncStartValidationError(resolvedToolTimeout.error);
 		const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
 		const instructionCwd = behaviorCwd ?? stepCwd;
 		const readExistenceCwd = behaviorCwd ? stepCwd : instructionCwd;
@@ -843,6 +854,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			sessionFile,
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
 			timeoutMs: a.defaultTimeoutMs ?? DEFAULT_ASYNC_TIMEOUT_MS,
+			toolTimeoutMs: resolvedToolTimeout.toolTimeoutMs,
 			waitToolEnabled: params.waitToolEnabled,
 			effectiveAcceptance: resolveEffectiveAcceptance({
 				explicit: s.acceptance,
@@ -1066,6 +1078,9 @@ export function executeAsyncChain(
 		asyncDir,
 		toolBudget: params.toolBudget,
 		configToolBudget: params.configToolBudget,
+		callToolTimeoutMs: params.callToolTimeoutMs,
+		configToolTimeoutMs: params.configToolTimeoutMs,
+		toolTimeoutMsEnv: params.toolTimeoutMsEnv ?? toolTimeoutFromEnv(),
 		capabilityCeiling,
 	});
 	if ("error" in built) {
@@ -1102,7 +1117,7 @@ export function executeAsyncChain(
 			{
 				id,
 				steps,
-				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(DIRS.results, `${id}.json`),
+				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : resultFilePath(DIRS.results, id),
 				cwd: runnerCwd,
 				placeholder: "{previous}",
 				maxOutput,
@@ -1251,6 +1266,7 @@ export function executeAsyncChain(
 			workflowGraph,
 			cwd: runnerCwd,
 			asyncDir,
+			...(sessionRoot ? { sessionRoot } : {}),
 			...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
 			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}),
@@ -1399,17 +1415,27 @@ export function executeAsyncSingle(
 		? deadlineAt - Date.now()
 		: params.timeoutMs;
 	if (timeoutMs !== undefined && timeoutMs <= 0) return formatAsyncStartError("single", "The source run's absolute deadline expired before recovery could launch.");
+	const resolvedToolTimeout = resolveToolTimeoutMs({
+		callValue: params.toolTimeoutMs,
+		agentValue: agentConfig.defaultToolTimeoutMs,
+		configValue: params.configToolTimeoutMs,
+		envValue: params.toolTimeoutMsEnv ?? toolTimeoutFromEnv(),
+	});
+	if (resolvedToolTimeout.error) return formatAsyncStartError("single", resolvedToolTimeout.error);
+	const toolTimeoutMs = resolvedToolTimeout.toolTimeoutMs;
 	const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
 	const initialUsageBudget = usageBudgetState(params.usageBudget, undefined);
 	const resolvedSessionDir = params.sessionDir ?? (sessionRoot ? path.join(sessionRoot, `async-${id}`) : undefined);
 	const structuredOutput = params.structuredOutputSchema
 		? createStructuredOutputRuntime(params.structuredOutputSchema, path.join(asyncDir, "structured-output"))
 		: undefined;
-	const modelCandidates = buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
-		.flatMap((candidate) => {
-			const resolved = applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined);
-			return resolved ? [resolved] : [];
-		});
+	const modelCandidates = externalRunner
+		? []
+		: buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
+			.flatMap((candidate) => {
+				const resolved = applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined);
+				return resolved ? [resolved] : [];
+			});
 	const effectiveSystemPrompt = appendTurnBudgetSystemPrompt(systemPrompt, params.turnBudget);
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agentConfig.tools,
@@ -1451,6 +1477,7 @@ export function executeAsyncSingle(
 		async: true,
 		agentContract: params.agentContract,
 	});
+	const recoveryAgentConfig = params.recoveryAgentConfig ?? agentConfig;
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
 		version: 1,
 		launchContractDigest,
@@ -1462,30 +1489,31 @@ export function executeAsyncSingle(
 		...(sessionFile ? { sessionFile } : {}),
 		cwd: runnerCwd,
 		...(model ? { model } : {}),
-		...(agentConfig.fallbackModels ? { fallbackModels: [...agentConfig.fallbackModels] } : {}),
+		...(recoveryAgentConfig.fallbackModels ? { fallbackModels: [...recoveryAgentConfig.fallbackModels] } : {}),
 		...(effectiveThinking ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
-		...(agentConfig.tools ? { tools: [...agentConfig.tools] } : {}),
-		...(agentConfig.extensions ? { extensions: [...agentConfig.extensions] } : {}),
-		...(agentConfig.subagentOnlyExtensions ? { subagentOnlyExtensions: [...agentConfig.subagentOnlyExtensions] } : {}),
-		...(agentConfig.mcpDirectTools ? { mcpDirectTools: [...agentConfig.mcpDirectTools] } : {}),
-		...(agentConfig.systemPrompt ? { systemPrompt: agentConfig.systemPrompt } : {}),
-		systemPromptMode: agentConfig.systemPromptMode,
-		inheritProjectContext: agentConfig.inheritProjectContext,
-		inheritSkills: agentConfig.inheritSkills,
+		...(recoveryAgentConfig.tools ? { tools: [...recoveryAgentConfig.tools] } : {}),
+		...(recoveryAgentConfig.extensions ? { extensions: [...recoveryAgentConfig.extensions] } : {}),
+		...(recoveryAgentConfig.subagentOnlyExtensions ? { subagentOnlyExtensions: [...recoveryAgentConfig.subagentOnlyExtensions] } : {}),
+		...(recoveryAgentConfig.mcpDirectTools ? { mcpDirectTools: [...recoveryAgentConfig.mcpDirectTools] } : {}),
+		...(recoveryAgentConfig.systemPrompt ? { systemPrompt: recoveryAgentConfig.systemPrompt } : {}),
+		systemPromptMode: recoveryAgentConfig.systemPromptMode,
+		inheritProjectContext: recoveryAgentConfig.inheritProjectContext,
+		inheritSkills: recoveryAgentConfig.inheritSkills,
 		...(resolvedSkills.length ? { skills: resolvedSkills.map((skill) => skill.name) } : {}),
-		...(agentConfig.skillPath ? { skillPath: [...agentConfig.skillPath] } : {}),
-		...(agentConfig.filePath ? { agentFilePath: agentConfig.filePath } : {}),
-		...(agentConfig.completionGuard !== undefined ? { completionGuard: agentConfig.completionGuard } : {}),
-		...(agentConfig.memory ? { memory: { ...agentConfig.memory } } : {}),
+		...(recoveryAgentConfig.skillPath ? { skillPath: [...recoveryAgentConfig.skillPath] } : {}),
+		...(recoveryAgentConfig.filePath ? { agentFilePath: recoveryAgentConfig.filePath } : {}),
+		...(recoveryAgentConfig.completionGuard !== undefined ? { completionGuard: recoveryAgentConfig.completionGuard } : {}),
+		...(recoveryAgentConfig.memory ? { memory: { ...recoveryAgentConfig.memory } } : {}),
 		...(outputPath ? { outputPath } : {}),
 		outputMode,
 		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
 		...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
 		...(controlConfig ? { controlConfig } : {}),
+		...(params.intercomBridge !== undefined ? { intercomBridge: params.intercomBridge } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
 		...(initialTurnBudget ? { initialTurnBudget: { maxTurns: initialTurnBudget.maxTurns, graceTurns: initialTurnBudget.graceTurns } } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
-		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
+		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, recoveryAgentConfig.maxSubagentDepth),
 		...(maxOutput ? { maxOutput } : {}),
 		share: shareEnabled,
 		...(resolvedSessionDir ? { sessionDir: resolvedSessionDir } : {}),
@@ -1546,7 +1574,7 @@ export function executeAsyncSingle(
 				],
 				resultPath: params.parentWorkflowRunId !== undefined && params.revivalLease !== undefined
 					? workflowAwaitedAsyncResultPath(asyncDir)
-					: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(DIRS.results, `${id}.json`),
+					: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : resultFilePath(DIRS.results, id),
 				cwd: runnerCwd,
 				placeholder: "{previous}",
 				maxOutput,
@@ -1565,6 +1593,7 @@ export function executeAsyncSingle(
 				controlConfig,
 				timeoutMs,
 				deadlineAt,
+				toolTimeoutMs,
 				turnBudget: params.turnBudget,
 				toolBudget: params.toolBudget,
 				usageBudget: params.usageBudget,
@@ -1654,6 +1683,7 @@ export function executeAsyncSingle(
 			goal: (params.goal ?? task).trim() ? PROMPT_REDACTED : undefined,
 			cwd: runnerCwd,
 			asyncDir,
+			...(sessionRoot ? { sessionRoot } : {}),
 			launchContractDigest,
 			launchResolvedExtensions,
 			...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}),

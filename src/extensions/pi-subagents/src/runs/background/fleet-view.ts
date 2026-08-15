@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { safeTerminalText } from "../../shared/display-text.ts";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
 import {
@@ -196,7 +197,7 @@ function readSessionTranscriptTail(sessionFile: string, maxLines: number, truste
 		try {
 			const parsed = JSON.parse(line) as unknown;
 			const messageLine = sessionMessageLine(parsed);
-			if (messageLine) lines.push(messageLine);
+			if (messageLine) lines.push(...messageLine.split(/\r?\n/));
 		} catch {
 			malformed++;
 		}
@@ -410,6 +411,18 @@ function appendKnownArtifacts(lines: string[], input: { outputPaths: string[]; s
 	for (const artifact of artifacts) lines.push(`  ${artifact}`);
 }
 
+/**
+ * Sanitizes each assembled line independently.
+ *
+ * Sanitizing the joined response would let a single binary fragment in child
+ * output collapse the whole transcript, including run state, artifact paths, and
+ * warnings, into the binary placeholder. Per-line sanitization keeps that damage
+ * to the offending line.
+ */
+function safeTranscriptLines(lines: string[]): string {
+	return lines.map((line) => safeTerminalText(line)).join("\n");
+}
+
 function appendTranscriptBody(lines: string[], sourceLabel: string, sourceLines: string[], truncated: boolean): void {
 	lines.push(`${sourceLabel}${truncated ? " (tail truncated)" : ""}:`);
 	if (sourceLines.length === 0) {
@@ -430,6 +443,8 @@ export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, 
 		: uniqueStrings([runOutputPath]);
 	const sessionFile = selected.index !== undefined ? selected.step?.sessionFile : status.sessionFile;
 	const eventsPath = path.join(asyncDir, "events.jsonl");
+	// Synthesized output paths can name files that were never written. Keep the unfiltered paths
+	// below so a present-but-unreadable file still reports its read error.
 
 	const context = contextModeLabel(status.context ?? summarizeContextModes((status.steps ?? []).map((step) => step.context)));
 	const lines = [
@@ -439,7 +454,7 @@ export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, 
 		stepStateLine(status.mode, selected.index, selected.step),
 		selected.hint,
 	].filter((line): line is string => Boolean(line));
-	appendKnownArtifacts(lines, { outputPaths, sessionFile, eventsPath: fs.existsSync(eventsPath) ? eventsPath : undefined, logPath: fs.existsSync(logPath) ? logPath : undefined });
+	appendKnownArtifacts(lines, { outputPaths: outputPaths.filter((outputPath) => fs.existsSync(outputPath)), sessionFile, eventsPath: fs.existsSync(eventsPath) ? eventsPath : undefined, logPath: fs.existsSync(logPath) ? logPath : undefined });
 
 	const warnings: string[] = [];
 	let transcriptLines: string[] = [];
@@ -470,7 +485,7 @@ export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, 
 		for (const warning of warnings) lines.push(`  ${warning}`);
 	}
 	appendTranscriptBody(lines, transcriptSource, transcriptLines, truncated);
-	return lines.join("\n");
+	return safeTranscriptLines(lines);
 }
 
 export function formatNestedRunTranscript(run: NestedRunSummary, options: TranscriptOptions = {}): string {
@@ -488,7 +503,7 @@ export function formatNestedRunTranscript(run: NestedRunSummary, options: Transc
 	appendKnownArtifacts(lines, { outputPaths: [], sessionFile: run.sessionFile });
 	if (!run.sessionFile) {
 		appendTranscriptBody(lines, "Transcript tail", [], false);
-		return lines.join("\n");
+		return safeTranscriptLines(lines);
 	}
 	const sessionTail = readSessionTranscriptTail(run.sessionFile, lineLimit, options.sessionRoots ?? []);
 	if (sessionTail.warnings.length) {
@@ -496,7 +511,7 @@ export function formatNestedRunTranscript(run: NestedRunSummary, options: Transc
 		for (const warning of sessionTail.warnings) lines.push(`  ${warning}`);
 	}
 	appendTranscriptBody(lines, `Session transcript tail from ${run.sessionFile}`, sessionTail.lines, false);
-	return lines.join("\n");
+	return safeTranscriptLines(lines);
 }
 
 export function formatAsyncResultTranscript(data: {
@@ -536,5 +551,5 @@ export function formatAsyncResultTranscript(data: {
 	].filter((line): line is string => Boolean(line));
 	appendKnownArtifacts(lines, { outputPaths: [], sessionFile, resultPath });
 	appendTranscriptBody(lines, "Result transcript tail", transcriptLines.filter((line) => line.trim()), output.split(/\r?\n/).length > lineLimit);
-	return lines.join("\n");
+	return safeTranscriptLines(lines);
 }

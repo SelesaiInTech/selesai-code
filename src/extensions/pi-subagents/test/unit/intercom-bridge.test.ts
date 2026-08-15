@@ -104,6 +104,19 @@ describe("resolveIntercomBridge", () => {
 		assert.equal(bridge.extensionDir, NATIVE_INTERCOM_EXTENSION_DIR);
 	});
 
+	it("uses a per-run override instead of the global config", () => {
+		const bridge = resolveIntercomBridge({
+			config: { mode: "always", resultDelivery: true },
+			override: { mode: "off" },
+			context: "fresh",
+			orchestratorTarget: "main",
+		});
+
+		assert.equal(bridge.active, false);
+		assert.equal(bridge.mode, "off");
+		assert.equal(bridge.resultDelivery, false);
+	});
+
 	it("can disable external grouped-result delivery without disabling supervisor coordination", () => {
 		const bridge = resolveIntercomBridge({
 			config: { mode: "always", resultDelivery: false },
@@ -166,17 +179,18 @@ describe("applyIntercomBridgeToAgent", () => {
 		instruction: "Intercom orchestration channel:\n- Need a decision or blocked: contact_supervisor({ reason: \"need_decision\", message: \"<question>\" })\n- Blocked/update: contact_supervisor({ reason: \"progress_update\", message: \"UPDATE: <summary>\" })",
 	};
 
-	it("injects intercom tool and prompt instructions", () => {
+	it("injects contact_supervisor and prompt instructions", () => {
 		const updated = applyIntercomBridgeToAgent(makeAgent({ tools: ["read", "bash"] }), activeBridge);
-		assert.deepEqual(updated.tools, ["read", "bash", "intercom", "contact_supervisor"]);
+		assert.deepEqual(updated.tools, ["read", "bash", "contact_supervisor"]);
 		assert.match(updated.systemPrompt, /Intercom orchestration channel:/);
 		assert.match(updated.systemPrompt, /contact_supervisor/);
+		assert.doesNotMatch(updated.systemPrompt ?? "", /Generic intercom/);
 	});
 
 	it("is idempotent", () => {
 		const first = applyIntercomBridgeToAgent(makeAgent({ tools: ["read"] }), activeBridge);
 		const second = applyIntercomBridgeToAgent(first, activeBridge);
-		assert.equal(second.tools?.filter((tool) => tool === "intercom").length, 1);
+		assert.equal(second.tools?.filter((tool) => tool === "intercom").length, 0);
 		assert.equal(second.tools?.filter((tool) => tool === "contact_supervisor").length, 1);
 		assert.equal(second.systemPrompt, first.systemPrompt);
 	});
@@ -184,8 +198,13 @@ describe("applyIntercomBridgeToAgent", () => {
 	it("does not block native supervisor tools for agents with explicit extension allowlists", () => {
 		const agent = makeAgent({ tools: ["read"], extensions: ["/tmp/other-extension/index.ts"] });
 		const updated = applyIntercomBridgeToAgent(agent, activeBridge);
-		assert.deepEqual(updated.tools, ["read", "intercom", "contact_supervisor"]);
+		assert.deepEqual(updated.tools, ["read", "contact_supervisor"]);
 		assert.match(updated.systemPrompt, /contact_supervisor/);
+	});
+
+	it("preserves explicitly requested external intercom tools", () => {
+		const updated = applyIntercomBridgeToAgent(makeAgent({ tools: ["read", "intercom"] }), activeBridge);
+		assert.deepEqual(updated.tools, ["read", "intercom", "contact_supervisor"]);
 	});
 
 	it("does not widen explicit empty or MCP-only builtin allowlists", () => {

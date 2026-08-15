@@ -1,12 +1,13 @@
 import type { ExtensionContext } from "@selesai/code";
 import { type EditorComponent, isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { snapshotExternalRuns } from "../api/external-runs.ts";
 import { formatModelThinking } from "../shared/formatters.ts";
 import type { AsyncJobStep, FleetViewPlacement, NestedRunSummary, NestedStepSummary, SubagentState } from "../shared/types.ts";
 import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 
 export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
 
-// Six rows fit the accepted collapsed hierarchy: one owner, four direct leaves, and overflow.
+// Six rows fit the accepted collapsed hierarchy: one owner, four visible descendants, and overflow.
 const MAX_AGENT_ROWS = 6;
 const REFRESH_MS = 500;
 
@@ -16,12 +17,15 @@ type FleetStatusTui = {
 };
 type FleetStatusEntry = {
 	key: string;
+	parentKey?: string;
+	workflowWrapper?: boolean;
 	agent: string;
 	modelThinking?: string;
 	description?: string;
 	startedAt: number;
 	tokens: number;
 	state: string;
+	external?: true;
 	nestedChildren?: NestedRunSummary[];
 };
 
@@ -31,11 +35,13 @@ type FleetNestedRow = {
 	modelThinking?: string;
 	activity?: string;
 	startedAt?: number;
+	depth: number;
 	overflow?: number;
 };
 
 type FleetTreeRow =
 	| { kind: "owner"; entry: FleetStatusEntry }
+	| { kind: "child"; entry: FleetStatusEntry; last: boolean }
 	| { kind: "nested"; ownerKey: string; row: FleetNestedRow; last: boolean };
 
 export interface FleetStatusOptions {
@@ -94,44 +100,112 @@ function nestedStatusGlyph(state: FleetNestedRow["state"], theme: Theme): string
 	return theme.fg("warning", "■");
 }
 
-function nestedFleetRows(children: NestedRunSummary[] | undefined): FleetNestedRow[] {
-	const rows: FleetNestedRow[] = [];
-	for (const child of children ?? []) {
+function nestedStepDisplayCount(steps: NestedStepSummary[] | undefined, start = 0): number {
+	let count = 0;
+	for (let index = start; index < (steps?.length ?? 0); index++) {
+		count += 1 + nestedDisplayCount(steps![index]!.children);
+	}
+	return count;
+}
+
+function nestedDisplayCount(children: NestedRunSummary[] | undefined, start = 0): number {
+	let count = 0;
+	for (let index = start; index < (children?.length ?? 0); index++) {
+		const child = children![index]!;
 		const steps = (child.mode === "parallel" || child.mode === "chain") ? child.steps ?? [] : [];
-		if (steps.length > 0) {
-			for (const step of steps) {
-				const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
-				const activity = nestedActivity(step);
+		count += steps.length > 0 ? nestedStepDisplayCount(steps) : 1;
+		count += nestedDisplayCount(child.children);
+	}
+	return count;
+}
+
+function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit: number): FleetNestedRow[] {
+	const rows: FleetNestedRow[] = [];
+	let omitted = 0;
+	const appendRuns = (runs: NestedRunSummary[] | undefined, depth: number): boolean => {
+		for (let runIndex = 0; runIndex < (runs?.length ?? 0); runIndex++) {
+			const child = runs![runIndex]!;
+			const steps = (child.mode === "parallel" || child.mode === "chain") ? child.steps ?? [] : [];
+			if (steps.length > 0) {
+				for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
+					if (rows.length >= visibleLimit) {
+						omitted += nestedStepDisplayCount(steps, stepIndex);
+						omitted += nestedDisplayCount(child.children);
+						omitted += nestedDisplayCount(runs, runIndex + 1);
+						return false;
+					}
+					const step = steps[stepIndex]!;
+					const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
+					const activity = nestedActivity(step);
+					rows.push({
+						name: step.agent,
+						state: step.status,
+						depth,
+						...(modelThinking ? { modelThinking } : {}),
+						...(activity ? { activity } : {}),
+						...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
+					});
+					if (!appendRuns(step.children, depth + 1)) {
+						omitted += nestedStepDisplayCount(steps, stepIndex + 1);
+						omitted += nestedDisplayCount(child.children);
+						omitted += nestedDisplayCount(runs, runIndex + 1);
+						return false;
+					}
+				}
+			} else {
+				if (rows.length >= visibleLimit) {
+					omitted += nestedDisplayCount(runs, runIndex);
+					return false;
+				}
+				const modelThinking = formatModelThinking(child.model, child.thinking) || undefined;
+				const activity = nestedActivity(child);
 				rows.push({
-					name: step.agent,
-					state: step.status,
+					name: nestedRunLabel(child),
+					state: child.state,
+					depth,
 					...(modelThinking ? { modelThinking } : {}),
 					...(activity ? { activity } : {}),
-					...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
+					...(child.startedAt !== undefined ? { startedAt: child.startedAt } : {}),
 				});
 			}
-			continue;
+			if (!appendRuns(child.children, depth + 1)) {
+				omitted += nestedDisplayCount(runs, runIndex + 1);
+				return false;
+			}
 		}
-		const modelThinking = formatModelThinking(child.model, child.thinking) || undefined;
-		const activity = nestedActivity(child);
-		rows.push({
-			name: nestedRunLabel(child),
-			state: child.state,
-			...(modelThinking ? { modelThinking } : {}),
-			...(activity ? { activity } : {}),
-			...(child.startedAt !== undefined ? { startedAt: child.startedAt } : {}),
-		});
-	}
-	const visible = rows.slice(0, 4);
-	if (rows.length > visible.length) visible.push({ name: `… +${rows.length - visible.length} more nested leaves`, state: "complete", overflow: rows.length - visible.length });
-	return visible;
+		return true;
+	};
+	appendRuns(children, 0);
+	if (omitted > 0) rows.push({ name: `… +${omitted} more nested leaves`, state: "complete", depth: 0, overflow: omitted });
+	return rows;
 }
 
 function fleetTreeRows(entries: FleetStatusEntry[]): FleetTreeRow[] {
 	const rows: FleetTreeRow[] = [];
+	const entryKeys = new Set(entries.map((entry) => entry.key));
+	const childrenByParent = new Map<string, FleetStatusEntry[]>();
 	for (const entry of entries) {
+		if (!entry.parentKey || !entryKeys.has(entry.parentKey)) continue;
+		const children = childrenByParent.get(entry.parentKey) ?? [];
+		children.push(entry);
+		childrenByParent.set(entry.parentKey, children);
+	}
+	for (const entry of entries) {
+		if (entry.parentKey && entryKeys.has(entry.parentKey)) continue;
 		rows.push({ kind: "owner", entry });
-		const nested = nestedFleetRows(entry.nestedChildren);
+		const attached = childrenByParent.get(entry.key) ?? [];
+		for (const [index, child] of attached.entries()) {
+			const nested = nestedFleetRows(child.nestedChildren, 3);
+			const laterRows = index < attached.length - 1 || Boolean(entry.nestedChildren?.length);
+			rows.push({ kind: "child", entry: child, last: !laterRows && nested.length === 0 });
+			for (const [nestedIndex, row] of nested.entries()) rows.push({
+				kind: "nested",
+				ownerKey: child.key,
+				row: { ...row, depth: row.depth + 1 },
+				last: nestedIndex === nested.length - 1 && !laterRows,
+			});
+		}
+		const nested = nestedFleetRows(entry.nestedChildren, attached.length > 0 ? 3 : 4);
 		for (const [index, row] of nested.entries()) rows.push({ kind: "nested", ownerKey: entry.key, row, last: index === nested.length - 1 });
 	}
 	return rows;
@@ -150,14 +224,24 @@ function foregroundDescription(control: { parentWorkflowRunId?: string; workflow
 	return description ? `${workflow} · ${description}` : workflow;
 }
 
+function activeLeafAgentCount(entries: FleetStatusEntry[]): number {
+	return entries.filter((entry) => !entry.workflowWrapper).length;
+}
+
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
 	const entries: FleetStatusEntry[] = [];
+	const activeWorkflowKeys = new Set([...state.asyncJobs.values()]
+		.filter((job) => job.mode === "workflow" && isActiveState(job.status))
+		.map((job) => `async:${job.asyncId}`));
 	for (const control of state.foregroundControls.values()) {
+		const parentKey = control.parentWorkflowRunId ? `async:${control.parentWorkflowRunId}` : undefined;
+		const linkedParentKey = parentKey && activeWorkflowKeys.has(parentKey) ? parentKey : undefined;
 		if (control.activeChildren) {
 			for (const child of [...control.activeChildren.values()].sort((left, right) => left.index - right.index)) {
 				const modelThinking = formatModelThinking(child.model, child.thinking) || undefined;
 				entries.push({
 					key: `foreground-active:${control.runId}:${child.index}`,
+					...(linkedParentKey ? { parentKey: linkedParentKey } : {}),
 					agent: child.agent,
 					...(modelThinking ? { modelThinking } : {}),
 					description: foregroundDescription(control, child.description),
@@ -174,6 +258,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 		const modelThinking = formatModelThinking(control.model, control.thinking) || undefined;
 		entries.push({
 			key: `foreground-active:${control.runId}:${control.currentIndex ?? 0}`,
+			...(linkedParentKey ? { parentKey: linkedParentKey } : {}),
 			agent: control.currentAgent ?? control.mode,
 			...(modelThinking ? { modelThinking } : {}),
 			description: foregroundDescription(control, control.description),
@@ -191,6 +276,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 			const latestEmit = job.workflow?.emits?.length ? formatWorkflowJsonPreview(job.workflow.emits.at(-1), 120) : undefined;
 			entries.push({
 				key: `async:${job.asyncId}`,
+				workflowWrapper: true,
 				agent: "workflow",
 				description: latestEmit !== undefined ? `latest emit: ${latestEmit}` : job.description,
 				startedAt,
@@ -238,6 +324,25 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 						? { nestedChildren: job.nestedChildren.filter((nested) => nested.parentStepIndex === index) }
 						: {}),
 			});
+		}
+	}
+
+	if (state.currentSessionId) {
+		try {
+			for (const run of snapshotExternalRuns(state.currentSessionId, { ignoreMalformed: true, onMalformedRecord: (message) => console.warn(`[pi-subagents] Removed ${message}`) })) {
+				if (!isActiveState(run.state)) continue;
+				entries.push({
+					key: `external:${run.id}`,
+					agent: `external · ${run.label}`,
+					description: run.currentAction ?? `source: ${run.source}`,
+					startedAt: run.startedAt,
+					tokens: 0,
+					state: run.state,
+					external: true,
+				});
+			}
+		} catch (cause) {
+			console.warn(`[pi-subagents] Failed to inspect external jobs: ${cause instanceof Error ? cause.message : String(cause)}`);
 		}
 	}
 
@@ -417,10 +522,15 @@ export class SubagentFleetStatus {
 		if (!this.active) {
 			const tokens = this.entries.reduce((total, entry) => total + entry.tokens, 0);
 			const capacity = this.state.activeAsyncCapacity;
-			const asyncRuns = capacity ? `Async runs ${capacity.used}/${capacity.limit || "∞"}` : "";
-			const agents = this.entries.length > 0 ? `${this.entries.length} active ${this.entries.length === 1 ? "agent" : "agents"}` : "";
+			const hasNativeRows = this.entries.some((entry) => !entry.external);
+			const showNativeSummary = hasNativeRows || Boolean(capacity?.used);
+			const asyncRuns = capacity && showNativeSummary ? `Async runs ${capacity.used}/${capacity.limit || "∞"}` : "";
+			const activeEntries = activeLeafAgentCount(this.entries);
+			const noun = this.entries.some((entry) => entry.external) ? "job" : "agent";
+			const agents = activeEntries > 0 ? `${activeEntries} active ${noun}${activeEntries === 1 ? "" : "s"}` : "";
 			const label = [agents, asyncRuns].filter(Boolean).join(" · ");
-			return [truncateToWidth(`  ${theme.fg("muted", label)} · ${theme.fg("dim", `${formatFleetTokens(tokens)} · ↓/← to inspect`)}`, width)];
+			const detail = [showNativeSummary ? formatFleetTokens(tokens) : undefined, "↓/← to inspect"].filter(Boolean).join(" · ");
+			return [truncateToWidth(`  ${theme.fg("muted", label)} · ${theme.fg("dim", detail)}`, width)];
 		}
 		const roster = this.rosterKeys();
 		const selectedIndex = Math.max(0, roster.indexOf(this.selectedKey));
@@ -428,16 +538,16 @@ export class SubagentFleetStatus {
 		lines.push(truncateToWidth(`  ${this.bullet(0, selectedIndex, theme)} main`, width));
 
 		const tree = fleetTreeRows(this.entries);
-		const selectedTreeIndex = Math.max(0, tree.findIndex((row) => row.kind === "owner" && row.entry.key === this.selectedKey));
+		const selectedTreeIndex = Math.max(0, tree.findIndex((row) => (row.kind === "owner" || row.kind === "child") && row.entry.key === this.selectedKey));
 		const visibleCount = Math.min(this.maxAgentRows, tree.length);
 		const start = selectedTreeIndex < visibleCount ? 0 : selectedTreeIndex - visibleCount + 1;
 		const hiddenBelow = tree.length - (start + visibleCount);
 		if (start > 0) lines.push(rightAlign("", theme.fg("dim", `↑ ${start} more`), width));
 		for (let index = start; index < start + visibleCount; index++) {
 			const row = tree[index]!;
-			if (row.kind === "owner") {
+			if (row.kind === "owner" || row.kind === "child") {
 				const ownerIndex = this.entries.findIndex((entry) => entry.key === row.entry.key);
-				lines.push(this.renderEntry(ownerIndex + 1, selectedIndex, row.entry, width, theme));
+				lines.push(this.renderEntry(ownerIndex + 1, selectedIndex, row.entry, width, theme, row.kind === "child" ? (row.last ? "└─" : "├─") : undefined));
 			} else {
 				lines.push(this.renderNestedRow(row.row, row.last, width, theme));
 			}
@@ -446,20 +556,22 @@ export class SubagentFleetStatus {
 		return lines;
 	}
 
-	private renderEntry(rosterIndex: number, selectedIndex: number, entry: FleetStatusEntry, width: number, theme: Theme): string {
+	private renderEntry(rosterIndex: number, selectedIndex: number, entry: FleetStatusEntry, width: number, theme: Theme, branch?: string): string {
 		const agent = entry.modelThinking ? `${entry.agent} (${entry.modelThinking})` : entry.agent;
-		const left = `  ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg("muted", agent)} · ${entry.state}`;
+		const prefix = branch ? `    ${branch}` : " ";
+		const left = `${prefix} ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg("muted", agent)} · ${entry.state}`;
 		const elapsed = Date.now() - entry.startedAt;
-		const right = theme.fg("dim", `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(entry.tokens)}`);
+		const right = theme.fg("dim", entry.external ? formatFleetElapsed(elapsed) : `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(entry.tokens)}`);
 		return rightAlign(left, right, width);
 	}
 
 	private renderNestedRow(row: FleetNestedRow, last: boolean, width: number, theme: Theme): string {
 		const marker = last ? "└─" : "├─";
-		if (row.overflow !== undefined) return truncateToWidth(`    ${marker} ${theme.fg("dim", `+${row.overflow} nested leaves`)}`, width);
+		const indent = "    ".repeat(row.depth + 1);
+		if (row.overflow !== undefined) return truncateToWidth(`${indent}${marker} ${theme.fg("dim", `+${row.overflow} nested leaves`)}`, width);
 		const modelThinking = row.modelThinking ? ` (${row.modelThinking})` : "";
 		const activity = row.activity ? ` · ${row.activity}` : "";
-		const left = `    ${marker} ${nestedStatusGlyph(row.state, theme)} ${theme.fg("muted", `${row.name}${modelThinking}`)} · ${row.state}${activity}`;
+		const left = `${indent}${marker} ${nestedStatusGlyph(row.state, theme)} ${theme.fg("muted", `${row.name}${modelThinking}`)} · ${row.state}${activity}`;
 		const elapsed = row.startedAt !== undefined ? ` · ${formatFleetElapsed(Date.now() - row.startedAt)}` : "";
 		return truncateToWidth(`${left}${theme.fg("dim", elapsed)}`, width);
 	}
@@ -504,22 +616,25 @@ export class SubagentFleetStatus {
 			entries: this.entries.map((entry) => this.active
 				? [
 					entry.key,
+					entry.parentKey,
 					entry.agent,
 					entry.state,
 					entry.modelThinking,
 					entry.description,
+					entry.external,
 					Math.round((now - entry.startedAt) / 1000),
 					entry.tokens,
-					entry.nestedChildren?.map((child) => [
-						child.id,
-						child.state,
-						child.model,
-						child.thinking,
-						child.lastUpdate,
-						child.steps?.map((step) => [step.agent, step.status, step.model, step.thinking, step.lastActivityAt]),
+					nestedFleetRows(entry.nestedChildren, entry.parentKey ? 3 : 4).map((row) => [
+						row.name,
+						row.state,
+						row.modelThinking,
+						row.activity,
+						row.startedAt,
+						row.depth,
+						row.overflow,
 					]),
 				]
-				: [entry.key, entry.state, entry.tokens]),
+				: [entry.key, entry.state, entry.external, entry.tokens]),
 		});
 	}
 

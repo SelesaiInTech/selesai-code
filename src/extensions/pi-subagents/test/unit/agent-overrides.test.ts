@@ -88,6 +88,67 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer?.modelSource, undefined);
 	});
 
+	it("lets a builtin agent inherit Pi's normal tools from an override", () => {
+		writeJson(path.join(tempHome, ".selesai", "agent", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					researcher: { tools: "inherit" },
+				},
+			},
+		});
+
+		const researcher = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "researcher");
+		assert.equal(researcher?.tools, undefined);
+		assert.equal(researcher?.mcpDirectTools, undefined);
+	});
+
+	it("keeps strict builtin tools unless a role opts into inheritance", () => {
+		writeJson(path.join(tempHome, ".selesai", "agent", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					researcher: { tools: "inherit" },
+				},
+			},
+		});
+
+		const builtins = discoverAgentsAll(tempProject).builtin;
+		assert.equal(builtins.find((agent) => agent.name === "researcher")?.tools, undefined);
+		assert.deepEqual(builtins.find((agent) => agent.name === "reviewer")?.tools, ["read", "grep", "find", "ls"]);
+	});
+
+	it("keeps explicit empty builtin tool allowlists distinct from inherited tools", () => {
+		writeJson(path.join(tempHome, ".selesai", "agent", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					researcher: { tools: [] },
+				},
+			},
+		});
+
+		const researcher = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "researcher");
+		assert.deepEqual(researcher?.tools, []);
+		assert.equal(researcher?.mcpDirectTools, undefined);
+	});
+
+	it("surfaces invalid string tool override settings", () => {
+		const settingsPath = path.join(tempHome, ".selesai", "agent", "settings.json");
+		writeJson(settingsPath, {
+			subagents: {
+				agentOverrides: {
+					researcher: { tools: "read" },
+				},
+			},
+		});
+
+		assert.throws(
+			() => discoverAgents(tempProject, "both"),
+			(error: unknown) => error instanceof Error
+				&& error.message.includes(settingsPath)
+				&& error.message.includes("researcher")
+				&& error.message.includes("tools"),
+		);
+	});
+
 	it("clears subagents.defaultModel provenance for same-value agent model overrides", () => {
 		writeJson(path.join(tempHome, ".selesai", "agent", "settings.json"), {
 			subagents: {

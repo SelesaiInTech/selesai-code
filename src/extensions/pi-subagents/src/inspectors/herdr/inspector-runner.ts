@@ -17,6 +17,7 @@ export interface RunnerOptions {
 	refreshMs: number;
 	allowSteer?: boolean;
 	allowStop?: boolean;
+	sessionRoots: string[];
 }
 
 function readMission(filePath: string | undefined): MissionRecord | undefined {
@@ -24,7 +25,7 @@ function readMission(filePath: string | undefined): MissionRecord | undefined {
 	try { return parseMissionRecord(JSON.parse(fs.readFileSync(filePath, "utf-8")), filePath); } catch { return undefined; }
 }
 
-export function formatInspectorDashboard(input: { status: AsyncStatus; asyncDir: string; index?: number; mission?: MissionRecord; allowSteer?: boolean; allowStop?: boolean }): string {
+export function formatInspectorDashboard(input: { status: AsyncStatus; asyncDir: string; index?: number; mission?: MissionRecord; allowSteer?: boolean; allowStop?: boolean; sessionRoots?: string[] }): string {
 	const { status, asyncDir, mission } = input;
 	const lines = [
 		`pi-subagents inspector for ${status.runId}`,
@@ -37,7 +38,7 @@ export function formatInspectorDashboard(input: { status: AsyncStatus; asyncDir:
 		if (open.length) lines.push(`Open decisions: ${open.map((decision) => `${decision.id}: ${decision.title}`).join(" | ")}`);
 		lines.push("");
 	}
-	lines.push(formatAsyncRunTranscript(status, asyncDir, { index: input.index, lines: 60 }));
+	lines.push(formatAsyncRunTranscript(status, asyncDir, { index: input.index, lines: 60, sessionRoots: input.sessionRoots }));
 	const controls = [input.allowSteer === false ? undefined : "steer <message>", input.allowStop === false ? undefined : "stop", "status"].filter(Boolean);
 	lines.push("", `Controls: ${controls.join(" | ")}`, "Supervisor replies remain in the parent Pi session (subagent_supervisor/intercom).");
 	return lines.join("\n");
@@ -57,6 +58,17 @@ function parseArgs(argv: string[]): RunnerOptions {
 	const indexRaw = values.get("--index");
 	const childIndex = indexRaw === undefined ? undefined : Number(indexRaw);
 	if (childIndex !== undefined && (!Number.isInteger(childIndex) || childIndex < 0)) throw new Error("--index must be a non-negative integer.");
+	const sessionRootsRaw = values.get("--session-roots");
+	let sessionRoots: string[] = [];
+	if (sessionRootsRaw !== undefined) {
+		try {
+			const parsed = JSON.parse(sessionRootsRaw) as unknown;
+			if (!Array.isArray(parsed) || parsed.some((root) => typeof root !== "string")) throw new Error();
+			sessionRoots = parsed;
+		} catch {
+			throw new Error("--session-roots must be a JSON array of strings.");
+		}
+	}
 	const refreshRaw = values.get("--refresh-ms");
 	const refreshMs = refreshRaw === undefined ? 1_500 : Number(refreshRaw);
 	if (!Number.isInteger(refreshMs) || refreshMs < 250) throw new Error("--refresh-ms must be an integer >= 250.");
@@ -65,6 +77,7 @@ function parseArgs(argv: string[]): RunnerOptions {
 		runId,
 		...(childIndex !== undefined ? { index: childIndex } : {}),
 		...(values.get("--mission-path") ? { missionPath: path.resolve(values.get("--mission-path")!) } : {}),
+		sessionRoots,
 		refreshMs,
 		allowSteer: values.get("--allow-steer") !== "false",
 		allowStop: values.get("--allow-stop") !== "false",
@@ -115,7 +128,7 @@ export function runInspector(argv = process.argv.slice(2)): void {
 			process.stdout.write(`\x1b[2J\x1b[Hpi-subagents inspector\n\nLifecycle status for ${options.runId} is unavailable.\n`);
 			return;
 		}
-		process.stdout.write(`\x1b[2J\x1b[H${formatInspectorDashboard({ status, asyncDir: options.asyncDir, index: options.index, mission: readMission(options.missionPath), allowSteer: options.allowSteer, allowStop: options.allowStop })}${notice ? `\n\n${notice}` : ""}\n> `);
+		process.stdout.write(`\x1b[2J\x1b[H${formatInspectorDashboard({ status, asyncDir: options.asyncDir, index: options.index, mission: readMission(options.missionPath), allowSteer: options.allowSteer, allowStop: options.allowStop, sessionRoots: options.sessionRoots })}${notice ? `\n\n${notice}` : ""}\n> `);
 		if (isTerminal(status) && timer) {
 			clearInterval(timer);
 			timer = undefined;

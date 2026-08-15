@@ -6,6 +6,7 @@ import {
 	type ControlNotificationChannel,
 	type ResolvedControlConfig,
 } from "../../shared/types.ts";
+import { isToolTimeoutExempt } from "./tool-timeout.ts";
 
 const CONTROL_EVENT_TYPES: ControlEventType[] = ["active_long_running", "needs_attention"];
 const CONTROL_NOTIFICATION_CHANNELS: ControlNotificationChannel[] = ["event", "async", "intercom"];
@@ -82,6 +83,18 @@ export function deriveActivityState(input: {
 	const lastActivity = input.lastActivityAt ?? input.startedAt;
 	const ageMs = Math.max(0, now - lastActivity);
 	return ageMs > input.config.needsAttentionAfterMs ? "needs_attention" : undefined;
+}
+
+export function shouldEmitOpenToolAttention(input: {
+	config: ResolvedControlConfig;
+	currentTool?: string;
+	currentToolStartedAt?: number;
+	now?: number;
+}): boolean {
+	if (!input.config.enabled || !input.currentTool || input.currentToolStartedAt === undefined) return false;
+	if (isToolTimeoutExempt(input.currentTool)) return false;
+	const now = input.now ?? Date.now();
+	return Math.max(0, now - input.currentToolStartedAt) >= input.config.activeNoticeAfterMs;
 }
 
 export function buildControlEvent(input: {
@@ -196,10 +209,12 @@ export function formatControlNoticeMessage(event: ControlEvent, childIntercomTar
 	const supervisorHint = event.reason === "supervisor_request"
 		? "Supervisor request: reply to the pending request. If subagent_supervisor pending is empty, check intercom pending because an external intercom tool may own the request."
 		: undefined;
+	const facts = formatLongRunningFacts(event);
 	return [
 		`Subagent needs attention: ${event.agent}`,
 		`Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
 		`Signal: ${event.message}`,
+		facts ? `Facts: ${facts}` : undefined,
 		event.recentFailureSummary ? `Recent failures: ${event.recentFailureSummary}` : undefined,
 		supervisorHint,
 		"Hint: Inspect status first unless the run is clearly blocked. Use steer for a top-level live async child, routed resume for a live nested child, or resume to revive a paused/completed/failed child.",

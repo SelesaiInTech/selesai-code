@@ -8,7 +8,7 @@ description: |
   other agents contribute context, planning, or execution.
 ---
 
-# Pi Subagents
+# Selesai Subagents
 
 This skill is for the main parent orchestrator only. Do not inject or follow it inside spawned child subagents. The parent session owns delegation, orchestration, review fanout, and final fix-worker launches. Ordinary children should not run their own subagent workflows; the explicit exception is a delegated fanout child whose resolved builtin `tools` includes `subagent`, and that child may use `subagent` only for the fanout work the parent assigned.
 

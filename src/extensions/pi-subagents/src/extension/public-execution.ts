@@ -9,6 +9,7 @@ export interface PublicSubagentExecutionParams {
 	concurrency?: unknown;
 	chainDir?: unknown;
 	workflowScript?: unknown;
+	output?: unknown;
 	resume?: unknown;
 	clarify?: unknown;
 	runFanoutBudget?: unknown;
@@ -33,7 +34,7 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	}
 	const action = params.action;
 	if (action !== undefined && (typeof action !== "string" || !action.trim())) {
-		return { ok: false, error: "action must be a non-empty management/control action, or omit action and execute directly.", mode: "management" };
+		return { ok: false, error: "action must be a non-empty management/control action, or omit action and use workflowScript.", mode: "management" };
 	}
 	const normalizedAction = typeof action === "string" ? action.trim() : undefined;
 	if (params.clarify === true && params.workflowScript !== undefined) {
@@ -59,10 +60,16 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		if (params.workflowScript !== undefined) {
 			return { ok: false, error: "workflowScript execution must omit action; only schedule.create accepts action with workflowScript.", mode: "management" };
 		}
+		if (params.task !== undefined) {
+			return { ok: false, error: "Structured single-child task cannot be combined with a management/control action.", mode: "management" };
+		}
 		return { ok: true, params: { ...params, action: normalizedAction } };
 	}
-	if (typeof params.workflowScript === "string" && params.workflowScript.trim()) {
-		return { ok: true, params };
+	if (params.step !== undefined) {
+		return { ok: false, error: "step is only available with action='append-step'; it is not an execution mode.", mode: "workflow" };
+	}
+	if (params.workflowScript !== undefined && (params.agent !== undefined || params.task !== undefined)) {
+		return { ok: false, error: "Structured single-child execution cannot be combined with workflowScript.", mode: "workflow" };
 	}
 	if (params.chain !== undefined) {
 		return { ok: true, params };
@@ -70,8 +77,29 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	if (params.tasks !== undefined) {
 		return { ok: true, params };
 	}
-	if (params.agent !== undefined || params.task !== undefined || params.step !== undefined) {
-		return { ok: true, params };
+	if (params.agent !== undefined || params.task !== undefined) {
+		if (typeof params.agent !== "string" || !params.agent.trim()) {
+			return { ok: false, error: "Structured single-child execution requires agent to be a non-empty string.", mode: "workflow" };
+		}
+		if (params.task !== undefined && typeof params.task !== "string") {
+			return { ok: false, error: "Structured single-child task must be a string when provided.", mode: "workflow" };
+		}
+		const { agent: _agent, task: _task, output, ...workflowDefaults } = params;
+		const child = {
+			agent: params.agent.trim(),
+			...(params.task !== undefined ? { task: params.task } : {}),
+			output: output === undefined ? true : output,
+		};
+		return {
+			ok: true,
+			params: {
+				...workflowDefaults,
+				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", ${JSON.stringify(child)})`,
+			} as T,
+		};
 	}
-	return { ok: false, error: "Execution requires one mode: { agent, task? }, { chain: [...] }, { tasks: [...] }, or { workflowScript }.", mode: "workflow" };
+	if (typeof params.workflowScript !== "string" || !params.workflowScript.trim()) {
+		return { ok: false, error: "Execution requires one mode: { agent, task? }, { chain: [...] }, { tasks: [...] }, or { workflowScript }.", mode: "workflow" };
+	}
+	return { ok: true, params };
 }

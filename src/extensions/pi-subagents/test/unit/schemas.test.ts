@@ -221,7 +221,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(actionSchema.enum, undefined);
 		const description = String(actionSchema.description ?? "");
 		assert.match(description, /Optional management\/control action/);
-		assert.match(description, /Omit this field for workflowScript execution/);
+		assert.match(description, /Omit this field for structured single-child or workflowScript execution/);
 		assert.doesNotMatch(description, /\{agent, task\}/);
 		assert.match(description, /use it only for management\/control actions/);
 		assert.doesNotMatch(description, /orchestration\./);

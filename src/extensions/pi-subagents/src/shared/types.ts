@@ -215,7 +215,7 @@ export interface ControlEvent {
 	nestedRunId?: string;
 	nestingPath?: NestedRunAddress["path"];
 	message: string;
-	reason?: "idle" | "completion_guard" | "active_long_running" | "tool_failures" | "supervisor_request" | "time_threshold" | "turn_threshold" | "token_threshold";
+	reason?: "idle" | "completion_guard" | "active_long_running" | "tool_failures" | "supervisor_request" | "time_threshold" | "turn_threshold" | "token_threshold" | "tool_open_threshold";
 	turns?: number;
 	tokens?: number;
 	toolCount?: number;
@@ -528,6 +528,8 @@ export interface SteeringRecoveryDescriptor {
 	structuredOutputSchema?: JsonSchemaObject;
 	acceptance?: AcceptanceInput;
 	controlConfig?: ResolvedControlConfig;
+	/** Raw per-run bridge override. Omitted descriptors continue to use global config. */
+	intercomBridge?: IntercomBridgeConfig;
 	absoluteDeadlineAt?: number;
 	initialTurnBudget?: ResolvedTurnBudget;
 	initialToolBudget?: ResolvedToolBudget;
@@ -1029,6 +1031,7 @@ export interface Details {
 	controlEvents?: ControlEvent[];
 	steering?: SteerActionResult;
 	asyncId?: string;
+	background?: boolean;
 	asyncDir?: string;
 	timeoutMs?: number;
 	deadlineAt?: number;
@@ -1086,7 +1089,7 @@ export interface Details {
 		trace: Array<{
 			operation: "run" | "status";
 			key: string;
-			state: "started" | "completed" | "failed" | "reused";
+			state: "started" | "completed" | "failed" | "detached" | "stopped" | "reused";
 			agent?: string;
 			runId?: string;
 			phase?: string;
@@ -1259,6 +1262,8 @@ export interface AsyncStartedEvent {
 	asyncDir?: string;
 	/** Parent-resolved launch directory, used as a trusted artifact root while this session is live. */
 	cwd?: string;
+	/** Parent-resolved child session root, used only while this session owns the live run. */
+	sessionRoot?: string;
 	pid?: number;
 	sessionId?: string;
 	mode?: SubagentRunMode;
@@ -1464,8 +1469,12 @@ export interface AsyncJobState {
 	asyncDir: string;
 	/** True when the job was adopted from a previous session via lineage carry-over. */
 	adopted?: boolean;
+	/** Host tool-call id retained when it differs from the internal run id. */
+	toolCallId?: string;
 	/** Parent-resolved launch directory retained for trusted live artifact lookup. */
 	cwd?: string;
+	/** Parent-resolved child session root retained for trusted live transcript lookup. */
+	sessionRoot?: string;
 	status: "queued" | "running" | "complete" | "failed" | "paused" | "stopped" | "rejected";
 	/** Short caller-facing task/goal shown in fleet surfaces when available. */
 	description?: string;
@@ -1671,6 +1680,10 @@ export interface SubagentState {
 	/** Runtime mission-store snapshot used by optional inspector context. */
 	missionStoreConfig?: MissionStoreConfig;
 	parentSessionFile?: string | null;
+	/** Extension-owned roots trusted for child session transcript reads. */
+	trustedSessionRoots?: string[];
+	/** Live async session roots created by this parent executor, keyed by run id. */
+	liveAsyncSessionRoots?: Map<string, string>;
 	/** Last valid parent session model observed for this session; used when continuation contexts omit ctx.model. */
 	lastParentModel?: { provider: string; id: string };
 	subagentInProgress?: boolean;
@@ -1767,6 +1780,10 @@ export interface RunSyncOptions {
 	interruptSignal?: AbortSignal;
 	timeoutMs?: number;
 	deadlineAt?: number;
+	/** Per-call per-tool timeout (ms), resolved with the agent/config/environment ladder at execution. */
+	toolTimeoutMs?: number;
+	/** Raw global config.toolTimeoutMs, used by the per-child resolver. */
+	configToolTimeoutMs?: number;
 	turnBudget?: ResolvedTurnBudget;
 	usageBudget?: UsageBudgetConfig;
 	/** Enforce maxTurns + graceTurns as a hard model-turn boundary. */
@@ -1831,6 +1848,8 @@ export interface RunSyncOptions {
 	};
 	/** Private live callback for the exact child prompt after runtime acceptance injection. */
 	onEffectivePrompt?: (prompt: string) => void;
+	/** Internal lifecycle hook for the observer shared across retries of one logical child. */
+	onOrcaProgressTabCreated?: (tab: import("../runs/shared/orca-progress-tabs.ts").OrcaProgressTab) => void;
 }
 
 export type IntercomBridgeMode = "off" | "fork-only" | "always";
@@ -1892,8 +1911,22 @@ export const FLEET_KEYBINDING_ACTIONS = [
 export type FleetKeybindingAction = typeof FLEET_KEYBINDING_ACTIONS[number];
 export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>>;
 
+export interface OrcaProgressTabsConfig {
+	/** Create one Orca terminal tab per running subagent. Experimental and opt-in. */
+	enabled?: boolean;
+}
+
+export interface MainWindowRendererConfig {
+	/** Unit of horizontal space in main chat subagent call/result rows. Omit to preserve current spacing. Set 0 for no extra padding. */
+	horizontalSpacing?: number;
+	/** Maximum collapsed rich-result rows. Expanded output is not capped. */
+	compactResultMaxLines?: number;
+}
+
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	/** Optional shortcut that detaches the active foreground single-subagent run. */
+	foregroundDetachShortcut?: string;
 	/** Show the Claude Code-style navigable fleet. Defaults to true. */
 	fleetView?: boolean;
 	/** Place the persistent FleetView above or below the editor. Defaults to belowEditor. */
@@ -1908,6 +1941,10 @@ export interface ExtensionConfig {
 	legacyChainControls?: boolean;
 	/** Inline chat rendering for the subagent tool. Defaults to rich. */
 	inlineToolDisplay?: InlineToolDisplay;
+	/** Density controls for the main chat subagent call/result renderer. */
+	mainWindowRenderer?: MainWindowRendererConfig;
+	/** Experimental observer: mirror each native subagent's progress into a new Orca tab. */
+	orcaProgressTabs?: OrcaProgressTabsConfig;
 	forceTopLevelAsync?: boolean;
 	waitTool?: WaitToolConfig;
 	defaultSessionDir?: string;
@@ -1937,6 +1974,15 @@ export interface ExtensionConfig {
 	 * Must be a positive integer; invalid values are ignored.
 	 */
 	timeoutMs?: number;
+	/**
+	 * Optional hard per-tool-call timeout in milliseconds. Bounds a single
+	 * subagent tool call inside the child; the run-level timeout remains
+	 * authoritative. Known-fast built-in tools have a five-minute default when
+	 * this is undefined. Precedence: call param > agent frontmatter > this config >
+	 * SELESAI_SUBAGENT_TOOL_TIMEOUT_MS. Must be a positive integer; invalid values
+	 * are rejected with an error.
+	 */
+	toolTimeoutMs?: number;
 	control?: ControlConfig;
 	completionBatch?: CompletionBatchConfig;
 	turnBudget?: TurnBudgetConfig;
@@ -2060,7 +2106,7 @@ export const SLASH_SUBAGENT_CANCEL_EVENT = "subagent:slash:cancel";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "append-step", "approve-checkpoint", "reject-checkpoint", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
+export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "append-step", "approve-checkpoint", "reject-checkpoint", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

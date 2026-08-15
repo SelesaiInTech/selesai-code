@@ -128,7 +128,7 @@ To see what `pi-subagents` has actually loaded right now:
 /subagents-models reviewer
 ```
 
-That reports the live runtime mapping, which can differ from settings on disk until you reload Selesai.
+That reports the live runtime mapping, which can differ from settings on disk until you reload Pi.
 
 ## Fuzzy model matching
 

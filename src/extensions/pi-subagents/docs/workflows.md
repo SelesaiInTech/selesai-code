@@ -62,7 +62,7 @@ return runs.run("test", { agent: "worker", task });
 
 A plain workflow creates one enclosing mission by default. Its children do not create separate missions. The result exposes the id as `details.missionId`, and human-readable output ends with `Mission: <id> (<status>)`. Pass `mission:false` for an ephemeral workflow with no mission or durable `state` global.
 
-For watched same-repo workflows, pass `async:false` to show the live in-chat workflow card. `chatProgress` can force `off` or `live-card` when the automatic policy is not what you want. Foreground workflows default to a 30-minute timeout; async workflows have no default timeout. Async workflows that end with a fan-out `budget` result auto-relaunch as a fresh top-level run (new fan-out budget, same mission and progress file) until the commentator reports clean or the `maxWorkflowAutoRelaunches` cap is reached (default 12; 0 = unlimited). See the [tool reference](tool-reference.md) for the full parameter list.
+For watched same-repo workflows, pass `async:false` to show the live in-chat workflow card. `chatProgress` can force `off` or `live-card` when the automatic policy is not what you want. Foreground workflows default to a 30-minute timeout; async workflows have no default timeout. See the [tool reference](tool-reference.md) for the full parameter list.
 
 The legacy `/chain`, `/parallel`, and `/run-chain` commands are not registered.
 
@@ -90,12 +90,12 @@ Configure the worktree base directory and setup hook in [configuration.md](confi
 
 ## Supervisor coordination (child asks parent)
 
-Child agents can talk back to the parent Selesai session without installing `pi-intercom`. `pi-subagents` provides the child-facing `contact_supervisor` tool and the parent-facing `subagent_supervisor({ action: "reply" })` path natively. If no external `pi-intercom` tool owns the `intercom` name, the native channel also exposes `intercom` as a compatibility fallback.
+Child agents can talk back to the parent Selesai session without installing `pi-intercom`. `pi-subagents` provides the child-facing `contact_supervisor` tool and the parent-facing `subagent_supervisor({ action: "reply" })` path natively. Generic `intercom` remains available only when an explicitly loaded external provider supplies it.
 
 Use it for work where the child might need a decision instead of guessing:
 
 ```text
-Run this implementation in the background. If the worker gets blocked or needs a product decision, have it ask me through intercom.
+Run this implementation in the background. If the worker gets blocked or needs a product decision, have it ask me through the supervisor channel.
 ```
 
 ```text
@@ -124,7 +124,7 @@ By default, nesting is limited to two levels: main session → subagent → sub-
 
 Configure the limit with:
 
-1. `SELESAI_SUBAGENT_MAX_DEPTH` before starting Selesai
+1. `SELESAI_SUBAGENT_MAX_DEPTH` before starting Pi
 2. `config.maxSubagentDepth`
 3. `maxSubagentDepth` in agent frontmatter, which can only tighten the inherited limit
 
@@ -140,7 +140,7 @@ export SELESAI_SUBAGENT_MAX_DEPTH=0
 
 `pi-subagents` includes a native prompt-workflow adapter for reusable subagent prompt templates, so you do not need `pi-prompt-template-model` for the common subagent workflow path.
 
-Create a prompt in `.selesai/prompts/` or `~/.selesai/agent/prompts/`:
+Create a prompt in `.pi/prompts/` or `~/.selesai/agent/prompts/`:
 
 ```md
 ---

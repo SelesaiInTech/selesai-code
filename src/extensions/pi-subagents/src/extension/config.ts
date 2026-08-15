@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Key } from "@earendil-works/pi-tui";
 import { FLEET_KEYBINDING_ACTIONS, type ArtifactDirPreference, type ExtensionConfig } from "../shared/types.ts";
 import { validateMissionStoreConfig } from "../missions/store.ts";
 import { validateAuthorityPolicy } from "../policy/authority.ts";
@@ -9,6 +10,21 @@ import { validatePermissionConfig } from "../runs/shared/permissions.ts";
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
+const KEY_MODIFIERS = new Set(["ctrl", "shift", "alt", "super"]);
+const BASE_KEY_IDS = new Set([
+	..."abcdefghijklmnopqrstuvwxyz0123456789",
+	...Object.values(Key).flatMap((value) => typeof value === "string" ? [value.toLowerCase()] : []),
+]);
+
+function isValidKeyId(value: string): boolean {
+	if (value !== value.trim()) return false;
+	const parts = value.toLowerCase().split("+");
+	const base = parts.pop();
+	if (!base || !BASE_KEY_IDS.has(base)) return false;
+	return parts.length <= KEY_MODIFIERS.size
+		&& new Set(parts).size === parts.length
+		&& parts.every((modifier) => KEY_MODIFIERS.has(modifier));
+}
 
 export function resolveScheduledStoreRoot(value: string): string {
 	const expanded = value.startsWith("~/") ? path.join(os.homedir(), value.slice(2)) : value;
@@ -46,7 +62,42 @@ function validateArtifactConfig(value: unknown): void {
 	}
 }
 
+function validateOrcaProgressTabsConfig(value: unknown): void {
+	if (value === undefined) return;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.orcaProgressTabs must be a JSON object");
+	const config = value as Record<string, unknown>;
+	for (const key of Object.keys(config)) {
+		if (key !== "enabled") throw new Error(`config.orcaProgressTabs.${key} is not supported`);
+	}
+	if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
+		throw new Error("config.orcaProgressTabs.enabled must be a boolean");
+	}
+}
+
+function validateMainWindowRendererConfig(value: unknown): void {
+	if (value === undefined) return;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.mainWindowRenderer must be a JSON object");
+	const rendererConfig = value as Record<string, unknown>;
+	if (rendererConfig.horizontalSpacing !== undefined
+		&& (typeof rendererConfig.horizontalSpacing !== "number"
+			|| !Number.isInteger(rendererConfig.horizontalSpacing)
+			|| rendererConfig.horizontalSpacing < 0
+			|| rendererConfig.horizontalSpacing > 4)) {
+		throw new Error("config.mainWindowRenderer.horizontalSpacing must be an integer from 0 to 4");
+	}
+	if (rendererConfig.compactResultMaxLines !== undefined
+		&& (typeof rendererConfig.compactResultMaxLines !== "number"
+			|| !Number.isInteger(rendererConfig.compactResultMaxLines)
+			|| rendererConfig.compactResultMaxLines < 1)) {
+		throw new Error("config.mainWindowRenderer.compactResultMaxLines must be a positive integer");
+	}
+}
+
 function validateConfig(config: Record<string, unknown>): void {
+	if (config.foregroundDetachShortcut !== undefined
+		&& (typeof config.foregroundDetachShortcut !== "string" || !isValidKeyId(config.foregroundDetachShortcut))) {
+		throw new Error("config.foregroundDetachShortcut must be a valid keybinding string such as \"ctrl+b\"");
+	}
 	if (config.artifactDir !== undefined && !ARTIFACT_DIR_PREFERENCES.has(config.artifactDir as ArtifactDirPreference)) {
 		throw new Error(`config.artifactDir must be "project", "session", or "temp"`);
 	}
@@ -71,6 +122,8 @@ function validateConfig(config: Record<string, unknown>): void {
 	validateScheduledRunsConfig(config.scheduledRuns);
 	validateFleetKeybindingsConfig(config.fleetKeybindings);
 	validateArtifactConfig(config.artifactConfig);
+	validateMainWindowRendererConfig(config.mainWindowRenderer);
+	validateOrcaProgressTabsConfig(config.orcaProgressTabs);
 }
 
 export function getConfigPath(): string {

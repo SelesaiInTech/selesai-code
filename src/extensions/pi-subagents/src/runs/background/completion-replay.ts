@@ -9,6 +9,8 @@ const ARCHIVE_VERSION = 1;
 const ARCHIVE_TEXT_LIMIT_BYTES = 64 * 1024;
 const REPLAY_DIR_NAME = "completion-replay";
 const ARCHIVE_DIR_NAME = "output-archives";
+const CLEANUP_INTERVAL_MS = 60_000;
+const lastCleanupByResultsDir = new Map<string, number>();
 
 export interface CompletionArchiveEntry {
 	agent?: string;
@@ -194,7 +196,7 @@ export function writeCompletionReplay(input: {
 		archivePath,
 	};
 	writePrivateAtomicJson(completionReplayPath(input.resultsDir, input.runId), record);
-	cleanupCompletionReplay(input.resultsDir, input.now, input.ttlMs);
+	cleanupCompletionReplayIfDue(input.resultsDir, input.now, input.ttlMs);
 	return record;
 }
 
@@ -231,6 +233,14 @@ export function readCompletionArchive(archivePath: string): CompletionArchive | 
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw error;
 	}
+}
+
+export function cleanupCompletionReplayIfDue(resultsDir: string, now: number, maxAgeMs: number, intervalMs = CLEANUP_INTERVAL_MS): boolean {
+	const last = lastCleanupByResultsDir.get(resultsDir);
+	if (last !== undefined && now - last < intervalMs) return false;
+	lastCleanupByResultsDir.set(resultsDir, now);
+	cleanupCompletionReplay(resultsDir, now, maxAgeMs);
+	return true;
 }
 
 /** Opportunistically remove expired replay and orphan archive files without affecting delivery. */

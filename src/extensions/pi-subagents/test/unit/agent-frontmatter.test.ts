@@ -472,6 +472,13 @@ Do work
 		}
 		const oracle = agents.find((candidate) => candidate.name === "oracle");
 		assert.deepEqual(oracle?.aliases, ["advisor"]);
+		assert.doesNotMatch(oracle?.tools?.join(",") ?? "", /contact_supervisor/);
+		for (const name of ["scout", "researcher", "oracle", "reviewer"]) {
+			assert.equal(agents.find((candidate) => candidate.name === name)?.tools?.includes("intercom"), false, `${name} should not require generic intercom`);
+		}
+		assert.match(oracle?.systemPrompt ?? "", /asking or consulting the oracle/);
+		assert.match(oracle?.systemPrompt ?? "", /When runtime bridge instructions provide `contact_supervisor`/);
+		assert.match(oracle?.systemPrompt ?? "", /If no supervisor channel is available/);
 		assert.equal(agents.some((candidate) => candidate.name === "planner"), false);
 		assert.equal(agents.some((candidate) => candidate.name === "context-builder"), false);
 	});
@@ -493,6 +500,7 @@ describe("agent frontmatter launch defaults", () => {
 			filePath,
 			defaultAsync: false,
 			defaultTimeoutMs: 90_000,
+			defaultToolTimeoutMs: 600_000,
 			defaultTurnBudget: { maxTurns: 12, graceTurns: 2 },
 			defaultAcceptance: { level: "none", reason: "lightweight lookup" },
 		};
@@ -500,6 +508,7 @@ describe("agent frontmatter launch defaults", () => {
 		const serialized = serializeAgent(agent);
 		assert.match(serialized, /^async: false$/m);
 		assert.match(serialized, /^timeoutMs: 90000$/m);
+		assert.match(serialized, /^toolTimeoutMs: 600000$/m);
 		assert.match(serialized, /^turnBudget: \{"maxTurns":12,"graceTurns":2\}$/m);
 		assert.match(serialized, /^acceptance: \{"level":"none","reason":"lightweight lookup"\}$/m);
 		writeAgent(filePath, serialized);
@@ -507,6 +516,7 @@ describe("agent frontmatter launch defaults", () => {
 		const worker = discoverAgents(dir, "project").agents.find((candidate) => candidate.name === "worker");
 		assert.equal(worker?.defaultAsync, false);
 		assert.equal(worker?.defaultTimeoutMs, 90_000);
+		assert.equal(worker?.defaultToolTimeoutMs, 600_000);
 		assert.deepEqual(worker?.defaultTurnBudget, { maxTurns: 12, graceTurns: 2 });
 		assert.deepEqual(worker?.defaultAcceptance, { level: "none", reason: "lightweight lookup" });
 	});
@@ -599,6 +609,24 @@ Do work
 		assert.throws(
 			() => discoverAgents(dir, "project"),
 			/Agent 'worker' has invalid async frontmatter; expected true or false/,
+		);
+	});
+
+	it("rejects oversized toolTimeoutMs frontmatter at discovery", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-oversized-tool-timeout-"));
+		tempDirs.push(dir);
+		writeAgent(path.join(dir, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Worker
+toolTimeoutMs: 2147483648
+---
+
+Do work
+`);
+
+		assert.throws(
+			() => discoverAgents(dir, "project"),
+			/Agent 'worker' has invalid toolTimeoutMs frontmatter; expected a positive integer no larger than 2147483647/,
 		);
 	});
 });

@@ -8,6 +8,7 @@ import {
 	formatControlIntercomMessage,
 	formatControlNoticeMessage,
 	resolveControlConfig,
+	shouldEmitOpenToolAttention,
 	shouldNotifyControlEvent,
 } from "../../src/runs/shared/subagent-control.ts";
 import { nextLongRunningTrigger } from "../../src/runs/shared/long-running-guard.ts";
@@ -99,6 +100,15 @@ describe("subagent control attention state", () => {
 		}), "time_threshold");
 	});
 
+	it("marks non-exempt open tools for attention at the active threshold", () => {
+		const defaults = resolveControlConfig();
+
+		assert.equal(shouldEmitOpenToolAttention({ config: defaults, currentTool: "bash", currentToolStartedAt: 0, now: 239_999 }), false);
+		assert.equal(shouldEmitOpenToolAttention({ config: defaults, currentTool: "bash", currentToolStartedAt: 0, now: 240_000 }), true);
+		assert.equal(shouldEmitOpenToolAttention({ config: defaults, currentTool: "contact_supervisor", currentToolStartedAt: 0, now: 999_999 }), false);
+		assert.equal(shouldEmitOpenToolAttention({ config: { ...defaults, enabled: false }, currentTool: "bash", currentToolStartedAt: 0, now: 999_999 }), false);
+	});
+
 	it("supports opt-in turn and token long-running thresholds", () => {
 		const tokenBudget = resolveControlConfig(undefined, { activeNoticeAfterMs: 999_999, activeNoticeAfterTokens: 500_000 });
 		const turnBudget = resolveControlConfig(undefined, { activeNoticeAfterMs: 999_999, activeNoticeAfterTurns: 5 });
@@ -170,6 +180,24 @@ describe("subagent control attention state", () => {
 		assert.match(message, /Status: subagent\(\{ action: "status", id: "78f659a3" \}\)/);
 		assert.match(message, /Interrupt: subagent\(\{ action: "interrupt", id: "78f659a3" \}\)/);
 		assert.doesNotMatch(message, /Wait:/);
+	});
+
+	it("formats open-tool attention notices with tool facts", () => {
+		const event = buildControlEvent({
+			to: "needs_attention",
+			runId: "78f659a3",
+			agent: "worker",
+			reason: "tool_open_threshold",
+			message: "worker has had tool 'bash' open for 240s",
+			currentTool: "bash",
+			currentToolDurationMs: 240_000,
+			currentPath: "scripts/run-tests.sh",
+		});
+
+		const message = formatControlNoticeMessage(event, "subagent-worker-78f659a3");
+
+		assert.match(message, /worker has had tool 'bash' open for 240s/);
+		assert.match(message, /Facts: tool bash 240s \| path scripts\/run-tests\.sh/);
 	});
 
 	it("formats supervisor-request notices with pending-channel guidance", () => {

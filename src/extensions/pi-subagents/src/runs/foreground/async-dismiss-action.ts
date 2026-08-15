@@ -6,6 +6,7 @@ import { DIRS, type Details, type SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { updateActiveRunIndex } from "../background/active-run-index.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
+import { resultFilePath } from "../background/result-files.ts";
 
 export function dismissRecoveredWorkflow(
 	state: SubagentState,
@@ -50,7 +51,7 @@ export function dismissRecoveredWorkflow(
 		};
 	}
 	let latestStatus = status;
-	const resultPath = path.join(DIRS.results, `${status.runId}.json`);
+	const resultPath = resultFilePath(DIRS.results, status.runId);
 	if (fs.existsSync(resultPath)) {
 		const reconciled = reconcileAsyncRun(asyncDir).status;
 		if (reconciled && reconciled.state !== "running") {

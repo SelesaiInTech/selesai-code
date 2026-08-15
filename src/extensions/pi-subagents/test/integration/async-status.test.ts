@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { formatAsyncRunList, listAsyncRuns } from "../../src/runs/background/async-status.ts";
-import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { ACTIVE_RUN_INDEX_DIR, DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { claimRunFanoutBatch, createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 
 function createAsyncDir(root: string, id: string, status: Record<string, unknown>): string {
@@ -376,6 +376,7 @@ describe("async status helpers", () => {
 		try {
 			const asyncDir = createAsyncDir(root, "run-stale", {
 				runId: "run-stale",
+				sessionId: "session-stale",
 				mode: "single",
 				state: "running",
 				pid: 12345,
@@ -635,6 +636,31 @@ describe("async status helpers", () => {
 				instances: [{ kind: "runner", processInstanceId: "runner", closeObservedAt: 300, exitCode: 0, signal: null }],
 			}), "utf-8");
 			assert.deepEqual(listAsyncRuns(root, { states: ["running"], reconcile: false }), []);
+			assert.equal(fs.existsSync(markerPath), false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("prunes old terminal active markers without process-terminal proof", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-index-aged-prune-"));
+		try {
+			const asyncDir = createAsyncDir(root, "finished", {
+				runId: "finished",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				displayDismissedAt: 250,
+				processTerminal: { version: 1, state: "unknown", runId: "finished", runnerProcessInstanceId: "runner", reason: "process-tree-unverified" },
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			updateActiveRunIndex(asyncDir, "running");
+			const markerPath = path.join(root, ACTIVE_RUN_INDEX_DIR, "finished");
+			const oldTime = new Date(1_000);
+			fs.utimesSync(markerPath, oldTime, oldTime);
+
+			assert.deepEqual(listAsyncRuns(root, { states: ["running"], reconcile: false, now: () => 1_000 + DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS + 1 }), []);
 			assert.equal(fs.existsSync(markerPath), false);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

@@ -162,6 +162,8 @@ interface ParallelChainRunInput {
 	nestedRoute?: NestedRouteInfo;
 	timeoutMs?: number;
 	deadlineAt?: number;
+	callToolTimeoutMs?: number;
+	configToolTimeoutMs?: number;
 	turnBudget?: ResolvedTurnBudget;
 	usageBudget?: UsageBudgetConfig;
 	onDetachedExit?: (index: number, result: SingleResult) => void;
@@ -436,6 +438,8 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				onEffectivePrompt: input.foregroundControl ? (prompt) => updateLiveEffectivePrompt(input.foregroundControl!, childIndex, prompt) : undefined,
 				timeoutMs: input.timeoutMs,
 				deadlineAt: input.deadlineAt,
+				toolTimeoutMs: input.callToolTimeoutMs,
+				configToolTimeoutMs: input.configToolTimeoutMs,
 				turnBudget: input.turnBudget,
 				onDetachedExit: (result) => {
 					try {
@@ -548,6 +552,12 @@ interface ChainExecutionParams {
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ToolBudgetConfig;
+	/** Optional per-call hard toolTimeoutMs override (highest precedence). */
+	callToolTimeoutMs?: number;
+	/** Global config.toolTimeoutMs (third precedence, after agent frontmatter). */
+	configToolTimeoutMs?: number;
+	/** SELESAI_SUBAGENT_TOOL_TIMEOUT_MS override (lowest precedence). */
+	toolTimeoutMsEnv?: string | undefined;
 	permissions?: PermissionConfig;
 	/** Global cap on simultaneously-running tasks within this chain. Defaults to DEFAULT_GLOBAL_CONCURRENCY_LIMIT. */
 	globalConcurrencyLimit?: number;
@@ -881,6 +891,8 @@ ${step.message}` : ""}` }],
 					maxSubagentDepth: params.maxSubagentDepth,
 					timeoutMs: params.timeoutMs,
 					deadlineAt,
+					callToolTimeoutMs: params.callToolTimeoutMs,
+					configToolTimeoutMs: params.configToolTimeoutMs,
 					turnBudget: params.turnBudget,
 					usageBudget: params.usageBudget,
 					onDetachedExit,
@@ -1156,6 +1168,8 @@ ${step.message}` : ""}` }],
 				maxSubagentDepth: params.maxSubagentDepth,
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
+				callToolTimeoutMs: params.callToolTimeoutMs,
+				configToolTimeoutMs: params.configToolTimeoutMs,
 				turnBudget: params.turnBudget,
 				usageBudget: params.usageBudget,
 				onDetachedExit,
@@ -1440,6 +1454,8 @@ ${step.message}` : ""}` }],
 				onEffectivePrompt: foregroundControl ? (prompt) => updateLiveEffectivePrompt(foregroundControl, childIndex, prompt) : undefined,
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
+				toolTimeoutMs: params.callToolTimeoutMs,
+				configToolTimeoutMs: params.configToolTimeoutMs,
 				turnBudget: params.turnBudget,
 				onDetachedExit: (result) => {
 					try {

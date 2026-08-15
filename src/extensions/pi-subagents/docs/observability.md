@@ -23,13 +23,37 @@ subagent({ action: "status", id: "..." })      // one run
 
 Or ask naturally: "Show me the current async runs."
 
+The under-editor async widget gives a short view while work runs. Its expand key follows your Selesai keybinding:
+
+```text
+async subagent worker · background
+● worker
+  ● Step 1/1: worker · running
+    ⎿  read: src/auth.ts | 2.0s
+    Press configured-expand-key for live detail
+```
+
 To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
 
 ## FleetView
 
 In the TUI, a persistent FleetView below the editor keeps active work visible as a compact summary. Set `fleetViewPlacement` to `"aboveEditor"` to move it above the editor.
 
-When the focused editor is empty, press `↓` or `←` to expand the summary into `main` plus active children with task, elapsed time, and token totals. Then use `↑`/`↓` or `j`/`k` to select a child and `Enter` to inspect it. Printable navigation keys are never intercepted before activation.
+```text
+2 active agents · ↓ 4.2k tokens · ↓/← to inspect
+```
+
+After you expand it:
+
+```text
+↑↓/jk select · enter inspect · esc back
+
+> main
+    scout · running                  1m 12s · ↓ 2.8k tokens
+    reviewer · running                 38s · ↓ 1.4k tokens
+```
+
+When the focused editor is empty, press `↓` or `←` to expand the summary into `main` plus active children with agent name, state, elapsed time, and token totals. Then use `↑`/`↓` or `j`/`k` to select a child and `Enter` to inspect it. Printable navigation keys are never intercepted before activation.
 
 FleetView replaces the legacy above-editor async widget by default. Successful background completions stay quiet so inactive Selesai tabs are not marked unread, while failed or paused completions still notify the originating session. Parallel runs show every active child independently. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
 
@@ -56,6 +80,22 @@ Set `fleetKeybindings` in the extension config to replace inspector-level keys w
 Without a TUI, `/subagents-fleet` retains the textual `subagent({ action: "status", view: "fleet" })` fallback, and mutations use explicit commands: run `/subagents-stop` and pick from the selector, or use `/subagents-stop <run-id>` / `subagent({ action: "stop", id: "..." })` when you already know the id.
 
 Use `/subagents-detach [run-id]` only for an active foreground single-subagent run you want to leave running without terminating; the eventual result remains available through status/wait.
+
+Set `foregroundDetachShortcut` in `~/.selesai/agent/extensions/subagent/config.json` to bind the same action to a shortcut. The running foreground card shows the configured shortcut beside its live-detail hint:
+
+```json
+{
+  "foregroundDetachShortcut": "ctrl+b"
+}
+```
+
+Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes precedence, but Selesai reports the conflict at startup. To reserve the key without that warning, override the editor action in `~/.selesai/agent/keybindings.json`:
+
+```json
+{
+  "tui.editor.cursorLeft": "left"
+}
+```
 
 If something feels misconfigured, run `/subagents-doctor` or ask: "Check whether subagents and intercom are set up correctly."
 
@@ -126,7 +166,7 @@ Foreground and async runners share bounded child-protocol handling:
 
 ## Chain and debug artifacts
 
-Each chain run creates a scratch directory under its resolved chain root. With the default `artifactDir: "project"`, that root is `<cwd>/.pi-subagents/chain-runs/`. With `artifactDir: "session"` or `"temp"`, it is user-scoped temp storage:
+Each chain run creates a scratch directory under its resolved chain root. With the default `artifactDir: "session"` or with `"temp"`, it is user-scoped temp storage. With `artifactDir: "project"`, the root is `<cwd>/.pi-subagents/chain-runs/`:
 
 ```text
 <tmpdir>/pi-subagents-<scope>/chain-runs/{runId}/

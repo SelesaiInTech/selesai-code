@@ -34,6 +34,7 @@ import { THINKING_LEVELS } from "../../shared/model-info.ts";
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");
 const ROUTE_FILE = "route.json";
 const REGISTRY_FILE = "registry.json";
+const ROUTE_INDEX_DIR = ".route-index";
 const MAX_EVENT_BYTES = 64 * 1024;
 const MAX_STEPS = 12;
 const MAX_CHILDREN = 16;
@@ -105,6 +106,18 @@ function commonRouteRoot(route: Pick<NestedRoute, "eventSink" | "controlInbox">)
 	return path.dirname(path.resolve(route.eventSink));
 }
 
+function routeIndexRoot(): string {
+	return path.join(NESTED_EVENTS_DIR, ROUTE_INDEX_DIR, "roots");
+}
+
+function routeIndexDir(rootRunId: string): string {
+	return path.join(routeIndexRoot(), encodeURIComponent(rootRunId));
+}
+
+function routeIndexPath(rootRunId: string, capabilityToken: string): string {
+	return path.join(routeIndexDir(rootRunId), `${encodeURIComponent(capabilityToken)}.json`);
+}
+
 function validateRouteShape(route: NestedRoute): void {
 	assertSafeId("rootRunId", route.rootRunId);
 	assertSafeId("capabilityToken", route.capabilityToken);
@@ -121,7 +134,10 @@ export function createNestedRoute(rootRunId: string): NestedRoute {
 	const controlInbox = path.join(routeRoot, "controls");
 	fs.mkdirSync(eventSink, { recursive: true, mode: 0o700 });
 	fs.mkdirSync(controlInbox, { recursive: true, mode: 0o700 });
-	fs.writeFileSync(path.join(routeRoot, ROUTE_FILE), `${JSON.stringify({ rootRunId, capabilityToken, createdAt: Date.now() })}\n`, { mode: 0o600 });
+	const createdAt = Date.now();
+	fs.mkdirSync(routeIndexDir(rootRunId), { recursive: true, mode: 0o700 });
+	writeAtomicJson(routeIndexPath(rootRunId, capabilityToken), { rootRunId, capabilityToken, routeRoot: path.basename(routeRoot), createdAt });
+	writeAtomicJson(path.join(routeRoot, ROUTE_FILE), { rootRunId, capabilityToken, createdAt });
 	return { rootRunId, eventSink, controlInbox, capabilityToken };
 }
 
@@ -515,68 +531,57 @@ function registryPath(route: NestedRoute): string {
 	return path.join(commonRouteRoot(route), REGISTRY_FILE);
 }
 
+function routeFromIndexEntry(rootRunId: string, filePath: string): NestedRoute | undefined {
+	try {
+		const metadata = JSON.parse(fs.readFileSync(filePath, "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown; routeRoot?: unknown; createdAt?: unknown };
+		if (metadata.rootRunId !== rootRunId || typeof metadata.capabilityToken !== "string" || typeof metadata.routeRoot !== "string") return undefined;
+		const routeRoot = path.join(NESTED_EVENTS_DIR, path.basename(metadata.routeRoot));
+		const route = {
+			rootRunId,
+			eventSink: path.join(routeRoot, "events"),
+			controlInbox: path.join(routeRoot, "controls"),
+			capabilityToken: metadata.capabilityToken,
+		};
+		validateRouteShape(route);
+		if (!fs.statSync(route.eventSink).isDirectory() || !fs.statSync(route.controlInbox).isDirectory()) return undefined;
+		const routeFilePath = path.join(routeRoot, ROUTE_FILE);
+		try {
+			const routeFile = JSON.parse(fs.readFileSync(routeFilePath, "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
+			if (routeFile.rootRunId !== rootRunId || routeFile.capabilityToken !== metadata.capabilityToken) return undefined;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+			try {
+				writeAtomicJson(routeFilePath, { rootRunId, capabilityToken: metadata.capabilityToken, createdAt: typeof metadata.createdAt === "number" ? metadata.createdAt : Date.now() });
+			} catch {
+				// The route index already carries enough data for reload lookup.
+			}
+		}
+		return route;
+	} catch {
+		return undefined;
+	}
+}
+
 export function findNestedRouteForRootId(rootRunId: string): NestedRoute | undefined {
 	assertSafeId("rootRunId", rootRunId);
 	let entries: string[];
 	try {
-		entries = fs.readdirSync(NESTED_EVENTS_DIR);
+		entries = fs.readdirSync(routeIndexDir(rootRunId));
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw error;
 	}
 	for (const entry of entries) {
-		if (!entry.startsWith(`${rootRunId}-`)) continue;
-		const routeRoot = path.join(NESTED_EVENTS_DIR, entry);
-		try {
-			const metadata = JSON.parse(fs.readFileSync(path.join(routeRoot, ROUTE_FILE), "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
-			if (metadata.rootRunId !== rootRunId || typeof metadata.capabilityToken !== "string") continue;
-			const route = {
-				rootRunId,
-				eventSink: path.join(routeRoot, "events"),
-				controlInbox: path.join(routeRoot, "controls"),
-				capabilityToken: metadata.capabilityToken,
-			};
-			validateRouteShape(route);
-			return route;
-		} catch {
-			continue;
-		}
+		const route = routeFromIndexEntry(rootRunId, path.join(routeIndexDir(rootRunId), entry));
+		if (route) return route;
 	}
 	return undefined;
 }
 
-/**
- * Scan the nested-events directory once and index every route by its root run
- * id. Use this when resolving routes for many runs (e.g. listAsyncRuns) so the
- * cost is O(routes) total instead of O(runs * routes) from calling
- * findNestedRouteForRootId per run.
- */
 export function buildNestedRouteIndex(): Map<string, NestedRoute> {
-	let entries: string[];
-	try {
-		entries = fs.readdirSync(NESTED_EVENTS_DIR);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Map();
-		throw error;
-	}
 	const index = new Map<string, NestedRoute>();
-	for (const entry of entries) {
-		const routeRoot = path.join(NESTED_EVENTS_DIR, entry);
-		try {
-			const metadata = JSON.parse(fs.readFileSync(path.join(routeRoot, ROUTE_FILE), "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
-			if (typeof metadata.rootRunId !== "string" || typeof metadata.capabilityToken !== "string") continue;
-			if (index.has(metadata.rootRunId)) continue;
-			const route: NestedRoute = {
-				rootRunId: metadata.rootRunId,
-				eventSink: path.join(routeRoot, "events"),
-				controlInbox: path.join(routeRoot, "controls"),
-				capabilityToken: metadata.capabilityToken,
-			};
-			validateRouteShape(route);
-			index.set(metadata.rootRunId, route);
-		} catch {
-			continue;
-		}
+	for (const route of listNestedRoutes()) {
+		if (!index.has(route.rootRunId)) index.set(route.rootRunId, route);
 	}
 	return index;
 }
@@ -630,27 +635,26 @@ function collectScopedNestedRuns(children: NestedRunSummary[] | undefined, scope
 }
 
 function listNestedRoutes(): NestedRoute[] {
-	let entries: string[];
+	let rootEntries: string[];
 	try {
-		entries = fs.readdirSync(NESTED_EVENTS_DIR);
+		rootEntries = fs.readdirSync(routeIndexRoot());
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
 		throw error;
 	}
 	const routes: NestedRoute[] = [];
-	for (const entry of entries) {
-		const routeRoot = path.join(NESTED_EVENTS_DIR, entry);
+	for (const rootEntry of rootEntries) {
+		let rootRunId: string;
 		try {
-			const metadata = JSON.parse(fs.readFileSync(path.join(routeRoot, ROUTE_FILE), "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
-			if (typeof metadata.rootRunId !== "string" || typeof metadata.capabilityToken !== "string") continue;
-			const route = {
-				rootRunId: metadata.rootRunId,
-				eventSink: path.join(routeRoot, "events"),
-				controlInbox: path.join(routeRoot, "controls"),
-				capabilityToken: metadata.capabilityToken,
-			};
-			validateRouteShape(route);
-			routes.push(route);
+			rootRunId = decodeURIComponent(rootEntry);
+		} catch {
+			continue;
+		}
+		try {
+			for (const entry of fs.readdirSync(path.join(routeIndexRoot(), rootEntry))) {
+				const route = routeFromIndexEntry(rootRunId, path.join(routeIndexRoot(), rootEntry, entry));
+				if (route) routes.push(route);
+			}
 		} catch {
 			continue;
 		}

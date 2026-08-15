@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
+import { resultFilePath } from "./result-files.ts";
 import type { AcceptanceLedger, AsyncStatus, CostSummary, ModelAttempt } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 
@@ -195,5 +195,5 @@ export async function waitForImportedAsyncRoot(
 }
 
 export function resolveAsyncRootResultPath(resultsDir: string, runId: string): string {
-	return path.join(resultsDir, `${runId}.json`);
+	return resultFilePath(resultsDir, runId);
 }

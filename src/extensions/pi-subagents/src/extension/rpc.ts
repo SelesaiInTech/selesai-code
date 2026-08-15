@@ -21,6 +21,7 @@ import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
+import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
 export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
@@ -381,6 +382,7 @@ function pingData(ctx: ExtensionContext | null) {
 		capabilities: {
 			status: true,
 			fleetStatus: { version: 1 },
+			asyncStatusSnapshot: { kind: ASYNC_STATUS_SNAPSHOT_KIND, version: ASYNC_STATUS_SNAPSHOT_VERSION },
 			asyncSpawn: true,
 			steer: true,
 			nonRecoveringSteer: true,
@@ -550,13 +552,15 @@ async function handleRequest(
 			request.method,
 			{ action: "status", ...normalizeTargetParams(request.params, "status") },
 		);
+		const sessionId = resolveCurrentSessionId(ctx.sessionManager);
 		return {
 			...status,
 			fleet: buildFleetStatus(
 				options.state,
 				fleetKeys,
-				resolveCurrentSessionId(ctx.sessionManager),
+				sessionId,
 			),
+			asyncSnapshot: buildAsyncStatusSnapshotForState(options.state, sessionId),
 		};
 	}
 	if (request.method === "steer") {

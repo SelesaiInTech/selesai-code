@@ -98,7 +98,7 @@ interface BuiltinAgentOverrideConfig {
 	disabled?: boolean;
 	systemPrompt?: string;
 	skills?: string[] | false;
-	tools?: string[] | false;
+	tools?: string[] | false | "inherit";
 	extensions?: string[] | false;
 	subagentOnlyExtensions?: string[] | false;
 	completionGuard?: boolean;
@@ -136,6 +136,7 @@ export interface AgentConfig {
 	defaultContext?: AgentDefaultContext;
 	defaultAsync?: boolean;
 	defaultTimeoutMs?: number;
+	defaultToolTimeoutMs?: number;
 	defaultTurnBudget?: TurnBudgetConfig;
 	defaultAcceptance?: AcceptanceInput;
 	acceptanceRole?: AcceptanceRole;
@@ -608,7 +609,7 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 		...(override.disabled !== undefined ? { disabled: override.disabled } : {}),
 		...(override.systemPrompt !== undefined ? { systemPrompt: override.systemPrompt } : {}),
 		...(override.skills !== undefined ? { skills: override.skills === false ? false : [...override.skills] } : {}),
-		...(override.tools !== undefined ? { tools: override.tools === false ? false : [...override.tools] } : {}),
+		...(override.tools !== undefined ? { tools: Array.isArray(override.tools) ? [...override.tools] : override.tools } : {}),
 		...(override.extensions !== undefined ? { extensions: override.extensions === false ? false : [...override.extensions] } : {}),
 		...(override.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: override.subagentOnlyExtensions === false ? false : [...override.subagentOnlyExtensions] } : {}),
 		...(override.completionGuard !== undefined ? { completionGuard: override.completionGuard } : {}),
@@ -747,6 +748,17 @@ function parseOverrideStringArrayOrFalse(
 	return items;
 }
 
+function parseToolsOverride(
+	value: unknown,
+	meta: { filePath: string; name: string },
+): BuiltinAgentOverrideConfig["tools"] | undefined {
+	if (typeof value === "string" && value.trim() === "inherit") return "inherit";
+	if (value === undefined || value === false || Array.isArray(value)) {
+		return parseOverrideStringArrayOrFalse(value, { ...meta, field: "tools" });
+	}
+	throw new Error(`Builtin override '${meta.name}' in '${meta.filePath}' has invalid 'tools'; expected an array of strings, "inherit", or false.`);
+}
+
 function parseBuiltinOverrideEntry(
 	name: string,
 	value: unknown,
@@ -854,7 +866,7 @@ function parseBuiltinOverrideEntry(
 	const skills = parseOverrideStringArrayOrFalse(input.skills, { filePath, name, field: "skills" });
 	if (skills !== undefined) override.skills = skills;
 
-	const tools = parseOverrideStringArrayOrFalse(input.tools, { filePath, name, field: "tools" });
+	const tools = parseToolsOverride(input.tools, { filePath, name });
 	if (tools !== undefined) override.tools = tools;
 
 	const extensions = parseOverrideStringArrayOrFalse(input.extensions, { filePath, name, field: "extensions" });
@@ -1013,6 +1025,17 @@ function applySubagentDefaults(
 	);
 }
 
+function applyToolsOverride(target: AgentConfig, toolsOverride: string[] | false | "inherit"): void {
+	if (toolsOverride === "inherit") {
+		delete target.tools;
+		delete target.mcpDirectTools;
+		return;
+	}
+	const { tools, mcpDirectTools } = splitToolList(toolsOverride === false ? [] : toolsOverride);
+	if (tools === undefined) delete target.tools; else target.tools = tools;
+	if (mcpDirectTools === undefined) delete target.mcpDirectTools; else target.mcpDirectTools = mcpDirectTools;
+}
+
 function applyBuiltinOverride(
 	agent: AgentConfig,
 	override: BuiltinAgentOverrideConfig,
@@ -1038,11 +1061,7 @@ function applyBuiltinOverride(
 	if (override.disabled !== undefined) next.disabled = override.disabled;
 	if (override.systemPrompt !== undefined) next.systemPrompt = override.systemPrompt;
 	if (override.skills !== undefined) { if (override.skills === false) delete next.skills; else next.skills = [...override.skills]; }
-	if (override.tools !== undefined) {
-		const { tools, mcpDirectTools } = splitToolList(override.tools === false ? [] : override.tools);
-		if (tools === undefined) delete next.tools; else next.tools = tools;
-		if (mcpDirectTools === undefined) delete next.mcpDirectTools; else next.mcpDirectTools = mcpDirectTools;
-	}
+	if (override.tools !== undefined) applyToolsOverride(next, override.tools);
 	if (override.extensions !== undefined) { if (override.extensions === false) delete next.extensions; else next.extensions = [...override.extensions]; }
 	if (override.subagentOnlyExtensions !== undefined) { if (override.subagentOnlyExtensions === false) delete next.subagentOnlyExtensions; else next.subagentOnlyExtensions = [...override.subagentOnlyExtensions]; }
 	if (override.completionGuard !== undefined) next.completionGuard = override.completionGuard;
@@ -1184,10 +1203,7 @@ function applyCustomAgentOverride(
 		fill("skills", ["skill", "skills"], override.skills === false ? undefined : [...override.skills]);
 	}
 	if (override.tools !== undefined && !agentHasFrontmatterField(agent, "tools")) {
-		const { tools, mcpDirectTools } = splitToolList(override.tools === false ? [] : override.tools);
-		const target = mutable();
-		if (tools === undefined) delete target.tools; else target.tools = tools;
-		if (mcpDirectTools === undefined) delete target.mcpDirectTools; else target.mcpDirectTools = mcpDirectTools;
+		applyToolsOverride(mutable(), override.tools);
 		anyFilled = true;
 	}
 	if (override.extensions !== undefined) {
@@ -1576,6 +1592,14 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			}
 			defaultTimeoutMs = parsed;
 		}
+		let defaultToolTimeoutMs: number | undefined;
+		if (frontmatter.toolTimeoutMs !== undefined) {
+			const parsed = Number(frontmatter.toolTimeoutMs);
+			if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 2_147_483_647) {
+				throw new Error(`Agent '${localName}' has invalid toolTimeoutMs frontmatter; expected a positive integer no larger than 2147483647.`);
+			}
+			defaultToolTimeoutMs = parsed;
+		}
 		let defaultTurnBudget: TurnBudgetConfig | undefined;
 		if (frontmatter.turnBudget !== undefined && frontmatter.turnBudget.trim()) {
 			const parsed = JSON.parse(frontmatter.turnBudget) as unknown;
@@ -1642,6 +1666,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			...(defaultContext !== undefined ? { defaultContext } : {}),
 			...(defaultAsync !== undefined ? { defaultAsync } : {}),
 			...(defaultTimeoutMs !== undefined ? { defaultTimeoutMs } : {}),
+			...(defaultToolTimeoutMs !== undefined ? { defaultToolTimeoutMs } : {}),
 			...(defaultTurnBudget !== undefined ? { defaultTurnBudget } : {}),
 			...(defaultAcceptance !== undefined ? { defaultAcceptance } : {}),
 			...(acceptanceRole !== undefined ? { acceptanceRole } : {}),

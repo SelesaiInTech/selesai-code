@@ -267,6 +267,7 @@ function activeRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps
 		resultsDir,
 		kill: deps.kill,
 		now: deps.now,
+		includeNested: false,
 		...(params.id ? { runId: params.id } : {}),
 	});
 	return params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;
@@ -286,6 +287,7 @@ function allRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): 
 		resultsDir,
 		kill: deps.kill,
 		now: deps.now,
+		includeNested: false,
 		...(params.id ? { runId: params.id } : {}),
 	});
 	return params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;

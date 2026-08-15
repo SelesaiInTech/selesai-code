@@ -5,7 +5,12 @@ import { normalizePublicSubagentExecution } from "../../src/extension/public-exe
 describe("public subagent execution normalization", () => {
 	it("accepts all four execution modes, management, and direct-field schedules", () => {
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1" }), { ok: true, params: { workflowScript: "return 1" } });
-		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", task: "work" }), { ok: true, params: { agent: "worker", task: "work" } });
+		const single = normalizePublicSubagentExecution({ agent: "worker", task: "work" });
+		assert.equal(single.ok, true);
+		if (single.ok) {
+			assert.equal(typeof (single.params as { workflowScript?: unknown }).workflowScript, "string");
+			assert.match((single.params as { workflowScript: string }).workflowScript, /runs\.run\("main", \{"agent":"worker","task":"work","output":true\}\)/);
+		}
 		assert.deepEqual(normalizePublicSubagentExecution({ tasks: [{ agent: "worker" }] }), { ok: true, params: { tasks: [{ agent: "worker" }] } });
 		assert.deepEqual(normalizePublicSubagentExecution({ chain: [{ agent: "worker" }] }), { ok: true, params: { chain: [{ agent: "worker" }] } });
 		assert.deepEqual(normalizePublicSubagentExecution({ action: " list " }), { ok: true, params: { action: "list" } });

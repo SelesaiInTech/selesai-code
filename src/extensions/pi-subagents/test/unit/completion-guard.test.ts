@@ -25,17 +25,216 @@ function assistantText(text: string): Message {
 }
 
 test("implementation task with no mutation triggers the completion guard", () => {
-	const result = evaluateCompletionMutationGuard({
-		agent: "worker",
-		task: "Implement the approved fix",
-		messages: [assistantText("Plan: update the files...")],
-	});
+	for (const report of [
+		"No better current-scope change is needed.",
+		"Kept the current implementation. No new code or test changes were made in this challenge pass.",
+	]) {
+		const result = evaluateCompletionMutationGuard({
+			agent: "worker",
+			task: "Implement the approved fix",
+			messages: [assistantText(report)],
+		});
 
-	assert.deepEqual(result, {
-		expectedMutation: true,
-		attemptedMutation: false,
-		triggered: true,
-	});
+		assert.deepEqual(result, {
+			expectedMutation: true,
+			attemptedMutation: false,
+			triggered: true,
+		});
+	}
+});
+
+function revivedTask(followUp: string): string {
+	return [
+		"You are reviving a previous subagent conversation.",
+		"",
+		"Original run: abc123",
+		"Original agent: worker",
+		"Original session file: /tmp/session.jsonl",
+		"",
+		"Use the stored session context as background. Answer the orchestrator's follow-up below. Do not assume the original child process is still alive.",
+		"",
+		"Follow-up:",
+		followUp,
+	].join("\n");
+}
+
+const implementationChallengeTask = revivedTask("Run implementation challenge pass two and implement any better current-scope change.");
+
+test("implementation challenges may complete with explicit no-change reports", () => {
+	for (const report of [
+		"No better current-scope change is needed.",
+		[
+			"Kept the current implementation. No new code or test changes were made in this challenge pass.",
+			"Reason: the current candidate is the smallest correct shape.",
+		].join("\n\n"),
+		"The current implementation was kept. No code changes were made.",
+		"The current candidate was kept. No source changes were made.",
+		"The current shape was kept. No file or test changes were made.",
+		"Kept the current implementation. No code/source/file/test changes were made.",
+		"Kept the current implementation. No code, source, or test changes were made.",
+		"No better current-scope change is needed.\n\nReason: I cannot identify a smaller safe change.",
+		"No better current-scope change is needed because I did not identify a smaller safe change.",
+		"No better current-scope change is needed because no work remains.",
+		"No better current-scope change is needed. I haven't identified required changes.",
+		"No better current-scope change is needed. I haven’t identified required changes.",
+		"No better current-scope change is needed; I did not identify a smaller safe change.",
+		"No better current-scope change is needed, since I did not identify a smaller safe change.",
+		"No better current-scope change is needed, I did not identify a smaller safe change.",
+		"No better current-scope change is needed, the current implementation does not require further edits.",
+		"No better current-scope change is needed; the current implementation does not require further edits.",
+		"No better current-scope change is needed, but the current implementation does not require further edits.",
+		"Kept the current implementation. No code changes were made.\n\nReason: this does not need a broader rewrite.",
+		"Kept the current implementation; I did not identify a smaller safe change. No code changes were made.",
+		"Kept the current implementation. No code changes were made, since I did not identify a smaller safe change.",
+		"Kept the current implementation. No code changes were made, I did not identify a smaller safe change.",
+		"Kept the current implementation, the current candidate does not need more work. No code changes were made.",
+		"Kept the current implementation; the current candidate does not need more work. No code changes were made.",
+		"Kept the current implementation because I did not identify a smaller safe change. No code changes were made.",
+		"Kept the current implementation. No code changes were made because I did not identify a smaller safe change.",
+	]) {
+		const result = evaluateCompletionMutationGuard({
+			agent: "worker",
+			task: implementationChallengeTask,
+			messages: [assistantText(report)],
+		});
+
+		assert.deepEqual(result, {
+			expectedMutation: true,
+			attemptedMutation: false,
+			triggered: false,
+		});
+	}
+});
+
+test("implementation challenge reports require both a kept-current rationale and no-change statement", () => {
+	for (const report of [
+		"Kept the current implementation.",
+		"No new code or test changes were made in this challenge pass.",
+		"Kept the current implementation. No new code or test changes were made, but I am uncertain.",
+	]) {
+		assert.equal(evaluateCompletionMutationGuard({
+			agent: "worker",
+			task: implementationChallengeTask,
+			messages: [assistantText(report)],
+		}).triggered, true, report);
+	}
+});
+
+test("implementation challenge reports require current kept/no-change claims", () => {
+	for (const report of [
+		"The previous message said \"Kept the current implementation. No code changes were made\".",
+		"The prior report stated Kept the current implementation. No code changes were made.",
+		"The previous message said \"Kept the current implementation. No code changes were made\". Kept the current implementation.",
+		"'Kept the current implementation. No code changes were made.'",
+	]) {
+		assert.equal(evaluateCompletionMutationGuard({
+			agent: "worker",
+			task: implementationChallengeTask,
+			messages: [assistantText(report)],
+		}).triggered, true, report);
+	}
+});
+
+test("implementation challenge reports with later implementation retractions remain guarded", () => {
+	for (const report of [
+		"No better current-scope change is needed. I found a required code change.",
+		"Kept the current implementation. No code changes were made. Implementation work remains.",
+		"No better current-scope change is needed. A code change is needed.",
+		"Kept the current implementation. No code changes were made. I need to implement the fix.",
+		"No better current-scope change is needed, but I found a required code change.",
+		"No better current-scope change is needed\nI found a required code change.",
+		"No better current-scope change is needed. I found required changes.",
+		"No better current-scope change is needed. Code changes are needed.",
+		"No better current-scope change is needed. Changes are needed.",
+		"No better current-scope change is needed because no work remains. Code changes are needed.",
+		"No better current-scope change is needed. I need changes.",
+		"No better current-scope change is needed. We need edits.",
+		"Kept the current implementation. No code changes were made. I need changes.",
+		"Kept the current implementation. No code changes were made. We need patches.",
+		"No better current-scope change is needed. That claim is rejected.",
+		"No better current-scope change is needed. This report is retracted.",
+		"No better current-scope change is needed. Required changes.",
+		"No better current-scope change is needed. Need changes.",
+		"No better current-scope change is needed, I disagree.",
+		"No better current-scope change is needed; I disagree.",
+		"Kept the current implementation. No code changes were made, I reject.",
+		"Kept the current implementation. No code changes were made; I reject.",
+		"No better current-scope change is needed: I disagree.",
+		"No better current-scope change is needed — I disagree.",
+		"No better current-scope change is needed. \"I reject.\"",
+		"No better current-scope change is needed. 'I reject.'",
+		"No better current-scope change is needed. ‘I reject.’",
+		"Kept the current implementation. No code changes were made: I reject.",
+		"Kept the current implementation. No code changes were made. \"I retract.\"",
+		"No better current-scope change is needed. I disagree.",
+		"No better current-scope change is needed. I reject.",
+		"No better current-scope change is needed. I retract.",
+		"Kept the current implementation. No code changes were made. I disagree.",
+		"Kept the current implementation. No code changes were made. I reject.",
+		"Kept the current implementation. No code changes were made. I retract.",
+		"No better current-scope change is needed. I disagree with that.",
+		"No better current-scope change is needed. I retract that.",
+		"No better current-scope change is needed. I reject that.",
+		"Kept the current implementation. No code changes were made. I disagree with that.",
+		"Kept the current implementation. No code changes were made. I retract that.",
+		"Kept the current implementation. No code changes were made. I reject that.",
+	]) {
+		assert.equal(evaluateCompletionMutationGuard({
+			agent: "worker",
+			task: implementationChallengeTask,
+			messages: [assistantText(report)],
+		}).triggered, true, report);
+	}
+});
+
+test("revived implementation tasks that mention implementation challenge remain guarded", () => {
+	for (const followUp of [
+		"Fix the implementation challenge completion guard bug.",
+		"Implementation challenge pass 1. Implement the required fix.",
+		"Implementation challenge pass 1 and implement the fix.",
+	]) {
+		const result = evaluateCompletionMutationGuard({
+			agent: "worker",
+			task: revivedTask(followUp),
+			messages: [assistantText("No better current-scope change is needed.")],
+		});
+
+		assert.deepEqual(result, {
+			expectedMutation: true,
+			attemptedMutation: false,
+			triggered: true,
+		}, followUp);
+	}
+});
+
+test("implementation challenge reports with negated or uncertain no-better-change claims remain guarded", () => {
+	for (const report of [
+		"I cannot say no better current-scope change is needed.",
+		"The previous message said \"No better current-scope change is needed\", but I disagree.",
+		"The previous message said \"Kept the current implementation. No code changes were made\", but I disagree.",
+		"The previous message said \"Kept the current implementation. No code changes were made\", but that was wrong.",
+		"The previous message said \"Kept the current implementation. No code changes were made\", but that was false.",
+		"The previous message said \"Kept the current implementation. No code changes were made\", but I reject that.",
+		"The previous message said \"Kept the current implementation. No code changes were made\". I reject that.",
+		"The previous message said \"Kept the current implementation. No code changes were made\". I reject this.",
+		"The previous message said \"Kept the current implementation. No code changes were made\". I disagree.",
+		"The previous message said \"Kept the current implementation. No code changes were made\", but it was rejected.",
+		"The previous message said \"Kept the current implementation. No code changes were made\", but I am rejecting it.",
+		"The prior report stated no better current-scope change is needed.",
+		"I don't think no better current-scope change is needed.",
+		"I dont think no better current-scope change is needed.",
+		"I do not think no better current-scope change is needed.",
+		"I cant say no better current-scope change is needed.",
+		"It is unclear whether no better current-scope change is needed.",
+		"Maybe no better current-scope change is needed.",
+	]) {
+		assert.equal(evaluateCompletionMutationGuard({
+			agent: "worker",
+			task: implementationChallengeTask,
+			messages: [assistantText(report)],
+		}).triggered, true, report);
+	}
+
 });
 
 test("declared read-only builtin tools suppress implementation-word false positives", () => {
