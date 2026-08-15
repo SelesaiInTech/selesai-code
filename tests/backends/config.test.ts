@@ -290,6 +290,15 @@ describe('usableSearchProviders', () => {
     expect(providers).toEqual(['duckduckgo', 'tavily']);
   });
 
+  it('treats a whitespace-only key as not usable', () => {
+    const providers = usableSearchProviders(
+      { provider: 'duckduckgo' },
+      { EXA_API_KEY: '   ' } as NodeJS.ProcessEnv
+    );
+    expect(providers).not.toContain('exa');
+    expect(providers).toEqual(['duckduckgo']);
+  });
+
   it('returns all usable providers when all are configured', () => {
     const providers = usableSearchProviders(
       { provider: 'duckduckgo', baseUrl: 'http://localhost:8080' },

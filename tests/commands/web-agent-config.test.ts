@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   applySettingsValue,
   collapseBackendConfigToOverride,
@@ -12,6 +12,17 @@ import {
 import { DEFAULT_PRESENTATION_CONFIG, mergePresentationConfigLayers } from '../../src/presentation/config.js';
 import { DEFAULT_BACKEND_CONFIG } from '../../src/backends/config.js';
 import type { BrowserResolutionResult } from '../../src/fetch/browser-resolution.js';
+
+beforeEach(() => {
+  vi.stubEnv('PI_WEB_AGENT_BRAVE_API_KEY', '');
+  vi.stubEnv('YDC_API_KEY', '');
+  vi.stubEnv('EXA_API_KEY', '');
+  vi.stubEnv('TAVILY_API_KEY', '');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('web-agent config draft helpers', () => {
   it('switches to the selected scope draft instead of keeping the old scope values', () => {
@@ -1329,4 +1340,3 @@ describe('web-agent config commands', () => {
     });
   });
 });
-
