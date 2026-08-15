@@ -305,9 +305,11 @@ Fanout has three modes:
 - `on`: Every search queries all configured providers and merges the results.
 - `auto`: Runs the primary provider first. If its results look thin (too few, or all from one host), fans out to configured providers for better coverage.
 
-When fanout runs, the provider list defaults to all configured providers in your backend config. Providers without API keys (or SearXNG without a baseUrl) are skipped.
+When fanout runs, the provider set defaults to the providers you have actually configured: DuckDuckGo (always, keyless), SearXNG if you gave it a baseUrl, and each hosted provider only when its API key is set. Providers you have not set up are not offered or queried.
 
-To select which providers fan out, set the fanout mode from **Settings → Backends**, then toggle individual providers on or off. You can also edit `backends.search.fanout.providers` directly in the config file.
+To select which providers fan out, set the fanout mode from **Settings → Backends**, then toggle individual providers on or off. Only usable providers appear in that list. You can also edit `backends.search.fanout.providers` directly in the config file.
+
+Each provider gets a short timeout during fanout, so one slow or unreachable backend (for example a self-hosted SearXNG that is down) is skipped instead of stalling the whole research pass.
 
 The equivalent config is:
 

@@ -12,6 +12,8 @@ The point is keeping the model-facing boundary simple: ask `web_explore` to rese
 
 That sounds obvious, but a lot of agent tooling gets fuzzy right there. This package is meant to be stricter about what it actually did and more willing to say when a read was not good enough to trust. Bot-check pages, narrow source sets, unreadable threads, and cautionary/conflicting evidence should show up as caveats instead of fake confidence.
 
+Paste a GitHub, PDF, or YouTube link into a research prompt and `web_explore` reads the real thing behind it, not the page shell: GitHub files/issues/PRs from the API, PDF text, and YouTube transcripts, all keyless. So "summarize this PDF" or "what does this repo do" works off the actual content. Set `GITHUB_TOKEN` for a higher GitHub rate limit if you want; it works without one.
+
 ## Install
 
 Compatibility notice: current `pi-web-agent` requires Pi 0.74+ because Pi packages moved to the `@earendil-works/*` scope. Update Pi before updating this package. If you are on an older Pi version, stay on `@demigodmode/pi-web-agent@0.6.x` until Pi is updated.
@@ -109,9 +111,11 @@ Example:
 }
 ```
 
-Backend config is also supported. Defaults remain DuckDuckGo search, plain HTTP fetch, and local-browser headless fallback with managed Chromium fallback configured. If you have a Brave Search or You.com API key, either can be selected as a hosted search backend while `web_explore` still handles page reading, ranking, and caveats itself.
+Backend config is also supported. Defaults remain DuckDuckGo search, plain HTTP fetch, and local-browser headless fallback with managed Chromium fallback configured. Set a hosted search key (Brave, You.com, Exa, or Tavily) and pick it as the backend, while `web_explore` still handles page reading, ranking, and caveats itself.
 
-Search backends: DuckDuckGo (default), SearXNG (self-hosted), Brave Search (hosted), You.com (hosted).
+Search backends: DuckDuckGo (default), SearXNG (self-hosted), Brave Search, You.com, Exa, Tavily.
+
+Search fanout is optional and off by default. Turn it on or auto from **Settings → Backends** and `web_explore` queries several of your configured backends at once, dedupes the results, and ranks pages that more than one provider agreed on to the top. Auto only fans out when the first provider comes back thin, so easy queries stay cheap.
 
 Backend settings can be changed from:
 
