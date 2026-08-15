@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createBackendSet } from '../../src/backends/factory.js';
 import { DEFAULT_BACKEND_CONFIG } from '../../src/backends/config.js';
+import type { SearchProviderName } from '../../src/types.js';
 
 describe('backend factory', () => {
   afterEach(() => {
@@ -345,5 +346,73 @@ describe('backend factory', () => {
     );
     await backends.search({ query: 'q' });
     expect(duck).toHaveBeenCalled();
+  });
+
+  it('defaults fanout to only usable providers (duckduckgo only when no keys/baseUrl)', async () => {
+    const duckMock = vi.fn(async () => ({
+      status: 'ok' as const,
+      results: [{ title: 'duck result', url: 'https://duck.com/1', snippet: 's' }],
+      metadata: { backend: 'duckduckgo' as const, cacheHit: false }
+    }));
+    const braveMock = vi.fn().mockRejectedValue(new Error('should not be called'));
+
+    const backends = createBackendSet(
+      {
+        search: {
+          provider: 'duckduckgo',
+          fanout: { mode: 'on' } // providers: undefined, should default to usable only
+        },
+        fetch: { provider: 'http' },
+        headless: { provider: 'local-browser' }
+      },
+      {
+        createDuckDuckGoSearch: () => duckMock,
+        createBraveSearch: () => braveMock
+      }
+    );
+
+    const result = await backends.search({ query: 'test' });
+
+    expect(result.status).toBe('ok');
+    expect(result.metadata.fanout?.mode).toBe('on');
+    // Only duckduckgo should have been called
+    expect(duckMock).toHaveBeenCalled();
+    expect(braveMock).not.toHaveBeenCalled();
+  });
+
+  it('defaults fanout to include searxng when baseUrl is configured', async () => {
+    const duckMock = vi.fn(async () => ({
+      status: 'ok' as const,
+      results: [{ title: 'duck', url: 'https://d.com/1', snippet: 's' }],
+      metadata: { backend: 'duckduckgo' as const, cacheHit: false }
+    }));
+    const searxngMock = vi.fn(async () => ({
+      status: 'ok' as const,
+      results: [{ title: 'sxng', url: 'https://s.com/1', snippet: 's' }],
+      metadata: { backend: 'searxng' as const, cacheHit: false }
+    }));
+
+    const backends = createBackendSet(
+      {
+        search: {
+          provider: 'duckduckgo',
+          baseUrl: 'http://localhost:8080',
+          fanout: { mode: 'on' }
+        },
+        fetch: { provider: 'http' },
+        headless: { provider: 'local-browser' }
+      },
+      {
+        createDuckDuckGoSearch: () => duckMock,
+        createSearxngSearch: () => searxngMock
+      }
+    );
+
+    const result = await backends.search({ query: 'test' });
+
+    expect(result.status).toBe('ok');
+    expect(result.metadata.fanout?.mode).toBe('on');
+    expect(duckMock).toHaveBeenCalled();
+    expect(searxngMock).toHaveBeenCalled();
   });
 });

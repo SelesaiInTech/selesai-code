@@ -465,10 +465,17 @@ describe('web-agent config draft helpers', () => {
   it('excludes a provider when toggled from default (included)', () => {
     const loaded = {
       global: { path: '/global/config.json', exists: false },
-      project: { path: '/project/config.json', exists: false },
+      project: {
+        path: '/project/config.json',
+        exists: true,
+        rawConfig: { tools: {} },
+        rawBackends: {
+          search: { provider: 'duckduckgo' as const, baseUrl: 'http://localhost:8080', fanout: { mode: 'on' as const } }
+        }
+      },
       effectiveConfig: DEFAULT_PRESENTATION_CONFIG,
       effectiveBackends: {
-        search: { provider: 'duckduckgo' as const, fanout: { mode: 'on' as const } },
+        search: { provider: 'duckduckgo' as const, baseUrl: 'http://localhost:8080', fanout: { mode: 'on' as const } },
         fetch: { provider: 'http' as const },
         headless: { provider: 'local-browser' as const }
       }
@@ -477,45 +484,62 @@ describe('web-agent config draft helpers', () => {
     const state = createSettingsDraftState(loaded, 'project');
     const duckExcludedState = applySettingsValue(state, 'backend:search:fanout:provider:duckduckgo', 'excluded');
 
-    // When we exclude one provider, fanout.providers should be materialized to all providers except the excluded one
+    // When we exclude one provider, fanout.providers should be materialized to usable providers except the excluded one
+    // With baseUrl set, usable providers are ['duckduckgo', 'searxng'], so excluding duck leaves just ['searxng']
     expect(duckExcludedState.backends.search.fanout).toBeDefined();
-    expect(duckExcludedState.backends.search.fanout?.providers).toEqual(['searxng', 'brave', 'youcom', 'exa', 'tavily']);
+    expect(duckExcludedState.backends.search.fanout?.providers).toEqual(['searxng']);
   });
 
   it('excludes a provider when toggled from explicitly included', () => {
     const loaded = {
       global: { path: '/global/config.json', exists: false },
-      project: { path: '/project/config.json', exists: false },
+      project: {
+        path: '/project/config.json',
+        exists: true,
+        rawConfig: { tools: {} },
+        rawBackends: {
+          search: { provider: 'duckduckgo' as const, baseUrl: 'http://localhost:8080', fanout: { mode: 'on' as const, providers: ['duckduckgo' as const, 'searxng' as const] } }
+        }
+      },
       effectiveConfig: DEFAULT_PRESENTATION_CONFIG,
       effectiveBackends: {
-        search: { provider: 'duckduckgo' as const, fanout: { mode: 'on' as const, providers: ['duckduckgo' as const, 'searxng' as const, 'brave' as const, 'youcom' as const, 'exa' as const, 'tavily' as const] } },
+        search: { provider: 'duckduckgo' as const, baseUrl: 'http://localhost:8080', fanout: { mode: 'on' as const, providers: ['duckduckgo' as const, 'searxng' as const] } },
         fetch: { provider: 'http' as const },
         headless: { provider: 'local-browser' as const }
       }
     };
 
     const state = createSettingsDraftState(loaded, 'project');
-    const braveExcludedState = applySettingsValue(state, 'backend:search:fanout:provider:brave', 'excluded');
+    const searxngExcludedState = applySettingsValue(state, 'backend:search:fanout:provider:searxng', 'excluded');
 
-    expect(braveExcludedState.backends.search.fanout?.providers).toEqual(['duckduckgo', 'searxng', 'youcom', 'exa', 'tavily']);
+    // With baseUrl set, usable providers are duckduckgo and searxng. Excluding searxng leaves just duckduckgo
+    expect(searxngExcludedState.backends.search.fanout?.providers).toEqual(['duckduckgo']);
   });
 
   it('includes a previously-excluded provider when toggled back', () => {
     const loaded = {
       global: { path: '/global/config.json', exists: false },
-      project: { path: '/project/config.json', exists: false },
+      project: {
+        path: '/project/config.json',
+        exists: true,
+        rawConfig: { tools: {} },
+        rawBackends: {
+          search: { provider: 'duckduckgo' as const, baseUrl: 'http://localhost:8080', fanout: { mode: 'on' as const, providers: ['duckduckgo' as const] } }
+        }
+      },
       effectiveConfig: DEFAULT_PRESENTATION_CONFIG,
       effectiveBackends: {
-        search: { provider: 'duckduckgo' as const, fanout: { mode: 'on' as const, providers: ['duckduckgo' as const, 'searxng' as const, 'youcom' as const, 'exa' as const, 'tavily' as const] } },
+        search: { provider: 'duckduckgo' as const, baseUrl: 'http://localhost:8080', fanout: { mode: 'on' as const, providers: ['duckduckgo' as const] } },
         fetch: { provider: 'http' as const },
         headless: { provider: 'local-browser' as const }
       }
     };
 
     const state = createSettingsDraftState(loaded, 'project');
-    const braveIncludedState = applySettingsValue(state, 'backend:search:fanout:provider:brave', 'included');
+    const searxngIncludedState = applySettingsValue(state, 'backend:search:fanout:provider:searxng', 'included');
 
-    expect(braveIncludedState.backends.search.fanout?.providers).toEqual(['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily']);
+    // With baseUrl set, usable providers are duckduckgo and searxng. After including searxng, we have both
+    expect(searxngIncludedState.backends.search.fanout?.providers).toEqual(['duckduckgo', 'searxng']);
   });
 
   it('persists explicit off mode across scopes when global has fanout on', () => {
@@ -1305,3 +1329,4 @@ describe('web-agent config commands', () => {
     });
   });
 });
+

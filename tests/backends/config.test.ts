@@ -3,7 +3,8 @@ import {
   DEFAULT_BACKEND_CONFIG,
   extractBackendConfigOverride,
   mergeBackendConfigLayers,
-  validateBackendConfig
+  validateBackendConfig,
+  usableSearchProviders
 } from '../../src/backends/config.js';
 
 describe('backend config', () => {
@@ -237,5 +238,68 @@ describe('fanout config', () => {
     const projectOverride = extractBackendConfigOverride({ backends: { search: { fanout: { mode: 'off' } } } });
     const effective = mergeBackendConfigLayers(DEFAULT_BACKEND_CONFIG, globalOverride, projectOverride);
     expect(effective.search.fanout?.mode).toBe('off');
+  });
+});
+
+describe('usableSearchProviders', () => {
+  it('returns only duckduckgo when no baseUrl and no env keys', () => {
+    const providers = usableSearchProviders(
+      { provider: 'duckduckgo' },
+      {} // empty env
+    );
+    expect(providers).toEqual(['duckduckgo']);
+  });
+
+  it('includes searxng when baseUrl is set', () => {
+    const providers = usableSearchProviders(
+      { provider: 'duckduckgo', baseUrl: 'http://localhost:8080' },
+      {} // empty env
+    );
+    expect(providers).toEqual(['duckduckgo', 'searxng']);
+  });
+
+  it('includes brave when PI_WEB_AGENT_BRAVE_API_KEY is set', () => {
+    const providers = usableSearchProviders(
+      { provider: 'duckduckgo' },
+      { PI_WEB_AGENT_BRAVE_API_KEY: 'test-key' }
+    );
+    expect(providers).toEqual(['duckduckgo', 'brave']);
+  });
+
+  it('includes youcom when YDC_API_KEY is set', () => {
+    const providers = usableSearchProviders(
+      { provider: 'duckduckgo' },
+      { YDC_API_KEY: 'test-key' }
+    );
+    expect(providers).toEqual(['duckduckgo', 'youcom']);
+  });
+
+  it('includes exa when EXA_API_KEY is set', () => {
+    const providers = usableSearchProviders(
+      { provider: 'duckduckgo' },
+      { EXA_API_KEY: 'test-key' }
+    );
+    expect(providers).toEqual(['duckduckgo', 'exa']);
+  });
+
+  it('includes tavily when TAVILY_API_KEY is set', () => {
+    const providers = usableSearchProviders(
+      { provider: 'duckduckgo' },
+      { TAVILY_API_KEY: 'test-key' }
+    );
+    expect(providers).toEqual(['duckduckgo', 'tavily']);
+  });
+
+  it('returns all usable providers when all are configured', () => {
+    const providers = usableSearchProviders(
+      { provider: 'duckduckgo', baseUrl: 'http://localhost:8080' },
+      {
+        PI_WEB_AGENT_BRAVE_API_KEY: 'brave-key',
+        YDC_API_KEY: 'ydc-key',
+        EXA_API_KEY: 'exa-key',
+        TAVILY_API_KEY: 'tavily-key'
+      }
+    );
+    expect(providers).toEqual(['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily']);
   });
 });

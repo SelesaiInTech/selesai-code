@@ -11,7 +11,7 @@ import { createWebFetchHeadlessTool } from '../tools/web-fetch-headless.js';
 import { createWebFetchTool } from '../tools/web-fetch.js';
 import { createWebSearchTool } from '../tools/web-search.js';
 import type { SearchProviderName, WebFetchHeadlessResponse, WebFetchResponse, WebSearchResponse } from '../types.js';
-import { DEFAULT_BACKEND_CONFIG, type BackendConfig } from './config.js';
+import { DEFAULT_BACKEND_CONFIG, type BackendConfig, usableSearchProviders } from './config.js';
 import { createSpecialContentResolver } from '../readers/resolver.js';
 import { createGithubReader } from '../readers/github-reader.js';
 import { createPdfReader } from '../readers/pdf-reader.js';
@@ -183,7 +183,7 @@ export function createBackendSet(
     const baseNames =
       fanoutConfig.providers && fanoutConfig.providers.length > 0
         ? fanoutConfig.providers
-        : (['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily'] as SearchProviderName[]);
+        : usableSearchProviders(config.search);
     // A configured DuckDuckGo fallback must still be honored under fanout: fold it into the set.
     const providerNames =
       config.search.fallback === 'duckduckgo' && !baseNames.includes('duckduckgo')
