@@ -8,132 +8,99 @@
 [![npm version](https://img.shields.io/npm/v/@demigodmode/pi-web-agent)](https://www.npmjs.com/package/@demigodmode/pi-web-agent)
 [![Docs](https://img.shields.io/badge/docs-github%20pages-blue)](https://demigodmode.github.io/pi-web-agent/)
 
-`@demigodmode/pi-web-agent` is a Pi package for web access.
+One public tool, `web_explore`, that does bounded web research for Pi: search, fetch, targeted browser rendering, ranking, and honest caveats, all behind a single call.
 
-Most agent web tools blur search, fetch, browser rendering, and research into one vague thing. `pi-web-agent` exposes one public research tool, `web_explore`, and keeps search/fetch/headless work inside that bounded workflow.
+> Most agent web tooling blurs search, fetch, rendering, and synthesis into one vague thing. `pi-web-agent` keeps that boundary simple, and it is stricter about what it actually did: bot-check pages, narrow source sets, unreadable threads, and conflicting evidence show up as caveats instead of fake confidence.
 
-The point is keeping the model-facing boundary simple: ask `web_explore` to research a question, and it handles direct links, discovery, HTTP reads, targeted browser rendering, source ranking, source-quality checks, and caveats internally.
+## What you get
 
-That sounds obvious, but a lot of agent tooling gets fuzzy right there. This package is meant to be stricter about what it actually did and more willing to say when a read was not good enough to trust. Bot-check pages, narrow source sets, unreadable threads, and cautionary/conflicting evidence should show up as caveats instead of fake confidence.
-
-Paste a GitHub, PDF, or YouTube link into a research prompt and `web_explore` reads the real thing behind it, not the page shell: GitHub files/issues/PRs from the API, PDF text, and YouTube transcripts, all keyless. So "summarize this PDF" or "what does this repo do" works off the actual content. Set `GITHUB_TOKEN` for a higher GitHub rate limit if you want; it works without one.
+- **One tool.** `web_explore` handles direct links, discovery, HTTP reads, targeted headless rendering, source ranking, source-quality checks, and caveats internally.
+- **Reads the real content behind links.** Paste a GitHub, PDF, or YouTube URL and it pulls the actual thing (GitHub files/issues/PRs from the API, PDF text, YouTube transcripts), keyless. So "summarize this PDF" or "what does this repo do" works off the source, not the page shell.
+- **Six search backends.** DuckDuckGo (keyless default), SearXNG, Brave, You.com, Exa, Tavily.
+- **Optional search fanout.** Query several backends at once, dedupe, and rank pages that more than one provider agreed on to the top. Off by default; flip it to `on` or `auto`.
+- **Honest by default.** Weak, narrow, blocked, or cautionary evidence gets flagged instead of dressed up as confidence.
+- **Bounded output.** `compact` / `preview` / `verbose` transcript modes.
 
 ## Install
 
-Compatibility notice: current `pi-web-agent` requires Pi 0.74+ because Pi packages moved to the `@earendil-works/*` scope. Update Pi before updating this package. If you are on an older Pi version, stay on `@demigodmode/pi-web-agent@0.6.x` until Pi is updated.
+> Requires Pi 0.74+ (Pi packages moved to the `@earendil-works/*` scope). On older Pi, stay on `@demigodmode/pi-web-agent@0.6.x` until you update Pi.
 
 ```bash
 pi install npm:@demigodmode/pi-web-agent
 ```
 
-After installing, reload or restart Pi. Run `/web-agent` for the action menu, or `/web-agent doctor` to check whether the package loaded cleanly and which web backends are configured.
+Reload or restart Pi after installing, then:
 
-Headless rendering first tries a detectable Chromium-family browser: Chrome, Chromium, Edge, or Brave. If none is found, it falls back to Playwright-managed Chromium and still launches headless. Firefox/Safari-only systems can still use search and plain HTTP reads; browser-rendered fallback uses Chromium.
-
-Later on, update installed packages with:
-
-```bash
-pi update --extensions
+```text
+/web-agent doctor   # check it loaded and show configured backends
+/web-agent          # action menu
 ```
 
-## Docs
+Update later with `pi update --extensions`.
 
-Docs site:
+**Browser rendering:** headless first tries a detected Chromium-family browser (Chrome, Chromium, Edge, Brave). If none is found, it falls back to Playwright-managed Chromium. Firefox/Safari-only systems still get search and plain HTTP reads.
 
-- https://demigodmode.github.io/pi-web-agent/
+## Usage
 
-Work on the docs locally:
+Ask `web_explore` a web question:
 
-```bash
-npm run docs:dev
-```
+> Find current docs and discussions on configuring Vitest coverage with the v8 provider.
 
-Build the docs:
+Or hand it a link to read:
 
-```bash
-npm run docs:build
-```
+> Summarize this PDF: https://arxiv.org/pdf/1706.03762
 
-## Presentation modes
+If a pass comes back thin, call `web_explore` again with a narrower query.
 
-`pi-web-agent` renders web tool output in one visible mode at a time:
+## Backends
 
-- `compact`: short summary, default everywhere
-- `preview`: slightly richer bounded view
-- `verbose`: fuller bounded view
+Defaults are DuckDuckGo search, plain HTTP fetch, and local-browser headless. Switch providers from `/web-agent settings → Backends`. API keys stay in environment variables, never in config files.
 
-See the `v0.3.0` release notes for a before/after of the transcript cleanup:
+| Backend | Role | Enable with |
+| --- | --- | --- |
+| DuckDuckGo | search (default) | nothing, keyless |
+| SearXNG | search (self-hosted) | base URL |
+| Brave | search (hosted) | `PI_WEB_AGENT_BRAVE_API_KEY` |
+| You.com | search (hosted) | `YDC_API_KEY` |
+| Exa | search (hosted) | `EXA_API_KEY` |
+| Tavily | search (hosted) | `TAVILY_API_KEY` |
+| Firecrawl | fetch (self-hosted) | base URL + `PI_WEB_AGENT_FIRECRAWL_API_KEY` |
+| GitHub reader | content | `GITHUB_TOKEN` (optional, raises the rate limit) |
 
-- https://github.com/demigodmode/pi-web-agent/releases/tag/v0.3.0
+Full config shape (fallback, SearXNG/Firecrawl options, fanout): see the [self-hosted backends docs](https://demigodmode.github.io/pi-web-agent/self-hosted-backends).
 
 ## Settings
 
-Primary UI:
-
 ```text
-/web-agent settings
-```
-
-Helper commands:
-
-```text
-/web-agent doctor
-/web-agent show
+/web-agent settings                    # main UI
+/web-agent doctor                      # health check
+/web-agent show                        # effective config
 /web-agent changelog
-/web-agent reset project
-/web-agent reset global
-/web-agent mode preview
-/web-agent mode web_explore verbose
-/web-agent mode web_explore inherit
+/web-agent mode web_explore verbose    # per-tool presentation mode
+/web-agent reset project | global
 ```
 
-Config files:
+Config is JSON, and project config overrides global:
 
 ```text
 Global:  ~/.pi/agent/extensions/pi-web-agent/config.json
 Project: .pi/extensions/pi-web-agent/config.json
 ```
 
-Precedence:
-
-- built-in defaults
-- global config
-- project config
-
-Project config overrides global config.
-
-Example:
-
 ```json
 {
   "presentation": {
     "defaultMode": "compact",
-    "tools": {
-      "web_explore": { "mode": "verbose" }
-    }
+    "tools": { "web_explore": { "mode": "verbose" } }
   }
 }
 ```
 
-Backend config is also supported. Defaults remain DuckDuckGo search, plain HTTP fetch, and local-browser headless fallback with managed Chromium fallback configured. Set a hosted search key (Brave, You.com, Exa, or Tavily) and pick it as the backend, while `web_explore` still handles page reading, ranking, and caveats itself.
+## Docs
 
-Search backends: DuckDuckGo (default), SearXNG (self-hosted), Brave Search, You.com, Exa, Tavily.
+Full docs: <https://demigodmode.github.io/pi-web-agent/>. Work on them locally with `npm run docs:dev`.
 
-Search fanout is optional and off by default. Turn it on or auto from **Settings → Backends** and `web_explore` queries several of your configured backends at once, dedupes the results, and ranks pages that more than one provider agreed on to the top. Auto only fans out when the first provider comes back thin, so easy queries stay cheap.
-
-Backend settings can be changed from:
-
-```text
-/web-agent settings
-```
-
-Choose **Backends** to edit search/fetch providers, fallback behavior, and SearXNG or Firecrawl base URLs interactively. Brave Search uses `PI_WEB_AGENT_BRAVE_API_KEY`, You.com uses `YDC_API_KEY`, Exa uses `EXA_API_KEY`, and Tavily uses `TAVILY_API_KEY`. Firecrawl API keys should also stay in environment variables rather than being written into config files.
-
-For the full backend config shape, including SearXNG, Brave, You.com, Firecrawl, and fallback behavior, see:
-
-- https://demigodmode.github.io/pi-web-agent/self-hosted-backends
-
-## Local development
+## Development
 
 ```bash
 npm install
@@ -142,10 +109,8 @@ npm run lint
 npm run build
 ```
 
-For local Pi work, this repo includes `.pi/extensions/pi-web-agent.ts`.
-
-If Pi is already running, use `/reload` after changes.
+Local Pi work uses `.pi/extensions/pi-web-agent.ts`; run `/reload` after changes.
 
 ## License
 
-AGPL-3.0-only. See `LICENSE`.
+AGPL-3.0-only. See [LICENSE](LICENSE).
