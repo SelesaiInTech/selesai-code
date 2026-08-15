@@ -120,8 +120,11 @@ export default function extension(pi: ExtensionAPI) {
       const result: WebExploreResponse = await webExplore({ query: params.query });
 
       // Terminal display honors the user's presentation mode; the model gets the full findings.
+      // The fallback must stay terse: never fall back to serializeForModel here, or a missing
+      // presentation would dump the full findings into the terminal.
       const mode = resolvePresentationMode('web_explore', await getEffectivePresentationConfig(pi));
-      const terminalText = selectPresentationView(result.presentation, mode) ?? serializeForModel(result);
+      const terseFallback = 'web_explore result';
+      const terminalText = selectPresentationView(result.presentation, mode) ?? terseFallback;
       const terminalTextExpanded = selectPresentationView(result.presentation, 'verbose') ?? terminalText;
 
       return {
@@ -132,13 +135,23 @@ export default function extension(pi: ExtensionAPI) {
     },
     renderResult(toolResult, options) {
       const details = toolResult.details as
-        | { terminalText?: string; terminalTextExpanded?: string }
+        | {
+            terminalText?: string;
+            terminalTextExpanded?: string;
+            presentation?: { views?: { compact?: string; verbose?: string } };
+          }
         | undefined;
       try {
+        // Legacy fallback: results persisted before this change carry `presentation` but no
+        // `terminalText`, so old sessions stay readable instead of rendering blank.
+        const legacy = options.expanded
+          ? details?.presentation?.views?.verbose ?? details?.presentation?.views?.compact
+          : details?.presentation?.views?.compact;
         const text =
           (options.expanded ? details?.terminalTextExpanded : details?.terminalText) ??
           details?.terminalText ??
-          '';
+          legacy ??
+          'web_explore result';
         return new Text(text, 0, 0);
       } catch {
         // Never throw: a thrown renderer makes Pi fall back to raw content, which would dump

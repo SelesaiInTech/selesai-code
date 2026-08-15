@@ -92,12 +92,13 @@ export function usableSearchProviders(
   search: SearchBackendConfig,
   env: NodeJS.ProcessEnv = process.env
 ): SearchProviderName[] {
+  // Match the provider implementations, which treat a blank/whitespace key as unconfigured.
   const usable: SearchProviderName[] = ['duckduckgo']; // keyless, always usable
-  if (search.baseUrl) usable.push('searxng');
-  if (env.PI_WEB_AGENT_BRAVE_API_KEY) usable.push('brave');
-  if (env.YDC_API_KEY) usable.push('youcom');
-  if (env.EXA_API_KEY) usable.push('exa');
-  if (env.TAVILY_API_KEY) usable.push('tavily');
+  if (search.baseUrl?.trim()) usable.push('searxng');
+  if (env.PI_WEB_AGENT_BRAVE_API_KEY?.trim()) usable.push('brave');
+  if (env.YDC_API_KEY?.trim()) usable.push('youcom');
+  if (env.EXA_API_KEY?.trim()) usable.push('exa');
+  if (env.TAVILY_API_KEY?.trim()) usable.push('tavily');
   return usable;
 }
 
