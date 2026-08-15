@@ -7,14 +7,15 @@ The format is intentionally simple and release-oriented.
 ## Unreleased
 
 ### Added
-- Optional search fanout: query several configured providers at once, dedupe and rerank the merged results so cross-provider agreement wins. Off by default; set it to on or auto in backend settings. Preview/verbose output shows which providers were queried. (#35)
+- Search fanout. Ask a hard question and web_explore can now hit several of your configured search backends at once, dedupe the merged results, and rank the pages that more than one provider agreed on to the top. Off by default. Flip it to on or auto in Settings → Backends (auto only fans out when the first provider comes back thin, so easy queries stay cheap). Preview/verbose shows which providers ran and which got skipped. (#35)
 
 ### Changed
 - None.
 
 ### Fixed
-- web_explore now returns the extracted content (capped around 24k characters) when it reads a GitHub, PDF, or YouTube link directly, instead of a short snippet tagged as weak "community" context. Summarizing a pasted video, PDF, or repo file works now. (#40, #41)
-- worker now requires reader responses to have non-empty text before promoting them to primary-content, and exempts successful reader results from package-page filtering. (#42)
+- web_explore can finally summarize a link you hand it. Paste a GitHub file/issue/PR, a PDF, or a YouTube URL and ask for a summary: it now reads the actual content (raw source, extracted PDF text, the video transcript) and gives the model the whole thing. 1.8.0 added these readers but then squeezed everything down to a ~180-char snippet before the model ever saw it, so summaries were basically guesswork. Now they're grounded in the real text (long content still capped around 24k characters). (#40, #41)
+- Fanout won't stall on a dead provider anymore. Each one gets an 8s timeout, so an unreachable self-hosted SearXNG can't hang a whole research pass. (#35)
+- Fanout only offers and queries the providers you've actually set up (keyless DuckDuckGo, SearXNG when you give it a URL, the hosted ones only when their key is present) instead of acting like all six are on. (#35)
 
 ### Breaking
 - None.
