@@ -20,6 +20,15 @@ One public tool, `web_explore`, that does bounded web research for Pi: search, f
 - **Optional search fanout.** Query several backends at once, dedupe, and rank pages that more than one provider agreed on to the top. Off by default; flip it to `on` or `auto`.
 - **Honest by default.** Weak, narrow, blocked, or cautionary evidence gets flagged instead of dressed up as confidence.
 - **Bounded output.** `compact` / `preview` / `verbose` transcript modes.
+- **Zero-config to start.** Runs keyless out of the box (DuckDuckGo search, local browser, the built-in readers). Opt into hosted backends, fallback, search fanout, and per-tool output modes through config when you want more control.
+
+## Compared to pi-web-access
+
+[pi-web-access](https://github.com/nicobailon/pi-web-access) is the other main web package for Pi, and it is broader in features. `pi-web-agent` makes some deliberate trade-offs the other way:
+
+- **Hands-off, no curator.** pi-web-access reviews results through a curator browser window you approve, which pops you out of your session. `pi-web-agent` has no popups and no approval step: one `web_explore` call, the answer comes back with caveats.
+- **Keyless by default.** Search, page reads, and the GitHub/PDF/YouTube readers all work with no API keys. You add hosted providers only if you want them.
+- **Bounded and quiet.** Compact output by default, and the tool says when a read was not good enough instead of returning fake confidence.
 
 ## Install
 
@@ -95,6 +104,12 @@ Project: .pi/extensions/pi-web-agent/config.json
   }
 }
 ```
+
+Presentation modes:
+
+- `compact`: short summary, the default everywhere
+- `preview`: slightly richer bounded view
+- `verbose`: fuller bounded view
 
 ## Docs
 
