@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/demigodmode/pi-web-agent/main/docs/public/pi-web-agent-banner.png" alt="pi-web-agent — bounded web research for Pi" width="100%">
+  <img src="https://raw.githubusercontent.com/demigodmode/pi-web-agent/main/docs/public/pi-web-agent-banner.png" alt="pi-web-agent: bounded web research for Pi" width="100%">
 </p>
 
 # pi-web-agent
