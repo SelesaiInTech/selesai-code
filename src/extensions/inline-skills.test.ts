@@ -108,4 +108,97 @@ describe("inline-skills", () => {
 		expect(result).toMatchObject({ action: "transform", text: expect.stringMatching(/<skill[\s\S]*Use \$research now$/) });
 		expect(handlers.get("input")!({ text: "$research", source: "extension" })).toEqual({ action: "continue" });
 	});
+
+	it("delegates applyCompletion and shouldTriggerFileCompletion to the base provider", async () => {
+		const pi = createPi([skill("research", "/skills/research/SKILL.md")]);
+		const base = {
+			getSuggestions: vi.fn(async () => null),
+			applyCompletion: vi.fn(() => "applied"),
+			shouldTriggerFileCompletion: vi.fn(() => false),
+		} as any;
+		const provider = createInlineSkillAutocompleteProvider(pi, base);
+
+		expect(provider.applyCompletion(["a"], 0, 1, {} as any, "$")).toBe("applied");
+		expect(base.applyCompletion).toHaveBeenCalledWith(["a"], 0, 1, {}, "$");
+		expect(provider.shouldTriggerFileCompletion(["a"], 0, 1)).toBe(false);
+		expect(base.shouldTriggerFileCompletion).toHaveBeenCalledWith(["a"], 0, 1);
+	});
+
+	it("shouldTriggerFileCompletion defaults to true when the base provider lacks it", () => {
+		const pi = createPi([skill("research", "/skills/research/SKILL.md")]);
+		const base = { getSuggestions: vi.fn(async () => null), applyCompletion: vi.fn() } as any;
+		const provider = createInlineSkillAutocompleteProvider(pi, base);
+
+		expect(provider.shouldTriggerFileCompletion(["a"], 0, 1)).toBe(true);
+	});
+
+	it("falls back to the base provider when no $ token is present", async () => {
+		const pi = createPi([skill("research", "/skills/research/SKILL.md")]);
+		const base = { getSuggestions: vi.fn(async () => "base-result"), applyCompletion: vi.fn() } as any;
+		const provider = createInlineSkillAutocompleteProvider(pi, base);
+
+		expect(await provider.getSuggestions(["plain text"], 0, 5, {} as any)).toBe("base-result");
+		expect(base.getSuggestions).toHaveBeenCalledWith(["plain text"], 0, 5, {});
+	});
+
+	it("handles a missing line and a bare $ token", async () => {
+		const pi = createPi([skill("research", "/skills/research/SKILL.md")]);
+		const base = { getSuggestions: vi.fn(async () => null), applyCompletion: vi.fn() } as any;
+		const provider = createInlineSkillAutocompleteProvider(pi, base);
+
+		// cursorLine beyond the array → lines[cursorLine] is undefined → "" slice.
+		expect(await provider.getSuggestions([], 3, 0, {} as any)).toBeNull();
+		// Bare "$" at end of line → empty token → all skills match (includes("")).
+		const bare = await provider.getSuggestions(["draft $"], 0, 7, {} as any);
+		expect(bare).toEqual({
+			prefix: "$",
+			items: [{ value: "$research", label: "$research", description: "research description" }],
+		});
+	});
+
+	it("falls back to the base provider when no skills match the token", async () => {
+		const pi = createPi([skill("research", "/skills/research/SKILL.md")]);
+		const base = { getSuggestions: vi.fn(async () => "base-result"), applyCompletion: vi.fn() } as any;
+		const provider = createInlineSkillAutocompleteProvider(pi, base);
+
+		expect(await provider.getSuggestions(["$zzz"], 0, 4, {} as any)).toBe("base-result");
+	});
+
+	it("skips skills whose files fail to read", () => {
+		const pi = createPi([skill("missing", "/nonexistent/SKILL.md")]);
+		const text = expandInlineSkills("Use $missing now", pi);
+		expect(text).toBe("Use $missing now");
+	});
+
+	it("session_start provider callback wraps the current provider", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "inline-skills-"));
+		tempDirs.push(dir);
+		const file = join(dir, "research.md");
+		writeFileSync(file, "---\ndescription: Research\n---\nResearch instructions.\n");
+		const handlers = new Map<string, Function>();
+		const pi = {
+			getCommands: vi.fn(() => [skill("research", file)]),
+			on: vi.fn((event: string, handler: Function) => handlers.set(event, handler)),
+		} as unknown as ExtensionAPI;
+		let captured: any = null;
+		inlineSkillsExtension(pi);
+		handlers.get("session_start")!({}, { ui: { addAutocompleteProvider: (cb: any) => (captured = cb) } } as unknown as ExtensionContext);
+
+		const base = { getSuggestions: vi.fn(async () => null), applyCompletion: vi.fn() } as any;
+		const provider = captured(base);
+		expect(await provider.getSuggestions(["$res"], 0, 4, {} as any)).toEqual({
+			prefix: "$res",
+			items: [{ value: "$research", label: "$research", description: "research description" }],
+		});
+	});
+
+	it("input without skill tokens passes through unchanged", () => {
+		const handlers = new Map<string, Function>();
+		const pi = {
+			getCommands: vi.fn(() => []),
+			on: vi.fn((event: string, handler: Function) => handlers.set(event, handler)),
+		} as unknown as ExtensionAPI;
+		inlineSkillsExtension(pi);
+		expect(handlers.get("input")!({ text: "plain text", source: "interactive" })).toEqual({ action: "continue" });
+	});
 });

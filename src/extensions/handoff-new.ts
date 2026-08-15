@@ -56,6 +56,9 @@ export function getHandoffMessages(branch: SessionEntry[]): AgentMessage[] {
 	}
 
 	const compaction = branch[compactionIndex];
+	// compactionIndex is only set when branch[i].type === "compaction", so the
+	// else branch is unreachable.
+	/* v8 ignore next 1 */
 	const firstKeptIndex =
 		compaction.type === "compaction" ? branch.findIndex((entry) => entry.id === compaction.firstKeptEntryId) : -1;
 	const compactedBranch = [

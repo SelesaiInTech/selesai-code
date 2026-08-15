@@ -75,6 +75,8 @@ async function runNpmInstall(pi: ExtensionAPI): Promise<string | null> {
 	const result = await pi.exec(command, args, { timeout: INSTALL_TIMEOUT_MS });
 	if (result.killed) return "npm install timed out";
 	if (result.code !== 0) {
+		// The exit-status fallback is always non-empty, so the final || is unreachable.
+		/* v8 ignore next 1 */
 		return (result.stderr || result.stdout || `exit status ${result.code}`).trim() || "npm install failed";
 	}
 	return null;

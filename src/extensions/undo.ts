@@ -160,6 +160,9 @@ async function restoreWrite(op: Extract<UndoOp, { type: "write" }>, cwd: string,
 	if (op.oldContentTooLarge) throw new Error(`${op.path}: old content too large; cannot restore`);
 	if (op.existed) {
 		await mkdir(path.dirname(absPath), { recursive: true });
+		// oldContent is always set when existed && !oldContentTooLarge (the
+		// too-large case throws above), so the ?? fallback is unreachable.
+		/* v8 ignore next 1 */
 		await writeFile(absPath, op.oldContent ?? "", "utf8");
 	} else {
 		if (existsSync(absPath)) await rm(absPath, { force: true });
@@ -173,6 +176,9 @@ async function restoreCheckpoint(checkpoint: Checkpoint, cwd: string, force: boo
 			if (op.type === "edit") await restoreEdit(op, cwd, force);
 			else await restoreWrite(op, cwd, force);
 		} catch (error: any) {
+			// restoreEdit/restoreWrite always throw Error instances, so the
+			// String(error) fallback is unreachable.
+			/* v8 ignore next 1 */
 			errors.push(error?.message ?? String(error));
 			if (!force) break;
 		}

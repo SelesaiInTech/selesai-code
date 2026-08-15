@@ -2,8 +2,11 @@ node_modules/
 dist/
 .astro/
 .cache/
+coverage-vitest/
+coverage/
 *.log
 .DS_Store
+
 .env
 .env.local
 
@@ -21,3 +24,5 @@ dist/
 # grepai project index (runtime binaries stay local; config is shared)
 .grepai/*
 !.grepai/config.yaml
+
+coverage-*/

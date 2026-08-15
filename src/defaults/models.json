@@ -16,6 +16,7 @@
           "reasoning": true,
           "input": ["text"],
           "contextWindow": 512000,
+          "maxTokens": 64000,
           "thinkingLevelMap": {
             "minimal": null,
             "low": null,
@@ -36,6 +37,7 @@
           "reasoning": true,
           "input": ["text"],
           "contextWindow": 512000,
+          "maxTokens": 64000,
           "thinkingLevelMap": {
             "minimal": null,
             "low": null,
@@ -56,6 +58,7 @@
           "reasoning": true,
           "input": ["text", "image"],
           "contextWindow": 512000,
+          "maxTokens": 64000,
           "thinkingLevelMap": {
             "minimal": null,
             "low": "low",
@@ -75,6 +78,7 @@
           "reasoning": true,
           "input": ["text", "image"],
           "contextWindow": 262128,
+          "maxTokens": 64000,
           "thinkingLevelMap": {
             "minimal": null,
             "low": "low",
@@ -94,6 +98,7 @@
           "reasoning": true,
           "input": ["text"],
           "contextWindow": 1000000,
+          "maxTokens": 64000,
           "thinkingLevelMap": {
             "minimal": null,
             "low": "low",

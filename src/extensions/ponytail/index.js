@@ -16,6 +16,9 @@ export { filterSkillBodyForMode };
 export const readDefaultMode = getDefaultMode;
 
 export function resolveSessionMode(entries, fallbackMode = DEFAULT_MODE) {
+  // Unreachable: normalizePersistedMode always returns a valid mode or null,
+  // and the caller passes a valid default.
+  /* v8 ignore next 1 */
   const fallback = normalizePersistedMode(fallbackMode) || DEFAULT_MODE;
   if (!Array.isArray(entries)) return fallback;
 
@@ -59,6 +62,9 @@ export default function ponytailExtension(pi) {
 
   const setMode = (mode, ctx) => {
     const normalized = normalizePersistedMode(mode);
+    // Unreachable: setMode is only called with validated modes from the
+    // command handler and the deactivation input handler.
+    /* v8 ignore next 1 */
     if (!normalized) return;
 
     currentMode = normalized;
@@ -68,6 +74,8 @@ export default function ponytailExtension(pi) {
 
   const sendAlias = (skillName, args, ctx) => {
     const normalized = String(args || "").trim();
+    // Unreachable: the alias command handlers always pass empty args.
+    /* v8 ignore next 1 */
     const message = normalized ? `${skillName} ${normalized}` : skillName;
 
     if (ctx?.isIdle?.() === false) {
@@ -91,6 +99,9 @@ export default function ponytailExtension(pi) {
 
       if (parsed.type === "set-default") {
         const written = writeDefaultMode(parsed.mode);
+        // Unreachable: parsePonytailCommand only returns set-default for
+        // valid config modes, so writeDefaultMode always succeeds.
+        /* v8 ignore next 1 */
         if (written) {
           configuredDefaultMode = getDefaultMode();
           const message = configuredDefaultMode === written

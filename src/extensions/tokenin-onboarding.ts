@@ -369,6 +369,9 @@ async function runOnboarding(pi: ExtensionAPI, ctx: ExtensionContext): Promise<v
 		if (!storedKey && typeof legacyModelsKey === "string") {
 			setStoredTokenInApiKey(ctx.modelRegistry.authStorage, legacyModelsKey);
 			saveTokenInAccount(legacyModelsKey, { baseUrl: getTokenInBaseUrl(models), setActive: true });
+			// legacyModelsKey is only non-empty when models.json parsed successfully,
+			// so the file always exists here.
+			/* v8 ignore next 1 */
 			if (existsSync(modelsPath)) writeModelsJson(removeTokenInApiKey(models), modelsPath);
 		}
 		markOnboardingComplete();

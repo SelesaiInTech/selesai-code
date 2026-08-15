@@ -22,6 +22,7 @@ import {
 	readTokenInAuth,
 	removeTokenInApiKey,
 	saveTokenInAccount,
+	TOKEN_IN_DASHBOARD_URL,
 	validateTokenInToken,
 	writeTokenInAuth,
 } from "../extensions/tokenin-onboarding.ts";
@@ -60,6 +61,12 @@ describe("tokenin-onboarding helpers", () => {
 		expect(providers.tokenin.apiKey).toBeUndefined();
 		expect(providers.tokenin.baseUrl).toBe("https://token.in");
 		expect(providers.other.apiKey).toBe("other-key");
+	});
+
+	it("removeTokenInApiKey tolerates missing or non-object providers", () => {
+		expect(removeTokenInApiKey({})).toEqual({});
+		expect(removeTokenInApiKey({ providers: "not-an-object" })).toEqual({ providers: "not-an-object" });
+		expect(removeTokenInApiKey({ providers: { tokenin: "not-an-object" } })).toEqual({ providers: { tokenin: "not-an-object" } });
 	});
 
 	it("stored Token-In apiKey uses auth storage", () => {
@@ -105,6 +112,30 @@ describe("tokenin-auth.json helpers", () => {
 		const authPath = join(dir, "tokenin-auth.json");
 		writeFileSync(authPath, "{not valid json", "utf-8");
 		expect(readTokenInAuth(authPath)).toEqual({ accounts: [], activeId: null });
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("readTokenInAuth returns default shape for non-object JSON", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-auth-nonobj-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		writeFileSync(authPath, "\"just a string\"", "utf-8");
+		expect(readTokenInAuth(authPath)).toEqual({ accounts: [], activeId: null });
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("readTokenInAuth returns default shape for array JSON", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-auth-array-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		writeFileSync(authPath, "[1,2,3]", "utf-8");
+		expect(readTokenInAuth(authPath)).toEqual({ accounts: [], activeId: null });
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("readTokenInAuth returns empty accounts when accounts is not an array", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-auth-noarr-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		writeFileSync(authPath, JSON.stringify({ accounts: "not-an-array", activeId: "sk-x" }), "utf-8");
+		expect(readTokenInAuth(authPath)).toEqual({ accounts: [], activeId: "sk-x" });
 		rmSync(dir, { recursive: true, force: true });
 	});
 
@@ -318,6 +349,240 @@ describe("tokenin-onboarding extension", () => {
 		expect(auth.accounts[0].apiKey).toBe("sk-onboard-token");
 		expect(auth.activeId).toBe("sk-onboard-token");
 	});
+
+	it("onboarding skips when the marker exists", async () => {
+		writeFileSync(markerPath, "1", "utf-8");
+		const { pi, handlers } = makeApi();
+		tokenInOnboardingExtension(pi);
+		const handler = handlers["session_start"] as any;
+		await handler({ type: "session_start", reason: "startup" }, fakeCtx);
+		expect(fakeCtx.ui.confirm).not.toHaveBeenCalled();
+	});
+
+	it("onboarding skips when the skip env var is set", async () => {
+		process.env.SELESAI_SKIP_TOKENIN_ONBOARDING = "1";
+		try {
+			const { pi, handlers } = makeApi();
+			tokenInOnboardingExtension(pi);
+			const handler = handlers["session_start"] as any;
+			await handler({ type: "session_start", reason: "startup" }, fakeCtx);
+			expect(fakeCtx.ui.confirm).not.toHaveBeenCalled();
+		} finally {
+			delete process.env.SELESAI_SKIP_TOKENIN_ONBOARDING;
+		}
+	});
+
+	it("onboarding ignores non-startup sessions", async () => {
+		const { pi, handlers } = makeApi();
+		tokenInOnboardingExtension(pi);
+		const handler = handlers["session_start"] as any;
+		await handler({ type: "session_start", reason: "reload" }, fakeCtx);
+		expect(fakeCtx.ui.confirm).not.toHaveBeenCalled();
+	});
+
+	it("onboarding defers without UI", async () => {
+		fakeCtx.hasUI = false;
+		const { pi, handlers } = makeApi();
+		tokenInOnboardingExtension(pi);
+		const handler = handlers["session_start"] as any;
+		await handler({ type: "session_start", reason: "startup" }, fakeCtx);
+		expect(existsSync(markerPath)).toBe(false);
+	});
+
+	it("onboarding notifies when the browser fails to open", async () => {
+		const { pi, handlers } = makeApi({ code: 1, stdout: "", stderr: "no browser" });
+		tokenInOnboardingExtension(pi);
+		const handler = handlers["session_start"] as any;
+		confirmValue = true;
+		inputValue = "sk-token";
+		await handler({ type: "session_start", reason: "startup" }, fakeCtx);
+		expect(notifications.some((n) => n.message.includes("Could not open browser"))).toBe(true);
+		expect(notifications.some((n) => n.message.includes("Open this URL manually"))).toBe(true);
+	});
+
+	it("onboarding tolerates a refresh failure after saving", async () => {
+		fakeCtx.modelRegistry.refresh = vi.fn(async () => {
+			throw new Error("refresh failed");
+		});
+		confirmValue = true;
+		inputValue = "sk-token";
+		await trigger();
+		expect(existsSync(markerPath)).toBe(true);
+		expect(notifications.some((n) => n.message.includes("Token-In token saved"))).toBe(true);
+	});
+
+	it("onboarding migrates a legacy models.json token with baseUrl", async () => {
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-legacy", baseUrl: "https://token.in" } } }), "utf-8");
+		await trigger();
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-legacy");
+		const auth = readTokenInAuth(authPath);
+		expect(auth.accounts[0].baseUrl).toBe("https://token.in");
+		expect(auth.activeId).toBe("sk-legacy");
+	});
+
+	it("onboarding marks complete when the user declines", async () => {
+		confirmValue = false;
+		await trigger();
+		expect(existsSync(markerPath)).toBe(true);
+		expect(notifications.some((n) => n.message.includes("You can add your Token-In token later"))).toBe(true);
+	});
+
+	it("onboarding with no models.json still prompts and saves", async () => {
+		confirmValue = true;
+		inputValue = "sk-fresh";
+		await trigger();
+		expect(existsSync(markerPath)).toBe(true);
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-fresh");
+	});
+
+	it("onboarding with a non-string tokenin apiKey prompts again", async () => {
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: 42 } } }), "utf-8");
+		confirmValue = true;
+		inputValue = "sk-new";
+		await trigger();
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-new");
+	});
+
+	it("onboarding with a non-object tokenin provider prompts again", async () => {
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: "not-an-object" } }), "utf-8");
+		confirmValue = true;
+		inputValue = "sk-new";
+		await trigger();
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-new");
+	});
+
+	it("onboarding with a non-object providers map prompts again", async () => {
+		writeFileSync(modelsPath, JSON.stringify({ providers: "not-an-object" }), "utf-8");
+		confirmValue = true;
+		inputValue = "sk-new";
+		await trigger();
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-new");
+	});
+
+	it("onboarding with a non-object models file prompts again", async () => {
+		writeFileSync(modelsPath, JSON.stringify("not-an-object"), "utf-8");
+		confirmValue = true;
+		inputValue = "sk-new";
+		await trigger();
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-new");
+	});
+
+	it("onboarding with a non-string baseUrl omits it", async () => {
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-legacy", baseUrl: 42 } } }), "utf-8");
+		await trigger();
+		const auth = readTokenInAuth(authPath);
+		expect(auth.accounts[0].baseUrl).toBeUndefined();
+	});
+
+	it("onboarding notifies with a stringified error when the browser throws a non-Error", async () => {
+		const { pi, handlers } = makeApi();
+		(pi.exec as any).mockRejectedValue("plain string failure");
+		tokenInOnboardingExtension(pi);
+		const handler = handlers["session_start"] as any;
+		confirmValue = true;
+		inputValue = "sk-token";
+		await handler({ type: "session_start", reason: "startup" }, fakeCtx);
+		expect(notifications.some((n) => n.message.includes("plain string failure"))).toBe(true);
+	});
+
+	it("onboarding uses xdg-open on non-darwin non-win32 platforms", async () => {
+		const original = process.platform;
+		Object.defineProperty(process, "platform", { value: "linux" });
+		try {
+			const { pi, handlers } = makeApi();
+			tokenInOnboardingExtension(pi);
+			const handler = handlers["session_start"] as any;
+			confirmValue = true;
+			inputValue = "sk-token";
+			await handler({ type: "session_start", reason: "startup" }, fakeCtx);
+			const execCalls = (pi.exec as any).mock.calls;
+			expect(execCalls[0][0]).toBe("xdg-open");
+			expect(execCalls[0][1]).toEqual([TOKEN_IN_DASHBOARD_URL]);
+		} finally {
+			Object.defineProperty(process, "platform", { value: original });
+		}
+	});
+
+	it("onboarding uses cmd start on win32", async () => {
+		const original = process.platform;
+		Object.defineProperty(process, "platform", { value: "win32" });
+		try {
+			const { pi, handlers } = makeApi();
+			tokenInOnboardingExtension(pi);
+			const handler = handlers["session_start"] as any;
+			confirmValue = true;
+			inputValue = "sk-token";
+			await handler({ type: "session_start", reason: "startup" }, fakeCtx);
+			const execCalls = (pi.exec as any).mock.calls;
+			expect(execCalls[0][0]).toBe("cmd");
+			expect(execCalls[0][1]).toEqual(["/c", "start", "", TOKEN_IN_DASHBOARD_URL]);
+		} finally {
+			Object.defineProperty(process, "platform", { value: original });
+		}
+	});
+
+	it("onboarding uses open on darwin", async () => {
+		const original = process.platform;
+		Object.defineProperty(process, "platform", { value: "darwin" });
+		try {
+			const { pi, handlers } = makeApi();
+			tokenInOnboardingExtension(pi);
+			const handler = handlers["session_start"] as any;
+			confirmValue = true;
+			inputValue = "sk-token";
+			await handler({ type: "session_start", reason: "startup" }, fakeCtx);
+			const execCalls = (pi.exec as any).mock.calls;
+			expect(execCalls[0][0]).toBe("open");
+			expect(execCalls[0][1]).toEqual([TOKEN_IN_DASHBOARD_URL]);
+		} finally {
+			Object.defineProperty(process, "platform", { value: original });
+		}
+	});
+
+	it("onboarding throws when the browser command fails with empty output", async () => {
+		const { pi, handlers } = makeApi({ code: 1, stdout: "", stderr: "" });
+		tokenInOnboardingExtension(pi);
+		const handler = handlers["session_start"] as any;
+		confirmValue = true;
+		inputValue = "sk-token";
+		await handler({ type: "session_start", reason: "startup" }, fakeCtx);
+		expect(notifications.some((n) => n.message.includes("unknown error"))).toBe(true);
+	});
+
+	it("onboarding throws when the browser command fails with stdout only", async () => {
+		const { pi, handlers } = makeApi({ code: 1, stdout: "stdout msg", stderr: "" });
+		tokenInOnboardingExtension(pi);
+		const handler = handlers["session_start"] as any;
+		confirmValue = true;
+		inputValue = "sk-token";
+		await handler({ type: "session_start", reason: "startup" }, fakeCtx);
+		expect(notifications.some((n) => n.message.includes("stdout msg"))).toBe(true);
+	});
+
+	it("onboarding with a stored key and no models.json skips migration", async () => {
+		fakeCtx.modelRegistry.authStorage.set("tokenin", { type: "api_key", key: "sk-stored" });
+		await trigger();
+		expect(existsSync(markerPath)).toBe(true);
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-stored");
+	});
+
+	it("onboarding with a stored key and legacy models key keeps the stored key", async () => {
+		fakeCtx.modelRegistry.authStorage.set("tokenin", { type: "api_key", key: "sk-stored" });
+		writeFileSync(modelsPath, JSON.stringify({ providers: { tokenin: { apiKey: "sk-legacy" } } }), "utf-8");
+		await trigger();
+		expect(existsSync(markerPath)).toBe(true);
+		expect(getStoredTokenInApiKey(fakeCtx.modelRegistry.authStorage)).toBe("sk-stored");
+		// The stored key wins; the legacy models key is left untouched.
+		const saved = JSON.parse(readFileSync(modelsPath, "utf-8"));
+		expect(saved.providers.tokenin.apiKey).toBe("sk-legacy");
+	});
+
+	it("onboarding with a stored key and no models file skips the write", async () => {
+		fakeCtx.modelRegistry.authStorage.set("tokenin", { type: "api_key", key: "sk-stored" });
+		await trigger();
+		expect(existsSync(markerPath)).toBe(true);
+		expect(existsSync(modelsPath)).toBe(false);
+	});
 });
 
 describe("/tokenin command", () => {
@@ -523,5 +788,104 @@ describe("/tokenin command", () => {
 		inputValue = "sk-token";
 		await runCommand("add");
 		expect(notifications.some((n) => n.message.includes("interactive mode"))).toBe(true);
+	});
+
+	it("/tokenin add notifies when the browser fails to open", async () => {
+		const { pi, commands } = makeApi({ code: 1, stdout: "", stderr: "no browser" });
+		tokenInOnboardingExtension(pi);
+		const cmd = commands.get("tokenin");
+		inputValue = "sk-token";
+		await cmd!.handler("add", fakeCtx);
+		expect(notifications.some((n) => n.message.includes("Could not open browser"))).toBe(true);
+		expect(notifications.some((n) => n.message.includes("Open this URL manually"))).toBe(true);
+	});
+
+	it("/tokenin add stringifies a non-Error browser failure", async () => {
+		const { pi, commands } = makeApi();
+		(pi.exec as any).mockRejectedValue("plain string failure");
+		tokenInOnboardingExtension(pi);
+		const cmd = commands.get("tokenin");
+		inputValue = "sk-token";
+		await cmd!.handler("add", fakeCtx);
+		expect(notifications.some((n) => n.message.includes("plain string failure"))).toBe(true);
+	});
+
+	it("/tokenin add notifies when the pasted token is invalid", async () => {
+		inputValue = "not-a-token";
+		await runCommand("add");
+		expect(notifications.some((n) => n.message.includes("Token must start with 'sk-'"))).toBe(true);
+	});
+
+	it("/tokenin switch cancels when the user picks nothing", async () => {
+		saveTokenInAccount("sk-first", { setActive: true });
+		selectValue = undefined;
+		await runCommand("switch");
+		expect(notifications.some((n) => n.message.includes("Switched"))).toBe(false);
+	});
+
+	it("/tokenin switch tolerates a refresh failure", async () => {
+		saveTokenInAccount("sk-first", { setActive: true });
+		saveTokenInAccount("sk-second");
+		fakeCtx.modelRegistry.authStorage.set("tokenin", { type: "api_key", key: "sk-first" });
+		fakeCtx.modelRegistry.refresh = vi.fn(async () => {
+			throw new Error("refresh failed");
+		});
+		const auth = readTokenInAuth(authPath);
+		const secondLabel = auth.accounts.find((a) => a.id === "sk-second")!.label;
+		selectValue = secondLabel;
+		await runCommand("switch");
+		expect(notifications.some((n) => n.message.includes("Switched"))).toBe(true);
+	});
+
+	it("/tokenin remove cancels when the user picks nothing", async () => {
+		saveTokenInAccount("sk-active", { setActive: true });
+		selectValue = undefined;
+		await runCommand("remove");
+		expect(notifications.some((n) => n.message.includes("Account removed"))).toBe(false);
+	});
+
+	it("/tokenin remove notifies when there are no saved accounts", async () => {
+		await runCommand("remove");
+		expect(notifications.some((n) => n.message.includes("No saved accounts"))).toBe(true);
+	});
+
+	it("/tokenin switch guards no-UI", async () => {
+		fakeCtx.hasUI = false;
+		await runCommand("switch");
+		expect(notifications.some((n) => n.message.includes("interactive mode"))).toBe(true);
+	});
+
+	it("/tokenin remove guards no-UI", async () => {
+		fakeCtx.hasUI = false;
+		await runCommand("remove");
+		expect(notifications.some((n) => n.message.includes("interactive mode"))).toBe(true);
+	});
+
+	it("readTokenInAuth filters invalid accounts", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-filter-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		writeFileSync(authPath, JSON.stringify({ accounts: [{ id: "sk-ok", apiKey: "sk-ok" }, { id: "no-key" }, "junk"], activeId: "sk-ok" }), "utf-8");
+		expect(readTokenInAuth(authPath)).toEqual({ accounts: [{ id: "sk-ok", apiKey: "sk-ok" }], activeId: "sk-ok" });
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("readTokenInAuth returns defaults for non-object activeId", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-activeid-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		writeFileSync(authPath, JSON.stringify({ accounts: [], activeId: 42 }), "utf-8");
+		expect(readTokenInAuth(authPath)).toEqual({ accounts: [], activeId: null });
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("saveTokenInAccount preserves the existing label on re-save", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-label-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		saveTokenInAccount("sk-token1", { setActive: true }, authPath);
+		const first = readTokenInAuth(authPath).accounts[0];
+		expect(first.label).toBe("sk-…" + "sk-token1".slice(-8));
+		saveTokenInAccount("sk-token1", {}, authPath);
+		const second = readTokenInAuth(authPath).accounts[0];
+		expect(second.label).toBe(first.label);
+		rmSync(dir, { recursive: true, force: true });
 	});
 });

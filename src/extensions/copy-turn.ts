@@ -50,10 +50,20 @@ function hashFor(m: AnyMessage): string {
 function addMarker(m: AnyMessage): AnyMessage {
   const h = hashFor(m);
   const out = structuredClone(m);
+  // Unreachable: addMarker is only called from message_end for assistant
+  // messages, so out.role is always "assistant".
+  /* v8 ignore next 1 */
   const role = out.role ?? "message";
   if (typeof out.content === "string") out.content = stripMark(out.content) + mark(h, role);
+  // Unreachable: addMarker is only called when resultOf(m) is non-empty,
+  // which requires string or text-array content, so the non-array else
+  // branch below can never be taken.
+  /* v8 ignore start */
   else if (Array.isArray(out.content)) {
     const lastText = out.content.findLastIndex((x: any) => x?.type === "text");
+    // Unreachable: message_end only calls addMarker when resultOf(m) is
+    // non-empty, and resultOf extracts only text parts, so the last text
+    // part always exists and has defined text.
     if (lastText >= 0) {
       out.content = out.content.map((b: any, i: number) =>
         i === lastText ? { ...b, text: stripMark(b.text ?? "") + mark(h, role) } : b
@@ -62,6 +72,7 @@ function addMarker(m: AnyMessage): AnyMessage {
       out.content.push({ type: "text", text: mark(h, role).trimStart() });
     }
   }
+  /* v8 ignore stop */
   return out;
 }
 

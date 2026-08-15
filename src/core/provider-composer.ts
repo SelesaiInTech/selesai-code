@@ -75,6 +75,19 @@ export type AuthStatus = {
 
 export const clearApiKeyCache = clearConfigValueCache;
 
+/** Sane default when a model definition omits maxTokens (kept small so providers never reject it). */
+const DEFAULT_MAX_TOKENS = 16384;
+
+/**
+ * Resolve a safe max output token count. Missing or non-positive values fall back
+ * (to a sane default or an inherited value); explicit values are never allowed to
+ * exceed the model's context window.
+ */
+function safeMaxTokens(value: number | undefined, contextWindow: number, fallback = DEFAULT_MAX_TOKENS): number {
+	const resolved = typeof value === "number" && value > 0 ? value : fallback;
+	return Math.min(resolved, Math.max(contextWindow, 1));
+}
+
 function mergeCompat(
 	base: Model<Api>["compat"],
 	override: Model<Api>["compat"] | ModelsJsonModelOverride["compat"],
@@ -98,6 +111,7 @@ function mergeCompat(
 }
 
 function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride): Model<Api> {
+	const contextWindow = override.contextWindow ?? model.contextWindow;
 	return {
 		...model,
 		name: override.name ?? model.name,
@@ -115,8 +129,8 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 					tiers: override.cost.tiers ?? model.cost.tiers,
 				}
 			: model.cost,
-		contextWindow: override.contextWindow ?? model.contextWindow,
-		maxTokens: override.maxTokens ?? model.maxTokens,
+		contextWindow,
+		maxTokens: safeMaxTokens(override.maxTokens ?? model.maxTokens, contextWindow, model.maxTokens),
 		compat: mergeCompat(model.compat, override.compat),
 	};
 }
@@ -141,6 +155,7 @@ function modelFromJson(
 	if (definition.maxTokens !== undefined && definition.maxTokens <= 0) {
 		throw new Error(`Provider ${providerId}, model ${definition.id}: invalid maxTokens`);
 	}
+	const contextWindow = definition.contextWindow ?? 128000;
 	return {
 		id: definition.id,
 		name: definition.name ?? definition.id,
@@ -151,8 +166,8 @@ function modelFromJson(
 		thinkingLevelMap: definition.thinkingLevelMap,
 		input: (definition.input ?? ["text"]) as ("text" | "image")[],
 		cost: definition.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: definition.contextWindow ?? 128000,
-		maxTokens: definition.maxTokens ?? 16384,
+		contextWindow,
+		maxTokens: safeMaxTokens(definition.maxTokens, contextWindow),
 		headers: undefined,
 		compat: mergeCompat(providerConfig.compat, definition.compat),
 	};

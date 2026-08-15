@@ -125,6 +125,9 @@ export function renderSingleSelectRows({
 
 	const safeMaxRows = Math.max(1, Math.floor(maxRows));
 	const selectedBlock = blocks[selectedIndex] ?? blocks[0];
+	// Blocks is never empty here: empty blocks means empty allRows, which is
+	// already returned by the allRows.length <= maxRows guard above.
+	/* v8 ignore next 1 */
 	if (!selectedBlock) return [];
 
 	const indicator = `  (${selectedIndex + 1}/${itemCount})`;

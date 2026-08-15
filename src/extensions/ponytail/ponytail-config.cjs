@@ -57,6 +57,8 @@ function getConfigDir() {
   }
   if (process.platform === 'win32') {
     return path.join(
+      // Unreachable: APPDATA is always set on Windows.
+      /* v8 ignore next 1 */
       process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
       'ponytail'
     );

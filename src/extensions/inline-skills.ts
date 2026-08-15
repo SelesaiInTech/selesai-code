@@ -22,6 +22,9 @@ function getSkillName(command: SkillCommand): string {
 
 function getInlineSkillToken(textBeforeCursor: string): string | undefined {
 	const match = textBeforeCursor.match(/(?:^|[^a-z0-9_-])\$([a-z0-9-]*)$/i);
+	// Group 1 is always present when the regex matches (it can be empty but
+	// never undefined), so the ?? fallback is unreachable.
+	/* v8 ignore next 1 */
 	return match ? match[1] ?? "" : undefined;
 }
 

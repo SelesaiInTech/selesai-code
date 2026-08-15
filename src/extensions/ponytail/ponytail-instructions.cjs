@@ -14,6 +14,9 @@ const COMPACT_MODE_RULES = {
 };
 
 function filterSkillBodyForMode(body, mode) {
+  // Unreachable: normalizeMode returns a valid mode or null, and the caller
+  // passes a valid mode.
+  /* v8 ignore next 1 */
   const effectiveMode = normalizeMode(mode) || DEFAULT_MODE;
   const withoutFrontmatter = String(body || '').replace(/^---[\s\S]*?---\s*/, '');
 
@@ -90,6 +93,9 @@ function getPonytailInstructions(mode, options) {
     return 'PONYTAIL MODE ACTIVE — level: ' + configuredMode + '. Behavior defined by /ponytail-' + configuredMode + ' skill.';
   }
 
+  // Unreachable: normalizePersistedMode above already falls back to
+  // DEFAULT_MODE, so normalizeMode always returns a valid mode here.
+  /* v8 ignore next 1 */
   const effectiveMode = normalizeMode(configuredMode) || DEFAULT_MODE;
   if (options?.compact === true) return getCompactInstructions(effectiveMode);
 

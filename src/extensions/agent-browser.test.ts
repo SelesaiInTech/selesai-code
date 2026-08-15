@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import agentBrowserSetupExtension, {
 	DECLINED_MARKER_NAME,
 	ensureAgentBrowser,
@@ -191,5 +191,181 @@ describe("agent-browser setup extension", () => {
 
 	it("declined marker path lives in the agent dir", () => {
 		expect(getDeclinedMarkerPath()).toBe(join(tmpDir, DECLINED_MARKER_NAME));
+	});
+
+	it("skips probing when the decline marker exists", async () => {
+		const { pi, handlers, exec } = makePi();
+		await agentBrowserSetupExtension(pi);
+		const markerPath = getDeclinedMarkerPath();
+		mkdirSync(dirname(markerPath), { recursive: true });
+		writeFileSync(markerPath, "1", "utf-8");
+		try {
+			await getSessionStartHandler(handlers)({ type: "session_start", reason: "startup" }, makeCtx());
+			expect(exec).not.toHaveBeenCalled();
+		} finally {
+			rmSync(markerPath, { force: true });
+		}
+	});
+
+	it("isAgentBrowserInstalled returns false when exec throws", async () => {
+		const { pi } = makePi(async () => {
+			throw new Error("spawn failed");
+		});
+		expect(await isAgentBrowserInstalled(pi)).toBe(false);
+	});
+
+	it("isAgentBrowserInstalled returns false when the probe is killed", async () => {
+		const { pi } = makePi(async () => ({ code: 0, stdout: "", stderr: "", killed: true }));
+		expect(await isAgentBrowserInstalled(pi)).toBe(false);
+	});
+
+	it("reports a timed-out npm install", async () => {
+		const execImpl = vi
+			.fn()
+			.mockResolvedValueOnce(fail) // probe: missing
+			.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "", killed: true }); // npm killed
+		const { pi, handlers, exec } = makePi(execImpl as any);
+		await agentBrowserSetupExtension(pi);
+		const ctx = makeCtx();
+		await getSessionStartHandler(handlers)({ type: "session_start", reason: "startup" }, ctx);
+
+		expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("timed out"), "error");
+		expect(exec).toHaveBeenCalledTimes(2);
+	});
+
+	it("reports npm success but missing binary on PATH", async () => {
+		const execImpl = vi
+			.fn()
+			.mockResolvedValueOnce(fail) // probe: missing
+			.mockResolvedValueOnce(ok) // npm i -g agent-browser
+			.mockResolvedValueOnce(fail) // probe: still missing
+			.mockResolvedValueOnce(ok); // (unused)
+		const { pi, handlers, exec } = makePi(execImpl as any);
+		await agentBrowserSetupExtension(pi);
+		const ctx = makeCtx();
+		await getSessionStartHandler(handlers)({ type: "session_start", reason: "startup" }, ctx);
+
+		expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("still not on PATH"), "warning");
+		expect(exec).toHaveBeenCalledTimes(3);
+	});
+
+	it("warns when browser provisioning fails after install", async () => {
+		const execImpl = vi
+			.fn()
+			.mockResolvedValueOnce(fail) // probe: missing
+			.mockResolvedValueOnce(ok) // npm i -g agent-browser
+			.mockResolvedValueOnce(ok) // probe: now present
+			.mockResolvedValueOnce({ code: 1, stdout: "", stderr: "browser failed", killed: false }); // agent-browser install fails
+		const { pi, handlers, exec } = makePi(execImpl as any);
+		await agentBrowserSetupExtension(pi);
+		const ctx = makeCtx();
+		await getSessionStartHandler(handlers)({ type: "session_start", reason: "startup" }, ctx);
+
+		expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Run `agent-browser install`"), "info");
+		expect(exec).toHaveBeenCalledTimes(4);
+	});
+
+	it("provisionBrowser returns false when exec throws", async () => {
+		const execImpl = vi
+			.fn()
+			.mockResolvedValueOnce(fail) // probe: missing
+			.mockResolvedValueOnce(ok) // npm i -g agent-browser
+			.mockResolvedValueOnce(ok) // probe: now present
+			.mockRejectedValueOnce(new Error("spawn failed")); // agent-browser install throws
+		const { pi, handlers, exec } = makePi(execImpl as any);
+		await agentBrowserSetupExtension(pi);
+		const ctx = makeCtx();
+		await getSessionStartHandler(handlers)({ type: "session_start", reason: "startup" }, ctx);
+
+		expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Run `agent-browser install`"), "info");
+		expect(exec).toHaveBeenCalledTimes(4);
+	});
+
+	it("ensureAgentBrowser returns false when the user declines", async () => {
+		const execImpl = vi.fn().mockResolvedValue(fail);
+		const { pi } = makePi(execImpl as any);
+		const ctx = makeCtx({ confirmResult: false });
+		expect(await ensureAgentBrowser(pi, ctx)).toBe(false);
+	});
+
+	it("ensureAgentBrowser returns true when already installed", async () => {
+		const { pi } = makePi(async () => ok);
+		expect(await ensureAgentBrowser(pi, makeCtx())).toBe(true);
+	});
+
+	it("ensureAgentBrowser returns false without UI", async () => {
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const execImpl = vi.fn().mockResolvedValue(fail);
+		const { pi } = makePi(execImpl as any);
+		expect(await ensureAgentBrowser(pi, makeCtx({ hasUI: false }))).toBe(false);
+		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(INSTALL_COMMAND));
+	});
+
+	it("ensureAgentBrowser returns false when npm install fails", async () => {
+		const execImpl = vi
+			.fn()
+			.mockResolvedValueOnce(fail) // probe
+			.mockResolvedValueOnce({ code: 1, stdout: "", stderr: "EACCES", killed: false }); // npm fails
+		const { pi } = makePi(execImpl as any);
+		expect(await ensureAgentBrowser(pi, makeCtx())).toBe(false);
+	});
+
+	it("npm install failure surfaces stdout when stderr is empty", async () => {
+		const execImpl = vi
+			.fn()
+			.mockResolvedValueOnce(fail) // probe
+			.mockResolvedValueOnce({ code: 1, stdout: "npm error log", stderr: "", killed: false }); // npm fails with stdout only
+		const { pi } = makePi(execImpl as any);
+		const ctx = makeCtx();
+		expect(await ensureAgentBrowser(pi, ctx)).toBe(false);
+		expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("npm error log"), "error");
+	});
+
+	it("npm install failure falls back to exit status when output is empty", async () => {
+		const execImpl = vi
+			.fn()
+			.mockResolvedValueOnce(fail) // probe
+			.mockResolvedValueOnce({ code: 1, stdout: "", stderr: "", killed: false }); // npm fails with no output
+		const { pi } = makePi(execImpl as any);
+		const ctx = makeCtx();
+		expect(await ensureAgentBrowser(pi, ctx)).toBe(false);
+		expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("exit status 1"), "error");
+	});
+
+	it("notify is a no-op without UI even when the CLI is installed", async () => {
+		const { pi } = makePi(async () => ok);
+		const ctx = makeCtx({ hasUI: false });
+		expect(await ensureAgentBrowser(pi, ctx)).toBe(true);
+	});
+
+	it("ensureAgentBrowser returns true after full install flow", async () => {
+		const execImpl = vi
+			.fn()
+			.mockResolvedValueOnce(fail) // probe: missing
+			.mockResolvedValueOnce(ok) // npm i -g agent-browser
+			.mockResolvedValueOnce(ok) // probe: now present
+			.mockResolvedValueOnce(ok); // agent-browser install
+		const { pi } = makePi(execImpl as any);
+		expect(await ensureAgentBrowser(pi, makeCtx())).toBe(true);
+	});
+
+	it("cliCommand wraps args in cmd.exe on win32", () => {
+		const original = process.platform;
+		Object.defineProperty(process, "platform", { value: "win32" });
+		try {
+			const { ensureAgentBrowser: _e, ...rest } = {} as any;
+			// Re-import to pick up the platform at module scope is not needed;
+			// cliCommand is module-private, so exercise it through the public flow.
+			const execImpl = vi.fn().mockResolvedValue(ok);
+			const { pi } = makePi(execImpl as any);
+			return ensureAgentBrowser(pi, makeCtx()).then((result) => {
+				expect(result).toBe(true);
+				const call = execImpl.mock.calls[0];
+				expect(call[0]).toBe("cmd");
+				expect(call[1]).toEqual(["/c", "agent-browser", "--version"]);
+			});
+		} finally {
+			Object.defineProperty(process, "platform", { value: original });
+		}
 	});
 });

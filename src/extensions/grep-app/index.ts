@@ -97,7 +97,12 @@ async function fetchWithBrowser(url: URL | string, signal: AbortSignal | undefin
 		await page.waitForFunction(() => document.body.innerText.trimStart().startsWith("{"), undefined, { timeout: 15_000 });
 		return await page.locator("body").innerText();
 	} catch (error) {
-		if (signal?.aborted) throw signal.reason ?? new Error("Cancelled");
+		if (signal?.aborted) {
+			// signal.reason is always set after abort() in Node, so the ?? fallback
+			// is unreachable.
+			/* v8 ignore next 1 */
+			throw signal.reason ?? new Error("Cancelled");
+		}
 		throw error;
 	} finally {
 		signal?.removeEventListener("abort", abort);
