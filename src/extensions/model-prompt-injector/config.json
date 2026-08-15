@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {
+      "match": ["deepseek-v4-pro"],
+      "mode": "append",
+      "prompt": "You are a helpful software engineer assistant. description: Bootstrap with shell/read, then expose the full Standard tool catalog after the first durable tool call. when you thought, start with `we need...`",
+      "enabled": true
+    }
+  ]
+}
