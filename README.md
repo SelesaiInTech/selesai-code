@@ -23,7 +23,7 @@ One public tool, `web_explore`, that does bounded web research for Pi: search, f
 
 ## Install
 
-> Requires Pi 0.74+ (Pi packages moved to the `@earendil-works/*` scope). On older Pi, stay on `@demigodmode/pi-web-agent@0.6.x` until you update Pi.
+> `pi-web-agent` requires Pi 0.74+ (Pi packages moved to the `@earendil-works/*` scope). Update Pi before updating this package. On older Pi, stay on `@demigodmode/pi-web-agent@0.6.x`.
 
 ```bash
 pi install npm:@demigodmode/pi-web-agent
