@@ -78,9 +78,9 @@ describe('web_explore tool', () => {
       }
     ]);
     expect(result.caveat).toBeUndefined();
-    expect(result.presentation?.views.compact).toContain('Use channel for branded browsers.');
-    expect(result.presentation?.views.compact).toContain('executablePath is supported but use at your own risk.');
-    expect(result.presentation?.views.compact).not.toContain('[http]');
+    expect(result.presentation?.views.compact).toBe(
+      'Reviewed 2 sources · synthesized answer with 2 findings'
+    );
     expect(result.presentation?.views.preview).toContain('Use channel for branded browsers.');
     expect(result).not.toHaveProperty('text');
   });
@@ -130,8 +130,9 @@ describe('web_explore tool', () => {
       }
     ]);
     expect(result.caveat).toBe('Evidence is partial, so this answer is based on the strongest source found within the bounded research budget.');
-    expect(result.presentation?.views.compact).toContain('Set coverage.provider to v8 and install @vitest/coverage-v8.');
-    expect(result.presentation?.views.compact).toContain('Evidence is partial, so this answer is based on the strongest source found within the bounded research budget.');
+    expect(result.presentation?.views.compact).toBe(
+      'Reviewed 1 sources · synthesized answer with 1 findings'
+    );
   });
 
   it('uses specific caveat reasons from research metadata', async () => {

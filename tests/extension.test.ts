@@ -213,7 +213,7 @@ describe('Pi extension entrypoint', () => {
     expect(handlers.has('context')).toBe(false);
   });
 
-  it('returns compact output for web_explore by default instead of the old text block', async () => {
+  it('sends the findings to the model as content while the terminal display stays compact', async () => {
     const tools: any[] = [];
     const pi = {
       registerTool: (tool: any) => tools.push(tool),
@@ -243,9 +243,18 @@ describe('Pi extension entrypoint', () => {
       query: 'example query'
     });
 
-    expect(result.content[0].text).toContain('Reviewed');
-    expect(result.content[0].text).not.toContain('Findings\n');
-    expect(result.content[0].text).not.toContain('{\n');
+    // The model receives the actual findings, not the compact count line.
+    expect(result.content[0].text).toContain('A concise finding.');
+    expect(result.content[0].text).not.toContain('Reviewed');
+    // The compact terminal view is carried separately for the renderer.
+    expect(result.details.terminalText).toBe('Reviewed 1 sources · synthesized answer with 1 findings');
+    // renderResult (terminal) shows the compact view, not the full findings.
+    const rendered = webExplore
+      .renderResult(result, { expanded: false, isPartial: false }, {}, {})
+      .render(80)
+      .join('\n');
+    expect(rendered).toContain('Reviewed 1 sources');
+    expect(rendered).not.toContain('A concise finding.');
   }, 15000);
 
   it('falls back to built-in defaults when the store cannot load config', async () => {
@@ -275,6 +284,8 @@ describe('Pi extension entrypoint', () => {
     const webExplore = tools.find((tool) => tool.name === 'web_explore');
     const result = await webExplore.execute('tool-call-1', { query: 'plain search' });
 
-    expect(result.content[0].text).toContain('Reviewed');
+    // Model still gets the findings; the compact display falls back to default mode.
+    expect(result.content[0].text).toContain('A concise finding.');
+    expect(result.details.terminalText).toContain('Reviewed');
   }, 15000);
 });
