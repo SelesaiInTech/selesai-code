@@ -7,6 +7,19 @@ The format is intentionally simple and release-oriented.
 ## Unreleased
 
 ### Added
+- None.
+
+### Changed
+- None.
+
+### Fixed
+- None.
+
+### Breaking
+- None.
+
+## [1.9.0] - 2026-08-15
+### Added
 - Search fanout. Ask a hard question and web_explore can now hit several of your configured search backends at once, dedupe the merged results, and rank the pages that more than one provider agreed on to the top. Off by default. Flip it to on or auto in Settings → Backends (auto only fans out when the first provider comes back thin, so easy queries stay cheap). Preview/verbose shows which providers ran and which got skipped. (#35)
 
 ### Changed
