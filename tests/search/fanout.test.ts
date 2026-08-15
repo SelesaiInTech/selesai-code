@@ -111,6 +111,18 @@ describe('createFanoutSearch', () => {
     expect(res.results.filter((r) => r.url.includes('u.com')).length).toBe(1);
   });
 
+  it('on: skips a provider that does not respond within the timeout', async () => {
+    const providers = [
+      { name: 'duckduckgo' as const, search: vi.fn().mockResolvedValue(ok('duckduckgo', ['https://a.com/x'])) },
+      { name: 'searxng' as const, search: vi.fn().mockReturnValue(new Promise(() => {})) } // never resolves
+    ];
+    const search = createFanoutSearch({ providers, mode: 'on', timeoutMs: 20 });
+    const res = await search({ query: 'q' });
+    expect(res.status).toBe('ok');
+    expect(res.metadata.fanout?.providers).toEqual(['duckduckgo']);
+    expect(res.metadata.fanout?.skipped).toEqual(['searxng']);
+  });
+
   it('on: records skipped providers that errored or returned nothing', async () => {
     const providers = [
       { name: 'duckduckgo' as const, search: vi.fn().mockResolvedValue(ok('duckduckgo', ['https://a.com/1'])) },

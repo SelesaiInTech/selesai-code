@@ -59,24 +59,49 @@ function withPresentation(result: WebSearchResponse): WebSearchResponse {
   return { ...result, presentation: buildSearchPresentation(result) };
 }
 
+const FANOUT_PROVIDER_TIMEOUT_MS = 8000;
+
+/** Resolve to undefined if the provider doesn't answer in time, so one slow/unreachable
+ *  provider (e.g. a down self-hosted SearXNG) can't stall the whole fanout across passes. */
+function withTimeout(
+  promise: Promise<WebSearchResponse>,
+  ms: number
+): Promise<WebSearchResponse | undefined> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(undefined);
+      }
+    );
+  });
+}
+
 export function createFanoutSearch({
   providers,
-  mode
+  mode,
+  timeoutMs = FANOUT_PROVIDER_TIMEOUT_MS
 }: {
   providers: FanoutProvider[];
   mode: Exclude<FanoutMode, 'off'>;
+  timeoutMs?: number;
 }) {
   return async function fanoutSearch({ query }: { query: string }): Promise<WebSearchResponse> {
     const [primary, ...rest] = providers;
 
     async function runSet(set: FanoutProvider[]) {
-      const settled = await Promise.allSettled(set.map((p) => p.search({ query })));
+      const settled = await Promise.all(set.map((p) => withTimeout(p.search({ query }), timeoutMs)));
       const contributing: Array<{ name: SearchProviderName; results: SearchResult[] }> = [];
       const skipped: SearchProviderName[] = [];
       set.forEach((provider, i) => {
-        const outcome = settled[i];
-        if (outcome.status === 'fulfilled' && outcome.value.status === 'ok' && outcome.value.results.length > 0) {
-          contributing.push({ name: provider.name, results: outcome.value.results });
+        const value = settled[i];
+        if (value && value.status === 'ok' && value.results.length > 0) {
+          contributing.push({ name: provider.name, results: value.results });
         } else {
           skipped.push(provider.name);
         }
@@ -109,7 +134,7 @@ export function createFanoutSearch({
     }
 
     if (mode === 'auto') {
-      const primaryOutcome = await primary.search({ query }).catch(() => undefined);
+      const primaryOutcome = await withTimeout(primary.search({ query }), timeoutMs);
       const primaryResults = primaryOutcome?.status === 'ok' ? primaryOutcome.results : [];
       if (primaryResults.length > 0 && !primaryLooksWeak(primaryResults)) {
         return withPresentation(primaryOutcome as WebSearchResponse); // strong primary: no fanout
