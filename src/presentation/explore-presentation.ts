@@ -53,12 +53,14 @@ export function buildExplorePresentation(result: WebExploreResponse): Presentati
     .filter((line) => line !== undefined)
     .join('\n');
 
+  const compact = hasEvidence
+    ? [result.findings.join('\n\n'), result.caveat].filter(Boolean).join('\n\n')
+    : 'No usable evidence found';
+
   return {
     mode: 'compact',
     views: {
-      compact: hasEvidence
-        ? `Reviewed ${result.sources.length} sources · synthesized answer with ${result.findings.length} findings`
-        : 'No usable evidence found',
+      compact,
       preview,
       verbose
     },

@@ -19,7 +19,10 @@ describe('buildExplorePresentation', () => {
       }
     });
 
-    expect(presentation.views.compact).toBe('Reviewed 2 sources · synthesized answer with 2 findings');
+    expect(presentation.views.compact).toContain('Use channel');
+    expect(presentation.views.compact).toContain('Treat executablePath as fallback');
+    expect(presentation.views.compact).not.toContain('[web_fetch]');
+    expect(presentation.views.compact).not.toContain('Internal research');
     expect(presentation.views.preview).toContain('- [web_fetch] Use channel');
     expect(presentation.views.preview).toContain('- [web_fetch_headless] Treat executablePath as fallback');
     expect(presentation.views.preview).toContain('Internal research: web_search ×2');
@@ -111,5 +114,45 @@ describe('buildExplorePresentation', () => {
     });
     const preview = presentation.views.preview as string;
     expect(preview).toContain('(fanout; skipped: brave, exa)');
+  });
+
+  it('includes caveat in compact view when present', () => {
+    const presentation = buildExplorePresentation({
+      status: 'ok',
+      findings: ['Primary finding here'],
+      sources: [{ title: 't', url: 'https://a.com', method: 'http' }],
+      caveat: 'This is based on limited sources.',
+      metadata: { searchPasses: 1, fetchedPages: 1, headlessAttempts: 0, exhaustedBudget: false }
+    });
+
+    expect(presentation.views.compact).toContain('Primary finding here');
+    expect(presentation.views.compact).toContain('This is based on limited sources.');
+    expect(presentation.views.compact).not.toContain('[web_fetch]');
+  });
+
+  it('includes finding text in compact for long findings without reader tags', () => {
+    const presentation = buildExplorePresentation({
+      status: 'ok',
+      findings: ['Community context: Use the channel variable for better integration', 'Execute paths should always be treated as fallback'],
+      sources: [
+        { title: 'Doc 1', url: 'https://a.com', method: 'http' },
+        { title: 'Doc 2', url: 'https://b.com', method: 'headless' }
+      ],
+      metadata: { searchPasses: 2, fetchedPages: 2, headlessAttempts: 1, exhaustedBudget: false }
+    });
+
+    // Compact should contain the findings
+    expect(presentation.views.compact).toContain('Community context: Use the channel variable for better integration');
+    expect(presentation.views.compact).toContain('Execute paths should always be treated as fallback');
+
+    // Compact should NOT contain reader labels or internal research line
+    expect(presentation.views.compact).not.toContain('[http]');
+    expect(presentation.views.compact).not.toContain('[headless]');
+    expect(presentation.views.compact).not.toContain('Internal research');
+
+    // Preview should still have reader labels and internal research
+    expect(presentation.views.preview).toContain('[web_fetch]');
+    expect(presentation.views.preview).toContain('[web_fetch_headless]');
+    expect(presentation.views.preview).toContain('Internal research');
   });
 });
