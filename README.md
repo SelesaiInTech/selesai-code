@@ -54,9 +54,9 @@ npm run docs:build
 
 `pi-web-agent` renders web tool output in one visible mode at a time:
 
-- `compact` — short summary, default everywhere
-- `preview` — slightly richer bounded view
-- `verbose` — fuller bounded view
+- `compact`: short summary, default everywhere
+- `preview`: slightly richer bounded view
+- `verbose`: fuller bounded view
 
 See the `v0.3.0` release notes for a before/after of the transcript cleanup:
 
