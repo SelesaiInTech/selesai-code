@@ -13,14 +13,15 @@ The format is intentionally simple and release-oriented.
 - None.
 
 ### Fixed
-- web_explore now returns the full content when it reads a GitHub, PDF, or YouTube link directly, instead of a short snippet tagged as weak "community" context. Summarizing a pasted video, PDF, or repo file works now. (#40, #41)
+- web_explore now returns the extracted content (capped around 24k characters) when it reads a GitHub, PDF, or YouTube link directly, instead of a short snippet tagged as weak "community" context. Summarizing a pasted video, PDF, or repo file works now. (#40, #41)
+- worker now requires reader responses to have non-empty text before promoting them to primary-content, and exempts successful reader results from package-page filtering. (#42)
 
 ### Breaking
 - None.
 
 ## [1.8.0] - 2026-08-14
 ### Added
-- Read the content behind GitHub, PDF, and YouTube links directly instead of the page shell. GitHub files, issues and PRs come from the API/raw endpoints (optional `GITHUB_TOKEN` raises the rate limit), PDFs are parsed with unpdf, and YouTube links return the transcript. All keyless. Scanned PDFs and caption-less videos are caveated rather than failing. (#39, #40, #41)
+- Read the content behind GitHub, PDF, and YouTube links directly instead of the page shell. GitHub files, issues and PRs come from the API/raw endpoints (optional `GITHUB_TOKEN` raises the rate limit), PDFs are parsed with unpdf, and YouTube links return the transcript (long content capped around 24k characters). All keyless. Scanned PDFs and caption-less videos are caveated rather than failing. (#39, #40, #41)
 
 ### Changed
 - None.

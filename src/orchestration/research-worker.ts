@@ -32,12 +32,9 @@ function evidenceFromFetch(fetched: WebFetchResponse, fallbackTitle: string) {
   if (fetched.status !== 'ok' || !content) return null;
   if (isBotCheckContent({ title: content.title, text: content.text })) return null;
 
-  const sourceKind = classifySource(fetched.url);
-  if (sourceKind === 'package-page') {
-    return null;
-  }
-
-  if (isReaderMethod(fetched.metadata.method)) {
+  // A successful reader read with usable text is primary content, exempt from the
+  // package-page filter below.
+  if (isReaderMethod(fetched.metadata.method) && content.text.trim()) {
     return {
       title: content.title ?? fallbackTitle,
       url: fetched.url,
@@ -46,6 +43,11 @@ function evidenceFromFetch(fetched: WebFetchResponse, fallbackTitle: string) {
       summary: content.text,
       supports: [content.text]
     } satisfies ResearchEvidence;
+  }
+
+  const sourceKind = classifySource(fetched.url);
+  if (sourceKind === 'package-page') {
+    return null;
   }
 
   return {

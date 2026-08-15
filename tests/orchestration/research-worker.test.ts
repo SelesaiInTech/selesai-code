@@ -367,4 +367,111 @@ describe('research worker', () => {
     expect(evidence?.summary).toBe(fullYoutubeText);
     expect(evidence?.supports[0]).toBe(fullYoutubeText);
   });
+
+  it('does not turn reader method response with empty text into primary-content', async () => {
+    const worker = createResearchWorker({
+      search: vi.fn().mockResolvedValue({
+        status: 'ok',
+        results: [
+          {
+            title: 'Empty PDF Document',
+            url: 'https://example.com/empty.pdf',
+            snippet: 'PDF file'
+          }
+        ],
+        metadata: { backend: 'duckduckgo', cacheHit: false }
+      }),
+      fetchPage: vi.fn().mockResolvedValue({
+        status: 'ok',
+        url: 'https://example.com/empty.pdf',
+        content: {
+          title: 'Empty PDF Document',
+          text: ''
+        },
+        metadata: { method: 'pdf', cacheHit: false, contentType: 'application/pdf', truncated: false }
+      })
+    });
+
+    const result = await worker.run({
+      query: 'pdf content',
+      maxSearchRounds: 1,
+      maxFetches: 1
+    });
+
+    const primaryContent = result.evidence.find((e) => e.sourceKind === 'primary-content');
+    expect(primaryContent).toBeUndefined();
+  });
+
+  it('does not turn reader method response with only whitespace into primary-content', async () => {
+    const worker = createResearchWorker({
+      search: vi.fn().mockResolvedValue({
+        status: 'ok',
+        results: [
+          {
+            title: 'Whitespace PDF',
+            url: 'https://example.com/whitespace.pdf',
+            snippet: 'PDF file'
+          }
+        ],
+        metadata: { backend: 'duckduckgo', cacheHit: false }
+      }),
+      fetchPage: vi.fn().mockResolvedValue({
+        status: 'ok',
+        url: 'https://example.com/whitespace.pdf',
+        content: {
+          title: 'Whitespace PDF',
+          text: '   \n  \t  '
+        },
+        metadata: { method: 'pdf', cacheHit: false, contentType: 'application/pdf', truncated: false }
+      })
+    });
+
+    const result = await worker.run({
+      query: 'pdf content',
+      maxSearchRounds: 1,
+      maxFetches: 1
+    });
+
+    const primaryContent = result.evidence.find((e) => e.sourceKind === 'primary-content');
+    expect(primaryContent).toBeUndefined();
+  });
+
+  it('makes reader method content primary-content even if url classifies as package-page', async () => {
+    const pdfText = 'This is actual PDF content from a package documentation PDF hosted on npmjs.';
+
+    const worker = createResearchWorker({
+      search: vi.fn().mockResolvedValue({
+        status: 'ok',
+        results: [
+          {
+            title: 'Package Docs PDF',
+            url: 'https://www.npmjs.com/package/example-pkg/docs.pdf',
+            snippet: 'Package documentation'
+          }
+        ],
+        metadata: { backend: 'duckduckgo', cacheHit: false }
+      }),
+      fetchPage: vi.fn().mockResolvedValue({
+        status: 'ok',
+        url: 'https://www.npmjs.com/package/example-pkg/docs.pdf',
+        content: {
+          title: 'Package Documentation',
+          text: pdfText
+        },
+        metadata: { method: 'pdf', cacheHit: false, contentType: 'application/pdf', truncated: false }
+      })
+    });
+
+    const result = await worker.run({
+      query: 'package documentation',
+      maxSearchRounds: 1,
+      maxFetches: 1
+    });
+
+    expect(result.evidence).toHaveLength(1);
+    const evidence = result.evidence[0];
+    expect(evidence?.sourceKind).toBe('primary-content');
+    expect(evidence?.method).toBe('pdf');
+    expect(evidence?.summary).toBe(pdfText);
+  });
 });

@@ -41,7 +41,7 @@ You don't do anything special for these. If a GitHub, PDF, or YouTube URL shows 
 - PDF: the text is extracted directly. A scanned PDF with no text layer can't be read, so you get a note saying so rather than a silent empty result.
 - YouTube: you get the transcript from the captions. A video with no captions gets the same kind of note.
 
-These run behind `web_explore`, so there's still nothing extra to call. When you paste a link to one of these and ask to read or summarize it, you get the full extracted content back: the complete transcript or PDF text or file/issue body, not a research digest.
+These run behind `web_explore`, so there's still nothing extra to call. When you paste a link to one of these and ask to read or summarize it, you get the extracted content back: the transcript or PDF text or file/issue body (long content is capped around 24k characters), not a research digest.
 
 ## What preview and verbose show
 
