@@ -18,7 +18,7 @@ function harness(config: InjectConfig, activeModel: ModelRef | undefined) {
 		}),
 	} as unknown as ExtensionAPI;
 	const ctx = {
-		getModel: () => activeModel,
+		model: activeModel,
 		ui: { setStatus: vi.fn() },
 	};
 	modelPromptInjector(pi, config);
@@ -71,6 +71,15 @@ describe("before_agent_start", () => {
 		const { handlers, ctx } = harness({ rules: [{ match: ["deepseek/*"], prompt: "EXTRA" }] }, model("deepseek", "deepseek-chat"));
 		const result = await handlers["before_agent_start"]({ systemPrompt: "BASE" }, ctx);
 		expect(result).toEqual({ systemPrompt: "BASE\n\nEXTRA" });
+	});
+
+	it("prepends the rule prompt to the top of the system prompt", async () => {
+		const { handlers, ctx } = harness(
+			{ rules: [{ match: ["deepseek/*"], prompt: "TOP", mode: "prepend" }] },
+			model("deepseek", "deepseek-chat"),
+		);
+		const result = await handlers["before_agent_start"]({ systemPrompt: "BASE" }, ctx);
+		expect(result).toEqual({ systemPrompt: "TOP\n\nBASE" });
 	});
 
 	it("replaces the system prompt in replace mode", async () => {

@@ -12,7 +12,7 @@
  *   "rules": [
  *     {
  *       "match": ["provider/model", "provider/*", "<any>/model", "bare-name", "*"],
- *       "mode": "append" | "replace",   // default: "append"
+ *       "mode": "prepend" | "append" | "replace",   // default: "append"
  *       "prompt": "...",
  *       "enabled": true                 // default: true
  *     }
@@ -23,15 +23,15 @@
  * - "provider/model" — glob against `<provider>/<id>`.
  * - bare pattern (no "/") — glob against model id OR display name.
  * - First matching rule wins; later rules are ignored.
- * - mode "append" adds the prompt to the end of the system prompt;
- *   mode "replace" replaces the whole system prompt.
+ * - mode "prepend" puts the prompt at the very top of the system prompt;
+ *   mode "append" adds it to the end; mode "replace" replaces the whole system prompt.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@selesai/code";
 
-export type InjectMode = "append" | "replace";
+export type InjectMode = "prepend" | "append" | "replace";
 
 export interface InjectRule {
 	match: string[];
@@ -110,8 +110,8 @@ export function loadConfig(path: string = CONFIG_PATH): InjectConfig {
 			console.error(`[model-prompt-injector] ${label} needs a non-empty "prompt" string — skipped`);
 			continue;
 		}
-		if (rule.mode !== undefined && rule.mode !== "append" && rule.mode !== "replace") {
-			console.error(`[model-prompt-injector] ${label}: "mode" must be "append" or "replace" — skipped`);
+		if (rule.mode !== undefined && rule.mode !== "prepend" && rule.mode !== "append" && rule.mode !== "replace") {
+			console.error(`[model-prompt-injector] ${label}: "mode" must be "prepend", "append" or "replace" — skipped`);
 			continue;
 		}
 		rules.push({
@@ -138,9 +138,10 @@ export default function modelPromptInjector(pi: ExtensionAPI, config: InjectConf
 	}
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		const rule = ruleFor(ctx.getModel());
+		const rule = ruleFor(ctx.model);
 		if (!rule) return;
 		if (rule.mode === "replace") return { systemPrompt: rule.prompt };
+		if (rule.mode === "prepend") return { systemPrompt: `${rule.prompt}\n\n${event.systemPrompt}` };
 		return { systemPrompt: `${event.systemPrompt}\n\n${rule.prompt}` };
 	});
 
