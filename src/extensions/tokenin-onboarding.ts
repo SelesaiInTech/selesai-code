@@ -15,7 +15,7 @@ import { getAgentDir, getModelsPath } from "@selesai/code";
 import type { AuthStorage, ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionStartEvent } from "@selesai/code";
 
 export const TOKEN_IN_PROVIDER = "tokenin";
-export const TOKEN_IN_DASHBOARD_URL = "https://token-in.selesai.in/dashboard/tokens";
+export const TOKEN_IN_DASHBOARD_URL = "https://token.selesai.in/dashboard/tokens";
 export const ONBOARDING_MARKER_NAME = ".tokenInOnboardingComplete";
 export const PLACEHOLDER_API_KEY = "sk-xxx";
 
