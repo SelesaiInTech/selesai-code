@@ -275,6 +275,12 @@ When selesai reads extensions from both `~/.selesai/agent/extensions/` and `~/.p
 
 Keys are top-level entry names (dir name for packaged extensions, file name for loose `.ts`). Values are `"selesai"` or `"pi"`. See [Shared Host Extensions](shared-host-extensions.md) for the full flow.
 
+### Prompt size
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `pruneToolDescriptions` | boolean | `true` | Strip per-field parameter-schema descriptions from provider tool payloads (top-level tool descriptions and UI/docs schemas are unchanged). Set `false` to send full schemas. |
+
 ## Example
 
 ```json

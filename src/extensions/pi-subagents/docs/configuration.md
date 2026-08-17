@@ -24,9 +24,9 @@ By default, project settings resolve from the nearest parent directory that cont
 { "toolDescriptionMode": "compact" }
 ```
 
-Controls the parent-facing `subagent` tool description registered at startup. `full` is the default. `compact` keeps the execution modes, async/`subagent_wait` guidance, child-safety boundary, management/action split, one-writer review guidance, and artifact/status essentials with less prompt bloat.
+Controls the parent-facing `subagent` tool description registered at startup. `compact` is the default. `full` keeps the full execution, management/control, and async guidance with more prompt bloat.
 
-`custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.selesai/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the full description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Selesai after changing the mode or custom file.
+`custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.selesai/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the compact description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Selesai after changing the mode or custom file.
 
 ## `legacyChainControls`
 

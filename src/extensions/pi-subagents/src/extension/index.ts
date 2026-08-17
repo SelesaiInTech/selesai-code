@@ -611,6 +611,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		label: "Subagent",
 		description: buildSubagentToolDescription(config),
 		parameters,
+		keepParameterDescriptions: true,
 
 		execute(id, params, signal, onUpdate, ctx) {
 			return executeSubagentCollapsed(id, params as SubagentParamsLike, signal ?? new AbortController().signal, onUpdate, ctx);

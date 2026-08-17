@@ -17,6 +17,14 @@ describe("buildSystemPrompt", () => {
 		expect(prompt).toContain("Current working directory: /tmp/project");
 	});
 
+	it("keeps the collapsed Pi-docs block without the per-topic filename map", () => {
+		const prompt = buildSystemPrompt({ cwd: "/tmp/project" });
+
+		expect(prompt).toContain("Pi documentation");
+		expect(prompt).not.toContain("When asked about:");
+		expect(prompt).not.toContain("(docs/extensions.md");
+	});
+
 	it("keeps the default tool snippets, skills, and agents XML read-gated", () => {
 		const skill: Skill = {
 			name: "test-skill",

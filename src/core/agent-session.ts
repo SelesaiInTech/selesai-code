@@ -105,7 +105,7 @@ import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
-import { createAllToolDefinitions } from "./tools/index.ts";
+import { createAllToolDefinitions, stripToolParameterDescriptions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -2592,6 +2592,18 @@ export class AgentSession {
 			toolRegistry.set(tool.name, tool);
 		}
 		this._toolRegistry = toolRegistry;
+
+		if (this.settingsManager.getPruneToolDescriptions()) {
+			const keepDescriptions = new Set<string>();
+			for (const [name, entry] of definitionRegistry) {
+				if (entry.definition.keepParameterDescriptions) keepDescriptions.add(name);
+			}
+			for (const [name, tool] of toolRegistry) {
+				if (!keepDescriptions.has(name)) {
+					toolRegistry.set(name, stripToolParameterDescriptions(tool));
+				}
+			}
+		}
 
 		const nextActiveToolNames = (
 			options?.activeToolNames ? [...options.activeToolNames] : [...previousActiveToolNames]

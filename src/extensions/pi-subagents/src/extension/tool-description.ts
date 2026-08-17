@@ -73,10 +73,10 @@ export interface ToolDescriptionOptions {
 
 export function resolveToolDescriptionMode(config: Pick<ExtensionConfig, "toolDescriptionMode">, options?: ToolDescriptionOptions): ToolDescriptionMode {
 	const mode = config.toolDescriptionMode;
-	if (mode === undefined) return "full";
+	if (mode === undefined) return "compact";
 	if (isToolDescriptionMode(mode)) return mode;
 	warn(options, `Ignoring invalid toolDescriptionMode ${JSON.stringify(mode)}; expected "full", "compact", or "custom".`);
-	return "full";
+	return "compact";
 }
 
 function customDescriptionPaths(options?: ToolDescriptionOptions): string[] {
@@ -179,8 +179,8 @@ export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "tool
 		const custom = loadCustomToolDescription(options);
 		if (custom) description = withMandatorySafetyGuidance(custom);
 		else {
-			warn(options, `${CUSTOM_TOOL_DESCRIPTION_FILE} was not found or valid for toolDescriptionMode "custom"; using full description.`);
-			description = FULL_SUBAGENT_TOOL_DESCRIPTION;
+			warn(options, `${CUSTOM_TOOL_DESCRIPTION_FILE} was not found or valid for toolDescriptionMode "custom"; using compact description.`);
+			description = COMPACT_SUBAGENT_TOOL_DESCRIPTION;
 		}
 	} else description = FULL_SUBAGENT_TOOL_DESCRIPTION;
 	return config.legacyChainControls === false ? withoutLegacyChainControlGuidance(description) : description;

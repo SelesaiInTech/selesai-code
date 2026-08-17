@@ -595,9 +595,13 @@ describe("subagent prompt runtime", () => {
 
 	it("registers child watchdog lifecycle handlers only when enabled by env", () => {
 		delete process.env[CHILD_WATCHDOG_CONFIG_ENV];
-		// Clear the ack capture env explicitly: when this test suite itself runs inside a
-		// pi-subagents child, the runner sets it and an extra agent_end handler registers.
+		// Clear the ack capture and steer env vars explicitly: when this test suite itself
+		// runs inside a pi-subagents child, the runner sets them and extra agent_end
+		// handlers register (steering inbox is gated on SUBAGENT_STEER_INBOX_ENV).
 		delete process.env[RUNTIME_EXTENSION_ACK_PATH_ENV];
+		delete process.env[SUBAGENT_STEER_INBOX_ENV];
+		delete process.env[SUBAGENT_STEER_CAPABILITY_ENV];
+		delete process.env[SUBAGENT_STEER_ACK_DIR_ENV];
 		const handlersWithout = new Map<string, unknown[]>();
 		registerSubagentPromptRuntime({
 			on(event: string, handler: unknown) {

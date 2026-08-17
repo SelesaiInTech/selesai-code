@@ -1935,7 +1935,7 @@ export interface ExtensionConfig {
 	fleetKeybindings?: FleetKeybindingsConfig;
 	/** Show the under-editor async runs widget. Defaults to true, including when FleetView is enabled. */
 	asyncWidget?: boolean;
-	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
+	/** Tool description variant registered for the parent-facing subagent tool. Defaults to compact. */
 	toolDescriptionMode?: ToolDescriptionMode;
 	/** Include legacy append-step and checkpoint controls in the registered tool schema. Defaults to false. */
 	legacyChainControls?: boolean;

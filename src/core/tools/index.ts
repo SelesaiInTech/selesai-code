@@ -51,6 +51,10 @@ export {
 	type ReadToolOptions,
 } from "./read.ts";
 export {
+	stripSchemaDescriptions,
+	stripToolParameterDescriptions,
+} from "./schema-prune.ts";
+export {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
 	formatSize,

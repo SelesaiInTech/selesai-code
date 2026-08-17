@@ -236,14 +236,11 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(maxRuntimeSchema, "maxRuntimeMs schema should exist");
 		assert.equal(timeoutSchema.minimum, 1);
 		assert.equal(maxRuntimeSchema.minimum, 1);
-		assert.match(String(timeoutSchema.description ?? ""), /foreground and single async runs/i);
-		assert.match(String(timeoutSchema.description ?? ""), /use config timeoutMs, else 30m/i);
-		assert.match(String(timeoutSchema.description ?? ""), /async composites have no default parent deadline/i);
+		assert.match(String(timeoutSchema.description ?? ""), /foreground\/single async runs/i);
+		assert.match(String(timeoutSchema.description ?? ""), /config timeoutMs or 30m/i);
 		assert.doesNotMatch(String(timeoutSchema.description ?? ""), /foreground-only/i);
 		assert.match(String(maxRuntimeSchema.description ?? ""), /timeoutMs/i);
-		assert.match(String(maxRuntimeSchema.description ?? ""), /foreground and single async runs/i);
-		assert.match(String(maxRuntimeSchema.description ?? ""), /use config timeoutMs, else 30m/i);
-		assert.match(String(maxRuntimeSchema.description ?? ""), /async composites have no default parent deadline/i);
+		assert.match(String(maxRuntimeSchema.description ?? ""), /alias of timeoutMs/i);
 		assert.equal(turnBudgetSchema?.properties?.maxTurns?.minimum, 1);
 		assert.equal(turnBudgetSchema?.properties?.graceTurns?.minimum, 0);
 		assert.equal(toolBudgetSchema?.properties?.soft?.minimum, 1);
@@ -494,7 +491,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const reviewedRecoveryBranch = acceptanceStringBranches.find((branch) => Array.isArray(branch.enum) && branch.enum.includes("reviewed"));
 		assert.deepEqual(reviewedRecoveryBranch?.enum, ["reviewed"]);
 		assert.equal(reviewedRecoveryBranch?.deprecated, true);
-		assert.match(String(acceptanceSchema.description ?? ""), /reviewer\/read-only calls, omit acceptance/i);
+		assert.match(String(acceptanceSchema.description ?? ""), /omit for read-only calls/i);
 		assert.match(String(acceptanceSchema.description ?? ""), /acceptance\.review\.required/);
 		const acceptanceObjectBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "object");
 		assert.ok(acceptanceObjectBranch, "acceptance should support object config");
