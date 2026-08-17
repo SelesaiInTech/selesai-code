@@ -29,7 +29,6 @@ const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
 const HEALTHY_SCAN_INTERVAL_MS = 60_000;
 const RETRY_DELAY_MS = 100;
-const SLOW_RESULT_SCAN_MS = 500;
 
 type ResultWatcherFs = Pick<typeof fs, "existsSync" | "readFileSync" | "unlinkSync" | "readdirSync" | "mkdirSync" | "realpathSync" | "statSync" | "watch">;
 
@@ -91,12 +90,6 @@ type ResultFileIdentity = {
 	runId?: string;
 	asyncDir?: string;
 };
-
-interface ResultScanStats {
-	files: number;
-	scheduled: number;
-	startedAt: number;
-}
 
 function jsonStringProperty(raw: string, property: string): string | undefined {
 	const matches = raw.matchAll(new RegExp(`"${property}"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`, "g"));
@@ -547,11 +540,6 @@ export function createResultWatcher(
 		void handleResult(file, triggerTurn);
 	}, deps.coalesceDelayMs ?? 50);
 
-	const logScanStats = (stats: ResultScanStats) => {
-		const elapsed = Date.now() - stats.startedAt;
-		if (elapsed < SLOW_RESULT_SCAN_MS) return;
-		console.error(`Subagent result scan inspected ${stats.files} indexed result file(s), scheduled ${stats.scheduled} in ${elapsed}ms (${resultsDir}).`);
-	};
 	const indexedResultCandidates = (observed: ReadonlySet<string>): string[] => {
 		const files = new Set<string>();
 		if (state.currentSessionId) {
@@ -565,14 +553,11 @@ export function createResultWatcher(
 	const primeExistingResults = (options: { triggerTurn?: boolean } = {}) => {
 		try {
 			const triggerTurn = options.triggerTurn !== false;
-			const stats: ResultScanStats = { files: 0, scheduled: 0, startedAt: Date.now() };
 			const observed = observedRunIds();
 			for (const file of indexedResultCandidates(observed)) {
-				stats.files += 1;
 				const signature = resultSignature(file, observed);
 				if (!signature) continue;
 				if (!shouldProcessResult(file, observed, signature)) continue;
-				stats.scheduled += 1;
 				scheduleResult(file, triggerTurn);
 			}
 			// Selesai fork: during the lineage adoption window, also scan flat
@@ -584,15 +569,12 @@ export function createResultWatcher(
 				const indexed = indexedResultCandidates(observed);
 				for (const file of fsApi.readdirSync(resultsDir)) {
 					if (!file.endsWith(".json") || indexed.includes(file)) continue;
-					stats.files += 1;
 					const signature = resultSignature(file, observed);
 					if (!signature) continue;
 					if (!shouldProcessResult(file, observed, signature)) continue;
-					stats.scheduled += 1;
 					scheduleResult(file, triggerTurn);
 				}
 			}
-			logScanStats(stats);
 		} catch (error) {
 			if (!isNotFound(error)) console.error(`Failed to scan subagent result index in '${resultsDir}':`, error);
 		}

@@ -126,6 +126,32 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("keeps slow indexed result scans silent", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-slow-scan-"));
+		const originalNow = Date.now;
+		const originalError = console.error;
+		const logged: unknown[][] = [];
+		try {
+			const state = createState();
+			state.currentSessionId = "session-current";
+			state.asyncJobs.set("slow-scan", { asyncId: "slow-scan", asyncDir: path.join(resultsDir, "slow-scan"), status: "running", startedAt: 0, updatedAt: 0 });
+			let nowCalls = 0;
+			Date.now = () => nowCalls++ === 0 ? 0 : 501;
+			console.error = (...args: unknown[]) => { logged.push(args); };
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000);
+			try {
+				watcher.primeExistingResults();
+			} finally {
+				watcher.stopResultWatcher();
+			}
+			assert.deepEqual(logged, []);
+		} finally {
+			Date.now = originalNow;
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("skips full parsing for unrelated sessions during priming, safety scans, and native watch events", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-filter-"));
 		try {
