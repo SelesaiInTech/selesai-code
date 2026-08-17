@@ -5,6 +5,14 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.8.7 — Prompt model lebih ramping dan Pi Subagents 0.50
+
+- Permukaan tool yang dibaca model kini lebih kecil di setiap permintaan: deskripsi per-field pada skema dipangkas di wire secara default (`pruneToolDescriptions`, bisa dimatikan lewat pengaturan), deskripsi tool subagent memakai varian compact (~3 KB lebih kecil per giliran model), dan blok dokumen Pi di system prompt menyusut menjadi dua baris.
+- Pi Subagents bawaan diperbarui hingga upstream 0.50.0 dengan lapisan fork Selesai (branding, routing `.selesai`, env var `SELESAI_SUBAGENT*`, mode `chain`/`tasks` deklaratif, auto-relaunch workflow).
+- Ekstensi bawaan baru `model-prompt-injector` menyuntikkan prompt spesifik model ke dalam system prompt; mendukung mode `prepend`, `append`, dan `replace`.
+- Memperbarui katalog konfigurasi pi-subagents: `toolDescriptionMode` kini mencantumkan default compact.
+- Memperbaiki suite pengujian prompt-runtime subagent agar lulus saat dijalankan di dalam lingkungan child subagent (env var steer dibersihkan).
+
 ## 0.8.6 — Workflow me-relaunch otomatis dan visibilitas goal
 
 - Empat mode `/workflow-*` (task, prototype, quicktype, loop) kini berjalan sepenuhnya tanpa pengawasan: saat workflow berskrip menghabiskan budget fan-out per-run sebelum goal bersih, executor async membuat budget baru dan menjalankan ulang script yang sama dengan mission dan progress file yang sama, hingga `maxWorkflowAutoRelaunches` (default 12; `0` = tak terbatas). Hanya hasil `budget` yang me-relaunch — kegagalan child yang nyata tetap langsung muncul.

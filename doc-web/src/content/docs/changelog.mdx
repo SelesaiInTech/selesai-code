@@ -5,6 +5,14 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.8.7 — Smaller model-facing prompts and Pi Subagents 0.50
+
+- Model-facing tool surface is smaller on every request: per-field schema descriptions are pruned on the wire by default (`pruneToolDescriptions`, opt out in settings), the subagent tool description defaults to a compact variant (~3 KB smaller per model turn), and the always-on Pi-docs block in the system prompt is down to two lines.
+- Bundled Pi Subagents updated through upstream 0.50.0 with the Selesai fork layers (branding, `.selesai` config routing, `SELESAI_SUBAGENT*` env vars, declarative `chain`/`tasks` modes, workflow auto-relaunch).
+- New bundled `model-prompt-injector` extension injects model-specific prompts into the system prompt; supports `prepend`, `append`, and `replace` modes.
+- Updated the pi-subagents configuration catalog: `toolDescriptionMode` now documents its compact default.
+- Fixed the subagent prompt-runtime test suite so it passes when run inside subagent child environments (steer env vars scrubbed).
+
 ## 0.8.6 — Auto-relaunching workflows and goal visibility
 
 - The four `/workflow-*` modes (task, prototype, quicktype, loop) now run fully unattended: when a scripted workflow exhausts its per-run fan-out budget before the goal is clean, the async executor mints a fresh budget and re-runs the same script with the same mission and progress file, up to `maxWorkflowAutoRelaunches` (default 12; `0` = unlimited). Only `budget` results relaunch — real child failures still surface immediately.

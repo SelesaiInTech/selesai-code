@@ -102,11 +102,11 @@
         {
           "key": "toolDescriptionMode",
           "type": "string",
-          "default": "\"full\"",
+          "default": "\"compact\"",
           "allowedValues": "\"full\", \"compact\", \"custom\"",
           "description": {
-            "en": "Variant of the parent-facing subagent tool description.",
-            "id": "Varian deskripsi tool subagent yang menghadap parent."
+            "en": "Variant of the parent-facing subagent tool description. Defaults to compact.",
+            "id": "Varian deskripsi tool subagent yang menghadap parent. Default: compact."
           },
           "persistence": "extension config"
         },

@@ -4,6 +4,22 @@ All notable changes to `@selesai/code` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-08-17
+
+### Added
+- **Pi Subagents updated through upstream 0.50.0.** The bundled extension advances through upstream 0.49/0.50 (single-child `{ agent, task }` runs, per-tool-call `toolTimeoutMs` with config/env precedence, `debug.run` inspection, builtin role overrides with `tools: "inherit"`, resumable retained-child listings, indexed async result inboxes) with the Selesai fork layers on top: branding, `.selesai` config routing, `SELESAI_SUBAGENT*` env vars, declarative `chain`/`tasks`/`clarify` modes, workflow auto-relaunch wiring, and same-model retry for transient provider errors.
+- **`model-prompt-injector` extension.** Bundled and registered in the extensions manifest, it injects model-specific prompts into the system prompt when the active model matches a configured rule (provider/model globs, bare id/name patterns, first-match-wins, enabled toggle). Modes: `prepend`, `append`, or `replace`.
+- **Wire-level tool schema pruning.** `pruneToolDescriptions` (default `true`) strips every per-field `description` from tool input schemas before they reach the model, keeping one-line tool descriptions. Stripped schemas are memoized and never mutated; UI/docs definitions keep full descriptions; `keepParameterDescriptions` opts a tool out.
+- **Compact subagent tool description by default.** `toolDescriptionMode` now defaults to `"compact"` (~3.2 KB vs ~6.3 KB per model turn), and a missing/invalid custom description file falls back to compact.
+
+### Changed
+- **Slimmer default system prompt.** The always-on Pi-docs block shrank from 8 lines to 2 (paths only); docs are still read on demand when the user asks about pi.
+- **Bundled defaults** now set `pruneToolDescriptions: true`.
+- **Test coverage.** `src/extensions` (pi-* excluded) now enforces 100% stmt/branch/func/line coverage via vitest thresholds; `safeMaxTokens()` clamps missing/oversized context-window metadata to a sane default.
+
+### Fixed
+- **Subagent prompt-runtime suite passes inside subagent child environments.** The watchdog-lifecycle test now scrubs the steer env vars (`SELESAI_SUBAGENT_STEER_*`) before registering, so the steering inbox's extra `agent_end` handler cannot skew the handler count.
+
 ## [0.8.6] - 2026-08-15
 
 ### Added
