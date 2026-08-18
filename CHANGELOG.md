@@ -2,6 +2,12 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.8.10] - 2026-08-18
+
+### Changed
+- **Higher default agent retry budget.** `src/defaults/settings.json` raises `retry.maxRetries` from 7 to 10, so transient provider failures get more automatic retry attempts before surfacing to you.
+- **Powerline footer shows cache-read tokens and hit rate by default.** The bundled settings now set `powerline.cache_read.format` to `"both"` (tokens + cache-hit percentage), instead of relying on the extension's `"tokens"` fallback.
+
 ## [0.8.9] - 2026-08-18
 
 ### Added

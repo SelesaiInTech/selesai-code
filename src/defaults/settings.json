@@ -29,12 +29,15 @@
   "quietStartup": true,
   "retry": {
     "enabled": true,
-    "maxRetries": 7
+    "maxRetries": 10
   },
   "steeringMode": "all",
   "terminal": {
     "clearOnShrink": false,
     "showImages": true
+  },
+  "powerline": {
+    "cache_read": { "format": "both" }
   },
   "subagents": {
     "agentOverrides": {

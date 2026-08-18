@@ -127,7 +127,7 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `retry.enabled` | boolean | `true` | Enable automatic agent-level retry on transient errors |
-| `retry.maxRetries` | number | `3` | Maximum agent-level retry attempts |
+| `retry.maxRetries` | number | `10` | Maximum agent-level retry attempts |
 | `retry.baseDelayMs` | number | `2000` | Base delay for agent-level exponential backoff (2s, 4s, 8s) |
 | `retry.provider.timeoutMs` | number | SDK default | Provider/SDK request timeout in milliseconds |
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
@@ -141,7 +141,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 {
   "retry": {
     "enabled": true,
-    "maxRetries": 3,
+    "maxRetries": 10,
     "baseDelayMs": 2000,
     "provider": {
       "timeoutMs": 3600000,
@@ -296,7 +296,7 @@ Keys are top-level entry names (dir name for packaged extensions, file name for 
   },
   "retry": {
     "enabled": true,
-    "maxRetries": 3
+    "maxRetries": 10
   },
   "enabledModels": ["claude-*", "gpt-4o"],
   "warnings": {

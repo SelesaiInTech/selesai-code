@@ -1491,7 +1491,7 @@
         {
           "key": "powerline.cache_read.format",
           "type": "string",
-          "default": "\"tokens\"",
+          "default": "\"both\"",
           "allowedValues": "\"tokens\", \"percent\", \"both\"",
           "description": {
             "en": "Show cache-read tokens, cache-hit rate, or both.",
