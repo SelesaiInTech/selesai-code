@@ -5,6 +5,10 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.8.9 — Token-In `auto` model
+
+- The Token-In provider defaults now include an **`auto`** model. It is reasoning-capable with a 512K context window and 64K max tokens; its thinking-level map forwards every thinking budget (`minimal` through `xhigh` resolve to provider defaults, `max` maps to `"max"`) using the deepseek thinking format, letting the provider auto-select the best available model for the request.
+
 ## 0.8.8 — Theme-on-startup, quieter managed-tool downloads, and Pi 0.84.2
 
 - New `--use-theme <name>` CLI flag sets the initial interactive theme for a run, and the fullscreen theme controller now applies an invocation-level theme before settings load. The TUI took on a live transcript search highlighter (themeable via new optional `searchMatchBg`/`searchMatchText` colors that fall back to `selectedBg`/`text`).

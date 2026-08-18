@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.8.9] - 2026-08-18
+
+### Added
+- **`auto` model for the Token-In provider.** `src/defaults/models.json` gains an `auto` entry on the Token-In provider, a reasoning-capable model with a 512K context window and 64K max tokens. Its thinking-level map forwards the available thinking budgets (`minimal`–`xhigh` resolve to provider defaults, `max` → `"max"`) using the deepseek thinking format, so the provider can auto-select the best available model.
+
 ## [0.8.8] - 2026-08-18
 
 ### Added

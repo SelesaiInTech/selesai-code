@@ -5,6 +5,10 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.8.9 — Model `auto` Token-In
+
+- Default penyedia Token-In kini menyertakan model **`auto`**. Model ini berkemampuan penalaran dengan jendela konteks 512K dan 64K token maksimum; peta level thinking-nya meneruskan setiap anggaran thinking (`minimal` sampai `xhigh` mengarah ke default penyedia, `max` memetakan ke `"max"`) memakai format thinking deepseek, sehingga penyedia dapat memilih otomatis model terbaik yang tersedia untuk setiap permintaan.
+
 ## 0.8.8 — Tema saat mulai, unduhan tool yang lebih senyap, dan Pi 0.84.2
 
 - Flag CLI baru `--use-theme <name>` mengatur tema interaktif awal untuk satu sesi, dan controller tema fullscreen kini menerapkan tema tingkat-invokasi sebelum pengaturan dimuat. TUI mendapat penyorot pencarian transkrip langsung (bisa diatur temanya lewat warna opsional baru `searchMatchBg`/`searchMatchText` yang kembali ke `selectedBg`/`text`).
