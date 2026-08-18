@@ -35,6 +35,8 @@ export interface RetrySettings {
 
 export type TuiMode = RendererTuiMode;
 
+export type FullscreenExitOutput = "transcript" | "resume-hint";
+
 export interface TerminalSettings {
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
@@ -126,6 +128,8 @@ export interface Settings {
 	agents?: string[]; // Array of local agent persona paths or directories
 	terminal?: TerminalSettings;
 	tuiMode?: TuiMode; // default: "fullscreen" (Selesai); set "regular" to opt out
+	defaultTools?: string[]; // Initial built-in tool selection
+	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 	images?: ImageSettings;
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
@@ -1171,6 +1175,16 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getFullscreenExitOutput(): FullscreenExitOutput {
+		return this.settings.fullscreenExitOutput === "resume-hint" ? "resume-hint" : "transcript";
+	}
+
+	setFullscreenExitOutput(output: FullscreenExitOutput): void {
+		this.globalSettings.fullscreenExitOutput = output;
+		this.markModified("fullscreenExitOutput");
+		this.save();
+	}
+
 	getImageAutoResize(): boolean {
 		return this.settings.images?.autoResize ?? true;
 	}
@@ -1199,6 +1213,11 @@ export class SettingsManager {
 
 	getEnabledModels(): string[] | undefined {
 		return this.settings.enabledModels;
+	}
+
+	getDefaultTools(): string[] | undefined {
+		const tools = this.settings.defaultTools;
+		return tools ? [...tools] : undefined;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

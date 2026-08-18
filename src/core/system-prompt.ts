@@ -93,7 +93,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 			prompt += `\n\nActive tool guidelines:\n${activeGuidelines.map((guideline) => `- ${guideline}`).join("\n")}`;
 		}
 
-		prompt += `\nCurrent working directory: ${promptCwd}`;
+		prompt += `\nCurrent working directory: ${promptCwd}\n`;
 
 		return prompt;
 	}

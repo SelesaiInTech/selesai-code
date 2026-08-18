@@ -8,6 +8,7 @@ import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts"
 import { truncateToVisualLines } from "../../modes/interactive/components/visual-truncate.ts";
 import { theme } from "../../modes/interactive/theme/theme.ts";
 import { waitForChildProcess } from "../../utils/child-process.ts";
+import { getExperimentalToolSampling } from "../experimental.ts";
 import {
 	getShellConfig,
 	getShellEnv,
@@ -330,6 +331,7 @@ export function createBashToolDefinition(
 			? ["Inspect PI_* environment variables for current model and session details."]
 			: undefined,
 		parameters: bashSchema,
+		constrainedSampling: getExperimentalToolSampling(),
 		async execute(
 			_toolCallId,
 			{ command, timeout }: { command: string; timeout?: number },

@@ -5,6 +5,18 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.8.8 — Tema saat mulai, unduhan tool yang lebih senyap, dan Pi 0.84.2
+
+- Flag CLI baru `--use-theme <name>` mengatur tema interaktif awal untuk satu sesi, dan controller tema fullscreen kini menerapkan tema tingkat-invokasi sebelum pengaturan dimuat. TUI mendapat penyorot pencarian transkrip langsung (bisa diatur temanya lewat warna opsional baru `searchMatchBg`/`searchMatchText` yang kembali ke `selectedBg`/`text`).
+- `/settings` kini memiliki opsi **Fullscreen exit output**: saat keluar dari mode fullscreen bisa mencetak transkrip seperti sebelumnya atau hanya petunjuk resume sesi (`fullscreenExitOutput`, default `"transcript"`).
+- Pengaturan baru `defaultTools` mengisi pemilihan tool bawaan awal (`read`, `bash`, `edit`, `write`) untuk `createAgentSession`, sehingga SDK mulai hanya dengan tool yang Anda inginkan.
+- Unduhan tool terkelola (`fd`/`rg`) dipindah dari jalur startup: TUI terpasang dan tetap responsif selama pemasangan, serta progress/pun mengalir sebagai baris status chat, bukan output konsol mentah.
+- Output tool yang besar kini menampilkan pratinjau 10 baris pertama dengan petunjuk expand `... (N more lines)` inline alih-alih membuang seluruh blok.
+- Penyegaran katalog model dibagi: penyegaran interaktif yang bersamaan memakai satu refresh dalam perjalanan sambil menjaga pembatalan tiap pemanggil tetap independen, serta dibatasi timeout singkat.
+- Sampling tool strict eksperimental diaktifkan di bawah `PI_EXPERIMENTAL=1` (`json_schema` / `strict: "prefer"`) untuk tool bawaan read/edit/write/bash.
+- `sendUserMessage` kini punya opsi `expandPromptTemplates` untuk mengirim perintah ekstensi, skill, dan template prompt dari ekstensi.
+- Fondasi coding-agent dan dependensi runtime Pi yang tepat diperbarui ke 0.84.2.
+
 ## 0.8.7 — Prompt model lebih ramping dan Pi Subagents 0.50
 
 - Permukaan tool yang dibaca model kini lebih kecil di setiap permintaan: deskripsi per-field pada skema dipangkas di wire secara default (`pruneToolDescriptions`, bisa dimatikan lewat pengaturan), deskripsi tool subagent memakai varian compact (~3 KB lebih kecil per giliran model), dan blok dokumen Pi di system prompt menyusut menjadi dua baris.

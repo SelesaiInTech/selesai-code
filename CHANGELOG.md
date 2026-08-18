@@ -2,7 +2,21 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
-## [Unreleased]
+## [0.8.8] - 2026-08-18
+
+### Added
+- **`--use-theme <name>` CLI flag.** Sets the initial interactive theme for a run; the fullscreen theme controller applies an invocation-level theme before settings load, so the flag wins until you change the theme in `/settings`.
+- **Transcript search highlighting.** The fullscreen TUI now highlights search matches live in the transcript, themeable via new optional `searchMatchBg`/`searchMatchText` colors (falling back to `selectedBg`/`text`).
+- **Fullscreen exit output option.** `/settings` gained a **Fullscreen exit output** entry: exiting fullscreen can print the transcript as before (`"transcript"`) or only a session resume hint (`"resume-hint"`) via the new `fullscreenExitOutput` setting.
+- **`defaultTools` setting.** Seeds the initial built-in tool selection for `createAgentSession`; when set, new sessions start with only the listed tools instead of the `read`/`bash`/`edit`/`write` default.
+- **`sendUserMessage` template expansion.** Extensions can pass `expandPromptTemplates: true` to dispatch extension commands and expand skill commands/prompt templates from a sent user message.
+- **Experimental strict tool sampling.** Under `PI_EXPERIMENTAL=1`, the built-in read/edit/write/bash tools request `json_schema` tool output with `strict: "prefer"`.
+
+### Changed
+- **Managed-tool downloads moved off the startup path.** The TUI mounts and stays responsive while `fd`/`rg` install; download progress and warnings are reported as chat status lines (with an `app.tools.expand` hint) instead of raw `console.log` output, and the interactive startup accepts input (with interrupt/exit/submit feedback) while it completes.
+- **Collapsed large tool output.** Tool components now preview only the first 10 lines with an inline `... (N more lines)` expand hint instead of dumping the whole block.
+- **Shared model-catalog refreshes.** Concurrent interactive all-catalog refreshes reuse one in-flight refresh while keeping each caller's cancellation independent, and refreshes are bounded by a short timeout.
+- **Runtime dependencies updated to Pi 0.84.2.** `@earendil-works/pi-ai`, `@earendil-works/pi-tui`, and `@earendil-works/pi-agent-core` moved to 0.84.2; `openAIResponses` model config gained an optional `supportsAdditionalTools` flag; `exportToHtml` accepts a `themeName` option.
 
 ## [0.8.7] - 2026-08-17
 

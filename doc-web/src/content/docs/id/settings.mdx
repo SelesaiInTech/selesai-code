@@ -15,15 +15,22 @@ Halaman ini mencakup pengaturan yang paling sering disentuh orang. Referensi len
 | `defaultProvider` | string | — | Provider default, mis. `"anthropic"` atau `"openai"`. |
 | `defaultModel` | string | — | ID model default untuk sesi baru. |
 | `defaultThinkingLevel` | string | — | Seberapa banyak agent berpikir sebelum menjawab: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, atau `"xhigh"`. |
-| `enabledModels` | string[] | — | Pola model untuk perpindahan Ctrl+P, mis. `["claude-*", "gpt-4o"]`. |
+| `enabledModels` | string[] | — | Pola model untuk perpindahan Ctrl+P, mis. `["claude-*"]`. |
+
+## Tool
+
+| Pengaturan | Tipe | Default | Fungsinya |
+| --- | --- | --- | --- |
+| `defaultTools` | string[] | — | Pemilihan tool bawaan awal untuk sesi baru. Saat disetel, sesi baru hanya mengaktifkan tool ini (berguna bersama SDK); saat dihilangkan, `read`, `bash`, `edit`, `write` default dipakai. |
 
 ## Tampilan
 
 | Pengaturan | Tipe | Default | Fungsinya |
 | --- | --- | --- | --- |
-| `theme` | string | `"dark"` | `"dark"`, `"light"`, atau nama tema kustom. |
+| `theme` | string | `"dark"` | `"dark"`, `"light"`, atau nama tema kustom. Anda juga bisa mengatur tema awal untuk satu sesi dengan `--use-theme <nama>`. |
 | `quietStartup` | boolean | `false` | Sembunyikan header startup agar peluncuran lebih tenang. |
 | `tuiMode` | string | `"fullscreen"` | `"fullscreen"` (tata letak dock default) atau `"regular"` (tata letak Pi klasik). |
+| `fullscreenExitOutput` | string | `"transcript"` | Yang terjadi saat keluar dari fullscreen: mencetak transkrip (`"transcript"`) atau hanya petunjuk resume sesi (`"resume-hint"`). |
 | `powerline` | string | `"default"` | Preset status bar untuk footer powerline: `"default"`, `"minimal"`, `"compact"`, `"full"`, `"nerd"`, atau `"ascii"`. |
 
 ## Konteks
@@ -71,6 +78,8 @@ Untuk mengembalikan pengaturan global ke default pabrik bawaan, jalankan `/setti
   "theme": "dark",
   "quietStartup": false,
   "tuiMode": "fullscreen",
+  "fullscreenExitOutput": "transcript",
+  "defaultTools": ["read", "bash", "edit", "write"],
   "powerline": "minimal",
   "compaction": {
     "enabled": true,

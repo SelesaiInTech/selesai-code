@@ -15,15 +15,22 @@ This page covers the settings most people actually touch. The exhaustive referen
 | `defaultProvider` | string | — | Default provider, e.g. `"anthropic"` or `"openai"`. |
 | `defaultModel` | string | — | Default model ID used for new sessions. |
 | `defaultThinkingLevel` | string | — | How much the agent thinks before answering: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, or `"xhigh"`. |
-| `enabledModels` | string[] | — | Model patterns for Ctrl+P cycling, e.g. `["claude-*", "gpt-4o"]`. |
+| `enabledModels` | string[] | — | Model patterns for Ctrl+P cycling, e.g. `["claude-*"]`. |
+
+## Tools
+
+| Setting | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `defaultTools` | string[] | — | Initial built-in tool selection for new sessions. When set, new sessions start with only these tools enabled (useful alongside the SDK); when omitted, the default `read`, `bash`, `edit`, `write` are used. |
 
 ## Appearance
 
 | Setting | Type | Default | What it does |
 | --- | --- | --- | --- |
-| `theme` | string | `"dark"` | `"dark"`, `"light"`, or a custom theme name. |
+| `theme` | string | `"dark"` | `"dark"`, `"light"`, or a custom theme name. You can also set an initial theme for a single run with `--use-theme <name>`. |
 | `quietStartup` | boolean | `false` | Hide the startup header for a calmer launch. |
 | `tuiMode` | string | `"fullscreen"` | `"fullscreen"` (default dock layout) or `"regular"` (classic Pi layout). |
+| `fullscreenExitOutput` | string | `"transcript"` | What happens on exit from fullscreen: print the transcript (`"transcript"`) or only a session resume hint (`"resume-hint"`). |
 | `powerline` | string | `"default"` | Status-bar preset for the powerline footer: `"default"`, `"minimal"`, `"compact"`, `"full"`, `"nerd"`, or `"ascii"`. |
 
 ## Context
@@ -71,6 +78,8 @@ To restore your global settings to the bundled factory defaults, run `/settings-
   "theme": "dark",
   "quietStartup": false,
   "tuiMode": "fullscreen",
+  "fullscreenExitOutput": "transcript",
+  "defaultTools": ["read", "bash", "edit", "write"],
   "powerline": "minimal",
   "compaction": {
     "enabled": true,

@@ -42,6 +42,7 @@ export interface Args {
 	promptTemplates?: string[];
 	noPromptTemplates?: boolean;
 	themes?: string[];
+	useTheme?: string;
 	noThemes?: boolean;
 	noContextFiles?: boolean;
 	listModels?: string | true;
@@ -166,6 +167,14 @@ export function parseArgs(args: string[]): Args {
 			result.noSkills = true;
 		} else if (arg === "--no-prompt-templates" || arg === "-np") {
 			result.noPromptTemplates = true;
+		} else if (arg === "--use-theme") {
+			const themeName = args[i + 1];
+			if (themeName === undefined || themeName.startsWith("-")) {
+				result.diagnostics.push({ type: "error", message: "--use-theme requires a theme name" });
+			} else {
+				result.useTheme = themeName;
+				i++;
+			}
 		} else if (arg === "--no-themes") {
 			result.noThemes = true;
 		} else if (arg === "--no-context-files" || arg === "-nc") {
@@ -283,6 +292,7 @@ ${chalk.bold("Options:")}
   --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)
   --no-prompt-templates, -np     Disable prompt template discovery and loading
   --theme <path>                 Load a theme file or directory (can be used multiple times)
+  --use-theme <name[/name]>      Set the initial interactive theme for this run
   --no-themes                    Disable theme discovery and loading
   --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
   --export <file>                Export session file to HTML and exit

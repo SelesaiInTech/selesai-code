@@ -5,6 +5,18 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.8.8 — Theme-on-startup, quieter managed-tool downloads, and Pi 0.84.2
+
+- New `--use-theme <name>` CLI flag sets the initial interactive theme for a run, and the fullscreen theme controller now applies an invocation-level theme before settings load. The TUI took on a live transcript search highlighter (themeable via new optional `searchMatchBg`/`searchMatchText` colors that fall back to `selectedBg`/`text`).
+- `/settings` gained a **Fullscreen exit output** option: exiting fullscreen can print the transcript as before or only a session resume hint (`fullscreenExitOutput`, default `"transcript"`).
+- New `defaultTools` setting seeds the initial built-in tool selection (`read`, `bash`, `edit`, `write`) for `createAgentSession`, so the SDK start with only the tools you want.
+- Managed-tool downloads (`fd`/`rg`) moved off the startup path: the TUI mounts and stays responsive while they install, and progress/warnings are reported as chat status lines instead of raw console output.
+- Large tool output now previews the first 10 lines with an inline `... (N more lines)` expand hint instead of dumping the whole block.
+- Model-catalog refreshes are shared: concurrent interactive refreshes reuse one in-flight refresh while keeping each caller's cancellation independent, and refreshes are bounded by a short timeout.
+- Experimental strict tool sampling enabled under `PI_EXPERIMENTAL=1` (`json_schema` / `strict: "prefer"`) for the built-in read/edit/write/bash tools.
+- `sendUserMessage` gained an `expandPromptTemplates` option for dispatching extension commands, skills, and prompt templates from extensions.
+- Updated the coding-agent foundation and exact Pi runtime dependencies to 0.84.2.
+
 ## 0.8.7 — Smaller model-facing prompts and Pi Subagents 0.50
 
 - Model-facing tool surface is smaller on every request: per-field schema descriptions are pruned on the wire by default (`pruneToolDescriptions`, opt out in settings), the subagent tool description defaults to a compact variant (~3 KB smaller per model turn), and the always-on Pi-docs block in the system prompt is down to two lines.
