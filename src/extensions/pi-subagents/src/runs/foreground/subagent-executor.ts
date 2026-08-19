@@ -5123,23 +5123,34 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const autoRelaunchCap = resolveMaxWorkflowAutoRelaunches(deps.config.maxWorkflowAutoRelaunches);
 						let relaunched = 0;
 						let capReached = false;
+						let stallReason: "fanout-limited" | "usage-budget" | "no-progress" | undefined;
 						let workflow: Awaited<ReturnType<typeof runWorkflowScript>> | undefined;
+						let roundProgress = { launched: 0, fanoutRejected: 0, usageBudgetBlocked: 0, stateWrites: 0 };
 						while (true) {
 							if (relaunched > 0) {
 								workflowFanoutBudget = createRunFanoutBudget(`${workflowRunId}#${relaunched + 1}`, workflowFanoutBudget.limit);
-								status = { ...status, workflow: { trace: [], emits: [], console: [] } };
+								workflowSteps.clear();
+								projectedTraceLength = 0;
+								projectedTraceTail = undefined;
+								status = { ...status, steps: [], currentStep: undefined, workflow: { trace: [], emits: [], console: [] } };
 							}
+							roundProgress = { launched: 0, fanoutRejected: 0, usageBudgetBlocked: 0, stateWrites: 0 };
 							workflow = await runWorkflowScript({
 								script: workflowScript,
 							timeoutMs: timeout,
 							signal: controller.signal,
 							prompts: workflowPrompts,
-							...(workflowState ? { state: workflowState } : {}),
+							...(workflowState ? { state: { get: (key: string) => workflowState.get(key), set: (key: string, value: unknown) => { roundProgress.stateWrites += 1; workflowState.set(key, value); } } } : {}),
 							onTrace: updateTrace,
 							admit: (calls) => {
 								const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, claimedOutputPaths, entries: calls });
 								if (outputClaims.error) throw new Error(outputClaims.error);
-								status.runFanoutBudget = claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
+								try {
+									status.runFanoutBudget = claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
+								} catch (error) {
+									if (error instanceof RunFanoutLimitError) roundProgress.fanoutRejected += calls.length;
+									throw error;
+								}
 								if (outputClaims.claims) applyWorkflowChildOutputClaims(claimedOutputPaths, outputClaims.claims);
 								persist();
 							},
@@ -5152,7 +5163,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							launch: async (key, childParams, workflowSignal, admission) => {
 								if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 								const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
-								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
+								if (budgetState?.exhausted) {
+									roundProgress.usageBudgetBlocked += 1;
+									return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
+								}
+								roundProgress.launched += 1;
 								const childPhase = typeof childParams.phase === "string" && childParams.phase.trim() ? childParams.phase.trim() : undefined;
 								const childLabel = typeof childParams.label === "string" && childParams.label.trim() ? childParams.label.trim() : undefined;
 								recordMissionWorkflowChild(missionBinding, workflowRunId, key, {
@@ -5231,9 +5246,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							},
 							status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession)),
 						});
-							const decision = resolveAutoRelaunchDecision(workflow?.value, relaunched, autoRelaunchCap);
+							const decision = resolveAutoRelaunchDecision(workflow?.value, relaunched, autoRelaunchCap, roundProgress);
 							if (!decision.relaunch) {
 								capReached = decision.capped;
+								stallReason = decision.stallReason;
 								break;
 							}
 							relaunched += 1;
@@ -5247,8 +5263,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const relaunchNote = relaunched > 0 ? `Auto-relaunched ${relaunched} time(s) with a fresh fan-out budget. ` : "";
 						const summary = `${relaunchNote}Workflow completed with ${workflow.children.length} child run(s). Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).`;
 						const workflowUsage = sumResultsUsage(workflowResults);
-						if (capReached) {
-							const relaunchCapError = `Workflow auto-relaunch cap reached after ${relaunched} relaunch(es); the goal is not clean yet. The progress file is current; raise config.maxWorkflowAutoRelaunches or relaunch manually.`;
+						if (capReached || stallReason) {
+							const relaunchCapError = stallReason === "usage-budget"
+								? "Workflow auto-relaunch stopped because the usage budget is exhausted; a fresh fan-out budget cannot make another child run."
+								: stallReason === "fanout-limited"
+									? `Workflow auto-relaunch stopped because the fan-out budget rejected ${roundProgress.fanoutRejected} child launch(es) and the fresh budget has the same limit.`
+									: stallReason === "no-progress"
+										? "Workflow auto-relaunch stopped because the budget result made no progress: no child launched and no workflow state changed."
+										: `Workflow auto-relaunch cap reached after ${relaunched} relaunch(es); the goal is not clean yet. The progress file is current; raise config.maxWorkflowAutoRelaunches or relaunch manually.`;
 							status = compactOptional<AsyncStatus>({ ...status, state: "failed", error: relaunchCapError, endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console } });
 							const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, relaunchCapError);
 							const resultSummary = appendWorkflowOutputWarning(relaunchCapError, outputWarning);

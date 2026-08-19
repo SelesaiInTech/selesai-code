@@ -9,7 +9,7 @@
     "keepRecentTokens": 32000,
     "reserveTokens": 64000
   },
-  "defaultModel": "deepseek-v4-flash",
+  "defaultModel": "auto-premium",
   "defaultProvider": "tokenin",
   "defaultThinkingLevel": "max",
   "doubleEscapeAction": "tree",
@@ -42,22 +42,22 @@
   "subagents": {
     "agentOverrides": {
       "architect": {
-        "model": "tokenin/deepseek-v4-pro:max"
+        "model": "tokenin/auto-premium:max"
       },
       "builder": {
-        "model": "tokenin/deepseek-v4-flash:max"
+        "model": "tokenin/auto-premium:max"
       },
       "commentator": {
-        "model": "tokenin/deepseek-v4-flash:max"
+        "model": "tokenin/auto-premium:max"
       },
       "explorer": {
-        "model": "tokenin/deepseek-v4-flash:max"
+        "model": "tokenin/auto:max"
       },
       "recapper": {
-        "model": "tokenin/deepseek-v4-flash:max"
+        "model": "tokenin/auto:max"
       },
       "researcher": {
-        "model": "tokenin/deepseek-v4-flash:max"
+        "model": "tokenin/auto:max"
       }
     }
   },

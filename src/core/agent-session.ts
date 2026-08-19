@@ -1582,33 +1582,46 @@ export class AgentSession {
 		try {
 			const descriptions: string[] = [];
 			let failureReason: string | undefined;
+			// Retry transient failures (timeouts, provider errors) a few times;
+			// each attempt gets a fresh 60s budget.
+			const maxAttempts = 4;
+			// Prime-number backoff between attempts: 3s, 5s, 7s, 11s, ...
+			const backoffSeconds = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31];
 			for (const image of images) {
-				const controller = new AbortController();
-				let aborted = false;
-				const timeout = setTimeout(() => {
-					aborted = true;
-					controller.abort();
-				}, 15_000);
-				try {
-					const caption = await captionImageWithModel(captionModel, image, {
-						apiKey: auth.auth.apiKey,
-						headers: auth.auth.headers,
-						signal: controller.signal,
-						userPrompt,
-						contextText,
-						onError: (message) => {
-							failureReason = message;
-							console.error("[image-caption] request failed:", message);
-						},
-					});
-					if (caption) descriptions.push(caption);
-				} catch {
-					// Captioning is best-effort; fall back to leaving the image attached.
-				} finally {
-					clearTimeout(timeout);
-				}
-				if (aborted) {
-					failureReason = failureReason ?? "timed out after 15s";
+				for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+					const controller = new AbortController();
+					let aborted = false;
+					const timeout = setTimeout(() => {
+						aborted = true;
+						controller.abort();
+					}, 60_000);
+					try {
+						const caption = await captionImageWithModel(captionModel, image, {
+							apiKey: auth.auth.apiKey,
+							headers: auth.auth.headers,
+							signal: controller.signal,
+							userPrompt,
+							contextText,
+							onError: (message) => {
+								failureReason = message;
+								console.error(`[image-caption] request failed (attempt ${attempt}/${maxAttempts}):`, message);
+							},
+						});
+						if (caption) {
+							descriptions.push(caption);
+							break;
+						}
+					} catch {
+						// Captioning is best-effort; fall back to leaving the image attached.
+					} finally {
+						clearTimeout(timeout);
+					}
+					if (aborted) {
+						failureReason = failureReason ?? "timed out after 60s";
+					}
+					if (attempt < maxAttempts) {
+						await sleep(backoffSeconds[attempt - 1] * 1_000);
+					}
 				}
 			}
 			if (descriptions.length === 0) {

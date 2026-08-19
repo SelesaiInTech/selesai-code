@@ -29,8 +29,28 @@ describe("workflow auto-relaunch policy", () => {
 		assert.deepEqual(decision, { relaunch: false, capped: true });
 	});
 
-	it("relaunches indefinitely when the cap is unlimited", () => {
+	it("relaunches indefinitely when the cap is unlimited and progress is omitted", () => {
 		const decision = resolveAutoRelaunchDecision({ result: "budget" }, 50, undefined);
+		assert.deepEqual(decision, { relaunch: true, capped: false });
+	});
+
+	it("stops when usage budget blocks the whole round", () => {
+		const decision = resolveAutoRelaunchDecision({ result: "budget" }, 0, undefined, { launched: 0, fanoutRejected: 0, usageBudgetBlocked: 1, stateWrites: 0 });
+		assert.deepEqual(decision, { relaunch: false, capped: false, stallReason: "usage-budget" });
+	});
+
+	it("stops when fanout rejects every launch", () => {
+		const decision = resolveAutoRelaunchDecision({ result: "budget" }, 1, undefined, { launched: 0, fanoutRejected: 3, usageBudgetBlocked: 0, stateWrites: 0 });
+		assert.deepEqual(decision, { relaunch: false, capped: false, stallReason: "fanout-limited" });
+	});
+
+	it("stops when a budget round makes no progress", () => {
+		const decision = resolveAutoRelaunchDecision({ result: "budget" }, 0, 12, { launched: 0, fanoutRejected: 0, usageBudgetBlocked: 0, stateWrites: 0 });
+		assert.deepEqual(decision, { relaunch: false, capped: false, stallReason: "no-progress" });
+	});
+
+	it("allows a retry when children actually launch", () => {
+		const decision = resolveAutoRelaunchDecision({ result: "budget" }, 1, 12, { launched: 3, fanoutRejected: 0, usageBudgetBlocked: 0, stateWrites: 0 });
 		assert.deepEqual(decision, { relaunch: true, capped: false });
 	});
 
