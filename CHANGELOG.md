@@ -2,6 +2,13 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.8.12] - 2026-08-20
+
+### Added
+- **Token-In `auto-premium` model default.** The Token-In provider now bundles an `auto-premium`
+  model alongside `auto` (reasoning, 512K context window, 64K max tokens, `max` thinking level
+  mapped through), letting the provider pick the best premium model for each request.
+
 ## [0.8.11] - 2026-08-19
 
 ### Added

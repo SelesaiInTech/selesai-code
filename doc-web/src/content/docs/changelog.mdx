@@ -5,6 +5,13 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.8.12 — Token-In `auto-premium` model default
+
+- The Token-In provider now bundles an **`auto-premium`** model alongside `auto`. Like `auto`, it is
+  a reasoning model with a 512K context window and 64K max tokens, passing every thinking budget
+  through (`minimal`–`xhigh` map to the provider default, `max` maps to `"max"`), so the provider
+  picks the best premium model for each request.
+
 ## 0.8.11 — Vision for text-only models, Gemma default, and context-aware captions
 
 - **Image captioning relay** lets a text-only main model (e.g. DeepSeek `deepseek-v4-*` / `auto`)

@@ -24,11 +24,22 @@
             "high": null,
             "xhigh": null,
             "max": "max"
-          },
-          "compat": {
-            "supportsDeveloperRole": false,
-            "requiresReasoningContentOnAssistantMessages": true,
-            "thinkingFormat": "deepseek"
+          }
+        },
+        {
+          "id": "auto-premium",
+          "name": "Auto Premium",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 512000,
+          "maxTokens": 64000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": null,
+            "xhigh": null,
+            "max": "max"
           }
         },
         {
