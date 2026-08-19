@@ -4,12 +4,22 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-19
+
+### Highlights
+- Messages can no longer land on a stale peer: if the target session restarted or was replaced, the send fails clearly or retries against the live session instead of silently reaching the wrong endpoint.
+- Retrying a send with the same message ID is now safe. Identical retries never deliver twice, and reusing an ID with different content is rejected.
+- Send results now include structured delivery details (state, error code, whether a retry is safe), so failures are actionable instead of guesswork.
+- The session list now shows each peer's tmux pane ID, making it easier to find and drive the right terminal.
+- Delivered blocking asks leave a local pending-ask record, so you can see what a peer is still waiting on.
+
 ### Added
-- Added endpoint-bound direct delivery with safe rebound retry and bounded same-message replay protection. Thanks to [@xiangbianpangde](https://github.com/xiangbianpangde) for #106.
-- Added local pending-ask observability records for delivered blocking asks. Thanks to [@bcanvural](https://github.com/bcanvural) for issue #104.
-- Added tmux pane IDs to the roster. Thanks to [@odfalik](https://github.com/odfalik) for issue #102 and PR #101.
+- Endpoint-bound direct delivery: sends target the exact live session and safely retry once when the target reconnects mid-send, with bounded replay protection for repeated message IDs. Thanks to [@xiangbianpangde](https://github.com/xiangbianpangde) for #106.
+- Local pending-ask records for delivered blocking asks. Thanks to [@bcanvural](https://github.com/bcanvural) for issue #104.
+- tmux pane IDs in the session roster. Thanks to [@odfalik](https://github.com/odfalik) for issue #102 and PR #101.
 
 ### Changed
+- Reusing a message ID with different content now fails with a clear error instead of relying on receiver-side duplicate suppression.
 - Clarified that agents should re-list stale intercom session IDs and skip self-targets.
 
 ## [0.10.1] - 2026-08-12
