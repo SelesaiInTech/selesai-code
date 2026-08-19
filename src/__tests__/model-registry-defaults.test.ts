@@ -26,6 +26,11 @@ describe("model registry bundled defaults", () => {
 		expect(model?.name).toBe("GLM-5.2");
 		expect(model?.baseUrl).toBe("https://lite.andlet.me/v1");
 		expect(registry.hasConfiguredAuth(model!)).toBe(false);
+
+		// Gemma is a vision-capable default usable as an image captioner.
+		const gemma = registry.find("tokenin", "gemma-4");
+		expect(gemma?.name).toBe("Gemma 4 31B (Vision)");
+		expect(gemma?.input).toContain("image");
 	});
 
 	it("keeps bundled model list when user models.json only stores apiKey", async () => {

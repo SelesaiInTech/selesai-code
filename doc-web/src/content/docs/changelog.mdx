@@ -5,6 +5,25 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.8.11 — Vision for text-only models, Gemma default, and context-aware captions
+
+- **Image captioning relay** lets a text-only main model (e.g. DeepSeek `deepseek-v4-*` / `auto`)
+  work with images: when a vision model is configured via `images.imageCaptionModel`, pasted images
+  and image files read through the `read` tool are described by that vision model and the caption
+  text reaches the main model in place of the raw image. Pick the vision model and its context
+  budget in `/settings` ("Vision caption model" / "Vision context tokens").
+- **Gemma 4 31B (Vision)** (`tokenin/gemma-4`, `input: ["text", "image"]`) is now a bundled default
+  on the Token-In provider — usable as a captioner or as a main model.
+- **Context-aware captions**: the caption request includes the user's current prompt plus a bounded
+  recent user/assistant conversation slice (whole messages, no tool output), capped by
+  `images.imageCaptionContextTokens` (default 16384). Full history is never sent, keeping the
+  caption model's context window safe.
+- **Captioning status spinner** in the TUI while an image is being described (per-image 15s timeout;
+  a notice is shown only if every caption fails), so captioning no longer looks stuck.
+- **Skill enablement overrides** are now applied to built-in and additional skill resources, and the
+  resource loader exposes `getResolvedSkills()`.
+- The **model-prompt-injector** Token-In rule now matches `deepseek-v4-*`.
+
 ## 0.8.10 — Higher agent retry budget and clearer powerline cache stats
 
 - The bundled settings now allow **10 automatic agent-level retries** (`retry.maxRetries`) on transient provider errors instead of 7, so brief provider hiccups are less likely to surface before a recovery succeeds.

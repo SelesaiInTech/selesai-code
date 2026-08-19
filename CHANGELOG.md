@@ -2,6 +2,35 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.8.11] - 2026-08-19
+
+### Added
+- **Image captioning relay for text-only models.** When the active model cannot accept images
+  (e.g. DeepSeek `deepseek-v4-*` / `auto`) and a vision model is configured
+  (`images.imageCaptionModel`), images pasted into chat or read via the `read` tool are described
+  by the vision model (e.g. Gemma/Kimi) and the caption text is used by the main model in place of
+  the raw image. Configure the vision model and its context budget from `/settings` ("Vision caption
+  model" / "Vision context tokens").
+- **Gemma 4 31B (Vision) as a bundled default** on the Token-In provider (`tokenin/gemma-4`,
+  `input: ["text", "image"]`) — usable both as a captioner and as a main model.
+- **Context-aware captioning.** The caption request now includes the user's current prompt and a
+  bounded slice of the most recent user/assistant conversation (whole messages, tool output
+  excluded), capped by `images.imageCaptionContextTokens` (default 16384). Full history is never
+  sent, so the caption model's smaller context window is never overloaded.
+- **Captioning status indicator.** While an image is being described, the TUI shows a "Reading image
+  with vision model..." spinner (with a per-image 15s timeout and a brief notice on total failure),
+  so captioning no longer looks like a frozen screen.
+- **Skill enablement overrides** are now honored for built-in and additional skill resources
+  (package-manager/resource-loader), and `getResolvedSkills()` is exposed on the resource loader.
+
+### Changed
+- **Model-prompt-injector** rule for the Token-In provider now matches `deepseek-v4-*` (was
+  `deepseek-v4-pro`).
+
+### Added (context)
+- `images.imageCaptionContextTokens` sets the max recent-conversation token budget sent to the
+  caption model (`0` disables context).
+
 ## [0.8.10] - 2026-08-18
 
 ### Changed

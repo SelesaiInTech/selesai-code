@@ -50,6 +50,14 @@ const DEFAULT_PROJECT_TRUST_BY_LABEL = new Map(
 	Object.entries(DEFAULT_PROJECT_TRUST_LABELS).map(([value, label]) => [label, value as DefaultProjectTrust]),
 );
 
+export interface SkillToggleItem {
+	name: string;
+	enabled: boolean;
+	pattern: string;
+	scope: "user" | "project";
+	id: string;
+}
+
 export interface SettingsConfig {
 	autoCompact: boolean;
 	autoHandoffEnabled: boolean;
@@ -58,6 +66,9 @@ export interface SettingsConfig {
 	imageWidthCells: number;
 	autoResizeImages: boolean;
 	blockImages: boolean;
+	imageCaptionModel: string | undefined;
+	imageCaptionContextTokens: number;
+	visionModels: string[];
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
 	transport: Transport;
@@ -85,6 +96,7 @@ export interface SettingsConfig {
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
 	warnings: WarningSettings;
+	skills: SkillToggleItem[];
 }
 
 export interface SettingsCallbacks {
@@ -95,6 +107,8 @@ export interface SettingsCallbacks {
 	onImageWidthCellsChange: (width: number) => void;
 	onAutoResizeImagesChange: (enabled: boolean) => void;
 	onBlockImagesChange: (blocked: boolean) => void;
+	onImageCaptionModelChange: (modelId: string | undefined) => void;
+	onImageCaptionContextTokensChange: (tokens: number) => void;
 	onSteeringModeChange: (mode: "all" | "one-at-a-time") => void;
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
 	onTransportChange: (transport: Transport) => void;
@@ -120,7 +134,66 @@ export interface SettingsCallbacks {
 	onFullscreenExitOutputChange: (output: FullscreenExitOutput) => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
+	onSkillsToggle: (item: SkillToggleItem, enabled: boolean) => void;
+	onSkillsReload: () => void;
 	onCancel: () => void;
+}
+
+class SkillsSubmenu extends Container {
+	private settingsList: SettingsList;
+
+	constructor(
+		skills: SkillToggleItem[],
+		onToggle: (item: SkillToggleItem, enabled: boolean) => void,
+		onCancel: () => void,
+	) {
+		super();
+
+		const initial = skills.map((s) => ({ ...s }));
+		const nameCounts = new Map<string, number>();
+		for (const skill of initial) {
+			nameCounts.set(skill.name, (nameCounts.get(skill.name) ?? 0) + 1);
+		}
+
+		const items: SettingItem[] = initial.map((skill) => ({
+			id: skill.id,
+			label: (nameCounts.get(skill.name) ?? 0) > 1 ? `${skill.name} (${skill.pattern})` : skill.name,
+			description: `Scope: ${skill.scope}${(nameCounts.get(skill.name) ?? 0) > 1 ? ` — ${skill.pattern}` : ""}`,
+			currentValue: skill.enabled ? "true" : "false",
+			values: ["true", "false"],
+		}));
+
+		if (items.length === 0) {
+			items.push({
+				id: "no-skills",
+				label: "No skills discovered",
+				currentValue: "",
+			});
+		}
+
+		this.settingsList = new SettingsList(
+			items,
+			Math.min(items.length, 10),
+			getSettingsListTheme(),
+			(id, newValue) => {
+				const skill = initial.find((s) => s.id === id);
+				if (skill) {
+					const enabled = newValue === "true";
+					skill.enabled = enabled;
+					const source = skills.find((s) => s.id === id);
+					if (source) source.enabled = enabled;
+					onToggle(skill, enabled);
+				}
+			},
+			onCancel,
+		);
+
+		this.addChild(this.settingsList);
+	}
+
+	handleInput(data: string): void {
+		this.settingsList.handleInput(data);
+	}
 }
 
 /**
@@ -487,6 +560,7 @@ export class SettingsSelectorComponent extends Container {
 		const supportsImages = getCapabilities().images;
 		const followUpKey = keyDisplayText("app.message.followUp");
 		let currentWarnings = { ...config.warnings };
+		let skillsChanged = false;
 
 		const items: SettingItem[] = [
 			{
@@ -597,6 +671,21 @@ export class SettingsSelectorComponent extends Container {
 				values: ["default", "no-tools", "user-only", "labeled-only", "all"],
 			},
 			{
+				id: "skills",
+				label: "Skills",
+				description: "Choose which skills are loaded (opt-in). Skills apply and reload when you close this menu.",
+				currentValue: `${config.skills.filter((s) => s.enabled).length}/${config.skills.length} enabled`,
+				submenu: (_currentValue, done) =>
+					new SkillsSubmenu(
+						config.skills,
+						(item, enabled) => {
+							callbacks.onSkillsToggle(item, enabled);
+							skillsChanged = true;
+						},
+						() => done(),
+					),
+			},
+			{
 				id: "warnings",
 				label: "Warnings",
 				description: "Enable or disable individual warnings",
@@ -702,9 +791,32 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
-		// Hardware cursor toggle (insert after block-images)
+		// Vision caption model picker (image -> text relay for text-only main models).
+		// Values are the available vision-capable models plus "off" for none.
+		const visionModelValues = ["off", ...config.visionModels];
+		const currentCaptionModel = config.imageCaptionModel ?? "off";
 		const blockImagesIndex = items.findIndex((item) => item.id === "block-images");
 		items.splice(blockImagesIndex + 1, 0, {
+			id: "image-caption-model",
+			label: "Vision caption model",
+			description: "Model used to describe images when the main model can't see them (off disables)",
+			currentValue: currentCaptionModel,
+			values: visionModelValues,
+		});
+
+		// Vision caption context-token budget
+		const captionModelIndex = items.findIndex((item) => item.id === "image-caption-model");
+		items.splice(captionModelIndex + 1, 0, {
+			id: "image-caption-context-tokens",
+			label: "Vision context tokens",
+			description: "Budget (approx) for recent-conversation context sent to the vision model",
+			currentValue: String(config.imageCaptionContextTokens),
+			values: ["0", "4096", "16384", "32768", "65536"],
+		});
+
+		// Hardware cursor toggle (insert after the image-caption settings)
+		const visionSettingsIndex = items.findIndex((item) => item.id === "image-caption-context-tokens");
+		items.splice(visionSettingsIndex + 1, 0, {
 			id: "show-hardware-cursor",
 			label: "Show hardware cursor",
 			description: "Show the terminal cursor while still positioning it for IME support",
@@ -792,6 +904,12 @@ export class SettingsSelectorComponent extends Container {
 					case "block-images":
 						callbacks.onBlockImagesChange(newValue === "true");
 						break;
+					case "image-caption-model":
+						callbacks.onImageCaptionModelChange(newValue === "off" ? undefined : newValue);
+						break;
+					case "image-caption-context-tokens":
+						callbacks.onImageCaptionContextTokensChange(parseInt(newValue, 10) || 0);
+						break;
 					case "steering-mode":
 						callbacks.onSteeringModeChange(newValue as "all" | "one-at-a-time");
 						break;
@@ -870,7 +988,12 @@ export class SettingsSelectorComponent extends Container {
 						break;
 				}
 			},
-			callbacks.onCancel,
+			() => {
+				if (skillsChanged) {
+					callbacks.onSkillsReload();
+				}
+				callbacks.onCancel();
+			},
 			{ enableSearch: true },
 		);
 

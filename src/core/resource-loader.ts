@@ -8,6 +8,7 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
+import { isEnabledByOverrides } from "./package-manager.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
 	clearExtensionCache,
@@ -42,6 +43,7 @@ export interface ResourceLoader {
 	getExtensions(): LoadExtensionsResult;
 	getExtensionDiagnostics(): ResourceDiagnostic[];
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
+	getResolvedSkills(): ResolvedResource[];
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
 	getAgents(): { agents: AgentPersona[]; diagnostics: ResourceDiagnostic[] };
@@ -249,6 +251,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private extensionDiagnostics: ResourceDiagnostic[];
 	private skills: Skill[];
 	private skillDiagnostics: ResourceDiagnostic[];
+	private resolvedSkills: ResolvedResource[] = [];
 	private agents: AgentPersona[];
 	private agentDiagnostics: ResourceDiagnostic[];
 	private prompts: PromptTemplate[];
@@ -335,6 +338,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
 		return { skills: this.skills, diagnostics: this.skillDiagnostics };
+	}
+
+	getResolvedSkills(): ResolvedResource[] {
+		return this.resolvedSkills;
 	}
 
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] } {
@@ -504,12 +511,17 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.extensionsResult = this.extensionsOverride ? this.extensionsOverride(extensionsResult) : extensionsResult;
 		this.applyExtensionSourceInfo(this.extensionsResult.extensions, metadataByPath);
 
+		const additionalSkills = this.additionalResolvedSkills();
 		const skillPaths = this.noSkills
 			? this.mergePaths(cliEnabledSkills, this.additionalSkillPaths)
-			: this.mergePaths([...cliEnabledSkills, ...enabledSkills], this.additionalSkillPaths);
+			: this.mergePaths(
+					[...cliEnabledSkills, ...enabledSkills],
+					additionalSkills.filter((r) => r.enabled).map((r) => r.path),
+				);
 
 		this.lastSkillPaths = skillPaths;
 		this.updateSkillsFromPaths(skillPaths, metadataByPath);
+		this.resolvedSkills = [...resolvedPaths.skills, ...additionalSkills];
 		for (const p of this.additionalSkillPaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -682,6 +694,42 @@ export class DefaultResourceLoader implements ResourceLoader {
 		for (const conflict of conflicts) {
 			extensionsResult.errors.push({ path: conflict.path, error: conflict.message });
 		}
+	}
+
+	/**
+	 * Enumerate every skill subdirectory in the bundled/CLI additional skill dirs,
+	 * each gated by the user's skill overrides and defaulting to disabled (opt-in).
+	 * Returns resolved resources (SKILL.md paths + enabled state).
+	 */
+	private additionalResolvedSkills(): ResolvedResource[] {
+		const resolved: ResolvedResource[] = [];
+		const patterns = this.settingsManager.getSkillPaths();
+		for (const dir of this.additionalSkillPaths) {
+			if (!isLocalPath(dir) || !existsSync(this.resolveResourcePath(dir))) continue;
+			const resolvedDir = this.resolveResourcePath(dir);
+			let entries: string[] = [];
+			try {
+				entries = readdirSync(resolvedDir, { withFileTypes: true })
+					.filter((e) => e.isDirectory() && !e.name.startsWith("."))
+					.map((e) => join(resolvedDir, e.name, "SKILL.md"))
+					.filter((p) => existsSync(p));
+			} catch {
+				continue;
+			}
+			for (const skillFile of entries) {
+				resolved.push({
+					path: skillFile,
+					enabled: isEnabledByOverrides(skillFile, patterns, resolvedDir, false),
+					metadata: {
+						source: dir,
+						scope: "user",
+						origin: "top-level",
+						baseDir: resolvedDir,
+					},
+				});
+			}
+		}
+		return resolved;
 	}
 
 	private mapSkillPath(resource: ResolvedResource, metadataByPath: Map<string, PathMetadata>): string {

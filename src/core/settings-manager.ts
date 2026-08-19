@@ -47,6 +47,12 @@ export interface TerminalSettings {
 export interface ImageSettings {
 	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
 	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
+	// default: unset. When set to a vision model (e.g. "tokenin/gemma-4"), images read while the
+	// active model cannot accept images are described by that model and the caption text is used instead.
+	imageCaptionModel?: string;
+	// default: 4096. Max token budget for the recent-conversation context sent to the caption model
+	// (the user's current prompt is always included). Keeps the caption request small and safe.
+	imageCaptionContextTokens?: number;
 }
 
 export interface ThinkingBudgetsSettings {
@@ -1200,6 +1206,36 @@ export class SettingsManager {
 
 	getBlockImages(): boolean {
 		return this.settings.images?.blockImages ?? false;
+	}
+
+	getImageCaptionModel(): string | undefined {
+		return this.settings.images?.imageCaptionModel;
+	}
+
+	setImageCaptionModel(modelId: string | undefined): void {
+		if (!this.globalSettings.images) {
+			this.globalSettings.images = {};
+		}
+		if (modelId === undefined || modelId === "off") {
+			delete this.globalSettings.images.imageCaptionModel;
+		} else {
+			this.globalSettings.images.imageCaptionModel = modelId;
+		}
+		this.markModified("images", "imageCaptionModel");
+		this.save();
+	}
+
+	getImageCaptionContextTokens(): number {
+		return this.settings.images?.imageCaptionContextTokens ?? 16384;
+	}
+
+	setImageCaptionContextTokens(tokens: number): void {
+		if (!this.globalSettings.images) {
+			this.globalSettings.images = {};
+		}
+		this.globalSettings.images.imageCaptionContextTokens = tokens;
+		this.markModified("images", "imageCaptionContextTokens");
+		this.save();
 	}
 
 	setBlockImages(blocked: boolean): void {

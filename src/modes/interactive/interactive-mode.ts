@@ -138,12 +138,13 @@ import {
 } from "./components/oauth-selector.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
-import { SettingsSelectorComponent } from "./components/settings-selector.ts";
+import { SettingsSelectorComponent, type SkillToggleItem } from "./components/settings-selector.ts";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.ts";
 import {
 	BranchSummaryStatusIndicator,
 	CompactionStatusIndicator,
 	IdleStatus,
+	ImageCaptioningStatusIndicator,
 	RetryStatusIndicator,
 	type StatusIndicator,
 	WorkingStatusIndicator,
@@ -3355,6 +3356,19 @@ export class InteractiveMode {
 				await this.checkShutdownRequested();
 				break;
 
+			case "image_captioning_start":
+				this.showStatusIndicator(new ImageCaptioningStatusIndicator(this.ui));
+				this.ui.requestRender();
+				break;
+
+			case "image_captioning_end":
+				this.clearStatusIndicator("imageCaptioning");
+				if (!event.ok) {
+					this.showStatus("Image captioning failed; image omitted");
+				}
+				this.ui.requestRender();
+				break;
+
 			case "compaction_start": {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
@@ -4441,6 +4455,9 @@ export class InteractiveMode {
 					imageWidthCells: this.settingsManager.getImageWidthCells(),
 					autoResizeImages: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),
+					imageCaptionModel: this.settingsManager.getImageCaptionModel(),
+					imageCaptionContextTokens: this.settingsManager.getImageCaptionContextTokens(),
+					visionModels: this.getVisionModels(),
 					steeringMode: this.session.steeringMode,
 					followUpMode: this.session.followUpMode,
 					transport: this.settingsManager.getTransport(),
@@ -4468,6 +4485,7 @@ export class InteractiveMode {
 					fullscreenExitOutput: this.settingsManager.getFullscreenExitOutput(),
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
 					warnings: this.settingsManager.getWarnings(),
+					skills: this.buildSkillToggleItems(),
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -4501,6 +4519,14 @@ export class InteractiveMode {
 					},
 					onBlockImagesChange: (blocked) => {
 						this.settingsManager.setBlockImages(blocked);
+					},
+					onImageCaptionModelChange: (modelId) => {
+						this.settingsManager.setImageCaptionModel(modelId);
+						this.showStatus(modelId ? `Vision caption model: ${modelId}` : "Vision captioning disabled");
+					},
+					onImageCaptionContextTokensChange: (tokens) => {
+						this.settingsManager.setImageCaptionContextTokens(tokens);
+						this.showStatus(`Vision caption context: ${tokens} tokens`);
 					},
 					onSteeringModeChange: (mode) => {
 						this.session.setSteeringMode(mode);
@@ -4630,6 +4656,12 @@ export class InteractiveMode {
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
 					},
+					onSkillsToggle: (item, enabled) => {
+						this.toggleSkillSetting(item, enabled);
+					},
+					onSkillsReload: () => {
+						void this.reloadAfterSkillChange();
+					},
 					onCancel: () => {
 						done();
 						this.ui.requestRender();
@@ -4638,6 +4670,77 @@ export class InteractiveMode {
 			);
 			return { component: selector, focus: selector.getSettingsList() };
 		});
+	}
+
+	private getVisionModels(): string[] {
+		try {
+			const models =
+				this.session.scopedModels.length > 0
+					? this.session.scopedModels.map((s) => s.model)
+					: this.session.modelRuntime.getAvailableSnapshot();
+			return models
+				.filter((m) => m.input.includes("image"))
+				.map((m) => `${m.provider}/${m.id}`)
+				.sort();
+		} catch {
+			return [];
+		}
+	}
+
+	private buildSkillToggleItems(): SkillToggleItem[] {
+		const resolvedSkills = this.session.resourceLoader.getResolvedSkills();
+		const agentDir = getAgentDir();
+		const items: SkillToggleItem[] = [];
+		for (const resource of resolvedSkills) {
+			const pathStr = resource.path;
+			const isSkillFile = path.basename(pathStr) === "SKILL.md";
+			const name = isSkillFile ? path.basename(path.dirname(pathStr)) : path.basename(pathStr);
+			const scope = resource.metadata.scope === "project" ? "project" : "user";
+			const baseDir =
+				resource.metadata.baseDir ??
+				(scope === "project" ? path.join(this.sessionManager.getCwd(), CONFIG_DIR_NAME) : agentDir);
+			const pattern = path.relative(baseDir, pathStr) || name;
+			items.push({
+				name,
+				pattern,
+				scope,
+				id: `${scope}:${pattern}`,
+				enabled: resource.enabled,
+			});
+		}
+		items.sort((a, b) => a.name.localeCompare(b.name));
+		return items;
+	}
+
+	private toggleSkillSetting(item: SkillToggleItem, enabled: boolean): void {
+		if (item.scope === "project" && !this.settingsManager.isProjectTrusted()) {
+			this.showError("Project is not trusted; cannot change project skills. Trust the project first.");
+			return;
+		}
+		const settings =
+			item.scope === "project"
+				? this.settingsManager.getProjectSettings()
+				: this.settingsManager.getGlobalSettings();
+		const current = [...((settings.skills ?? []) as string[])];
+		const updated = current.filter((p) => {
+			const stripped = p.startsWith("!") || p.startsWith("+") || p.startsWith("-") ? p.slice(1) : p;
+			return stripped !== item.pattern;
+		});
+		updated.push(enabled ? `+${item.pattern}` : `-${item.pattern}`);
+		if (item.scope === "project") {
+			this.settingsManager.setProjectSkillPaths(updated);
+		} else {
+			this.settingsManager.setSkillPaths(updated);
+		}
+	}
+
+	private async reloadAfterSkillChange(): Promise<void> {
+		try {
+			await this.session.reload();
+			this.ui.requestRender();
+		} catch (error) {
+			this.showError(`Failed to reload after skill change: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	private async handleModelCommand(searchTerm?: string): Promise<void> {

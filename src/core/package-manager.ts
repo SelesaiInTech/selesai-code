@@ -723,13 +723,13 @@ function getOverridePatterns(entries: string[]): string[] {
 	return entries.filter((pattern) => pattern.startsWith("!") || pattern.startsWith("+") || pattern.startsWith("-"));
 }
 
-function isEnabledByOverrides(filePath: string, patterns: string[], baseDir: string): boolean {
+export function isEnabledByOverrides(filePath: string, patterns: string[], baseDir: string, defaultEnabled = true): boolean {
 	const overrides = getOverridePatterns(patterns);
 	const excludes = overrides.filter((pattern) => pattern.startsWith("!")).map((pattern) => pattern.slice(1));
 	const forceIncludes = overrides.filter((pattern) => pattern.startsWith("+")).map((pattern) => pattern.slice(1));
 	const forceExcludes = overrides.filter((pattern) => pattern.startsWith("-")).map((pattern) => pattern.slice(1));
 
-	let enabled = true;
+	let enabled = defaultEnabled;
 	if (excludes.length > 0 && matchesAnyPattern(filePath, excludes, baseDir)) {
 		enabled = false;
 	}
@@ -2390,10 +2390,11 @@ export class DefaultPackageManager implements PackageManager {
 			metadata: PathMetadata,
 			overrides: string[],
 			baseDir: string,
+			defaultEnabled = true,
 		) => {
 			const target = this.getTargetMap(accumulator, resourceType);
 			for (const path of paths) {
-				const enabled = isEnabledByOverrides(path, overrides, baseDir);
+				const enabled = isEnabledByOverrides(path, overrides, baseDir, defaultEnabled);
 				this.addResource(target, path, metadata, enabled);
 			}
 		};
@@ -2415,6 +2416,7 @@ export class DefaultPackageManager implements PackageManager {
 				projectMetadata,
 				projectOverrides.skills,
 				projectBaseDir,
+				false,
 			);
 		}
 
@@ -2431,6 +2433,7 @@ export class DefaultPackageManager implements PackageManager {
 				agentsMetadata,
 				projectOverrides.skills,
 				agentsBaseDir,
+				false,
 			);
 		}
 
@@ -2539,6 +2542,7 @@ export class DefaultPackageManager implements PackageManager {
 			userMetadata,
 			userOverrides.skills,
 			globalBaseDir,
+			false,
 		);
 
 		// User skills from ~/.agents/ (with its own baseDir)
@@ -2553,6 +2557,7 @@ export class DefaultPackageManager implements PackageManager {
 			userAgentsMetadata,
 			userOverrides.skills,
 			userAgentsBaseDir,
+			false,
 		);
 
 		addResources(

@@ -132,6 +132,18 @@
             "supportsDeveloperRole": false,
             "supportsReasoningEffort": true
           }
+        },
+        {
+          "id": "gemma-4",
+          "name": "Gemma 4 31B (Vision)",
+          "reasoning": false,
+          "input": ["text", "image"],
+          "contextWindow": 256000,
+          "maxTokens": 8192,
+          "compat": {
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": false
+          }
         }
       ]
     }

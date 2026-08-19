@@ -12,7 +12,8 @@ import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
 import { getExperimentalToolSampling } from "../experimental.ts";
-import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import type { ExtensionContext, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { captionImageWithModel } from "../vision-caption.ts";
 import { resolveReadPathAsync, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -59,6 +60,12 @@ const defaultReadOperations: ReadOperations = {
 export interface ReadToolOptions {
 	/** Whether to auto-resize images to 2000x2000 max. Default: true */
 	autoResizeImages?: boolean;
+	/**
+	 * Vision model ("provider/modelId") used to describe images when the active
+	 * model cannot accept image input. The caption text is returned in place of
+	 * the image block. Default: unset (images are omitted as before).
+	 */
+	imageCaptionModel?: string;
 	/** Custom operations for file reading. Default: local filesystem */
 	operations?: ReadOperations;
 }
@@ -90,6 +97,39 @@ function getNonVisionImageNote(model: Model<Api> | undefined): string | undefine
 		return undefined;
 	}
 	return "[Current model does not support images. The image will be omitted from this request.]";
+}
+
+/**
+ * Ask a vision model to describe an image. Returns the caption text, or null if
+ * the caption model/credentials are unavailable or the request fails.
+ */
+export async function captionImage(
+	image: ImageContent,
+	captionModelId: string | undefined,
+	ctx: ExtensionContext | undefined,
+	signal: AbortSignal | undefined,
+): Promise<string | null> {
+	if (!captionModelId || !ctx?.modelRegistry || !ctx.model) return null;
+	const slash = captionModelId.indexOf("/");
+	if (slash <= 0 || slash === captionModelId.length - 1) return null;
+	const provider = captionModelId.slice(0, slash);
+	const modelId = captionModelId.slice(slash + 1);
+	const captionModel = ctx.modelRegistry.find(provider, modelId);
+	if (!captionModel || !captionModel.input.includes("image")) return null;
+
+	let auth;
+	try {
+		auth = await ctx.modelRegistry.getApiKeyAndHeaders(captionModel);
+	} catch {
+		return null;
+	}
+	if (!auth.ok) return null;
+
+	return captionImageWithModel(captionModel, image, {
+		apiKey: auth.apiKey,
+		headers: auth.headers,
+		signal,
+	});
 }
 
 function toPosixPath(filePath: string): string {
@@ -206,6 +246,7 @@ export function createReadToolDefinition(
 	options?: ReadToolOptions,
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
+	const imageCaptionModel = options?.imageCaptionModel;
 	const ops = options?.operations ?? defaultReadOperations;
 	return {
 		name: "read",
@@ -257,10 +298,27 @@ export function createReadToolDefinition(
 								} else {
 									let textNote = `Read image file [${processed.mimeType}]`;
 									if (processed.hints.length > 0) textNote += `\n${processed.hints.join("\n")}`;
+									const image: ImageContent = { type: "image", data: processed.data, mimeType: processed.mimeType };
+									// Vision relay: when the active model cannot accept images, ask a
+									// configured vision model to describe the image and use that text instead.
+									if (nonVisionImageNote) {
+										const caption = await captionImage(image, imageCaptionModel, ctx, signal);
+										if (caption) {
+											content = [
+												{
+													type: "text",
+													text: `Read image file [${processed.mimeType}] (described by vision model)\n${caption}`,
+												},
+											];
+											if (aborted) return;
+											resolve({ content, details });
+											return;
+										}
+									}
 									if (nonVisionImageNote) textNote += `\n${nonVisionImageNote}`;
 									content = [
 										{ type: "text", text: textNote },
-										{ type: "image", data: processed.data, mimeType: processed.mimeType },
+										image,
 									];
 								}
 							} else {

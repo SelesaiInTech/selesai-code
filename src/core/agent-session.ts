@@ -108,6 +108,7 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { createAllToolDefinitions, stripToolParameterDescriptions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
+import { captionImageWithModel } from "./vision-caption.ts";
 
 // ============================================================================
 // Skill Block Parsing
@@ -194,7 +195,9 @@ export type AgentSessionEvent =
 	  }
 	| { type: "summarization_retry_finished" }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-	| { type: "bash_execution_update"; id?: string; delta: string };
+	| { type: "bash_execution_update"; id?: string; delta: string }
+	| { type: "image_captioning_start" }
+	| { type: "image_captioning_end"; ok: boolean };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
@@ -1220,6 +1223,16 @@ export class AgentSession {
 				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 			}
 
+			// Vision relay: when the active model cannot accept images, describe
+			// attached images with the configured caption model (images.imageCaptionModel)
+			// so the main model can work from the description text.
+			if (currentImages && currentImages.length > 0) {
+				const caption = await this._captionImagesForCurrentModel(currentImages, currentText);
+				if (caption) {
+					expandedText += `\n\n${caption}`;
+				}
+			}
+
 			// If streaming, queue via steer() or followUp() based on option
 			if (this.isStreaming) {
 				if (!options?.streamingBehavior) {
@@ -1525,6 +1538,141 @@ export class AgentSession {
 			this._emit({ type: "message_start", message: appMessage });
 			this._emit({ type: "message_end", message: appMessage });
 		}
+	}
+
+	/**
+	 * Vision relay for attached images: when the active model cannot accept image
+	 * input and a caption model is configured (images.imageCaptionModel), describe
+	 * each image with the caption model and return the descriptions as text.
+	 * Returns null when no captioning applies (vision-capable main model, no
+	 * caption model configured, or every caption attempt failed). The caption
+	 * model is always called with a minimal fresh context, so main-agent context
+	 * usage does not matter here.
+	 */
+	private async _captionImagesForCurrentModel(
+		images: ImageContent[],
+		userPrompt?: string,
+	): Promise<string | null> {
+		const mainModel = this.model;
+		if (!mainModel || mainModel.input.includes("image")) return null;
+		const captionModelId = this.settingsManager.getImageCaptionModel();
+		if (!captionModelId) return null;
+		const slash = captionModelId.indexOf("/");
+		if (slash <= 0 || slash === captionModelId.length - 1) return null;
+		const captionModel = this._modelRuntime.getModel(
+			captionModelId.slice(0, slash),
+			captionModelId.slice(slash + 1),
+		);
+		if (!captionModel || !captionModel.input.includes("image")) return null;
+
+		let auth: AuthResult | undefined;
+		try {
+			auth = await this._modelRuntime.getAuth(captionModel);
+		} catch {
+			return null;
+		}
+		if (!auth) return null;
+
+		const maxContextTokens = this.settingsManager.getImageCaptionContextTokens();
+		const contextText = maxContextTokens > 0 ? this._recentConversationTail(maxContextTokens) : "";
+
+		// Show a status spinner while the caption request runs so the UI never
+		// looks frozen on a blank screen.
+		this._emit({ type: "image_captioning_start" });
+		try {
+			const descriptions: string[] = [];
+			let failureReason: string | undefined;
+			for (const image of images) {
+				const controller = new AbortController();
+				let aborted = false;
+				const timeout = setTimeout(() => {
+					aborted = true;
+					controller.abort();
+				}, 15_000);
+				try {
+					const caption = await captionImageWithModel(captionModel, image, {
+						apiKey: auth.auth.apiKey,
+						headers: auth.auth.headers,
+						signal: controller.signal,
+						userPrompt,
+						contextText,
+						onError: (message) => {
+							failureReason = message;
+							console.error("[image-caption] request failed:", message);
+						},
+					});
+					if (caption) descriptions.push(caption);
+				} catch {
+					// Captioning is best-effort; fall back to leaving the image attached.
+				} finally {
+					clearTimeout(timeout);
+				}
+				if (aborted) {
+					failureReason = failureReason ?? "timed out after 15s";
+				}
+			}
+			if (descriptions.length === 0) {
+				if (failureReason) console.error("[image-caption] captioning failed:", failureReason);
+				this._emit({ type: "image_captioning_end", ok: false });
+				return null;
+			}
+			this._emit({ type: "image_captioning_end", ok: true });
+			if (descriptions.length === 1) {
+				return `[Image description provided by the ${captionModel.name} vision model:]\n${descriptions[0]}`;
+			}
+			return descriptions
+				.map((d, i) => `[Image ${i + 1} of ${descriptions.length} description:]\n${d}`)
+				.join("\n\n");
+		} catch {
+			this._emit({ type: "image_captioning_end", ok: false });
+			return null;
+		}
+	}
+
+	/**
+	 * Build a small, text-only slice of the most recent conversation to give the
+	 * caption model some intent context without risking its context window.
+	 * Only user and assistant text is included (tool output/code is skipped), and
+	 * the result is capped to the given token budget.
+	 */
+	/**
+	 * Build a slice of the most recent conversation to give the caption model some
+	 * intent context without risking its context window. Only user and assistant
+	 * text is included (tool output is skipped).
+	 *
+	 * Walks messages backward from the end toward the first message. Messages are
+	 * kept whole (never truncated mid-message): we stop adding once the next full
+	 * message would push us past `maxTokens` (approx chars).
+	 */
+	private _recentConversationTail(maxTokens: number): string {
+		const messages = this.agent.state.messages;
+		const maxChars = maxTokens * 4;
+		const collected: string[] = [];
+		let length = 0;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			const text = this._messageText(msg);
+			if (!text) continue;
+			const entry = `${msg.role === "user" ? "User" : "Assistant"}: ${text}`;
+			// Cut at message boundaries only: once the next full message would
+			// exceed the budget, stop (unless nothing collected yet, so the most
+			// recent exchange is never dropped).
+			if (length > 0 && length + entry.length > maxChars) break;
+			collected.push(entry);
+			length += entry.length;
+		}
+		return collected.reverse().join("\n\n");
+	}
+
+	/** Extract plain user/assistant text from a message; returns "" for others/empty. */
+	private _messageText(msg: AgentMessage): string {
+		if (msg.role !== "user" && msg.role !== "assistant") return "";
+		if (typeof msg.content === "string") return msg.content;
+		if (!Array.isArray(msg.content)) return "";
+		return msg.content
+			.filter((c): c is { type: "text"; text: string } => c.type === "text")
+			.map((c) => c.text)
+			.join("\n");
 	}
 
 	/**
@@ -2636,6 +2784,7 @@ export class AgentSession {
 		includeAllExtensionTools?: boolean;
 	}): void {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
+		const imageCaptionModel = this.settingsManager.getImageCaptionModel();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
 		const baseToolDefinitions = this._baseToolsOverride
@@ -2646,7 +2795,7 @@ export class AgentSession {
 					]),
 				)
 			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages },
+					read: { autoResizeImages, imageCaptionModel },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
 				});
 

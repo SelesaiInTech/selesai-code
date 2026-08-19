@@ -47,6 +47,19 @@ This page covers the settings most people actually touch. The exhaustive referen
 | --- | --- | --- | --- |
 | `defaultProjectTrust` | string | `"ask"` | Fallback for trusting a project in non-interactive runs: `"ask"`, `"always"`, or `"never"`. Global setting only. |
 
+## Images & vision
+
+When the active model can't see images (e.g. a text-only DeepSeek model), you can route images
+to a vision model that describes them as text. Set the caption model and its context budget in
+`/settings` ("Vision caption model" / "Vision context tokens") or via these settings:
+
+| Setting | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `images.imageCaptionModel` | string | unset | Vision model (`provider/model`) used to describe images when the main model can't accept them, e.g. `"tokenin/gemma-4"`. Unset (or `"off"`) disables captioning. |
+| `images.imageCaptionContextTokens` | number | `16384` | Max token budget (approx) for the recent-conversation context sent to the vision model. Messages are kept whole (cut at message boundaries only); the user's current prompt is always included. `0` sends no prior conversation. |
+| `images.autoResize` | boolean | `true` | Resize images to 2000×2000 max for model compatibility. |
+| `images.blockImages` | boolean | `false` | Prevent images from being sent to any LLM. |
+
 ## Extensibility
 
 | Setting | Type | Default | What it does |
@@ -87,6 +100,10 @@ To restore your global settings to the bundled factory defaults, run `/settings-
     "keepRecentTokens": 20000
   },
   "defaultProjectTrust": "ask",
+  "images": {
+    "imageCaptionModel": "tokenin/gemma-4",
+    "imageCaptionContextTokens": 16384
+  },
   "packages": ["pi-skills"]
 }
 ```

@@ -171,6 +171,8 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 | `terminal.clearOnShrink` | boolean | `false` | Clear empty rows when content shrinks (can cause flicker) |
 | `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
+| `images.imageCaptionModel` | string | unset | Vision model (`provider/model`) to describe images when the active model cannot accept images; the caption text is used in place of the image (e.g. `tokenin/gemma-4`, `tokenin/kimi-k3`) |
+| `images.imageCaptionContextTokens` | number | `16384` | Max token budget (approx) for the recent-conversation context sent to the caption model. Messages are kept whole (cut at message boundaries only); the user's current prompt is always included |
 
 ### Shell
 
