@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.2] - 2026-08-20
+
+### Fixed
+- **Token-In premium model availability.** Restore the bundled `auto-premium` model so existing premium model selections continue to resolve while the default remains the supported `tokenin/auto:max`.
+
 ## [0.9.1] - 2026-08-20
 
 ### Fixed
