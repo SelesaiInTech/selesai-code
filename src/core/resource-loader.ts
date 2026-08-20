@@ -698,7 +698,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	/**
 	 * Enumerate every skill subdirectory in the bundled/CLI additional skill dirs,
-	 * each gated by the user's skill overrides and defaulting to disabled (opt-in).
+	 * enabling them by default while honoring explicit user overrides.
 	 * Returns resolved resources (SKILL.md paths + enabled state).
 	 */
 	private additionalResolvedSkills(): ResolvedResource[] {
@@ -719,7 +719,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			for (const skillFile of entries) {
 				resolved.push({
 					path: skillFile,
-					enabled: isEnabledByOverrides(skillFile, patterns, resolvedDir, false),
+					enabled: isEnabledByOverrides(skillFile, patterns, resolvedDir, true),
 					metadata: {
 						source: dir,
 						scope: "user",
