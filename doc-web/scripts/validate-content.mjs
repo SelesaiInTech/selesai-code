@@ -45,6 +45,8 @@ const BUNDLED_EXTENSION_GUIDES = {
   "./pi-web-agent": "research/web-agent",
   "./web-agent-onboarding.ts": "workspace/web-agent-onboarding",
   "./pi-powerline-footer": "workspace/powerline-footer",
+  "./model-prompt-injector": "workspace/ollama-provider",
+  "./custom-provider-ollama": "workspace/ollama-provider",
 };
 
 function loadCapabilities() {

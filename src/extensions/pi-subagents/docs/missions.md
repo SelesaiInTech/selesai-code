@@ -1,6 +1,6 @@
-# Missions and schedules
+# Missions
 
-Durable records for delegated work: missions wrap runs so you can recover them later, and schedules launch work on a timer.
+Durable records for delegated work: missions wrap runs so you can recover them later.
 
 ## Missions
 
@@ -82,40 +82,3 @@ Keep same-project tasks on ordinary subagents. Use an explicit `cwd` for small b
 For substantial or long-running work in another project, open a project-owned Herdr pane with `project.open` and give that project Selesai session a narrow mission/result contract (see [extension-api.md](extension-api.md#herdr-integration)). The project pane owns its own subagents; do not model it as ordinary child nesting or expect existing headless runs to move into the pane.
 
 Mission storage configuration (`missions.directory`, `retainTerminal`, `globalIndex`) is in [configuration.md](configuration.md#missions).
-
-## Schedules
-
-Durable schedules are enabled by default and stored per project under `.pi-subagents/schedules/<id>/`.
-
-Create a one-shot schedule:
-
-```ts
-subagent({
-  action: "schedule.create",
-  id: "evening-review",
-  name: "Evening review",
-  at: "+30m",
-  workflowScript: `return runs.run("main", { agent: "reviewer", task: "Review the current diff." })`
-})
-```
-
-Create a fixed recurring workflow:
-
-```ts
-subagent({ action: "schedule.create", id: "backlog", every: "6h", catchUp: "latest", workflowScript: "..." })
-```
-
-Fixed intervals support `m`, `h`, `d`, and `w` units and advance from the planned time without completion drift.
-
-Manage schedules with `schedule.list`, `schedule.show`, `schedule.history`, `schedule.pause`, `schedule.resume`, `schedule.run`, `schedule.run-due`, and `schedule.delete`.
-
-Behavior:
-
-- Runs always launch async with fresh context and disable automatic mission creation; mission attachment is deferred from this first slice.
-- Definitions, bounded history, append-only events, and per-run receipts are stored with mode `0600`.
-- `overlap` is currently fixed to `skip`; `catchUp` supports `latest` (default) and `none`.
-- `schedule.run-due` lets an external launcher start due project work without making `pi-subagents` a daemon.
-- Calendar recurrence, cron, queue/replace overlap, and the schedule TUI inspector are intentionally deferred to the next slice.
-- The old `schedule`, `schedule-list`, `schedule-status`, and `schedule-cancel` actions were removed in a hard cutover.
-
-Disable or bound schedules with the `scheduledRuns` config key in [configuration.md](configuration.md#scheduledruns).

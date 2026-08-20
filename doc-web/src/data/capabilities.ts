@@ -38,6 +38,7 @@ export const categories: { id: Category; en: string; indonesian: string }[] = [
 ];
 
 export const capabilities: Capability[] = [
+
   {
     slug: "pi-subagents",
     category: "delegation-and-workflows",

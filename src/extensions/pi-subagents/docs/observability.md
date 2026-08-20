@@ -35,49 +35,9 @@ async subagent worker · background
 
 To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
 
-## FleetView
+## Run status
 
-In the TUI, a persistent FleetView below the editor keeps active work visible as a compact summary. Set `fleetViewPlacement` to `"aboveEditor"` to move it above the editor.
-
-```text
-2 active agents · ↓ 4.2k tokens · ↓/← to inspect
-```
-
-After you expand it:
-
-```text
-↑↓/jk select · enter inspect · esc back
-
-> main
-    scout · running                  1m 12s · ↓ 2.8k tokens
-    reviewer · running                 38s · ↓ 1.4k tokens
-```
-
-When the focused editor is empty, press `↓` or `←` to expand the summary into `main` plus active children with agent name, state, elapsed time, and token totals. Then use `↑`/`↓` or `j`/`k` to select a child and `Enter` to inspect it. Printable navigation keys are never intercepted before activation.
-
-FleetView replaces the legacy above-editor async widget by default. Successful background completions stay quiet so inactive Selesai tabs are not marked unread, while failed or paused completions still notify the originating session. Parallel runs show every active child independently. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
-
-## The fleet inspector
-
-`/subagents-fleet` opens the live fleet inspector with current-session foreground work, recent async children, structured Markdown/tool transcripts, and completed output/session paths.
-
-Default keys:
-
-- `↑`/`↓` or `j`/`k` — select a child
-- `Shift+K`/`Shift+J` — scroll one line
-- `PgUp`/`PgDn` — scroll one page
-- `x`/`Ctrl+O` — toggle tool details
-- `r` — refresh
-- `Esc` — close
-- `s` — compose an acknowledged message to a selected live async child; Tab cycles `steer`, `follow_up`, and `auto`
-- `D` — stop a selected child's top-level async run after confirmation
-- `H` — open the selected active async child in a Herdr inspector pane (Herdr 0.7.5+)
-
-Set `fleetKeybindings` in the extension config to replace inspector-level keys when a terminal intercepts keys such as `PgUp`, `PgDn`, `Home`, or `End`. Prompt modes keep fixed keys such as `Esc`, `Enter`, `Tab`, and stop-confirmation `Y`/`N`.
-
-`Ctrl+Alt+F` opens the same inspector even while a foreground turn is active and slash input is queued.
-
-Without a TUI, `/subagents-fleet` retains the textual `subagent({ action: "status", view: "fleet" })` fallback, and mutations use explicit commands: run `/subagents-stop` and pick from the selector, or use `/subagents-stop <run-id>` / `subagent({ action: "stop", id: "..." })` when you already know the id.
+Use `subagent({ action: "status" })` for current run state and lifecycle details. Use `subagent({ action: "status", id: "...", view: "transcript" })` for a specific child transcript. Stop runs explicitly with `subagent({ action: "stop", id: "..." })`.
 
 Use `/subagents-detach [run-id]` only for an active foreground single-subagent run you want to leave running without terminating; the eventual result remains available through status/wait.
 

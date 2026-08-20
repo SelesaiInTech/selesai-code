@@ -2,6 +2,20 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.0] - 2026-08-20
+
+### Added
+- **Bundled Ollama provider.** Selesai now ships and tests an OpenAI-compatible local Ollama provider, and includes it in the bundled extension manifest.
+- **Vision model selection.** `/settings` reuses the model selector for image-caption models, filters to image-capable models, supports disabling captioning, and keeps the choice separate from the main default model. Bundled Token-In defaults include `gemma-4` captioning and a 16,384-token context budget; `Qwen3-VL` is also available.
+
+### Changed
+- **Smarter vision caption recovery.** Image captions now get up to four attempts with fresh 60-second timeouts and backoff, instead of failing after one 15-second attempt.
+- **Model defaults refreshed.** Token-In `auto`/`auto-premium` context windows are 256K; the bundled default is `auto-premium` for the main session and core subagent roles, while exploration/research roles use `auto`. The model prompt injector also covers `auto`.
+- **Workflow auto-relaunch diagnostics.** Relaunch rounds reset projected workflow state cleanly, track launches/state writes/budget blocks/fan-out rejection, and stop with a precise reason when another round cannot make progress.
+- **Bundled skills enabled by default.** Explicit user overrides still win, but additional bundled skills are now active unless disabled.
+- **Pi Subagents surface simplified.** Removed FleetView/fleet inspector, durable schedules, and watchdog model recommendation/configuration actions; run status, missions, watchdog status/check, and ordinary async controls remain. Corresponding runtime code, schemas, tests, and references were removed or updated.
+- **Documentation and test maintenance.** Updated the subagent API/configuration/observability/workflow references and added the Ollama provider to the standard test command.
+
 ## [0.8.12] - 2026-08-20
 
 ### Added

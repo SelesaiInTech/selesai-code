@@ -5,6 +5,16 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.9.0 — Local Ollama, vision model selection, resilient captions, and a leaner subagent surface
+
+- **Bundled Ollama provider:** Selesai now includes a tested OpenAI-compatible local Ollama provider in its bundled extensions, with setup guidance in the provider documentation.
+- **Vision model selector:** `/settings` now opens the shared model selector for image-caption models, shows only image-capable models, supports an explicit Disabled choice, and does not change the main session model. Token-In defaults include Gemma vision captioning and a 16,384-token context budget; Qwen3-VL is also bundled.
+- **Resilient image captioning:** caption requests retry up to four times with fresh 60-second timeouts and backoff, preserving the original image when all attempts fail.
+- **Model defaults:** Token-In `auto` and `auto-premium` now use 256K context windows; `auto-premium` is the default main model and most subagent roles, while exploration/research roles use `auto`. The model-prompt-injector applies its bootstrap prompt to `auto` too.
+- **Workflow reliability:** auto-relaunch rounds clear stale projected steps/traces, preserve workflow state safely, and report whether fan-out, usage budgets, or lack of progress prevented another round.
+- **Bundled skills:** additional bundled skills are enabled by default while explicit user overrides remain authoritative.
+- **Pi Subagents cleanup:** FleetView/fleet inspector, durable schedules, and watchdog model recommendation/configuration actions were removed; run status, missions, watchdog status/check, and normal async controls remain. The shipped API/configuration/observability/workflow references now describe the reduced surface.
+
 ## 0.8.12 — Token-In `auto-premium` model default
 
 - The Token-In provider now bundles an **`auto-premium`** model alongside `auto`. Like `auto`, it is

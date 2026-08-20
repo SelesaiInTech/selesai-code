@@ -262,7 +262,6 @@ const SubagentParamProperties = {
 	action: Type.Optional(Type.String({ minLength: 1,
 		description: "Optional management/control action. Omit this field for structured single-child or workflowScript execution; use it only for management/control actions."
 	})),
-	name: Type.Optional(Type.String({ description: "Human-readable name for action='schedule.create'." })),
 	id: Type.Optional(Type.String({
 		description: "Run id/prefix for status/debug.run, interrupt, steer, append-step, approve-checkpoint, reject-checkpoint, or mission."
 	})),
@@ -284,18 +283,8 @@ const SubagentParamProperties = {
 	mode: Type.Optional(Type.String({ enum: ["steer", "follow_up", "auto"], description: "Delivery mode for action='steer': steer interrupts at the next safe point (default), follow_up waits for the next turn boundary, auto follows up mid-turn." })),
 	steeringRecovery: Type.Optional(Type.Boolean({ description: "For action='steer', allow pause-and-revive recovery after a missed acknowledgment. Defaults true for direct tool calls; false for extension RPC steering." })),
 	additional: Type.Optional(Type.Integer({ minimum: 1, description: "Positive launches to add with action='grant-spawn-budget'. Root interactive parent with native user confirmation only." })),
-	scope: Type.Optional(Type.String({ enum: ["session", "user", "project"], description: "Scope for action='watchdog.configure'. Defaults to session." })),
-	target: Type.Optional(Type.String({ enum: ["main", "children", "child"], description: "Target for watchdog actions." })),
 	focus: Type.Optional(Type.Boolean({ description: "Focus the new Herdr pane for inspector.open or project.open." })),
-	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level for action='watchdog.configure' (off/minimal/low/medium/high/xhigh/max, inherit, or false for off)." })),
-	schedule: Type.Optional(Type.String({ deprecated: true, description: "Deprecated. Use action='schedule.create' with at." })),
-	scheduleName: Type.Optional(Type.String({ deprecated: true, description: "Deprecated. Use name." })),
-	at: Type.Optional(Type.String({ description: "One-shot trigger for action='schedule.create': a relative delay such as '+10m' or an ISO timestamp with timezone." })),
-	every: Type.Optional(Type.String({ description: "Fixed recurring interval for action='schedule.create', such as '30m', '6h', '2d', or '2w'." })),
-	on: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "integer" }], description: "Reserved for a later calendar schedule slice." })),
-	timezone: Type.Optional(Type.String({ description: "Reserved for a later calendar schedule slice." })),
-	overlap: Type.Optional(Type.String({ enum: ["skip"], description: "Overlap policy. This slice supports skip only." })),
-	catchUp: Type.Optional(Type.String({ enum: ["none", "latest"], description: "Missed occurrence policy for recurring schedules. Defaults to latest." })),
+	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level override." })),
 	missionId: Type.Optional(Type.String({ description: "Mission id." })),
 	mission: Type.Optional(Type.Unsafe({ ...MissionLaunchOverride, description: "Mission object, or false for no mission. Requires exactly one non-empty title or summary; goal may only be true and then requires budget.tokens." })),
 	missionUpdate: Type.Optional(Type.Unsafe({ ...MissionUpdateOverride, description: "Mission update: objective, goal false or {paused:boolean}, budget, summary, labels, decisions, artifacts, or delivery receipts." })),

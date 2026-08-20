@@ -26,9 +26,8 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 ## What it sets up
 
 - Registers the `subagent` tool for single, parallel, and chain runs.
-- Registers a family of slash commands: `/run`, `/chain`, `/parallel`, `/run-chain`, `/subagents`, `/subagent-cost`, `/subagents-doctor`, `/subagents-fleet`, `/subagents-stop`, `/subagents-models`, `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile`, plus prompt-workflow shortcuts such as `/parallel-review`.
+- Registers a family of slash commands: `/run`, `/chain`, `/parallel`, `/run-chain`, `/subagents`, `/subagent-cost`, `/subagents-doctor`, `/subagents-stop`, `/subagents-models`, `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile`, plus prompt-workflow shortcuts such as `/parallel-review`.
 - Registers inline agent invocation: `#agent-name` anywhere in a message (start, middle, or end) runs that agent directly, and typing `#` in the editor autocompletes installed agents.
-- Registers the `Ctrl+Alt+F` shortcut to open the live subagent fleet inspector.
 - Creates lifecycle artifacts for async runs under the Selesai subagent results directory.
 - Sets `SELESAI_SUBAGENT_PARENT_SESSION` in child processes for permission-system forwarding.
 
@@ -46,8 +45,7 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 - Run agents in parallel: `/parallel commentator "check correctness" -> commentator "check tests"`.
 - Use inline group syntax: `/chain explorer -> (commentator "A" | commentator "B") -> writer "fix"`.
 - Run in the background: append `--bg`. Start from a forked session: append `--fork`.
-- Inspect active runs: `/subagents-fleet` or `subagent({ action: "status" })`.
-- In Fleet inspector, steer the selected live child with `s` or stop its top-level async run with `D` and confirmation.
+- Inspect active runs: `subagent({ action: "status" })`.
 - Stop a run: `/subagents-stop <run-id>` or `subagent({ action: "stop", id: "..." })`.
 - Restrict launches with session-scoped `allowedAgents`, add chain approval checkpoints, or cap aggregate usage with `usageBudget`.
 - Discover the runtime delegation catalog: `subagent({ action: "list" })` shows executable and capability-restricted agents with source, aliases, role, context, tools, and description, and returns the same catalog as versioned machine metadata in `details.catalog`.
@@ -73,12 +71,12 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 | `/parallel ...` | Slash form of a parallel run. |
 | `/run-chain <chainName> -- <task>` | Run a saved `.chain.md` or `.chain.json`. |
 | `/subagents-doctor` | Show setup diagnostics. |
-| `/subagents-fleet` | Open the live fleet inspector. |
+| `subagent({ action: "status" })` | Inspect live run status and child activity. |
 | `Ctrl+Alt+F` | Open the fleet inspector even while a foreground turn is active. |
 | `/subagents-stop [<run-id>]` | Stop async runs. |
 | `/subagent-cost` | Show parent and child usage cost for the session. |
 | `/subagents-models [<builtin-agent>]` | Show runtime-loaded builtin model mapping. |
-| `/subagents-watchdog [status\|on\|off\|recommend-model\|model ...]` | Configure the opt-in watchdog. |
+| `/subagents-watchdog [status\|on\|off\|model ...]` | Configure the opt-in watchdog. |
 | `/parallel-review`, `/review-loop`, `/parallel-research`, etc. | Prompt-workflow shortcuts. |
 
 ### Builtin agents

@@ -284,7 +284,7 @@ interface RegisterSubagentRpcBridgeOptions {
 	resultsDir?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
-	/** Native live state, projected into the optional public fleet-status capability. */
+	/** Native live state for status consumers. */
 	state?: SubagentState;
 }
 
@@ -381,7 +381,6 @@ function pingData(ctx: ExtensionContext | null) {
 		methods: [...SUBAGENT_RPC_METHODS],
 		capabilities: {
 			status: true,
-			fleetStatus: { version: 1 },
 			asyncStatusSnapshot: { kind: ASYNC_STATUS_SNAPSHOT_KIND, version: ASYNC_STATUS_SNAPSHOT_VERSION },
 			asyncSpawn: true,
 			steer: true,

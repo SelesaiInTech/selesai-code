@@ -7,7 +7,6 @@ import type { ExtensionContext } from "@selesai/code";
 import { buildCompletionKey } from "../../src/runs/background/completion-dedupe.ts";
 import { createResultWatcher as createRawResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
-import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { prepareMissionLaunch, writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
 import { readMission, updateMission } from "../../src/missions/store.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
@@ -400,64 +399,6 @@ describe("result watcher", () => {
 		}
 	});
 
-	it("observes retained-project completions without changing active-session delivery", async () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-scheduled-"));
-		const resultsDir = path.join(root, "results");
-		const project = path.join(root, "project-a");
-		fs.mkdirSync(resultsDir);
-		fs.mkdirSync(project);
-		const ctx = {
-			cwd: project,
-			sessionManager: {
-				getSessionId: () => "session-a",
-				getSessionFile: () => path.join(project, "session-a.jsonl"),
-			},
-		} as unknown as ExtensionContext;
-		const manager = createScheduledRunManager({
-			config: { scheduledRuns: { enabled: true } },
-			storeRoot: path.join(root, "stores"),
-			launch: async () => ({ content: [{ type: "text", text: "Async" }], details: { mode: "single", results: [], asyncId: "scheduled-a" } }),
-		});
-		try {
-			manager.bindSession(ctx);
-			await manager.handleToolCall({ action: "schedule.create", id: "retained", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, ctx);
-			await manager.handleToolCall({ action: "schedule.run", id: "retained" }, ctx);
-			const scheduleDir = path.join(scheduledRunStorePath(project, undefined, path.join(root, "stores")), "retained");
-			assert.equal(fs.existsSync(path.join(scheduleDir, "active.lock")), true);
-
-			const emitted: Array<{ event: string; data: unknown }> = [];
-			const state = createState();
-			state.currentSessionId = "session-b";
-			const resultPath = path.join(resultsDir, "scheduled-a.json");
-			writeIndexedResult(resultPath, { id: "scheduled-a", sessionId: "session-a", success: true, summary: "done" });
-			const watcher = createResultWatcher({
-				events: {
-					on: () => () => {},
-					emit(event: string, data: unknown) { emitted.push({ event, data }); },
-				},
-			}, state, resultsDir, 60_000, {
-				observeCompletion: (result) => manager.handleAsyncCompletion(result),
-				observedCompletionRunIds: () => manager.observedCompletionRunIds(),
-				notifier: { deliver: async () => assert.fail("inactive-session completion must not reach the live notifier") },
-			});
-			try {
-				watcher.startResultWatcher();
-				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 10));
-			} finally {
-				watcher.stopResultWatcher();
-			}
-
-			assert.equal(state.currentSessionId, "session-b");
-			assert.equal(emitted.length, 0);
-			assert.equal(fs.existsSync(path.join(scheduleDir, "active.lock")), false);
-			assert.match(fs.readFileSync(path.join(scheduleDir, "history.json"), "utf-8"), /"state": "completed"/);
-			assert.equal(fs.existsSync(resultPath), true, "the owning session keeps delivery ownership of its result file");
-		} finally {
-			manager.stop();
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
 
 	it("delivers indexed pending results during reload when public promotion is blocked", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-pending-index-"));

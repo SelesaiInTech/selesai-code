@@ -413,26 +413,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 0);
 	});
 
-	it("allows schedule.create to carry the required workflowScript target", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		let forwarded;
-		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, async (params) => {
-			forwarded = params;
-			return { content: [{ type: "text", text: "created" }], details: { mode: "management", results: [] } };
-		});
-
-		const result = await executor.execute(
-			"schedule-create",
-			{ action: "schedule.create", id: "nightly", every: "1h", workflowScript: "return runs.run('main', { agent: 'echo' })" },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(result.isError, undefined);
-		assert.equal(result.content[0]?.text, "created");
-		assert.equal(forwarded?.workflowScript, "return runs.run('main', { agent: 'echo' })");
-	});
-
 	it("starts workflow scripts asynchronously with a portable internal run id", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ echoEnv: [SUBAGENT_STEER_INBOX_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_ACK_DIR_ENV] });
 		const asyncJobs: SubagentState["asyncJobs"] = new Map();
@@ -1681,45 +1661,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, true);
 		assert.match(result.content[0]?.text ?? "", /Unknown action: not-a-real-action/);
 		assert.match(result.content[0]?.text ?? "", /Valid:/);
-	});
-
-	it("routes watchdog.configure through the management action path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const gpt = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
-		const opus = { provider: "anthropic", id: "claude-opus-4-8", reasoning: true };
-		const models = [gpt, opus];
-		const watchdog = new MainWatchdogRuntime({ cwd: tempDir });
-		const executor = createSubagentExecutor!({
-			pi: { events: createEventBus(), getSessionName: () => undefined },
-			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
-			config: {},
-			asyncByDefault: false,
-			watchdog,
-			tempArtifactsDir: tempDir,
-			getSubagentSessionRoot: () => tempDir,
-			expandTilde: (value: string) => value,
-			discoverAgents: () => ({ agents: [makeAgent("echo")] }),
-		});
-		const ctx = {
-			...makeMinimalCtx(tempDir),
-			model: gpt,
-			modelRegistry: {
-				getAvailable: () => models,
-				find: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id),
-				hasConfiguredAuth: (model: unknown) => Boolean(model),
-			},
-		};
-
-		const result = await executor.execute(
-			"watchdog-configure",
-			{ action: "watchdog.configure", model: "recommended" },
-			new AbortController().signal,
-			undefined,
-			ctx,
-		);
-
-		assert.equal(result.isError, undefined);
-		assert.match(result.content[0]?.text ?? "", /session model configured: anthropic\/claude-opus-4-8:high/);
-		assert.equal(watchdog.getSnapshot(tempDir).config.main.model, "anthropic/claude-opus-4-8");
 	});
 
 	it("rejects duplicate concurrent subagent execution calls", async () => {

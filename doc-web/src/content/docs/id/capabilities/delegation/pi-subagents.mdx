@@ -26,9 +26,8 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 ## Yang disiapkan
 
 - Mendaftarkan tool `subagent` untuk run single, paralel, dan berantai.
-- Mendaftarkan keluarga slash command: `/run`, `/chain`, `/parallel`, `/run-chain`, `/subagents`, `/subagent-cost`, `/subagents-doctor`, `/subagents-fleet`, `/subagents-stop`, `/subagents-models`, `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile`, plus shortcut prompt-workflow seperti `/parallel-review`.
+- Mendaftarkan keluarga slash command: `/run`, `/chain`, `/parallel`, `/run-chain`, `/subagents`, `/subagent-cost`, `/subagents-doctor`, `/subagents-stop`, `/subagents-models`, `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile`, plus shortcut prompt-workflow seperti `/parallel-review`.
 - Mendaftarkan invokasi agen inline: `#nama-agent` di mana pun dalam pesan (awal, tengah, atau akhir) menjalankan agen tersebut secara langsung, dan mengetik `#` di editor melengkapi agen yang terinstal secara otomatis.
-- Mendaftarkan shortcut `Ctrl+Alt+F` untuk membuka inspector fleet subagent yang aktif.
 - Membuat artifact lifecycle untuk run async di bawah direktori hasil subagent Selesai.
 - Menyetel `SELESAI_SUBAGENT_PARENT_SESSION` di proses child untuk forwarding permission-system.
 
@@ -46,8 +45,7 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 - Menjalankan agen secara paralel: `/parallel commentator "check correctness" -> commentator "check tests"`.
 - Menggunakan sintaks grup inline: `/chain explorer -> (commentator "A" | commentator "B") -> writer "fix"`.
 - Menjalankan di background: tambahkan `--bg`. Memulai dari sesi forked: tambahkan `--fork`.
-- Memeriksa run aktif: `/subagents-fleet` atau `subagent({ action: "status" })`.
-- Di Fleet inspector, arahkan child aktif yang dipilih dengan `s` atau hentikan run async top-level dengan `D` dan konfirmasi.
+- Memeriksa run aktif: `subagent({ action: "status" })`.
 - Menghentikan run: `/subagents-stop <run-id>` atau `subagent({ action: "stop", id: "..." })`.
 - Membatasi launch dengan `allowedAgents` scoped sesi, menambahkan checkpoint persetujuan chain, atau membatasi penggunaan agregat dengan `usageBudget`.
 - Menemukan katalog delegasi runtime: `subagent({ action: "list" })` menampilkan agen yang executable dan yang dibatasi capability ceiling beserta source, alias, peran, konteks, tool, dan deskripsi, serta mengembalikan katalog yang sama sebagai metadata mesin ber-version di `details.catalog`.
@@ -73,12 +71,12 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 | `/parallel ...` | Bentuk slash untuk run paralel. |
 | `/run-chain <chainName> -- <task>` | Jalankan `.chain.md` atau `.chain.json` yang tersimpan. |
 | `/subagents-doctor` | Tampilkan diagnostik setup. |
-| `/subagents-fleet` | Buka inspector fleet yang aktif. |
+| `subagent({ action: "status" })` | Periksa status run dan aktivitas child. |
 | `Ctrl+Alt+F` | Buka inspector fleet meskipun turn foreground sedang aktif. |
 | `/subagents-stop [<run-id>]` | Hentikan run async. |
 | `/subagent-cost` | Tampilkan biaya penggunaan parent dan child untuk sesi. |
 | `/subagents-models [<builtin-agent>]` | Tampilkan mapping model builtin yang dimuat runtime. |
-| `/subagents-watchdog [status\|on\|off\|recommend-model\|model ...]` | Konfigurasi watchdog opsional. |
+| `/subagents-watchdog [status\|on\|off\|model ...]` | Konfigurasi watchdog opsional. |
 | `/parallel-review`, `/review-loop`, `/parallel-research`, dll. | Shortcut prompt-workflow. |
 
 ### Agen builtin

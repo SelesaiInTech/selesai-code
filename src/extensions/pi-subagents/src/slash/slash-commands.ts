@@ -19,13 +19,11 @@ import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts
 import { findModelInfo, toModelInfo } from "../shared/model-info.ts";
 import { formatTokens, shortenPath } from "../shared/formatters.ts";
 import { listAsyncRuns, formatAsyncRunProgressLabel, type AsyncRunSummary } from "../runs/background/async-status.ts";
-import { listScheduledRunSummaries } from "../runs/background/scheduled-runs.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
 import { openSubagentsAdmin } from "./subagents-admin.ts";
 import { SUBAGENT_GUIDE_TOPICS } from "../extension/subagent-guide.ts";
-import { openSubagentFleet } from "../tui/fleet.ts";
 import {
 	applySlashUpdate,
 	buildSlashInitialResult,
@@ -154,7 +152,7 @@ async function withSlashStatus<T>(
 type Theme = ExtensionContext["ui"]["theme"];
 
 type StopSelectorTarget = {
-	kind: "async" | "scheduled";
+	kind: "async";
 	id: string;
 	label: string;
 	detail: string;
@@ -164,9 +162,7 @@ type StopSelectorTarget = {
 type StopSelectorResult = { confirmed: boolean; target?: StopSelectorTarget };
 
 function commandForTarget(target: StopSelectorTarget): string {
-	return target.kind === "scheduled"
-		? `subagent({ action: "schedule.pause", id: ${JSON.stringify(target.id)} })`
-		: `subagent({ action: "stop", id: ${JSON.stringify(target.id)} })`;
+	return `subagent({ action: "stop", id: ${JSON.stringify(target.id)} })`;
 }
 
 function formatAsyncStopTarget(run: AsyncRunSummary): StopSelectorTarget {
@@ -181,30 +177,13 @@ function formatAsyncStopTarget(run: AsyncRunSummary): StopSelectorTarget {
 	};
 }
 
-function scheduledStopTargets(ctx: ExtensionContext, _state: SubagentState): StopSelectorTarget[] {
-	try {
-		return listScheduledRunSummaries(ctx.cwd)
-			.filter((schedule) => !schedule.paused && !schedule.activeRunId && schedule.trigger.nextRunAt)
-			.sort((left, right) => left.trigger.nextRunAt!.localeCompare(right.trigger.nextRunAt!))
-			.map((schedule) => ({
-				kind: "scheduled" as const,
-				id: schedule.id,
-				label: `${schedule.id} · ${schedule.name}`,
-				detail: `scheduled · ${schedule.trigger.nextRunAt}`,
-				actionLabel: "pause schedule",
-			}));
-	} catch {
-		return [];
-	}
-}
-
 function discoverStopTargets(ctx: ExtensionContext, state: SubagentState): StopSelectorTarget[] {
 	const sessionId = state.currentSessionId ?? ctx.sessionManager.getSessionId() ?? undefined;
 	const asyncTargets = listAsyncRuns(DIRS.async, {
 		states: ["queued", "running"],
 		...(sessionId ? { sessionId } : {}),
 	}).map(formatAsyncStopTarget);
-	return [...asyncTargets, ...scheduledStopTargets(ctx, state)];
+	return asyncTargets;
 }
 
 function stopFallbackText(targets: StopSelectorTarget[]): string {
@@ -294,7 +273,7 @@ class SubagentsStopSelector implements Component {
 			const selected = index === this.selected;
 			const marker = selected ? "›" : " ";
 				const actionLabel = target.actionLabel;
-			const action = target.kind === "scheduled" ? this.theme.fg("warning", actionLabel) : this.theme.fg("accent", actionLabel);
+			const action = this.theme.fg("accent", actionLabel);
 			const labelWidth = Math.max(0, contentWidth - marker.length - actionLabel.length - 2);
 			lines.push(`${marker} ${action} ${target.label.slice(0, labelWidth)}`);
 			if (selected) lines.push(this.theme.fg("dim", `  ${target.detail}`.slice(0, contentWidth)));
@@ -635,25 +614,6 @@ export function registerSlashCommands(
 	options: { fleetKeybindings?: FleetKeybindingsConfig; foregroundDetachShortcut?: string } = {},
 ): void {
 	registerInlineSubagentInvocation(pi, state);
-	let fleetOpen = false;
-	const showFleet = async (ctx: ExtensionContext) => {
-		state.lastUiContext = ctx;
-		if (!ctx.hasUI) {
-			await runSlashSubagent(pi, ctx, { action: "status", view: "fleet" });
-			return;
-		}
-		if (fleetOpen) {
-			ctx.ui.notify("Subagent fleet inspector is already open.", "info");
-			return;
-		}
-		fleetOpen = true;
-		try {
-			await openSubagentFleet(ctx, state, { asyncDirRoot: DIRS.async, resultsDir: DIRS.results, fleetKeybindings: options.fleetKeybindings });
-		} finally {
-			fleetOpen = false;
-		}
-	};
-
 	pi.registerCommand("subagents", {
 		description: "Administer subagents: inspect metadata and update models, thinking, or prompts",
 		handler: async (args, ctx) => {
@@ -733,16 +693,6 @@ export function registerSlashCommands(
 		},
 	});
 
-	pi.registerCommand("subagents-fleet", {
-		description: "Open the live subagent fleet inspector",
-		handler: async (_args, ctx) => showFleet(ctx),
-	});
-
-	pi.registerShortcut(Key.ctrlAlt("f"), {
-		description: "Open subagent fleet inspector",
-		handler: async (ctx) => showFleet(ctx),
-	});
-
 	const detachForegroundRun = (args: string, ctx: ExtensionContext): void => {
 		const id = args.trim();
 		let control: ReturnType<typeof selectForegroundDetachControl>;
@@ -815,10 +765,6 @@ export function registerSlashCommands(
 				{ overlay: true, overlayOptions: { anchor: "center", width: 88, maxHeight: "80%" } },
 			);
 			if (!result?.confirmed || !result.target) return;
-			if (result.target.kind === "scheduled") {
-				await runSlashSubagent(pi, ctx, { action: "schedule.pause", id: result.target.id });
-				return;
-			}
 			await runSlashSubagent(pi, ctx, { action: "stop", id: result.target.id });
 		},
 	});

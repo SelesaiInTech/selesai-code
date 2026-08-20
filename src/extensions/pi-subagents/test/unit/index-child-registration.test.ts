@@ -612,8 +612,8 @@ describe("subagent extension child mode", () => {
 			}), "utf-8");
 			updateActiveRunIndex(asyncDir, "running");
 			handlers.get("tool_result")({ toolName: "subagent" }, ctx);
-			const fleetWidgets = widgets.filter((entry) => entry.key === "subagent-fleet-status");
-			if (!fleetWidgets.some((entry) => typeof entry.value === "function")) throw new Error("management result did not restore active fleet status: " + JSON.stringify(fleetWidgets));
+			const asyncWidgets = widgets.filter((entry) => entry.key === "subagent-async");
+			if (!asyncWidgets.some((entry) => typeof entry.value === "function" || typeof entry.value === "string")) throw new Error("management result did not restore active async status: " + JSON.stringify(asyncWidgets));
 			handlers.get("session_shutdown")();
 			fs.rmSync(asyncDir, { recursive: true, force: true });
 		`;
@@ -787,7 +787,7 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("registers the main watchdog command and renderer in parent mode", () => {
+	it("does not register the main watchdog command or renderer in parent mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
@@ -808,8 +808,8 @@ describe("subagent extension child mode", () => {
 				},
 			});
 			registerSubagentExtension(fakePi);
-			if (!commands.includes("subagents-watchdog")) throw new Error("watchdog command not registered: " + commands.join(", "));
-			if (!renderers.includes("subagent_watchdog_warning")) throw new Error("watchdog renderer not registered: " + renderers.join(", "));
+			if (commands.includes("subagents-watchdog")) throw new Error("watchdog command still registered: " + commands.join(", "));
+			if (renderers.includes("subagent_watchdog_warning")) throw new Error("watchdog renderer still registered: " + renderers.join(", "));
 		`;
 
 		execFileSync(

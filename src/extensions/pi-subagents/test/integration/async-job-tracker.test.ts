@@ -4,7 +4,6 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
-import { SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
 import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
 
@@ -317,20 +316,6 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.ok(state.poller, "expected restored active jobs to start polling");
 			assert.ok(ui.renderRequests >= 2, "expected reset and restore to request widget renders");
 			assert.equal(typeof ui.widgets.at(-1), "function", "expected restored jobs to render the widget");
-
-			const component = new SubagentFleetComponent(
-				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
-				ui.ctx.ui.theme as never,
-				state as never,
-				() => {},
-				{ refreshMs: 60_000 },
-			);
-			try {
-				assert.ok(component.render(100).some((line) => line.includes("Restored custom cwd transcript")));
-			} finally {
-				component.dispose();
-			}
-
 			await new Promise((resolve) => setTimeout(resolve, 30));
 			assert.equal(recorder.events.length, 0, "historical control events should not be replayed during restore");
 		} finally {

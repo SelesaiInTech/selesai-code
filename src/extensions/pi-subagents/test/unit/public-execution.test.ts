@@ -14,14 +14,6 @@ describe("public subagent execution normalization", () => {
 		assert.deepEqual(normalizePublicSubagentExecution({ tasks: [{ agent: "worker" }] }), { ok: true, params: { tasks: [{ agent: "worker" }] } });
 		assert.deepEqual(normalizePublicSubagentExecution({ chain: [{ agent: "worker" }] }), { ok: true, params: { chain: [{ agent: "worker" }] } });
 		assert.deepEqual(normalizePublicSubagentExecution({ action: " list " }), { ok: true, params: { action: "list" } });
-		assert.deepEqual(
-			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflowScript: "return 1" }),
-			{ ok: true, params: { action: "schedule.create", every: "1h", workflowScript: "return 1" } },
-		);
-		assert.deepEqual(
-			normalizePublicSubagentExecution({ action: "schedule.create", agent: "worker", task: "work" }),
-			{ ok: true, params: { action: "schedule.create", agent: "worker", task: "work" } },
-		);
 	});
 
 	it("rejects private run fan-out fields at the public boundary", () => {

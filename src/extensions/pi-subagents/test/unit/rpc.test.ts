@@ -95,9 +95,9 @@ describe("subagent extension RPC bridge", () => {
 			(reply as { data: { capabilities?: { resume?: boolean } } }).data.capabilities?.resume,
 			true,
 		);
-		assert.deepEqual(
+		assert.equal(
 			(reply as { data: { capabilities?: { fleetStatus?: unknown } } }).data.capabilities?.fleetStatus,
-			{ version: 1 },
+			undefined,
 		);
 
 		bridge.dispose();

@@ -33,7 +33,6 @@ MANAGEMENT / CONTROL (use action; omit execution fields):
 • status, interrupt, stop, resume, and steer manage live or persisted runs. Use status view:"fleet" for an overview or view:"transcript" with id and optional index to tail output.
 • { action: "append-step", id: "...", step: {agent:"agent-c", task:"Use {previous}"} } appends one step to an already-running durable chain. step is control-only, not an execution mode; use { chain: [...] } for new chains.
 • approve-checkpoint and reject-checkpoint decide a paused chain checkpoint.
-• Create durable project schedules with { action:"schedule.create", id?, name?, at:"+10m" | ISO, workflowScript:"return runs.run('main', {agent:'worker', task:'...'})" } or { every:"6h", workflowScript:"..." }. Manage them with schedule.list/show/history/pause/resume/run/run-due/delete. This first slice supports fixed intervals; calendar schedules and schedule mission attachment are deferred.
 
 ${SUBAGENT_SAFETY_GUIDANCE}`;
 
@@ -47,7 +46,7 @@ EXECUTE:
 • context can be fresh or fork. timeoutMs/maxRuntimeMs apply to foreground and async runs; foreground defaults to 30 minutes absent call/agent. Omit acceptance for read-only calls.
 
 MANAGE / CONTROL:
-• Use action without execution fields for list/get/models/guide/authoring, refine/refine.show/refine.rollback, mission, watchdog, status, interrupt, stop, resume, steer, script-only scheduling, diagnostics, and other management actions. guide reads shipped current-version docs by topic.
+• Use action without execution fields for list/get/models/guide/authoring, refine/refine.show/refine.rollback, mission, watchdog, status, interrupt, stop, resume, steer, diagnostics, and other management actions. guide reads shipped current-version docs by topic.
 • append-step uses step:{...} only for an already-running durable chain; step is not an execution mode.
 • A mission object needs exactly one non-empty title or summary; objective and labels are optional. goal may only be true and requires budget:{tokens}.
 

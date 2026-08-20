@@ -37,6 +37,9 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		return { ok: false, error: "action must be a non-empty management/control action, or omit action and use workflowScript.", mode: "management" };
 	}
 	const normalizedAction = typeof action === "string" ? action.trim() : undefined;
+	if (normalizedAction?.toLowerCase().startsWith("schedule.") || normalizedAction === "watchdog.configure" || normalizedAction === "watchdog.recommend-model") {
+		return { ok: false, error: `Removed action '${normalizedAction}' is no longer supported.`, mode: "management" };
+	}
 	if (params.clarify === true && params.workflowScript !== undefined) {
 		return { ok: false, error: "Public workflowScript execution does not support clarify UI.", mode: "workflow" };
 	}
@@ -48,17 +51,8 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		if (legacyAction === "single" || legacyAction === "parallel" || legacyAction === "tasks" || legacyAction === "chain") {
 			return { ok: false, error: `action '${normalizedAction}' is not a management action; use the direct execution fields ({ agent, task }, { chain: [...] }, { tasks: [...] }).`, mode: "workflow" };
 		}
-		if (normalizedAction === "schedule.create") {
-			if (typeof params.workflowScript === "string" && params.workflowScript.trim()) {
-				return { ok: true, params: { ...params, action: normalizedAction } };
-			}
-			if (params.agent === undefined && params.task === undefined && params.step === undefined && params.tasks === undefined && params.chain === undefined) {
-				return { ok: false, error: "schedule.create requires a non-empty workflowScript or direct execution fields (agent, task, tasks, or chain).", mode: "management" };
-			}
-			return { ok: true, params: { ...params, action: normalizedAction } };
-		}
 		if (params.workflowScript !== undefined) {
-			return { ok: false, error: "workflowScript execution must omit action; only schedule.create accepts action with workflowScript.", mode: "management" };
+			return { ok: false, error: "workflowScript execution must omit action; use management actions without workflowScript.", mode: "management" };
 		}
 		if (params.task !== undefined) {
 			return { ok: false, error: "Structured single-child task cannot be combined with a management/control action.", mode: "management" };

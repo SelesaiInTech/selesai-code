@@ -593,7 +593,7 @@ describe("subagent prompt runtime", () => {
 		}
 	});
 
-	it("registers child watchdog lifecycle handlers only when enabled by env", () => {
+	it("does not register child watchdog lifecycle handlers when env is set", () => {
 		delete process.env[CHILD_WATCHDOG_CONFIG_ENV];
 		// Clear the ack capture and steer env vars explicitly: when this test suite itself
 		// runs inside a pi-subagents child, the runner sets them and extra agent_end
@@ -634,9 +634,9 @@ describe("subagent prompt runtime", () => {
 			sendMessage() {},
 		} as { on(event: string, handler: unknown): void; getThinkingLevel(): string; sendMessage(): void });
 
-		assert.ok((handlersWith.get("before_agent_start")?.length ?? 0) >= 2);
-		assert.ok((handlersWith.get("turn_end")?.length ?? 0) >= 1);
-		assert.ok((handlersWith.get("agent_end")?.length ?? 0) >= 2, "watchdog and auto-drain both observe agent_end");
+		assert.equal(handlersWith.get("agent_end")?.length ?? 0, 1, "child watchdog lifecycle handlers are not registered");
+		assert.equal(handlersWith.get("before_agent_start")?.length ?? 0, handlersWithout.get("before_agent_start")?.length ?? 0);
+		assert.equal(handlersWith.get("turn_end")?.length ?? 0, handlersWithout.get("turn_end")?.length ?? 0);
 	});
 
 	it("registered structured_output tool accepts valid schema output and writes the capture file", async () => {

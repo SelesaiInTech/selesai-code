@@ -141,13 +141,7 @@ export function buildWatchdogStatus(snapshot: ReturnType<MainWatchdogRuntime["ge
 		"Sources:",
 		...snapshot.sources.map(sourceLine),
 		"",
-		"Model commands:",
-		"- /subagents-watchdog recommend-model",
-		"- /subagents-watchdog model recommended",
-		"- /subagents-watchdog model <provider/model[:thinking]>",
-		"- /subagents-watchdog model inherit",
-		"- /subagents-watchdog session model recommended",
-		"Agent action: subagent({ action: \"watchdog.configure\", model: \"recommended\", scope: \"session\" })",
+		"Model configuration is managed through Selesai settings.",
 	);
 	return lines.join("\n");
 }
@@ -371,7 +365,7 @@ async function handleWatchdogCommand(
 		pi.sendMessage(createWatchdogWarningMessage(details, { display: true, details }));
 		return;
 	}
-	ctx.ui.notify(`Usage: /subagents-watchdog [status|on|off|session on|session off|recommend-model|model recommended|model <provider/model[:thinking]>|model inherit|thinking ${THINKING_LEVELS.join("|")}|thinking inherit|session model recommended|check|test concern <text>|test blocker <text>]`, "error");
+	ctx.ui.notify(`Usage: /subagents-watchdog [status|on|off|session on|session off|check|test concern <text>|test blocker <text>]`, "error");
 }
 
 export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatchdogOptions = {}): MainWatchdogRuntime {

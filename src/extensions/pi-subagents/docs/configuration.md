@@ -42,7 +42,7 @@ Defaults to `false`. The default registered model-facing tool schema and descrip
 { "inlineToolDisplay": "summary" }
 ```
 
-Controls the `subagent` tool result shown inline in chat. The default, `"rich"`, shows live child activity and expands to detailed output. `"summary"` keeps the inline result at one stable row for running, completed, failed, stopped, and paused runs; it does not animate, show elapsed time, preview child output, or change when Selesai's expand key is pressed. FleetView remains available for live progress and detailed inspection.
+Controls the `subagent` tool result shown inline in chat. The default, `"rich"`, shows live child activity and expands to detailed output. `"summary"` keeps the inline result at one stable row for running, completed, failed, stopped, and paused runs; it does not animate, show elapsed time, preview child output, or change when Selesai's expand key is pressed. Live run status remains available through the status action.
 
 ## `mainWindowRenderer`
 
@@ -55,7 +55,7 @@ Controls the `subagent` tool result shown inline in chat. The default, `"rich"`,
 }
 ```
 
-Controls only the main chat `subagent` call/result renderer. It does not change child execution, orchestration, FleetView, artifacts, transcripts, or model-facing content.
+Controls only the main chat `subagent` call/result renderer. It does not change child execution, orchestration, run status, artifacts, transcripts, or model-facing content.
 
 `horizontalSpacing` is an integer from `0` to `4`. The default preserves current spacing. Set it to `0` to remove the extra spaces before compact result details and between parts of the call row.
 
@@ -107,48 +107,13 @@ Set `enabled` to `false` (or remove the block) as a kill switch. In that state, 
 
 WorkflowScript calls use background execution when the request omits `async`. Set `asyncByDefault` to `false` to restore foreground-by-default behavior for tool launches that still use the internal single-run primitive. Callers can still force foreground with `async: false` unless `forceTopLevelAsync` is enabled.
 
-## `fleetView`
-
-```json
-{ "fleetView": false }
-```
-
-Controls the persistent, navigable FleetView. The default is `true`. Set it to `false` to hide FleetView without disabling status tracking, completion notifications, `/subagents-fleet`, or lifecycle events.
-
-## `fleetViewPlacement`
-
-```json
-{ "fleetViewPlacement": "aboveEditor" }
-```
-
-Places the persistent FleetView either `"belowEditor"` or `"aboveEditor"`. The default is `"belowEditor"`; invalid values fall back to `"belowEditor"`.
-
-## `fleetKeybindings`
-
-```json
-{
-  "fleetKeybindings": {
-    "pageUp": ["u"],
-    "pageDown": ["d"],
-    "selectFirst": ["g"],
-    "selectLast": ["G"]
-  }
-}
-```
-
-Customizes only the full Fleet inspector opened by `/subagents-fleet` or FleetView inspection. It does not change Selesai's global keybindings or the compact persistent FleetView.
-
-Each action accepts a non-empty array of key strings. Configured actions replace their defaults. Unset actions keep the defaults: `selectUp` is `up`/`k`, `selectDown` is `down`/`j`, `scrollUp` is `K`, `scrollDown` is `J`, `pageUp` is `pageUp`, `pageDown` is `pageDown`, `selectFirst` is `home`, `selectLast` is `end`, `toggleTools` is `x`/`X`/`ctrl+o`, `refresh` is `r`/`R`, `steer` is `s`, `stop` is `D`, `inspect` is `H`, and `close` is `escape`/`ctrl+c`/`q`.
-
-Prompt modes keep their fixed keys. For example, `Esc` still cancels steer text or stop confirmation even when the Fleet-level close binding is changed.
-
 ## `asyncWidget`
 
 ```json
 { "asyncWidget": true }
 ```
 
-Controls the under-editor widget for active background runs. It defaults to `true`, including when FleetView is enabled, so active work remains visible after reload. Set it to `false` to hide this widget while keeping FleetView available.
+Controls the under-editor widget for active background runs. It defaults to `true`, including when run status is enabled, so active work remains visible after reload. Set it to `false` to hide this widget while keeping run status available.
 
 ## `waitTool`
 
@@ -235,22 +200,6 @@ Queued, running, paused, and needs-attention runs retain capacity. Runner-backed
 This limit bounds current top-level async load. It is separate from cumulative `maxSubagentSpawnsPerSession`, `maxSubagentSpawnsPerRun`, and `globalConcurrencyLimit`.
 
 `subagent({ action: "status" })`, fleet status, and `subagent({ action: "doctor" })` expose used, effective limit, and remaining active capacity. Static chains and parallel calls fail before creating run artifacts or starting partial work when their declared capacity cannot fit. Later retries or unbounded dynamic work are not guaranteed by that preflight.
-
-## `scheduledRuns`
-
-```json
-{ "scheduledRuns": { "enabled": false, "maxPending": 20 } }
-```
-
-Durable schedules are enabled by default and stored per project under `.pi-subagents/schedules/<id>/`. See [missions.md](missions.md#schedules) for usage.
-
-Set `storeRoot` to keep durable schedules outside project repositories. It must be an absolute path or a `~/` path, which expands from the user home directory. Each project is stored under a hash of its resolved working directory, so projects do not share schedules.
-
-```json
-{ "scheduledRuns": { "storeRoot": "~/.local/share/pi-subagents/schedules" } }
-```
-
-When `storeRoot` is omitted, schedules remain at `<cwd>/.pi-subagents/schedules`.
 
 ## `parallel`
 

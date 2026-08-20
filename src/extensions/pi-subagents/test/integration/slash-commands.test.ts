@@ -5,7 +5,6 @@ import * as path from "node:path";
 import { beforeEach, describe, it } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
-import { scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 import { ASYNC_DIR } from "../../src/shared/types.ts";
 import type { WatchdogReviewFunction } from "../../src/watchdog/runtime.ts";
@@ -280,35 +279,6 @@ describe("subagents watchdog slash command", { skip: !available ? "watchdog comm
 		});
 	});
 
-	it("recommends and saves a strong complementary watchdog model", async () => {
-		await withIsolatedHome(async () => {
-			await withTempProject("pi-watchdog-model-", async (root) => {
-				const gpt = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
-				const opus = { provider: "anthropic", id: "claude-opus-4-8", reasoning: true };
-				const models = [gpt, opus];
-				const modelRegistry = {
-					getAvailable: () => models,
-					find: (provider: string, id: string) => models.find((entry) => entry.provider === provider && entry.id === id),
-					hasConfiguredAuth: (model: unknown) => Boolean(model),
-				};
-				const ctx = createCommandContext({ cwd: root, model: gpt, modelRegistry });
-				const { commands, sent } = createWatchdogHarness();
-
-				await commands.get("subagents-watchdog")!.handler("recommend-model", ctx);
-				await commands.get("subagents-watchdog")!.handler("model recommended", ctx);
-
-				const recommendation = String((sent[0] as { content?: unknown }).content ?? "");
-				assert.match(recommendation, /Recommended: anthropic\/claude-opus-4-8:high/);
-				const settingsPath = path.join(process.env.HOME!, ".selesai", "agent", "settings.json");
-				const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-				assert.equal(settings.subagents.watchdog.main.model, "anthropic/claude-opus-4-8");
-				assert.equal(settings.subagents.watchdog.main.thinking, "high");
-				assert.equal(settings.subagents.watchdog.enabled, undefined);
-				assert.match(String((sent[1] as { content?: unknown }).content ?? ""), /Run \/subagents-watchdog on if the watchdog is still off/);
-			});
-		});
-	});
-
 	it("supports session-scoped recommended watchdog models without writing settings", async () => {
 		await withIsolatedHome(async () => {
 			await withTempProject("pi-watchdog-session-model-", async (root) => {
@@ -529,23 +499,6 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 
 	it("/subagents-stop keeps the selector within its allocated width", async () => {
 		await withTempProject("pi-stop-selector-width-", async (root) => {
-			const id = "scheduled-width-check";
-			const nextRunAt = "2099-01-01T00:00:00.000Z";
-			const scheduleDir = path.join(scheduledRunStorePath(root), id);
-			fs.mkdirSync(scheduleDir, { recursive: true });
-			fs.writeFileSync(path.join(scheduleDir, "schedule.json"), JSON.stringify({
-				schemaVersion: 1,
-				id,
-				name: "A very long scheduled run name with wide characters 中文🙂",
-				cwd: root,
-				trigger: { kind: "once", at: nextRunAt, nextRunAt },
-				target: { agent: "scout", task: "Inspect" },
-				overlap: "skip",
-				catchUp: "latest",
-				paused: false,
-				createdAt: "2026-08-06T00:00:00.000Z",
-				updatedAt: "2026-08-06T00:00:00.000Z",
-			}), "utf-8");
 
 			const commands = new Map<string, RegisteredSlashCommand>();
 			const pi = {

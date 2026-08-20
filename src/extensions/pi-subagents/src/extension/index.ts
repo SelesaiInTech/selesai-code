@@ -27,8 +27,6 @@ import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { resolveSessionLineage } from "../shared/session-lineage.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary } from "../tui/render.ts";
-import { openSubagentFleet } from "../tui/fleet.ts";
-import { SubagentFleetStatus, resolveFleetViewPlacement } from "../tui/fleet-status.ts";
 import { createSubagentParamsSchema } from "./schemas.ts";
 import { validateChainInput } from "./chain-validation.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
@@ -36,10 +34,8 @@ import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { getActiveAsyncCapacitySnapshot, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
 import { cleanupResultIndexes } from "../runs/background/result-files.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
-import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
-import { registerMainWatchdog } from "../watchdog/register-main.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
 import { registerHerdrStatusBridge, type HerdrStatusRun } from "../integrations/herdr-status.ts";
@@ -55,7 +51,7 @@ import { formatSteeringNotice, handleSubagentSteeringNotice, SUBAGENT_STEERING_M
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
-import { loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./config.ts";
+import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { buildSubagentToolDescription } from "./tool-description.ts";
 import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
 import { restoreForegroundRunHistory } from "../runs/foreground/foreground-history.ts";
@@ -383,8 +379,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const config = loadConfig();
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	const asyncByDefault = resolveAsyncByDefault(config);
-	const fleetViewEnabled = config.fleetView !== false;
-	const fleetViewPlacement = resolveFleetViewPlacement(config.fleetViewPlacement);
 	const asyncWidgetEnabled = config.asyncWidget !== false;
 	const summaryInlineToolDisplay = config.inlineToolDisplay === "summary";
 	const tempArtifactsDir = getArtifactsDir(null);
@@ -442,33 +436,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const supervisorChannel = createNativeSupervisorChannel(pi, state);
 	const waitSubscriptionManager = createWaitSubscriptionManager(pi, state);
-	const mainWatchdog = registerMainWatchdog(pi);
 	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
-	const fleetStatus = fleetViewEnabled
-		? new SubagentFleetStatus(state, async (itemKey) => {
-			const ctx = state.lastUiContext;
-			if (!ctx?.hasUI) return;
-			await openSubagentFleet(ctx, state, { initialKey: itemKey, asyncDirRoot: DIRS.async, resultsDir: DIRS.results, fleetKeybindings: config.fleetKeybindings });
-		}, { placement: fleetViewPlacement })
-		: undefined;
-	let executorScheduled: ((id: string, params: SubagentParamsLike, signal: AbortSignal, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
 	let goalTurnId = 0;
-	const scheduledStoreRoot = config.scheduledRuns?.storeRoot === undefined ? undefined : resolveScheduledStoreRoot(config.scheduledRuns.storeRoot);
-	const scheduledRunManager = createScheduledRunManager({
-		config,
-		storeRoot: scheduledStoreRoot,
-		launch: (params, ctx, signal) => {
-			if (!executorScheduled) {
-				return Promise.resolve({
-					content: [{ type: "text", text: "Scheduled subagent launch is unavailable (executor not ready)." }],
-					isError: true,
-					details: { mode: "management" as const, results: [] },
-				});
-			}
-			return executorScheduled(randomUUID(), params, signal, ctx);
-		},
-		resolveCapabilityCeiling: (sessionId) => resolveCurrentSubagentCapabilityCeiling(sessionId),
-	});
 	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs, dispose: disposeAsyncJobTracker } = createAsyncJobTracker(pi, state, DIRS.async, {
 		widgetEnabled: asyncWidgetEnabled,
 	});
@@ -479,8 +448,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		10 * 60 * 1000,
 		{
 			notifier: completionNotifier,
-			observeCompletion: (result) => scheduledRunManager.handleAsyncCompletion(result),
-			observedCompletionRunIds: () => scheduledRunManager.observedCompletionRunIds(),
 			deliverIntercomResults: config.intercomBridge?.resultDelivery === true,
 		},
 	);
@@ -490,11 +457,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		stopResultWatcher();
 		state.currentSessionId = null;
 		completionNotifier.dispose();
-		mainWatchdog.dispose();
-		scheduledRunManager.stop();
 		supervisorChannel.dispose();
 		waitSubscriptionManager.dispose();
-		fleetStatus?.dispose();
 		disposeAsyncJobTracker();
 	};
 	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
@@ -505,14 +469,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		config,
 		asyncByDefault,
 		waitToolEnabled: waitToolConfig.enabled,
-		handleScheduledRunAction: (params, ctx) => scheduledRunManager.handleToolCall(params, ctx),
-		watchdog: mainWatchdog,
 		tempArtifactsDir,
 		getSubagentSessionRoot,
 		expandTilde,
 		discoverAgents,
 	});
-	executorScheduled = executor.executeScheduled;
 
 	pi.registerMessageRenderer<SlashMessageDetails>(SLASH_RESULT_TYPE, (message, options, theme) => {
 		const details = resolveSlashMessageDetails(message.details);
@@ -737,20 +698,16 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	const asyncStartedHandler = (payload: unknown) => {
 		handleStarted(payload);
-		fleetStatus?.refresh();
 	};
 	const asyncCompleteHandler = (payload: unknown) => {
 		handleComplete(payload);
 		refreshActiveAsyncCapacity();
-		scheduledRunManager.handleAsyncCompletion(payload);
-		fleetStatus?.refresh();
 	};
 	const eventUnsubscribes = [
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, asyncStartedHandler),
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, asyncCompleteHandler),
 		pi.events.on(SUBAGENT_PROCESS_TERMINAL_EVENT, () => {
 			refreshActiveAsyncCapacity();
-			fleetStatus?.refresh();
 		}),
 		pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
 		pi.events.on(SUBAGENT_STEERING_NOTICE_EVENT, steeringNoticeHandler),
@@ -764,8 +721,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (!ctx.hasUI) return;
 		state.lastUiContext = ctx;
 		restoreActiveJobs(ctx);
-		fleetStatus?.setContext(ctx);
-		fleetStatus?.refresh();
 		if (state.asyncJobs.size > 0) {
 			refreshWidget(ctx);
 			ensurePoller();
@@ -787,14 +742,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (state.widgetsSuspended) return;
 		state.widgetsSuspended = true;
 		if (state.lastUiContext?.hasUI) state.lastUiContext.ui.setWidget(WIDGET_KEY, undefined);
-		fleetStatus?.refresh();
 	};
 	const resumeWidgetsAfterCompaction = () => {
 		if (!state.widgetsSuspended) return;
 		state.widgetsSuspended = false;
 		const ctx = state.lastUiContext;
 		if (ctx?.hasUI) refreshWidget(ctx);
-		fleetStatus?.refresh();
 	};
 
 	const refreshActiveAsyncCapacity = () => {
@@ -890,8 +843,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		logSlowPhase("active-job-restore", phaseStartedAt);
 		state.handoffResumePending = adoptedJobs > 0 && state.lastUiContext?.hasUI === true;
 		phaseStartedAt = Date.now();
-		scheduledRunManager.bindSession(ctx);
-		logSlowPhase("scheduled-runs", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
 		logSlowPhase("slash-snapshots", phaseStartedAt);
@@ -904,7 +855,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		phaseStartedAt = Date.now();
 		primeExistingResults({ triggerTurn: !recovering });
 		logSlowPhase("result-prime", phaseStartedAt);
-		fleetStatus?.setContext(ctx);
 	};
 
 	pi.on("agent_start", () => {
@@ -977,7 +927,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (globalStore[eventUnsubscribeStoreKey] === eventUnsubscribes) {
 			delete globalStore[eventUnsubscribeStoreKey];
 		}
-		scheduledRunManager.stop();
 		disposeAsyncJobTracker();
 		for (const timer of state.cleanupTimers.values()) {
 			clearTimeout(timer);
@@ -990,7 +939,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		promptTemplateBridge.cancelAll();
 		promptTemplateBridge.dispose();
 		supervisorChannel.dispose();
-		fleetStatus?.dispose();
 		if (globalStore[runtimeCleanupStoreKey] === runtimeCleanup) {
 			delete globalStore[runtimeCleanupStoreKey];
 		}

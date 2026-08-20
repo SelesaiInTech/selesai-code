@@ -14,52 +14,6 @@ It reviews repo edits, not ordinary conversation:
 - Generated `.pi-subagents/` or `tmp/` artifacts do not trigger review.
 - In orchestrated runs, each writing child can review its own edited worktree, and the parent can still review the aggregate repo diff after child changes are applied.
 
-## Choosing a model
-
-Because the watchdog is an adversarial change reviewer, it should usually use a strong complementary model rather than a cheap/light one.
-
-Ask pi-subagents for the current strong pairing:
-
-```text
-/subagents-watchdog recommend-model
-/subagents-watchdog session model recommended
-/subagents-watchdog model recommended
-```
-
-The current recommendation policy is Opus 4.8 with thinking high or GPT 5.5 with thinking high. If your main session is using one, the watchdog should use the other when that model is authenticated.
-
-- `session model recommended` changes only the current Selesai session.
-- `model recommended` saves the recommendation to `~/.selesai/agent/settings.json`. It does not turn the watchdog on; enable it separately with `/subagents-watchdog on`.
-
-Or set the model explicitly:
-
-```text
-/subagents-watchdog model anthropic/claude-opus-4-8:high
-/subagents-watchdog model openai-codex/gpt-5.5:high
-/subagents-watchdog model inherit
-/subagents-watchdog check
-```
-
-In settings files, use `subagents.watchdog.main.model` and `subagents.watchdog.main.thinking` for the main watchdog:
-
-- If `main.model` is omitted, the main watchdog uses the current session model and thinking level.
-- If `main.model` is set without a thinking suffix or `main.thinking`, it runs with thinking off. Prefer `:high` or `"thinking": "high"` for the strong-watchdog pairing.
-
-Default strong-reviewer profile:
-
-```json
-{
-  "subagents": {
-    "watchdog": {
-      "enabled": true,
-      "main": {
-        "model": "anthropic/claude-opus-4-8",
-        "thinking": "high"
-      }
-    }
-  }
-}
-```
 
 ## Scope monitoring
 
@@ -109,17 +63,6 @@ For child subagent watchdogs, use `subagents.watchdog.children.model` as the def
 
 Child watchdogs are opt-in and follow the same edit-gated rule: read-only children do not trigger watchdog reviews, while writer children are reviewed at their own `agent_end` if their worktree changed.
 
-## Agent-driven configuration
-
-Agents can configure the same values through the tool when you ask them to set up the watchdog:
-
-```ts
-subagent({ action: "watchdog.recommend-model" })
-subagent({ action: "watchdog.configure", model: "recommended", scope: "session" })
-subagent({ action: "watchdog.configure", model: "recommended", scope: "project" })
-```
-
-Persistent scopes (`user` or `project`) should only be used when you ask for a lasting default. Otherwise the agent should use `scope: "session"`.
 
 ## Native child tool permissions
 

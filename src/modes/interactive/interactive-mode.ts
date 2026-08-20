@@ -4902,6 +4902,7 @@ export class InteractiveMode {
 				this.session.modelRuntime,
 				this.session.scopedModels,
 				async (model) => {
+					if (!model) return;
 					try {
 						await this.session.setModel(model);
 						this.footer.invalidate();

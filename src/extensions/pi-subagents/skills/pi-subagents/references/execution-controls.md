@@ -186,9 +186,7 @@ const run = subagent({
 // Continue local inspection, then later call status with the returned id.
 ```
 
-While children run, the persistent FleetView and the collapsed foreground tool-result card show live per-child detail: resolved model and thinking level, `[fresh]`/`[fork]` context, tool/token/elapsed counters, and current activity. The collapsed running card also prints the configured expand-key hint ("Press … for live detail"); expanding it shows nested children, recent tools, and recent output. Model badges appear once the child's model resolves at first attempt start. `/subagents-fleet` opens the live fleet inspector, which also has per-child controls (`s` steer, `D` stop with confirmation). When optional Herdr 0.7.5+ is available, `H` opens a raw inspector dashboard for the selected active async child; this mirrors artifacts rather than attaching to the headless child. Use it for confusing or long-running active async work when the human wants a dedicated visual pane or FleetView is insufficient, not for routine headless runs.
-
-Inspect async runs with `subagent({ action: "status", id: "..." })` or `subagent({ action: "status" })` for active runs. Use `subagent({ action: "status", view: "fleet" })` when supervising several active foreground/background runs and `subagent({ action: "status", id: "...", view: "transcript", index: 0 })` when you need the latest child output without digging through artifacts. If a delegated fanout child launches nested runs, the parent status view shows them as a tree and you can target a nested run directly with its nested id.
+Inspect async runs with `subagent({ action: "status", id: "..." })` or `subagent({ action: "status" })` for active runs. Use `subagent({ action: "status", id: "...", view: "transcript", index: 0 })` when you need the latest child output without digging through artifacts. Use `steer` to send guidance to a running child and `stop` to terminate a current-session top-level async run. If a delegated fanout child launches nested runs, the parent status view shows them as a tree and you can target a nested run directly with its nested id.
 
 Stop a current-session top-level async run with `stop` (or `/subagents-stop`). Stopped runs finish as `stopped`/cancelled and are not resumable. For an active foreground single-subagent run, `/subagents-detach [run-id]` leaves the child running without terminating it and returns the eventual result through status/wait. Append one more step to the tail of a still-running durable chain with `append-step` (`step` must contain exactly one step object). Use checkpoint steps for planned human gates; they pause without launching a child and are approved or rejected through current-session control actions:
 
@@ -235,31 +233,6 @@ subagent({ action: "doctor" })
 Use native `subagent` runs for unattended implementation, review, and gate work that needs managed isolation, durable artifacts, and process controls. Use `interactive_shell` for visible terminal work, alternate CLIs, trust prompts, and recovery.
 
 A cooperating terminal runtime can register read-only external records through `pi-subagents/external-runs`. Records include the source, session, state, optional report path, and completion reason. They are observations only: pi-subagents does not start, stop, steer, or otherwise own the foreign process. Run unattended raw terminal agents in an explicit isolated cwd or worktree; do not use a live project checkout as disposable review space.
-
-### Scheduled subagent runs
-
-Schedules are durable project records under `.pi-subagents/schedules/`. They are enabled by default; set `{ "scheduledRuns": { "enabled": false } }` in `~/.selesai/agent/extensions/subagent/config.json` to disable them. Only schedule explicit work the user asked for.
-
-```typescript
-// One-shot reviewer
-subagent({ action: "schedule.create", id: "evening-review", name: "Evening review", at: "+30m", workflowScript: "return runs.run('main', { agent: 'reviewer', task: 'Review the diff.' })" })
-
-// Fixed recurring workflow
-subagent({ action: "schedule.create", id: "backlog", every: "6h", catchUp: "latest", workflowScript: "..." })
-
-subagent({ action: "schedule.list" })
-subagent({ action: "schedule.show", id: "backlog" })
-subagent({ action: "schedule.history", id: "backlog" })
-subagent({ action: "schedule.pause", id: "backlog" })
-subagent({ action: "schedule.resume", id: "backlog" })
-subagent({ action: "schedule.run", id: "backlog" })
-subagent({ action: "schedule.run-due" })
-subagent({ action: "schedule.delete", id: "backlog" })
-```
-
-`schedule.create` accepts exactly one target, `workflowScript`, and exactly one trigger (`at`, or a fixed `every` interval using `m`, `h`, `d`, or `w`). Runs always launch async with fresh context and no automatic mission; mission attachment is deferred from this first slice. `overlap` is currently `skip`; `catchUp` supports `latest` and `none`. `schedule.run-due` is the headless external-launcher seam. Calendar recurrence, cron, and the schedule inspector are deferred from this first safe slice. Definitions, bounded history, append-only events, and per-run receipts remain project-scoped across Selesai sessions.
-
-Humans can use `/subagents-doctor` for the same read-only report. It checks runtime paths, discovery counts, async support, current session context, and intercom bridge state.
 
 ### Subagent control
 
@@ -325,27 +298,9 @@ and can optionally run non-blocking Scopey-style cadence reviews every N tool re
 are always transcript-visible; choose the watchdog model that matches the desired
 cheap-monitor vs strong-reviewer policy.
 
-Prefer a strong complementary model (for example Opus 4.8 high paired against a
-GPT 5.5 main session, or the reverse). Recommendation and configuration:
-
-```text
-/subagents-watchdog recommend-model
-/subagents-watchdog session model recommended
-/subagents-watchdog on
-/subagents-watchdog status
-/subagents-watchdog check
-```
-
-```typescript
-subagent({ action: "watchdog.status" })
-subagent({ action: "watchdog.recommend-model" })
-subagent({ action: "watchdog.configure", model: "recommended", scope: "session" })
-subagent({ action: "watchdog.check" })
-```
-
-`session` scope is temporary. Persistent `user`/`project` scopes write settings only
-when the user asked. Use ordinary fresh-context `reviewer` fanout for planned review
-waves; enable the watchdog when you want an automatic second pass on real edits.
+Enable the watchdog with `/subagents-watchdog on`; inspect it with `status` or `check`.
+Use ordinary fresh-context `reviewer` fanout for planned review waves; enable the
+watchdog when you want an automatic second pass on real edits.
 
 ## Clarify TUI
 

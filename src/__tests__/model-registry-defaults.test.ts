@@ -29,7 +29,7 @@ describe("model registry bundled defaults", () => {
 
 		// Gemma is a vision-capable default usable as an image captioner.
 		const gemma = registry.find("tokenin", "gemma-4");
-		expect(gemma?.name).toBe("Gemma 4 31B (Vision)");
+		expect(gemma?.name).toBe("Gemma 4 (Vision)");
 		expect(gemma?.input).toContain("image");
 	});
 

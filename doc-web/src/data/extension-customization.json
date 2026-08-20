@@ -312,16 +312,6 @@
           "persistence": "extension config"
         },
         {
-          "key": "scheduledRuns",
-          "type": "object",
-          "default": "(disabled)",
-          "description": {
-            "en": "Scheduled background runs: enabled, maxLatenessMs, maxPending.",
-            "id": "Run latar belakang terjadwal: enabled, maxLatenessMs, maxPending."
-          },
-          "persistence": "extension config"
-        },
-        {
           "key": "subagents.defaultModel",
           "type": "string",
           "default": "(not configured)",
@@ -438,24 +428,24 @@
           }
         },
         {
-          "name": "/subagents-doctor, /subagents-fleet, /subagents-stop, /subagent-cost, /subagents-models, /subagents-profiles, /parallel-review",
+          "name": "/subagents-doctor, /subagents-stop, /subagent-cost, /subagents-models, /subagents-profiles, /parallel-review",
           "description": {
             "en": "Management and monitoring commands.",
             "id": "Command manajemen dan monitoring."
           }
         },
         {
-          "name": "Ctrl+Alt+F",
+          "name": "/subagents-watchdog [status|on|off|model ...]",
           "description": {
-            "en": "Keyboard shortcut to toggle the fleet view.",
-            "id": "Shortcut keyboard untuk men-toggle fleet view."
+            "en": "Runtime watchdog status and controls.",
+            "id": "Status dan kontrol watchdog runtime."
           }
         },
         {
-          "name": "/subagents watchdog.*, schedule, schedule-list, schedule-status, schedule-cancel",
+          "name": "subagent({ action: \"status\" })",
           "description": {
-            "en": "Runtime watchdog and scheduling controls.",
-            "id": "Kontrol runtime watchdog dan penjadwalan."
+            "en": "Inspect live run status and child activity.",
+            "id": "Periksa status run dan aktivitas child."
           }
         }
       ],

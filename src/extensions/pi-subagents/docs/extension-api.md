@@ -40,23 +40,14 @@ Capability advertisements on `ping`:
 - `processTerminalProof` — the process-terminal proof status (see [observability.md](observability.md#process-terminal-proof)).
 - `nonRecoveringSteer` — RPC steering never pauses-and-revives.
 - `resume` — the revival seam described above.
-- `fleetStatus: { version: 1 }` — successful `status` replies additionally include `data.fleet`.
 
 Structured delegation progress updates carry `runId` as soon as foreground execution allocates it, so a caller can retain the package-owned revival target even if its own tool turn is interrupted before the terminal response. Foreground `details.results[]` rows also include a numeric `index` that is unique within the run and stable across partial progress snapshots and the final result; use `(runId, index)` instead of row position to correlate single, counted parallel, and chain children.
-
-### Fleet status DTO
-
-When `ping.capabilities.fleetStatus` is `{ version: 1 }`, successful `status` replies include `data.fleet`: `{ version: 1, entries, totalActive, omitted }`.
-
-Entries are bounded, current-session public display records with an opaque reconciliation `key`, resolved `agent`, optional `role`, `model`, `effort`, caller-facing `goal`, safe `startedAt`, and `{ input, output, total }` tokens. `totalActive` and `omitted` preserve overflow information beyond the bounded entry window.
-
-The DTO intentionally never exposes run, async, or tool IDs. Clients must ignore unknown fields and fall back to status text when the capability is absent.
 
 ### Scope
 
 `pi.events` is in-process only. It does not reach separate Selesai processes or child subagents; use the file lifecycle artifacts or `pi-intercom` for cross-process coordination.
 
-## External jobs in FleetView
+## External jobs in run status
 
 Use `pi-subagents/external-runs` to publish display-only current-session jobs owned by another extension:
 
@@ -88,9 +79,9 @@ updateExternalRun(ctx.sessionManager.getSessionId(), "dependency-review", {
 unregisterExternalRun(ctx.sessionManager.getSessionId(), "dependency-review");
 ```
 
-The API validates and caches bounded display fields when the caller registers or updates a job. FleetView reads that cache only. It does not poll caller code. `snapshotExternalRuns(sessionId)` and `listExternalRuns(sessionId)` return bounded current-session snapshots. By default, malformed cached records throw with the validation error. Display-only Fleet callers can pass `{ ignoreMalformed: true, onMalformedRecord }` to remove bad records and keep rendering with a programmatic diagnostic.
+The API validates and caches bounded display fields when the caller registers or updates a job. run status reads that cache only. It does not poll caller code. `snapshotExternalRuns(sessionId)` and `listExternalRuns(sessionId)` return bounded current-session snapshots. By default, malformed cached records throw with the validation error. Display-only Fleet callers can pass `{ ignoreMalformed: true, onMalformedRecord }` to remove bad records and keep rendering with a programmatic diagnostic.
 
-External jobs are observational. The caller owns execution, persistence, cancellation, and result delivery. FleetView does not expose stop, steer, resume, cancel, or Herdr controls for them. Supplied report and transcript paths are shown as bounded text only; FleetView does not read arbitrary external paths.
+External jobs are observational. The caller owns execution, persistence, cancellation, and result delivery. run status does not expose stop, steer, resume, cancel, or Herdr controls for them. Supplied report and transcript paths are shown as bounded text only; run status does not read arbitrary external paths.
 
 ## Launch contract preflight
 
@@ -233,8 +224,6 @@ Semantics:
 
 `denyExtensions` suppresses ambient, configured, and MCP provider extensions while retaining the package runtime needed for child protocol enforcement. This is a same-process policy boundary, not a sandbox against malicious code already running in the parent process.
 
-Schedules created while a ceiling is active are rejected until durable schedule persistence is available; unrestricted schedules remain subject to any policy active when they fire. Public status exposes bounded audit counts and sources, never full extension paths.
-
 ## Background-work provider API
 
 Other Selesai extensions can make their current-session jobs visible to `subagent_wait` through the process-local provider contract:
@@ -292,7 +281,7 @@ subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
 
 The inspector is a raw dashboard pane, not the child process and not a literal attach. It reads lifecycle/status/output/mission artifacts and sends `steer` or `stop` through pi-subagents' existing control inbox. Closing it never stops the run.
 
-Herdr remains optional. Ordinary launches stay headless, and missing/older Herdr versions affect only Herdr-specific inspector and project-pane actions. FleetView opens the selected active async child with `H`. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
+Herdr remains optional. Ordinary launches stay headless, and missing/older Herdr versions affect only Herdr-specific inspector and project-pane actions. run status opens the selected active async child with `H`. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
 
 ### Project panes
 

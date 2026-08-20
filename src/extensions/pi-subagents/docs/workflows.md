@@ -70,6 +70,8 @@ The legacy `/chain`, `/parallel`, and `/run-chain` commands are not registered.
 
 Use `/run <agent> [task] [--bg] [--fork]` for one child.
 
+Host extensions that need to launch a scripted workflow programmatically can use the exported `launchSlashSubagent(pi, ctx, params)` seam from `src/slash/slash-commands.ts`; it routes through the normal public executor with async delivery, result handling, and UI rendering.
+
 ## Worktree isolation
 
 Scripted workflows can give each writing child a separate managed git worktree by setting `worktree: true` on each `runs.run` / `runs.all` item:
