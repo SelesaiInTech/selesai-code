@@ -19,7 +19,9 @@
   "followUpMode": "one-at-a-time",
   "hideThinkingBlock": false,
   "images": {
-    "autoResize": true
+    "autoResize": true,
+    "imageCaptionModel": "tokenin/gemma-4",
+    "imageCaptionContextTokens": 16384
   },
   "packages": [
     "git:github.com/MasuRii/pi-tool-display",

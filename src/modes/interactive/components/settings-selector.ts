@@ -23,6 +23,7 @@ import {
 	theme,
 } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
+import type { ModelSelectorComponent } from "./model-selector.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
 
 const SETTINGS_SUBMENU_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -69,6 +70,7 @@ export interface SettingsConfig {
 	imageCaptionModel: string | undefined;
 	imageCaptionContextTokens: number;
 	visionModels: string[];
+	visionModelSelector?: (currentValue: string, done: () => void) => ModelSelectorComponent;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
 	transport: Transport;
@@ -802,6 +804,9 @@ export class SettingsSelectorComponent extends Container {
 			description: "Model used to describe images when the main model can't see them (off disables)",
 			currentValue: currentCaptionModel,
 			values: visionModelValues,
+			submenu: config.visionModelSelector
+				? (currentValue, done) => config.visionModelSelector!(currentValue, done)
+				: undefined,
 		});
 
 		// Vision caption context-token budget

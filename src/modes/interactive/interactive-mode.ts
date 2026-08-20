@@ -4458,6 +4458,22 @@ export class InteractiveMode {
 					imageCaptionModel: this.settingsManager.getImageCaptionModel(),
 					imageCaptionContextTokens: this.settingsManager.getImageCaptionContextTokens(),
 					visionModels: this.getVisionModels(),
+					visionModelSelector: (currentValue, selectorDone) =>
+						new ModelSelectorComponent(
+							this.ui,
+							undefined,
+							this.settingsManager,
+							this.session.modelRuntime,
+							this.session.scopedModels,
+							(model) => {
+								this.settingsManager.setImageCaptionModel(model ? `${model.provider}/${model.id}` : undefined);
+								selectorDone();
+								this.showStatus(model ? `Vision caption model: ${model.provider}/${model.id}` : "Vision captioning disabled");
+							},
+							selectorDone,
+							currentValue === "off" ? undefined : currentValue,
+							{ modelFilter: (model) => model.input.includes("image"), allowOff: true, persistSelection: false },
+						),
 					steeringMode: this.session.steeringMode,
 					followUpMode: this.session.followUpMode,
 					transport: this.settingsManager.getTransport(),

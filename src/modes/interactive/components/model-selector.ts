@@ -23,6 +23,15 @@ interface ModelItem {
 	model: Model<any>;
 }
 
+export interface ModelSelectorOptions {
+	/** Restrict the list (for example, to vision-capable models). */
+	modelFilter?: (model: Model<any>) => boolean;
+	/** Add an "off" choice without changing the active/default model. */
+	allowOff?: boolean;
+	/** Do not persist this selection as the main/default model. */
+	persistSelection?: boolean;
+}
+
 interface ScopedModelItem {
 	model: Model<any>;
 	thinkingLevel?: string;
@@ -54,8 +63,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private currentModel?: Model<any>;
 	private settingsManager: SettingsManager;
 	private modelRuntime: ModelRuntime;
-	private onSelectCallback: (model: Model<any>) => void;
+	private onSelectCallback: (model: Model<any> | undefined) => void;
 	private onCancelCallback: () => void;
+	private readonly options: ModelSelectorOptions;
 	private errorMessage?: string;
 	private refreshStatusMessage = "Refreshing model catalogs…";
 	private refreshStatusSuccess = false;
@@ -74,9 +84,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		settingsManager: SettingsManager,
 		modelRuntime: ModelRuntime,
 		scopedModels: ReadonlyArray<ScopedModelItem>,
-		onSelect: (model: Model<any>) => void,
+		onSelect: (model: Model<any> | undefined) => void,
 		onCancel: () => void,
 		initialSearchInput?: string,
+		options: ModelSelectorOptions = {},
 	) {
 		super();
 
@@ -88,6 +99,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.scope = scopedModels.length > 0 ? "scoped" : "all";
 		this.onSelectCallback = onSelect;
 		this.onCancelCallback = onCancel;
+		this.options = options;
 
 		// Add top border
 		this.addChild(new DynamicBorder());
@@ -143,17 +155,18 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			id: model.id,
 			model,
 		}));
-		this.allModels = this.sortModels(models);
+		this.allModels = this.sortModels(models).filter((item) => !this.options.modelFilter || this.options.modelFilter(item.model));
 		this.scopedModels = this.scopedModels.map((scoped) => {
 			const refreshed = this.modelRuntime.getModel(scoped.model.provider, scoped.model.id);
 			return refreshed ? { ...scoped, model: refreshed } : scoped;
 		});
-		this.scopedModelItems = this.scopedModels.map((scoped) => ({
+		this.scopedModelItems = this.scopedModels.filter((scoped) => !this.options.modelFilter || this.options.modelFilter(scoped.model)).map((scoped) => ({
 			provider: scoped.model.provider,
 			id: scoped.model.id,
 			model: scoped.model,
 		}));
 		this.activeModels = this.scope === "scoped" ? this.scopedModelItems : this.allModels;
+		if (this.options.allowOff) this.activeModels = [{ provider: "", id: "off", model: { provider: "", id: "off", name: "Disabled", input: ["text"] } as Model<any> }, ...this.activeModels];
 		this.filteredModels = this.activeModels;
 		const currentIndex = this.filteredModels.findIndex((item) => modelsAreEqual(this.currentModel, item.model));
 		this.selectedIndex =
@@ -354,9 +367,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	private handleSelect(model: Model<any>): void {
 		this.close();
-		// Save as new default
-		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
-		this.onSelectCallback(model);
+		if (model.id !== "off" && this.options.persistSelection !== false) this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+		this.onSelectCallback(model.id === "off" ? undefined : model);
 	}
 
 	getSearchInput(): Input {
