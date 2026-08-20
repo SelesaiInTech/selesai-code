@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.1] - 2026-08-20
+
+### Fixed
+- **Token-In model defaults.** Use the supported `auto` model for the main session and core subagent roles, remove the unsupported `auto-premium` default, and update its bundled context window to 384K.
+
 ## [0.9.0] - 2026-08-20
 
 ### Added

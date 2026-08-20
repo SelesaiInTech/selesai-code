@@ -15,23 +15,7 @@
           "name": "Auto",
           "reasoning": true,
           "input": ["text"],
-          "contextWindow": 256000,
-          "maxTokens": 64000,
-          "thinkingLevelMap": {
-            "minimal": null,
-            "low": null,
-            "medium": null,
-            "high": null,
-            "xhigh": null,
-            "max": "max"
-          }
-        },
-        {
-          "id": "auto-premium",
-          "name": "Auto Premium",
-          "reasoning": true,
-          "input": ["text"],
-          "contextWindow": 256000,
+          "contextWindow": 393216,
           "maxTokens": 64000,
           "thinkingLevelMap": {
             "minimal": null,
