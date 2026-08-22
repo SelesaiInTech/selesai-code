@@ -2,6 +2,13 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.4] - 2026-08-22
+
+### Changed
+- **Extensible pi-subagents workflows.** The bundled `/workflow-*` extension is now a thin registry-based adapter over pi-subagents orchestration. Modes can use ordered runs, parallel discovery, or scripted conditional loops without adding command plumbing. The prototype workflow now runs external research and codebase exploration in parallel.
+- **Workflow completion contract.** Build/review/fix loops now finish only when the reviewer reports `clean` with no remaining work, preventing a clean review of one slice from ending an incomplete plan.
+- **Workflow documentation.** Replaced stale durable-state-machine documentation with the current pi-subagents launch, recovery, and extension model.
+
 ## [0.9.3] - 2026-08-22
 
 ### Fixed

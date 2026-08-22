@@ -48,13 +48,13 @@ Extension `workflow` menyediakan empat bentuk mode workflow sebagai **workflow a
 | Mode | Fase scripted |
 | --- | --- |
 | `task` | architect (plan) → explorer (reuse) → recapper (handoff) → auto loop build→review→fix (builder → commentator → builder fix, hingga bersih) |
-| `prototype` | researcher (research) → architect (plan) → explorer (reuse) → recapper (handoff) → auto loop build→review→fix (builder → commentator → builder fix, hingga bersih) → commentator (audit diff yang belum di-commit) |
-| `quicktype` | sama dengan `prototype` tanpa langkah researcher |
+| `prototype` | researcher (research) + explorer (reuse codebase) paralel → architect (plan) → recapper (handoff) → auto loop build→review→fix (builder → commentator → builder fix, hingga bersih) → commentator (audit diff yang belum di-commit) |
+| `quicktype` | architect (plan) → explorer (reuse) → recapper (handoff) → auto loop build→review→fix (builder → commentator → builder fix, hingga bersih) → commentator (audit diff yang belum di-commit) |
 | `loop` | auto loop build→review→fix (builder → commentator → builder fix, hingga bersih) — putaran langsung untuk rencana yang sudah disepakati |
 
-- Fase setiap mode berjalan sebagai langkah `runs.run` di dalam `workflowScript`. Tidak ada checkpoint: skrip bersifat one-shot-and-sleep, dan review independen commentator adalah gate dari loop.
+- Mode memakai `runs.run` untuk pekerjaan berurutan; prototype juga memakai `runs.all` untuk discovery independen. Loop build/review kondisional tetap berupa `workflowScript`, sehingga tidak memiliki checkpoint; review independen commentator adalah gate-nya.
 - Setiap peluncuran meng-emit goal-nya di awal (terlihat di `subagent status` → workflow emits dan kartu live) dan menamai mission sesuai goal (`mission.list` / `mission.show`).
-- Putaran build→review→fix berulang otomatis hingga output reviewer cocok dengan marker `WORKFLOW_REVIEW_STATUS: clean`; kunci `runs.run` unik per putaran (`build-1`, `review-1`, `fix-1`, `build-2`, …). Review yang blocking memicu putaran fix yang hanya mengerjakan temuan reviewer; build berikutnya melanjutkan dari catatan sisa pekerjaan review.
+- Putaran build→review→fix berulang otomatis hingga output reviewer cocok dengan marker `WORKFLOW_REVIEW_STATUS: clean` **dan** tidak memuat bagian `Remaining work:`; kunci `runs.run` unik per putaran (`build-1`, `review-1`, `fix-1`, `build-2`, …). Review yang blocking (atau review bersih yang masih mencantumkan pekerjaan tersisa) memicu putaran fix yang hanya mengerjakan temuan reviewer; build berikutnya melanjutkan dari catatan sisa pekerjaan review.
 - State proses tahan lama berada di **mission** yang dibuat otomatis per peluncuran (state, artifact, keputusan, receipt); periksa dengan `mission.list` / `mission.show`.
 - Saat budget fan-out per-run (`maxSubagentSpawnsPerRun`) habis di tengah loop, workflow async me-relaunch otomatis sebagai run top-level baru dengan budget baru dan terus berputar hingga commentator melaporkan bersih atau cap auto-relaunch (`maxWorkflowAutoRelaunches`, default 12; 0 = tak terbatas) tercapai. Plan dan progress file membawa semua state antar relaunch.
 - Workflow diluncurkan secara asinkron; pulihkan atau lanjutkan melalui `mission.list` dan `status` run async.
@@ -63,7 +63,7 @@ Extension `workflow` menyediakan empat bentuk mode workflow sebagai **workflow a
 
 | Perintah | Deskripsi |
 | --- | --- |
-| `/workflow-prototype <goal>` | Jalankan workflow scripted prototype penuh (research → plan → reuse → handoff → auto loop → audit). |
+| `/workflow-prototype <goal>` | Jalankan workflow scripted prototype penuh (research + reuse codebase paralel → plan → handoff → auto loop → audit). |
 | `/workflow-quicktype <goal>` | Jalankan workflow scripted prototype lebih cepat tanpa research. |
 | `/workflow-task <goal>` | Jalankan workflow scripted task (plan → reuse → handoff → auto loop). |
 | `/workflow-loop <goal>` | Jalankan auto loop build→review→fix langsung untuk rencana yang sudah disepakati. |

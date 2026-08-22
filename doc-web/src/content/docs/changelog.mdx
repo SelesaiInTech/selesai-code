@@ -5,6 +5,12 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.9.4 — Extensible pi-subagents workflows
+
+- The bundled `/workflow-*` extension is now a thin registry-based adapter over pi-subagents orchestration, so source-owned modes can use ordered runs, parallel discovery, or scripted conditional loops without new command plumbing.
+- The prototype workflow now runs external research and codebase exploration in parallel.
+- A build/review/fix loop completes only when the reviewer reports `clean` and no `Remaining work:` section, preventing premature completion of a multi-step plan.
+
 ## 0.9.3 — Token-In model identifiers
 
 - Replaces the provider's removed `auto`/`auto-premium` identifiers with the bundled `celestial-pro`, `celestial-max`, and `celestial-ultra` models.

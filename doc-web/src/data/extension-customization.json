@@ -455,8 +455,8 @@
       "slug": "workflow",
       "distribution": "bundled",
       "overview": {
-        "en": "Workflow modes are pi-subagents scripted workflows defined in source. Users pick a mode and pass a goal; the modes' scripts and phases are not edited through config files.",
-        "id": "Mode workflow adalah workflow scripted pi-subagents yang didefinisikan source. User memilih mode dan memberikan goal; skrip dan fase mode tidak diedit melalui file konfigurasi."
+        "en": "Workflow modes are source-owned, extensible pi-subagents orchestrations. Users pick a mode and pass a goal; mode definitions are not edited through config files.",
+        "id": "Mode workflow adalah orkestrasi pi-subagents yang dapat diperluas dan dimiliki source. User memilih mode dan memberikan goal; definisi mode tidak diedit melalui file konfigurasi."
       },
       "sourcePaths": [
         "src/extensions/workflow/extension.ts",
@@ -470,8 +470,8 @@
           },
           "path": "src/extensions/workflow/modes.ts (source-owned)",
           "precedence": {
-            "en": "Scripted workflow phases and the auto-loop (until clean) are defined in source, not user files.",
-            "id": "Fase workflow scripted dan auto-loop (hingga bersih) didefinisikan di source, bukan file user."
+            "en": "Mode definitions choose native ordered/parallel pi-subagents runs or a scripted auto-loop; they are defined in source, not user files.",
+            "id": "Definisi mode memilih run pi-subagents native berurutan/paralel atau auto-loop berskrip; semuanya didefinisikan di source, bukan file user."
           }
         }
       ],
@@ -502,8 +502,8 @@
         {
           "name": "/workflow-prototype, /workflow-quicktype, /workflow-task, /workflow-loop",
           "description": {
-            "en": "Launch the selected mode's pi-subagents scripted workflow with the goal.",
-            "id": "Meluncurkan workflow scripted pi-subagents mode yang dipilih dengan goal."
+            "en": "Launch the selected pi-subagents workflow mode with the goal.",
+            "id": "Meluncurkan mode workflow pi-subagents yang dipilih dengan goal."
           }
         }
       ],

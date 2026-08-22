@@ -5,6 +5,12 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.9.4 — Workflow pi-subagents yang dapat diperluas
+
+- Extension `/workflow-*` bawaan kini menjadi adaptor tipis berbasis registry di atas orkestrasi pi-subagents, sehingga mode milik source dapat memakai run berurutan, discovery paralel, atau loop kondisional berskrip tanpa menambah plumbing command baru.
+- Workflow prototype kini menjalankan riset eksternal dan eksplorasi codebase secara paralel.
+- Loop build/review/fix selesai hanya saat reviewer melaporkan `clean` dan tidak ada bagian `Remaining work:`, mencegah penyelesaian prematur pada rencana bertahap.
+
 ## 0.9.3 — Identitas model Token-In
 
 - Mengganti identifier `auto`/`auto-premium` yang telah dihapus provider dengan model bawaan `celestial-pro`, `celestial-max`, dan `celestial-ultra`.
