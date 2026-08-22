@@ -11,8 +11,8 @@
       },
       "models": [
         {
-          "id": "auto",
-          "name": "Auto",
+          "id": "celestial-pro",
+          "name": "Celestial Pro",
           "reasoning": true,
           "input": ["text"],
           "contextWindow": 393216,
@@ -27,8 +27,24 @@
           }
         },
         {
-          "id": "auto-premium",
-          "name": "Auto",
+          "id": "celestial-max",
+          "name": "Celestial Max",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 393216,
+          "maxTokens": 64000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": null,
+            "xhigh": null,
+            "max": "max"
+          }
+        },
+        {
+          "id": "celestial-ultra",
+          "name": "Celestial Ultra",
           "reasoning": true,
           "input": ["text"],
           "contextWindow": 393216,

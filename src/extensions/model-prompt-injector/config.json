@@ -7,7 +7,7 @@
       "enabled": true
     },
     {
-      "match": ["auto"],
+      "match": ["celestial-*"],
       "mode": "prepend",
       "prompt": "text: You are a helpful software engineer assistant.\n\ndescription: Bootstrap with shell/read, then expose the full Standard tool catalog after the first durable tool call.\n\nwhen you thought, start with `we need...`",
       "enabled": true

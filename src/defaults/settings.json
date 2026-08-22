@@ -9,7 +9,7 @@
     "keepRecentTokens": 32000,
     "reserveTokens": 64000
   },
-  "defaultModel": "auto",
+  "defaultModel": "celestial-pro",
   "defaultProvider": "tokenin",
   "defaultThinkingLevel": "max",
   "doubleEscapeAction": "tree",
@@ -44,22 +44,22 @@
   "subagents": {
     "agentOverrides": {
       "architect": {
-        "model": "tokenin/auto:max"
+        "model": "tokenin/celestial-pro:max"
       },
       "builder": {
-        "model": "tokenin/auto:max"
+        "model": "tokenin/celestial-pro:max"
       },
       "commentator": {
-        "model": "tokenin/auto:max"
+        "model": "tokenin/celestial-pro:max"
       },
       "explorer": {
-        "model": "tokenin/auto:max"
+        "model": "tokenin/celestial-pro:max"
       },
       "recapper": {
-        "model": "tokenin/auto:max"
+        "model": "tokenin/celestial-pro:max"
       },
       "researcher": {
-        "model": "tokenin/auto:max"
+        "model": "tokenin/celestial-pro:max"
       }
     }
   },

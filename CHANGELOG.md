@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.3] - 2026-08-22
+
+### Fixed
+- **Token-In model identifiers.** Replace the provider's removed `auto`/`auto-premium` identifiers with the bundled `celestial-pro`, `celestial-max`, and `celestial-ultra` models, and point factory defaults and model-specific prompt injection at the supported Celestial IDs.
+
 ## [0.9.2] - 2026-08-20
 
 ### Fixed
