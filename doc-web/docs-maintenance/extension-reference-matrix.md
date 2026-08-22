@@ -69,13 +69,13 @@ extension documentation accurate. It is not published as user-facing content.
 
 ### question
 
-- **Startup behavior**: Loaded automatically at boot via `./question`; registers question TUI.
-- **Prerequisites**: Bundled; interactive TUI session.
+- **Startup behavior**: Loaded automatically at boot via `./question`; registers question tool (TUI wizard or host dialogs in RPC/VS Code).
+- **Prerequisites**: Bundled; a UI surface (TUI session or RPC/VS Code host).
 - **Config / settings / env**: None.
 - **Commands / tools / shortcuts**: Question tool calls for single, multi-select, freeform, image, and info prompts.
 - **Persistence scope**: Can restore saved answers; per-session state.
 - **Test / source evidence**: `src/extensions/question/index.ts`, schemas, tests.
-- **Limits / failure behavior**: Requires TUI rendering; non-interactive sessions may skip prompts.
+- **Limits / failure behavior**: Requires a UI surface; headless sessions may skip prompts.
 
 ### grep-app
 

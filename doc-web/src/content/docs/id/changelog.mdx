@@ -5,6 +5,12 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.9.5 — Pertanyaan di luar TUI
+
+- Tool `question` bawaan kini berfungsi di mode non-TUI seperti host RPC/VS Code: pertanyaan dijawab melalui dialog `extension_ui_request` host alih-alih memunculkan error khusus TUI.
+- Pertanyaan multiselect tetap mempertahankan multi-seleksi penuh di host yang mendukung method UI `multiselect` baru; host lama beralih ke satu pilihan.
+- Klien RPC kini dapat menangani request `method: "multiselect"` dan membalas dengan array `values`.
+
 ## 0.9.4 — Workflow pi-subagents yang dapat diperluas
 
 - Extension `/workflow-*` bawaan kini menjadi adaptor tipis berbasis registry di atas orkestrasi pi-subagents, sehingga mode milik source dapat memakai run berurutan, discovery paralel, atau loop kondisional berskrip tanpa menambah plumbing command baru.

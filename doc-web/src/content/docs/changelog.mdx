@@ -5,6 +5,12 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.9.5 — Questions outside the TUI
+
+- The bundled `question` tool now works in non-TUI modes such as RPC/VS Code hosts: questions are answered through the host's `extension_ui_request` dialogs instead of throwing a TUI-only error.
+- Multi-select questions keep full multi-selection in hosts that support the new `multiselect` UI method; older hosts fall back to a single choice.
+- RPC clients can now handle `method: "multiselect"` requests and reply with a `values` array.
+
 ## 0.9.4 — Extensible pi-subagents workflows
 
 - The bundled `/workflow-*` extension is now a thin registry-based adapter over pi-subagents orchestration, so source-owned modes can use ordered runs, parallel discovery, or scripted conditional loops without new command plumbing.

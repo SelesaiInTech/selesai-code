@@ -81,7 +81,7 @@ DuckDuckGo works as the default search path. Optional first-run onboarding can c
 
 ### Interactive questions
 
-The bundled `question` tool gives the agent a real TUI for decisions instead of forcing every clarification through plain text. It supports:
+The bundled `question` tool gives the agent a real UI for decisions instead of forcing every clarification through plain text. It supports:
 
 - single- and multi-select options
 - descriptions and context summaries

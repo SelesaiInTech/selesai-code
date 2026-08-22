@@ -197,13 +197,29 @@ describe("question wizard", () => {
 		expect(emitted2).toEqual(["question:submitted"]);
 	});
 
-	it("rejects non-TUI modes and invalid params", async () => {
+	it("uses extension UI requests in RPC mode", async () => {
 		let tool: any;
 		questionExtension({ registerTool: (entry: unknown) => (tool = entry), events: { emit() {} } } as any);
-
-		await expect(tool.execute("call", { questions: [{ type: "select", question: "Q", options: [{ value: "x", label: "X" }] }] }, undefined, undefined, {
+		const result = await tool.execute("call", { questions: [{ type: "select", question: "Choose", options: [{ value: "x", label: "X" }] }] }, undefined, undefined, {
 			mode: "rpc",
-		} as any)).rejects.toThrow("Question requires terminal TUI mode.");
+			ui: { select: async () => "X" },
+		} as any);
+		expect(result.details).toEqual({ status: "submitted", answers: [{ id: "q1", status: "answered", response: { kind: "selection", values: ["x"] } }] });
+	});
+
+	it("preserves multiple RPC selections", async () => {
+		let tool: any;
+		questionExtension({ registerTool: (entry: unknown) => (tool = entry), events: { emit() {} } } as any);
+		const result = await tool.execute("call", { questions: [{ type: "multiselect", question: "Choose many", options: [{ value: "a", label: "A" }, { value: "b", label: "B" }] }] }, undefined, undefined, {
+			mode: "rpc",
+			ui: { multiselect: async () => ["A", "B"] },
+		} as any);
+		expect(result.details).toEqual({ status: "submitted", answers: [{ id: "q1", status: "answered", response: { kind: "selection", values: ["a", "b"] } }] });
+	});
+
+	it("rejects invalid params", async () => {
+		let tool: any;
+		questionExtension({ registerTool: (entry: unknown) => (tool = entry), events: { emit() {} } } as any);
 
 		await expect(tool.execute("call", { questions: [] }, undefined, undefined, {
 			mode: "tui",

@@ -1008,7 +1008,7 @@ Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()
 
 There are two categories of extension UI methods:
 
-- **Dialog methods** (`select`, `confirm`, `input`, `editor`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
+- **Dialog methods** (`select`, `multiselect`, `confirm`, `input`, `editor`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
 - **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
 
 If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The client does not need to track timeouts.
@@ -1045,6 +1045,23 @@ Prompt the user to choose from a list. Dialog methods with a `timeout` field inc
 ```
 
 Expected response: `extension_ui_response` with `value` (the selected option string) or `cancelled: true`.
+
+#### multiselect
+
+Prompt the user to choose zero or more options from a list. Dialog methods with a `timeout` field include the timeout in milliseconds; the agent auto-resolves with `undefined` if the client doesn't respond in time.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-10",
+  "method": "multiselect",
+  "title": "Which regions?",
+  "options": ["us-east", "eu-west", "ap-southeast"],
+  "timeout": 10000
+}
+```
+
+Expected response: `extension_ui_response` with `values` (the selected option strings) or `cancelled: true`.
 
 #### confirm
 
@@ -1172,12 +1189,18 @@ Set the text in the input editor. Fire-and-forget.
 
 ### Extension UI Responses (stdin)
 
-Responses are sent for dialog methods only (`select`, `confirm`, `input`, `editor`). The `id` must match the request.
+Responses are sent for dialog methods only (`select`, `multiselect`, `confirm`, `input`, `editor`). The `id` must match the request.
 
 #### Value response (select, input, editor)
 
 ```json
 {"type": "extension_ui_response", "id": "uuid-1", "value": "Allow"}
+```
+
+#### Values response (multiselect)
+
+```json
+{"type": "extension_ui_response", "id": "uuid-10", "values": ["us-east", "ap-southeast"]}
 ```
 
 #### Confirmation response (confirm)
@@ -1188,7 +1211,7 @@ Responses are sent for dialog methods only (`select`, `confirm`, `input`, `edito
 
 #### Cancellation response (any dialog)
 
-Dismiss any dialog method. The extension receives `undefined` (for select/input/editor) or `false` (for confirm).
+Dismiss any dialog method. The extension receives `undefined` (for select/multiselect/input/editor) or `false` (for confirm).
 
 ```json
 {"type": "extension_ui_response", "id": "uuid-3", "cancelled": true}

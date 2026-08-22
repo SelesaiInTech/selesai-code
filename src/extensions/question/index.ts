@@ -1,6 +1,6 @@
 // Batch-first interactive question tool.
 
-import type { ExtensionAPI, KeybindingsManager, Theme } from "@selesai/code";
+import type { ExtensionAPI, ExtensionUIContext, KeybindingsManager, Theme } from "@selesai/code";
 import {
 	Container,
 	type Component,
@@ -18,6 +18,78 @@ import {
 import { buildQuestionAnswers, prepareQuestions, saveDraftQuestion } from "./batch.ts";
 import { BOX_BORDER_LEFT, BOX_BORDER_OVERHEAD, BOX_BORDER_RIGHT, DISABLED_SHORTCUT, QUESTION_VERSION } from "./constants.ts";
 import { createSelectionResponse, createTextResponse, formatQuestionResponse, formatResponseSummary, oneLine, previewText, trimText } from "./helpers.ts";
+
+/**
+ * Answer a question outside the terminal TUI (e.g. RPC/extension mode) using
+ * the per-mode ExtensionUIContext, which emits extension_ui_request dialogs
+ * (select/input) that the VS Code host renders. Mirrors Cline/Kilo: a pending
+ * question is surfaced in the webview and blocks until the user answers.
+ */
+function answerQuestionViaUi(question: PreparedQuestion, ctx: { ui: ExtensionUIContext }): Promise<QuestionResponse | null> {
+	const title = question.context ? `${question.question}
+
+${question.context}` : question.question;
+	if (question.type === "text") {
+		return ctx.ui.input(title).then((text) => createTextResponse(text));
+	}
+	const optionLabels = new Map(question.options.map((option) => [option.label, option.value] as const));
+	const optionValues = question.options.map((option) => option.value);
+	const labels = question.options.map((option) => option.label);
+	if (question.type === "select") {
+		return ctx.ui
+			.select(title, labels)
+			.then((selected) => {
+				if (selected === undefined) return null;
+				const value = optionLabels.get(selected);
+				const isOther = value === undefined;
+				if (isOther) {
+					if (!question.allowOther) return null;
+					return ctx.ui.input(title).then((text) => createSelectionResponse([], text ?? undefined));
+				}
+				return createSelectionResponse([value]);
+			});
+	}
+	// RPC/webview hosts can preserve true multi-selection. Older hosts fall back to
+	// one choice rather than making the question tool unavailable entirely. When
+	// allowOther is set the host sees an explicit "Other" choice, surfacing a free
+	// text follow-up exactly like the TUI wizard.
+	if (ctx.ui.multiselect) {
+		const other = question.allowOther ? ["Other"] : [];
+		return ctx.ui.multiselect(title, [...labels, ...other]).then((selected) => {
+			if (selected === undefined) return null;
+			const values = selected.filter((label) => label !== "Other").map((label) => optionLabels.get(label)).filter((value): value is string => value !== undefined);
+			if (question.allowOther && selected.includes("Other")) {
+				return ctx.ui.input(title).then((text) => createSelectionResponse(values, text ?? undefined));
+			}
+			return createSelectionResponse(values);
+		});
+	}
+	return ctx.ui.select(title, labels).then((selected) => {
+		if (selected === undefined) return null;
+		const value = optionLabels.get(selected);
+		return value === undefined
+			? question.allowOther ? ctx.ui.input(title).then((text) => createSelectionResponse([], text ?? undefined)) : null
+			: createSelectionResponse([value]);
+	});
+}
+
+/**
+ * Non-TUI fallback that answers each question in sequence via the host UI.
+ * Returns null when the user cancels any question.
+ */
+async function answerQuestionsViaUi(questions: PreparedQuestion[], ctx: { ui: ExtensionUIContext }): Promise<QuestionResponse[] | null> {
+	const answers: QuestionResponse[] = [];
+	for (const question of questions) {
+		const response = await answerQuestionViaUi(question, ctx);
+		if (response === null) return null;
+		answers.push(response);
+	}
+	return answers;
+}
+
+function buildAnswersFromResponses(questions: PreparedQuestion[], responses: QuestionResponse[]): QuestionAnswer[] {
+	return questions.map((question, index) => ({ id: question.id, status: "answered" as const, response: responses[index]! }));
+}
 import { QuestionList } from "./question-list.ts";
 import { MultiSelect, SingleSelect } from "./selection-mode.ts";
 import { QuestionParamsSchema } from "./schemas.ts";
@@ -557,14 +629,17 @@ export default function questionExtension(pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const prepared = prepareQuestions(params.questions);
 			if ("error" in prepared) throw new Error(prepared.error);
-			if (ctx.mode !== "tui") throw new Error("Question requires terminal TUI mode.");
 			if (signal?.aborted) return { content: [{ type: "text", text: "Question cancelled" }], details: { status: "cancelled", reason: "user" } satisfies QuestionToolResult };
 
 			onUpdate?.({ content: [{ type: "text", text: `Waiting for answers to ${prepared.questions.length} question${prepared.questions.length === 1 ? "" : "s"}...` }] });
-			const result = await ctx.ui.custom<QuestionToolResult>((tui, theme, keybindings, done) => {
-				if (signal) signal.addEventListener("abort", () => done({ status: "cancelled", reason: "user" }), { once: true });
-				return new BatchQuestionComponent(prepared.questions, tui, theme, keybindings, done);
-			});
+			const result: QuestionToolResult | undefined = ctx.mode === "tui"
+				? await ctx.ui.custom<QuestionToolResult>((tui, theme, keybindings, done) => {
+					if (signal) signal.addEventListener("abort", () => done({ status: "cancelled", reason: "user" }), { once: true });
+					return new BatchQuestionComponent(prepared.questions, tui, theme, keybindings, done);
+				})
+				: await answerQuestionsViaUi(prepared.questions, ctx).then((responses) =>
+					responses ? { status: "submitted" as const, answers: buildAnswersFromResponses(prepared.questions, responses) } : { status: "cancelled" as const, reason: "user" as const },
+				);
 			if (!result) throw new Error("Question TUI did not return a result.");
 
 			if (result.status === "cancelled") {

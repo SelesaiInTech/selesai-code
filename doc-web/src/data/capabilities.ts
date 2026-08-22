@@ -90,8 +90,8 @@ export const capabilities: Capability[] = [
   {
     slug: "question",
     category: "research-and-interaction",
-    en: { displayName: "Interactive questions", benefit: "TUI for single, multi-select, freeform, and image/info questions with keyboard navigation and filtering." },
-    id: { displayName: "Pertanyaan interaktif", benefit: "TUI untuk pertanyaan single/multi-select, freeform, dan image/info dengan navigasi keyboard dan filtering." },
+    en: { displayName: "Interactive questions", benefit: "TUI wizard (or host dialogs in RPC/VS Code) for single, multi-select, and freeform questions with keyboard navigation and filtering." },
+    id: { displayName: "Pertanyaan interaktif", benefit: "Wizard TUI (atau dialog host di RPC/VS Code) untuk pertanyaan single/multi-select dan freeform dengan navigasi keyboard dan filtering." },
     sourcePaths: ["src/extensions/question/", "README.md"],
     sourceLinks: [
       links("Question source", "src/extensions/question/"),

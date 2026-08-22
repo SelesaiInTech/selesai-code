@@ -2,6 +2,12 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.5] - 2026-08-23
+
+### Added
+- **Questions in non-TUI modes.** The bundled `question` tool now works outside the terminal TUI (e.g. RPC/VS Code hosts): questions are answered through the host's `extension_ui_request` dialogs (`select`/`input`) instead of throwing, mirroring Cline/Kilo. Multi-select questions preserve full multi-selection when the host supports the new `multiselect` UI method, with single-select fallback for older hosts.
+- **`multiselect` extension UI method.** `ExtensionUIContext.multiselect()` prompts for multiple choices and returns `string[] | undefined`. In RPC mode it emits an `extension_ui_request` with `method: "multiselect"` and accepts an `extension_ui_response` with a `values` array.
+
 ## [0.9.4] - 2026-08-22
 
 ### Changed

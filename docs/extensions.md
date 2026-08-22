@@ -9,7 +9,7 @@ Extensions are TypeScript modules that extend pi's behavior. They can subscribe 
 **Key capabilities:**
 - **Custom tools** - Register tools the LLM can call via `pi.registerTool()`
 - **Event interception** - Block or modify tool calls, inject context, customize compaction
-- **User interaction** - Prompt users via `ctx.ui` (select, confirm, input, notify)
+- **User interaction** - Prompt users via `ctx.ui` (select, multiselect, confirm, input, notify)
 - **Custom UI components** - Full TUI components with keyboard input via `ctx.ui.custom()` for complex interactions
 - **Custom commands** - Register commands like `/mycommand` via `pi.registerCommand()`
 - **Session persistence** - Store state that survives restarts via `pi.appendEntry()`
@@ -2200,6 +2200,9 @@ Extensions can interact with users via `ctx.ui` methods and customize how messag
 ```typescript
 // Select from options
 const choice = await ctx.ui.select("Pick one:", ["A", "B", "C"]);
+
+// Multi-select from options (string[] | undefined; optional in hosts that do not support it)
+const choices = await ctx.ui.multiselect?.("Pick many:", ["A", "B", "C"]);
 
 // Confirm dialog
 const ok = await ctx.ui.confirm("Delete?", "This cannot be undone");

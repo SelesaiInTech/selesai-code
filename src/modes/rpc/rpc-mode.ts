@@ -144,6 +144,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
 			),
 
+		multiselect: (title, options, opts) =>
+			createDialogPromise(opts, undefined, { method: "multiselect", title, options, timeout: opts?.timeout }, (r) =>
+				"cancelled" in r && r.cancelled ? undefined : "values" in r ? r.values : undefined,
+			),
+
 		confirm: (title, message, opts) =>
 			createDialogPromise(opts, false, { method: "confirm", title, message, timeout: opts?.timeout }, (r) =>
 				"cancelled" in r && r.cancelled ? false : "confirmed" in r ? r.confirmed : false,

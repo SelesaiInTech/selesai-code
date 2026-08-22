@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-The `question` extension provides a terminal wizard for asking the user one or more typed questions. It supports single-select, multi-select, and free-form text questions, with keyboard navigation and filtering.
+The `question` extension provides a terminal wizard for asking the user one or more typed questions. It supports single-select, multi-select, and free-form text questions, with keyboard navigation and filtering. Outside the TUI (e.g. RPC/VS Code hosts), the same questions are answered through the host's extension UI dialogs.
 
 <ExtensionStatus
   distribution="bundled"
@@ -19,12 +19,13 @@ The `question` extension provides a terminal wizard for asking the user one or m
 ## Setup and prerequisites
 
 - This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
-- Requires terminal TUI mode. It cannot be used in headless or non-interactive sessions.
+- Requires a UI surface. In terminal TUI mode questions render as a full-screen wizard; in RPC/VS Code hosts they render as `extension_ui_request` dialogs (`select`, `input`, `multiselect`). It cannot be used in modes without any UI.
 - The agent invokes the tool; the user answers through the TUI.
 
 ## What it sets up
 
-- Registers the `question` tool and renders a full-screen batch question component.
+- In terminal TUI mode the tool renders a full-screen batch question wizard. In non-TUI modes (e.g. RPC) questions are asked one at a time through the host's extension UI dialogs; cancelling any question cancels the whole batch.
+- Multi-select questions keep full multi-selection when the host supports the `multiselect` UI method; older hosts fall back to a single choice.
 - Each question has a stable `id`, a `label`, a `question` string, a `type`, and optional `options` and `context`.
 - Answers are returned as a structured result with `answered`, `skipped`, and `unanswered` statuses.
 
@@ -73,7 +74,7 @@ Committing a select, multi-select, text, or custom answer advances automatically
 
 ## Limits and safety
 
-- The tool only works in TUI mode. Invoking it from a non-interactive session throws an error.
+- The tool requires a UI. It throws when no host UI is available (headless or non-interactive sessions).
 - Questions should be independent decisions that the user must make; the agent should inspect facts itself rather than asking the user for discoverable information.
 
 - Blank text entries are recorded as `skipped`; the agent must handle skipped and unanswered statuses explicitly.
