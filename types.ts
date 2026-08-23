@@ -54,10 +54,18 @@ export interface Message {
   retryOf?: string;
   replyTo?: string;
   expectsReply?: boolean;
+  provenance?: MessageProvenance;
   content: {
     text: string;
     attachments?: Attachment[];
   };
+}
+
+export interface MessageProvenance {
+  type: "extension_outbox";
+  extensionId: string;
+  extensionName: string;
+  requestId: string;
 }
 
 export interface Attachment {

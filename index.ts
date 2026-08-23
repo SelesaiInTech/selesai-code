@@ -14,11 +14,17 @@ import type { Attachment, BrokerMessage, Message, MessageControl, MessageReceipt
 import {
   INTERCOM_EXTENSION_REGISTER_EVENT,
   INTERCOM_EXTENSION_REGISTRY_READY_EVENT,
+  INTERCOM_OUTBOX_REQUEST_EVENT,
+  INTERCOM_OUTBOX_RESULT_EVENT,
   type IntercomExtensionChannel,
   type IntercomExtensionEvent,
   type IntercomExtensionOwner,
   type IntercomExtensionRegistration,
   type IntercomExtensionState,
+  type IntercomOutboxRequestV1,
+  type IntercomOutboxResultCode,
+  type IntercomOutboxResultStatus,
+  type IntercomOutboxResultV1,
 } from "./extension-api.ts";
 import { ReplyTracker } from "./reply-tracker.ts";
 import { realpathSync } from "node:fs";
@@ -67,6 +73,24 @@ interface DeliveryTarget {
   id: string;
   label: string;
   projectPane?: ProjectPaneLaunch;
+}
+
+interface OutboxTarget {
+  id: string;
+  label: string;
+}
+
+interface OutboxRequestTrace {
+  requestId: string;
+  extensionId?: string;
+  extensionName?: string;
+  to?: string;
+  message?: string;
+}
+
+interface PendingOutboxRequest {
+  generation: number;
+  request: OutboxRequestTrace;
 }
 
 type ContactSupervisorReason = "need_decision" | "progress_update" | "interview_request";
@@ -444,6 +468,44 @@ function parseSubagentIntercomPayload(payload: unknown): { to: string; message: 
   const requestId = typeof record.requestId === "string" ? record.requestId : undefined;
   return { to: record.to, message: record.message, ...(requestId ? { requestId } : {}) };
 }
+function parseOutboxRequestPayload(payload: unknown): { ok: true; request: IntercomOutboxRequestV1 } | { ok: false; requestId?: string; extensionId?: string; extensionName?: string; detail: string } {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return { ok: false, detail: "request must be an object" };
+  }
+  const record = payload as Record<string, unknown>;
+  const requestId = typeof record.requestId === "string" && record.requestId.trim() ? record.requestId : undefined;
+  const extensionId = typeof record.extensionId === "string" && record.extensionId.trim() ? record.extensionId.trim() : undefined;
+  const extensionName = typeof record.extensionName === "string" && record.extensionName.trim() ? record.extensionName.trim() : undefined;
+  if (record.version !== 1) {
+    return { ok: false, requestId, extensionId, extensionName, detail: "version must be 1" };
+  }
+  if (!requestId) {
+    return { ok: false, extensionId, extensionName, detail: "requestId is required" };
+  }
+  if (!extensionId) {
+    return { ok: false, requestId, extensionName, detail: "extensionId is required" };
+  }
+  if (!extensionName) {
+    return { ok: false, requestId, extensionId, detail: "extensionName is required" };
+  }
+  if (typeof record.to !== "string" || !record.to.trim()) {
+    return { ok: false, requestId, extensionId, extensionName, detail: "to is required" };
+  }
+  if (typeof record.message !== "string" || !record.message.trim()) {
+    return { ok: false, requestId, extensionId, extensionName, detail: "message is required" };
+  }
+  return {
+    ok: true,
+    request: {
+      version: 1,
+      requestId,
+      extensionId,
+      extensionName,
+      to: record.to.trim(),
+      message: record.message,
+    },
+  };
+}
 function resolveIntercomPresenceName(sessionName: string | undefined, sessionId: string): string {
   const trimmedName = sessionName?.trim();
   if (trimmedName) {
@@ -580,6 +642,8 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
 
   const seenInboundMessages = new Map<string, number>();
   const latestOutboundReceipts = new Map<string, { status: MessageReceiptStatus; timestamp: number; detail?: string }>();
+  const outboxRequestIds = new Set<string>();
+  const pendingOutboxRequests = new Map<string, PendingOutboxRequest>();
   function dismissIncomingAsk(messageId: string): void {
     replyTracker.dismissPendingAsk(messageId);
   }
@@ -916,6 +980,207 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
     if (currentSessionId) addTarget(buildPresenceIdentity(pi, currentIntercomSessionId ?? currentSessionId).name);
     return Boolean(resolvedTo && activeClient?.sessionId && resolvedTo === activeClient.sessionId)
       || targets.has(to.trim().toLowerCase());
+  }
+  function buildOutboxResult(request: OutboxRequestTrace, status: IntercomOutboxResultStatus, options: {
+    code?: IntercomOutboxResultCode;
+    detail?: string;
+    messageId?: string;
+  } = {}): IntercomOutboxResultV1 {
+    return {
+      version: 1,
+      requestId: request.requestId,
+      status,
+      ...(options.code ? { code: options.code } : {}),
+      ...(request.extensionId ? { extensionId: request.extensionId } : {}),
+      ...(request.extensionName ? { extensionName: request.extensionName } : {}),
+      ...(options.messageId ? { messageId: options.messageId } : {}),
+      ...(options.detail ? { detail: options.detail } : {}),
+    };
+  }
+  function emitOutboxResult(result: IntercomOutboxResultV1, request: OutboxRequestTrace): void {
+    pi.appendEntry("intercom_outbox_result", {
+      ...result,
+      ...(request.to ? { to: request.to } : {}),
+      ...(request.message ? { message: { text: request.message } } : {}),
+      timestamp: Date.now(),
+    });
+    pi.events.emit(INTERCOM_OUTBOX_RESULT_EVENT, result);
+  }
+  function settleOutboxRequest(requestId: string, status: IntercomOutboxResultStatus, options: {
+    code?: IntercomOutboxResultCode;
+    detail?: string;
+    messageId?: string;
+  } = {}): boolean {
+    const pending = pendingOutboxRequests.get(requestId);
+    if (!pending) {
+      return false;
+    }
+    pendingOutboxRequests.delete(requestId);
+    emitOutboxResult(buildOutboxResult(pending.request, status, options), pending.request);
+    return true;
+  }
+  function failPendingOutboxRequests(generation: number, code: IntercomOutboxResultCode, detail: string): void {
+    for (const [requestId, pending] of [...pendingOutboxRequests]) {
+      if (pending.generation === generation) {
+        settleOutboxRequest(requestId, "failed", { code, detail });
+      }
+    }
+  }
+  function resolveOutboxTarget(sessions: SessionInfo[], currentId: string, to: string): { ok: true; target: OutboxTarget } | { ok: false; code: "target_not_found" | "target_ambiguous" | "self_target"; detail: string } {
+    const byId = sessions.find((session) => session.id === to);
+    const lowerName = to.toLowerCase();
+    const byName = byId ? [] : sessions.filter((session) => session.name?.toLowerCase() === lowerName);
+    const byPrefix = byId || byName.length > 0 ? [] : sessions.filter((session) => session.id.startsWith(to));
+    const matches = byId ? [byId] : byName.length > 0 ? byName : byPrefix;
+    if (matches.length === 0) {
+      return { ok: false, code: "target_not_found", detail: `Session "${to}" is not currently connected.` };
+    }
+    if (matches.length > 1) {
+      return { ok: false, code: "target_ambiguous", detail: `Multiple sessions match "${to}".` };
+    }
+    const target = matches[0]!;
+    if (target.id === currentId) {
+      return { ok: false, code: "self_target", detail: "Cannot message the current session." };
+    }
+    return { ok: true, target: { id: target.id, label: target.name || target.id } };
+  }
+  function handleOutboxRequest(payload: unknown): void {
+    const parsed = parseOutboxRequestPayload(payload);
+    if (parsed.ok === false) {
+      if (parsed.requestId) {
+        const trace: OutboxRequestTrace = {
+          requestId: parsed.requestId,
+          ...(parsed.extensionId ? { extensionId: parsed.extensionId } : {}),
+          ...(parsed.extensionName ? { extensionName: parsed.extensionName } : {}),
+        };
+        emitOutboxResult(buildOutboxResult(trace, "rejected", { code: "invalid_request", detail: parsed.detail }), trace);
+      }
+      return;
+    }
+
+    const request = parsed.request;
+    const trace: OutboxRequestTrace = {
+      requestId: request.requestId,
+      extensionId: request.extensionId,
+      extensionName: request.extensionName,
+      to: request.to,
+      message: request.message,
+    };
+    if (outboxRequestIds.has(request.requestId)) {
+      emitOutboxResult(buildOutboxResult(trace, "rejected", { code: "duplicate_request", detail: "requestId has already been used in this session runtime" }), trace);
+      return;
+    }
+    outboxRequestIds.add(request.requestId);
+
+    const outboxGeneration = runtimeGeneration;
+    pendingOutboxRequests.set(request.requestId, { generation: outboxGeneration, request: trace });
+
+    void (async () => {
+      const liveContext = getLiveContext(runtimeContext, outboxGeneration);
+      if (!liveContext) {
+        settleOutboxRequest(request.requestId, "failed", { code: "session_unavailable", detail: "Intercom session is not active" });
+        return;
+      }
+      if (config.confirmSend && !liveContext.hasUI) {
+        settleOutboxRequest(request.requestId, "blocked", { code: "confirmation_unavailable", detail: "confirmSend is enabled but no UI is available" });
+        return;
+      }
+
+      let activeClient: IntercomClient;
+      try {
+        activeClient = await ensureConnected("background");
+      } catch (error) {
+        settleOutboxRequest(request.requestId, "failed", { code: "session_unavailable", detail: getErrorMessage(error) });
+        return;
+      }
+      if (!getLiveContext(liveContext, outboxGeneration)) {
+        settleOutboxRequest(request.requestId, "failed", { code: "session_ended", detail: "Session ended before target resolution" });
+        return;
+      }
+
+      let target: OutboxTarget;
+      try {
+        const currentClientSessionId = activeClient.sessionId;
+        const sessions = await activeClient.listSessions();
+        if (!currentClientSessionId) {
+          settleOutboxRequest(request.requestId, "failed", { code: "session_unavailable", detail: "Current session is not registered with intercom" });
+          return;
+        }
+        const resolved = resolveOutboxTarget(sessions, currentClientSessionId, request.to);
+        if (resolved.ok === false) {
+          settleOutboxRequest(request.requestId, "blocked", { code: resolved.code, detail: resolved.detail });
+          return;
+        }
+        target = resolved.target;
+      } catch (error) {
+        settleOutboxRequest(request.requestId, "failed", { code: "session_unavailable", detail: getErrorMessage(error) });
+        return;
+      }
+      if (!getLiveContext(liveContext, outboxGeneration)) {
+        settleOutboxRequest(request.requestId, "failed", { code: "session_ended", detail: "Session ended before confirmation" });
+        return;
+      }
+
+      if (config.confirmSend) {
+        let confirmed = false;
+        try {
+          confirmed = await liveContext.ui.confirm(
+            "Send extension message",
+            `Allow ${request.extensionName} (${request.extensionId}) to send to "${target.label}":\n\n${request.message}`,
+          );
+        } catch (error) {
+          settleOutboxRequest(request.requestId, "blocked", { code: "confirmation_unavailable", detail: getErrorMessage(error) });
+          return;
+        }
+        if (!getLiveContext(liveContext, outboxGeneration)) {
+          settleOutboxRequest(request.requestId, "failed", { code: "session_ended", detail: "Session ended during confirmation" });
+          return;
+        }
+        if (!confirmed) {
+          settleOutboxRequest(request.requestId, "rejected", { code: "user_cancelled", detail: "User cancelled the outbox request" });
+          return;
+        }
+      }
+
+      try {
+        if (!getLiveContext(liveContext, outboxGeneration) || client !== activeClient || !activeClient.isConnected()) {
+          settleOutboxRequest(request.requestId, "failed", { code: "session_ended", detail: "Session ended before delivery" });
+          return;
+        }
+        const result = await activeClient.send(target.id, {
+          messageId: request.requestId,
+          text: request.message,
+          provenance: {
+            type: "extension_outbox",
+            extensionId: request.extensionId,
+            extensionName: request.extensionName,
+            requestId: request.requestId,
+          },
+        });
+        if (!getLiveContext(liveContext, outboxGeneration)) {
+          settleOutboxRequest(request.requestId, "failed", { code: "session_ended", detail: "Session ended during delivery" });
+          return;
+        }
+        if (!result.delivered) {
+          settleOutboxRequest(request.requestId, "failed", { code: "delivery_failed", messageId: result.id, detail: result.reason ?? "Delivery failed" });
+          return;
+        }
+        pi.appendEntry("intercom_sent", {
+          to: target.label,
+          message: { text: request.message },
+          messageId: result.id,
+          timestamp: Date.now(),
+          extension: { id: request.extensionId, name: request.extensionName, requestId: request.requestId },
+        });
+        settleOutboxRequest(request.requestId, "sent", { messageId: result.id });
+      } catch (error) {
+        const live = getLiveContext(liveContext, outboxGeneration);
+        settleOutboxRequest(request.requestId, "failed", {
+          code: live ? "session_unavailable" : "session_ended",
+          detail: getErrorMessage(error),
+        });
+      }
+    })();
   }
   function shouldTriggerInboundMessage(entry: InboundMessageEntry, forceTrigger = false): boolean {
     if (forceTrigger) {
@@ -1309,10 +1574,12 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
   function startSessionRuntime(ctx: ExtensionContext): void {
     hideIntercomTool();
     const previousClient = client;
+    failPendingOutboxRequests(runtimeGeneration, "session_ended", "Session replaced");
     shuttingDown = false;
     disposed = false;
     runtimeStarted = true;
     runtimeGeneration += 1;
+    outboxRequestIds.clear();
     reconnectAttempt = 0;
     clearReconnectTimer();
     clearStartupConnectTimer();
@@ -1446,6 +1713,7 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
       acknowledge: true,
     });
   });
+  const unsubscribeOutboxRequest = pi.events.on(INTERCOM_OUTBOX_REQUEST_EVENT, handleOutboxRequest);
   pi.on("session_start", (_event, ctx) => {
     if (!config.enabled) {
       return;
@@ -1457,8 +1725,10 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
     unsubscribeExtensionRegister();
     unsubscribeSubagentControlIntercom();
     unsubscribeSubagentResultIntercom();
+    unsubscribeOutboxRequest();
     shuttingDown = true;
     disposed = true;
+    failPendingOutboxRequests(runtimeGeneration, "session_ended", "Session shutting down");
     runtimeGeneration += 1;
     clearStartupConnectTimer();
     clearReconnectTimer();

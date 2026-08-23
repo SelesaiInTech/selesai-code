@@ -1049,6 +1049,7 @@ class IntercomBroker {
       expectsReply: message.expectsReply,
       supersedes: message.supersedes,
       retryOf: message.retryOf,
+      provenance: message.provenance,
     });
   }
 

@@ -12,6 +12,7 @@ import type {
   ClientMessage,
   Message,
   MessageControl,
+  MessageProvenance,
   MessageReceipt,
   SessionInfo,
   SessionRegistration,
@@ -25,6 +26,7 @@ interface SendOptions {
   messageId?: string;
   supersedes?: string;
   retryOf?: string;
+  provenance?: MessageProvenance;
 }
 
 export interface SendResult extends DeliveryDetails {
@@ -633,6 +635,7 @@ export class IntercomClient extends EventEmitter {
       retryOf: options.retryOf,
       replyTo: options.replyTo,
       expectsReply: options.expectsReply,
+      provenance: options.provenance,
       content: {
         text: options.text,
         attachments: options.attachments,

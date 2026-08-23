@@ -7,7 +7,13 @@ import { EventEmitter, once } from "node:events";
 import { spawn, type ChildProcess } from "node:child_process";
 import { ReplyTracker } from "./reply-tracker.ts";
 import type { BrokerMessage, Message, SessionInfo } from "./types.ts";
-import { INTERCOM_EXTENSION_REGISTER_EVENT, type IntercomExtensionChannel } from "./extension-api.ts";
+import {
+  INTERCOM_EXTENSION_REGISTER_EVENT,
+  INTERCOM_OUTBOX_REQUEST_EVENT,
+  INTERCOM_OUTBOX_RESULT_EVENT,
+  type IntercomExtensionChannel,
+  type IntercomOutboxResultV1,
+} from "./extension-api.ts";
 
 const repoDir = process.cwd();
 const childEnvKeys = [
@@ -468,6 +474,24 @@ function waitForReply(client: InstanceType<typeof IntercomClient>, replyTo: stri
       resolve({ from, message });
     };
     client.on("message", handler);
+  });
+}
+
+function waitForOutboxResults(results: IntercomOutboxResultV1[], count: number, timeoutMs = 3000): Promise<IntercomOutboxResultV1[]> {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+    const check = () => {
+      if (results.length >= count) {
+        resolve(results.slice(0, count));
+        return;
+      }
+      if (Date.now() >= deadline) {
+        reject(new Error(`Timed out waiting for ${count} outbox result(s); saw ${JSON.stringify(results)}`));
+        return;
+      }
+      setTimeout(check, 10);
+    };
+    check();
   });
 }
 
@@ -1437,6 +1461,161 @@ test("late extension registration advertises before an onReady publish", { concu
     await observer.disconnect().catch(() => undefined);
     await cleanup();
   }
+});
+
+test("extension outbox sends notify-only messages with trace and provenance", { concurrency: false }, async () => {
+  const { planner, cleanup } = await setupClients();
+  const { default: piIntercomExtension } = await import("./index.ts");
+  const harness = createExtensionHarness("outbox-worker");
+  const results: IntercomOutboxResultV1[] = [];
+
+  try {
+    harness.pi.events.on(INTERCOM_OUTBOX_RESULT_EVENT, (payload) => results.push(payload as IntercomOutboxResultV1));
+    piIntercomExtension(harness.pi as never);
+    await harness.emitLifecycle("session_start");
+    const delivered = once(planner, "message") as Promise<[SessionInfo, Message]>;
+
+    harness.pi.events.emit(INTERCOM_OUTBOX_REQUEST_EVENT, {
+      version: 1,
+      requestId: "outbox-success-1",
+      extensionId: "example-extension",
+      extensionName: "Example Extension",
+      to: "planner",
+      message: "Outbox hello.",
+    });
+
+    const [result] = await waitForOutboxResults(results, 1);
+    assert.equal(result?.status, "sent");
+    assert.equal(result?.messageId, "outbox-success-1");
+    const [, message] = await Promise.race([
+      delivered,
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("Timed out waiting for outbox delivery")), 3000)),
+    ]);
+    assert.equal(message.id, "outbox-success-1");
+    assert.equal(message.content.text, "Outbox hello.");
+    assert.deepEqual(message.provenance, {
+      type: "extension_outbox",
+      extensionId: "example-extension",
+      extensionName: "Example Extension",
+      requestId: "outbox-success-1",
+    });
+    assert.equal(harness.entries.some((entry) => entry.type === "intercom_sent"
+      && (entry.data as { extension?: { requestId?: string } }).extension?.requestId === "outbox-success-1"), true);
+    assert.equal(harness.entries.some((entry) => entry.type === "intercom_outbox_result"
+      && (entry.data as { requestId?: string; status?: string }).requestId === "outbox-success-1"
+      && (entry.data as { requestId?: string; status?: string }).status === "sent"), true);
+  } finally {
+    await harness.emitLifecycle("session_shutdown");
+    await cleanup();
+  }
+});
+
+test("extension outbox rejects duplicate request ids without duplicate delivery", { concurrency: false }, async () => {
+  const { planner, cleanup } = await setupClients();
+  const { default: piIntercomExtension } = await import("./index.ts");
+  const harness = createExtensionHarness("outbox-duplicate-worker");
+  const results: IntercomOutboxResultV1[] = [];
+  const deliveredMessages: Message[] = [];
+
+  try {
+    planner.on("message", (_from: SessionInfo, message: Message) => deliveredMessages.push(message));
+    harness.pi.events.on(INTERCOM_OUTBOX_RESULT_EVENT, (payload) => results.push(payload as IntercomOutboxResultV1));
+    piIntercomExtension(harness.pi as never);
+    await harness.emitLifecycle("session_start");
+
+    const request = {
+      version: 1,
+      requestId: "outbox-duplicate-1",
+      extensionId: "example-extension",
+      extensionName: "Example Extension",
+      to: "planner",
+      message: "Deliver once.",
+    };
+    harness.pi.events.emit(INTERCOM_OUTBOX_REQUEST_EVENT, request);
+    await waitForOutboxResults(results, 1);
+    harness.pi.events.emit(INTERCOM_OUTBOX_REQUEST_EVENT, request);
+
+    const [, duplicate] = await waitForOutboxResults(results, 2);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(duplicate?.status, "rejected");
+    assert.equal(duplicate?.code, "duplicate_request");
+    assert.equal(deliveredMessages.filter((message) => message.id === "outbox-duplicate-1").length, 1);
+  } finally {
+    await harness.emitLifecycle("session_shutdown");
+    await cleanup();
+  }
+});
+
+test("extension outbox fails closed when confirmation needs unavailable UI", async () => {
+  await withConfirmSendEnabled(async () => {
+    const { default: piIntercomExtension } = await import("./index.ts");
+    const harness = createExtensionHarness("outbox-no-ui", { hasUI: false });
+    const results: IntercomOutboxResultV1[] = [];
+
+    harness.pi.events.on(INTERCOM_OUTBOX_RESULT_EVENT, (payload) => results.push(payload as IntercomOutboxResultV1));
+    piIntercomExtension(harness.pi as never);
+    await harness.emitLifecycle("session_start");
+    harness.pi.events.emit(INTERCOM_OUTBOX_REQUEST_EVENT, {
+      version: 1,
+      requestId: "outbox-no-ui-1",
+      extensionId: "example-extension",
+      extensionName: "Example Extension",
+      to: "planner",
+      message: "Needs confirmation.",
+    });
+
+    const [result] = await waitForOutboxResults(results, 1);
+    assert.equal(result?.status, "blocked");
+    assert.equal(result?.code, "confirmation_unavailable");
+    assert.equal(harness.entries.some((entry) => entry.type === "intercom_outbox_result"
+      && (entry.data as { code?: string }).code === "confirmation_unavailable"), true);
+    await harness.emitLifecycle("session_shutdown");
+  });
+});
+
+test("extension outbox settles pending confirmation on session shutdown", async () => {
+  await withConfirmSendEnabled(async () => {
+    const { cleanup } = await setupClients();
+    const { default: piIntercomExtension } = await import("./index.ts");
+    const confirmCalls: string[] = [];
+    const harness = createExtensionHarness("outbox-shutdown", {
+      hasUI: true,
+      ui: {
+        confirm: (title: string) => {
+          confirmCalls.push(title);
+          return new Promise<boolean>(() => undefined);
+        },
+      },
+    });
+    const results: IntercomOutboxResultV1[] = [];
+
+    try {
+      harness.pi.events.on(INTERCOM_OUTBOX_RESULT_EVENT, (payload) => results.push(payload as IntercomOutboxResultV1));
+      piIntercomExtension(harness.pi as never);
+      await harness.emitLifecycle("session_start");
+      harness.pi.events.emit(INTERCOM_OUTBOX_REQUEST_EVENT, {
+        version: 1,
+        requestId: "outbox-shutdown-1",
+        extensionId: "example-extension",
+        extensionName: "Example Extension",
+        to: "planner",
+        message: "Will shut down.",
+      });
+      const deadline = Date.now() + 3000;
+      while (confirmCalls.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(confirmCalls.length, 1);
+      await harness.emitLifecycle("session_shutdown");
+
+      const [result] = await waitForOutboxResults(results, 1);
+      assert.equal(result?.status, "failed");
+      assert.equal(result?.code, "session_ended");
+    } finally {
+      await harness.emitLifecycle("session_shutdown");
+      await cleanup();
+    }
+  });
 });
 
 test("intercom tool renders compact call and result rows", async () => {

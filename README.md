@@ -469,6 +469,35 @@ The broker:
 
 `channel.publish()` accepts payloads up to 16 KiB. A `capable` broadcast includes the sender, so consumers must not blindly republish messages they receive. `channel.commitState()` uses compare-and-swap against the last observed revision. Capabilities registered after the broker connection is established are synchronized without reconnecting. Clients connected to an older broker see the channel as unsupported and do not send extension operations.
 
+### Extension outbox
+
+Same-process extensions can request a user-visible intercom send through the consent-aware outbox. Emit `intercom:outbox-request` with a unique `requestId`; listen for `intercom:outbox-result` and treat `sent`, `rejected`, `blocked`, and `failed` as terminal states. There is no fire-and-forget mode.
+
+```typescript
+import {
+  INTERCOM_OUTBOX_REQUEST_EVENT,
+  INTERCOM_OUTBOX_RESULT_EVENT,
+  type IntercomOutboxResult,
+} from "pi-intercom/extension-api.ts";
+
+pi.events.on(INTERCOM_OUTBOX_RESULT_EVENT, (result: IntercomOutboxResult) => {
+  if (result.requestId === "example-request-1") {
+    // Handle the terminal result.
+  }
+});
+
+pi.events.emit(INTERCOM_OUTBOX_REQUEST_EVENT, {
+  version: 1,
+  requestId: "example-request-1",
+  extensionId: "example-extension",
+  extensionName: "Example Extension",
+  to: "planner",
+  message: "Build finished.",
+});
+```
+
+`confirmSend` applies to outbox requests. If confirmation is required and no UI is available, the request fails closed with `confirmation_unavailable`. The outbox resolves the target through the current session's scoped intercom client, so extensions cannot choose the sender, scope, or resolved target ID. Duplicate `requestId` values are rejected and do not deliver again. Receiver messages include structured `extension_outbox` provenance in message details; provenance is not prepended to the message body.
+
 ## How It Works
 
 ```mermaid

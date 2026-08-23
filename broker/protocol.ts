@@ -2,6 +2,7 @@ import type {
   Attachment,
   Message,
   MessageControl,
+  MessageProvenance,
   MessageReceipt,
   MessageReceiptStatus,
   SessionInfo,
@@ -69,6 +70,16 @@ function isAttachment(value: unknown): value is Attachment {
   return value.language === undefined || typeof value.language === "string";
 }
 
+function isMessageProvenance(value: unknown): value is MessageProvenance {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return value.type === "extension_outbox"
+    && typeof value.extensionId === "string"
+    && typeof value.extensionName === "string"
+    && typeof value.requestId === "string";
+}
+
 export function isMessage(value: unknown): value is Message {
   if (!isRecord(value)) {
     return false;
@@ -97,6 +108,10 @@ export function isMessage(value: unknown): value is Message {
   }
 
   if (value.expectsReply !== undefined && typeof value.expectsReply !== "boolean") {
+    return false;
+  }
+
+  if (value.provenance !== undefined && !isMessageProvenance(value.provenance)) {
     return false;
   }
 

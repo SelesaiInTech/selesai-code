@@ -4,7 +4,15 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-22
+
+### Highlights
+- Extensions can now ask pi-intercom to send a message through the current session without losing user consent, sender attribution, or delivery feedback.
+- Teams can isolate intercom traffic with `PI_INTERCOM_SCOPE_ID`, so unrelated sessions do not see or receive each other's scoped messages.
+- The generic `intercom` tool can stay hidden until it is first useful, keeping quiet sessions less cluttered.
+
 ### Added
+- Added a consent-aware extension outbox API with `intercom:outbox-request` and `intercom:outbox-result` events for notify-only same-process extension sends. Outbox sends honor `confirmSend`, always return a terminal result for valid request IDs, use scoped target resolution, and leave attributed sender-side transcript traces. Thanks to [@elecnix](https://github.com/elecnix) for #110.
 - Added opt-in broker-enforced routing scopes through `PI_INTERCOM_SCOPE_ID`. Scoped sessions only see, route, recover mailbox messages, receive presence events, and use extension-bus owner, publish, and state traffic with sessions in the exact same opaque scope. Unscoped sessions keep existing behavior. Thanks to [@YeungKC](https://github.com/YeungKC) for issue #112.
 - Added opt-in `after-first-use` visibility for the generic `intercom` tool, keeping its model schema and prompt out of unused sessions until an inbound message, overlay send, or bundled skill load reveals it. Broker reception and the child-only `contact_supervisor` tool remain available while it is hidden. Thanks to [@XWIlluDelu](https://github.com/XWIlluDelu) for PR #111.
 
