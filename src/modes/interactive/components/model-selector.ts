@@ -165,12 +165,17 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			id: scoped.model.id,
 			model: scoped.model,
 		}));
-		this.activeModels = this.scope === "scoped" ? this.scopedModelItems : this.allModels;
-		if (this.options.allowOff) this.activeModels = [{ provider: "", id: "off", model: { provider: "", id: "off", name: "Disabled", input: ["text"] } as Model<any> }, ...this.activeModels];
+		this.activeModels = this.getActiveModels();
 		this.filteredModels = this.activeModels;
 		const currentIndex = this.filteredModels.findIndex((item) => modelsAreEqual(this.currentModel, item.model));
 		this.selectedIndex =
 			currentIndex >= 0 ? currentIndex : Math.min(this.selectedIndex, Math.max(0, this.filteredModels.length - 1));
+	}
+
+	private getActiveModels(): ModelItem[] {
+		const items = this.scope === "scoped" ? this.scopedModelItems : this.allModels;
+		if (this.options.allowOff) return [{ provider: "", id: "off", model: { provider: "", id: "off", name: "Disabled", input: ["text"] } as Model<any> }, ...items];
+		return items;
 	}
 
 	private async refreshModels(): Promise<void> {
@@ -237,7 +242,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private setScope(scope: ModelScope): void {
 		if (this.scope === scope) return;
 		this.scope = scope;
-		this.activeModels = this.scope === "scoped" ? this.scopedModelItems : this.allModels;
+		this.activeModels = this.getActiveModels();
 		const currentIndex = this.activeModels.findIndex((item) => modelsAreEqual(this.currentModel, item.model));
 		this.selectedIndex = currentIndex >= 0 ? currentIndex : 0;
 		this.filterModels(this.searchInput.getValue());

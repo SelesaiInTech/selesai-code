@@ -4458,10 +4458,13 @@ export class InteractiveMode {
 					imageCaptionModel: this.settingsManager.getImageCaptionModel(),
 					imageCaptionContextTokens: this.settingsManager.getImageCaptionContextTokens(),
 					visionModels: this.getVisionModels(),
-					visionModelSelector: (currentValue, selectorDone) =>
-						new ModelSelectorComponent(
+					visionModelSelector: (currentValue, selectorDone) => {
+						const slash = currentValue.indexOf("/");
+						const currentModel =
+							slash > 0 ? this.session.modelRuntime.getModel(currentValue.slice(0, slash), currentValue.slice(slash + 1)) : undefined;
+						return new ModelSelectorComponent(
 							this.ui,
-							undefined,
+							currentModel,
 							this.settingsManager,
 							this.session.modelRuntime,
 							this.session.scopedModels,
@@ -4471,9 +4474,10 @@ export class InteractiveMode {
 								this.showStatus(model ? `Vision caption model: ${model.provider}/${model.id}` : "Vision captioning disabled");
 							},
 							selectorDone,
-							currentValue === "off" ? undefined : currentValue,
+							undefined,
 							{ modelFilter: (model) => model.input.includes("image"), allowOff: true, persistSelection: false },
-						),
+						);
+					},
 					steeringMode: this.session.steeringMode,
 					followUpMode: this.session.followUpMode,
 					transport: this.settingsManager.getTransport(),

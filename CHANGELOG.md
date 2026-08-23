@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.6] - 2026-08-23
+
+### Fixed
+- **Vision caption model selector.** Opening the selector from `/settings` now shows the available image-capable models instead of filtering the list by the configured model ID, highlights the current caption model, and preserves the Disabled option when switching model scopes.
+
 ## [0.9.5] - 2026-08-23
 
 ### Added

@@ -5,6 +5,11 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.9.6 — Perbaikan pemilih model caption vision
+
+- Pemilih model caption vision di `/settings` kini dibuka dengan seluruh model yang mendukung gambar, bukan menggunakan ID model tersimpan sebagai kueri pencarian.
+- Model caption yang sedang digunakan ditandai sebagai pilihan aktif, dan opsi Disabled tetap tersedia saat berpindah antara model all dan scoped.
+
 ## 0.9.5 — Pertanyaan di luar TUI
 
 - Tool `question` bawaan kini berfungsi di mode non-TUI seperti host RPC/VS Code: pertanyaan dijawab melalui dialog `extension_ui_request` host alih-alih memunculkan error khusus TUI.
