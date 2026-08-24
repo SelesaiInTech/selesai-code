@@ -5,6 +5,10 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.9.9 — Bundled handoff extension loading
+
+- `/handoff-new` now resolves shared core modules from packaged `.js` files, so it loads correctly in installed builds.
+
 ## 0.9.8 — RPC session handoff
 
 - RPC clients can now send `handoff_new` with an optional goal to summarize the current session and start a clean child session seeded with the generated handoff.

@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.9] - 2026-08-25
+
+### Fixed
+- **Bundled `/handoff-new` extension.** Use packaged `.js` core module paths so the extension loads from `dist/extensions` without missing-module errors.
+
 ## [0.9.8] - 2026-08-25
 
 ### Added

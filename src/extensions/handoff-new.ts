@@ -19,9 +19,9 @@ import {
 	buildAiContext,
 	entryToMessage,
 	getHandoffMessages,
-} from "../core/handoff.ts";
-import { serializeConversation } from "../core/compaction/utils.ts";
-import { convertToLlm } from "../core/messages.ts";
+} from "../core/handoff.js";
+import { serializeConversation } from "../core/compaction/utils.js";
+import { convertToLlm } from "../core/messages.js";
 
 export { buildAiContext, entryToMessage, getHandoffMessages };
 export const DEFAULT_GOAL = DEFAULT_HANDOFF_GOAL;
