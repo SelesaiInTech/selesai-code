@@ -5,6 +5,11 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.9.8 — Handoff sesi melalui RPC
+
+- Klien RPC kini dapat mengirim `handoff_new` dengan goal opsional untuk meringkas sesi saat ini dan memulai sesi anak yang bersih dengan handoff yang dibuat.
+- Pembuatan handoff dibagi antara extension TUI `/handoff-new` dan mode RPC, mempertahankan penanganan percakapan yang sadar kompaksi dan panduan redaksi informasi sensitif.
+
 ## 0.9.7 — Status dan penggantian antrean RPC
 
 - RPC `get_state` kini mengekspos pesan steering dan follow-up yang masih tertunda agar host dapat memulihkan status antrean.

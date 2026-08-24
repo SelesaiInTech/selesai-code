@@ -5,6 +5,11 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.9.8 — RPC session handoff
+
+- RPC clients can now send `handoff_new` with an optional goal to summarize the current session and start a clean child session seeded with the generated handoff.
+- Handoff generation is shared between the TUI `/handoff-new` extension and RPC mode, preserving compaction-aware conversation handling and sensitive-data redaction guidance.
+
 ## 0.9.7 — RPC queue state and replacement
 
 - RPC `get_state` now exposes pending steering and follow-up messages so hosts can restore queue state.

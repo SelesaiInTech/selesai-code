@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-The `handoff-new` extension creates a fresh continuation prompt from the current conversation and starts it in a clean new session. This resets context and reduces token spend when a conversation has grown large or shifted direction.
+The `handoff-new` extension creates a fresh continuation prompt from the current conversation and starts it in a clean new session. This resets context and reduces token spend when a conversation has grown large or shifted direction. RPC clients can use the `handoff_new` command for the same flow in headless hosts.
 
 <ExtensionStatus
   distribution="bundled"
@@ -19,7 +19,7 @@ The `handoff-new` extension creates a fresh continuation prompt from the current
 ## Setup and prerequisites
 
 - This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
-- Requires an interactive TUI session.
+- Requires an interactive TUI session for `/handoff-new`; RPC clients can use the `handoff_new` command in headless mode.
 - Requires a selected model and valid API credentials so the handoff document can be generated.
 - A model is used to summarize the conversation; the result is submitted as the first prompt of the new session.
 
@@ -47,6 +47,7 @@ The `handoff-new` extension creates a fresh continuation prompt from the current
 | Command | Description |
 | --- | --- |
 | `/handoff-new [goal]` | Generate a handoff document and start a clean new session from it. |
+| RPC `handoff_new` | Generate a handoff and start a clean child session; accepts an optional `goal`. |
 | `$selesai-handoff [goal]` | Ask a skill-backed agent to launch a background Selesai session with a handoff summary instead of editing in place. |
 
 ## Limits and safety

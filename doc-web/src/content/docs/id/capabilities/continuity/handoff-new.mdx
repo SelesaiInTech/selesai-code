@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-Extension `handoff-new` membuat prompt kelanjutan segar dari percakapan saat ini dan memulainya dalam sesi baru yang bersih. Ini mereset konteks dan mengurangi pengeluaran token ketika percakapan telah membesar atau berubah arah.
+Extension `handoff-new` membuat prompt kelanjutan segar dari percakapan saat ini dan memulainya dalam sesi baru yang bersih. Ini mereset konteks dan mengurangi pengeluaran token ketika percakapan telah membesar atau berubah arah. Klien RPC dapat memakai command `handoff_new` untuk alur yang sama di host tanpa antarmuka (headless).
 
 <ExtensionStatus
   distribution="bundled"
@@ -19,7 +19,7 @@ Extension `handoff-new` membuat prompt kelanjutan segar dari percakapan saat ini
 ## Penyiapan dan prasyarat
 
 - Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
-- Memerlukan sesi TUI interaktif.
+- Memerlukan sesi TUI interaktif untuk `/handoff-new`; klien RPC dapat memakai command `handoff_new` dalam mode headless.
 - Memerlukan model yang dipilih dan kredensial API yang valid agar dokumen handoff dapat dibuat.
 - Model digunakan untuk meringkas percakapan; hasilnya dikirim sebagai prompt pertama dari sesi baru.
 
@@ -47,6 +47,7 @@ Extension `handoff-new` membuat prompt kelanjutan segar dari percakapan saat ini
 | Perintah | Deskripsi |
 | --- | --- |
 | `/handoff-new [goal]` | Menghasilkan dokumen handoff dan memulai sesi baru bersih darinya. |
+| RPC `handoff_new` | Menghasilkan handoff dan memulai sesi anak bersih; menerima `goal` opsional. |
 | `$selesai-handoff [goal]` | Meminta agent yang didukung skill meluncurkan sesi Selesai background dengan ringkasan handoff alih-alih mengedit di tempat. |
 
 ## Batasan dan keamanan

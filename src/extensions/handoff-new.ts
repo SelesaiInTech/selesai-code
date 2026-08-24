@@ -11,81 +11,20 @@
  * is submitted immediately in the new session.
  */
 
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { complete, type Context } from "@earendil-works/pi-ai/compat";
-import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@selesai/code";
-import { BorderedLoader, convertToLlm, serializeConversation } from "@selesai/code";
+import { complete } from "@earendil-works/pi-ai/compat";
+import type { ExtensionAPI, ExtensionCommandContext } from "@selesai/code";
+import { BorderedLoader } from "@selesai/code";
+import {
+	DEFAULT_HANDOFF_GOAL,
+	buildAiContext,
+	entryToMessage,
+	getHandoffMessages,
+} from "../core/handoff.ts";
+import { serializeConversation } from "../core/compaction/utils.ts";
+import { convertToLlm } from "../core/messages.ts";
 
-const SYSTEM_PROMPT = `Write a handoff document for a fresh agent to continue the current conversation. Return only the handoff document text; do not save a file or describe saving one. No question, no fluff, just write the handoff. Do not reproduce, quote, or reformat the conversation history or its tool calls — distill it into what matters; never emit transcript-style markup or raw tool-call text.
-
-Include a "suggested skills" section in the document, which suggests skills that the agent should invoke.
-
-Do not duplicate content already captured in other artifacts (PRDs, plans, ADRs, issues, commits, diffs). Reference them by path or URL instead.
-
-Redact any sensitive information, such as API keys, passwords, or personally identifiable information.
-
-If the user passed arguments, treat them as a description of what the next session will focus on and tailor the doc accordingly.`;
-
-export const DEFAULT_GOAL = "Continue the previous session from this handoff.";
-
-export function entryToMessage(entry: SessionEntry): AgentMessage | undefined {
-	if (entry.type === "message") {
-		return entry.message;
-	}
-	if (entry.type === "compaction") {
-		return {
-			role: "compactionSummary",
-			summary: entry.summary,
-			tokensBefore: entry.tokensBefore,
-			timestamp: new Date(entry.timestamp).getTime(),
-		};
-	}
-	return undefined;
-}
-
-export function getHandoffMessages(branch: SessionEntry[]): AgentMessage[] {
-	let compactionIndex = -1;
-	for (let i = branch.length - 1; i >= 0; i--) {
-		if (branch[i].type === "compaction") {
-			compactionIndex = i;
-			break;
-		}
-	}
-	if (compactionIndex < 0) {
-		return branch.map(entryToMessage).filter((m): m is AgentMessage => m !== undefined);
-	}
-
-	const compaction = branch[compactionIndex];
-	// compactionIndex is only set when branch[i].type === "compaction", so the
-	// else branch is unreachable.
-	/* v8 ignore next 1 */
-	const firstKeptIndex =
-		compaction.type === "compaction" ? branch.findIndex((entry) => entry.id === compaction.firstKeptEntryId) : -1;
-	const compactedBranch = [
-		compaction,
-		...(firstKeptIndex >= 0 ? branch.slice(firstKeptIndex, compactionIndex) : []),
-		...branch.slice(compactionIndex + 1),
-	];
-	return compactedBranch.map(entryToMessage).filter((m): m is AgentMessage => m !== undefined);
-}
-
-export function buildAiContext(conversationText: string, goal: string): Context {
-	return {
-		systemPrompt: SYSTEM_PROMPT,
-		messages: [
-			{
-				role: "user",
-				content: [
-					{
-						type: "text",
-						text: `## Conversation History\n\n${conversationText}\n\n## User's Goal for New Thread\n\n${goal}`,
-					},
-				],
-				timestamp: Date.now(),
-			},
-		],
-	};
-}
+export { buildAiContext, entryToMessage, getHandoffMessages };
+export const DEFAULT_GOAL = DEFAULT_HANDOFF_GOAL;
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("handoff-new", {

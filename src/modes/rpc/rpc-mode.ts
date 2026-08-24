@@ -13,6 +13,7 @@
 
 import * as crypto from "node:crypto";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import { generateHandoff } from "../../core/handoff.ts";
 import type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
@@ -447,6 +448,21 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					await rebindSession();
 				}
 				return success(id, "new_session", result);
+			}
+
+			case "handoff_new": {
+				if (!session.model) return error(id, "handoff_new", "No model selected");
+				try {
+					const handoff = await generateHandoff(session.model, session.modelRuntime, session.sessionManager.getBranch(), command.goal);
+					const result = await runtimeHost.newSession({
+						parentSession: session.sessionManager.getSessionFile(),
+						withSession: async (replacementSession) => replacementSession.sendUserMessage(handoff),
+					});
+					if (!result.cancelled) await rebindSession();
+					return success(id, "handoff_new", result);
+				} catch (errorValue) {
+					return error(id, "handoff_new", errorValue instanceof Error ? errorValue.message : String(errorValue));
+				}
 			}
 
 			// =================================================================

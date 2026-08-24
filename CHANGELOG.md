@@ -2,6 +2,14 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.8] - 2026-08-25
+
+### Added
+- **RPC session handoff.** RPC clients can now use `handoff_new` to summarize the current session and start a clean child session seeded with the generated handoff, optionally tailored to a goal.
+
+### Changed
+- **Shared handoff generation.** Handoff context and summary generation now live in reusable core code shared by the TUI extension and RPC mode.
+
 ## [0.9.7] - 2026-08-25
 
 ### Added
