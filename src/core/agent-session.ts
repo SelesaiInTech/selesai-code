@@ -1329,6 +1329,21 @@ export class AgentSession {
 				this._systemPromptOverride = undefined;
 				this.agent.state.systemPrompt = this._baseSystemPrompt;
 			}
+
+			// Another prompt may have started while this one was preflighting (auth
+			// checks, compaction, and extension events can take seconds). The agent is
+			// now streaming, so queue instead of racing the active run: the RPC layer
+			// has already reported preflight success, so throwing here would silently
+			// drop the message. Default to a follow-up so it runs after the current turn.
+			if (this.isStreaming) {
+				if (options?.streamingBehavior === "steer") {
+					await this._queueSteer(expandedText, currentImages);
+				} else {
+					await this._queueFollowUp(expandedText, currentImages);
+				}
+				preflightResult?.(true);
+				return;
+			}
 		} catch (error) {
 			preflightResult?.(false);
 			throw error;
