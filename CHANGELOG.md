@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.7] - 2026-08-25
+
+### Added
+- **RPC queue state and replacement.** RPC `get_state` now exposes pending steering and follow-up messages, and the new `replace_queue` command replaces both queues while preserving their routing. Parent sessions created through RPC are now passed directly to the session manager.
+
 ## [0.9.6] - 2026-08-23
 
 ### Fixed

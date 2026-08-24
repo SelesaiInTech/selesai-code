@@ -5,6 +5,12 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.9.7 — Status dan penggantian antrean RPC
+
+- RPC `get_state` kini mengekspos pesan steering dan follow-up yang masih tertunda agar host dapat memulihkan status antrean.
+- Command RPC `replace_queue` baru mengganti kedua antrean tertunda sambil mempertahankan routing steering versus follow-up.
+- Sesi parent yang dibuat melalui RPC kini diteruskan langsung ke session manager, sehingga hubungan parent-session tetap terjaga.
+
 ## 0.9.6 — Perbaikan pemilih model caption vision
 
 - Pemilih model caption vision di `/settings` kini dibuka dengan seluruh model yang mendukung gambar, bukan menggunakan ID model tersimpan sebagai kueri pencarian.

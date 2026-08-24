@@ -469,6 +469,8 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					autoHandoffThresholdTokens: session.autoHandoffThresholdTokens,
 					messageCount: session.messages.length,
 					pendingMessageCount: session.pendingMessageCount,
+					steering: session.getSteeringMessages(),
+					followUp: session.getFollowUpMessages(),
 				};
 
 				// Attach workflow state from latest workflow-phase entry, if active.
@@ -557,6 +559,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			case "set_follow_up_mode": {
 				session.setFollowUpMode(command.mode);
 				return success(id, "set_follow_up_mode");
+			}
+
+			case "replace_queue": {
+				session.replaceQueue(command.steering, command.followUp);
+				return success(id, "replace_queue");
 			}
 
 			// =================================================================

@@ -1758,6 +1758,16 @@ export class AgentSession {
 		return { steering, followUp };
 	}
 
+	/** Replace pending messages without changing their steer/follow-up routing. */
+	replaceQueue(steering: readonly string[], followUp: readonly string[]): void {
+		this._steeringMessages = [...steering];
+		this._followUpMessages = [...followUp];
+		this.agent.clearAllQueues();
+		for (const text of steering) this.agent.steer({ role: "user", content: [{ type: "text", text }], timestamp: Date.now() });
+		for (const text of followUp) this.agent.followUp({ role: "user", content: [{ type: "text", text }], timestamp: Date.now() });
+		this._emitQueueUpdate();
+	}
+
 	/** Number of pending messages (includes both steering and follow-up) */
 	get pendingMessageCount(): number {
 		return this._steeringMessages.length + this._followUpMessages.length;
