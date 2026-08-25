@@ -132,4 +132,31 @@ describe('DuckDuckGo search parsing', () => {
     expect(init.headers.Accept).toMatch(/text\/html/);
     expect(init.headers['Accept-Language']).toMatch(/en/);
   });
+
+  it('retries once before giving up on a transient failure', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, text: vi.fn() } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue('<html>ok</html>')
+      } as unknown as Response);
+
+    const html = await fetchDuckDuckGoHtml('playwright', { fetchImpl, sleep: async () => {} });
+
+    expect(html).toBe('<html>ok</html>');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up after the retry is exhausted', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status: 429, text: vi.fn() } as unknown as Response);
+
+    await expect(
+      fetchDuckDuckGoHtml('playwright', { fetchImpl, sleep: async () => {} })
+    ).rejects.toThrow(/429/);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
 });
