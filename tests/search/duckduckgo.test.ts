@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
-import { buildSearchUrl, parseDuckDuckGoResults } from '../../src/search/duckduckgo.js';
+import { describe, expect, it, vi } from 'vitest';
+import { buildSearchUrl, fetchDuckDuckGoHtml, parseDuckDuckGoResults } from '../../src/search/duckduckgo.js';
 
 describe('DuckDuckGo search parsing', () => {
   it('builds a deterministic search URL', () => {
@@ -116,5 +116,20 @@ describe('DuckDuckGo search parsing', () => {
       noResults: false,
       hasResultContainers: false
     });
+  });
+
+  it('sends browser-like headers so DuckDuckGo does not treat us as a bot', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: vi.fn().mockResolvedValue('<html></html>')
+    } as unknown as Response);
+
+    await fetchDuckDuckGoHtml('playwright', { fetchImpl });
+
+    const [, init] = fetchImpl.mock.calls[0];
+    expect(init.headers['User-Agent']).toMatch(/Mozilla\/5\.0/);
+    expect(init.headers.Accept).toMatch(/text\/html/);
+    expect(init.headers['Accept-Language']).toMatch(/en/);
   });
 });
