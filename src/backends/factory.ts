@@ -70,7 +70,7 @@ function invalidFirecrawlFetch() {
 function withSearchFallback(
   primary: BackendSet['search'],
   fallback: BackendSet['search'],
-  fallbackFrom: 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily'
+  fallbackFrom: 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily' | 'duckduckgo'
 ): BackendSet['search'] {
   return async (input) => {
     const first = await primary(input);
@@ -176,6 +176,13 @@ export function createBackendSet(
 
   if (config.search.provider === 'tavily' && config.search.fallback === 'duckduckgo') {
     search = withSearchFallback(search, createDuckDuckGoSearch(), 'tavily');
+  }
+
+  const keylessFallbackDisabled = process.env.PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK === '1';
+  const usingDuckDuckGoDefault =
+    config.search.provider === 'duckduckgo' || !config.search.provider;
+  if (usingDuckDuckGoDefault && !keylessFallbackDisabled) {
+    search = withSearchFallback(search, createTavilySearch({ keyless: true }), 'duckduckgo');
   }
 
   const fanoutConfig = config.search.fanout;
