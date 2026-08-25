@@ -82,7 +82,10 @@ function withSearchFallback(
       metadata: {
         ...second.metadata,
         fallbackFrom,
-        fallbackReason: first.error?.message ?? `${fallbackFrom} search failed.`
+        fallbackReason: first.error?.message ?? `${fallbackFrom} search failed.`,
+        // Keep the primary's fanout provenance (which providers were tried/skipped) even though
+        // the answer came from the fallback backend.
+        ...(first.metadata.fanout ? { fanout: first.metadata.fanout } : {})
       }
     };
     return { ...result, presentation: buildSearchPresentation(result) };

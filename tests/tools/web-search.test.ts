@@ -157,4 +157,55 @@ describe('web_search tool', () => {
       error: { code: 'BLOCKED' }
     });
   });
+
+  it('retries once when the first page is a 200-OK bot-wall', async () => {
+    const searchHtml = vi.fn()
+      .mockResolvedValueOnce(`
+        <html>
+          <body>
+            <div>Unusual traffic from your computer network.</div>
+            <p>Please verify you are human.</p>
+          </body>
+        </html>
+      `)
+      .mockResolvedValueOnce(`
+        <div class="result">
+          <a class="result__a" href="https://example.com">Example Result</a>
+          <a class="result__snippet">This is a valid search result</a>
+        </div>
+      `);
+
+    const search = createWebSearchTool({ searchHtml });
+
+    const result = await search({ query: 'retry test' });
+
+    expect(result.status).toBe('ok');
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]).toMatchObject({
+      title: 'Example Result',
+      url: 'https://example.com',
+      snippet: 'This is a valid search result'
+    });
+    expect(searchHtml).toHaveBeenCalledTimes(2);
+  });
+
+  it('classifies a page with both no-results text and a bot-wall marker as BLOCKED', async () => {
+    const searchHtml = vi.fn().mockResolvedValue(`
+      <html>
+        <body>
+          <div>No results found for your query.</div>
+          <p>Our systems have detected automated queries.</p>
+        </body>
+      </html>
+    `);
+
+    const search = createWebSearchTool({ searchHtml });
+
+    const result = await search({ query: 'mixed signals' });
+
+    expect(result.status).toBe('error');
+    expect(result.error?.code).toBe('BLOCKED');
+    // The retry should have happened even though both markers are present
+    expect(searchHtml).toHaveBeenCalledTimes(2);
+  });
 });

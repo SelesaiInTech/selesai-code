@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBackendSet } from '../../src/backends/factory.js';
 import { DEFAULT_BACKEND_CONFIG } from '../../src/backends/config.js';
 import type { SearchProviderName } from '../../src/types.js';
 
 describe('backend factory', () => {
+  beforeEach(() => {
+    delete process.env.PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK;
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -417,6 +421,36 @@ describe('backend factory', () => {
     expect(createTavilySearch).toHaveBeenCalledWith({ keyless: true });
     expect(res.status).toBe('ok');
     expect(res.metadata.fallbackFrom).toBe('duckduckgo');
+  });
+
+  it('preserves fanout metadata when falling back from duckduckgo-default fanout to keyless Tavily', async () => {
+    const failingDuck = async () => ({
+      status: 'error' as const,
+      results: [],
+      metadata: {
+        backend: 'duckduckgo' as const,
+        cacheHit: false,
+        fanout: { mode: 'on' as const, providers: [] }
+      },
+      error: { code: 'FANOUT_NO_RESULTS', message: 'no fanout results' }
+    });
+    const tavilyOk = vi.fn().mockResolvedValue({
+      status: 'ok',
+      results: [{ title: 'Fallback', url: 'https://example.com', snippet: 'ok' }],
+      metadata: { backend: 'tavily', cacheHit: false }
+    });
+    const createTavilySearch = vi.fn().mockReturnValue(tavilyOk);
+
+    const backends = createBackendSet(
+      { search: { provider: 'duckduckgo', fanout: { mode: 'on', providers: ['duckduckgo'] } }, fetch: { provider: 'http' }, headless: { provider: 'local-browser' } },
+      { createDuckDuckGoSearch: () => failingDuck, createTavilySearch }
+    );
+
+    const res = await backends.search({ query: 'q' });
+
+    expect(res.status).toBe('ok');
+    expect(res.metadata.fallbackFrom).toBe('duckduckgo');
+    expect(res.metadata.fanout?.mode).toBe('on');
   });
 
   it('keeps duckduckgo in the fanout set when it is the configured fallback', async () => {
