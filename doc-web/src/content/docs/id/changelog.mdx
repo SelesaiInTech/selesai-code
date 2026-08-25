@@ -5,6 +5,11 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.9.11 — Penemuan skill otomatis yang kompatibel dengan Pi
+
+- Skill di `~/.agents/skills/` dan direktori `.agents/skills/` pada project/ancestor kini otomatis aktif, sama seperti Pi coding agent. Bagian `skills` di settings tidak diperlukan untuk penemuan skill normal.
+- Skill otomatis dari `.pi/skills/` dan direktori skill agent Selesai juga aktif secara default; pola `skills` eksplisit tetap dapat mengatur override dan pengecualian.
+
 ## 0.9.10 — Handoff di host RPC
 
 - `/handoff-new` kini berfungsi pada host RPC/non-TUI seperti VS Code: handoff dibuat langsung dan sesi anak dimulai tanpa loader terminal.

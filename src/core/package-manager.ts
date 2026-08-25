@@ -2416,7 +2416,6 @@ export class DefaultPackageManager implements PackageManager {
 				projectMetadata,
 				projectOverrides.skills,
 				projectBaseDir,
-				false,
 			);
 		}
 
@@ -2433,7 +2432,6 @@ export class DefaultPackageManager implements PackageManager {
 				agentsMetadata,
 				projectOverrides.skills,
 				agentsBaseDir,
-				false,
 			);
 		}
 
@@ -2542,7 +2540,6 @@ export class DefaultPackageManager implements PackageManager {
 			userMetadata,
 			userOverrides.skills,
 			globalBaseDir,
-			false,
 		);
 
 		// User skills from ~/.agents/ (with its own baseDir)
@@ -2557,7 +2554,6 @@ export class DefaultPackageManager implements PackageManager {
 			userAgentsMetadata,
 			userOverrides.skills,
 			userAgentsBaseDir,
-			false,
 		);
 
 		addResources(

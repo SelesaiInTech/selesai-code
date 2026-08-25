@@ -5,6 +5,11 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.9.11 — Pi-compatible automatic skill discovery
+
+- Skills in `~/.agents/skills/` and project/ancestor `.agents/skills/` directories are now enabled automatically, matching the Pi coding agent. No `skills` section is required in settings for normal skill discovery.
+- Automatic skills from `.pi/skills/` and the Selesai agent skill directory are enabled by default as well; explicit `skills` patterns still control overrides and exclusions.
+
 ## 0.9.10 — Handoff in RPC hosts
 
 - `/handoff-new` now works in RPC/non-TUI hosts such as VS Code: it generates the handoff directly and starts the child session without the terminal loader.

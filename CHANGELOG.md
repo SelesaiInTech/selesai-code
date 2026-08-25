@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.11] - 2026-08-25
+
+### Fixed
+- **Pi-compatible automatic skill discovery.** Skills under `~/.agents/skills/` and project/ancestor `.agents/skills/` directories, plus automatic skills from `.pi/skills/` and the Selesai agent skill directory, are now enabled by default — matching the Pi coding agent. Explicit `skills` patterns still control overrides and exclusions.
+
 ## [0.9.10] - 2026-08-25
 
 ### Fixed

@@ -53,7 +53,7 @@ Halaman ini mencakup pengaturan yang paling sering disentuh orang. Referensi len
 | --- | --- | --- | --- |
 | `packages` | array | `[]` | Package npm/git yang memuat ekstensi, skill, prompt, dan tema. |
 | `extensions` | string[] | `[]` | File atau direktori ekstensi lokal yang dimuat. |
-| `skills` | string[] | `[]` | File atau direktori skill lokal yang dimuat. |
+| `skills` | string[] | `[]` | File atau direktori skill tambahan, atau pola eksplisit `+`/`-`. Penemuan normal otomatis memuat skill dari `~/.selesai/agent/skills/`, `~/.agents/skills/`, `.selesai/skills/`, dan direktori `.agents/skills/` project/ancestor, sehingga pengaturan ini tidak wajib untuk skill biasa. |
 
 ## Tempat pengaturan berada
 

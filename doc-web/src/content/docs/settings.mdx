@@ -66,7 +66,7 @@ to a vision model that describes them as text. Set the caption model and its con
 | --- | --- | --- | --- |
 | `packages` | array | `[]` | npm/git packages that load extensions, skills, prompts, and themes. |
 | `extensions` | string[] | `[]` | Local extension files or directories to load. |
-| `skills` | string[] | `[]` | Local skill files or directories to load. |
+| `skills` | string[] | `[]` | Additional skill files or directories, or explicit `+`/`-` patterns. Normal discovery automatically loads skills from `~/.selesai/agent/skills/`, `~/.agents/skills/`, `.selesai/skills/`, and project/ancestor `.agents/skills/` directories, so this setting is not required for ordinary skills. |
 
 ## Where things live
 
