@@ -7,6 +7,19 @@ The format is intentionally simple and release-oriented.
 ## Unreleased
 
 ### Added
+- None.
+
+### Changed
+- None.
+
+### Fixed
+- None.
+
+### Breaking
+- None.
+
+## [1.10.0] - 2026-08-25
+### Added
 - The zero-config default has a safety net now. When DuckDuckGo blocks a search (which happens fast on VPS and datacenter IPs), web search falls back to Tavily's keyless endpoint, no account or API key needed, so a fresh install still returns results instead of an error. Set `PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK=1` if you'd rather it just fail. (#42)
 
 ### Changed
