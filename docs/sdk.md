@@ -468,7 +468,7 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 
 Specify which built-in tools to enable:
 
-- Built-in tool names: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
+- Built-in tool names: `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, `ls`
 - Default built-ins: `read`, `bash`, `edit`, `write`
 - `noTools: "all"` disables all tools
 - Extension and custom tools are inactive by default; include their names in `tools` to enable them
@@ -1127,7 +1127,7 @@ SettingsManager
 // Tool factories
 createCodingTools
 createReadOnlyTools
-createReadTool, createBashTool, createEditTool, createWriteTool
+createReadTool, createBashTool, createPowerShellTool, createEditTool, createWriteTool
 createGrepTool, createFindTool, createLsTool
 
 // Types

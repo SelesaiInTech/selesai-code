@@ -23,6 +23,7 @@ import {
 	createFindTool,
 	createGrepTool,
 	createLsTool,
+	createPowerShellTool,
 	createReadOnlyTools,
 	createReadTool,
 	createWriteTool,
@@ -120,6 +121,7 @@ export {
 	createReadOnlyTools,
 	createReadTool,
 	createBashTool,
+	createPowerShellTool,
 	createEditTool,
 	createWriteTool,
 	createGrepTool,
@@ -213,6 +215,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			defaultProvider: settingsManager.getDefaultProvider(),
 			defaultModelId: settingsManager.getDefaultModel(),
 			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
+			modelThinkingLevels: settingsManager.getAllModelThinkingLevels(),
 			modelRuntime,
 		});
 		model = result.model;
@@ -232,7 +235,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			: (settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL);
 	}
 
-	// Fall back to settings default
+	// Fall back to the selected model's override, then settings default
+	if (thinkingLevel === undefined && model) {
+		thinkingLevel = settingsManager.getModelThinkingLevel(model.provider, model.id);
+	}
 	if (thinkingLevel === undefined) {
 		thinkingLevel = settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
 	}

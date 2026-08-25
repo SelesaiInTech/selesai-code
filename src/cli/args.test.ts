@@ -1,6 +1,15 @@
 import { describe, expect, test } from "vitest";
 import { parseArgs } from "./args.ts";
 
+describe("parseArgs end-of-options delimiter", () => {
+	test("treats remaining arguments as messages and @files", () => {
+		const result = parseArgs(["--no-session", "--", "--provider", "openai", "-c", "@prompt.md"]);
+		expect(result.noSession).toBe(true);
+		expect(result.messages).toEqual(["--provider", "openai", "-c"]);
+		expect(result.fileArgs).toEqual(["prompt.md"]);
+	});
+});
+
 describe("parseArgs --use-theme", () => {
 	test("parses --use-theme with a theme name", () => {
 		const result = parseArgs(["--use-theme", "nord-border", "hello"]);

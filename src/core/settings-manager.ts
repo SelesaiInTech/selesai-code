@@ -106,6 +106,8 @@ export interface Settings {
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: ThinkingLevel;
+	/** Per-model default thinking overrides, keyed by "provider/modelId". */
+	modelThinkingLevels?: Record<string, ThinkingLevel>;
 	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
@@ -789,6 +791,31 @@ export class SettingsManager {
 	setDefaultThinkingLevel(level: ThinkingLevel): void {
 		this.globalSettings.defaultThinkingLevel = level;
 		this.markModified("defaultThinkingLevel");
+		this.save();
+	}
+
+	getModelThinkingLevel(provider: string, modelId: string): ThinkingLevel | undefined {
+		return this.settings.modelThinkingLevels?.[`${provider}/${modelId}`];
+	}
+
+	getAllModelThinkingLevels(): Record<string, ThinkingLevel> {
+		return { ...(this.settings.modelThinkingLevels ?? {}) };
+	}
+
+	setModelThinkingLevel(provider: string, modelId: string, level: ThinkingLevel): void {
+		this.globalSettings.modelThinkingLevels ??= {};
+		this.globalSettings.modelThinkingLevels[`${provider}/${modelId}`] = level;
+		this.markModified("modelThinkingLevels");
+		this.save();
+	}
+
+	removeModelThinkingLevel(provider: string, modelId: string): void {
+		if (!this.globalSettings.modelThinkingLevels) return;
+		delete this.globalSettings.modelThinkingLevels[`${provider}/${modelId}`];
+		if (Object.keys(this.globalSettings.modelThinkingLevels).length === 0) {
+			delete this.globalSettings.modelThinkingLevels;
+		}
+		this.markModified("modelThinkingLevels");
 		this.save();
 	}
 

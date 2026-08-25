@@ -74,7 +74,16 @@ export function parseArgs(args: string[]): Args {
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 
-		if (arg === "--help" || arg === "-h") {
+		if (arg === "--") {
+			for (const positionalArg of args.slice(i + 1)) {
+				if (positionalArg.startsWith("@")) {
+					result.fileArgs.push(positionalArg.slice(1));
+				} else {
+					result.messages.push(positionalArg);
+				}
+			}
+			break;
+		} else if (arg === "--help" || arg === "-h") {
 			result.help = true;
 		} else if (arg === "--version" || arg === "-v") {
 			result.version = true;
