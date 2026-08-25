@@ -4,7 +4,7 @@ description: An extension-first coding agent with subagents, durable workflows, 
 template: splash
 hero:
   title: "The coding agent<br><span class='accent'>built to finish.</span>"
-  tagline: "Selesai turns a minimal coding harness into a complete workspace: delegate work, research the web, recover context, and ship without assembling a plugin stack first."
+  tagline: "A maintained, extension-first Pi coding agent with subagents, durable workflows, live research, and recovery built in. Ship without assembling a plugin stack first."
   actions:
     - text: Get started
       link: get-started/
@@ -54,9 +54,8 @@ import { capabilities } from "../../data/capabilities.ts";
 
 <section className="home-section">
   <div className="home-section__heading">
-    <p className="eyebrow">A complete working loop</p>
     <h2>More than chat in a terminal.</h2>
-    <p>Delegate deep work, bring in external evidence, preserve session continuity, and keep token spend visible.</p>
+    <p>Delegate deep work, bring in external evidence, preserve session continuity, and keep token spend visible. The vertical bar shows where each tool lives in the loop.</p>
   </div>
   <div className="capability-grid">
     {capabilities.slice(0, 6).map((capability) => (

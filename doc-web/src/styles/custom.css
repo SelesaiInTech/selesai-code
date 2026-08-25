@@ -225,6 +225,24 @@ header.header {
   margin: 1.25rem 0 2.5rem;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .capability-card {
+    animation: card-in linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 30%;
+  }
+  @keyframes card-in {
+    from {
+      opacity: 0;
+      transform: translateY(18px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
 .category-section {
   margin-block: 3rem;
 }
@@ -312,13 +330,36 @@ header.header {
 .hero::before {
   position: absolute;
   z-index: -1;
-  width: 26rem;
-  height: 26rem;
+  width: 30rem;
+  height: 30rem;
   border-radius: 50%;
   background: var(--sl-color-accent);
   content: "";
-  filter: blur(150px);
-  opacity: 0.09;
+  filter: blur(140px);
+  opacity: 0.12;
+  pointer-events: none;
+}
+
+.hero h1[data-page-title] {
+  font-size: clamp(var(--sl-text-4xl), 4vw + 0.5rem, var(--sl-text-7xl));
+  letter-spacing: -0.04em;
+  line-height: 1.04;
+}
+
+.hero .tagline {
+  max-width: 52ch;
+}
+
+.terminal-card {
+  position: relative;
+}
+
+.terminal-card::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid var(--selesai-border);
+  content: "";
   pointer-events: none;
 }
 

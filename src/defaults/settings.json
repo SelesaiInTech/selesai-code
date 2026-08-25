@@ -43,10 +43,10 @@
   "subagents": {
     "agentOverrides": {
       "architect": {
-        "model": "tokenin/celestial-pro:max"
+        "model": "tokenin/celestial-max:max"
       },
       "builder": {
-        "model": "tokenin/celestial-pro:max"
+        "model": "tokenin/celestial-max:max"
       },
       "commentator": {
         "model": "tokenin/celestial-pro:max"

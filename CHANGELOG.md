@@ -2,6 +2,12 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.13] - 2026-08-26
+
+### Changed
+- **Selesai documentation refresh.** Reworked the documentation homepage with sharper hero typography, concise installation and capability copy, and reduced-motion-safe capability reveals.
+- **Default implementation agents.** The built-in `architect` and `builder` roles now default to `tokenin/celestial-max:max` instead of `tokenin/celestial-pro:max`.
+
 ## [0.9.12] - 2026-08-25
 
 ### Added
