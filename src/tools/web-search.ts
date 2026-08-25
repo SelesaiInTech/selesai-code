@@ -36,7 +36,11 @@ function htmlLooksBlocked(html: string) {
     normalized.includes('challenge') ||
     normalized.includes('verify you are human') ||
     normalized.includes('are you a robot') ||
-    normalized.includes('unusual traffic')
+    normalized.includes('unusual traffic') ||
+    normalized.includes('automated requests') ||
+    normalized.includes('automated queries') ||
+    normalized.includes('detected unusual') ||
+    normalized.includes('too many requests')
   );
 }
 

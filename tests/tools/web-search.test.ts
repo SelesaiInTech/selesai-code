@@ -146,4 +146,15 @@ describe('web_search tool', () => {
       }
     });
   });
+
+  it('classifies a keyword-light bot-wall page as BLOCKED, not PARSE_FAILED', async () => {
+    const search = createWebSearchTool({
+      searchHtml: vi.fn().mockResolvedValue('<html><body>Our systems have detected automated requests.</body></html>')
+    });
+
+    await expect(search({ query: 'anything' })).resolves.toMatchObject({
+      status: 'error',
+      error: { code: 'BLOCKED' }
+    });
+  });
 });
