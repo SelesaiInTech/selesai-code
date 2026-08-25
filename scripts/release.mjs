@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import process from 'node:process';
 import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
 export function parseUnreleasedSections(changelog) {
   const unreleasedMatch = changelog.match(/## Unreleased\s*([\s\S]*?)(?:\n## \[|$)/);
@@ -124,7 +126,11 @@ function main() {
   console.log(`Released ${nextVersion}`);
 }
 
-const invokedDirectly = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'));
+// Compare decoded filesystem paths, not the raw file:// URL — otherwise a repo path containing a
+// space (or any URL-encoded char) makes import.meta.url (%20) never match argv[1] and main() silently
+// never runs.
+const invokedDirectly =
+  Boolean(process.argv[1]) && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 
 if (invokedDirectly) {
   try {
