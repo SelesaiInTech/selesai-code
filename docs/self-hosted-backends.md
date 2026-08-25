@@ -49,6 +49,12 @@ Without any backend config, `pi-web-agent` uses:
 
 That path does not require SearXNG or Firecrawl.
 
+## Keyless default
+
+With no configuration, search uses DuckDuckGo. We send normal browser headers and retry once if a request looks blocked, so it holds up better than a raw scrape. If DuckDuckGo still walls the request (common on datacenter IPs), search quietly falls back to Tavily's keyless endpoint (no account, no API key). Only the query that failed is sent, and only on failure.
+
+Don't want the Tavily fallback? Set `PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK=1` and a blocked DuckDuckGo request will just return an error instead.
+
 ## Easiest setup path
 
 Open:
