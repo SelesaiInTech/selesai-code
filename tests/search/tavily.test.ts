@@ -130,4 +130,24 @@ describe('tavily search', () => {
     expect(result.status).toBe('ok');
     expect(result.results[0].snippet).toBe('');
   });
+
+  it('runs keyless: sends the keyless header and no Authorization', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({
+      results: [{ title: 'Doc', url: 'https://example.com', content: 'snip' }]
+    }));
+
+    const search = createTavilySearchTool({ keyless: true, fetchImpl });
+    const result = await search({ query: 'playwright' });
+
+    expect(result.status).toBe('ok');
+    const [, init] = fetchImpl.mock.calls[0];
+    expect(init.headers['X-Tavily-Access-Mode']).toBe('keyless');
+    expect(init.headers.Authorization).toBeUndefined();
+  });
+
+  it('still errors when neither a key nor keyless is provided', async () => {
+    const search = createTavilySearchTool({ fetchImpl: vi.fn() });
+    const result = await search({ query: 'playwright' });
+    expect(result.error?.code).toBe('BACKEND_CONFIG_INVALID');
+  });
 });
