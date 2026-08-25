@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { Type } from "typebox";
 import { AgentSession } from "./agent-session.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
-import type { ResolvedCommand } from "./extensions/types.ts";
+import type { ResolvedCommand, ToolDefinition } from "./extensions/types.ts";
 import { SettingsManager } from "./settings-manager.ts";
 
 function createMockSession({
@@ -10,12 +11,16 @@ function createMockSession({
 	tokens,
 	mode = "tui",
 	command,
+	customTools,
+	allowedToolNames,
 }: {
 	enabled: boolean;
 	threshold?: number;
 	tokens: number | null;
 	mode?: "tui" | "print" | "rpc";
 	command?: ResolvedCommand | undefined;
+	customTools?: ToolDefinition[];
+	allowedToolNames?: string[];
 }) {
 	const settings = SettingsManager.inMemory({
 		autoHandoff: { enabled, thresholdTokens: threshold },
@@ -66,7 +71,9 @@ function createMockSession({
 		settingsManager: settings,
 		cwd: "/tmp",
 		resourceLoader: resourceLoader as unknown as never,
+		customTools,
 		modelRuntime: modelRegistry as unknown as never,
+		allowedToolNames,
 	});
 
 	(session as any)._extensionRunner = extensionRunner;
@@ -76,6 +83,29 @@ function createMockSession({
 
 	return { session, getCommand, createCommandContext, handler, emitError, settings };
 }
+
+describe("AgentSession tools", () => {
+	const customTool: ToolDefinition = {
+		name: "custom",
+		label: "Custom",
+		description: "A custom tool",
+		parameters: Type.Object({}),
+		execute: async () => ({ content: [{ type: "text", text: "ok" }], details: undefined }),
+	};
+
+	it("keeps custom tools inactive by default but activates explicitly allowed ones", () => {
+		const defaults = createMockSession({ enabled: false, tokens: null, customTools: [customTool] });
+		expect(defaults.session.getActiveToolNames()).not.toContain("custom");
+
+		const allowed = createMockSession({
+			enabled: false,
+			tokens: null,
+			customTools: [customTool],
+			allowedToolNames: ["custom"],
+		});
+		expect(allowed.session.getActiveToolNames()).toEqual(["custom"]);
+	});
+});
 
 describe("AgentSession auto handoff", () => {
 	it("invokes handoff-new once when enabled and threshold reached in tui mode", async () => {

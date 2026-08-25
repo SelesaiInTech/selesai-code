@@ -471,7 +471,8 @@ Specify which built-in tools to enable:
 - Built-in tool names: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
 - Default built-ins: `read`, `bash`, `edit`, `write`
 - `noTools: "all"` disables all tools
-- `noTools: "builtin"` disables default built-ins while keeping extension and custom tools enabled
+- Extension and custom tools are inactive by default; include their names in `tools` to enable them
+- `noTools: "builtin"` disables default built-ins and enables extension and custom tools
 - `excludeTools` disables specific built-in, extension, or custom tool names after any `tools` allowlist is applied
 
 The `edit` tool returns `details.diff` for Pi's TUI display and `details.patch` as a standard unified patch for SDK consumers.

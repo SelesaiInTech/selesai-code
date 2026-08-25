@@ -64,9 +64,9 @@ export interface CreateAgentSessionOptions {
 	 *
 	 * When omitted, pi uses the `defaultTools` setting for the initial built-in
 	 * selection when configured. Otherwise it enables the default built-in tools
-	 * (read, bash, edit, write). Extension/custom tools remain enabled unless
-	 * `noTools` changes that default. When provided, only the listed tool names are
-	 * enabled.
+	 * (read, bash, edit, write). Extension/custom tools are inactive by default;
+	 * `noTools: "builtin"` enables them instead. When provided, only the listed
+	 * tool names are enabled.
 	 */
 	tools?: string[];
 	/** Optional denylist of tool names to disable. Applies after `tools` when both are provided. */
@@ -250,7 +250,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const excludedToolNames = options.excludeTools;
 	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
 	const initialActiveToolNames = (
-		options.tools ?? (options.noTools ? [] : (configuredDefaultToolNames ?? defaultActiveToolNames))
+		options.tools ??
+		(options.noTools === "builtin"
+			? [
+					...resourceLoader.getExtensions().extensions.flatMap((extension) =>
+						Array.from(extension.tools.keys()),
+					),
+					...(options.customTools?.map((tool) => tool.name) ?? []),
+				]
+			: options.noTools
+				? []
+				: (configuredDefaultToolNames ?? defaultActiveToolNames))
 	).filter((name) => !excludedToolNameSet?.has(name));
 
 	let agent: Agent;
