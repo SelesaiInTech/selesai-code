@@ -33,12 +33,39 @@ export function buildSearchUrl(query: string): string {
   return `https://html.duckduckgo.com/html/?${params.toString()}`;
 }
 
-export async function fetchDuckDuckGoHtml(query: string): Promise<string> {
-  const response = await fetch(buildSearchUrl(query));
-  if (!response.ok) {
-    throw new Error(`DuckDuckGo request failed with ${response.status}`);
+export const DUCKDUCKGO_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9'
+} as const;
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+export async function fetchDuckDuckGoHtml(
+  query: string,
+  {
+    fetchImpl = fetch,
+    retries = 1,
+    sleep = defaultSleep
+  }: { fetchImpl?: typeof fetch; retries?: number; sleep?: (ms: number) => Promise<void> } = {}
+): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const response = await fetchImpl(buildSearchUrl(query), { headers: { ...DUCKDUCKGO_HEADERS } });
+      if (!response.ok) {
+        throw new Error(`DuckDuckGo request failed with ${response.status}`);
+      }
+      return response.text();
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        await sleep(500);
+      }
+    }
   }
-  return response.text();
+  throw lastError instanceof Error ? lastError : new Error('DuckDuckGo request failed');
 }
 
 export function parseDuckDuckGoResults(html: string): ParsedDuckDuckGoResults {

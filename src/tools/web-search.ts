@@ -36,7 +36,11 @@ function htmlLooksBlocked(html: string) {
     normalized.includes('challenge') ||
     normalized.includes('verify you are human') ||
     normalized.includes('are you a robot') ||
-    normalized.includes('unusual traffic')
+    normalized.includes('unusual traffic') ||
+    normalized.includes('automated requests') ||
+    normalized.includes('automated queries') ||
+    normalized.includes('detected unusual') ||
+    normalized.includes('too many requests')
   );
 }
 
@@ -80,8 +84,15 @@ export function createWebSearchTool({
     }
 
     try {
-      const html = await searchHtml(normalizedQuery);
-      const parsed = parseDuckDuckGoResults(html);
+      let html = await searchHtml(normalizedQuery);
+      let parsed = parseDuckDuckGoResults(html);
+
+      // A 200-OK bot-wall reads as a successful fetch, so the fetch-layer retry never sees it.
+      // Give a page that looks blocked one more shot here before we classify it.
+      if (parsed.results.length === 0 && htmlLooksBlocked(html)) {
+        html = await searchHtml(normalizedQuery);
+        parsed = parseDuckDuckGoResults(html);
+      }
 
       if (parsed.results.length > 0) {
         const result: WebSearchResponse = {
@@ -96,22 +107,8 @@ export function createWebSearchTool({
         };
       }
 
-      if (parsed.noResults) {
-        const result: WebSearchResponse = {
-          status: 'error',
-          results: [],
-          metadata: { backend: 'duckduckgo', cacheHit: false },
-          error: {
-            code: 'NO_RESULTS',
-            message: 'DuckDuckGo returned no usable results for this query.'
-          }
-        };
-        return {
-          ...result,
-          presentation: buildSearchPresentation(result)
-        };
-      }
-
+      // Check for a bot-wall before "no results": a page can carry both markers, and BLOCKED is
+      // the honest call since it routes to the fallback instead of a dead end.
       if (htmlLooksBlocked(html)) {
         const result: WebSearchResponse = {
           status: 'error',
@@ -120,6 +117,22 @@ export function createWebSearchTool({
           error: {
             code: 'BLOCKED',
             message: 'DuckDuckGo search appears to be blocked or rate limited.'
+          }
+        };
+        return {
+          ...result,
+          presentation: buildSearchPresentation(result)
+        };
+      }
+
+      if (parsed.noResults) {
+        const result: WebSearchResponse = {
+          status: 'error',
+          results: [],
+          metadata: { backend: 'duckduckgo', cacheHit: false },
+          error: {
+            code: 'NO_RESULTS',
+            message: 'DuckDuckGo returned no usable results for this query.'
           }
         };
         return {

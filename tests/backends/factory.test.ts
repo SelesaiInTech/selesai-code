@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBackendSet } from '../../src/backends/factory.js';
 import { DEFAULT_BACKEND_CONFIG } from '../../src/backends/config.js';
 import type { SearchProviderName } from '../../src/types.js';
 
 describe('backend factory', () => {
+  beforeEach(() => {
+    delete process.env.PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK;
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -306,6 +310,62 @@ describe('backend factory', () => {
     expect(result.metadata.fallbackReason).toBe('Tavily failed');
   });
 
+  it('falls back to keyless Tavily when the DuckDuckGo default errors', async () => {
+    const failingDdg = vi.fn().mockResolvedValue({
+      status: 'error',
+      results: [],
+      metadata: { backend: 'duckduckgo', cacheHit: false },
+      error: { code: 'BLOCKED', message: 'blocked' }
+    });
+    const tavilyOk = vi.fn().mockResolvedValue({
+      status: 'ok',
+      results: [{ title: 'T', url: 'https://example.com', snippet: '' }],
+      metadata: { backend: 'tavily', cacheHit: false }
+    });
+
+    const createTavilySearch = vi.fn().mockReturnValue(tavilyOk);
+    const backends = createBackendSet(
+      { ...DEFAULT_BACKEND_CONFIG, search: { provider: 'duckduckgo' } },
+      { createDuckDuckGoSearch: vi.fn().mockReturnValue(failingDdg), createTavilySearch }
+    );
+
+    const result = await backends.search({ query: 'anything' });
+
+    expect(createTavilySearch).toHaveBeenCalledWith({ keyless: true });
+    expect(result.status).toBe('ok');
+    expect(result.metadata.fallbackFrom).toBe('duckduckgo');
+  });
+
+  it('does not fall back to keyless Tavily when the opt-out env var is set', async () => {
+    const original = process.env.PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK;
+    process.env.PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK = '1';
+
+    try {
+      const failingDdg = vi.fn().mockResolvedValue({
+        status: 'error',
+        results: [],
+        metadata: { backend: 'duckduckgo', cacheHit: false },
+        error: { code: 'BLOCKED', message: 'blocked' }
+      });
+      const createTavilySearch = vi.fn().mockReturnValue(vi.fn());
+
+      const backends = createBackendSet(
+        { ...DEFAULT_BACKEND_CONFIG, search: { provider: 'duckduckgo' } },
+        { createDuckDuckGoSearch: vi.fn().mockReturnValue(failingDdg), createTavilySearch }
+      );
+
+      const result = await backends.search({ query: 'anything' });
+
+      expect(createTavilySearch).not.toHaveBeenCalledWith({ keyless: true });
+      expect(result.status).toBe('error');
+      expect(result.metadata.backend).toBe('duckduckgo');
+      expect(result.metadata.fallbackFrom).toBeUndefined();
+    } finally {
+      if (original === undefined) delete process.env.PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK;
+      else process.env.PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK = original;
+    }
+  });
+
   it('routes github urls through the github reader, not http', async () => {
     // Stub global fetch so the github reader resolves offline. A 404 makes the reader
     // return a caveated response whose method is still 'github' — proving the resolver wired it.
@@ -334,6 +394,62 @@ describe('backend factory', () => {
     );
     const res = await backends.search({ query: 'q' });
     expect(res.status).toBe('ok');
+    expect(res.metadata.fanout?.mode).toBe('on');
+  });
+
+  it('still falls back to keyless Tavily when a duckduckgo-default fanout comes up empty', async () => {
+    const failingDuck = async () => ({
+      status: 'error' as const,
+      results: [],
+      metadata: { backend: 'duckduckgo' as const, cacheHit: false },
+      error: { code: 'BLOCKED', message: 'blocked' }
+    });
+    const tavilyOk = vi.fn().mockResolvedValue({
+      status: 'ok',
+      results: [{ title: 'T', url: 'https://example.com', snippet: '' }],
+      metadata: { backend: 'tavily', cacheHit: false }
+    });
+    const createTavilySearch = vi.fn().mockReturnValue(tavilyOk);
+
+    const backends = createBackendSet(
+      { search: { provider: 'duckduckgo', fanout: { mode: 'on', providers: ['duckduckgo'] } }, fetch: { provider: 'http' }, headless: { provider: 'local-browser' } },
+      { createDuckDuckGoSearch: () => failingDuck, createTavilySearch }
+    );
+
+    const res = await backends.search({ query: 'q' });
+
+    expect(createTavilySearch).toHaveBeenCalledWith({ keyless: true });
+    expect(res.status).toBe('ok');
+    expect(res.metadata.fallbackFrom).toBe('duckduckgo');
+  });
+
+  it('preserves fanout metadata when falling back from duckduckgo-default fanout to keyless Tavily', async () => {
+    const failingDuck = async () => ({
+      status: 'error' as const,
+      results: [],
+      metadata: {
+        backend: 'duckduckgo' as const,
+        cacheHit: false,
+        fanout: { mode: 'on' as const, providers: [] }
+      },
+      error: { code: 'FANOUT_NO_RESULTS', message: 'no fanout results' }
+    });
+    const tavilyOk = vi.fn().mockResolvedValue({
+      status: 'ok',
+      results: [{ title: 'Fallback', url: 'https://example.com', snippet: 'ok' }],
+      metadata: { backend: 'tavily', cacheHit: false }
+    });
+    const createTavilySearch = vi.fn().mockReturnValue(tavilyOk);
+
+    const backends = createBackendSet(
+      { search: { provider: 'duckduckgo', fanout: { mode: 'on', providers: ['duckduckgo'] } }, fetch: { provider: 'http' }, headless: { provider: 'local-browser' } },
+      { createDuckDuckGoSearch: () => failingDuck, createTavilySearch }
+    );
+
+    const res = await backends.search({ query: 'q' });
+
+    expect(res.status).toBe('ok');
+    expect(res.metadata.fallbackFrom).toBe('duckduckgo');
     expect(res.metadata.fanout?.mode).toBe('on');
   });
 

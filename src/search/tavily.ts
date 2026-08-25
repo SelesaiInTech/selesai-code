@@ -35,9 +35,11 @@ function normalizeResults(response: TavilySearchResponse): SearchResult[] {
 
 export function createTavilySearchTool({
   apiKey,
+  keyless = false,
   fetchImpl = fetch
 }: {
   apiKey?: string;
+  keyless?: boolean;
   fetchImpl?: typeof fetch;
 }) {
   return async function tavilySearch({ query }: { query: string }): Promise<WebSearchResponse> {
@@ -52,7 +54,7 @@ export function createTavilySearchTool({
       });
     }
 
-    if (!apiKey?.trim()) {
+    if (!apiKey?.trim() && !keyless) {
       return resultWithPresentation({
         status: 'error',
         results: [],
@@ -70,7 +72,9 @@ export function createTavilySearchTool({
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`
+          ...(apiKey?.trim()
+            ? { Authorization: `Bearer ${apiKey}` }
+            : { 'X-Tavily-Access-Mode': 'keyless' })
         },
         body: JSON.stringify({ query: normalizedQuery, max_results: 10 })
       });

@@ -70,7 +70,7 @@ function invalidFirecrawlFetch() {
 function withSearchFallback(
   primary: BackendSet['search'],
   fallback: BackendSet['search'],
-  fallbackFrom: 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily'
+  fallbackFrom: 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily' | 'duckduckgo'
 ): BackendSet['search'] {
   return async (input) => {
     const first = await primary(input);
@@ -82,7 +82,10 @@ function withSearchFallback(
       metadata: {
         ...second.metadata,
         fallbackFrom,
-        fallbackReason: first.error?.message ?? `${fallbackFrom} search failed.`
+        fallbackReason: first.error?.message ?? `${fallbackFrom} search failed.`,
+        // Keep the primary's fanout provenance (which providers were tried/skipped) even though
+        // the answer came from the fallback backend.
+        ...(first.metadata.fanout ? { fanout: first.metadata.fanout } : {})
       }
     };
     return { ...result, presentation: buildSearchPresentation(result) };
@@ -196,6 +199,16 @@ export function createBackendSet(
       providers: ordered.map((name) => ({ name, search: buildProviderSearch(name) })),
       mode: fanoutConfig.mode
     });
+  }
+
+  // Keep the keyless Tavily safety net for the no-key DuckDuckGo default, even under fanout —
+  // it wraps whatever search ended up being (plain DDG or the fanout set) so a total failure
+  // still has somewhere to go. Opt out with PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK=1.
+  const keylessFallbackDisabled = process.env.PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK === '1';
+  const usingDuckDuckGoDefault =
+    config.search.provider === 'duckduckgo' || !config.search.provider;
+  if (usingDuckDuckGoDefault && !keylessFallbackDisabled) {
+    search = withSearchFallback(search, createTavilySearch({ keyless: true }), 'duckduckgo');
   }
 
   const httpFetch = createHttpFetch();

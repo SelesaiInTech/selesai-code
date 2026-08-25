@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
-import { buildSearchUrl, parseDuckDuckGoResults } from '../../src/search/duckduckgo.js';
+import { describe, expect, it, vi } from 'vitest';
+import { buildSearchUrl, fetchDuckDuckGoHtml, parseDuckDuckGoResults } from '../../src/search/duckduckgo.js';
 
 describe('DuckDuckGo search parsing', () => {
   it('builds a deterministic search URL', () => {
@@ -116,5 +116,47 @@ describe('DuckDuckGo search parsing', () => {
       noResults: false,
       hasResultContainers: false
     });
+  });
+
+  it('sends browser-like headers so DuckDuckGo does not treat us as a bot', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: vi.fn().mockResolvedValue('<html></html>')
+    } as unknown as Response);
+
+    await fetchDuckDuckGoHtml('playwright', { fetchImpl });
+
+    const [, init] = fetchImpl.mock.calls[0];
+    expect(init.headers['User-Agent']).toMatch(/Mozilla\/5\.0/);
+    expect(init.headers.Accept).toMatch(/text\/html/);
+    expect(init.headers['Accept-Language']).toMatch(/en/);
+  });
+
+  it('retries once before giving up on a transient failure', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, text: vi.fn() } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue('<html>ok</html>')
+      } as unknown as Response);
+
+    const html = await fetchDuckDuckGoHtml('playwright', { fetchImpl, sleep: async () => {} });
+
+    expect(html).toBe('<html>ok</html>');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up after the retry is exhausted', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status: 429, text: vi.fn() } as unknown as Response);
+
+    await expect(
+      fetchDuckDuckGoHtml('playwright', { fetchImpl, sleep: async () => {} })
+    ).rejects.toThrow(/429/);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });
