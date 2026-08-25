@@ -34,7 +34,7 @@ export type ToolError = {
 export type SearchMetadata = {
   backend: 'duckduckgo' | 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily';
   cacheHit: boolean;
-  fallbackFrom?: 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily';
+  fallbackFrom?: 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily' | 'duckduckgo';
   fallbackReason?: string;
   fanout?: FanoutMetadata;
 };
