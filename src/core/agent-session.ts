@@ -626,10 +626,9 @@ export class AgentSession {
 		if (this._autoHandoffTriggered) return;
 		this._autoHandoffTriggered = true;
 
-		// handoff-new requires interactive mode (uses editor/dialog UI).
-		// ponytail: _extensionMode is set to "tui" by InteractiveMode.bindCurrentSessionExtensions()
-		// before the first prompt runs, so by the time _emitAgentSettled() calls this the mode is
-		// reliable. Default "print" only applies before extensions are bound.
+		// Auto-handoff is TUI-only: it runs at agent_settled, and headless/print
+		// modes should not churn sessions on their own. The handoff-new command
+		// itself now also works in non-TUI modes (direct generation, no loader).
 		if (this._extensionMode !== "tui") return;
 
 		const command = this._extensionRunner.getCommand("handoff-new");

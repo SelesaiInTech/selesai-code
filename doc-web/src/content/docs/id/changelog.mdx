@@ -5,6 +5,11 @@ title: Changelog
 
 Riwayat ini mengikuti tag rilis Selesai yang dapat dijangkau dari branch `main`. Tag dari riwayat Pi yang tidak terkait tidak disertakan. Mulai 0.8.0, Selesai memakai tag `selesai-v*` untuk menghindari benturan dengan tag Pi yang diimpor.
 
+## 0.9.10 — Handoff di host RPC
+
+- `/handoff-new` kini berfungsi pada host RPC/non-TUI seperti VS Code: handoff dibuat langsung dan sesi anak dimulai tanpa loader terminal.
+- Marker salin `/cp` khusus terminal tidak lagi ditambahkan pada host RPC, sehingga transkrip host dan konteks handoff tetap bersih.
+
 ## 0.9.9 — Pemuatan extension handoff bawaan
 
 - `/handoff-new` kini merujuk modul inti bersama ke file `.js` dalam paket sehingga dapat dimuat dengan benar pada build terpasang.

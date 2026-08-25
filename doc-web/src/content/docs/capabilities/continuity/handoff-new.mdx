@@ -19,7 +19,7 @@ The `handoff-new` extension creates a fresh continuation prompt from the current
 ## Setup and prerequisites
 
 - This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
-- Requires an interactive TUI session for `/handoff-new`; RPC clients can use the `handoff_new` command in headless mode.
+- Works in the terminal TUI and non-TUI/RPC hosts such as VS Code. In non-TUI hosts, generation runs directly without the terminal loader.
 - Requires a selected model and valid API credentials so the handoff document can be generated.
 - A model is used to summarize the conversation; the result is submitted as the first prompt of the new session.
 

@@ -33,11 +33,28 @@ export default function (pi: ExtensionAPI) {
 	});
 }
 
-async function handoffNew(args: string, ctx: ExtensionCommandContext) {
-	if (ctx.mode !== "tui") {
-		ctx.ui.notify("handoff-new requires interactive mode", "error");
-		return;
+async function generateHandoffText(
+	ctx: ExtensionCommandContext,
+	aiContext: ReturnType<typeof buildAiContext>,
+	signal?: AbortSignal,
+): Promise<string | null> {
+	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model!);
+	if (!auth.ok || !auth.apiKey) {
+		throw new Error(auth.ok ? `No API key for ${ctx.model!.provider}` : auth.error);
 	}
+	const response = await complete(ctx.model!, aiContext, {
+		apiKey: auth.apiKey,
+		headers: auth.headers,
+		signal,
+	});
+	if (response.stopReason === "aborted") return null;
+	return response.content
+		.filter((c): c is { type: "text"; text: string } => c.type === "text")
+		.map((c) => c.text)
+		.join("\n");
+}
+
+async function handoffNew(args: string, ctx: ExtensionCommandContext) {
 	if (!ctx.model) {
 		ctx.ui.notify("No model selected", "error");
 		return;
@@ -56,34 +73,31 @@ async function handoffNew(args: string, ctx: ExtensionCommandContext) {
 	const currentSessionFile = ctx.sessionManager.getSessionFile();
 	const aiContext = buildAiContext(conversationText, goal);
 
-	const result = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-		const loader = new BorderedLoader(tui, theme, `Generating handoff prompt...`);
-		loader.onAbort = () => done(null);
+	let result: string | null;
+	if (ctx.mode === "tui") {
+		result = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+			const loader = new BorderedLoader(tui, theme, `Generating handoff prompt...`);
+			loader.onAbort = () => done(null);
 
-		(async () => {
-			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model!);
-			if (!auth.ok || !auth.apiKey) {
-				throw new Error(auth.ok ? `No API key for ${ctx.model!.provider}` : auth.error);
-			}
-			const response = await complete(ctx.model!, aiContext, {
-				apiKey: auth.apiKey,
-				headers: auth.headers,
-				signal: loader.signal,
-			});
-			if (response.stopReason === "aborted") return null;
-			return response.content
-				.filter((c): c is { type: "text"; text: string } => c.type === "text")
-				.map((c) => c.text)
-				.join("\n");
-		})()
-			.then(done)
-			.catch((err) => {
-				console.error("handoff-new generation failed:", err);
-				done(null);
-			});
+			generateHandoffText(ctx, aiContext, loader.signal)
+				.then(done)
+				.catch((err) => {
+					console.error("handoff-new generation failed:", err);
+					done(null);
+				});
 
-		return loader;
-	});
+			return loader;
+		});
+	} else {
+		// Non-interactive modes (RPC for the VS Code extension, print/json):
+		// no TUI loader is available, so generate directly.
+		try {
+			result = await generateHandoffText(ctx, aiContext, ctx.signal);
+		} catch (err) {
+			ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
+			return;
+		}
+	}
 
 	if (result === null) {
 		ctx.ui.notify("Cancelled", "info");

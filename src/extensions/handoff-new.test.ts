@@ -191,12 +191,25 @@ describe("handoff-new extension", () => {
 		expect(calls.userMessage).toBe("HANDOFF PROMPT");
 	});
 
-	it("non-tui mode fails cleanly, no new session", async () => {
+	it("non-tui mode generates directly and opens new session", async () => {
+		(complete as any).mockResolvedValueOnce({
+			stopReason: "done",
+			content: [{ type: "text", text: "HANDOFF PROMPT" }],
+		});
+		const { commands } = createPiHarness();
+		const { ctx, calls } = createCtx({ mode: "rpc" });
+		await commands.get("handoff-new")!.handler("goal", ctx);
+		expect(calls.userMessage).toBe("HANDOFF PROMPT");
+		expect(calls.newSession).not.toBeNull();
+	});
+
+	it("non-tui mode generation error notifies and opens no session", async () => {
+		(complete as any).mockRejectedValueOnce(new Error("api down"));
 		const { commands } = createPiHarness();
 		const { ctx, calls } = createCtx({ mode: "rpc" });
 		await commands.get("handoff-new")!.handler("goal", ctx);
 		expect(calls.newSession).toBeNull();
-		expect(calls.notify.some((n) => /interactive mode/.test(n.msg))).toBe(true);
+		expect(calls.notify.some((n) => /api down/.test(n.msg))).toBe(true);
 	});
 
 	it("no model fails cleanly", async () => {

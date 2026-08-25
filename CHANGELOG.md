@@ -2,6 +2,12 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.10] - 2026-08-25
+
+### Fixed
+- **Handoff from RPC hosts.** `/handoff-new` now generates and starts a child session in RPC/non-TUI hosts such as VS Code instead of requiring the terminal loader.
+- **Terminal copy markers.** The `copy-turn` extension now adds its `/cp` markers only in the TUI, preventing terminal-only transcript rows from leaking into RPC host conversations and handoffs.
+
 ## [0.9.9] - 2026-08-25
 
 ### Fixed

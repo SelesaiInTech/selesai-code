@@ -31,7 +31,7 @@ function createHarness() {
 	const sent: AnyMessage[] = [];
 	const pi = {
 		on: vi.fn((event: string, handler: Handler) => {
-			handlers.set(event, handler);
+			handlers.set(event, (e: any, c: any) => handler(e, { mode: "tui", ...(c ?? {}) }));
 		}),
 		registerCommand: vi.fn((name: string, opts: Command) => {
 			commands.set(name, opts);
@@ -153,6 +153,29 @@ describe("copy-turn hash stability", () => {
 
 		await messageEnd({ type: "message_end", message: null }, {});
 		expect(sent).toHaveLength(0);
+	});
+
+	it("non-tui modes skip copy markers and copy rows", async () => {
+		const { handlers, sent } = createHarness();
+		const messageEnd = handlers.get("message_end")!;
+
+		const rpcCtx = { mode: "rpc" };
+		const assistant = await messageEnd(
+			{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "result text" }] } },
+			rpcCtx,
+		);
+		expect(assistant).toBeUndefined(); // no ⧉ copy marker appended
+		expect(sent).toHaveLength(0); // no user copy row either
+
+		await messageEnd({ type: "message_end", message: { role: "user", content: "ask me" } }, rpcCtx);
+		expect(sent).toHaveLength(0);
+
+		// TUI mode still annotates as before.
+		const tuiResult = await messageEnd(
+			{ type: "message_end", message: { role: "assistant", content: "tui text" } },
+			{ mode: "tui" },
+		);
+		expect(tuiResult.message.content).toMatch(/⧉ copy assistant: \/cp [0-9a-f]{6}/);
 	});
 
 	it("marks string-content assistant messages and bashExecution results", async () => {

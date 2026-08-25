@@ -90,7 +90,12 @@ export default function (pi: ExtensionAPI) {
     return new Text(theme.fg("dim", `⧉ copy ${role}: /cp ${h}`), 0, 0);
   });
 
-  pi.on("message_end", async (event: any) => {
+  pi.on("message_end", async (event: any, ctx: any) => {
+    // The ⧉ copy markers are a terminal affordance: the TUI has no copy
+    // buttons, so each message is annotated with a /cp hash. Hosts like the
+    // VS Code extension run in non-TUI modes and ship their own copy UI,
+    // where these markers are just noise.
+    if (ctx?.mode !== "tui") return;
     const m = event.message;
     if (!m) return;
 
