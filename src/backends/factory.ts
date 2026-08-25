@@ -178,13 +178,6 @@ export function createBackendSet(
     search = withSearchFallback(search, createDuckDuckGoSearch(), 'tavily');
   }
 
-  const keylessFallbackDisabled = process.env.PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK === '1';
-  const usingDuckDuckGoDefault =
-    config.search.provider === 'duckduckgo' || !config.search.provider;
-  if (usingDuckDuckGoDefault && !keylessFallbackDisabled) {
-    search = withSearchFallback(search, createTavilySearch({ keyless: true }), 'duckduckgo');
-  }
-
   const fanoutConfig = config.search.fanout;
   if (fanoutConfig && fanoutConfig.mode !== 'off') {
     const baseNames =
@@ -203,6 +196,16 @@ export function createBackendSet(
       providers: ordered.map((name) => ({ name, search: buildProviderSearch(name) })),
       mode: fanoutConfig.mode
     });
+  }
+
+  // Keep the keyless Tavily safety net for the no-key DuckDuckGo default, even under fanout —
+  // it wraps whatever search ended up being (plain DDG or the fanout set) so a total failure
+  // still has somewhere to go. Opt out with PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK=1.
+  const keylessFallbackDisabled = process.env.PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK === '1';
+  const usingDuckDuckGoDefault =
+    config.search.provider === 'duckduckgo' || !config.search.provider;
+  if (usingDuckDuckGoDefault && !keylessFallbackDisabled) {
+    search = withSearchFallback(search, createTavilySearch({ keyless: true }), 'duckduckgo');
   }
 
   const httpFetch = createHttpFetch();

@@ -393,6 +393,32 @@ describe('backend factory', () => {
     expect(res.metadata.fanout?.mode).toBe('on');
   });
 
+  it('still falls back to keyless Tavily when a duckduckgo-default fanout comes up empty', async () => {
+    const failingDuck = async () => ({
+      status: 'error' as const,
+      results: [],
+      metadata: { backend: 'duckduckgo' as const, cacheHit: false },
+      error: { code: 'BLOCKED', message: 'blocked' }
+    });
+    const tavilyOk = vi.fn().mockResolvedValue({
+      status: 'ok',
+      results: [{ title: 'T', url: 'https://example.com', snippet: '' }],
+      metadata: { backend: 'tavily', cacheHit: false }
+    });
+    const createTavilySearch = vi.fn().mockReturnValue(tavilyOk);
+
+    const backends = createBackendSet(
+      { search: { provider: 'duckduckgo', fanout: { mode: 'on', providers: ['duckduckgo'] } }, fetch: { provider: 'http' }, headless: { provider: 'local-browser' } },
+      { createDuckDuckGoSearch: () => failingDuck, createTavilySearch }
+    );
+
+    const res = await backends.search({ query: 'q' });
+
+    expect(createTavilySearch).toHaveBeenCalledWith({ keyless: true });
+    expect(res.status).toBe('ok');
+    expect(res.metadata.fallbackFrom).toBe('duckduckgo');
+  });
+
   it('keeps duckduckgo in the fanout set when it is the configured fallback', async () => {
     const duck = vi.fn(async () => ({ status: 'ok' as const, results: [{ title: 'd', url: 'https://d.com/1', snippet: 's' }], metadata: { backend: 'duckduckgo' as const, cacheHit: false } }));
     const brave = async () => ({ status: 'ok' as const, results: [{ title: 'b', url: 'https://b.com/1', snippet: 's' }], metadata: { backend: 'brave' as const, cacheHit: false } });
