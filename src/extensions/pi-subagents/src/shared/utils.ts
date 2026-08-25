@@ -15,8 +15,8 @@ import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, Neste
 // ============================================================================
 
 const DEFAULT_CONFIG_DIR_NAME = ".selesai";
-const PI_CODING_AGENT_PACKAGE_NAME = "@selesai/code";
-export const SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV = "SELESAI_SUBAGENTS_SELESAI_PACKAGE_ROOT";
+const SELESAI_CODING_AGENT_PACKAGE_NAME = "@selesai/code";
+export const SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV = "SELESAI_SUBAGENTS_CODING_AGENT_PACKAGE_ROOT";
 export const PROMPT_REDACTED = "[prompt redacted]";
 
 export function resolveWatchPath(
@@ -42,7 +42,7 @@ function readConfigDirNameFromPackageRoot(packageRoot: string | undefined): stri
 			name?: unknown;
 			piConfig?: { configDir?: unknown };
 		};
-		if (pkg.name !== PI_CODING_AGENT_PACKAGE_NAME) return undefined;
+		if (pkg.name !== SELESAI_CODING_AGENT_PACKAGE_NAME) return undefined;
 		return validConfigDirName(pkg.piConfig?.configDir);
 	} catch {
 		return undefined;
@@ -102,6 +102,7 @@ export function getAgentDir(): string {
 }
 
 const statusCache = new Map<string, { mtime: number; ctime: number; size: number; ino: number; status: AsyncStatus }>();
+const MAX_STATUS_CACHE_ENTRIES = 512;
 
 export function pruneStatusCacheForAsyncRoot(asyncDirRoot: string, runIds: Iterable<string>): number {
 	const root = path.resolve(asyncDirRoot);
@@ -163,6 +164,8 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 		&& cached.size === stat.size
 		&& cached.ino === stat.ino
 	) {
+		statusCache.delete(statusPath);
+		statusCache.set(statusPath, cached);
 		return cached.status;
 	}
 
@@ -195,6 +198,11 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 		ino: stat.ino,
 		status,
 	});
+	while (statusCache.size > MAX_STATUS_CACHE_ENTRIES) {
+		const oldest = statusCache.keys().next().value as string | undefined;
+		if (oldest === undefined) break;
+		statusCache.delete(oldest);
+	}
 	return status;
 }
 

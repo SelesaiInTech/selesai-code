@@ -8,6 +8,7 @@ import { registerWaitTool } from "../../src/runs/background/wait-tool.ts";
 import { createWaitSubscriptionManager } from "../../src/runs/background/wait-subscriptions.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
+import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, type IntercomEventBus, type SubagentState } from "../../src/shared/types.ts";
 
 function writeStatus(asyncRoot: string, runId: string, state: string, extra: object = {}): void {
@@ -22,6 +23,23 @@ function writeStatus(asyncRoot: string, runId: string, state: string, extra: obj
 		lastUpdate: now,
 		steps: [{ agent: "worker", status: state }],
 		...extra,
+	}), "utf-8");
+}
+
+function writeRecoveryDescriptor(asyncRoot: string, runId: string, agent: string, sessionFile: string, cwd: string): void {
+	fs.writeFileSync(path.join(asyncRoot, runId, "recovery-descriptor.json"), JSON.stringify({
+		version: 1,
+		sourceRunId: runId,
+		agent,
+		sessionFile,
+		cwd,
+		systemPromptMode: "append",
+		outputMode: "inline",
+		inheritProjectContext: false,
+		inheritSkills: false,
+		maxSubagentDepth: 0,
+		share: false,
+		runFanoutBudget: createRunFanoutBudget(runId, 64),
 	}), "utf-8");
 }
 
@@ -68,7 +86,7 @@ describe("non-blocking wait subscriptions", () => {
 			const asyncRoot = path.join(root, "runs");
 			writeStatus(asyncRoot, "run-alpha", "running", { sessionId: "session-a", pid: 999_999 });
 			let armed: { targetKind: "async" | "foreground"; runId: string; requestedId: string; timeoutMs: number } | undefined;
-			const result = await waitForSubagents({ id: "run-al", nonBlocking: true, timeoutMs: 5_000 }, undefined, {
+			const result = await waitForSubagents({ id: "run-alph", nonBlocking: true, timeoutMs: 5_000 }, undefined, {
 				state: makeState(),
 				asyncDirRoot: asyncRoot,
 				resultsDir: path.join(root, "results"),
@@ -82,7 +100,7 @@ describe("non-blocking wait subscriptions", () => {
 
 			assert.equal(result.isError, undefined);
 			assert.match(textOf(result), /Armed wait subscription wait-token/);
-			assert.deepEqual(armed, { targetKind: "async", runId: "run-alpha", requestedId: "run-al", timeoutMs: 5_000 });
+			assert.deepEqual(armed, { targetKind: "async", runId: "run-alpha", requestedId: "run-alph", timeoutMs: 5_000 });
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -107,9 +125,10 @@ describe("non-blocking wait subscriptions", () => {
 			} as never, state, true, {
 				arm() { throw new Error("headless calls must not arm subscriptions"); },
 			});
-			const result = await tool!.execute("wait", { id: "run-headless", nonBlocking: true }, undefined, undefined, { hasUI: false });
-			assert.equal(result.isError, true);
-			assert.match(textOf(result), /long-lived interactive subagent runtime/);
+			await assert.rejects(
+				tool!.execute("wait", { id: "run-headless", nonBlocking: true }, undefined, undefined, { hasUI: false }),
+				/long-lived interactive subagent runtime/,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -213,6 +232,7 @@ describe("non-blocking wait subscriptions", () => {
 			fs.writeFileSync(completedSessionFile, "{}\n", "utf-8");
 			fs.writeFileSync(failedSessionFile, "{}\n", "utf-8");
 			writeStatus(asyncRoot, "run-revive", "running", { sessionId: "session-a", pid: 999_999 });
+			writeRecoveryDescriptor(asyncRoot, "run-revive", "second", failedSessionFile, root);
 			manager.arm({ targetKind: "async", runId: "run-revive", requestedId: "run-revive", timeoutMs: 30_000 });
 
 			writeStatus(asyncRoot, "run-revive", "failed", {
@@ -370,7 +390,7 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
-	it("wakes when async reconciliation throws", () => {
+	it("wakes when an exact async run cannot be reconciled", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-reconcile-error-"));
 		const asyncRoot = path.join(root, "not-a-directory");
 		const subscriptionsDir = path.join(root, "subscriptions");
@@ -385,7 +405,7 @@ describe("non-blocking wait subscriptions", () => {
 		try {
 			const registration = manager.arm({ targetKind: "async", runId: "run-error", requestedId: "run-error", timeoutMs: 30_000 });
 			manager.reconcile();
-			assert.match(sent[0] ?? "", /reconciliation failed/);
+			assert.match(sent[0] ?? "", /could not be reconciled/);
 			assert.equal(state.waitSubscriptions?.has(registration.token), false);
 			assert.equal(fs.existsSync(path.join(subscriptionsDir, `${registration.token}.json`)), false);
 		} finally {
@@ -428,6 +448,213 @@ describe("non-blocking wait subscriptions", () => {
 			assert.equal(state.waitSubscriptions?.size, 0);
 		} finally {
 			manager.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("wait subscriptions armed by another session", () => {
+	function subscriptionFiles(dir: string): string[] {
+		try {
+			return fs.readdirSync(dir).filter((file) => file.endsWith(".json"));
+		} catch {
+			return [];
+		}
+	}
+
+	it("sweeps an expired record whose owning session never came back", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-orphan-"));
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const sent: string[] = [];
+		const pi = {
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+		};
+		let now = 1_000;
+		const owner = makeState("session-a");
+		const armer = createWaitSubscriptionManager(pi as never, owner, {
+			subscriptionsDir,
+			pollIntervalMs: 60_000,
+			now: () => now,
+		});
+		try {
+			armer.arm({ targetKind: "async", runId: "run-orphan", requestedId: "run-orphan", timeoutMs: 100 });
+			assert.equal(subscriptionFiles(subscriptionsDir).length, 1);
+			armer.dispose();
+
+			// A different session starts well after the record expired. Before this
+			// swept, the file was never loaded, never reconciled and never timed
+			// out, so it stayed on disk forever.
+			now = 1_101 + 86400000;
+			const other = makeState("session-b");
+			const restarted = createWaitSubscriptionManager(pi as never, other, {
+				subscriptionsDir,
+				pollIntervalMs: 60_000,
+				now: () => now,
+			});
+			try {
+				restarted.restore();
+				assert.deepEqual(subscriptionFiles(subscriptionsDir), [], "expired foreign record is removed");
+				assert.equal(sent.length, 0, "no wake is delivered to the wrong session");
+			} finally {
+				restarted.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps another session's record until it expires", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-foreign-live-"));
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const pi = {
+			events: new TestBus(),
+			sendMessage() {},
+		};
+		let now = 1_000;
+		const owner = makeState("session-a");
+		const armer = createWaitSubscriptionManager(pi as never, owner, {
+			subscriptionsDir,
+			pollIntervalMs: 60_000,
+			now: () => now,
+		});
+		try {
+			armer.arm({ targetKind: "async", runId: "run-live", requestedId: "run-live", timeoutMs: 10_000 });
+			armer.dispose();
+
+			now = 1_500; // still well inside the window
+			const other = makeState("session-b");
+			const restarted = createWaitSubscriptionManager(pi as never, other, {
+				subscriptionsDir,
+				pollIntervalMs: 60_000,
+				now: () => now,
+			});
+			try {
+				restarted.restore();
+				assert.equal(subscriptionFiles(subscriptionsDir).length, 1, "an unexpired record still belongs to its owner");
+			} finally {
+				restarted.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("sweeps a foreign record that expires while another session stays open", () => {
+		// restore() only fires on session_start and reconcile() walks the in-memory
+		// map, which holds current-session records only. A record that is still live
+		// when the next session starts is therefore retained by restore() and, without
+		// a periodic sweep, never looked at again once it expires.
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-late-expiry-"));
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const pi = {
+			events: new TestBus(),
+			sendMessage() {},
+		};
+		let now = 1_000;
+		const armer = createWaitSubscriptionManager(pi as never, makeState("session-a"), {
+			subscriptionsDir,
+			pollIntervalMs: 60_000,
+			now: () => now,
+		});
+		try {
+			armer.arm({ targetKind: "async", runId: "run-late", requestedId: "run-late", timeoutMs: 30_000 });
+			armer.dispose();
+
+			const other = makeState("session-b");
+			const open = createWaitSubscriptionManager(pi as never, other, {
+				subscriptionsDir,
+				pollIntervalMs: 60_000,
+				now: () => now,
+			});
+			try {
+				open.restore();
+				assert.equal(subscriptionFiles(subscriptionsDir).length, 1, "still live, so retained");
+
+				// The other session stays open past the record's expiry and grace.
+				now = 1_000 + 30_000 + 86400000 + 120_000;
+				open.reconcile();
+				assert.deepEqual(subscriptionFiles(subscriptionsDir), [], "expired record is swept without a restart");
+			} finally {
+				open.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps an expired foreign record through the grace window", () => {
+		// The owner settles its own expired records with a timeout notice on its next
+		// restore(). Sweeping the instant it expires would take that away from a
+		// session that had simply not resumed yet.
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-grace-"));
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const pi = { events: new TestBus(), sendMessage() {} };
+		let now = 1_000;
+		const armer = createWaitSubscriptionManager(pi as never, makeState("session-a"), {
+			subscriptionsDir,
+			pollIntervalMs: 60_000,
+			now: () => now,
+		});
+		try {
+			armer.arm({ targetKind: "async", runId: "run-grace", requestedId: "run-grace", timeoutMs: 100 });
+			armer.dispose();
+
+			now = 1_101 + 60_000; // expired, but well inside the grace window
+			const other = createWaitSubscriptionManager(pi as never, makeState("session-b"), {
+				subscriptionsDir,
+				pollIntervalMs: 60_000,
+				now: () => now,
+			});
+			try {
+				other.restore();
+				assert.equal(subscriptionFiles(subscriptionsDir).length, 1, "owner can still collect its timeout notice");
+			} finally {
+				other.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("still gives the owning session its timeout notice after a restart", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-owner-timeout-"));
+		const asyncRoot = path.join(root, "runs");
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const sent: string[] = [];
+		const pi = {
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+		};
+		let now = 1_000;
+		writeStatus(asyncRoot, "run-owned", "running", { sessionId: "session-a", pid: 999_997 });
+		const first = createWaitSubscriptionManager(pi as never, makeState("session-a"), {
+			asyncDirRoot: asyncRoot,
+			subscriptionsDir,
+			pollIntervalMs: 60_000,
+			now: () => now,
+			kill: () => true,
+		});
+		try {
+			first.arm({ targetKind: "async", runId: "run-owned", requestedId: "run-owned", timeoutMs: 100 });
+			first.dispose();
+
+			now = 1_101; // expired, but this session owns it
+			const resumed = createWaitSubscriptionManager(pi as never, makeState("session-a"), {
+				asyncDirRoot: asyncRoot,
+				subscriptionsDir,
+				pollIntervalMs: 60_000,
+				now: () => now,
+				kill: () => true,
+			});
+			try {
+				resumed.restore();
+				assert.match(sent.shift() ?? "", /timed out/, "the owner is still told its wait expired");
+				assert.deepEqual(subscriptionFiles(subscriptionsDir), []);
+			} finally {
+				resumed.dispose();
+			}
+		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

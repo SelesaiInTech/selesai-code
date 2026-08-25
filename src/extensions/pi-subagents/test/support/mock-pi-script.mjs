@@ -103,13 +103,20 @@ function claimNextResponse(dir, args) {
 	return responseMatchesArgs(fallback, args) ? fallback : undefined;
 }
 
-function defaultAssistantMessage(output) {
+function requestedModelArg(args) {
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === "--model" && typeof args[i + 1] === "string") return args[i + 1];
+	}
+	return "mock/test-model";
+}
+
+function defaultAssistantMessage(output, args) {
 	return {
 		type: "message_end",
 		message: {
 			role: "assistant",
 			content: [{ type: "text", text: output }],
-			model: "mock/test-model",
+			model: requestedModelArg(args),
 			stopReason: "stop",
 			usage: {
 				input: 100,
@@ -183,6 +190,14 @@ function writeStructuredOutputCapture(response) {
 	if (!outputPath) return;
 	fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 	fs.writeFileSync(outputPath, JSON.stringify(response.structuredOutputCapture), "utf-8");
+	if (Object.prototype.hasOwnProperty.call(response, "structuredOutputAcceptanceReport")) {
+		const acceptancePath = process.env.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE;
+		if (acceptancePath) fs.writeFileSync(acceptancePath, JSON.stringify(response.structuredOutputAcceptanceReport), "utf-8");
+	}
+	if (Object.prototype.hasOwnProperty.call(response, "structuredOutputAcceptanceReportRaw")) {
+		const acceptancePath = process.env.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE;
+		if (acceptancePath) fs.writeFileSync(acceptancePath, response.structuredOutputAcceptanceReportRaw, "utf-8");
+	}
 }
 
 function writeRuntimeAcknowledgedExtensions(response) {
@@ -207,6 +222,16 @@ function writeToolDiagnostic(response) {
 		available,
 		missing,
 	}), "utf-8");
+}
+
+function readRequiredToolsEnv() {
+	try {
+		const encoded = process.env.SELESAI_SUBAGENT_REQUIRED_TOOLS;
+		const parsed = encoded === undefined ? [] : JSON.parse(encoded);
+		return Array.isArray(parsed) ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 function isJsonMode(args) {
@@ -337,7 +362,7 @@ async function main() {
 	writeToolDiagnostic(response);
 	const callPath = path.join(queueDir, `call-${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.json`);
 	const callTempPath = `${callPath}.tmp-${process.pid}-${Date.now()}`;
-	fs.writeFileSync(callTempPath, JSON.stringify({ args, cwd: process.cwd(), systemPrompts: readSystemPromptRecords(args) }), "utf-8");
+	fs.writeFileSync(callTempPath, JSON.stringify({ args, cwd: process.cwd(), systemPrompts: readSystemPromptRecords(args), requiredChildTools: readRequiredToolsEnv() }), "utf-8");
 	fs.renameSync(callTempPath, callPath);
 
 	if (typeof response.delay === "number" && response.delay > 0) {
@@ -378,11 +403,11 @@ async function main() {
 		} else if (Array.isArray(response.echoEnv) && response.echoEnv.length > 0) {
 			const envSnapshot = Object.fromEntries(response.echoEnv.map((key) => [key, process.env[key] ?? null]));
 				const output = withAcceptanceReport(JSON.stringify(envSnapshot), args);
-				if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output));
+				if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output, args));
 				else await writeStdout(`${output}\n`);
 			} else if (typeof response.output === "string") {
 				const output = withAcceptanceReport(response.output, args);
-				if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output));
+				if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output, args));
 				else await writeStdout(`${output}\n`);
 			}
 		await maybeWriteStructuredOutput(response, jsonMode);

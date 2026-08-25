@@ -2,6 +2,44 @@
 
 All notable changes to the `pi-intercom` extension will be documented in this file.
 
+## [Unreleased]
+
+## [0.12.0] - 2026-08-22
+
+### Highlights
+- Extensions can now ask pi-intercom to send a message through the current session without losing user consent, sender attribution, or delivery feedback.
+- Teams can isolate intercom traffic with `PI_INTERCOM_SCOPE_ID`, so unrelated sessions do not see or receive each other's scoped messages.
+- The generic `intercom` tool can stay hidden until it is first useful, keeping quiet sessions less cluttered.
+
+### Added
+- Added a consent-aware extension outbox API with `intercom:outbox-request` and `intercom:outbox-result` events for notify-only same-process extension sends. Outbox sends honor `confirmSend`, always return a terminal result for valid request IDs, use scoped target resolution, and leave attributed sender-side transcript traces. Thanks to [@elecnix](https://github.com/elecnix) for #110.
+- Added opt-in broker-enforced routing scopes through `PI_INTERCOM_SCOPE_ID`. Scoped sessions only see, route, recover mailbox messages, receive presence events, and use extension-bus owner, publish, and state traffic with sessions in the exact same opaque scope. Unscoped sessions keep existing behavior. Thanks to [@YeungKC](https://github.com/YeungKC) for issue #112.
+- Added opt-in `after-first-use` visibility for the generic `intercom` tool, keeping its model schema and prompt out of unused sessions until an inbound message, overlay send, or bundled skill load reveals it. Broker reception and the child-only `contact_supervisor` tool remain available while it is hidden. Thanks to [@XWIlluDelu](https://github.com/XWIlluDelu) for PR #111.
+
+## [0.11.0] - 2026-08-19
+
+### Highlights
+- Messages can no longer land on a stale peer: if the target session restarted or was replaced, the send fails clearly or retries against the live session instead of silently reaching the wrong endpoint.
+- Retrying a send with the same message ID is now safe. Identical retries never deliver twice, and reusing an ID with different content is rejected.
+- Send results now include structured delivery details (state, error code, whether a retry is safe), so failures are actionable instead of guesswork.
+- The session list now shows each peer's tmux pane ID, making it easier to find and drive the right terminal.
+- Delivered blocking asks leave a local pending-ask record, so you can see what a peer is still waiting on.
+
+### Added
+- Endpoint-bound direct delivery: sends target the exact live session and safely retry once when the target reconnects mid-send, with bounded replay protection for repeated message IDs. Thanks to [@xiangbianpangde](https://github.com/xiangbianpangde) for #106.
+- Local pending-ask records for delivered blocking asks. Thanks to [@bcanvural](https://github.com/bcanvural) for issue #104.
+- tmux pane IDs in the session roster. Thanks to [@odfalik](https://github.com/odfalik) for issue #102 and PR #101.
+
+### Changed
+- Reusing a message ID with different content now fails with a clear error instead of relying on receiver-side duplicate suppression.
+- Clarified that agents should re-list stale intercom session IDs and skip self-targets.
+
+## [0.10.1] - 2026-08-12
+
+### Fixed
+- Resolve the default broker `tsx` launcher from flat plugin-store installs when package resolution fails, and include broker stderr when startup exits early. Thanks to Eduardo Marquez (`DocksDocks`) for issue #97.
+- Preserve attachments when replying through `intercom({ action: "reply" })`. Thanks to Ruoshan Huang (`ruoshan`) for issue #99.
+
 ## [0.10.0] - 2026-08-09
 
 ### Added
@@ -11,7 +49,6 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 - Cleaned intercom tool copy, visible-peer skill guidance, and broker protocol validation structure.
 
 ### Fixed
-- Resolve the default broker `tsx` launcher from flat plugin-store installs when package resolution fails, and include broker stderr when startup exits early. Thanks to Eduardo Marquez (`DocksDocks`) for issue #97.
 - Surface malformed intercom config errors with path context instead of silently falling back to defaults.
 - Fail blocking `ask` and supervisor-decision requests immediately when the target is not connected instead of accepting a mailbox delivery that can wait until timeout.
 - Prevent disconnected mailbox routing from delivering a message back to its sender or transferring mail through runtime-only unnamed-session aliases. Thanks to ELA718 for PR #93.
@@ -29,7 +66,7 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 ## [0.9.2] - 2026-08-03
 
 ### Fixed
-- Avoid relaunching standalone Pi executables as the Node runtime when starting the default broker process. Thanks to ZacharyQin for PR #82 and to jeffutter and awaae001 for confirming the impact.
+- Avoid relaunching standalone Selesai executables as the Node runtime when starting the default broker process. Thanks to ZacharyQin for PR #82 and to jeffutter and awaae001 for confirming the impact.
 
 ## [0.9.1] - 2026-07-30
 
@@ -60,11 +97,11 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 ### Changed
 - Documented `PI_INTERCOM_ASK_TIMEOUT_MS` for configurable ask/supervisor timeouts. Thanks to wiansapu for issue #14.
 - Clarified session addressing copy so the short IDs shown by `list` are documented as usable prefixes. Thanks to Grant Hutchins for PR #66.
-- Updated Pi runtime peer metadata and tool schemas for the `@earendil-works` package scope and Pi-bundled `typebox`/`pi-ai` packages.
+- Updated Selesai runtime peer metadata and tool schemas for the `@earendil-works` package scope and Selesai-bundled `typebox`/`pi-ai` packages.
 - Centralized pi-intercom runtime and config paths under `SELESAI_CODING_AGENT_DIR` when set, defaulting to `~/.selesai/agent`.
 - Hardened default broker auto-spawn to launch the resolved bundled `tsx` CLI through the current Node executable instead of resolving `npx` through `PATH`; custom `brokerCommand`/`brokerArgs` remain available as advanced trusted config.
 - Added an `inboundTrigger` policy (`always`, `replies`, or `never`) so users can reduce inbound auto-trigger risk while preserving existing behavior by default.
-- Made inline intercom messages collapse and expand with Pi's `Ctrl+O` custom-message toggle while keeping sender, preview, reply, and attachment cues visible. Thanks to RyanKim17920 for PR #32.
+- Made inline intercom messages collapse and expand with Selesai's `Ctrl+O` custom-message toggle while keeping sender, preview, reply, and attachment cues visible. Thanks to RyanKim17920 for PR #32.
 - Improved inline message theme hierarchy with separate semantic styling for borders, headers, body text, and metadata. Thanks to Sreenath for PR #68.
 
 ### Fixed
@@ -73,9 +110,9 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 - Restricted Unix intercom runtime directory, socket, PID, and spawn-lock permissions.
 - Rechecked single-flight ask state after session target resolution so concurrent regular asks fail safely instead of crashing on an unhandled rejected reply waiter.
 - Refused broker-level mutual asks that would deadlock two sessions, and cleared outstanding ask edges when asks are replied to, cancelled, or disconnected.
-- Stabilized intercom session addressing across reconnects, idle `/name` changes, replaced Pi sessions, supervisor routing, pending replies, and short-ID targeting.
+- Stabilized intercom session addressing across reconnects, idle `/name` changes, replaced Selesai sessions, supervisor routing, pending replies, and short-ID targeting.
 - Aligned intercom overlay widths with their rendered modal boxes. Thanks to Cat for PR #43.
-- Marked failed `intercom` and `contact_supervisor` tool results through Pi's `tool_result` error flag path while preserving structured renderer details.
+- Marked failed `intercom` and `contact_supervisor` tool results through Selesai's `tool_result` error flag path while preserving structured renderer details.
 - Limited the intercom overlay to TUI mode and unsubscribed subagent relay event handlers during session shutdown.
 - Added an opt-in Windows localhost TCP transport using a dynamic port, broker protocol health checks, and a local endpoint secret instead of a fixed-port default.
 - Stabilized reply/supervisor routing by respecting explicit reply targets, suppressing legacy supervisor tools when native supervisor channels are present, and clearing replied idle-queued asks. Thanks to ThanhNT29Jacky for PR #64.
@@ -130,12 +167,12 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 - Added receiver-side `reply` ergonomics for inbound asks. Agents can now use `intercom({ action: "reply", message })` in the triggered turn or later against a single pending ask, plus `intercom({ action: "pending" })` to inspect unresolved inbound asks.
 
 ### Fixed
-- Migrated extension tool schemas from `@sinclair/typebox` to `typebox` 1.x so packaged installs follow Pi's current extension runtime contract.
+- Migrated extension tool schemas from `@sinclair/typebox` to `typebox` 1.x so packaged installs follow Selesai's current extension runtime contract.
 - Included `reply-tracker.ts` in the published package so installed extensions can load the new reply-tracking helper at runtime.
 - Updated the integration test harness to set `USERPROFILE` alongside `HOME`, keeping temp-home isolation reliable on Windows.
 
 ### Changed
-- Moved TypeBox from `peerDependencies` to a real `dependencies` entry so `pi install` production installs keep the schema package available at runtime.
+- Moved TypeBox from `peerDependencies` to a real `dependencies` entry so `selesai install` production installs keep the schema package available at runtime.
 - Incoming ask reply hints now prefer `intercom({ action: "reply", ... })` instead of exposing raw `to` and `replyTo` identifiers.
 - Updated the bundled `pi-intercom` skill and README examples to prefer `reply`/`pending` over manual reply threading.
 
@@ -143,7 +180,7 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 
 ### Added
 - Bundled `pi-intercom` skill with coordination patterns, error handling, constraints, and optional cmux/tmux peer-session spawning for visible multi-session workflows.
-- `pi.skills` manifest in `package.json` so `pi install` loads the skill automatically.
+- `pi.skills` manifest in `package.json` so `selesai install` loads the skill automatically.
 - AGENTS.md snippet in README recommending a project-level coordination hint for agents.
 - Attachments example to Quick Start section in README.
 
@@ -172,21 +209,21 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 ## [0.1.9] - 2026-04-17
 
 ### Fixed
-- Declared the extension entry in `package.json` via `pi.extensions` so `pi install npm:pi-intercom` can discover and load the extension from the npm package.
+- Declared the extension entry in `package.json` via `pi.extensions` so `selesai install npm:pi-intercom` can discover and load the extension from the npm package.
 
 ### Changed
-- Added `pi-package` package metadata plus peer dependency declarations for every Pi runtime package the extension imports, including `@mariozechner/pi-tui`.
+- Added `pi-package` package metadata plus peer dependency declarations for every Selesai runtime package the extension imports, including `@mariozechner/pi-tui`.
 
 ## [0.1.8] - 2026-04-14
 
 ### Changed
 - Intercom sessions now reconnect automatically after broker disconnects or sleep/wake interruptions instead of staying offline until reload or restart.
-- Replaced raw runtime `console.error` intercom disconnect logging with silent recovery so transient broker churn no longer splashes stray text into the Pi TUI.
+- Replaced raw runtime `console.error` intercom disconnect logging with silent recovery so transient broker churn no longer splashes stray text into the Selesai TUI.
 
 ## [0.1.7] - 2026-04-13
 
 ### Changed
-- Unnamed sessions now register a runtime-only `subagent-chat-<id>` intercom alias instead of persisting a generic session title into Pi session history, so `pi --resume` can keep showing transcript snippets while unnamed sessions remain reachable over intercom.
+- Unnamed sessions now register a runtime-only `subagent-chat-<id>` intercom alias instead of persisting a generic session title into Selesai session history, so `selesai --resume` can keep showing transcript snippets while unnamed sessions remain reachable over intercom.
 - Intercom presence updates now refresh the advertised session name during later turn/intercom activity, so renaming a session does not leave subagents and peers targeting a stale startup alias.
 
 ## [0.1.6] - 2026-04-13
@@ -230,11 +267,11 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 ## [0.1.1] - 2026-04-04
 
 ### Changed
-- Added a `promptSnippet` for the `intercom` tool so Pi 0.59+ includes it in the default tool prompt section and improves session-to-session coordination discoverability.
+- Added a `promptSnippet` for the `intercom` tool so Selesai 0.59+ includes it in the default tool prompt section and improves session-to-session coordination discoverability.
 
 ### Changed
-- **Pi compatibility refresh** — Updated the extension to match current Pi lifecycle and custom UI APIs, including `session_start` / `session_shutdown` and injected `ctx.ui.custom()` keybindings.
-- **Overlay keybindings** — The session picker and compose overlay now use injected, namespaced Pi keybindings instead of reading editor-global bindings directly.
+- **Selesai compatibility refresh** — Updated the extension to match current Selesai lifecycle and custom UI APIs, including `session_start` / `session_shutdown` and injected `ctx.ui.custom()` keybindings.
+- **Overlay keybindings** — The session picker and compose overlay now use injected, namespaced Selesai keybindings instead of reading editor-global bindings directly.
 - **Session list correlation** — `list` / `sessions` now carry a `requestId`, so a delayed broker reply cannot be mistaken for a newer session-list request.
 - **Reply sends skip approval** — `send` calls that include `replyTo` now bypass the confirmation dialog so reply-hint flows work without an extra approval step.
 - **Documentation accuracy** — The README now matches the current implementation, including request correlation, persistence behavior, broker disconnect behavior, and the file layout.

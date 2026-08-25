@@ -145,7 +145,4 @@ export default function modelPromptInjector(pi: ExtensionAPI, config: InjectConf
 		return { systemPrompt: `${event.systemPrompt}\n\n${rule.prompt}` };
 	});
 
-	pi.on("model_select", async (event, ctx) => {
-		ctx.ui.setStatus("model-prompt-injector", ruleFor(event.model) ? "prompt-inject: active" : undefined);
-	});
 }

@@ -12,6 +12,7 @@ import {
 	formatAcceptancePrompt,
 	normalizeGateAcceptance,
 	parseAcceptanceReport,
+	quoteExecutableForShell,
 	resolveEffectiveAcceptance,
 	stripAcceptanceReport,
 	validateAcceptanceInput,
@@ -600,6 +601,93 @@ describe("acceptance gates", () => {
 			assert.equal(ledger.status, "checked");
 			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:changed-files")?.status, "not-applicable");
 			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:tests-added")?.status, "not-applicable");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("accepts read-only reviewer reports that omit child no-staged-files evidence when the worktree is clean", async () => {
+		const cwd = tempGitRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "reviewer",
+				task: "Review-only. Do not edit.",
+				explicit: { level: "checked", evidence: ["review-findings", "commands-run", "validation-output", "residual-risks"] },
+			});
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: report({
+					changedFiles: [],
+					testsAddedOrUpdated: [],
+					validationOutput: ["Read-only review completed."],
+					reviewFindings: [],
+					noStagedFiles: undefined,
+				}),
+				cwd,
+			});
+
+			assert.equal(ledger.status, "checked");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:no-staged-files"), undefined);
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "no-staged-files")?.status, "passed");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("still rejects aggregate no-staged-files evidence when a child worktree reports staged files", async () => {
+		const cwd = tempGitRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "reviewer",
+				task: "Review-only. Do not edit.",
+				explicit: { level: "checked", evidence: ["review-findings", "commands-run", "validation-output", "residual-risks"] },
+			});
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: report({
+					changedFiles: [],
+					testsAddedOrUpdated: [],
+					validationOutput: ["Dynamic fanout review completed."],
+					reviewFindings: [],
+					noStagedFiles: false,
+				}),
+				cwd,
+			});
+
+			assert.equal(ledger.status, "rejected");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:no-staged-files")?.status, "failed");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "no-staged-files")?.status, "passed");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("still rejects omitted child no-staged-files evidence when the parent git check finds staged files", async () => {
+		const cwd = tempGitRepo();
+		try {
+			fs.writeFileSync(path.join(cwd, "staged.txt"), "staged\n", "utf-8");
+			execFileSync("git", ["add", "staged.txt"], { cwd });
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "reviewer",
+				task: "Review-only. Do not edit.",
+				explicit: { level: "checked", evidence: ["review-findings", "commands-run", "validation-output", "residual-risks"] },
+			});
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: report({
+					changedFiles: [],
+					testsAddedOrUpdated: [],
+					validationOutput: ["Read-only review completed."],
+					reviewFindings: [],
+					noStagedFiles: undefined,
+				}),
+				cwd,
+			});
+
+			assert.equal(ledger.status, "rejected");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:no-staged-files"), undefined);
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "no-staged-files")?.status, "failed");
+			assert.match(acceptanceFailureMessage(ledger) ?? "", /Staged files present/);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
@@ -1209,5 +1297,114 @@ describe("acceptance gates", () => {
 		assert.match(validateAcceptanceInput({ review: { required: "yes" } }).join("\n"), /acceptance\.review\.required must be a boolean/);
 		assert.match(validateAcceptanceInput({ stopRules: [123] }).join("\n"), /acceptance\.stopRules\[0\] must be a string/);
 		assert.match(validateAcceptanceInput({ surprise: true }).join("\n"), /acceptance\.surprise is not supported/);
+	});
+});
+
+describe("quoteExecutableForShell", () => {
+	it("quotes an unquoted Windows executable path containing spaces", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\vendor\\tool.exe --flag", "win32"),
+			"\"C:\\Program Files\\vendor\\tool.exe\" --flag",
+		);
+	});
+
+	it("quotes an unquoted Windows executable path with parentheses", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files (x86)\\vendor\\tool.exe --flag", "win32"),
+			"\"C:\\Program Files (x86)\\vendor\\tool.exe\" --flag",
+		);
+	});
+
+	it("quotes an extensionless spaced executable before a later drive-root argument", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\Tool\\verify C:\\path\\to\\file.exe", "win32"),
+			"\"C:\\Program Files\\Tool\\verify\" C:\\path\\to\\file.exe",
+		);
+	});
+
+	it("quotes an extensionless spaced executable before a flag argument", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\Tool\\verify --flag", "win32"),
+			"\"C:\\Program Files\\Tool\\verify\" --flag",
+		);
+	});
+
+	it("quotes an extensionless spaced executable filename before a flag argument", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\my tool --flag", "win32"),
+			"\"C:\\Program Files\\my tool\" --flag",
+		);
+	});
+
+	it("quotes a spaced executable before a later drive-root executable argument", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\Tool\\verify.exe C:\\path\\to\\file.exe", "win32"),
+			"\"C:\\Program Files\\Tool\\verify.exe\" C:\\path\\to\\file.exe",
+		);
+	});
+
+	it("quotes a spaced executable filename", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\my tool.exe --flag", "win32"),
+			"\"C:\\Program Files\\my tool.exe\" --flag",
+		);
+	});
+
+	it("leaves an already-quoted command unchanged", () => {
+		const command = "\"C:\\Program Files\\vendor\\tool.exe\" --flag";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
+	it("leaves a single-token command unchanged", () => {
+		assert.equal(quoteExecutableForShell("phpunit", "win32"), "phpunit");
+	});
+
+	it("leaves a first token without spaces unchanged", () => {
+		const command = "node script.js --check";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
+	it("leaves a Windows executable path without spaces unchanged", () => {
+		const command = "C:\\tools\\tool.exe --flag";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
+	it("leaves an executable followed by an executable-looking argument unchanged", () => {
+		const command = "C:\\tools\\node script.exe";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
+	it("quotes a shallow spaced executable filename", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\node script.exe", "win32"),
+			"\"C:\\Program Files\\node script.exe\"",
+		);
+	});
+
+	it("leaves ambiguous shell syntax in extensionless commands unchanged", () => {
+		const command = "C:\\Program Files\\Tool\\verify&echo C:\\arg";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
+	it("leaves a spaced executable argument after an executable unchanged", () => {
+		const command = "C:\\tools\\tool.exe C:\\Program Files\\data\\file.exe";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
+	it("leaves a spaced executable-looking argument after an extensionless executable unchanged", () => {
+		const command = "C:\\tools\\verify C:\\Program Files\\data\\file.exe";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
+	it("passes commands through unchanged on non-Windows platforms", () => {
+		const command = "/opt/my tools/runner --flag";
+		assert.equal(quoteExecutableForShell(command, "linux"), command);
+		assert.equal(quoteExecutableForShell(command, "darwin"), command);
+	});
+
+	it("leaves ambiguous Windows commands unchanged", () => {
+		for (const command of ["tool file.exe", "cmd /c tool.exe", "echo hi > out.exe"]) {
+			assert.equal(quoteExecutableForShell(command, "win32"), command);
+		}
 	});
 });

@@ -1,7 +1,19 @@
 export const EXTENSION_BUS_FEATURE = "extension-bus-v1";
+export const EXACT_SEND_FEATURE = "exact-send-v1";
+
+export type DeliveryState = "socket_delivered" | "queued" | "failed" | "unknown";
+
+export interface DeliveryDetails {
+  delivery: DeliveryState;
+  code?: string;
+  retryable: boolean;
+  outcomeKnown: boolean;
+}
 
 export interface SessionInfo {
   id: string;
+  /** Broker-owned lifetime of this live endpoint. */
+  endpointEpoch?: string;
   name?: string;
   /** True only when the extension synthesized name for an unnamed runtime. */
   runtimeFallbackAlias?: boolean;
@@ -21,6 +33,13 @@ export interface SessionInfo {
   contextPct?: number;
   contextTokens?: number;
   contextWindow?: number;
+  /** tmux pane id (e.g. "%212") of the session's terminal, read from
+   *  $TMUX_PANE at registration. Present only when the session runs inside a
+   *  tmux pane; absent for cloud, headless, IDE-embedded, or Herdr sessions.
+   *  The pane id is immutable for the process lifetime — unlike the window
+   *  name, which is mutable — so a peer can live-resolve the current window
+   *  from it via tmux when it needs to introspect or drive that pane. */
+  tmuxPane?: string;
 }
 
 export interface Message {
@@ -35,10 +54,18 @@ export interface Message {
   retryOf?: string;
   replyTo?: string;
   expectsReply?: boolean;
+  provenance?: MessageProvenance;
   content: {
     text: string;
     attachments?: Attachment[];
   };
+}
+
+export interface MessageProvenance {
+  type: "extension_outbox";
+  extensionId: string;
+  extensionName: string;
+  requestId: string;
 }
 
 export interface Attachment {
@@ -72,16 +99,16 @@ export interface ExtensionCapability {
   ownerEligible: boolean;
 }
 
-export type SessionRegistration = Omit<SessionInfo, "id" | "peerUid" | "trustedLocal"> & {
+export type SessionRegistration = Omit<SessionInfo, "id" | "endpointEpoch" | "peerUid" | "trustedLocal"> & {
   extensions?: ExtensionCapability[];
 };
 
 export type ClientMessage =
-  | { type: "register"; session: SessionRegistration; sessionId?: string; stateId?: string }
+  | { type: "register"; session: SessionRegistration; sessionId?: string; stateId?: string; scopeId?: string }
   | { type: "unregister" }
   | { type: "extension_capabilities_update"; extensions: ExtensionCapability[] }
   | { type: "list"; requestId: string }
-  | { type: "send"; to: string; message: Message }
+  | { type: "send"; to: string; message: Message; targetId?: string; targetEpoch?: string }
   | { type: "message_receipt"; receipt: MessageReceipt }
   | { type: "cancel_message"; messageId: string }
   | { type: "cancel_ask"; messageId: string }
@@ -110,8 +137,8 @@ export type BrokerMessage =
   | { type: "session_joined"; session: SessionInfo }
   | { type: "session_left"; sessionId: string }
   | { type: "error"; error: string }
-  | { type: "delivered"; messageId: string }
-  | { type: "delivery_failed"; messageId: string; reason: string }
+  | ({ type: "delivered"; messageId: string } & DeliveryDetails)
+  | ({ type: "delivery_failed"; messageId: string; reason: string } & DeliveryDetails)
   | { type: "message_receipt"; from: SessionInfo; receipt: MessageReceipt }
   | { type: "message_control"; from: SessionInfo; control: MessageControl }
   | { type: "extension_owner"; namespace: string; ownerId?: string; ownerEpoch?: string }

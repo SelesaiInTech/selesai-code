@@ -37,13 +37,14 @@ describe("async stale-run reconciliation", () => {
 			writeStatus(asyncDir, {
 				runId: "run-dead",
 				sessionId: "session-current",
+				completionOwnerId: "owner-current",
 				mode: "single",
 				state: "running",
 				pid: 12345,
 				startedAt: 1000,
 				lastUpdate: 1000,
 				currentStep: 0,
-				steps: [{ agent: "scout", status: "running", startedAt: 1000 }],
+				steps: [{ agent: "scout", status: "running", startedAt: 1000, contextOverflow: true }],
 			});
 
 			const result = reconcileAsyncRun(asyncDir, {
@@ -58,13 +59,16 @@ describe("async stale-run reconciliation", () => {
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
 			assert.equal(status.state, "failed");
 			assert.equal(status.sessionId, "session-current");
+			assert.equal(status.completionOwnerId, "owner-current");
 			assert.equal(status.steps[0].status, "failed");
 			assert.match(status.steps[0].error, /process 12345 exited or disappeared/);
 			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-dead.json"), "utf-8"));
 			assert.equal(resultJson.success, false);
 			assert.equal(resultJson.sessionId, "session-current");
+			assert.equal(resultJson.completionOwnerId, "owner-current");
 			assert.equal(resultJson.state, "failed");
 			assert.equal(resultJson.exitCode, 1);
+			assert.equal(resultJson.results[0].contextOverflow, true);
 			assert.match(resultJson.summary, /process 12345 exited or disappeared/);
 			assert.match(fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8"), /subagent\.run\.repaired_stale/);
 		} finally {
@@ -199,7 +203,7 @@ describe("async stale-run reconciliation", () => {
 				state: "failed",
 				results: [
 					{ agent: "scout", success: true, sessionFile: scoutSession, model: "fast", attemptedModels: ["planned-scout", "fast"] },
-					{ agent: "worker", success: false, error: "boom", sessionFile: workerSession, model: "careful", attemptedModels: ["planned-worker", "careful"] },
+					{ agent: "worker", success: false, error: "boom", sessionFile: workerSession, model: "careful", attemptedModels: ["planned-worker", "careful"], contextOverflow: true },
 				],
 			}, null, 2), "utf-8");
 
@@ -221,6 +225,7 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(result.status?.steps?.[1]?.error, "boom");
 			assert.equal(result.status?.steps?.[1]?.model, "careful");
 			assert.deepEqual(result.status?.steps?.[1]?.attemptedModels, ["planned-worker", "careful"]);
+			assert.equal(result.status?.steps?.[1]?.contextOverflow, true);
 			assert.equal(result.status?.steps?.[1]?.sessionFile, workerSession);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -290,8 +295,7 @@ describe("async stale-run reconciliation", () => {
 				startedAt: 1000,
 				lastUpdate: 1000,
 				currentStep: 0,
-				checkpoint: { name: "review", status: "rejected", stepIndex: 0 },
-				steps: [{ agent: "checkpoint:review", status: "rejected", startedAt: 1000, error: "Checkpoint 'review' rejected." }],
+				steps: [{ agent: "worker", status: "rejected", startedAt: 1000, error: "Run rejected." }],
 			});
 			const publicResultPath = path.join(resultsDir, "run-rejected.json");
 			fs.mkdirSync(publicResultPath, { recursive: true });
@@ -301,8 +305,8 @@ describe("async stale-run reconciliation", () => {
 				sessionId: "session-current",
 				success: false,
 				state: "rejected",
-				summary: "Checkpoint 'review' rejected.",
-				results: [{ agent: "checkpoint:review", success: false, error: "Checkpoint 'review' rejected." }],
+				summary: "Run rejected.",
+				results: [{ agent: "worker", success: false, error: "Run rejected." }],
 			});
 
 			const result = reconcileAsyncRun(asyncDir, {
@@ -314,7 +318,7 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(result.repaired, false);
 			assert.equal(result.status?.state, "rejected");
 			assert.equal(result.status?.steps?.[0]?.status, "rejected");
-			assert.match(fs.readFileSync(result.resultPath!, "utf-8"), /review/);
+			assert.match(fs.readFileSync(result.resultPath!, "utf-8"), /Run rejected/);
 		} finally {
 			console.error = originalError;
 			fs.rmSync(root, { recursive: true, force: true });

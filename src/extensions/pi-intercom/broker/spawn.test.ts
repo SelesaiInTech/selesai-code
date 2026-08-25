@@ -105,7 +105,7 @@ test("getBrokerLaunchSpec uses wscript launcher on Windows without writing files
   }
 });
 
-test("getBrokerLaunchSpec falls back to PATH node for a standalone Pi executable on Windows", () => {
+test("getBrokerLaunchSpec falls back to PATH node for a standalone Selesai executable on Windows", () => {
   const intercomDir = mkdtempSync(path.join(tmpdir(), "pi-intercom-"));
 
   try {
@@ -149,7 +149,7 @@ test("getBrokerLaunchSpec uses node + resolved tsx for the default non-Windows l
   assert.equal(spec.captureStartupStderr, true);
 });
 
-test("getBrokerLaunchSpec falls back to PATH node for a standalone Pi executable on non-Windows", () => {
+test("getBrokerLaunchSpec falls back to PATH node for a standalone Selesai executable on non-Windows", () => {
   const spec = getBrokerLaunchSpec(
     "/repo/broker.ts",
     "npx",
@@ -213,31 +213,16 @@ test("spawnBrokerIfNeeded includes stderr from default broker startup failures",
   try {
     mkdirSync(brokerDir, { recursive: true });
     mkdirSync(path.dirname(fakeTsxCli), { recursive: true });
+    mkdirSync(path.join(extensionDir, "node_modules", "@selesai", "code"), { recursive: true });
     writeFileSync(path.join(extensionDir, "package.json"), JSON.stringify({ type: "module" }));
+    writeFileSync(path.join(extensionDir, "node_modules", "@selesai", "code", "package.json"), JSON.stringify({ type: "module" }));
+    writeFileSync(path.join(extensionDir, "node_modules", "@selesai", "code", "index.js"), "export const getAgentDir = () => process.env.SELESAI_CODING_AGENT_DIR;\n");
     writeFileSync(fakeTsxCli, "process.stderr.write('fake tsx failed\\n'); process.exit(1);\n");
 
     const sourceDir = path.dirname(fileURLToPath(import.meta.url));
     for (const fileName of ["spawn.ts", "framing.ts", "paths.ts"]) {
       cpSync(path.join(sourceDir, fileName), path.join(brokerDir, fileName));
     }
-
-    // Our fork's paths.ts routes through getAgentDir() from @selesai/code, so
-    // the temp copy needs a resolvable shim for the fork's config-dir lookup.
-    const codeShimDir = path.join(extensionDir, "node_modules", "@selesai", "code");
-    mkdirSync(codeShimDir, { recursive: true });
-    writeFileSync(
-      path.join(codeShimDir, "package.json"),
-      JSON.stringify({ name: "@selesai/code", type: "module", exports: { ".": "./index.mjs" } }),
-    );
-    writeFileSync(
-      path.join(codeShimDir, "index.mjs"),
-      `import { homedir } from "node:os";
-import { join } from "node:path";
-export function getAgentDir() {
-  return process.env.SELESAI_CODING_AGENT_DIR ?? join(homedir(), ".selesai", "agent");
-}
-`,
-    );
 
     process.env.SELESAI_CODING_AGENT_DIR = path.join(root, "agent");
     const moduleUrl = `${pathToFileURL(path.join(brokerDir, "spawn.ts")).href}?case=${Date.now()}`;

@@ -54,6 +54,14 @@ describe("subagent action recovery", () => {
 		assert.match(message, /Valid: .*status/);
 	});
 
+	it("does not list removed legacy controls", () => {
+		const message = unknownSubagentActionMessage("not-a-real-action");
+
+		assert.doesNotMatch(message, /append-step/);
+		assert.doesNotMatch(message, /approve-checkpoint/);
+		assert.doesNotMatch(message, /reject-checkpoint/);
+	});
+
 	it("does not suggest a destructive near-miss", () => {
 		const message = unknownSubagentActionMessage("del");
 
@@ -70,10 +78,10 @@ describe("subagent action recovery", () => {
 	});
 
 	it("routes invalid schedule actions through common recovery", async () => {
-		const result = await createExecutor().execute("invalid-removed-action", { action: "removed.lsit" }, new AbortController().signal, undefined, ctx());
+		const result = await createExecutor().execute("invalid-schedule-action", { action: "schedule.lsit" }, new AbortController().signal, undefined, ctx());
 		assert.equal(result.isError, true);
 		assert.equal(result.content[0]?.type, "text");
-		assert.equal(result.content[0]?.text, unknownSubagentActionMessage("removed.lsit"));
+		assert.equal(result.content[0]?.text, unknownSubagentActionMessage("schedule.lsit"));
 	});
 
 	it("lists and suggests mission decision resolution", () => {

@@ -127,7 +127,7 @@ describe("agent dir bootstrap", () => {
 		expect(existsSync(join(dir, "extensions", "question.ts"))).toBe(false);
 	});
 
-	it("seeds bundled skills into user skill dir but skips existing", () => {
+	it("seeds bundled skills into user skill dir, overwriting existing copies", () => {
 		mkdirSync(join(bundled, "skills", "grill-me"), { recursive: true });
 		writeFileSync(join(bundled, "skills", "grill-me", "SKILL.md"), "---\ndescription: Grill\n---\n");
 
@@ -135,38 +135,36 @@ describe("agent dir bootstrap", () => {
 		expect(written).toEqual([join(dir, "skills", "grill-me", "SKILL.md")]);
 		expect(existsSync(join(dir, "skills", "grill-me", "SKILL.md"))).toBe(true);
 
+		// an existing (possibly stale/edited) user copy is replaced by the bundled file
 		writeFileSync(join(dir, "skills", "grill-me", "SKILL.md"), "---\ndescription: User Grill\n---\n");
-		expect(seedDefaultSkills(dir, join(bundled, "skills"))).toEqual([]);
+		expect(seedDefaultSkills(dir, join(bundled, "skills"))).toEqual([join(dir, "skills", "grill-me", "SKILL.md")]);
 		expect(readFileSync(join(dir, "skills", "grill-me", "SKILL.md"), "utf-8")).toBe(
-			"---\ndescription: User Grill\n---\n",
+			"---\ndescription: Grill\n---\n",
 		);
 	});
 
-	it("keeps user-edited skills that differ from bundled files", () => {
-		mkdirSync(join(bundled, "skills", "grill-me"), { recursive: true });
-		mkdirSync(join(dir, "skills", "grill-me"), { recursive: true });
-		writeFileSync(join(bundled, "skills", "grill-me", "SKILL.md"), "---\ndescription: Grill\n---\n");
-		writeFileSync(join(dir, "skills", "grill-me", "SKILL.md"), "---\ndescription: User Grill\n---\n");
-
-		expect(seedDefaultSkills(dir, join(bundled, "skills"))).toEqual([]);
-		expect(readFileSync(join(dir, "skills", "grill-me", "SKILL.md"), "utf-8")).toBe(
-			"---\ndescription: User Grill\n---\n",
-		);
-	});
-
-	it("installs new bundled skills while preserving user-edited skills", () => {
-		mkdirSync(join(bundled, "skills", "grill-me"), { recursive: true });
-		mkdirSync(join(dir, "skills", "grill-me"), { recursive: true });
-		writeFileSync(join(bundled, "skills", "grill-me", "SKILL.md"), "---\ndescription: Grill\n---\n");
-		writeFileSync(join(dir, "skills", "grill-me", "SKILL.md"), "---\ndescription: User Grill\n---\n");
-		// a later release adds a brand-new bundled skill
+	it("replaces a stale user skill with the bundled authoritative copy", () => {
 		mkdirSync(join(bundled, "skills", "pi-subagents"), { recursive: true });
+		mkdirSync(join(dir, "skills", "pi-subagents"), { recursive: true });
 		writeFileSync(join(bundled, "skills", "pi-subagents", "SKILL.md"), "---\ndescription: Delegate\n---\n");
+		writeFileSync(join(dir, "skills", "pi-subagents", "SKILL.md"), "---\ndescription: Old stale copy\n---\n");
+
+		expect(seedDefaultSkills(dir, join(bundled, "skills"))).toEqual([join(dir, "skills", "pi-subagents", "SKILL.md")]);
+		expect(readFileSync(join(dir, "skills", "pi-subagents", "SKILL.md"), "utf-8")).toBe(
+			"---\ndescription: Delegate\n---\n",
+		);
+	});
+
+	it("installs new bundled skills while leaving user-only skills untouched", () => {
+		mkdirSync(join(bundled, "skills", "pi-subagents"), { recursive: true });
+		mkdirSync(join(dir, "skills", "user-custom"), { recursive: true });
+		writeFileSync(join(bundled, "skills", "pi-subagents", "SKILL.md"), "---\ndescription: Delegate\n---\n");
+		writeFileSync(join(dir, "skills", "user-custom", "SKILL.md"), "---\ndescription: Custom\n---\n");
 
 		const written = seedDefaultSkills(dir, join(bundled, "skills"));
 		expect(written).toEqual([join(dir, "skills", "pi-subagents", "SKILL.md")]);
-		expect(readFileSync(join(dir, "skills", "grill-me", "SKILL.md"), "utf-8")).toBe(
-			"---\ndescription: User Grill\n---\n",
+		expect(readFileSync(join(dir, "skills", "user-custom", "SKILL.md"), "utf-8")).toBe(
+			"---\ndescription: Custom\n---\n",
 		);
 		expect(readFileSync(join(dir, "skills", "pi-subagents", "SKILL.md"), "utf-8")).toBe(
 			"---\ndescription: Delegate\n---\n",

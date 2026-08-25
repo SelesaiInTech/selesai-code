@@ -3,11 +3,19 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { actionResultFromSteeringStatus, claimSteeringRecovery, createSteeringStatus, recordSteeringRequest, remainingSteeringRecoveryLimits, terminalSteeringNoticeState, updateSteeringTarget } from "../../src/runs/background/steering.ts";
+import { actionResultFromSteeringStatus, claimSteeringRecovery, createSteeringStatus, recordSteeringRequest, remainingSteeringRecoveryLimits, steeringMessagePreview, terminalSteeringNoticeState, updateSteeringTarget } from "../../src/runs/background/steering.ts";
 import { applySteeringRecoveryAgentConfig } from "../../src/runs/background/async-resume.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 
 describe("steering lifecycle ledger", () => {
+	it("redacts and bounds steering message previews", () => {
+		const secret = "ghp_1234567890abcdef";
+		const preview = steeringMessagePreview(`Use ${secret}\n${"x".repeat(200)}`);
+		assert.ok(preview.length <= 160);
+		assert.match(preview, /\[redacted\]/);
+		assert.doesNotMatch(preview, new RegExp(secret));
+	});
+
 	it("retains 20 recent requests while aggregate totals remain monotonic", () => {
 		const status = createSteeringStatus();
 		for (let index = 0; index < 21; index++) {
@@ -163,6 +171,37 @@ describe("steering lifecycle ledger", () => {
 		for (const field of ["fallbackModels", "extensions", "subagentOnlyExtensions", "mcpDirectTools", "skills", "skillPath", "filePath", "completionGuard", "memory", "output"] as const) {
 			assert.equal(recovered[field], undefined, `${field} leaked from current config`);
 		}
+	});
+
+	it("intersects persisted thinking ceilings with the current agent ceiling", () => {
+		const current = {
+			name: "worker",
+			description: "current",
+			thinking: "high",
+			maxThinking: "low",
+			systemPrompt: "current prompt",
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
+			inheritSkills: false,
+			source: "project",
+			filePath: "/current/agent.md",
+		} as AgentConfig;
+		const recovered = applySteeringRecoveryAgentConfig(current, {
+			version: 1,
+			sourceRunId: "source",
+			agent: "worker",
+			cwd: "/original",
+			thinking: "xhigh",
+			thinkingCeiling: "xhigh",
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
+			inheritSkills: false,
+			outputMode: "inline",
+			maxSubagentDepth: 2,
+			share: false,
+		});
+		assert.equal(recovered.thinking, "xhigh");
+		assert.equal(recovered.maxThinking, "low");
 	});
 
 	it("rejects recovery when any configured hard budget is exhausted", () => {

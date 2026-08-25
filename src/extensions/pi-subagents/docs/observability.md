@@ -8,7 +8,7 @@ Foreground runs stream progress in the conversation while they run. They default
 
 Live progress shows compact detail for single, chain, and parallel modes: current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and chain graph metadata when available.
 
-Press Selesai's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step.
+Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step.
 
 Sequential chains show a flow line like `done scout → running worker`. Chains with parallel steps show per-step cards instead. Chain status uses `label` and `phase` metadata when present, while falling back to agent names for older chains.
 
@@ -23,7 +23,7 @@ subagent({ action: "status", id: "..." })      // one run
 
 Or ask naturally: "Show me the current async runs."
 
-The under-editor async widget gives a short view while work runs. Its expand key follows your Selesai keybinding:
+The under-editor async widget gives a short view while work runs. Its expand key follows your Pi keybinding:
 
 ```text
 async subagent worker · background
@@ -35,9 +35,49 @@ async subagent worker · background
 
 To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
 
-## Run status
+## FleetView
 
-Use `subagent({ action: "status" })` for current run state and lifecycle details. Use `subagent({ action: "status", id: "...", view: "transcript" })` for a specific child transcript. Stop runs explicitly with `subagent({ action: "stop", id: "..." })`.
+In the TUI, a persistent FleetView below the editor keeps active work visible as a compact summary. Set `fleetViewPlacement` to `"aboveEditor"` to move it above the editor.
+
+```text
+2 active agents · 1 pane · ↓ 4.2k tokens · ↓/← to inspect
+```
+
+After you expand it:
+
+```text
+↑↓/jk select · enter inspect · esc back
+
+> main
+    scout · running                  1m 12s · ↓ 2.8k tokens
+    reviewer · running                 38s · ↓ 1.4k tokens
+```
+
+When the focused editor is empty, press `↓` or `←` to expand the summary into `main` plus active children with agent name, state, elapsed time, and token totals. The compact line counts active current-session work and Herdr project panes. Then use `↑`/`↓` or `j`/`k` to select a child and `Enter` to inspect it. Printable navigation keys are never intercepted before activation.
+
+FleetView replaces the legacy above-editor async widget by default. Successful background completions stay quiet so inactive Pi tabs are not marked unread, while failed or paused completions still notify the originating session. Parallel runs show every active child independently. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
+
+## The fleet inspector
+
+`/subagents-fleet` opens the live fleet inspector with current-session foreground work, recent async children, structured Markdown/tool transcripts, and completed output/session paths.
+
+Default keys:
+
+- `↑`/`↓` or `j`/`k` — select a child
+- `Shift+K`/`Shift+J` — scroll one line
+- `PgUp`/`PgDn` — scroll one page
+- `x`/`Ctrl+O` — toggle tool details
+- `r` — refresh
+- `Esc` — close
+- `s` — compose an acknowledged message to a selected live async child; Tab cycles `steer`, `follow_up`, and `auto`
+- `D` — stop a selected child's top-level async run after confirmation
+- `H` — open the selected active async child in a Herdr inspector pane (Herdr 0.7.5+)
+
+Set `fleetKeybindings` in the extension config to replace inspector-level keys when a terminal intercepts keys such as `PgUp`, `PgDn`, `Home`, or `End`. Prompt modes keep fixed keys such as `Esc`, `Enter`, `Tab`, and stop-confirmation `Y`/`N`.
+
+`Ctrl+Alt+F` opens the same inspector even while a foreground turn is active and slash input is queued.
+
+Without a TUI, `/subagents-fleet` retains the textual `subagent({ action: "status", view: "fleet" })` fallback, and mutations use explicit commands: run `/subagents-stop` and pick from the selector, or use `/subagents-stop <run-id>` / `subagent({ action: "stop", id: "..." })` when you already know the id.
 
 Use `/subagents-detach [run-id]` only for an active foreground single-subagent run you want to leave running without terminating; the eventual result remains available through status/wait.
 
@@ -49,7 +89,7 @@ Set `foregroundDetachShortcut` in `~/.selesai/agent/extensions/subagent/config.j
 }
 ```
 
-Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes precedence, but Selesai reports the conflict at startup. To reserve the key without that warning, override the editor action in `~/.selesai/agent/keybindings.json`:
+Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes precedence, but Pi reports the conflict at startup. To reserve the key without that warning, override the editor action in `~/.selesai/agent/keybindings.json`:
 
 ```json
 {
@@ -58,6 +98,42 @@ Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes
 ```
 
 If something feels misconfigured, run `/subagents-doctor` or ask: "Check whether subagents and intercom are set up correctly."
+
+## Host inspection protocol (RPC)
+
+RPC hosts receive live async status through the bounded `subagent-async` widget
+(`SELESAI_SUBAGENT_ASYNC_JSON:` payload). For on-demand detail — a child's delegated
+task, transcript window, or final output — hosts can invoke the extension
+command:
+
+```text
+/subagents-inspect-rpc <requestId> <asyncId> [childId] [--lines N]
+```
+
+Extension commands execute inline over Pi RPC without a model turn. The reply
+arrives as a single emit-then-retract update on the dedicated `subagent-inspect`
+widget key: the first (and only) line is `SELESAI_SUBAGENT_INSPECT_JSON:<JSON>` with a
+versioned `pi-subagents.inspect-reply` payload correlated by `requestId`. Hosts
+must not render this widget; they should buffer the payload by `requestId` and
+drop unmatched replies.
+
+Inspection properties:
+
+- Read-only and on demand: nothing is persisted, broadcast, or added to
+  notification details; every request re-reads canonical run artifacts after
+  the same reconciliation the status action performs.
+- Session-scoped: runs owned by another session fail with `foreign_session`;
+  unknown ids fail with `not_found`; cleaned-up artifacts fail with `stale`.
+- Bounded: per-field string caps, a message-count cap (`--lines`, max 200), and
+  a hard 64 KB serialized budget with explicit `truncated` markers.
+- No filesystem paths appear in the reply.
+- `task` is the child session's first user message and is only populated when
+  it is genuinely attributable (fresh-context child whose session file fits the
+  read window); forked children omit it.
+- `childId` is exactly the node id the host received in the status snapshot
+  (step `workflowKey`/`runId`/`step:<index>`, or a nested run id).
+
+In TUI mode the command only points at the interactive `/subagents` inspector.
 
 ## Async run artifacts
 
@@ -72,21 +148,32 @@ Async runs write machine-readable lifecycle artifacts for observability and work
 ```
 
 - `status.json` powers the widget and `subagent({ action: "status" })` output.
-- `events.jsonl` contains wrapper events plus child Selesai JSON events annotated with run and step metadata, including correlated `subagent.steer.requested`, `scheduled`, `routed`, `queued`, `delivered`, `failed`, and `recovered` events plus failure/partial/recovery notices.
+- `events.jsonl` contains wrapper events plus child Pi JSON events annotated with run and step metadata, including correlated `subagent.steer.requested`, `scheduled`, `routed`, `queued`, `delivered`, `failed`, and `recovered` events plus failure/partial/recovery notices.
 - `output-<n>.log` is a live human-readable tail.
 - Fallback information is persisted so background runs are debuggable after completion.
 
-For a top-level async run, `details.asyncDir` points at that directory; the final summary is written to Selesai's subagent results directory as `<runId>.json`. Nested async runs use the same shape under the nested async root and are discoverable through status projections that read the nested-run registry. These files are append/update artifacts only; interactive foreground behavior is unchanged.
+For a top-level async run, `details.asyncDir` points at that directory; the final summary is written to Pi's subagent results directory as `<runId>.json`. Nested async runs use the same shape under the nested async root and are discoverable through status projections that read the nested-run registry. These files are append/update artifacts only; interactive foreground behavior is unchanged.
 
 The result file is consumed and deleted once its completion notice is delivered. Before deletion, the watcher writes a versioned replay record under `<resultsDir>/completion-replay/<runId>.json` and a bounded output archive under `<resultsDir>/output-archives/<runId>.json`. Replay records expire with the completion deduplication window and are best-effort temporary state, not a permanent run ledger.
 
 `subagent_wait` surfaces a slim projection of each terminal payload it covered in its own tool-result `details.completions` — run identity, per-child agent/`runId`/success, artifact paths, and the bounded `archivePath`, without duplicating output text. It reads the replay when watcher delivery or a watcher restart has removed the one-shot result file and in-memory completion state is unavailable. Durable non-blocking wait subscriptions use the same replay in their delivered details. Workflow result files record each child's `runId` explicitly, since a workflow child's `artifactPaths` entry points at its saved output rather than the artifact files keyed by the id. Extensions observing `tool_result` events can read run and artifact identity from there instead of parsing the text summary.
 
-Output archives reference an existing child output artifact or session file when one is available. For children without either file, the archive stores only the tail of result text, bounded to 64 KiB per run, and records whether it was truncated. Replay and archive JSON use `version: 1`; consumers must ignore unknown fields.
+Output archives reference an existing child output artifact or session file when one is available. For children without either file, the archive stores a per-child `result-tail` entry with `resultIndex`, bounded to 64 KiB per child, and records whether it was truncated. Replay and archive JSON use `version: 1`; consumers must ignore unknown fields.
 
 Nested fanout status is stored as compact sidecar event/registry metadata and merged into parent status views and result/intercom payloads; full recursive status snapshots are not embedded in parent result files.
 
 Consumers should read these JSON files instead of scraping terminal output. Unknown fields and event types should be ignored for forward compatibility.
+
+RPC hosts that need low-latency child-stop UI hints can subscribe to the
+`subagent:child-status` event advertised by RPC `ping` as `events.childStatus`.
+The payload uses `type: "subagent.child-status"`, `version: 1`, `runId`,
+`childId`, `status` (`"stopping"` or `"stopped"`), `ts`, and optional child
+metadata such as `stepIndex`, `agent`, `childRunId`, `workflowKey`, `phase`, and
+`label`. These events are observer hints only. They can duplicate across RPC and
+async replay paths, and they are not replayed after a host restart. Status
+snapshots remain authoritative for recovery and final state. Child stop control
+still uses the normal `stop` request with `childId`; there is no separate child
+stop API.
 
 ### Status and result fields
 
@@ -118,23 +205,23 @@ The `subagent:process-terminal` event and RPC `ping.capabilities.processTerminal
 
 Foreground and async runners share bounded child-protocol handling:
 
-- A child JSONL line above 16 MiB fails with structured `protocolError` code `protocol_output_limit`. Oversized Selesai `turn_end` and `agent_end` aggregates are the exception because they duplicate granular events, so runners replace them with bounded lifecycle records while preserving `agent_end.willRetry`.
+- A child JSONL line above 16 MiB fails with structured `protocolError` code `protocol_output_limit`. Oversized Pi `turn_end` and `agent_end` aggregates are the exception because they duplicate granular events, so runners replace them with bounded lifecycle records while preserving `agent_end.willRetry`.
 - Stderr retains only its latest 128 KiB.
 - Split UTF-8 and final unterminated JSON events remain valid.
 - `agent_end.willRetry` defers completion until the child settles.
-- Current Selesai builds use `agent_settled` as the terminal watermark; older builds retain the bounded terminal-message fallback.
+- Current Pi builds use `agent_settled` as the terminal watermark; older builds retain the bounded terminal-message fallback.
 
-## Chain and debug artifacts
+## Workflow and debug artifacts
 
-Each chain run creates a scratch directory under its resolved chain root. With the default `artifactDir: "session"` or with `"temp"`, it is user-scoped temp storage. With `artifactDir: "project"`, the root is `<cwd>/.pi-subagents/chain-runs/`:
+Each scripted workflow stores runtime artifacts under a workflow artifact directory. The on-disk directory is still named `chain-runs` for compatibility. With the default `artifactDir: "session"` or with `"temp"`, it is user-scoped temp storage. With `artifactDir: "project"`, the root is `<cwd>/.pi-subagents/chain-runs/`:
 
 ```text
 <tmpdir>/pi-subagents-<scope>/chain-runs/{runId}/
 ```
 
-A run directory may contain files such as `context.md`, `plan.md`, `progress.md`, and `parallel-{stepIndex}/.../output.md`. User-scoped temp chain directories older than 24 hours are cleaned up on extension startup; project-local and explicit persistent roots are not age-scanned.
+A run directory may contain files such as `context.md`, `plan.md`, `progress.md`, and `parallel-{stepIndex}/.../output.md`. User-scoped temp workflow artifact directories older than 24 hours are cleaned up on extension startup; project-local and explicit persistent roots are not age-scanned.
 
-Debug artifacts live under `{sessionDir}/subagent-artifacts/`, `.pi-subagents/artifacts/` for project-scoped runs, or a user-scoped temp artifact directory. Single-run relative `output` files are saved under `{artifactsDir}/outputs/{runId}/` unless `singleRunOutputBaseDir` is configured. Per task you may see:
+Debug artifacts live under `{sessionDir}/subagent-artifacts/`, `.pi-subagents/artifacts/` for project-scoped runs, or a user-scoped temp artifact directory. Single-run relative `output` files are saved under `{artifactsDir}/outputs/{runId}/` unless `singleRunOutputBaseDir` is configured. For lane, review, council, and gate reports, prefer these managed artifacts or the aggregate workflow result instead of repo-root `reports/` files. Copy only final durable evidence to session memory, a mission artifact, a PR/comment, or an approved docs path. Per task you may see:
 
 - `{runId}_{agent}_input.md`
 - `{runId}_{agent}_output.md`
@@ -147,7 +234,7 @@ For npm package projects, project-scoped artifacts need a `.npmignore` rule (or 
 
 ## Sessions
 
-Session files are stored under a per-run session directory. With `context: "fork"`, each child starts with `--session <branched-session-file>` produced from the parent's current leaf. That is a real session fork, not an injected summary.
+Session files are stored under a per-run session directory. With `context: "fork"`, each child starts with `--session <branched-session-file>` produced from the parent's current leaf. That is a real session fork, not an injected summary. An omitted launch `context` that resolves through `defaultContext: fork` uses the same branch when the parent session file and current leaf exist, and otherwise starts fresh.
 
 ## Completion notifications
 
@@ -171,4 +258,4 @@ Intercom delivery events:
 
 `src/extension/index.ts` registers the notification handler that consumes `subagent:async-complete`. Control/attention events are surfaced as visible parent notices and persisted for async runs. Native supervisor requests are delivered only to the exact parent session that spawned the child.
 
-`pi.events` is in-process only. It does not reach separate Selesai processes or child subagents; use the file lifecycle artifacts or `pi-intercom` for cross-process coordination.
+`pi.events` is in-process only. It does not reach separate Pi processes or child subagents; use the file lifecycle artifacts or `pi-intercom` for cross-process coordination.

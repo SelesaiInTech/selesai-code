@@ -14,12 +14,58 @@ It reviews repo edits, not ordinary conversation:
 - Generated `.pi-subagents/` or `tmp/` artifacts do not trigger review.
 - In orchestrated runs, each writing child can review its own edited worktree, and the parent can still review the aggregate repo diff after child changes are applied.
 
+## Choosing a model
+
+Because the watchdog is an adversarial change reviewer, it should usually use a strong complementary model rather than a cheap/light one.
+
+Ask pi-subagents for the current strong pairing:
+
+```text
+/subagents-watchdog recommend-model
+/subagents-watchdog session model recommended
+/subagents-watchdog model recommended
+```
+
+The current recommendation policy is Opus 4.8 with thinking high or GPT 5.5 with thinking high. If your main session is using one, the watchdog should use the other when that model is authenticated.
+
+- `session model recommended` changes only the current Pi session.
+- `model recommended` saves the recommendation to `~/.selesai/agent/settings.json`. It does not turn the watchdog on; enable it separately with `/subagents-watchdog on`.
+
+Or set the model explicitly:
+
+```text
+/subagents-watchdog model anthropic/claude-opus-4-8:high
+/subagents-watchdog model openai-codex/gpt-5.5:high
+/subagents-watchdog model inherit
+/subagents-watchdog check
+```
+
+In settings files, use `subagents.watchdog.main.model` and `subagents.watchdog.main.thinking` for the main watchdog:
+
+- If `main.model` is omitted, the main watchdog uses the current session model and thinking level.
+- If `main.model` is set without a thinking suffix or `main.thinking`, it runs with thinking off. Prefer `:high` or `"thinking": "high"` for the strong-watchdog pairing.
+
+Default strong-reviewer profile:
+
+```json
+{
+  "subagents": {
+    "watchdog": {
+      "enabled": true,
+      "main": {
+        "model": "anthropic/claude-opus-4-8",
+        "thinking": "high"
+      }
+    }
+  }
+}
+```
 
 ## Scope monitoring
 
 When enabled, the watchdog keeps a bounded in-memory current-scope artifact from real user prompts and prepends it to review input by default (`subagents.watchdog.scope.enabled`). Newer prompts supersede and mutate older prompts, so the reviewer can flag work that no longer serves the current scope as `scope-drift`. Watchdog auto-follow prompts are not recorded as scope.
 
-You can opt into Scopey-style scope monitoring, inspired by [Scopey](https://github.com/ArchAstro/scopey), by setting `subagents.watchdog.cadence.everyNTools` to run additional non-blocking reviews every N tool results. Cadence warnings are transcript-visible and delivered with Selesai's `steer` mode after the current tool boundary; they are never hidden. The same configured watchdog model is used for all checks, so choose a cheap model for frequent monitoring or a strong model for rarer adversarial review.
+You can opt into Scopey-style scope monitoring, inspired by [Scopey](https://github.com/ArchAstro/scopey), by setting `subagents.watchdog.cadence.everyNTools` to run additional non-blocking reviews every N tool results. Cadence warnings are transcript-visible and delivered with Pi's `steer` mode after the current tool boundary; they are never hidden. The same configured watchdog model is used for all checks, so choose a cheap model for frequent monitoring or a strong model for rarer adversarial review.
 
 Scopey-style profile:
 
@@ -63,10 +109,21 @@ For child subagent watchdogs, use `subagents.watchdog.children.model` as the def
 
 Child watchdogs are opt-in and follow the same edit-gated rule: read-only children do not trigger watchdog reviews, while writer children are reviewed at their own `agent_end` if their worktree changed.
 
+## Agent-driven configuration
+
+Agents can configure the same values through the tool when you ask them to set up the watchdog:
+
+```ts
+subagent({ action: "watchdog.recommend-model" })
+subagent({ action: "watchdog.configure", model: "recommended", scope: "session" })
+subagent({ action: "watchdog.configure", model: "recommended", scope: "project" })
+```
+
+Persistent scopes (`user` or `project`) should only be used when you ask for a lasting default. Otherwise the agent should use `scope: "session"`.
 
 ## Native child tool permissions
 
-Native permissions are opt-in and apply only to Selesai child runtimes. With no rules configured, every tool call passes through unchanged.
+Native permissions are opt-in and apply only to Pi child runtimes. With no rules configured, every tool call passes through unchanged.
 
 Configure explicit non-bash rules globally in `~/.selesai/agent/extensions/subagent/config.json`:
 
@@ -112,7 +169,7 @@ Asked requests and decisions are written to bounded audit JSONL, including `deci
 
 `bash` is always passed through by pi-subagents. Bash rules are rejected rather than parsed, gated, denied, or audited. Install and configure `pi-guard` when command-level bash policy is needed.
 
-A pi-subagents child is headless, so a pi-guard rule that resolves to `ask` cannot request approval from the parent Selesai UI. Native permissions do not forward pi-guard decisions; they only apply to the separate non-bash child permission gate. For child-specific policy, use `PI_GUARD` through a `SELESAI_SUBAGENT_PI_BINARY` wrapper or an equivalent launch wrapper, and configure explicit `allow` or `deny` rules. An `allow` rule grants execution; it is not approval forwarding, so retain explicit denies for commands the child must not run.
+A pi-subagents child is headless, so a pi-guard rule that resolves to `ask` cannot request approval from the parent Pi UI. Native permissions do not forward pi-guard decisions; they only apply to the separate non-bash child permission gate. For child-specific policy, use `PI_GUARD` through a `SELESAI_SUBAGENT_PI_BINARY` wrapper or an equivalent launch wrapper, and configure explicit `allow` or `deny` rules. An `allow` rule grants execution; it is not approval forwarding, so retain explicit denies for commands the child must not run.
 
 ### External CLI profiles
 

@@ -2,6 +2,7 @@ import type {
   Attachment,
   Message,
   MessageControl,
+  MessageProvenance,
   MessageReceipt,
   MessageReceiptStatus,
   SessionInfo,
@@ -69,6 +70,16 @@ function isAttachment(value: unknown): value is Attachment {
   return value.language === undefined || typeof value.language === "string";
 }
 
+function isMessageProvenance(value: unknown): value is MessageProvenance {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return value.type === "extension_outbox"
+    && typeof value.extensionId === "string"
+    && typeof value.extensionName === "string"
+    && typeof value.requestId === "string";
+}
+
 export function isMessage(value: unknown): value is Message {
   if (!isRecord(value)) {
     return false;
@@ -100,6 +111,10 @@ export function isMessage(value: unknown): value is Message {
     return false;
   }
 
+  if (value.provenance !== undefined && !isMessageProvenance(value.provenance)) {
+    return false;
+  }
+
   if (!isRecord(value.content) || typeof value.content.text !== "string") {
     return false;
   }
@@ -124,6 +139,10 @@ export function isSessionInfo(value: unknown): value is SessionInfo {
     return false;
   }
 
+  if (value.endpointEpoch !== undefined && typeof value.endpointEpoch !== "string") {
+    return false;
+  }
+
   if (value.name !== undefined && typeof value.name !== "string") {
     return false;
   }
@@ -144,6 +163,10 @@ export function isSessionInfo(value: unknown): value is SessionInfo {
     if (value[key] !== undefined && typeof value[key] !== "number") {
       return false;
     }
+  }
+
+  if (value.tmuxPane !== undefined && typeof value.tmuxPane !== "string") {
+    return false;
   }
 
   return value.trustedLocal === undefined || typeof value.trustedLocal === "boolean";
@@ -175,6 +198,9 @@ export function isSessionRegistration(value: unknown): value is SessionRegistrat
     return false;
   }
   if (value.extensions !== undefined && !Array.isArray(value.extensions)) {
+    return false;
+  }
+  if (value.tmuxPane !== undefined && typeof value.tmuxPane !== "string") {
     return false;
   }
 

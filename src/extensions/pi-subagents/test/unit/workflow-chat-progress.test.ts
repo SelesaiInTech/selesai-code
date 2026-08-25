@@ -95,10 +95,11 @@ describe("workflow chat progress policy", () => {
 			assert.equal(isSameGitRepository(repo, other), false);
 
 			assert.equal(resolveWorkflowChatProgress({ requested: "auto", parentCwd: repo, workflowCwd: worktree, background: false }).projection?.mode, "live-card");
-			assert.equal(resolveWorkflowChatProgress({ requested: "auto", parentCwd: repo, workflowCwd: worktree, background: true }).projection?.mode, "milestones");
-			assert.equal(resolveWorkflowChatProgress({ requested: "auto", parentCwd: repo, workflowCwd: other, background: false }).projection?.mode, "terminal");
+			assert.equal(resolveWorkflowChatProgress({ requested: "auto", parentCwd: repo, workflowCwd: worktree, background: true }).projection?.mode, "off");
+			assert.equal(resolveWorkflowChatProgress({ requested: "auto", parentCwd: repo, workflowCwd: other, background: false }).projection?.mode, "off");
 			assert.match(resolveWorkflowChatProgress({ requested: "live-card", parentCwd: repo, workflowCwd: other, background: false }).error ?? "", /same Git repository/i);
-			assert.match(resolveWorkflowChatProgress({ requested: "terminal", parentCwd: repo, workflowCwd: repo, background: false }).projection?.mode ?? "", /terminal/);
+			assert.match(resolveWorkflowChatProgress({ requested: "live-card", parentCwd: repo, workflowCwd: repo, background: true }).error ?? "", /omit chatProgress or use auto\/off.*async:false only when the parent must block/i);
+			assert.match(resolveWorkflowChatProgress({ requested: "terminal", parentCwd: repo, workflowCwd: repo, background: false }).error ?? "", /one of: auto, off, live-card/i);
 		} finally {
 			try { git(repo, ["worktree", "remove", "--force", worktree]); } catch {}
 			fs.rmSync(repo, { recursive: true, force: true });
@@ -209,8 +210,8 @@ describe("workflow chat progress rendering", () => {
 		try {
 			const location = {
 				projectRoot: root,
-				missionDir: path.join(root, ".pi/subagents", "missions"),
-				globalIndexDir: path.join(root, ".pi/subagents", "mission-index"),
+				missionDir: path.join(root, ".pi-subagents", "missions"),
+				globalIndexDir: path.join(root, ".pi-subagents", "mission-index"),
 				writeGlobalIndex: false,
 			};
 			const mission = createMission(location, { title: "Workflow", objective: "Track child" });
@@ -271,27 +272,54 @@ describe("workflow chat progress rendering", () => {
 			state: "detached",
 			phase: "Decision",
 			label: "supervisor handoff",
+			runId: "child-detached-123456",
 			error: "Detached for intercom coordination. Reply to the supervisor request first.",
 		}];
 		const rows = buildWorkflowChatProgressRows(trace);
 		assert.equal(rows[0]?.state, "detached");
 
 		const text = componentText(renderSubagentResult({
-			content: [{ type: "text", text: "Workflow paused." }],
+			content: [{ type: "text", text: "Workflow failed: Run 'detaches' detached for intercom coordination." }],
+			isError: true,
 			details: {
 				mode: "workflow",
-				runId: "wf_detached",
+				runId: "wf_detached_123456",
 				results: [],
 				chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
 				workflow: { trace, emits: [], console: [] },
 			},
 		}, { expanded: false }, theme as any));
 
-		assert.match(text, /workflow wf_detached .* same repo .* paused/);
+		assert.match(text, /workflow wf_detached_ .* same repo .* paused/);
 		assert.match(text, /Phase  Decision/);
-		assert.match(text, /detached\s+detaches supervisor handoff .* Detached for intercom coordination/);
+		assert.match(text, /detached\s+detaches supervisor handoff \[child-de\] .* Detached for intercom coordination/);
 		assert.doesNotMatch(text, /running\s+detaches/);
 		assert.doesNotMatch(text, /failed\s+detaches/);
+	});
+
+	it("keeps mixed detached and failed workflow traces failed", () => {
+		const text = componentText(renderSubagentResult({
+			content: [{ type: "text", text: "Workflow failed: child failed after a detached sibling." }],
+			isError: true,
+			details: {
+				mode: "workflow",
+				runId: "wf_mixed_failure",
+				results: [],
+				chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
+				workflow: {
+					trace: [
+						{ operation: "run", key: "handoff", state: "detached", runId: "child-detached", error: "Detached for supervisor handoff." },
+						{ operation: "run", key: "tests", state: "failed", runId: "child-failed", error: "unit test failed" },
+					],
+					emits: [],
+					console: [],
+				},
+			},
+		}, { expanded: false }, theme as any));
+
+		assert.match(text, /workflow wf_mixed_fai .* same repo .* failed/);
+		assert.match(text, /detached\s+handoff .* Detached for supervisor handoff/);
+		assert.match(text, /failed\s+tests .* unit test failed/);
 	});
 
 	it("applies main-window density settings to collapsed workflow live cards", () => {

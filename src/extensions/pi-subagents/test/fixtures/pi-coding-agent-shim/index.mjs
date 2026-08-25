@@ -42,7 +42,7 @@ export class SessionManager {
 		this.entries = entries;
 	}
 
-	static create(cwd, sessionDir = path.join(cwd, ".pi", "sessions")) {
+	static create(cwd, sessionDir = path.join(cwd, ".selesai", "sessions")) {
 		const id = randomUUID();
 		return new SessionManager(cwd, sessionDir, path.join(sessionDir, `${id}.jsonl`), { type: "session", version: 1, id, timestamp: new Date().toISOString(), cwd });
 	}

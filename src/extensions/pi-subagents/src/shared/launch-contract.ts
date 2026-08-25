@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import type { AgentConfig } from "../agents/agents.ts";
+import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 
 export const AGENT_DEFINITION_PROJECTION_VERSION = 1 as const;
 export const LAUNCH_BINDING_PROJECTION_VERSION = 1 as const;
@@ -17,7 +18,7 @@ function stableJson(value: unknown): string {
 	return JSON.stringify(value);
 }
 
-function sha256(value: unknown): string {
+export function stableJsonDigest(value: unknown): string {
 	return createHash("sha256").update(stableJson(value)).digest("hex");
 }
 
@@ -44,7 +45,9 @@ export function projectAgentDefinition(agent: AgentConfig): Record<string, unkno
 		inheritProjectContext: agent.inheritProjectContext,
 		inheritSkills: agent.inheritSkills,
 		model: agent.model,
+		modelProvider: agent.modelProvider,
 		fallbackModels: agent.fallbackModels,
+		fast: agent.fast,
 		thinking: agent.thinking,
 		tools: agent.tools,
 		mcpDirectTools: agent.mcpDirectTools,
@@ -70,7 +73,7 @@ export function projectAgentDefinition(agent: AgentConfig): Record<string, unkno
 }
 
 export function agentDefinitionDigest(agent: AgentConfig): string {
-	return sha256(projectAgentDefinition(agent));
+	return stableJsonDigest(projectAgentDefinition(agent));
 }
 
 export interface LaunchBindingInput {
@@ -79,6 +82,7 @@ export interface LaunchBindingInput {
 	task?: string;
 	model?: string;
 	modelCandidates?: string[];
+	fast?: boolean;
 	thinking?: string;
 	systemPrompt?: string | null;
 	systemPromptMode?: AgentConfig["systemPromptMode"];
@@ -92,6 +96,7 @@ export interface LaunchBindingInput {
 	outputPath?: string;
 	outputMode?: string;
 	structuredOutputSchema?: unknown;
+	extensionBindings?: ExtensionBindings;
 }
 
 /** Canonical projection of the resolved inputs handed to the child. */
@@ -99,12 +104,13 @@ export function projectLaunchBinding(input: LaunchBindingInput): Record<string, 
 	return {
 		version: LAUNCH_BINDING_PROJECTION_VERSION,
 		definitionDigest: input.definitionDigest,
-		taskDigest: input.task === undefined ? undefined : sha256(input.task),
+		taskDigest: input.task === undefined ? undefined : stableJsonDigest(input.task),
 		// The ordered candidate set already contains each attempted model; keeping only
 		// this set makes retries correlate to the same preflight binding.
 		modelCandidates: input.modelCandidates,
+		fast: input.fast,
 		thinking: input.thinking,
-		systemPromptDigest: input.systemPrompt === undefined || input.systemPrompt === null ? undefined : sha256(input.systemPrompt),
+		systemPromptDigest: input.systemPrompt === undefined || input.systemPrompt === null ? undefined : stableJsonDigest(input.systemPrompt),
 		systemPromptMode: input.systemPromptMode,
 		inheritProjectContext: input.inheritProjectContext,
 		inheritSkills: input.inheritSkills,
@@ -116,9 +122,10 @@ export function projectLaunchBinding(input: LaunchBindingInput): Record<string, 
 		outputPath: input.outputPath,
 		outputMode: input.outputMode,
 		structuredOutputSchema: input.structuredOutputSchema,
+		extensionBindings: input.extensionBindings,
 	};
 }
 
 export function launchBindingDigest(input: LaunchBindingInput): string {
-	return sha256(projectLaunchBinding(input));
+	return stableJsonDigest(projectLaunchBinding(input));
 }

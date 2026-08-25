@@ -2,11 +2,11 @@
 
 `pi-subagents` reads optional JSON config from `~/.selesai/agent/extensions/subagent/config.json`. This page lists every key, plus the environment variables and the settings-file keys that affect config resolution.
 
-Settings-level keys (`subagents.defaultModel`, `defaultThinking`, `defaultExtensions`, `agentOverrides`, `modelScope`, `disableThinking`, `disableBuiltins`, watchdog settings) live in Selesai settings files, not this config file. See [models.md](models.md), [agents.md](agents.md), and [watchdog.md](watchdog.md).
+Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `defaultThinking`, `defaultExtensions`, `agentOverrides`, `modelScope`, `disableThinking`, `disableBuiltins`, watchdog settings) live in Pi settings files, not this config file. `modelScope.agents.<name>` adds per-agent restrictions, and `allow: ["inherit"]` permits the current parent model. See [models.md](models.md), [agents.md](agents.md), and [watchdog.md](watchdog.md).
 
 ## Project root resolution (settings)
 
-By default, project settings resolve from the nearest parent directory that contains `.pi` or `.agents`, preserving existing nested-project behavior. In monorepos or git worktrees where an incidental nested `.pi` directory should not shadow the repository-level config, set this in the repository root `.selesai/settings.json`:
+By default, project settings resolve from the nearest parent directory that contains `.selesai` or `.agents`, preserving existing nested-project behavior. In monorepos or git worktrees where an incidental nested `.selesai` directory should not shadow the repository-level config, set this in the repository root `.pi/settings.json`:
 
 ```json
 {
@@ -16,7 +16,7 @@ By default, project settings resolve from the nearest parent directory that cont
 }
 ```
 
-`"git-root"` keeps package discovery, project agents, chains, and `agentOverrides` anchored to the git worktree root when that root also has Selesai project config. A nested project can still opt back into nearest-root behavior by setting `"projectRootResolution": "nearest"` in its own `.selesai/settings.json`.
+`"git-root"` keeps package discovery, project agents, chains, and `agentOverrides` anchored to the git worktree root when that root also has Pi project config. A nested project can still opt back into nearest-root behavior by setting `"projectRootResolution": "nearest"` in its own `.pi/settings.json`.
 
 ## `toolDescriptionMode`
 
@@ -24,17 +24,9 @@ By default, project settings resolve from the nearest parent directory that cont
 { "toolDescriptionMode": "compact" }
 ```
 
-Controls the parent-facing `subagent` tool description registered at startup. `compact` is the default. `full` keeps the full execution, management/control, and async guidance with more prompt bloat.
+Controls the parent-facing `subagent` tool description registered at startup. The default registers split prompt metadata: a short tool description plus `promptSnippet` and `promptGuidelines`. Set `"full"` to register the complete description as one tool description, or `"compact"` to keep the execution modes, async/`subagent_wait` guidance, child-safety boundary, management/action split, one-writer review guidance, and artifact/status essentials with less prompt bloat.
 
-`custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.selesai/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the compact description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Selesai after changing the mode or custom file.
-
-## `legacyChainControls`
-
-```json
-{ "legacyChainControls": true }
-```
-
-Defaults to `false`. The default registered model-facing tool schema and description omit the legacy `append-step` `step` schema and legacy checkpoint controls. This does not change runtime support for existing durable legacy chains. Set this to `true` before directly managing a legacy chain with `append-step`, `approve-checkpoint`, or `reject-checkpoint`.
+`custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.selesai/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the full description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Pi after changing the mode or custom file.
 
 ## `inlineToolDisplay`
 
@@ -42,7 +34,7 @@ Defaults to `false`. The default registered model-facing tool schema and descrip
 { "inlineToolDisplay": "summary" }
 ```
 
-Controls the `subagent` tool result shown inline in chat. The default, `"rich"`, shows live child activity and expands to detailed output. `"summary"` keeps the inline result at one stable row for running, completed, failed, stopped, and paused runs; it does not animate, show elapsed time, preview child output, or change when Selesai's expand key is pressed. Live run status remains available through the status action.
+Controls the `subagent` tool result shown inline in chat. The default, `"rich"`, shows live child activity and expands to detailed output. `"summary"` keeps the inline result at one stable row for running, completed, failed, stopped, and paused runs; it does not animate, show elapsed time, preview child output, or change when Pi's expand key is pressed. FleetView remains available for live progress and detailed inspection.
 
 ## `mainWindowRenderer`
 
@@ -55,7 +47,7 @@ Controls the `subagent` tool result shown inline in chat. The default, `"rich"`,
 }
 ```
 
-Controls only the main chat `subagent` call/result renderer. It does not change child execution, orchestration, run status, artifacts, transcripts, or model-facing content.
+Controls only the main chat `subagent` call/result renderer. It does not change child execution, orchestration, FleetView, artifacts, transcripts, or model-facing content.
 
 `horizontalSpacing` is an integer from `0` to `4`. The default preserves current spacing. Set it to `0` to remove the extra spaces before compact result details and between parts of the call row.
 
@@ -75,7 +67,7 @@ With `"summary"`, a tool result looks like this:
 
 Optionally binds a shortcut that detaches the active foreground single-subagent run without terminating it. The running foreground card shows the configured shortcut beside its live-detail hint. The default is unset, so pi-subagents does not reserve a global key.
 
-Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes precedence, but Selesai reports the conflict at startup. To reserve the key without that warning, override the editor action in `~/.selesai/agent/keybindings.json`:
+Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes precedence, but Pi reports the conflict at startup. To reserve the key without that warning, override the editor action in `~/.selesai/agent/keybindings.json`:
 
 ```json
 {
@@ -93,11 +85,11 @@ Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes
 }
 ```
 
-Opt in to a best-effort Orca observer that creates one Orca terminal tab for each subagent child and mirrors its live tool, assistant, stdout, and stderr progress. Tab titles use a persistent worktree-local sequence (`subagent · <agent> · 1`, `... · 2`, and so on), so separate workflows and concurrent children do not reuse the same number. This does **not** replace Selesai as the child runner: native Selesai children keep the same process, lifecycle, status, control, artifact, and result paths. External CLI profiles also keep their existing runner and can mirror their stdout/stderr.
+Opt in to a best-effort Orca observer that creates one Orca terminal tab for each top-level subagent call and mirrors the run's live tool, assistant, stdout, and stderr progress. Parallel and chain children share that one tab, with child section headers in the mirrored log. Tab titles use a persistent worktree-local sequence (`subagents · <run-label> · 1`, `... · 2`, and so on), so separate top-level calls do not reuse the same number. For the same worktree, `orca terminal create` runs one at a time in that sequence so observer tabs appear from left to right as `1`, then `2`, then `3`. This does **not** replace Pi as the runner: native Pi children keep the same process, lifecycle, status, control, artifact, and result paths. External CLI profiles also keep their existing runner and can mirror their stdout/stderr.
 
-The integration is off by default and supports macOS and Linux. It is disabled on Windows. When enabled, `pi-subagents` looks for executable `orca` on `PATH`, or uses the executable path in `SELESAI_SUBAGENT_ORCA_BINARY`. If no executable is available, Orca is not running, the cwd is not an Orca-managed worktree, or `terminal create` fails, the authoritative subagent still runs normally. Tab creation is deliberately best-effort and never changes the child result.
+The integration is off by default and supports macOS and Linux. It is disabled on Windows. When enabled, `pi-subagents` looks for executable `orca` on `PATH`, or uses the executable path in `SELESAI_SUBAGENT_ORCA_BINARY`. If no executable is available, Orca is not running, the cwd is not an Orca-managed worktree, or `terminal create` fails, the authoritative subagent still runs normally. Tab creation is deliberately best-effort and never changes the child result. A passive observer manifest is also written under `<worktree>/.pi-subagents/views/orca/` when possible so future view surfaces can discover the Orca tab without making Orca authoritative.
 
-Set `enabled` to `false` (or remove the block) as a kill switch. In that state, `pi-subagents` does not invoke `orca` and creates no Orca tabs. The temporary mirror files contain child output, use private file modes where supported, and are removed shortly after the child finishes. Each mirror is capped at 1 MiB. The observer stops accepting progress when the cap or stream backpressure is reached and appends a truncation notice. The viewer removes terminal control sequences with parser state that persists across file reads. On completion, the viewer exits back to the Orca terminal's shell prompt; the tab and its terminal scrollback remain open until the user closes the tab. A successfully completed native Selesai child with a recorded session ends with a safely quoted `rm -- <exact-session-path>` command; failed, stopped, timed-out, and sessionless children do not show the removal command.
+Set `enabled` to `false` (or remove the block) as a kill switch. In that state, `pi-subagents` does not invoke `orca` and creates no Orca tabs. The temporary mirror files contain child output, use private file modes where supported, and are removed shortly after the run finishes. Each mirror is capped at 1 MiB. The observer stops accepting progress when the cap or stream backpressure is reached and appends a truncation notice. The viewer removes terminal control sequences with parser state that persists across file reads. On completion, the viewer exits back to the Orca terminal's shell prompt; the tab and its terminal scrollback remain open until the user closes the tab. A successfully completed native Pi run with a recorded session ends with a safely quoted `rm -- <exact-session-path>` command; failed, stopped, timed-out, and sessionless runs do not show the removal command.
 
 ## `asyncByDefault`
 
@@ -107,13 +99,58 @@ Set `enabled` to `false` (or remove the block) as a kill switch. In that state, 
 
 WorkflowScript calls use background execution when the request omits `async`. Set `asyncByDefault` to `false` to restore foreground-by-default behavior for tool launches that still use the internal single-run primitive. Callers can still force foreground with `async: false` unless `forceTopLevelAsync` is enabled.
 
+## `defaultSubagentContext`
+
+```json
+{ "defaultSubagentContext": "fresh" }
+```
+
+Sets `fresh` or `fork` for every subagent launch that omits `context`. This global preference replaces each agent-level `defaultContext`. Explicit `context: "fresh"` or `context: "fork"` still wins.
+
+With `"fork"`, the setting uses the existing implicit-fork behavior. A launch starts fresh when the parent session file or current leaf is not available. `"fresh"` starts fresh even when the selected agent defaults to fork. Scheduled runs continue to set fresh context explicitly. A runner or provider that does not support fork context keeps its existing rejection behavior.
+
+## `fleetView`
+
+```json
+{ "fleetView": false }
+```
+
+Controls the persistent, navigable FleetView. The default is `true`. Set it to `false` to hide FleetView without disabling status tracking, completion notifications, `/subagents-fleet`, or lifecycle events.
+
+## `fleetViewPlacement`
+
+```json
+{ "fleetViewPlacement": "aboveEditor" }
+```
+
+Places the persistent FleetView either `"belowEditor"` or `"aboveEditor"`. The default is `"belowEditor"`; invalid values fall back to `"belowEditor"`.
+
+## `fleetKeybindings`
+
+```json
+{
+  "fleetKeybindings": {
+    "pageUp": ["u"],
+    "pageDown": ["d"],
+    "selectFirst": ["g"],
+    "selectLast": ["G"]
+  }
+}
+```
+
+Customizes only the full Fleet inspector opened by `/subagents-fleet` or FleetView inspection. It does not change Pi's global keybindings or the compact persistent FleetView.
+
+Each action accepts a non-empty array of key strings. Configured actions replace their defaults. Unset actions keep the defaults: `selectUp` is `up`/`k`, `selectDown` is `down`/`j`, `scrollUp` is `K`, `scrollDown` is `J`, `pageUp` is `pageUp`, `pageDown` is `pageDown`, `selectFirst` is `home`, `selectLast` is `end`, `toggleTools` is `x`/`X`/`ctrl+o`, `refresh` is `r`/`R`, `steer` is `s`, `stop` is `D`, `inspect` is `H`, and `close` is `escape`/`ctrl+c`/`q`.
+
+Prompt modes keep their fixed keys. For example, `Esc` still cancels steer text or stop confirmation even when the Fleet-level close binding is changed.
+
 ## `asyncWidget`
 
 ```json
 { "asyncWidget": true }
 ```
 
-Controls the under-editor widget for active background runs. It defaults to `true`, including when run status is enabled, so active work remains visible after reload. Set it to `false` to hide this widget while keeping run status available.
+Controls the under-editor widget for active background runs. It defaults to `true`, including when FleetView is enabled, so active work remains visible after reload. Set it to `false` to hide this widget while keeping FleetView available.
 
 ## `waitTool`
 
@@ -123,9 +160,19 @@ Controls the under-editor widget for active background runs. It defaults to `tru
 
 Keeps the `subagent_wait` tool registered but makes direct calls return immediately instead of blocking on active subagent or provider work. The default is enabled. You can also set `"waitTool": false`; set `SELESAI_SUBAGENT_WAIT_TOOL_ENABLED=false` (or `0`, `off`, `disabled`) to override config for one process. The effective value is passed explicitly to child runtimes. Headless `agent_end` auto-drain remains a lifecycle safeguard even when direct wait calls are disabled. Invalid config or environment values fail instead of being coerced.
 
-Blocking `subagent_wait({ id: "..." })` keeps the current tool call open until that run changes. In a long-lived interactive parent session, `subagent_wait({ id: "...", nonBlocking: true })` instead resolves the prefix once, persists the exact run identity, returns a subscription token immediately, and wakes that session on completion, failure, attention, reconciliation failure, or timeout. Armed subscriptions appear in ordinary `subagent({ action: "status" })` output and are not counted as active child work.
+Blocking `subagent_wait({ id: "..." })` keeps the current tool call open until that run changes. By default it returns when a run needs attention. Use `subagent_wait({ stopOnAttention: false })` only for run-to-completion flows that should wait through idle or long-thinking attention; supervisor/contact requests still stop the wait. In a long-lived interactive parent session, `subagent_wait({ id: "...", nonBlocking: true })` instead resolves the prefix once, persists the exact run identity, returns a subscription token immediately, and wakes that session on completion, failure, attention, reconciliation failure, or timeout. Armed subscriptions appear in ordinary `subagent({ action: "status" })` output and are not counted as active child work.
 
 This is different from `waitTool.enabled=false`, which returns immediately without registering any future wake. Provider items remain available only to blocking fleet-wide waits; non-blocking subscriptions require one async or remembered detached foreground run id.
+
+## `resultScanLogging`
+
+```json
+{ "resultScanLogging": "activity" }
+```
+
+Controls how slow result-index scans are logged. Defaults to `"activity"`; valid values are `"all"`, `"activity"`, and `"off"`.
+
+The watcher logs `Subagent result scan inspected … scheduled …` through `console.error` whenever a result-index scan passes the slow threshold (500ms). With `"activity"` (default), it logs only scans that inspected or scheduled actual work. Use `"all"` to log every slow scan, including the periodic healthy rescan that inspects zero files while no async runs are pending, or `"off"` to silence slow-scan logging entirely. `"off"` does not disable result delivery or the watcher itself, only its slow-scan log line.
 
 ## `forceTopLevelAsync`
 
@@ -155,7 +202,7 @@ Composite async runs (async chains, parallel tasks, and scripted workflows) stay
 
 Optional hard per-tool-call deadline in milliseconds. When configured, a child that emits `tool_execution_start` but not `tool_execution_end` is terminated with `timedOut: true` and a tool-specific error. The effective value is resolved per child: explicit `subagent` call value, then agent frontmatter, then this config value, then `SELESAI_SUBAGENT_TOOL_TIMEOUT_MS`.
 
-Without a configured value, Selesai still applies a five-minute hard timeout to known-fast built-in tools: `read`, `grep`, `find`, `ls`, `edit`, `write`, and `structured_output`. Long-running tools such as `bash`, custom tools, and MCP tools do not get a hard default. They get the normal open-tool attention notice after `activeNoticeAfterMs` and remain bounded by the run-level deadline.
+Without a configured value, Pi still applies a five-minute hard timeout to known-fast built-in tools: `read`, `grep`, `find`, `ls`, `edit`, `write`, and `structured_output`. Long-running tools such as `bash`, custom tools, and MCP tools do not get a hard default. They get the normal open-tool attention notice after `activeNoticeAfterMs` and remain bounded by the run-level deadline.
 
 The tool timer tracks each active `toolCallId` separately and never extends the run-level deadline: when the remaining run budget is shorter, the ordinary run-level timeout wins. `contact_supervisor`, `intercom`, and `subagent_wait` are exempt because their legitimate purpose can be to wait for a human, supervisor, or child run. Use hard tool timeouts only for wedge protection; an elapsed timeout is not a mutation-safe boundary. Configured values must be positive integers no greater than `2147483647`; invalid or out-of-range values are rejected with a visible error rather than silently ignored.
 
@@ -201,6 +248,22 @@ This limit bounds current top-level async load. It is separate from cumulative `
 
 `subagent({ action: "status" })`, fleet status, and `subagent({ action: "doctor" })` expose used, effective limit, and remaining active capacity. Static chains and parallel calls fail before creating run artifacts or starting partial work when their declared capacity cannot fit. Later retries or unbounded dynamic work are not guaranteed by that preflight.
 
+## `scheduledRuns`
+
+```json
+{ "scheduledRuns": { "enabled": false, "maxPending": 20 } }
+```
+
+Durable schedules are enabled by default and stored per project under `.pi-subagents/schedules/<id>/`. See [missions.md](missions.md#schedules) for usage.
+
+Set `storeRoot` to keep durable schedules outside project repositories. It must be an absolute path or a `~/` path, which expands from the user home directory. Each project is stored under a hash of its resolved working directory, so projects do not share schedules.
+
+```json
+{ "scheduledRuns": { "storeRoot": "~/.local/share/pi-subagents/schedules" } }
+```
+
+When `storeRoot` is omitted, schedules remain at `<cwd>/.pi-subagents/schedules`.
+
 ## `parallel`
 
 ```json
@@ -225,7 +288,7 @@ Session directory precedence is: `params.sessionDir`, then `config.defaultSessio
 ## `singleRunOutputBaseDir`
 
 ```json
-{ "singleRunOutputBaseDir": "~/.selesai/subagent-outputs" }
+{ "singleRunOutputBaseDir": "~/.pi/subagent-outputs" }
 ```
 
 Routes relative `output` paths for single-agent `/run` calls under this directory. Absolute per-call or agent output paths are still used as-is. When unset, relative single-run outputs go under the run's output artifact directory instead of the project root.
@@ -244,7 +307,7 @@ Controls nested delegation when no inherited `SELESAI_SUBAGENT_MAX_DEPTH` is alr
 export SELESAI_SUBAGENT_PI_BINARY=/path/to/pi-or-wrapper
 ```
 
-Overrides the command used to launch child Selesai processes. Package wrappers can set this to their own `pi`/agent binary so subagents inherit wrapper flags, environment setup, and bundled resources without relying on `PATH` ordering. Empty or whitespace-only values are ignored.
+Overrides the command used to launch child Pi processes. Package wrappers can set this to their own `pi`/agent binary so subagents inherit wrapper flags, environment setup, and bundled resources without relying on `PATH` ordering. Empty or whitespace-only values are ignored.
 
 ## `SELESAI_SUBAGENT_TASK_DELIVERY`
 
@@ -252,7 +315,7 @@ Overrides the command used to launch child Selesai processes. Package wrappers c
 export SELESAI_SUBAGENT_TASK_DELIVERY=file   # auto | file (default: auto)
 ```
 
-Controls how the task text reaches the child Selesai process. `auto` (default) passes short tasks as an inline argv token and writes tasks longer than 8000 characters to a temp `task.md` referenced as `@<path>`. `file` always uses a temp file, keeping the task out of argv entirely.
+Controls how the task text reaches the child Pi process. `auto` (default) passes short tasks as an inline argv token and writes tasks longer than 8000 characters to a temp `task.md` referenced as `@<path>`. `file` always uses a temp file, keeping the task out of argv entirely.
 
 Use `file` on hosts where endpoint protection (EDR) pre-execution scanning denies child processes whose command line embeds a long natural-language task — that denial surfaces as an immediate zero-activity `SIGKILL`. Independently of this setting, startup retries automatically escalate to file delivery after an unexplained zero-activity `SIGKILL`. Empty, whitespace-only, or unrecognized values fall back to `auto`.
 
@@ -355,9 +418,9 @@ Controls where subagent artifact files (inputs, outputs, transcripts, metadata) 
 - `"session"` (default): stores artifacts under pi's session directory (`~/.selesai/agent/sessions/<session>/subagent-artifacts/`), keeping the working directory clean. It falls back to the OS temp directory when no session file exists.
 - `"temp"`: uses the OS temp directory.
 
-This preference also controls the default chain scratch directory. `"project"` uses `<cwd>/.pi-subagents/chain-runs/`, while the default `"session"` and `"temp"` use the user-scoped temp chain directory.
+This preference also controls the default workflow artifact directory used by scripted chaining. `"project"` uses `<cwd>/.pi-subagents/chain-runs/`; the directory keeps its legacy name for compatibility. The default `"session"` and `"temp"` use the user-scoped temp workflow artifact directory.
 
-The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically. Temporary chain directories are cleaned up separately after 24 hours.
+The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically. Temporary workflow artifact directories are cleaned up separately after 24 hours.
 
 When a project-scoped launch runs from an npm package directory, pi-subagents warns if package settings can include `.pi-subagents/` in the published package. Add `.pi-subagents/` to `.npmignore` (or `.gitignore` when no `.npmignore` exists), use a `files` allowlist that does not include `.pi-subagents/`, or select `"session"` or `"temp"`.
 
@@ -386,3 +449,19 @@ Controls smart batching of async-completion notifications. When several backgrou
 ## `permissions`
 
 Native child tool permission rules. See [watchdog.md](watchdog.md#native-child-tool-permissions).
+
+## `SELESAI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS`
+
+Caps the total time a single retried filesystem operation may sleep, in milliseconds. Environment-only; there is no config key.
+
+Atomic status and result writes retry on `EACCES`, `EBUSY`, and `EPERM`, which on Windows are usually a scanner or a sibling process holding the destination of a rename for a moment. The retry ladder sleeps up to about 7.9s in total, and it sleeps *synchronously* — `Atomics.wait` parks the calling thread rather than spinning.
+
+That is the right trade-off for a CLI. It is the wrong one for a long-lived process that loads `pi-subagents` in-process and runs those writers on its event loop: one contended rename stalls everything it serves for the length of the ladder, and because the thread is parked rather than busy, it presents as an unresponsive process sitting at 0% CPU. A wide fanout makes contention on a single `status.json` likely.
+
+Set this to bound that stall. The ladder keeps its number of attempts and only the sleeps shrink, because `run-fanout-budget` and mission state locking use the ladder's length as their attempt budget:
+
+```text
+SELESAI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS=1000
+```
+
+Unset by default, so behaviour is unchanged unless you opt in. Opting in trades lock-wait tolerance for responsiveness: entries clamped to `0` return immediately, so contention that would previously have been waited out surfaces as an error sooner. Values that are not a non-negative integer fail instead of being coerced.

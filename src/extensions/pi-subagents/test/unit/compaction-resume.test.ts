@@ -32,7 +32,7 @@ describe("async compaction resume", () => {
 			renders = 0;
 			handlers.get("session_before_compact")({ reason: "threshold", signal: new AbortController().signal });
 			const cleared = widgets.filter(([key, value]) => value === undefined).map(([key]) => key).sort();
-			if (JSON.stringify(cleared) !== JSON.stringify(["subagent-async"])) throw new Error(JSON.stringify(widgets));
+			if (JSON.stringify(cleared) !== JSON.stringify(["subagent-async", "subagent-fleet-status"])) throw new Error(JSON.stringify(widgets));
 			widgets.length = 0;
 			events.emit("subagent:async-complete", { id: "running", sessionId: "compact-session", agent: "worker", success: true, summary: "done" });
 			events.emit("subagent:async-started", { id: "running-2", pid: 2, sessionId: "compact-session", mode: "single", agent: "worker", asyncDir: path.join(os.tmpdir(), "pi-compaction-test-running-2") });
@@ -41,7 +41,7 @@ describe("async compaction resume", () => {
 			if (widgets.length !== 0) throw new Error("widgets restored inside compaction hook");
 			handlers.get("agent_start")();
 			const restored = widgets.filter(([_, value]) => value !== undefined).map(([key]) => key).sort();
-			if (JSON.stringify(restored) !== JSON.stringify(["subagent-async"])) throw new Error(JSON.stringify(widgets));
+			if (JSON.stringify(restored) !== JSON.stringify(["subagent-async", "subagent-fleet-status"])) throw new Error(JSON.stringify(widgets));
 			if (sent.length !== 1 || sent[0].options?.triggerTurn !== true || sent[0].message?.customType !== "subagent-compaction-resume") throw new Error(JSON.stringify(sent));
 
 			sent.length = 0;

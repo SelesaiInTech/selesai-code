@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { resultFilePath, resultPayloadPathForSessionRun, writeAsyncResultFile } from "./result-files.ts";
-import { releaseActiveRunIndex, updateActiveRunIndex } from "./active-run-index.ts";
+import { updateActiveRunIndex } from "./active-run-index.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { DIRS, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type SubagentRunMode } from "../../shared/types.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -17,6 +17,7 @@ interface StartedRunMetadata {
 	runId: string;
 	pid?: number;
 	sessionId?: string;
+	completionOwnerId?: string;
 	mode?: SubagentRunMode;
 	agents?: string[];
 	chainStepCount?: number;
@@ -96,6 +97,7 @@ interface ResultChildOutcome {
 	thinking?: string;
 	attemptedModels?: string[];
 	modelAttempts?: NonNullable<AsyncStatus["steps"]>[number]["modelAttempts"];
+	contextOverflow?: boolean;
 }
 
 interface ResultRepairData {
@@ -162,6 +164,7 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 			thinking,
 			attemptedModels: child?.attemptedModels ?? step.attemptedModels,
 			modelAttempts: child?.modelAttempts ?? step.modelAttempts,
+			contextOverflow: child?.contextOverflow ?? step.contextOverflow,
 		};
 	});
 	const terminalStatus: AsyncStatus = {
@@ -190,6 +193,7 @@ function buildStartedStatus(asyncDir: string, startedRun: StartedRunMetadata, no
 	return {
 		runId: startedRun.runId || path.basename(asyncDir),
 		...(startedRun.sessionId ? { sessionId: startedRun.sessionId } : {}),
+		...(startedRun.completionOwnerId ? { completionOwnerId: startedRun.completionOwnerId } : {}),
 		mode: startedRun.mode ?? "single",
 		state: "running",
 		pid: startedRun.pid,
@@ -244,6 +248,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 			id: runId,
 			agent: resultAgent,
 			mode: status.mode,
+			...(status.completionOwnerId ? { completionOwnerId: status.completionOwnerId } : {}),
 			success: false,
 			state: "failed",
 			summary: message,
@@ -255,6 +260,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 				model: step.model,
 				attemptedModels: step.attemptedModels,
 				modelAttempts: step.modelAttempts,
+				contextOverflow: step.contextOverflow,
 				sessionFile: step.sessionFile,
 			})),
 			exitCode: 1,
@@ -271,7 +277,7 @@ function writeFailedRepair(asyncDir: string, status: AsyncStatus, resultPath: st
 	const repair = buildFailedRepair(status, asyncDir, now, reason);
 	if (repair.result.sessionId) writeAsyncResultFile(resultPath, repair.result);
 	writeAtomicJson(path.join(asyncDir, "status.json"), repair.status);
-	if (repair.status.processTerminal?.state === "observed") releaseActiveRunIndex(asyncDir);
+	updateActiveRunIndex(asyncDir, repair.status.state, repair.status.toolCallId);
 	appendJsonlBestEffort(path.join(asyncDir, "events.jsonl"), {
 		type: "subagent.run.repaired_stale",
 		ts: now,
@@ -365,7 +371,7 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 			: undefined;
 		if (terminalStatus) {
 			writeAtomicJson(path.join(asyncDir, "status.json"), terminalStatus);
-			if (terminalStatus.processTerminal?.state === "observed") releaseActiveRunIndex(asyncDir);
+			updateActiveRunIndex(asyncDir, terminalStatus.state, terminalStatus.toolCallId);
 			return { status: terminalStatus, repaired: true, resultPath: existingResultPath, message: "Existing async result file was used to repair stale running status." };
 		}
 		if (effectiveStatus.displayDismissedAt === undefined) return { status: effectiveStatus, repaired: false, resultPath: existingResultPath };

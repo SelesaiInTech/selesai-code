@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
+import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import {
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	type IntercomEventBus,
@@ -29,6 +30,7 @@ const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
 const HEALTHY_SCAN_INTERVAL_MS = 60_000;
 const RETRY_DELAY_MS = 100;
+const SLOW_RESULT_SCAN_MS = 500;
 
 type ResultWatcherFs = Pick<typeof fs, "existsSync" | "readFileSync" | "unlinkSync" | "readdirSync" | "mkdirSync" | "realpathSync" | "statSync" | "watch">;
 
@@ -53,6 +55,11 @@ type ResultWatcherDeps = {
 	deliverIntercomResults?: boolean;
 	/** Coalesces result-file events. Tests can lower this without changing retry timing. */
 	coalesceDelayMs?: number;
+	/** Returns true while a durable completion source needs periodic delivery checks. */
+	hasDeliveryDemand?: () => boolean;
+	/** Control how slow result-index scans are logged. Defaults to \"activity\". */
+	resultScanLogging?: "all" | "activity" | "off";
+	platform?: NodeJS.Platform;
 };
 
 type ResultFileChild = {
@@ -87,9 +94,16 @@ type ResultFileData = CompletionNotification & {
 
 type ResultFileIdentity = {
 	sessionId?: string;
+	completionOwnerId?: string;
 	runId?: string;
 	asyncDir?: string;
 };
+
+interface ResultScanStats {
+	files: number;
+	scheduled: number;
+	startedAt: number;
+}
 
 function jsonStringProperty(raw: string, property: string): string | undefined {
 	const matches = raw.matchAll(new RegExp(`"${property}"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`, "g"));
@@ -107,6 +121,7 @@ function jsonStringProperty(raw: string, property: string): string | undefined {
 function resultFileIdentity(raw: string, file: string): ResultFileIdentity {
 	return {
 		sessionId: jsonStringProperty(raw, "sessionId"),
+		completionOwnerId: jsonStringProperty(raw, "completionOwnerId"),
 		runId: file.replace(/\.json$/i, ""),
 		asyncDir: jsonStringProperty(raw, "asyncDir"),
 	};
@@ -133,6 +148,11 @@ function isNotFound(error: unknown): boolean {
 	return errorCode(error) === "ENOENT";
 }
 
+function isAccessDenied(error: unknown): boolean {
+	const code = errorCode(error);
+	return code === "EPERM" || code === "EACCES";
+}
+
 function shouldPoll(error: unknown): boolean {
 	const code = errorCode(error);
 	return code === "EMFILE" || code === "ENOSPC";
@@ -140,6 +160,21 @@ function shouldPoll(error: unknown): boolean {
 
 function hasDeliveredNotification(data: ResultFileData): boolean {
 	return typeof data.notificationDeliveredAt === "number" && Number.isFinite(data.notificationDeliveredAt);
+}
+
+type PublicResultIdentity = {
+	state?: string;
+	timestamp?: number;
+};
+
+function resultPayloadWasReplaced(delivered: ResultFileData, disk: PublicResultIdentity | undefined): boolean {
+	if (!disk) return false;
+	const deliveredState = typeof delivered.state === "string" ? delivered.state : undefined;
+	if (disk.state && deliveredState && disk.state !== deliveredState) return true;
+	const deliveredTimestamp = typeof delivered.timestamp === "number" && Number.isFinite(delivered.timestamp)
+		? delivered.timestamp
+		: undefined;
+	return disk.timestamp !== undefined && deliveredTimestamp !== undefined && disk.timestamp !== deliveredTimestamp;
 }
 
 function markDeliveredNotification(resultPath: string, data: ResultFileData, runId: string, now: number): ResultFileData {
@@ -162,6 +197,7 @@ export function createResultWatcher(
 ): {
 	startResultWatcher: () => void;
 	primeExistingResults: (options?: { triggerTurn?: boolean }) => void;
+	refreshResultDelivery: () => void;
 	stopResultWatcher: () => void;
 } {
 	const fsApi = deps.fs ?? fs;
@@ -179,27 +215,13 @@ export function createResultWatcher(
 	// and revoked before the watcher, queues, or callbacks are torn down.
 	let activeSessionId: string | null = null;
 
-	const ownsSession = (sessionId: string, epoch: number) => {
+	const ownsCompletion = (sessionId: string, completionOwnerId: unknown, epoch: number) => {
 		if (!deliveryActive || epoch !== deliveryEpoch) return false;
 		if (!activeSessionId && state.currentSessionId) activeSessionId = state.currentSessionId;
-		if (activeSessionId !== state.currentSessionId) return false;
-		if (sessionId === state.currentSessionId) return true;
-		return (state.sessionLineage ?? []).includes(sessionId);
-	};
-
-	const lineageOwnsResult = (identity: ResultFileIdentity, file: string): boolean => {
-		const lineage = state.sessionLineage;
-		if (!identity.sessionId || !lineage || !lineage.includes(identity.sessionId)) return false;
-		// Replay guard: only accept lineage results written around or after the
-		// adoption window. The previous session's watcher deleted every result it
-		// delivered, so older files are stale leftovers, not missed deliveries.
-		const windowStart = state.adoptedResultWindowStart;
-		if (windowStart === undefined) return false;
-		try {
-			return fsApi.statSync(path.join(resultsDir, file)).mtimeMs >= windowStart;
-		} catch {
-			return false;
-		}
+		return activeSessionId === sessionId
+			&& state.currentSessionId === sessionId
+			&& typeof completionOwnerId === "string"
+			&& completionOwnerId === state.completionOwnerId;
 	};
 
 	const scheduleResult = (file: string, triggerTurn: boolean, delayMs = 0) => {
@@ -242,6 +264,7 @@ export function createResultWatcher(
 			return `${resultPath}:${stat.size}:${stat.mtimeMs}`;
 		} catch (error) {
 			identityCache.delete(file);
+			if (isAccessDenied(error)) throw error;
 			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
 			return undefined;
 		}
@@ -259,6 +282,7 @@ export function createResultWatcher(
 			return { identity, signature };
 		} catch (error) {
 			identityCache.delete(file);
+			if (isAccessDenied(error)) throw error;
 			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
 			return undefined;
 		}
@@ -280,8 +304,7 @@ export function createResultWatcher(
 		// Missing identity stays on the normal parser path so malformed or legacy
 		// files keep their existing diagnostics and compatibility behavior.
 		if (!identity.sessionId) return true;
-		if (identity.sessionId === state.currentSessionId) return true;
-		if (lineageOwnsResult(identity, file)) return true;
+		if (identity.sessionId === state.currentSessionId && identity.completionOwnerId === state.completionOwnerId) return true;
 		if (identity.asyncDir && fsApi.existsSync(path.join(identity.asyncDir, MISSION_BINDING_FILE))) return true;
 		if (identity.runId && (observed ?? observedRunIds()).has(identity.runId)) return true;
 		return Boolean(deps.observeCompletion && !deps.observedCompletionRunIds);
@@ -304,13 +327,33 @@ export function createResultWatcher(
 	const handleResult = async (file: string, triggerTurn: boolean) => {
 		if (processing.has(file)) return;
 		let observed: ReadonlySet<string> | undefined;
-		if (!shouldProcessResult(file)) {
-			const runId = file === path.basename(file) && file.endsWith(".json") ? file.replace(/\.json$/i, "") : undefined;
-			observed = observedRunIds();
-			if (!runId || !observed.has(runId) || !shouldProcessResult(file, observed)) return;
+		try {
+			if (!shouldProcessResult(file)) {
+				const runId = file === path.basename(file) && file.endsWith(".json") ? file.replace(/\.json$/i, "") : undefined;
+				observed = observedRunIds();
+				if (!runId || !observed.has(runId) || !shouldProcessResult(file, observed)) return;
+			}
+		} catch (error) {
+			if (!isAccessDenied(error)) throw error;
+			console.error(`Failed to inspect subagent result file '${publicResultPath(file)}'; will retry:`, error);
+			scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+			return;
 		}
 		processing.add(file);
+		let rereadReplacedPayload = false;
 		let resultPath = publicResultPath(file);
+		const readPublicResultIdentity = (): PublicResultIdentity | undefined => {
+			if (!publicResultFileExists(file)) return undefined;
+			const parsed: unknown = JSON.parse(fsApi.readFileSync(publicResultPath(file), "utf-8"));
+			if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+			const record = parsed as Record<string, unknown>;
+			const state = typeof record.state === "string" && record.state ? record.state : undefined;
+			const timestamp = typeof record.timestamp === "number" && Number.isFinite(record.timestamp)
+				? record.timestamp
+				: undefined;
+			if (!state && timestamp === undefined) return undefined;
+			return { state, timestamp };
+		};
 		try {
 			const payloadPath = resultPayloadPath(file, observed);
 			if (!payloadPath) return;
@@ -336,8 +379,21 @@ export function createResultWatcher(
 				}
 			}
 			let data = parseResult(raw);
+			const markReplacedPayload = (): boolean => {
+				try {
+					if (!resultPayloadWasReplaced(data, readPublicResultIdentity())) return false;
+				} catch (error) {
+					if (isAccessDenied(error)) throw error;
+					if (isNotFound(error)) return false;
+					console.error(`Failed to re-read subagent result file '${publicResultPath(file)}':`, error);
+				}
+				identityCache.delete(file);
+				rereadReplacedPayload = true;
+				return true;
+			};
 			if (typeof data.sessionId !== "string" || !data.sessionId) return;
 			const sessionId = data.sessionId;
+			const completionOwnerId = data.completionOwnerId;
 			const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
 			const toolCallId = typeof data.toolCallId === "string" ? data.toolCallId : undefined;
 			let observerSucceeded = true;
@@ -355,7 +411,7 @@ export function createResultWatcher(
 			}
 			if (observerSucceeded) removeMissionObserverIndex(resultsDir, runId);
 			const epoch = deliveryEpoch;
-			if (!ownsSession(sessionId, epoch)) return;
+			if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 			// Recorded before dedupe and before the unlink below so subagent_wait can
 			// use the in-memory record or its bounded durable replay after cleanup.
 			recordWaitCompletion(state, runId, data, Date.now(), completionTtlMs, {
@@ -384,7 +440,8 @@ export function createResultWatcher(
 					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 					return;
 				}
-				if (!ownsSession(sessionId, epoch)) return;
+				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
+				if (markReplacedPayload()) return;
 				if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
@@ -439,7 +496,8 @@ export function createResultWatcher(
 					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 					return;
 				}
-				if (!ownsSession(sessionId, epoch)) return;
+				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
+				if (markReplacedPayload()) return;
 				if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
@@ -460,7 +518,7 @@ export function createResultWatcher(
 					asyncDir: data.asyncDir,
 					...(data.parallelHandoff ? { parallelHandoff: data.parallelHandoff } : {}),
 				}));
-				if (!ownsSession(sessionId, epoch)) return;
+				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 				if (!intercomDelivered) console.error(`Subagent async grouped result intercom delivery was not acknowledged for '${resultPath}'.`);
 			}
 
@@ -484,11 +542,12 @@ export function createResultWatcher(
 					})) : [],
 				} : {}),
 			});
-			if (!ownsSession(sessionId, epoch)) return;
+			if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 			if (!accepted) {
 				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
+			if (markReplacedPayload()) return;
 			try {
 				data = markDeliveredNotification(publicResultPath(file), data, runId, Date.now());
 				identityCache.delete(file);
@@ -525,12 +584,16 @@ export function createResultWatcher(
 				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
-			if (!ownsSession(sessionId, epoch)) return;
+			if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 			if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 		} catch (error) {
-			if (!isNotFound(error)) console.error(`Failed to process subagent result file '${resultPath}':`, error);
+			if (isAccessDenied(error)) {
+				console.error(`Failed to process subagent result file '${resultPath}'; will retry:`, error);
+				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+			} else if (!isNotFound(error)) console.error(`Failed to process subagent result file '${resultPath}':`, error);
 		} finally {
 			processing.delete(file);
+			if (rereadReplacedPayload) scheduleResult(file, triggerTurn);
 		}
 	};
 
@@ -540,6 +603,18 @@ export function createResultWatcher(
 		void handleResult(file, triggerTurn);
 	}, deps.coalesceDelayMs ?? 50);
 
+	const logScanStats = (stats: ResultScanStats) => {
+		const elapsed = Date.now() - stats.startedAt;
+		if (elapsed < SLOW_RESULT_SCAN_MS) return;
+		const resultScanLogging = deps.resultScanLogging ?? "activity";
+		if (resultScanLogging === "off") return;
+		// A scan that inspected and scheduled nothing is a quiet no-op (e.g. the
+		// healthy periodic rescan while no async runs are pending). Under
+		// "activity", skip it so empty scans do not burn context tokens in the
+		// session transcript.
+		if (resultScanLogging === "activity" && stats.files === 0 && stats.scheduled === 0) return;
+		console.error(`Subagent result scan inspected ${stats.files} indexed result file(s), scheduled ${stats.scheduled} in ${elapsed}ms (${resultsDir}).`);
+	};
 	const indexedResultCandidates = (observed: ReadonlySet<string>): string[] => {
 		const files = new Set<string>();
 		if (state.currentSessionId) {
@@ -553,28 +628,17 @@ export function createResultWatcher(
 	const primeExistingResults = (options: { triggerTurn?: boolean } = {}) => {
 		try {
 			const triggerTurn = options.triggerTurn !== false;
+			const stats: ResultScanStats = { files: 0, scheduled: 0, startedAt: Date.now() };
 			const observed = observedRunIds();
 			for (const file of indexedResultCandidates(observed)) {
+				stats.files += 1;
 				const signature = resultSignature(file, observed);
 				if (!signature) continue;
 				if (!shouldProcessResult(file, observed, signature)) continue;
+				stats.scheduled += 1;
 				scheduleResult(file, triggerTurn);
 			}
-			// Selesai fork: during the lineage adoption window, also scan flat
-			// result files written directly under the results root by a previous
-			// session's runtime, so completions that raced the session switch are
-			// adopted instead of left behind. Bounded to the window; outside it,
-			// flat files are stale leftovers and only the indexed inbox is scanned.
-			if (state.adoptedResultWindowStart !== undefined) {
-				const indexed = indexedResultCandidates(observed);
-				for (const file of fsApi.readdirSync(resultsDir)) {
-					if (!file.endsWith(".json") || indexed.includes(file)) continue;
-					const signature = resultSignature(file, observed);
-					if (!signature) continue;
-					if (!shouldProcessResult(file, observed, signature)) continue;
-					scheduleResult(file, triggerTurn);
-				}
-			}
+			logScanStats(stats);
 		} catch (error) {
 			if (!isNotFound(error)) console.error(`Failed to scan subagent result index in '${resultsDir}':`, error);
 		}
@@ -583,6 +647,30 @@ export function createResultWatcher(
 	const clearResultScan = () => {
 		if (resultScanTimer) timers.clearInterval(resultScanTimer);
 		resultScanTimer = null;
+	};
+	const useNativeWatcher = () => shouldUseNativeFsWatch("result-delivery", deps.platform);
+	const hasDeliveryDemand = () => {
+		try {
+			return deps.hasDeliveryDemand?.() === true;
+		} catch (error) {
+			console.error("Failed to inspect subagent result delivery demand:", error);
+			return false;
+		}
+	};
+	const clearResultPoller = () => {
+		if (!state.watcherRestartTimer) return;
+		timers.clearTimeout(state.watcherRestartTimer);
+		timers.clearInterval(state.watcherRestartTimer);
+		state.watcherRestartTimer = null;
+	};
+	const startDemandPolling = () => {
+		if (!deliveryActive || useNativeWatcher() || state.watcherRestartTimer) return;
+		if (!hasDeliveryDemand()) return;
+		state.watcherRestartTimer = timers.setInterval(() => {
+			primeExistingResults();
+			if (!hasDeliveryDemand()) clearResultPoller();
+		}, POLL_INTERVAL_MS);
+		state.watcherRestartTimer.unref?.();
 	};
 
 	const startPolling = (reason: unknown) => {
@@ -622,6 +710,10 @@ export function createResultWatcher(
 			timers.clearTimeout(state.watcherRestartTimer);
 			timers.clearInterval(state.watcherRestartTimer);
 			state.watcherRestartTimer = null;
+		}
+		if (!useNativeWatcher()) {
+			startDemandPolling();
+			return;
 		}
 		try {
 			const watchDir = resolveWatchPath(resultsDir, fsApi.realpathSync.native);
@@ -665,11 +757,7 @@ export function createResultWatcher(
 		deliveryEpoch += 1;
 		state.watcher?.close();
 		state.watcher = null;
-		if (state.watcherRestartTimer) {
-			timers.clearTimeout(state.watcherRestartTimer);
-			timers.clearInterval(state.watcherRestartTimer);
-		}
-		state.watcherRestartTimer = null;
+		clearResultPoller();
 		clearResultScan();
 		state.resultFileCoalescer.clear();
 		pendingTriggerTurn.clear();
@@ -677,5 +765,5 @@ export function createResultWatcher(
 		identityCache.clear();
 	};
 
-	return { startResultWatcher, primeExistingResults, stopResultWatcher };
+	return { startResultWatcher, primeExistingResults, stopResultWatcher, refreshResultDelivery: () => { primeExistingResults(); startDemandPolling(); } };
 }

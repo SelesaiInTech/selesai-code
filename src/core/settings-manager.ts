@@ -116,7 +116,6 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
-	pruneToolDescriptions?: boolean; // default: true (strip per-field schema descriptions from provider payloads)
 	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
@@ -917,10 +916,6 @@ export class SettingsManager {
 
 	getHideThinkingBlock(): boolean {
 		return this.settings.hideThinkingBlock ?? false;
-	}
-
-	getPruneToolDescriptions(): boolean {
-		return this.settings.pruneToolDescriptions ?? true;
 	}
 
 	getShowCacheMissNotices(): boolean {

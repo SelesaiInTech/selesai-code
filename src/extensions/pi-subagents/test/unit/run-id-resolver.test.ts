@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fsDefault, * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { SubagentState } from "../../src/shared/types.ts";
 import { releaseActiveRunIndex, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
-import { resultFilePath, writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { resultFilePath, writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { resolveSubagentRunId } from "../../src/runs/background/run-id-resolver.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 
@@ -83,11 +84,11 @@ describe("subagent run id resolver", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const resultsDir = path.join(root, "results");
-			fs.mkdirSync(path.join(asyncRoot, "fanout-async"), { recursive: true });
-			nested("root-fanout", "fanout-nested");
+			fs.mkdirSync(path.join(asyncRoot, "fanout-x-async"), { recursive: true });
+			nested("root-fanout", "fanout-x-nested");
 			assert.throws(
-				() => resolveSubagentRunId("fanout", { asyncDirRoot: asyncRoot, resultsDir }),
-				/Ambiguous subagent run id prefix 'fanout' matched: async:fanout-async, nested:fanout-nested/,
+				() => resolveSubagentRunId("fanout-x", { asyncDirRoot: asyncRoot, resultsDir }),
+				/Ambiguous subagent run id prefix 'fanout-x' matched: async:fanout-x-async, nested:fanout-x-nested/,
 			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -129,12 +130,12 @@ describe("subagent run id resolver", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const resultsDir = path.join(root, "results");
-			fs.mkdirSync(path.join(asyncRoot, "dupe-one"), { recursive: true });
-			fs.mkdirSync(path.join(asyncRoot, "dupe-two"), { recursive: true });
+			fs.mkdirSync(path.join(asyncRoot, "dupe-aaa-one"), { recursive: true });
+			fs.mkdirSync(path.join(asyncRoot, "dupe-aaa-two"), { recursive: true });
 
 			assert.throws(
-				() => resolveSubagentRunId("dupe", { asyncDirRoot: asyncRoot, resultsDir }),
-				/Ambiguous subagent run id prefix 'dupe' matched: async:dupe-one, async:dupe-two/,
+				() => resolveSubagentRunId("dupe-aaa", { asyncDirRoot: asyncRoot, resultsDir }),
+				/Ambiguous subagent run id prefix 'dupe-aaa' matched: async:dupe-aaa-one, async:dupe-aaa-two/,
 			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -178,6 +179,61 @@ describe("subagent run id resolver", () => {
 			const done = resolveSubagentRunId("call-done", { asyncDirRoot: asyncRoot, resultsDir });
 			assert.equal(done?.kind, "async");
 			assert.equal(done?.id, "workflow-done");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("prefers a newer pending payload when resolving run and tool-call ids", (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-resolver-pending-payload-"));
+		try {
+			const asyncRoot = path.join(root, "async");
+			const resultsDir = path.join(root, "results");
+			const resultPath = resultFilePath(resultsDir, "workflow-done");
+			writeAsyncResultFile(resultPath, { id: "workflow-done", runId: "workflow-done", toolCallId: "call-done", sessionId: "session-a", success: false });
+			writePendingAsyncResultFile(resultPath, { id: "workflow-done", runId: "workflow-done", toolCallId: "call-done", sessionId: "session-a", success: true });
+
+			t.mock.method(fsDefault, "renameSync", () => {
+				const error = new Error("destination exists") as NodeJS.ErrnoException;
+				error.code = "EEXIST";
+				throw error;
+			});
+			syncBuiltinESMExports();
+
+			const pendingPath = path.join(resultsDir, "result-pending", "session-a", "workflow-done.json");
+			const byRunId = resolveSubagentRunId("workflow-done", { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(byRunId?.kind, "async");
+			assert.equal(byRunId?.kind === "async" ? byRunId.location.resultPath : undefined, pendingPath);
+
+			const byToolCallId = resolveSubagentRunId("call-done", { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(byToolCallId?.kind, "async");
+			assert.equal(byToolCallId?.id, "workflow-done");
+			assert.equal(byToolCallId?.kind === "async" ? byToolCallId.location.resultPath : undefined, pendingPath);
+			assert.equal(JSON.parse(fs.readFileSync(pendingPath, "utf-8")).success, true);
+			assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf-8")).success, false);
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("resolves oversized workflow tool-call ids through bounded indexes", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-resolver-long-tool-call-index-"));
+		try {
+			const asyncRoot = path.join(root, "async");
+			const resultsDir = path.join(root, "results");
+			const toolCallId = `call_${"界".repeat(100)}`;
+			const activeDir = path.join(asyncRoot, "workflow-active-long");
+			fs.mkdirSync(activeDir, { recursive: true });
+			fs.writeFileSync(path.join(activeDir, "status.json"), JSON.stringify({ runId: "workflow-active-long", toolCallId, state: "running", mode: "workflow", startedAt: 1, lastUpdate: 1, steps: [] }), "utf-8");
+			updateActiveRunIndex(activeDir, "running", toolCallId);
+
+			assert.equal(resolveSubagentRunId(toolCallId, { asyncDirRoot: asyncRoot, resultsDir })?.id, "workflow-active-long");
+			releaseActiveRunIndex(activeDir);
+
+			writeAsyncResultFile(resultFilePath(resultsDir, "workflow-done-long"), { id: "workflow-done-long", runId: "workflow-done-long", toolCallId, sessionId: "session-a", state: "complete", success: true });
+			assert.equal(resolveSubagentRunId(toolCallId, { asyncDirRoot: asyncRoot, resultsDir })?.id, "workflow-done-long");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

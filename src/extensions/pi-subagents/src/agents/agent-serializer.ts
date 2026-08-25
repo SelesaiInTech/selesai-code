@@ -11,6 +11,7 @@ export const KNOWN_FIELDS = new Set([
 	"tools",
 	"model",
 	"fallbackModels",
+	"fast",
 	"thinking",
 	"systemPromptMode",
 	"inheritProjectContext",
@@ -28,6 +29,7 @@ export const KNOWN_FIELDS = new Set([
 	"extensions",
 	"subagentOnlyExtensions",
 	"output",
+	"outputMode",
 	"defaultReads",
 	"defaultProgress",
 	"interactive",
@@ -70,6 +72,7 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	if (config.model || preserve("model")) lines.push(`model: ${config.model ?? ""}`);
 	const fallbackModelsValue = joinComma(config.fallbackModels);
 	if (fallbackModelsValue || preserve("fallbackModels")) lines.push(`fallbackModels: ${fallbackModelsValue ?? ""}`);
+	if (config.fast === true || preserve("fast")) lines.push(`fast: ${config.fast === undefined ? "" : config.fast ? "true" : "false"}`);
 	if ((config.thinking && (config.thinking !== "off" || preserve("thinking"))) || (!config.thinking && preserve("thinking"))) {
 		lines.push(`thinking: ${config.thinking ?? ""}`);
 	}
@@ -112,10 +115,11 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 		lines.push(`subagentOnlyExtensions: ${subagentOnlyExtensionsValue ?? ""}`);
 	}
 
-	if (config.output) lines.push(`output: ${config.output}`);
+	if (config.output || preserve("output")) lines.push(`output: ${config.output ?? ""}`);
+	if (config.outputMode || preserve("outputMode")) lines.push(`outputMode: ${config.outputMode ?? ""}`);
 
 	const readsValue = joinComma(config.defaultReads);
-	if (readsValue) lines.push(`defaultReads: ${readsValue}`);
+	if (readsValue || preserve("defaultReads")) lines.push(`defaultReads: ${readsValue ?? ""}`);
 
 	if (config.defaultProgress) lines.push("defaultProgress: true");
 	if (config.interactive) lines.push("interactive: true");

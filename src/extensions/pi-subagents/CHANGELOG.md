@@ -2,35 +2,257 @@
 
 ## [Unreleased]
 
-## Selesai fork (0.50.0)
+## [0.56.0] - 2026-08-23
 
-Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and layers its own branding and additions on top:
+### Highlights
+- Run allowlisted OpenAI-Codex subagents with opt-in `fast` mode when you want priority service tier.
+- Pass bounded extension metadata into native child launches without leaking that authority to external runners.
+- Workflow scripts are easier to read when child results are stringified or returned.
+- Completion guards now use safer tracked-file evidence, including large dirty files and interrupted runs.
+- Model verification is less fragile for provider-qualified and variant-tagged model ids.
 
-### Branding
-- Host package renamed from `@earendil-works/pi-coding-agent` to `@selesai/code`.
-- Config dirs: `~/.pi` → `~/.selesai`, project `.pi/` → `.selesai/`; runtime state under `.pi-subagents/`.
-- Extension env vars renamed `PI_SUBAGENT*` → `SELESAI_SUBAGENT*` (legacy `PI_SUBAGENT*` values still honored via `src/shared/env.ts`), including the new v0.50 surfaces (`SELESAI_SUBAGENT_TOOL_TIMEOUT_MS`, `SELESAI_SUBAGENT_ORCA_BINARY`, `SELESAI_SUBAGENT_ASYNC_JSON:` widget prefix).
-- Home directory is never treated as a project root for subagent config resolution.
+### Added
+- Add opt-in `fast: true` launches for allowlisted native OpenAI-Codex subagents, using OpenAI's priority service tier.
+- Add bounded namespaced extension bindings to child launch contracts. Thanks to [@FL03](https://github.com/FL03) for #1410.
 
-### Selesai additions (upstream 0.50.0 features are all preserved)
-- Declarative `chain` / `tasks` / `clarify` execution restored as first-class top-level modes alongside `{ agent, task }` and `workflowScript` (upstream 0.50 keeps only structured single-child + workflowScript at the top level). Saved `.chain.md` / `.chain.json` workflows remain shareable via `/run-chain`.
-- Agent roster extended with Selesai personas: `architect`, `builder`, `commentator`, `explorer`, `recapper` (upstream `worker`, `reviewer`, `scout`, `oracle`, `delegate`, `researcher` remain). `researcher` is the Selesai host-compatible brief generator.
-- New slash commands: `/chain`, `/parallel`, `/run-chain`, `/chain-prompts`.
-- Workflow auto-relaunch wiring: `config.maxWorkflowAutoRelaunches` caps fan-out-budget relaunches for async workflow runs; cap exhaustion fails the run with an actionable error (upstream ships the decision module but does not wire it).
-- Same-model retry for transient provider errors (503/429/no-body/econnreset) with a bounded delay schedule (`MODEL_RETRY_DELAYS_MS`), keeping fallback-model switching as the primary strategy.
-- Artifact default stays `project` (cwd/.pi-subagents) instead of upstream 0.50's `session` default; `artifactDir` config still selects among project/session/temp.
-- `SELESAI_SUBAGENT_EXTRA_AGENT_DIRS` path-style env for extra agent discovery directories.
-- Adopted-job capacity accounting: lineage carry-over jobs count against the per-session active async cap; carry-over summaries label adopted jobs.
-- LLM intent arbiter toggle env renamed `SELESAI_SUBAGENTS_LLM_INTENT_ARBITER` (upstream: `PI_SUBAGENTS_LLM_INTENT_ARBITER`).
+### Fixed
+- Render workflow child results as useful text when scripts stringify `runs.all` or awaited `runs.run` result objects.
+- Keep checked acceptance compatible with strict workflow child `outputSchema` results. Thanks to [@rtbe](https://github.com/rtbe) for #1406.
+- Use bounded tracked-file mutation evidence for implementation completion guards, including files that were already dirty when the child started. Thanks to [@rtbe](https://github.com/rtbe) for #1407.
+- Bind fast mode into launch contract provenance and keep large tracked-file mutation evidence precise.
+- Add timeout recovery summaries with changed tracked files, active child state, and session/artifact paths. Thanks to [@rtbe](https://github.com/rtbe) for #1409.
+- Fail closed when reviewer runs are interrupted or detached workflow children settle without persisted top-level continuation proof. Thanks to [@rtbe](https://github.com/rtbe) for #1408.
+- Stop flagging awaited `.then()` workflow chains as unawaited when a handler returns another child launch.
+- Preserve variant-tagged model ids during verification and fallback exclusion parsing. Thanks to [@rafafortes](https://github.com/rafafortes) for #1420.
 
-### Now upstream (no longer fork-only)
-- Inline `#agent-name [task]` invocation with autocomplete (`src/slash/inline-subagents.ts`), task-aware advisory agent recommender (`src/agents/task-aware-routing.ts`), friendly chain validation (`src/extension/chain-validation.ts`), workflow auto-relaunch decision module (`src/workflows/workflow-auto-relaunch.ts`), session lineage + adopted-result carry-over, `chatProgress` `terminal`/`milestones` projections, and the `parallel-context-build` / `parallel-handoff-plan` prompt templates all shipped in upstream 0.49.0/0.50.0 verbatim.
+## [0.55.0] - 2026-08-23
 
+### Highlights
+- Stop a single stuck child in an async workflow without stopping the whole run.
+- Continue finished external jobs, like `gpt-pro` from [Surf](https://github.com/nicobailon/surf-cli/), with follow-up requests through `resume`.
+- Cap child thinking with `subagents.maxThinking` and set a preferred default provider for bare model ids.
+- Scripted workflow outputs now land in the run's managed artifact directory instead of the repository root.
+- Child launches fail fast with clear reasons when requested models or write tools are unavailable.
+
+### Added
+- Add `subagents.maxThinking` to enforce a thinking ceiling across native subagent launches. Thanks to [@alex-real14](https://github.com/alex-real14) for #1397.
+- Add `subagents.defaultProvider` and per-agent `defaultProvider` overrides so bare subagent model ids can prefer a configured provider. Thanks to [@swingtempo](https://github.com/swingtempo) for #1393.
+- Add external-job follow-ups through `subagent({ action: "resume" })` for completed provider jobs that expose `followUp(input)`, with duplicate request dedupe, durable parent-job lineage (#1381), and clearer errors when a follow-up cannot start.
+- Add child-scoped stop support and child stop observer events for async/workflow runs. Malformed child stop requests are rejected instead of widening to a run-level stop. Thanks to [@yanqianglu](https://github.com/yanqianglu) for #1367.
+- Create one passive Orca observer tab per top-level subagent call, with shared chain/parallel progress and project-local observer manifests. Thanks to [@hyein-cbio](https://github.com/hyein-cbio) for #1360.
+- Count Herdr project panes in inline status and report compact Herdr pane title suffixes for active subagent work.
+- Let `agentOverrides` set or clear default `output` paths and `defaultReads`, while preserving explicit custom-agent frontmatter and preventing settings-derived values from being serialized into custom definitions. Thanks to [@mevatron](https://github.com/mevatron) for #1349.
+- Surface copyable `provider/id` model selectors from `{ action: "models" }` and point invalid model warnings at that discovery path. Thanks to [@lixinglong27](https://github.com/lixinglong27) for #1365.
+- Add bundled skill guidance for lightweight task profiles before subagent fanout. Thanks to [@srcKod](https://github.com/srcKod) for #1395.
+- Add delegated review guidance that separates evidence requirements from severity labels so first-pass reviews do not default to `blockers only`.
+
+### Fixed
+- Route relative `workflowScript` output paths through managed artifacts instead of creating report files in the repository root.
+- Keep the async widget spinner and elapsed timer moving while the parent is idle by routing animation ticks through the live widget rebuild path. Thanks to [@0xFlo](https://github.com/0xFlo) for #1390.
+- Slow async widget animation rerenders to 1 Hz so quiet running jobs do not repaint the full TUI at the liveness tick rate. Thanks to [@0xFlo](https://github.com/0xFlo) for #1376.
+- Fail a Pi child launch when the child reports a different provider/model than the resolved requested model. Thanks to [@zzzubair](https://github.com/zzzubair) for #1377.
+- Render detached workflow supervisor handoffs as paused/waiting and include workflow and child run ids in completion notifications.
+- Report implementation runs blocked by missing child tools as blocked mutation effects instead of no-edit completion guard failures.
+- Fail child launch attempts when the runtime lacks requested core write tools or an implementation worker has only read-only launch tools, including workflow children that inherit a read-only capability ceiling.
+- Let read-only reviewer acceptance rely on the parent-side staged-file check instead of requiring child-reported `noStagedFiles` evidence.
+- Run public single-child launches directly instead of wrapping them in a workflow, so async external-job agents do not show a completed workflow before the real provider job finishes.
+- Start omitted-`async` public external-runner single-child launches in the supported background mode, so package agents such as `gpt-pro` from [Surf](https://github.com/nicobailon/surf-cli/) do not fail as foreground requests.
+- Let workflow scripts await omitted-`async` external-runner children by launching them in the background internally and returning their terminal result.
+- Report helpful workflow errors when `runs.all(...)` results are read as keyed objects instead of ordered arrays. Thanks to [@ravshansbox](https://github.com/ravshansbox) for #1351.
+- Clarify that Council Mode can include installed external-runner advisors such as `gpt-pro` from [Surf](https://github.com/nicobailon/surf-cli/) when the `surf-cli` Pi extension has registered `surf-oracle`, with text JSON reports instead of `outputSchema`.
+
+## [0.54.0] - 2026-08-21
+
+### Highlights
+- Subagent model selection is more precise with per-agent restrictions and an `inherit` shortcut for the current parent model.
+- Package agents are easier to discover because list and detail output now shows where they come from and whether their external provider is ready.
+- Workflow runs are less fragile: tool-result backfill, context-overflow handling, resumed children, and permission asks now behave more predictably.
+- Child launches are lighter and safer because subagent processes avoid loading the parent extension graph and avoid unnecessary permission bridge setup.
+- Council Mode is easier to use from natural language and no longer requires invented advisor role labels.
+
+### Added
+- Add per-agent model restrictions and a current-parent `inherit` allow-list alias. Thanks to [@hieudmg](https://github.com/hieudmg) for #1328.
+
+### Changed
+- Show package names, versions, and external-job provider status in subagent list and detail output so package agents such as Surf's `gpt-pro` are easier to find and use.
+- Make scripted workflow helper support and stale-session recovery easier to see in `doctor` and the workflow guide (#1344).
+- Keep structured single-child execution receipts quieter by removing an internal conversion log from public workflow output.
+- Route natural-language requests for advisor councils, plan critique, cross-exam, or multiple model perspectives to the Council Mode protocol.
+- Simplify Council Mode advisor selection so model-based profiles provide the perspective and the question supplies the decision frame.
+
+### Fixed
+- Layer custom-agent user and project overrides without dropping user-only fields, while preserving project precedence. Thanks to [@jagaliano](https://github.com/jagaliano) for #1348.
+- Avoid child tool-call hangs by loading the external permission-system bridge only for explicit native permission rules and by failing stalled ask decisions closed. Thanks to [@moekyo](https://github.com/moekyo) for #1339.
+- Keep foreground workflow children from timing out after a tool result is backfilled without a separate execution-end event. Thanks to [@moekyo](https://github.com/moekyo) for #1339.
+- Mark completed foreground workflow children as resumable in keyed receipts when their persisted session file is available (#1335).
+- Avoid loading the parent extension graph in subagent child processes. Thanks to [@ccharname](https://github.com/ccharname) for #1330.
+- Stop model fallback on context-overflow failures and surface `contextOverflow`. Thanks to [@srcKod](https://github.com/srcKod) for #1323.
+- Stop empty slow result scans from spamming the session transcript. Thanks to [@afrodao2394](https://github.com/afrodao2394) for #1329.
+- Surface logical tool failures so subagent tool results backfill correctly. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for #1332 and [@moekyo](https://github.com/moekyo) for #1331.
+
+## [0.53.0] - 2026-08-20
+
+### Highlights
+- New `/council` mode helps with material decisions by running a small, bounded group of advisors and ending with a parent-written decision memo.
+- Pi extensions can now register runtime agents without writing user or project config.
+- Async workflows are easier to resume because completed children now have durable keyed receipts.
+- Model fallback is less noisy and less wasteful when a model fails or the prompt is too large.
+- Extension RPC hosts can safely inspect status, launch async work, steer children, and manage schedules.
+
+### Added
+- Carry full model registry metadata, including tiered pricing, into normalized model information. Thanks to [@srcKod](https://github.com/srcKod) for #1317.
+- Add runtime agent registration for Pi extensions, with name and alias collision checks. Thanks to [@fmoda3](https://github.com/fmoda3) for #1310.
+- Skip recently failed fallback models for a TTL-backed window during model selection. Thanks to [@srcKod](https://github.com/srcKod) for #1318.
+- Add a schedule-only `manage` method to extension RPC for list/show/history/pause/resume/run/delete, while rejecting unrelated management actions. Thanks to [@aboubakrine](https://github.com/aboubakrine) for #1319.
+- Let agent definitions and `agentOverrides` set a default `outputMode`, while
+  call-level output mode stays higher priority. Thanks to [@bbbRye007](https://github.com/bbbRye007) for #1305.
+- Add `context: "profile"` for workflow children that should use the selected
+  agent profile's declared context instead of the global default (#1303).
+- Add durable keyed async workflow receipts and resume-by-key selectors for
+  retained workflow children (#1302).
+- Add the `resultScanLogging` config to control result scan logging. Thanks to [@apoapostolov](https://github.com/apoapostolov) for #1293.
+- Add `/council` and `council-mode` for bounded advisor councils. Use it for material decisions that need multiple perspectives: the parent picks 2–3 advisors, collects independent reports, optionally runs one cross-exam pass, and writes the final decision memo. The package also documents model-based `council-*` profile examples (#1295).
+
+### Changed
+- Show bounded workflow progress in Fleet detail views while keeping workflow
+  parents as the only actionable async items (#1304).
+- Make `/council` easier to supervise with structured advisor contracts,
+  aggregate pass receipts, and visible pass checkpoints (#1301).
+- Reuse validated workflow launch fingerprints during `runs.all` batch setup, reducing focused fingerprint bookkeeping time by 48.7% (#1287).
+- Speed up recent terminal run history reads when the marker history is large and the requested limit is small.
+- Reduce repeated serialization while applying async status snapshot byte caps (#1288).
+
+### Fixed
+- Add tolerant `subagent_wait({ stopOnAttention: false })` blocking waits and scale idle attention defaults for higher-thinking children. Thanks to [@elecnix](https://github.com/elecnix) for #1315 and #1316.
+- Add a separate classifier for model context-overflow errors. Thanks to [@srcKod](https://github.com/srcKod) for #1312.
+- Normalize child result metadata before workflow return persistence (#1307).
+- Quote only confidently identified leading Windows executable paths in acceptance verification commands. Thanks to [@srcKod](https://github.com/srcKod) for #1294.
+- Keep forked subagent sessions out of top-level `pi -c` discovery by storing them under the parent session root. Thanks to [@xz-dev](https://github.com/xz-dev) for #1297.
+- Preserve `/council` advisor context defaults during fallback and cross-exam runs (#1298).
+
+## [0.52.1] - 2026-08-20
+
+### Highlights
+- Model setup errors now point to the right alternate provider when there is one clear match.
+- Surf's optional `gpt-pro` package agent has a smoother path to run ChatGPT Pro web jobs through the external-job bridge when the user is logged in.
+- External-job providers can add metadata or extra operations without breaking provider discovery.
+- The packaged skill now includes a concise guide for coordinating multiple tasks, worktrees, and repositories.
+- Pi extension worktrees now have clearer guidance to avoid duplicate auto-loaded tools and shortcuts.
+
+### Fixed
+- Suggest the unique alternate provider model when an explicit qualified subagent model is unavailable, without resolving across providers. Thanks to [@lallenlowe](https://github.com/lallenlowe) for #1280.
+- Accept extra fields on registered external-job providers, such as `kind`, `wakeChannels`, or additional operations. This keeps integrations such as Surf's `gpt-pro` package agent from breaking provider discovery as they add browser-backed job metadata, while job payload validation stays strict.
+
+### Changed
+- Add a pi-subagents reference for coordinating multiple tasks, worktrees, and repositories, including guidance for keeping Pi extension worktrees outside auto-discovered extension directories.
+
+## [0.52.0] - 2026-08-19
+
+### Highlights
+- Async workflows are much harder to break mid-flight: a transient status-file lock, a stalled child, or a paused supervisor hand-off no longer fails or loses an otherwise healthy run.
+- Hosts can now inspect a running or completed async child on demand — task, recent transcript, and final output — without spending a model turn, and that output stays available after delivery.
+- macOS and FreeBSD sandboxes stop warning about setuid `/bin/ps`, and Windows stops flashing console windows during busy runs.
+- Gateway and proxy models work better: children can inherit the parent's session model, and Hugging Face-style `owner/name` model ids resolve correctly.
+
+### Added
+- Add `/subagents-inspect-rpc`, a host-facing bridge command that answers on-demand async child inspection requests with a correlated, bounded `SELESAI_SUBAGENT_INSPECT_JSON:` widget payload (task, transcript window, final output), so RPC hosts can inspect children without a model turn while the live status feed stays small. Thanks to [@yanqianglu](https://github.com/yanqianglu) for #1254.
+
+### Changed
+- Guide oracle plan and design advice through a short same-session consultation when a material tradeoff remains, while keeping the parent as final decision-maker (#1245).
+- Improve bundled role and parent prompts for source-first discovery in noisy codebases (#1247).
+- Make Surf's `gpt-pro` agent an optional package integration instead of a pi-subagents builtin. If you disabled the old builtin workaround, remove `agentOverrides.gpt-pro.disabled` before using Surf's package agent. Thanks to [@binhex](https://github.com/binhex) for #1256.
+
+### Fixed
+- Stop spawning setuid `/bin/ps` for process start identity on macOS and FreeBSD. Sandboxes such as nono no longer report `forbidden-exec-sugid` from session leases, retention locks, external-job claims, or mission state. Those platforms stay fail-closed without pid-reuse detection. Thanks to [@jdumas](https://github.com/jdumas) for #1273.
+- Stop a transient lock on `status.json` (seen on Windows) from failing an already-completed workflow child and aborting its still-running siblings. Status updates after launch now degrade to a `subagent.workflow.status_write_failed` event instead of failing the run, and a throwing `onTrace` host callback can no longer reject a child promise. Follow-up to #1143. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1272.
+- Keep a still-paused workflow result when reconcile republishes updated child output during paused delivery, so a same-state revision is not overwritten or deleted as the old payload.
+- Persist async terminal `status.json` before publishing the result file, so observers cannot see a completed result while the run still looks `running`.
+- Stop Windows opening a console window for each helper process (Git, `gh`, PowerShell, `npm root -g`) spawned during a run, which made a busy run disruptive to work alongside. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1274.
+- Keep completed inspect RPC output available from the durable completion replay after result delivery consumes its one-shot payload, including per-child inline result tails (#1254).
+- After a workflow child detaches for supervisor coordination, clear attention once the reply is delivered, keep `subagent_wait` blocked until the child exits, and reconcile the paused workflow when that child completes — even after the paused payload was already delivered. A timed-out workflow can also resume from its persisted child session when the workflow dir has no recovery descriptor. Thanks to [@skystar567](https://github.com/skystar567) for #1263.
+- Wake the idle parent when an async workflow child needs attention, and persist that control event on the enclosing workflow. Status already showed the stall; the parent notice did not. Thanks to [@Yibo-Zhang](https://github.com/Yibo-Zhang) for #1266.
+- Resolve Hugging Face-style `owner/name` model ids against the registry instead of treating every slash as `provider/id`. Fully qualified `huggingface/owner/name` still wins, and a first path segment that matches a registered provider still means `provider/id`. Thanks to [@mr-brobot](https://github.com/mr-brobot) for #1264.
+- Keep public structured single-child calls synchronous when `asyncByDefault:false` and `async` is omitted. Thanks to [@Nofuture123](https://github.com/Nofuture123) for #1257.
+- Trust the running parent session model when no model is configured, so gateway and proxy parent models can launch children outside the host registry. Thanks to [@Nofuture123](https://github.com/Nofuture123) for #1258.
+- Isolate colliding inherited workflow child output defaults while preserving explicit output collision checks. Thanks to [@Reverier-Xu](https://github.com/Reverier-Xu) for #1253.
+- Show a scheduled run's completion and name the schedule that produced it, so scheduled work no longer finishes silently in a session that cannot attribute it. Thanks to [@albertgwo](https://github.com/albertgwo) for #1246.
+- Show resume-first guidance for failed async runs only when a matching recovery descriptor exists, so missing recovery data no longer points users to a resume command that cannot work. Thanks to [@graadient](https://github.com/graadient) for #1241.
+- Keep bundled agent discovery stable across hot package updates, so long-running sessions do not parse newer bundled agent files with older loaded code. Thanks to [@graadient](https://github.com/graadient) for #1242.
+- Resolve relative extension paths against the defining agent file, so portable agent definitions load child extensions from the declared location. Thanks to [@tayiorbeii](https://github.com/tayiorbeii) for #1249.
+
+## [0.51.0] - 2026-08-18
+
+### Highlights
+- Workflow orchestration is easier to control with stable-key steering, clearer fanout guidance, and a supported external-job runner path.
+- Async runs are harder to lose when storage is full, file access is temporarily denied, identifiers are too long, or multiple Pi windows share one session.
+- macOS reloads and idle sessions do less fragile filesystem watching, which avoids reload hangs without adding always-on work.
+- Herdr and Fleet are less disruptive: panes stay in the background by default, trusted transcripts open cleanly, and live workflow children steer through the right route.
+- The workflow API is cleaner: scripted workflows are the supported path, and removed legacy chain surfaces now have direct migration guidance.
+
+### Added
+- Add stable-key `runs.steer` to `workflowScript`, with routing for foreground and async children, structured receipts, trace entries, and checks for unawaited calls (#1186).
+- Add `runner.type: external-job`, the exported provider bridge, the Surf GPT Pro `gpt-pro` profile, and docs for external advisor data boundaries (#1189).
+- Add `defaultSubagentContext: "fork"` for launches that do not set an explicit context (#1161).
+- Allow `defaultSubagentContext: "fresh"` to override agent fork defaults for launches that do not set an explicit context.
+- Add `SELESAI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS` so hosts can cap filesystem retry waits. Unset by default. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1143.
+
+### Changed
+- Document rolling `workflowScript` fanout with `runs.run`, `Promise.race`, `runs.steer`, and `Promise.all` (#1187).
+- Document scripted chaining as the supported workflow API, with migration examples for removed top-level chain and task inputs.
+- Clarify `workflowScript` fanout guidance: use awaited `runs.all` for ordinary parallel work, and use stored `runs.run` promises only for fully observed advanced rolling fanout (#1229, #1230).
+- Clarify that async workflows do not have inline `live-card` projection (#1229, #1230).
+- Describe `async:false` as a blocking parent wait, not a UI or foreground-only mode.
+- Clarify that subagent reviews and gates should stay async unless the parent must block until completion.
+- Document that a host's session lifetime owns completion wakes, and how to key an idle check on live run state rather than parent activity. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1144.
+- Register the default `subagent` tool prompt as split metadata with a short description, `promptSnippet`, and `promptGuidelines`, while keeping explicit `full`, `compact`, and `custom` description modes.
+- Keep `worktree: true` workflow children on the single-child path while preserving managed patch handoffs.
+
+### Removed
+- Remove unused foreground chain and parallel execution and durable chain management surfaces.
+- Remove legacy subagent tool compatibility fields for append-step control, schedule aliases, async recovery metadata, and string mission goals.
+- Remove chain approval checkpoint steps and the `approve-checkpoint` / `reject-checkpoint` controls.
+- Remove `prompts.render` from `workflowScript`; pass explicit task text to `runs.run` or use `/prompt-workflow` for reusable prompt templates.
+
+### Fixed
+- Avoid Darwin reload hangs by disabling idle native filesystem watchers and using demand-gated delivery for live results, supervisor messages, controls, and steering. Thanks to [@youlikemodernart](https://github.com/youlikemodernart) for #1220.
+- Bound async result session, run, active-run, and result-index path segments so long provider IDs do not break launches or waits with `ENAMETOOLONG`. Thanks to [@hlstwizard](https://github.com/hlstwizard) for #1131 and [@zhouatie](https://github.com/zhouatie) for #1135.
+- Hash result-index session segments that look like Windows paths or file names, keep reading previous URI-encoded keys, and treat `EPERM` and `EACCES` as empty scans. Thanks to [@apoapostolov](https://github.com/apoapostolov) for #1211.
+- Sanitize foreground workflow output path segments derived from provider run IDs, so Windows launches do not fail when tool-call IDs contain path-invalid characters. Thanks to [@maxime-louward-shift](https://github.com/maxime-louward-shift) for #1235.
+- Keep async status and result persistence retrying after temporary `ENOSPC`, quota, or file-descriptor exhaustion errors. Thanks to [@ahmadaccino](https://github.com/ahmadaccino) for #1227.
+- Route async completion notifications and cleanup only to the parent Pi process that launched the run, so concurrent windows sharing one session file cannot consume each other's results. Thanks to [@wangjianming](https://github.com/wangjianming) for #1225.
+- Keep extension reload cleanup scoped to the replaced session runtime, so concurrent Pi sessions in one process do not remove each other's subscriptions or parent-session identity. Thanks to [@ryanbbrown](https://github.com/ryanbbrown) for #1222.
+- Stop failing child runs when an explicit allowlist names `contact_supervisor` without the legacy `intercom` companion. A lone `intercom` entry still requires a real external provider. Thanks to [@MingTeer](https://github.com/MingTeer) for #1207.
+- Add explicit `isolation: "none"` for schema-driven workflows without Git worktree setup, while keeping strict `isolation: "worktree"` behavior. Thanks to [@tlsneo](https://github.com/tlsneo) for #1203.
+- Fail closed when an existing external-job `status.json` is unreadable or malformed, including an invalid `steps` shape.
+- Skip malformed agent definitions during discovery so valid agents still list and launch, while showing configuration errors in management diagnostics (#1200).
+- Resolve `/subagents-generate-profiles` provider probes through the shared Pi executable resolver so configured and Windows-specific Pi commands work. Thanks to [@Wumpf](https://github.com/Wumpf) for #1199.
+- Resolve the workflowScript parser from pi-subagents instead of the caller's working directory, so workflows start in projects that do not install Acorn. Thanks to [@xz-dev](https://github.com/xz-dev) for #1214, following up #1190.
+- Keep workflowScript child-launch tracking working on Bun-built Pi without a hard dependency on V8 promise hooks. Thanks to [@rochecompaan](https://github.com/rochecompaan) for #1158 and [@rholak](https://github.com/rholak) for the version-window diagnosis.
+- Treat provider subscription usage-limit errors as retryable model failures so `fallbackModels` can continue to the next configured model. Thanks to [@dwizzle204](https://github.com/dwizzle204) for #1215.
+- Skip fallback models that are unavailable in the active registry, so shared agent configs still run where their primary model is available. Thanks to [@JPFrancoia](https://github.com/JPFrancoia) for #1147.
+- Preserve workflow async session roots for Herdr inspectors so workflow runs open with the same trusted session-root context as standalone runs. Thanks to [@hank-warren](https://github.com/hank-warren) for #1219.
+- Keep Herdr project and inspector panes in the background by default, and move focus only when callers set `focus: true`. The FleetView inspect key still focuses the pane it opens. Thanks to [@boggylp](https://github.com/boggylp) for #1226.
+- Show FleetView transcript fallbacks for trusted session roots instead of warning about an untrusted session file. Thanks to [@aliceisjustplaying](https://github.com/aliceisjustplaying) for #1154.
+- Route Fleet inspector steering for live in-process workflow children through their foreground routes instead of the detached async queue. Thanks to [@ViktorBarzin](https://github.com/ViktorBarzin) for #1218 and #1216.
+- Serialize same-worktree Orca progress-tab creation so numbered tabs appear left to right in sequence. Thanks to [@hyein-cbio](https://github.com/hyein-cbio) for #1196.
+- Bound repeated async-state queries to active, exact-id, and recent-terminal indexes instead of scanning the full async history (#1162).
+- Move retention directory discovery to a read-only worker so full scans do not block the extension event loop (#1188).
+- Reclaim proven-safe async run and orphan result state after 30 days in bounded, locked cleanup passes with rename-first tombstones (#1163).
+- Sweep expired wait subscriptions armed by another session, so stale records stop accumulating in the subscriptions directory. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1142.
+- Restore and list schedules after their project directory is deleted, and skip orphan schedule directories without letting create reuse stale state. Thanks to [@ELA718](https://github.com/ELA718) for #1171 and [@colinb4987](https://github.com/colinb4987) for #1167.
+- Fall back from an implicit `defaultContext: fork` to `fresh` when the parent session file or current leaf is not available yet. Explicit `context: "fork"` remains fail-fast. Thanks to [@hyein-cbio](https://github.com/hyein-cbio) for #1137.
+- Keep retained workflow children resumable when their managed worktree cwd is preserved in the handoff manifest (#1172).
+- Preserve workflow child task output when neither the workflow nor child configures an output file (#1136).
+- Preserve a child's file-only report when its output path also names the workflow summary output.
+- Keep concurrent async result promotion from deleting a newer payload or another promoter's published result. Thanks to [@albertgwo](https://github.com/albertgwo) for #1130.
+- Keep `mcp:<server>` direct tools available when pi-mcp-adapter cache identity includes a request-header command. Thanks to [@xz-dev](https://github.com/xz-dev) for #1141.
+- Isolate test async state from the user temp root and write each missing-mission sync diagnostic only once (#1164, #1165).
+- Keep structured delegation integration coverage active when the test process inherits a subagent-child environment marker.
 
 ## [0.50.0] - 2026-08-15
 
 ### Added
-- Add optional Orca progress tabs with bounded, sanitized mirrors for native Selesai and external CLI children. Thanks to @hyein-cbio for #1080.
+- Add optional Orca progress tabs with bounded, sanitized mirrors for native Pi and external CLI children. Thanks to @hyein-cbio for #1080.
 - Show caller-owned external jobs in FleetView through a bounded push/cache API, without polling or exposing managed controls. Thanks to @ssyram for #1083.
 - Add a bounded current-status snapshot for async runs in RPC surfaces, without replaying terminal history. Thanks to @yanqianglu for #1078.
 - Add an optional `foregroundDetachShortcut` binding and show it in the running single-subagent card, so foreground work can be moved to the background without editing package source. Thanks to @Lewis-E for #1097.
@@ -49,7 +271,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Keep structured single-child runs from overriding output paths in the task, while preserving explicit and agent-configured outputs. Thanks to @pasemes for #1119.
 - Keep no-edit confirmations guarded after later changes retract a prior implementation (#1115).
 - Remove the native generic `intercom` compatibility fallback from supervisor coordination while preserving `contact_supervisor`, `subagent_supervisor`, and external `intercom` providers. Thanks to @jaudiger for #1107.
-- Report an actionable project-settings override when duplicate ambient Selesai extensions prevent a child from starting (#1114).
+- Report an actionable project-settings override when duplicate ambient Pi extensions prevent a child from starting (#1114).
 - Keep the FleetView overlay refreshed while open and count active leaf agents in the compact summary. Thanks to @Don-Yin for #1108.
 - Keep user-requested foreground detaches from showing supervisor-response recovery guidance. Thanks to @Lewis-E for #1109.
 - Reject configured subagent models that are not in the active host model registry before spawning a child, instead of forwarding an invalid `--model` argument to Pi. Thanks to @DresvyanskiyDenis for #1093.
@@ -58,7 +280,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Show supervisor-detached workflow children as paused and needing attention instead of failed while preserving recovery guidance (#1096).
 - Show workflow-owned foreground children and recursive nested runs as a bounded tree in FleetView. Thanks to @expoli for #1086.
 - Warn once, instead of on every heartbeat, when a long-running workflow child outlives its mission record. Thanks to @albertgwo for #1079.
-- Keep deleted-schedule timers from exiting Selesai and re-arm recurring schedules after unexpected timer fire failures. Thanks to @albertgwo for #1084.
+- Keep deleted-schedule timers from exiting Pi and re-arm recurring schedules after unexpected timer fire failures. Thanks to @albertgwo for #1084.
 - Count native `await` use of `runs.run`, `runs.all`, and launch-containing Promise combinators as consumed without allowing fire-and-forget launches. Thanks to @kebinzhi for #1082.
 
 ## [0.49.0] - 2026-08-13
@@ -67,7 +289,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Run a single child with `{ agent, task? }` when a full workflow script is not needed (#1059).
 - Adjust FleetView spacing and collapsed result height from the main window. Thanks to @pierre-mgmt for #1048.
 - Inspect async run state with `debug.run`, without exposing prompts, secrets, or transcripts (#1037).
-- Let builtin role overrides keep Selesai's normal tools and extensions with `tools: "inherit"`. Thanks to @estanexanavsem for #1047 and @davidarny for #1049.
+- Let builtin role overrides keep Pi's normal tools and extensions with `tools: "inherit"`. Thanks to @estanexanavsem for #1047 and @davidarny for #1049.
 - Add simple terminal examples for FleetView, the async widget, and inline tool display. Thanks to @czottmann for #1050.
 - Add per-tool-call wedge protection with `toolTimeoutMs` call → agent → config → environment precedence. Known-fast built-in tools get a five-minute default, long-running tools get attention notices without a hard default, matching `toolCallId` timers survive parallel tool completions, and supervisor waits (`contact_supervisor`, `intercom`, `subagent_wait`) remain exempt. Thanks to @forrestbthomas for #1077.
 
@@ -87,7 +309,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Keep workflow summary reports separate from child reports, and reject report path collisions before launch (#1038).
 - Accept no-edit implementation challenge passes when the writer says the current solution is already best (#1054).
 - Make the mutation guard safer for LLM intent checks, long tasks, and provider authentication. Thanks to @MarcusNeufeldt for #1044.
-- Launch Herdr inspector panes with Node when Selesai runs as a standalone executable. Thanks to @kevinpita for #1051.
+- Launch Herdr inspector panes with Node when Pi runs as a standalone executable. Thanks to @kevinpita for #1051.
 - Sanitize async, nested, and result transcript output before showing it in terminal views. Thanks to @riesbri for #1046.
 
 ## [0.48.0] - 2026-08-13
@@ -103,7 +325,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 ### Fixed
 - Open Fleet Prompt Audit with the original task visible by default, and show a short task summary in the normal Fleet detail pane (#1021).
 - Use the full task text when caching LLM intent decisions, so similar tasks with the same prefix cannot share the wrong answer.
-- Stop async Selesai writer processes as full process groups, and only mark process cleanup as proven after the process tree has actually exited. Thanks to @asjer for #1030.
+- Stop async Pi writer processes as full process groups, and only mark process cleanup as proven after the process tree has actually exited. Thanks to @asjer for #1030.
 - Explain when a mission belongs to another worktree, including both the current project root and the mission directory (#1024).
 - Keep the configured output reference when explicit acceptance rejects a foreground child, so useful reports remain available (#1023).
 - Reject worktree base directories inside the agent extensions directory, including symlinked paths (#1014).
@@ -111,7 +333,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Stop treating phrases like "must-fix items" or "should-fix tests" as instructions to edit files during read-only review tasks. Thanks to @MarcusNeufeldt for #1020.
 - Add an optional LLM check before the mutation guard fails a foreground single, parallel, or chain child that made no edits. If the task was actually read-only, the run now completes instead of failing. Thanks to @MarcusNeufeldt for #1020.
 - Accept empty strings inside acceptance-report string arrays instead of rejecting the full report. Thanks to @hjiang for #1015.
-- Let single external-CLI workflow children start without inheriting a Selesai model, so model-less external runners do not fail preflight. Thanks to @twosunnus for #1016.
+- Let single external-CLI workflow children start without inheriting a Pi model, so model-less external runners do not fail preflight. Thanks to @twosunnus for #1016.
 
 ## [0.47.1] - 2026-08-12
 
@@ -153,7 +375,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 
 ### Added
 - Add `prompts.render(ref, vars?)` to `workflowScript` for explicitly scoped package, user, and project prompt fragments with simple `{{name}}` interpolation (#960).
-- Expose a versioned `pi-subagents/project-panes` TypeScript API so other Selesai extensions can deterministically open, inspect, and close project-owned Herdr panes without invoking the model-facing `subagent` tool. The structured status includes bounded pane runtime state and an opt-in idle-only close guard; Selesai project trust remains an explicit human verification step. Thanks to @wiizard-chen for #949.
+- Expose a versioned `pi-subagents/project-panes` TypeScript API so other Pi extensions can deterministically open, inspect, and close project-owned Herdr panes without invoking the model-facing `subagent` tool. The structured status includes bounded pane runtime state and an opt-in idle-only close guard; Pi project trust remains an explicit human verification step. Thanks to @wiizard-chen for #949.
 - Preserve short-lived completion replay records and bounded output archives so waits can recover consumed async result details after watcher delivery or restart.
 - Add `subagent({ action: "guide" })` and `/subagents-guide [topic]` to read current-version packaged guides.
 - Persist workflow child attempts, status heartbeats, session paths, and artifacts in their enclosing mission, and add explicit mission decision resolution.
@@ -166,7 +388,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Show the resolved child agent in async workflow status while keeping the workflow key as its stable label. Thanks to @albertgwo for #955.
 - Reject workflow scripts that finish with unawaited child launches and name every launch that was aborted. Thanks to @zig-zag-zig for #957.
 - Reject mismatched completion replay archive paths so stale replay cleanup cannot delete another run's saved output archive.
-- Keep `git-root` project agent and package discovery stable when incidental `.pi` state appears in a nested linked worktree. Thanks to @klajdo-f for #950.
+- Keep `git-root` project agent and package discovery stable when incidental `.selesai` state appears in a nested linked worktree. Thanks to @klajdo-f for #950.
 - Read skill descriptions from YAML block scalars instead of exposing their markers. Thanks to @ashlineldridge for #945.
 - Collapse repeated subagent status snapshots in live widgets so status polling does not overflow the chat.
 - Give invalid `subagent` actions safe next steps and typo suggestions without suggesting destructive actions for ambiguous input.
@@ -260,7 +482,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 ## [0.42.1] - 2026-08-06
 
 ### Fixed
-- Prevent Selesai from crashing when subagent status widgets and overlays are shown in narrow or resized terminal layouts. Thanks to @alanvardy for the report in #858 and @meatcar for the fix.
+- Prevent Pi from crashing when subagent status widgets and overlays are shown in narrow or resized terminal layouts. Thanks to @alanvardy for the report in #858 and @meatcar for the fix.
 - Keep async scripted workflows running without an implicit 30-minute timeout, while preserving the foreground default and explicit timeout controls.
 - Limit `workflowScript` chat progress to the supported `auto`, `off`, and `live-card` projections.
 
@@ -281,7 +503,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Fail child launch setup when an installed permission-system manifest cannot be read or names a missing extension entry.
 - Let the Fleet inspector use the full 85% terminal-height budget on tall terminals. Thanks to @xz-dev for #839.
 - Launch Herdr inspector panes through a JavaScript bootstrap instead of asking Node to type-strip TypeScript installed under `node_modules`. Thanks to @williamleong for #837.
-- Removed the Selesai CLI devDependency from the default install and test against a local runtime shim, so repo audits no longer report the upstream dev-only Undici advisory while real Selesai E2E remains optional. Thanks to @dmg-egg for #782.
+- Removed the Pi CLI devDependency from the default install and test against a local runtime shim, so repo audits no longer report the upstream dev-only Undici advisory while real Pi E2E remains optional. Thanks to @dmg-egg for #782.
 - Stream immediate and periodic progress for blocking foreground subagent runs, so long reasoning intervals remain visibly active. Thanks to @walter-erquinigo for #833.
 
 ## [0.41.0] - 2026-08-05
@@ -306,7 +528,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Added a small fixed authority policy for worktree discard, destructive cleanup, spawn-budget grants, schedule creation, stop, and steer actions.
 - Added automatic Herdr status metadata for active async runs, including reload recovery, needs-attention blocking, and a forward-compatible `herdr:busy` sibling event for semantic working state. Thanks to @magoz for #730.
 - Added optional Herdr 0.7.5+ drill-in inspector panes for async runs, with durable pane bindings, lifecycle/transcript/mission dashboards, FleetView opening, and steer/stop controls through the existing file control channel.
-- Added Herdr project panes so an orchestrator can open a project-rooted Selesai session for substantial cross-codebase work.
+- Added Herdr project panes so an orchestrator can open a project-rooted Pi session for substantial cross-codebase work.
 - Added optional `thinking` and `fallbackModels` fields to `/subagents` profile agent overrides, so a saved profile can pin reasoning effort and fallbacks (not just the model) — important for reasoning-sensitive models where the thinking level is load-bearing. Thanks to @dt-benedict for #741.
 
 ### Changed
@@ -330,7 +552,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Keep the under-editor async status widget visible by default while FleetView is enabled, including after active runs restore following reload. Thanks to @nicobailon for #804.
 - Restore active under-editor subagent status after management calls, so `status` and `list` do not hide running disk-backed work. Thanks to @nicobailon for #816.
 - Allow direct single-child `worktree: true` launches to use managed isolation without requiring `workflowScript`. Thanks to @nicobailon for #808.
-- Isolated each mock Selesai test queue so late child processes cannot consume or lose responses after the next test resets the harness. Thanks to @nicobailon for #810.
+- Isolated each mock Pi test queue so late child processes cannot consume or lose responses after the next test resets the harness. Thanks to @nicobailon for #810.
 - Show a workflow lane manifest with mode and stable lane keys in the launch card instead of only `subagent workflow script`. Thanks to @nicobailon for #813.
 - Reject scalar or commandless verified acceptance before spawning a child; verified policies now require object form with at least one runtime command. Thanks to @ryanbbrown for #807.
 - Let every `runs.all` child settle and return ordered per-child outcomes instead of aborting siblings when one child fails; `runs.run` remains fail-fast. Thanks to @ryanbbrown for #807.
@@ -338,7 +560,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Preserve successful async completion when project-local artifact or mission files are removed before final bookkeeping by recreating artifact directories and recording missing-mission warnings.
 - Keep active Fleet inspector runs ahead of terminal history, which now sorts by recency instead of failure state so old failures do not look attached to current workflow work. Thanks to @nicobailon for #802.
 - Normalize undefined fields in workflow child results before scripts can return them, preserving artifact-only child output.
-- Show current-session async runs in the Fleet inspector even when this Selesai process did not start them.
+- Show current-session async runs in the Fleet inspector even when this Pi process did not start them.
 - Replace the duplicate advisor agent with an alias on the oracle agent.
 - Suppress stale foreground needs-attention transcript notices after the target run completes.
 - Retry zero-activity `SIGKILL` exits during child startup.
@@ -346,9 +568,9 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Resume the parent session after compaction while async subagent work remains active.
 - Avoid invoking `npm root -g` on Windows when the standard `%APPDATA%\\npm\\node_modules` global root is available, preserving custom terminal tab titles during agent and skill discovery. Thanks to @Suchwert for #767.
 - Preserved nested foreground failure events when resolved launch metadata is unavailable.
-- Launch standalone Selesai child processes directly instead of prepending the resolved Selesai CLI script path. Thanks to @ZacharyQin for #764.
+- Launch standalone Pi child processes directly instead of prepending the resolved Pi CLI script path. Thanks to @ZacharyQin for #764.
 - Kept foreground `workflowScript` live-card runs from flooding chat with routine successful child-result intercom messages while preserving failure surfacing and final artifact references.
-- Project oversized redundant Selesai `turn_end` and `agent_end` child events to bounded lifecycle records instead of failing image-heavy runs with `protocol_output_limit`, while preserving `agent_end.willRetry` drain behavior. Thanks to @barto-sh for #743.
+- Project oversized redundant Pi `turn_end` and `agent_end` child events to bounded lifecycle records instead of failing image-heavy runs with `protocol_output_limit`, while preserving `agent_end.willRetry` drain behavior. Thanks to @barto-sh for #743.
 - Count clear `git add`, `git commit`, and `git push` bash calls as implementation mutation attempts so workers that finalize pre-applied changes do not fail the completion guard.
 - Render structured-output-only children as useful JSON output instead of misleading `(no output)` summaries and empty output artifacts.
 - Preserved unrelated `subagents` settings (e.g. `disableBuiltins`, `modelScope`, `watchdog`) when applying a `/subagents` profile, instead of replacing the whole `subagents` object; a profile still owns the complete `agentOverrides` mapping. Also validate profile `thinking`, `fallbackModels`, and `disableBuiltins` fields. Thanks to @dt-benedict for #741.
@@ -358,7 +580,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Preserved dirty or divergent managed worktrees when no successful handoff patch was captured, instead of force-removing uncaptured work and its temporary branch.
 - Routed foreground chain scratch files to user-scoped temp storage when `artifactDir` is `"session"` or `"temp"`, preventing `.pi-subagents/` clutter in the working directory. Thanks to @magoz for #729.
 - Retry transient Windows `EPERM`/`EBUSY`/`EACCES` locks when atomically replacing the async runner startup-control handshake file, so a transient antivirus/indexer lock no longer makes the parent believe the runner never reached the ready state. Thanks to @franktheglock for #731.
-- Kept successful background subagent completions quiet so inactive Selesai tabs are not marked unread, while failed and paused completions still notify the originating session. Thanks to @killianMei for #728.
+- Kept successful background subagent completions quiet so inactive Pi tabs are not marked unread, while failed and paused completions still notify the originating session. Thanks to @killianMei for #728.
 - Avoid crashing the extension at load on Windows when shared temp async result/run directories are persistently blocked by `EPERM`/`EACCES`, falling back to pid-scoped sibling paths without deleting saved run state. Thanks to @franktheglock for #734.
 
 ## [0.40.0] - 2026-08-01
@@ -389,7 +611,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Added Fleet inspector controls to steer the selected live async child and stop its top-level async run with confirmation. Thanks to @saleemlala for #692.
 
 ### Changed
-- Reduced repeated runtime filesystem work by caching stable Selesai config-directory resolution, incrementally sanitizing run history, and limiting nested control-result polling to files created for the active request.
+- Reduced repeated runtime filesystem work by caching stable Pi config-directory resolution, incrementally sanitizing run history, and limiting nested control-result polling to files created for the active request.
 
 ### Fixed
 - Show per-child async task descriptions in the persistent running-subagents status widget instead of repeating the run-level description for every parallel child.
@@ -423,7 +645,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Reduced repeated scanning and file reads in live TUI rendering and skill loading.
 
 ### Fixed
-- Passed `--no-context-files` to child Selesai runs when an agent disables inherited project context, avoiding stale prompt-header parsing as Selesai's context block format changes. Thanks to @KorenKrita for #667.
+- Passed `--no-context-files` to child Pi runs when an agent disables inherited project context, avoiding stale prompt-header parsing as Pi's context block format changes. Thanks to @KorenKrita for #667.
 
 ## [0.37.1] - 2026-07-27
 
@@ -470,14 +692,14 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Added delegation v2 for extension-owned concurrent foreground leaves, with logical run/node ownership, exact per-attempt cancellation, explicit duplicate-node outcomes, literal or structured values, effective model/thinking metadata, detailed usage, and an exact zero-tool budget while preserving delegation v1 and the model-facing single-dispatch guard. Thanks to Jakub Neumann (@neumie) for #610.
 - Added acknowledged `steer` support to the extension RPC for exact-child async orchestration without recovery replacement. Thanks to Daan Bosch (@daanbosch) for #607.
 - Added a persistent below-editor FleetView with safe empty-editor navigation and a structured inspector for Markdown, code, tool calls, and compact or expanded tool results. Thanks to Rui Pu (@Zeppelinpp) for #587.
-- Added `artifactDir` config to store subagent artifacts in the project, Selesai session, or temp artifact directory while keeping project-local artifacts as the default. Thanks to WeZZard (@WeZZard) for #582.
+- Added `artifactDir` config to store subagent artifacts in the project, Pi session, or temp artifact directory while keeping project-local artifacts as the default. Thanks to WeZZard (@WeZZard) for #582.
 - Added opt-in `agentContract: { version: 1 }` runs with explicit execution, acceptance, review, and effects projections, report-optional acceptance, observational file-mutation effects, generic `outputSchema` plumbing, and `gateOn` chain controls while keeping the current/default contract unchanged. Thanks to mapleluv (@mapleluvr) for #499.
-- Replaced the flat `/subagents` admin model, thinking, and agent pickers with a searchable, bounded-scroll selector docked in place of the editor, matching Selesai's built-in `/model` picker so the current selection no longer scrolls off screen when the option list is long. Thanks to Chanyeong Lim (@asp345) for #568.
-- Added `advisor` as an `oracle`-compatible bundled agent alias for users switching between Claude Code and Selesai naming. Thanks to Serhii Chernenko (@serhii-chernenko) for #552.
+- Replaced the flat `/subagents` admin model, thinking, and agent pickers with a searchable, bounded-scroll selector docked in place of the editor, matching Pi's built-in `/model` picker so the current selection no longer scrolls off screen when the option list is long. Thanks to Chanyeong Lim (@asp345) for #568.
+- Added `advisor` as an `oracle`-compatible bundled agent alias for users switching between Claude Code and Pi naming. Thanks to Serhii Chernenko (@serhii-chernenko) for #552.
 - Show each subagent child’s resolved `[fresh]` or `[fork]` launch context in foreground results, async status, fleet, and widget surfaces, with `[mixed]` on aggregate headers when a run uses both modes.
 
 ### Fixed
-- Kept explicit empty and MCP-only child tool allowlists from falling back to Selesai's default builtin tools. Thanks to @jstokke for #628.
+- Kept explicit empty and MCP-only child tool allowlists from falling back to Pi's default builtin tools. Thanks to @jstokke for #628.
 - Kept completed Fleet inspector durations stable when legacy terminal status lacks an explicit end timestamp, preventing time-sensitive redraws from changing rendered snapshots.
 - Deferred strict child tool availability diagnostics until after child extension startup hooks, so tools registered asynchronously by child-only extensions no longer falsely fail as unavailable. Thanks to ConjugativeIndicator (@CovetingEpiphany2152) for #567.
 - Made parent-facing subagent tool descriptions lead with delegation and clarified that `action` is omitted for execution. Thanks to @donwellsav for #600.
@@ -492,23 +714,23 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Avoided scanning and reconciling every historical async run when `subagent_wait({ id })` targets an exact run, preventing supervisor-attention waits from being delayed until the child completes.
 - Routed independent strict v1 extension delegation requests through a correlated concurrent-safe executor while preserving the one-foreground-call-per-turn guard for the ordinary model-facing tool and non-versioned prompt-template requests. Thanks to Nova (@bianyeyu) for #565.
 - Mapped sparse parallel slash progress updates by child index so one child’s live tool/output state no longer appears on another chain placeholder. Thanks to Eli Stark (@white-hat) for #595.
-- Retried transient Windows filesystem locks while creating async result directories and stopped destructively recreating shared async directories during startup access checks, so concurrent Selesai instances are less likely to lose completed async results to `EPERM` directory handles. Thanks to AiraNadih (@AiraNadih) for #566.
+- Retried transient Windows filesystem locks while creating async result directories and stopped destructively recreating shared async directories during startup access checks, so concurrent Pi instances are less likely to lose completed async results to `EPERM` directory handles. Thanks to AiraNadih (@AiraNadih) for #566.
 - Pruned broad agent and chain discovery roots so package-declared `.` scans no longer descend into `node_modules`, `.git`, Git submodules, or nested project roots during startup. Thanks to tupe12334 (@tupe12334) for #570 and shoehn (@shoehn) for narrowing the startup trace.
 - Made `subagent_wait({ id })` wake when an async child is blocked in `contact_supervisor` for a supervisor decision, instead of waiting for completion or timeout. Thanks to @DrunkenDonkey80 for #581.
 - Scoped async result delivery to the active session lease so stale watchers and recovered result files cannot wake or redeliver completions after reload, while retaining unaccepted result files for retry. Thanks to KawaiiNahida (@KawaiiNahida) for #588.
 - Namespaced inherited relative agent output paths for foreground top-level parallel tasks so repeated builtin agents no longer collide before launch. Thanks to Artem Timofeev (@atimofeev) for #580.
-- Use Selesai's native editor for `/subagents` system-prompt editing so terminal editors receive terminal ownership and cannot leave a stale waiting status. Thanks to Prodipta Guha (@proguha) for #576.
-- Bundled TypeBox as a production dependency so detached runners can always load `typebox/compile`, including managed extension installs where Selesai's host package is not visible from the child process. Thanks to Matteo Collina (@mcollina) for #583.
-- Updated the Selesai development SDK to 0.81.0 and passed the watchdog stream through the renamed `Agent.streamFunction` option, preventing watchdog reviews from terminating with `streamFunction is not a function`. Thanks to Wang Zixiong (@XWIlluDelu) for #574.
+- Use Pi's native editor for `/subagents` system-prompt editing so terminal editors receive terminal ownership and cannot leave a stale waiting status. Thanks to Prodipta Guha (@proguha) for #576.
+- Bundled TypeBox as a production dependency so detached runners can always load `typebox/compile`, including managed extension installs where Pi's host package is not visible from the child process. Thanks to Matteo Collina (@mcollina) for #583.
+- Updated the Pi development SDK to 0.81.0 and passed the watchdog stream through the renamed `Agent.streamFunction` option, preventing watchdog reviews from terminating with `streamFunction is not a function`. Thanks to Wang Zixiong (@XWIlluDelu) for #574.
 - Documented that relative chain `output` paths are chain-artifact paths under `{chain_dir}`, with persistent `chainDir` and absolute `output` paths as the supported ways to keep artifacts outside the temp run directory. Thanks to @dougEfresh for #529.
 - Bounded main-watchdog repository signatures so startup and agent-end checks no longer recurse through nested Git worktrees or generated dependency trees, reducing slow starts in large repos. Thanks to @pompanonb for #551 and @markg85 for #555.
 - Raised the child stdout line limit above Pi’s resized-image payload range so image OCR subagents no longer fail with `protocol_output_limit` on valid `read` tool image events. Thanks to @zmarty for #538.
 - Wrote an explanatory failure stub to output artifacts when a child run ends before producing output, so advertised `_output.md` breadcrumbs are no longer empty. Thanks to Mattias Petter Johansson (@mpj) for #547.
-- Routed main watchdog reviews through matching provider-scoped `streamSimple` handlers before falling back to the compat dispatcher, restoring custom-provider watchdog models on newer Selesai runtimes. Thanks to @alexei-led for #527.
+- Routed main watchdog reviews through matching provider-scoped `streamSimple` handlers before falling back to the compat dispatcher, restoring custom-provider watchdog models on newer Pi runtimes. Thanks to @alexei-led for #527.
 - Kept async resume recovery descriptors from rejecting acceptance metadata written by earlier async runs, and now persist only the public acceptance input needed for safe revival. Thanks to Phil (@philliugithub) for #537.
 - Made `subagent_wait({ id })` wake when a remembered detached foreground child reaches `needs_attention`, so headless parents can answer pending supervisor requests instead of waiting until timeout. Thanks to Mattias Petter Johansson (@mpj) for #554.
 - Made `run-history.jsonl` and its agent directory owner-only where supported, redacted stored task prompts, and retained only a SHA-256 task hash for history correlation. Thanks to @avishkandi for #534.
-- Registered the native child `intercom` fallback before strict tool-allowlist diagnostics run and stopped treating Selesai core tools as missing extension tools, preventing read-only scouts and workers from failing before execution when strict child tool allowlists are active.
+- Registered the native child `intercom` fallback before strict tool-allowlist diagnostics run and stopped treating Pi core tools as missing extension tools, preventing read-only scouts and workers from failing before execution when strict child tool allowlists are active.
 - Kept async oracle review tasks with implementation vocabulary from triggering write-evidence acceptance contracts or the no-mutation implementation guard.
 - Added the missing `context: "fork"` field to the fork-context example in the bundled `pi-subagents` skill. Thanks to Kier (@kierr) for #540.
 - Resolved host-provided TypeBox compiler lookup for detached async runners and structured-output validation. Thanks to @nistaux for #526, 96tommykim (@96tommykim) for #545, and @git-geeky and @lukechen526 for reproduction and validation details.
@@ -525,11 +747,11 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 ## [0.35.0] - 2026-07-17
 
 ### Fixed
-- Updated Selesai development packages and real-session SDK coverage to 0.80.10, removing known dependency audit findings. Thanks to dmg (@dmg-egg) for #520.
+- Updated Pi development packages and real-session SDK coverage to 0.80.10, removing known dependency audit findings. Thanks to dmg (@dmg-egg) for #520.
 - `subagent({ action: "get" })` now honors `agentScope` for agent and chain details. Thanks to Kyle (@kylegl) for #519.
-- Removed timer-driven foreground spinner redraws that repeatedly rendered the full Selesai TUI and could survive session shutdown; running indicators now advance only with real progress updates.
+- Removed timer-driven foreground spinner redraws that repeatedly rendered the full Pi TUI and could survive session shutdown; running indicators now advance only with real progress updates.
 - Exposed cumulative spawn-budget usage in status and doctor output, preflighted declared static work before partial launch, and added bounded root-interactive additive grants without changing unlimited or compaction semantics. Thanks to Mati Gummá (@matigumma) for #495.
-- Skipped optional global npm package discovery while Selesai is offline, avoiding `npm root -g` subprocesses during agent and skill discovery. Thanks to Rafiq Rashid (@rrvsh) for #506.
+- Skipped optional global npm package discovery while Pi is offline, avoiding `npm root -g` subprocesses during agent and skill discovery. Thanks to Rafiq Rashid (@rrvsh) for #506.
 - Invalidated cached async status reads when a replacement changes file identity but reuses the same modification time, preventing steering and recovery from observing stale lifecycle state.
 - Moved Pi-owned `@earendil-works/pi-tui` and `typebox` imports to optional wildcard peer dependencies while retaining exact dev versions for local and CI tests. Thanks to Alexei Ledenev (@alexei-led) for #510.
 - Made steering pre-recovery acknowledgment and Windows async hard-kill regressions synchronize around their actual lifecycle boundaries instead of depending on CI scheduler or process-start timing.
@@ -551,9 +773,9 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Added acknowledged async steering: action `steer` returns a correlated request id and waits up to three seconds for child-Pi input acceptance, supports scheduled pending children, records a bounded steering ledger, and fail-closed single-run recovery after confirmed pause within a further 15-second bound. Chain, parallel, and nested runs report per-child partial/failure states without automatic interruption.
 - Added a native, live-refreshing, inspection-only fleet opened by `/subagents-fleet` or `Ctrl+Alt+F`, with current-session foreground and recent async child navigation, transcript detail, and completed output/session paths. The textual status view remains available without a TUI, while stop, steer, and resume stay in explicit commands. Thanks to Jakub Neumann (@neumie) for #454 and Manfred Liiv (@manfredlift) for #412.
 - Added `asyncWidget: false` to disable the above-editor background-run widget for companion footer/dashboard extensions, and exposed the workflow-level `goal` on `subagent:async-started` lifecycle events.
-- Added agent-local `skillPath` discovery so custom agents can select private skills without publishing them to Selesai's parent/global catalog. Relative paths resolve from the defining agent file, local matches take precedence, and missing or unreadable candidates fall back to normal discovery. Thanks to Kylegl (@kylegl) for #428.
+- Added agent-local `skillPath` discovery so custom agents can select private skills without publishing them to Pi's parent/global catalog. Relative paths resolve from the defining agent file, local matches take precedence, and missing or unreadable candidates fall back to normal discovery. Thanks to Kylegl (@kylegl) for #428.
 - Added strict `acceptance` defaults in agent frontmatter and agent management. The default applies only to single-agent launches, explicit call values win, and chain/parallel acceptance remains task or step configuration. Thanks to ConjugativeIndicator (@CovetingEpiphany2152) for #453.
-- Added canonical-session leases for direct child revival so independent parent processes cannot write the same persisted session concurrently. Lease ownership includes the revived/source run, parent session, runner and writer process identities, and host; a two-phase startup handshake rejects contention before Selesai starts, and stale recovery remains conservative. Thanks to Luke Parke (@LukasParke) for #446.
+- Added canonical-session leases for direct child revival so independent parent processes cannot write the same persisted session concurrently. Lease ownership includes the revived/source run, parent session, runner and writer process identities, and host; a two-phase startup handshake rejects contention before Pi starts, and stale recovery remains conservative. Thanks to Luke Parke (@LukasParke) for #446.
 - Added single-agent launch defaults for `async`, `timeoutMs`, and `turnBudget` in agent frontmatter, with explicit tool-call values taking precedence. Thanks to ConjugativeIndicator (@CovetingEpiphany2152) for #410.
 - Added `/subagents-stop` and `subagent({ action: "stop", id })` for current-session top-level async runs. The slash command opens a confirmation selector when no id is provided, falls back to exact commands without a TUI, routes scheduled jobs through `schedule-cancel`, and records manual stops as `stopped`/cancelled lifecycle events instead of timeouts. Thanks to Sean Seaman (@seans-leadsonline) for #407 and #408.
 - Added an opt-in read-only subagent watchdog that reviews actual repo edits at safe agent-end boundaries, with visible warnings, main and child watchdog coordination, strong complementary model recommendations, changed-file TypeScript/JavaScript LSP diagnostics, `/subagents-watchdog` status/model commands, and agent-facing watchdog configuration actions. Thanks to can1357/oh-my-pi for the advisor/watchdog concept, and to apmantza/pi-lens, gjczone/pi-shazam, and can1357/oh-my-pi for LSP diagnostics patterns.
@@ -564,11 +786,11 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Documented `contact_supervisor` structured interview requests in the default child bridge instructions.
 
 ### Fixed
-- Moved the published extension entrypoint to the package root so Selesai displays the startup label as `pi-subagents` instead of an internal source path. Thanks to Ramin Hazegh (@rhazegh) for #475.
+- Moved the published extension entrypoint to the package root so Pi displays the startup label as `pi-subagents` instead of an internal source path. Thanks to Ramin Hazegh (@rhazegh) for #475.
 - Accepted empty optional `manualNotes` and `notes` strings in acceptance reports while retaining the `manual-notes` evidence requirement when configured. Thanks to Nick Tripp (@nicholastripp) for #474.
 - Kept explicit child tool allowlists strict while surfacing actionable errors when named extension tools are requested without a loaded provider. Internal `structured_output` is now admitted automatically when an output schema is active, and direct and chained children share the same registry check. Thanks to DesertThief (@DesertThief) for #429 and Chris-Kode (@Chris-Kode) for confirming the structured-output case.
 - Prevented model fallback retries for trailing child tool failures even when their details resemble provider outages, and retried provider streams that end without `finish_reason`. Thanks to 虚妄IlluDelu (@XWIlluDelu) for #436.
-- Recognized Selesai's `max` thinking level in child model suffixes, Clarify selection, watchdog settings, and status formatting, while exposing it only when model metadata explicitly supports it. Thanks to mapleluv (@mapleluvr) for #423.
+- Recognized Pi's `max` thinking level in child model suffixes, Clarify selection, watchdog settings, and status formatting, while exposing it only when model metadata explicitly supports it. Thanks to mapleluv (@mapleluvr) for #423.
 - Labeled every chain-clarification shortcut with its action, made the background state explicit, and kept primary actions in a separate footer without widening the fixed 84-column overlay. Thanks to GonzaloRocca (@gonzalonicolasr) for #430.
 - Hardened acceptance reports so explicit empty changed-file and test arrays are treated as not applicable, required criteria are reflected in examples, known model-output variants normalize to one strict canonical shape, unknown or ambiguous values fail with exact diagnostics, and parsed reports plus ledgers persist in child metadata while normal output stays clean. Thanks to Nick Tripp (@nicholastripp) for #442, maxsturmb (@maxsturmb) for #452, and techmodv90 (@techmodv90) for #449 and #450.
 - Shared task-intent classification between acceptance inference and the completion guard so read-only tasks with explicit no-edit wording do not receive impossible write-evidence gates, while scoped prohibitions still preserve later implementation clauses. Thanks to 虚妄IlluDelu (@XWIlluDelu) for #433.
@@ -579,13 +801,13 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Bounded live child JSONL lines and stderr tails in foreground and async runners, preserving split UTF-8 and final unterminated events while returning structured `protocol_output_limit` failures for oversized lines. Completion now honors `agent_end.willRetry` and prefers `agent_settled` without removing the legacy terminal-message fallback. Thanks to Luke Parke (@LukasParke) for #444 and #445.
 - Made `subagent_wait({ id })` track remembered detached foreground runs, defer acceptance until the child exits, and wake the originating session with recovered output so parents do not launch duplicate replacements after supervisor coordination. Thanks to Ramin Hazegh (@rhazegh) for #456.
 - Renamed the parent blocking tool from `wait` to `subagent_wait` with no legacy alias, avoiding startup conflicts with unrelated extension wait tools. Thanks to DesZhang (@DesZhang) for #437 and Nate Rutman (@nrutman) for confirming the conflict and clarifying the incompatible semantics.
-- Reused the verified current or installed Selesai CLI on POSIX instead of resolving a potentially missing or different `pi` from `PATH`. Thanks to Luke Parke (@LukasParke) for #443.
+- Reused the verified current or installed Pi CLI on POSIX instead of resolving a potentially missing or different `pi` from `PATH`. Thanks to Luke Parke (@LukasParke) for #443.
 - Preserved `{outputs.name}` as literal task text in async single runs while keeping named-output interpolation for real chains. Thanks to Tristan Storch (@tstorch) for #427.
 - Recovered acceptance reports from child-written configured outputs, honoring file-only source precedence and surfacing malformed primary reports. Thanks to 虚妄IlluDelu (@XWIlluDelu) for #434.
 - Isolated inherited output files for async parallel siblings and rejected duplicate resolved output paths before launch, preventing silent report loss. Thanks to basher83 (@basher83) for #420.
 - Replaced raw chain-schema failures with actionable errors that name invalid properties, list allowed fields, and show valid examples. Thanks to Nicolas Marchildon (@elecnix) for #416 and #425.
 - Hide lower-priority agent definitions from `subagent({ action: "list" })` when a higher-priority project or user agent shadows them. Thanks to Kylegl (@kylegl) for #415.
-- Resolve the real Selesai CLI on Windows when pi-subagents runs inside an embedded SDK host instead of relaunching the host application's entry point. Thanks to Marc Kassubeck (@CompN3rd) for #413.
+- Resolve the real Pi CLI on Windows when pi-subagents runs inside an embedded SDK host instead of relaunching the host application's entry point. Thanks to Marc Kassubeck (@CompN3rd) for #413.
 - Avoid rendering active subagent activity as `now ago`. Thanks to Viktor Chernodub (@chernodub) for #414.
 - Preserve async resume model/thinking metadata for live, completed, and result-only child runs, and repair stale status metadata from final results. Thanks to BoxChen (@nishuzumi) for #403.
 - Gate foreground `contact_supervisor`/intercom detaches on delivered supervisor handoff events, keep detached foreground runs visible through status/fleet, and mark detached placeholders as non-successful so missing explicit outputs are not mistaken for completed work.
@@ -610,20 +832,20 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 
 ### Added
 - Added optional `toolBudget` limits for child subagent tool calls. Runs, steps, and agents can set `{ soft?, hard, block? }`; the child runtime nudges at the soft limit and blocks configured tools after the hard limit so runaway browsing can still finish with final text. Thanks to Jürgen Schmied (@jschmied) for #379.
-- Added a stable v1 in-process event-bus RPC for other Selesai extensions, with `ping`, `status`, async-only `spawn`, `interrupt`, and async `stop` over versioned request/reply envelopes.
+- Added a stable v1 in-process event-bus RPC for other Pi extensions, with `ping`, `status`, async-only `spawn`, `interrupt`, and async `stop` over versioned request/reply envelopes.
 - Added `toolDescriptionMode` with `full`, `compact`, and `custom` modes for the parent-facing `subagent` tool description. Compact mode reduces prompt bloat while keeping safety-critical orchestration guidance, and invalid custom descriptions fall back to full mode.
 - Added an optional read-only subagent fleet/status view with `/subagents-fleet` and `subagent({ action: "status", view: "fleet" })`, plus `view: "transcript"` to tail active async child output/session artifacts.
 - Added uniform per-child transcript artifacts (`<run>_<agent>_transcript.jsonl`) for foreground and async subagent runs, gated by `subagents.artifacts.includeTranscript` (default on). Each transcript is a versioned JSONL stream of child messages, tool starts/ends, and stdout/stderr lines with a byte cap and truncation marker.
-- Added `subagent({ action: "steer", id, message, index? })` for non-terminal guidance to live async Selesai child sessions, with file-backed control requests, per-child steering inboxes, status/event visibility, and queued delivery for pending indexed async children when the runtime supports mid-run steering.
+- Added `subagent({ action: "steer", id, message, index? })` for non-terminal guidance to live async Pi child sessions, with file-backed control requests, per-child steering inboxes, status/event visibility, and queued delivery for pending indexed async children when the runtime supports mid-run steering.
 - Added an optional `turnBudget` (`maxTurns` with `graceTurns`) for foreground and async/background subagent runs. At the soft `maxTurns` limit the child is warned via its system prompt to wrap up; after `graceTurns` additional assistant turns the run is aborted and partial output is returned. `turnBudget`, `turnBudgetExceeded`, and `wrapUpRequested` propagate through results, async status, and nested summaries.
-- Added optional scheduled subagent runs so callers can defer a subagent launch until a future time. `subagent({ action: "schedule", agent, task?, schedule: "+10m" | "2030-01-01T09:00:00Z", scheduleName? })` arms a one-shot timer that launches the run as a normal tracked async run once it fires, with `schedule-list`, `schedule-status`, and `schedule-cancel` management actions. Schedules are persisted per session and restored after a Selesai restart; jobs missed by more than the configured lateness window are marked `missed` instead of firing late. The feature is opt-in and requires `{ "scheduledRuns": { "enabled": true } }` in `~/.selesai/agent/extensions/subagent/config.json`. Only schedule explicit delayed runs the user asked for. Thanks to @tintinweb for the concept.
+- Added optional scheduled subagent runs so callers can defer a subagent launch until a future time. `subagent({ action: "schedule", agent, task?, schedule: "+10m" | "2030-01-01T09:00:00Z", scheduleName? })` arms a one-shot timer that launches the run as a normal tracked async run once it fires, with `schedule-list`, `schedule-status`, and `schedule-cancel` management actions. Schedules are persisted per session and restored after a Pi restart; jobs missed by more than the configured lateness window are marked `missed` instead of firing late. The feature is opt-in and requires `{ "scheduledRuns": { "enabled": true } }` in `~/.selesai/agent/extensions/subagent/config.json`. Only schedule explicit delayed runs the user asked for. Thanks to @tintinweb for the concept.
 - Added a real Pi-session E2E test lane with faux provider routing to verify parent-child subagent result delivery without network model calls.
 - Hardened the `wait` tool's wake path so an event wake cancels its poll-interval fallback timer instead of letting both run, and so an already-aborted turn resolves immediately. Added a test that verifies an event wakes `wait` before the poll interval elapses.
 - Added smart completion batching for async subagent notifications. Successful sibling completions that finish within a short window now arrive as a single grouped message instead of separate notifications; a hard max-wait cap prevents holding them indefinitely, and late-finishing siblings join a shorter straggler group. Failed and paused completions bypass batching and fire immediately so failure and attention signals are never delayed. The debounce window, max-wait cap, and straggler windows are configurable via `completionBatch` in `config.json`.
 - Added `subagent({ action: "eject" })`, `disable`, `enable`, and `reset` management actions for bundled and custom agents. `eject` copies a builtin or package agent to user/project scope as an editable custom file that shadows the original; `disable`/`enable` toggle a reversible `agentOverrides.<name>.disabled` settings override without deleting the agent; `reset` removes the scope's custom agent file and/or settings override to restore the bundled default. All four accept `agentScope: "user" | "project"` (default `user`) and are blocked from child-safe fanout mode alongside `create`/`update`/`delete`.
 - Added fuzzy model resolution so callers can specify models with provider separator variations, optional date-stamp parts, and case differences instead of exact `provider/modelId` strings. When `subagents.modelScope: { enforce: true, allow: [...] }` is configured, explicit caller-supplied out-of-scope models error while frontmatter/parent-inherited/fallback models warn. Inspired by @tintinweb's pi-subagents.
 - Added a parent-side `wait` tool for detached async subagent runs. `wait()` returns when the next active run finishes or needs attention, `wait({ all: true })` drains all active runs, `wait({ id })` targets one run, and `wait({ timeoutMs })` caps the block. This lets background-launching skills and non-interactive `pi -p` runs keep going without sleep/status-polling loops or abandoned children. Thanks to RoboBryce (@robobryce) for #365.
-- Added an opt-in `memory` frontmatter field for agent definitions so recurring custom agents can maintain role-specific durable memory (e.g. a security reviewer accumulating threat-model notes). `memory: { scope: "project" | "user", path: "<name>" }` resolves a safe `agent-memory/` directory, injects the first 200 lines of a `MEMORY.md` into the child system prompt, and falls back to a read-only memory block for agents without write tools. Memory lives under a dedicated namespace that does not conflict with Selesai's parent/session/project memory system. Inspired by @tintinweb's pi-subagents.
+- Added an opt-in `memory` frontmatter field for agent definitions so recurring custom agents can maintain role-specific durable memory (e.g. a security reviewer accumulating threat-model notes). `memory: { scope: "project" | "user", path: "<name>" }` resolves a safe `agent-memory/` directory, injects the first 200 lines of a `MEMORY.md` into the child system prompt, and falls back to a read-only memory block for agents without write tools. Memory lives under a dedicated namespace that does not conflict with Pi's parent/session/project memory system. Inspired by @tintinweb's pi-subagents.
 - Added native supervisor coordination for child subagents. Children can use `contact_supervisor` without installing `pi-intercom`, and parent-side requests are scoped to the exact session id that spawned the child.
 - Added native prompt workflow commands: `/prompt-workflow` runs a prompt template through a subagent, and `/chain-prompts` turns prompt templates into native subagent chain steps.
 
@@ -632,9 +854,9 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Tolerate execution-mode action aliases such as `single`, `parallel`, `PARALLEL`, and `tasks` when the matching execution fields are present, while preserving clear runtime errors for unknown management actions. Thanks to Artem Timofeev (@atimofeev) for #382.
 - Removed companion-package recommendation messages from session start, `subagent({ action: "list" })`, and `/subagents-doctor`. Thanks to Mark Gaiser (@markg85) for #381.
 - Recover detached foreground subagent results after intercom handoff so completed detached runs remain visible to status and resume paths. Thanks to Artem Timofeev (@atimofeev) for #384.
-- Scope async subagent completion notifications to the exact owning Selesai session so another session in the same repo no longer receives result notices.
+- Scope async subagent completion notifications to the exact owning Pi session so another session in the same repo no longer receives result notices.
 - Harden scheduled-run timestamp parsing and persisted store validation so ambiguous absolute times and corrupted job records fail clearly instead of being normalized or dropped.
-- Derive live-detail and full-notification hints from Selesai's configured expand key instead of hard-coding `Ctrl+O`. Thanks to Kylegl (@kylegl) for #364.
+- Derive live-detail and full-notification hints from Pi's configured expand key instead of hard-coding `Ctrl+O`. Thanks to Kylegl (@kylegl) for #364.
 - Tolerate transient Windows `EPERM`/`EBUSY`/`EACCES` locks when atomically replacing async JSON files. Thanks to ThanhNT29Jacky (@ThanhNT29Jacky) for #380.
 - Hardened the async timeout integration test to wait for the mock child to spawn before asserting the timeout result, fixing a race where the timeout could fire before the child existed.
 
@@ -648,7 +870,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Added `totalCost` rollups to foreground single, parallel, and chain run details, including nested foreground subagent costs and compact progress display. Thanks to Clark Everson (@gr3enarr0w) for #345.
 - Added `globalConcurrencyLimit` to cap simultaneously running subagent tasks across parallel groups in a single run. Thanks to Clark Everson (@gr3enarr0w) for #349.
 - Added stable v1 async lifecycle artifact metadata in `status.json`, `events.jsonl`, and result JSON so observability and workflow gates can correlate subagent runs without scraping terminal output. Thanks to Clark Everson (@gr3enarr0w) for #350.
-- Added `SELESAI_SUBAGENT_PI_BINARY` to let wrappers launch child agents through an explicit Selesai binary instead of resolving `pi` from `PATH`. Thanks to David Barroso (@dbarrosop) for #341.
+- Added `SELESAI_SUBAGENT_PI_BINARY` to let wrappers launch child agents through an explicit Pi binary instead of resolving `pi` from `PATH`. Thanks to David Barroso (@dbarrosop) for #341.
 - Added `worktreeBaseDir` and `SELESAI_SUBAGENTS_WORKTREE_DIR` so worktree isolation can use a stable trusted base directory. Thanks to Matt Robenolt (@mattrobenolt) for #185.
 - Added `singleRunOutputBaseDir` so single-agent relative outputs can be routed to a configured artifact directory. Thanks to Oleksii Nikiforov (@NikiforovAll) for #173.
 - Added `maxSubagentSpawnsPerSession` and `SELESAI_SUBAGENT_MAX_SPAWNS_PER_SESSION` to cap total subagent launches in one session. Thanks to @eightHundreds for #239.
@@ -659,12 +881,12 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Detach foreground subagent runs immediately when a child starts a blocking `contact_supervisor` or `intercom.ask` call, avoiding parent/child intercom deadlocks. Thanks to huarkiou (@huarkiou) for #335.
 - Made child boundary prompt editing instructions tool-agnostic so Codex-style adapters are not told to call unavailable `edit`/`write` tools. Thanks to Artem Timofeev (@atimofeev) for #338.
 - Recursively interrupt active async parallel children and nested async descendants when pausing a background run. Thanks to Vicary (@vicary) for #355.
-- Avoid runtime peer imports from detached async runners while still forwarding the Selesai package root when available. Thanks to @aurbina83 for #352 and @huangkun3251 for #342.
+- Avoid runtime peer imports from detached async runners while still forwarding the Pi package root when available. Thanks to @aurbina83 for #352 and @huangkun3251 for #342.
 - Fall back to PATH `node` for async runners when the current Node executable path is stale or deleted. Thanks to Richard Hao (@0xRichardH) for #347.
 - Retry fallback models when a zero-exit subagent attempt produces no output, including background async runs, preserve structured-output-only completions, and pre-warm forked session files for parallel children. Thanks to Clark Everson (@gr3enarr0w) for #344.
 - Preserve explicit empty companion suggestion surfaces and keep global companion suggestions disabled when writing package dismissal state.
 - Include bounded async runner stderr tails when stale-run reconciliation marks a startup crash failed. Thanks to Salem Sayed (@salemsayed) for #340.
-- Persist forked child session files when Selesai returns a branch path before writing it to disk. Thanks to @trisforrestcam for #174.
+- Persist forked child session files when Pi returns a branch path before writing it to disk. Thanks to @trisforrestcam for #174.
 - Pass explicit `thinking: off` through to child model arguments as a `:off` suffix. Thanks to Thomas Dietert (@tdietert) for #147.
 - Sanitize Anthropic signed `thinking` / `redacted_thinking` blocks out of forked child sessions and force child thinking off so fork-context subagents survive signed-thinking transcripts after branching or compaction. Thanks to Thomas Dietert (@tdietert) for #147.
 - Restore queued and running detached async jobs into the widget after restarting Pi. Thanks to Vicary (@vicary) for #362.
@@ -677,7 +899,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Added subagent profile commands and provider model catalog generation for quota and quality model profiles. Thanks to tencnivel (@tencnivel) for #333.
 
 ### Fixed
-- Discover `pi-intercom` installations created by `--extension npm:pi-intercom` under Selesai's temporary npm extension cache. Thanks to loss-and-quick (@loss-and-quick) for #336.
+- Discover `pi-intercom` installations created by `--extension npm:pi-intercom` under Pi's temporary npm extension cache. Thanks to loss-and-quick (@loss-and-quick) for #336.
 - Made async subagent interrupt, steer, and stop requests portable across platforms that do not support Unix signals. Thanks to AeonDave (@AeonDave) for #332.
 - Hardened profile commands by probing models without tools, rejecting unsafe profile/provider path tokens, and resolving short model IDs and thinking suffixes against the current registry.
 - Limited inline `/chain` acceptance values to levels expressible in slash syntax and kept completion disabled inside shared `--` tasks with literal parentheses.
@@ -687,14 +909,14 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 ### Added
 - Added `subagents.disableThinking` so bundled builtin agents can drop thinking suffix defaults for providers that do not accept them. Thanks to Joshua Harding (@jhstatewide) for #212.
 - Discover nested grouped skills such as `.pi/skills/group/name/SKILL.md` so subagents match the host runtime's recursive skill lookup. Thanks to Weaxs (@Weaxs) for #262.
-- Follow Selesai's configured project config directory for project-local agents, chains, skills, packages, settings, direct MCP config, and intercom package discovery instead of hardcoding `.pi`, while retaining `.pi` as the fallback for older Pi versions.
+- Follow Pi's configured project config directory for project-local agents, chains, skills, packages, settings, direct MCP config, and intercom package discovery instead of hardcoding `.selesai`, while retaining `.selesai` as the fallback for older Pi versions.
 
 ### Changed
 - Hardened npm installs by tracking `package-lock.json`, pinning direct dependencies, and using `npm ci --ignore-scripts` in CI and release workflows. Thanks to Modestas Vainius (@modax) for #234.
 - List configured subagent skills by name, description, and file path instead of inlining full skill bodies, and ensure tool-restricted children can read those skill files on demand. Thanks to Ruben Paz (@Istar-Eldritch) for #183.
 
 ### Fixed
-- Resolve the async result watcher directory with `fs.realpathSync.native()` before `fs.watch()` so Windows profiles with 8.3 temp paths do not crash Selesai when async subagent results arrive. Thanks to kerushidao (@kerushidao) for #254.
+- Resolve the async result watcher directory with `fs.realpathSync.native()` before `fs.watch()` so Windows profiles with 8.3 temp paths do not crash Pi when async subagent results arrive. Thanks to kerushidao (@kerushidao) for #254.
 - Accept structured acceptance reports emitted in JSON-family fences when the fenced body has the acceptance-report shape. Thanks to Suleiman Tawil (@stawils) for #253.
 - Report field-level acceptance-report validation errors instead of a generic parse failure, and clarify array element types in the acceptance prompt. Thanks to Whisperfall (@Whisperfall) for #264 and josephkEA (@josephkEA) for the follow-up reproduction.
 - Simplified the public `acceptance` and chain tool schemas so Kimi/Moonshot-style parsers can load `subagent`, while runtime validation still rejects malformed acceptance config and dynamic fanout steps. Thanks to Sergio Agosti (@sergio-agosti) for #249.
@@ -721,14 +943,14 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Interrupt live async children before delivering `resume` follow-up messages so intercom nudges reach workers that are stuck mid-turn more reliably.
 - Reject appended chain steps with duplicate reserved output names or unknown named-output references before they are queued.
 - Ignore legacy `.agents/skills` files during agent discovery so skill definitions are not registered as subagents. Thanks to chyax98 (@chyax98) for #257.
-- Launch detached async runners through Node when Selesai itself is not the Node executable. Thanks to Tetsuya.dev (@tetsuya-dev-jp) for #273.
+- Launch detached async runners through Node when Pi itself is not the Node executable. Thanks to Tetsuya.dev (@tetsuya-dev-jp) for #273.
 - Preserve the slash command requester context when bridge requests launch subagents. Thanks to Victor Sumner (@vsumner) for #268.
 - Trim repeated nested `subagent` tool schema descriptions so provider payloads stay compact while retaining top-level parameter guidance. Thanks to Thomas Mustier (@tmustier) for #250.
 
 ## [0.29.0] - 2026-06-19
 
 ### Added
-- Added package-provided agent and chain discovery from installed Selesai packages and package settings, including read-only management behavior, package source counts in doctor output, nested-cwd project package discovery, and package definitions that remain below user/project overrides. Thanks to Fabian Jocks (@iamfj) for #278.
+- Added package-provided agent and chain discovery from installed Pi packages and package settings, including read-only management behavior, package source counts in doctor output, nested-cwd project package discovery, and package definitions that remain below user/project overrides. Thanks to Fabian Jocks (@iamfj) for #278.
 - Added `SELESAI_SUBAGENT_EXTRA_AGENT_DIRS` and `PI_INTERCOM_EXTENSION_DIR` overrides so bundled agents and `pi-intercom` can be loaded from read-only package locations. Thanks to David Barroso (@dbarrosop) for #288.
 
 ### Fixed
@@ -790,8 +1012,8 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 ### Fixed
 - Treat provider-coerced single-run `output: "false"` the same as boolean `false`, preventing literal `false` output files in foreground and async runs.
 - Include selected direct MCP tool names in explicit child `--tools` allowlists when metadata cache/config resolution is available.
-- Honor `PI_CODING_AGENT_DIR` for runtime config, agent/chain/settings discovery, skills, run history, artifact cleanup, and intercom defaults.
-- Hide nested child Selesai process windows on Windows for both foreground and background subagent runs.
+- Honor `SELESAI_CODING_AGENT_DIR` for runtime config, agent/chain/settings discovery, skills, run history, artifact cleanup, and intercom defaults.
+- Hide nested child Pi process windows on Windows for both foreground and background subagent runs.
 - Avoid completion-guard false positives for declared read-only agents, and add `completionGuard: false` for bash-enabled non-implementation agents that should not be required to edit files.
 - Skip empty or whitespace-only assistant text parts when selecting subagent final output, so later meaningful text in the same or earlier assistant message is not masked.
 - Declare `@earendil-works/pi-tui` as a runtime dependency so packaged installs can load the extension without relying on dev dependencies or optional peers.
@@ -815,7 +1037,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 ## [0.24.1] - 2026-05-10
 
 ### Changed
-- Migrated Selesai package imports and package metadata to the `@earendil-works/*` scope, switched async TypeScript execution discovery to upstream `jiti`, and hardened forked-session creation to use the public `SessionManager.open()` path.
+- Migrated Pi package imports and package metadata to the `@earendil-works/*` scope, switched async TypeScript execution discovery to upstream `jiti`, and hardened forked-session creation to use the public `SessionManager.open()` path.
 
 ## [0.24.0] - 2026-05-03
 
@@ -854,9 +1076,9 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 
 ### Changed
 - Store and discover saved chain workflows from dedicated chain directories: user chains in `~/.selesai/agent/chains/**/*.chain.md` and project chains in `.pi/chains/**/*.chain.md`.
-- Retry foreground subagent fallback models when Selesai reports a retryable provider error, such as 429/quota, even if the child process exits successfully.
+- Retry foreground subagent fallback models when Pi reports a retryable provider error, such as 429/quota, even if the child process exits successfully.
 - Align single-run async subagent widgets and `/subagents-status` rendering with foreground subagent result styling for parallel, chain, and grouped chain runs, including inline live detail when tool output expansion is enabled, while keeping multi-job async widgets compact.
-- Render async subagent widgets through an adaptive component so active parallel agent rows fit without Selesai's fixed string-widget truncation marker.
+- Render async subagent widgets through an adaptive component so active parallel agent rows fit without Pi's fixed string-widget truncation marker.
 - Tell parent agents that async runs are detached and they should end the turn instead of running sleep/poll loops when no independent work remains.
 
 ## [0.22.0] - 2026-05-02
@@ -867,7 +1089,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 
 ### Changed
 - Builtin agents now inherit the user's configured default model instead of pinning `openai-codex/gpt-5.5`; use builtin overrides to pin a model for a role.
-- Hide unsupported thinking levels in subagent clarify and agent-manager pickers when Selesai exposes per-model thinking metadata.
+- Hide unsupported thinking levels in subagent clarify and agent-manager pickers when Pi exposes per-model thinking metadata.
 - Updated builtin agent prompts, README, and bundled skill docs to prefer `contact_supervisor` for blocked decisions and avoid child-side routine completion handoffs.
 - Teach reviewer agents that repo-local `progress.md` files are intentional scratch files that should remain untracked and covered by `.gitignore`.
 
@@ -879,7 +1101,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 ### Fixed
 - Show top-level async parallel runs as `parallel` instead of `chain`, with foreground-style running/done wording in widgets and status output, and group running async chain detail by chain step.
 - Scoped `/subagents-status` to async runs launched from the current pi session instead of showing prior or unrelated sessions.
-- Declared the Selesai TUI package as a direct dev dependency and added a manifest guard so CI installs do not rely on transitive optional peer dependencies for tests.
+- Declared the Pi TUI package as a direct dev dependency and added a manifest guard so CI installs do not rely on transitive optional peer dependencies for tests.
 - Made prompt-runtime extension path assertions portable on Windows.
 
 ## [0.21.4] - 2026-05-01
@@ -890,7 +1112,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Added `outputMode: "inline" | "file-only"` for saved subagent outputs. `inline` remains the default, while `file-only` returns a concise saved-file reference instead of injecting full saved output back into the parent context.
 
 ### Fixed
-- Marked Selesai runtime peer dependencies as optional so npm package installs do not auto-install duplicate Selesai packages or emit unrelated transitive dependency warnings.
+- Marked Pi runtime peer dependencies as optional so npm package installs do not auto-install duplicate Pi packages or emit unrelated transitive dependency warnings.
 
 ## [0.21.3] - 2026-04-30
 
@@ -1058,7 +1280,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Added builtin `oracle` and `oracle-executor` agents for the `main -> oracle -> main decision -> oracle-executor` workflow, plus README guidance for invoking the oracle pair with forked context.
 
 ### Fixed
-- Migrated extension tool schemas from `@sinclair/typebox` to `typebox` 1.x so packaged installs follow Selesai's current extension runtime contract.
+- Migrated extension tool schemas from `@sinclair/typebox` to `typebox` 1.x so packaged installs follow Pi's current extension runtime contract.
 
 ### Changed
 - Moved TypeBox from `peerDependencies` to a real `dependencies` entry so `pi install` production installs keep the schema package available at runtime.
@@ -1101,7 +1323,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 ## [0.16.1] - 2026-04-16
 
 ### Changed
-- Parallel subagent startup no longer applies any worker-start stagger in `mapConcurrent()`. `pi-subagents` now relies on Selesai core's settings/auth lock retry behavior instead of carrying its own startup-delay workaround.
+- Parallel subagent startup no longer applies any worker-start stagger in `mapConcurrent()`. `pi-subagents` now relies on Pi core's settings/auth lock retry behavior instead of carrying its own startup-delay workaround.
 
 ## [0.16.0] - 2026-04-16
 
@@ -1119,8 +1341,8 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 ## [0.15.0] - 2026-04-16
 
 ### Added
-- Added `systemPromptMode` so subagents can replace Selesai's base prompt with `--system-prompt` instead of always appending with `--append-system-prompt`, shipping the core of issue `#85` from @isvlasov.
-- Added `inheritProjectContext` and `inheritSkills` so child runs can keep or strip inherited project instruction files (`AGENTS.md`, `CLAUDE.md`, etc.) and Selesai's discovered skills block.
+- Added `systemPromptMode` so subagents can replace Pi's base prompt with `--system-prompt` instead of always appending with `--append-system-prompt`, shipping the core of issue `#85` from @isvlasov.
+- Added `inheritProjectContext` and `inheritSkills` so child runs can keep or strip inherited project instruction files (`AGENTS.md`, `CLAUDE.md`, etc.) and Pi's discovered skills block.
 
 ### Changed
 - Builtin subagents now default to `systemPromptMode: replace`, with builtin `delegate` staying on `append`.
@@ -1128,7 +1350,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Builtin agent prompts were rewritten for the new prompt-assembly model, and builtin `reviewer` / `context-builder` tool lists now match their documented behaviors. This rounds out the prompt-assembly work merged in PR `#92`, which closed issue `#85`. Thanks @isvlasov.
 
 ### Fixed
-- Cross-platform tests now avoid machine-specific Selesai install paths, align homedir-sensitive settings discovery on Windows CI, and use deterministic async config-write failure fixtures.
+- Cross-platform tests now avoid machine-specific Pi install paths, align homedir-sensitive settings discovery on Windows CI, and use deterministic async config-write failure fixtures.
 - Request-level `cwd` handling is now consistent across management and execution paths. `subagent` requests that target a worktree or nested checkout now resolve project agents, project settings, and builtin agent overrides from the requested `cwd` instead of accidentally inheriting the parent session's repo. This fixes issue `#83`. Thanks @hakin19 for the report.
 - Relative child `cwd` values now resolve from the already-selected request/shared `cwd` across sync runs, async/background runs, chain steps, and top-level parallel tasks. This fixes cases where values like `packages/app` were interpreted from the wrong base directory, which could break skill lookup, output paths, and child process spawning.
 - Worktree parallel-mode validation now compares task-level `cwd` overrides after relative-path resolution, so equivalent paths like `.` no longer trigger false conflict errors against the shared worktree base.
@@ -1145,7 +1367,7 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 ## [0.14.0] - 2026-04-14
 
 ### Added
-- Builtin agents can now be customized through settings-backed field overrides in `~/.selesai/agent/settings.json` and `.selesai/settings.json` under `subagents.agentOverrides`, with `/agents` exposing a create/edit override flow instead of forcing full-file copies for model/thinking/tool/prompt tweaks.
+- Builtin agents can now be customized through settings-backed field overrides in `~/.selesai/agent/settings.json` and `.pi/settings.json` under `subagents.agentOverrides`, with `/agents` exposing a create/edit override flow instead of forcing full-file copies for model/thinking/tool/prompt tweaks.
 
 ### Fixed
 - Shared temp paths are now scoped under a user-specific temp root across async result storage, async run state, chain directories, artifact fallback storage, and detached async config files, avoiding cross-user collisions on shared machines while still handling arbitrary-UID/container environments where `os.userInfo()` can throw.
@@ -1455,14 +1677,14 @@ Selesai vendors pi-subagents 0.50.0 (upstream 0.49.0 + 0.50.0 included) and laye
 - Async execution now respects agent `extensions` sandbox settings, matching sync behavior.
 - Single-mode `output` now resolves explicit paths correctly: absolute paths are used directly, and relative paths resolve against `cwd`.
 - Single-mode output persistence is now caller-side in both sync and async execution, so output files are still written when agents run with read-only tools.
-- Selesai process spawning now uses a shared cross-platform helper in sync and async paths; on Windows it prefers direct Node + CLI invocation to avoid `ENOENT` and argument fragmentation.
+- Pi process spawning now uses a shared cross-platform helper in sync and async paths; on Windows it prefers direct Node + CLI invocation to avoid `ENOENT` and argument fragmentation.
 - Sync JSONL artifact capture now streams lines directly to disk with backpressure handling, preventing unbounded memory growth in long or parallel runs.
 - Execution now defaults `agentScope` to `both`, aligning run behavior with management `list` so project agents shown in discovery execute without explicit scope overrides.
 - Async completion notifications now dedupe at source and notify layers, eliminating duplicate/triple "Background task completed" messages.
 - Async notifications now standardize on canonical `subagent:started` and `subagent:complete` events (legacy enhanced event emissions removed).
 
 ### Changed
-- Reworked `skills.ts` to resolve skills through Selesai core skill loading with explicit project-first precedence and support for project/user package and settings skill paths.
+- Reworked `skills.ts` to resolve skills through Pi core skill loading with explicit project-first precedence and support for project/user package and settings skill paths.
 - Skill discovery now normalizes and prioritizes collisions by source so project-scoped skills consistently win over user-scoped skills.
 - Documentation now references `<tmpdir>` instead of hardcoded `/tmp` paths for cross-platform clarity.
 

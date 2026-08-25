@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import { cleanupCompletionReplay, completionArchivePath, completionReplayPath, readCompletionArchive, readCompletionReplay, writeCompletionReplay, writeCompletionArchive } from "../../src/runs/background/completion-replay.ts";
 import { utf8Tail } from "../../src/shared/utf8.ts";
 import { collectWaitCompletions, recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
+import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import type { AsyncRunSummary } from "../../src/runs/background/async-status.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
@@ -40,20 +41,95 @@ describe("completion replay", () => {
 				mode: "single",
 				state: "complete",
 				success: true,
-				results: [{ agent: "worker", success: true, outputState: "present", output: "finished output" }],
+				results: [{ agent: "worker", success: true, outputState: "present", output: "finished output", contextOverflow: true }],
 			}, now, 60_000, { resultsDir, sessionId: "session-a" });
 
 			const replay = readCompletionReplay(resultsDir, "run-a", { sessionId: "session-a", now: now + 1 });
 			assert.equal(replay?.version, 1);
 			assert.equal(replay?.completion.archivePath, replay?.archivePath);
-			assert.equal(readCompletionArchive(replay!.archivePath)?.entries[0]?.text, "[worker]\nfinished output");
+			assert.deepEqual(readCompletionArchive(replay!.archivePath)?.entries[0], {
+				agent: "worker",
+				resultIndex: 0,
+				source: "result-tail",
+				text: "finished output",
+			});
 
 			const terminal = [{ id: "run-a", sessionId: "session-a" }] as AsyncRunSummary[];
 			const completions = collectWaitCompletions(terminal, makeState(), resultsDir);
 			assert.equal(completions?.[0]?.runId, "run-a");
 			assert.equal(completions?.[0]?.results?.[0]?.agent, "worker");
+			assert.equal(completions?.[0]?.results?.[0]?.contextOverflow, true);
 			assert.equal(completions?.[0]?.archivePath, replay?.archivePath);
 		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("surfaces pending completions when the direct session index is temporarily inaccessible", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-completion-index-denied-"));
+		const originalReadFileSync = fsCjs.readFileSync;
+		try {
+			const publicPath = path.join(resultsDir, "run-pending.json");
+			fs.mkdirSync(publicPath, { recursive: true });
+			writeAsyncResultFile(publicPath, {
+				id: "run-pending",
+				runId: "run-pending",
+				sessionId: "session-a",
+				agent: "worker",
+				success: true,
+				results: [{ agent: "worker", success: true, outputState: "present" }],
+			});
+			fsCjs.readFileSync = ((file, ...args) => {
+				if (String(file).includes(`${path.sep}result-index${path.sep}`)) {
+					const error = new Error("permission denied") as NodeJS.ErrnoException;
+					error.code = "EACCES";
+					throw error;
+				}
+				return originalReadFileSync(file, ...args);
+			}) as typeof fsCjs.readFileSync;
+			syncBuiltinESMExports();
+
+			const terminal = [{ id: "run-pending", sessionId: "session-a" }] as AsyncRunSummary[];
+			const completions = collectWaitCompletions(terminal, makeState(), resultsDir);
+			assert.equal(completions?.[0]?.runId, "run-pending");
+			assert.equal(completions?.[0]?.results?.[0]?.agent, "worker");
+		} finally {
+			fsCjs.readFileSync = originalReadFileSync;
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("surfaces malformed pending payload errors when the direct session index is inaccessible", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-completion-index-denied-malformed-"));
+		const originalReadFileSync = fsCjs.readFileSync;
+		try {
+			const publicPath = path.join(resultsDir, "run-pending.json");
+			fs.mkdirSync(publicPath, { recursive: true });
+			writeAsyncResultFile(publicPath, {
+				id: "run-pending",
+				runId: "run-pending",
+				sessionId: "session-a",
+				success: true,
+			});
+			fs.rmSync(publicPath, { recursive: true, force: true });
+			const pendingDir = path.join(resultsDir, "result-pending", encodeURIComponent("session-a"));
+			fs.writeFileSync(path.join(pendingDir, "run-pending.json"), "{", "utf-8");
+			fsCjs.readFileSync = ((file, ...args) => {
+				if (String(file).includes(`${path.sep}result-index${path.sep}`)) {
+					const error = new Error("permission denied") as NodeJS.ErrnoException;
+					error.code = "EACCES";
+					throw error;
+				}
+				return originalReadFileSync(file, ...args);
+			}) as typeof fsCjs.readFileSync;
+			syncBuiltinESMExports();
+
+			const terminal = [{ id: "run-pending", sessionId: "session-a" }] as AsyncRunSummary[];
+			assert.throws(() => collectWaitCompletions(terminal, makeState(), resultsDir), /Failed to read/);
+		} finally {
+			fsCjs.readFileSync = originalReadFileSync;
+			syncBuiltinESMExports();
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 	});
@@ -213,9 +289,11 @@ describe("completion replay", () => {
 				],
 			}, Date.now());
 			const archive = readCompletionArchive(archivePath);
-			assert.deepEqual(archive?.entries[0], { agent: "saved", source: "output-artifact", path: savedOutput });
+			assert.deepEqual(archive?.entries[0], { agent: "saved", resultIndex: 0, source: "output-artifact", path: savedOutput });
 			const fallback = archive?.entries[1];
 			assert.equal(fallback?.source, "result-tail");
+			assert.equal(fallback?.agent, "fallback");
+			assert.equal(fallback?.resultIndex, 1);
 			assert.equal(fallback?.truncated, true);
 			assert.ok(Buffer.byteLength(fallback?.text ?? "", "utf-8") <= 64 * 1024);
 			assert.match(fallback?.text ?? "", /-tail$/);

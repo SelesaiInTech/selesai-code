@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getAgentDir } from "@selesai/code";
 import {
   ensureIntercomRuntimeDir,
   getAgentDirPath,
@@ -20,7 +19,8 @@ import {
 } from "./paths.ts";
 
 test("getAgentDirPath defaults to Selesai's configured agent directory", () => {
-  assert.equal(getAgentDirPath({}), getAgentDir());
+  const expected = getAgentDirPath();
+  assert.equal(getAgentDirPath({}), expected);
 });
 
 test("getAgentDirPath honors SELESAI_CODING_AGENT_DIR", () => {

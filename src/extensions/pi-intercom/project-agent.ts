@@ -242,7 +242,7 @@ export async function openProjectPane(input: {
   const paneId = extractPaneId(split.data);
   if (!paneId) throw new Error("Herdr project pane error (PANE_GONE): pane split returned no pane id.");
 
-  const command = shellQuote(process.env.PI_INTERCOM_PI_BIN?.trim() || process.env.PI_BIN?.trim() || "pi");
+  const command = shellQuote(process.env.SELESAI_INTERCOM_BINARY?.trim() || process.env.SELESAI_BIN?.trim() || "selesai");
   const started = await client.run(["pane", "run", paneId, command], { timeoutMs: 15_000, signal: input.signal });
   if (started.ok === false) {
     await client.run(["pane", "close", paneId], { timeoutMs: 5_000 });
@@ -292,7 +292,7 @@ export async function waitForProjectSession(client: ListSessionsClient, input: {
     await sleep(pollMs, input.signal);
   }
 
-  throw new Error(`Timed out waiting for a Pi intercom session to register in ${input.projectRoot}. The Herdr pane may still be starting, or pi-intercom may not be loaded there.`);
+  throw new Error(`Timed out waiting for a Selesai intercom session to register in ${input.projectRoot}. The Herdr pane may still be starting, or  pi-intercom may not be loaded there.`);
 }
 
 function formatSessionRefs(sessions: SessionInfo[]): string {

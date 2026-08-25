@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const PI_CODING_AGENT_PACKAGE = "@selesai/code";
-export const SELESAI_SUBAGENT_PI_BINARY_ENV = "SELESAI_SUBAGENT_PI_BINARY";
+export const SELESAI_SUBAGENT_SELESAI_BINARY_ENV = "SELESAI_SUBAGENT_SELESAI_BINARY";
 
 export function findPiPackageRootFromEntry(
 	entryPoint: string,
@@ -70,9 +70,9 @@ function normalizePath(filePath: string): string {
 	return path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
 }
 
-function isStandalonePiExecutable(execPath: string): boolean {
+function isStandaloneSelesaiExecutable(execPath: string): boolean {
 	const executableName = execPath.split(/[\\/]/).pop();
-	return /^pi(?:\.exe)?$/i.test(executableName ?? "");
+	return /^(?:selesai|selesai-code)(?:\.exe)?$/i.test(executableName ?? "");
 }
 
 export function resolvePiCliScript(
@@ -122,7 +122,7 @@ export function resolvePiCliScript(
 		const binPath =
 			typeof binField === "string"
 				? binField
-				: (binField?.pi ?? Object.values(binField ?? {})[0]);
+				: (binField?.selesai ?? Object.values(binField ?? {})[0]);
 		if (!binPath) return undefined;
 		const candidate = path.resolve(path.dirname(packageJsonPath), binPath);
 		if (isRunnableNodeScript(candidate, existsSync)) {
@@ -141,13 +141,13 @@ export function getPiSpawnCommand(
 	deps: PiSpawnDeps = {},
 ): PiSpawnCommand {
 	const env = deps.env ?? process.env;
-	const piBinary = env[SELESAI_SUBAGENT_PI_BINARY_ENV]?.trim();
-	if (piBinary) {
-		return { command: piBinary, args };
+	const selesaiBinary = env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV]?.trim();
+	if (selesaiBinary) {
+		return { command: selesaiBinary, args };
 	}
 
 	const execPath = deps.execPath ?? process.execPath;
-	if (isStandalonePiExecutable(execPath)) {
+	if (isStandaloneSelesaiExecutable(execPath)) {
 		return { command: execPath, args };
 	}
 
@@ -159,5 +159,5 @@ export function getPiSpawnCommand(
 		};
 	}
 
-	return { command: "pi", args };
+	return { command: "selesai", args };
 }

@@ -89,7 +89,7 @@ const AcceptanceOverride = Type.Unsafe({
 		{ type: "boolean", enum: [false] },
 		{ type: "object", additionalProperties: true },
 	],
-	description: `Optional acceptance policy. Omit for read-only calls. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }. Supported evidence kinds: ${AcceptanceEvidenceKinds.join(", ")}. Evidence levels end at verified; use acceptance.review.required for review.`,
+	description: `Optional acceptance policy. For reviewer/read-only calls, omit acceptance. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }. Supported evidence kinds: ${AcceptanceEvidenceKinds.join(", ")}. Evidence levels end at verified; use acceptance.review.required for review. Omitted means auto-inferred unless agentContract compatibility behavior is enabled.`,
 });
 
 const AgentContractOverride = Type.Object({
@@ -145,6 +145,7 @@ export const ParallelTaskSchema = Type.Object({
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for this task" })),
+	fast: Type.Optional(Type.Boolean({ description: "Opt into priority service tier for supported native OpenAI-Codex child models. This can increase quota or cost." })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 	agentContract: Type.Optional(AgentContractOverride),
@@ -175,6 +176,7 @@ export const DynamicParallelTemplateSchema = Type.Object({
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for this task" })),
+	fast: Type.Optional(Type.Boolean({ description: "Opt into priority service tier for supported native OpenAI-Codex child models. This can increase quota or cost." })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 	agentContract: Type.Optional(AgentContractOverride),
@@ -188,8 +190,6 @@ export const DynamicCollectSchema = Type.Object({
 
 // Flattened so chain steps do not need an object-shape anyOf/oneOf union.
 export const ChainItem = Type.Object({
-	checkpoint: Type.Optional(Type.String({ description: "Approval checkpoint name. Pauses the chain without launching a child until approve-checkpoint or reject-checkpoint is called." })),
-	message: Type.Optional(Type.String({ description: "Optional approval message shown while the checkpoint is paused." })),
 	agent: Type.Optional(Type.String({ description: "Sequential step agent name" })),
 	task: Type.Optional(Type.String({
 		description: "Task template with variables: {task}=original request, {previous}=prior step's text response, {chain_dir}=shared folder, {outputs.name}=prior named output. Required for first step, defaults to '{previous}' for subsequent steps."
@@ -205,6 +205,7 @@ export const ChainItem = Type.Object({
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for this step" })),
+	fast: Type.Optional(Type.Boolean({ description: "Opt into priority service tier for supported native OpenAI-Codex child models. This can increase quota or cost." })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 	agentContract: Type.Optional(AgentContractOverride),
@@ -224,7 +225,7 @@ export const ChainItem = Type.Object({
 		description: "Create isolated git worktrees for each parallel task."
 	})),
 }, {
-	description: "Chain step: use {agent, task?, ...} for sequential, {parallel: [...]} for static concurrent execution, {expand, parallel: {...}, collect} for dynamic fanout, or {checkpoint: name, message?} for an approval pause.",
+	description: "Chain step: use {agent, task?, ...} for sequential, {parallel: [...]} for static concurrent execution, or {expand, parallel: {...}, collect} for dynamic fanout.",
 	additionalProperties: false,
 });
 
@@ -257,88 +258,82 @@ const ControlOverrides = Type.Object({
 const SubagentParamProperties = {
 	agent: Type.Optional(Type.String({ description: "Agent for one-child execution, or target for agent management actions." })),
 	task: Type.Optional(Type.String({ description: "Optional one-child task. Requires agent; cannot combine with action or workflowScript." })),
-	resume: Type.Optional(Type.String({ description: "Retained child run id for a workflowScript runs.run/runs.all item. Mutually exclusive with agent; task supplies the follow-up." })),
+	extensionBindings: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Namespaced, bounded plain-JSON metadata delivered only to the child runtime. Namespace keys use package.name/1 syntax." })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({ minLength: 1,
 		description: "Optional management/control action. Omit this field for structured single-child or workflowScript execution; use it only for management/control actions."
 	})),
+	name: Type.Optional(Type.String({ description: "Human-readable name for action='schedule.create'." })),
 	id: Type.Optional(Type.String({
-		description: "Run id/prefix for status/debug.run, interrupt, steer, append-step, approve-checkpoint, reject-checkpoint, or mission."
+		description: "Run id/prefix for status/debug.run, interrupt, steer, or mission.attach-run."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for debug.run, interrupt, steer, append-step, or mission.attach-run. Prefer id."
+		description: "Target run ID for debug.run, interrupt, steer, or mission.attach-run. Prefer id."
 	})),
 	dir: Type.Optional(Type.String({
 		description: "Async run directory for status/debug.run, stop, resume, or steer."
 	})),
 	handoffPath: Type.Optional(Type.String({ description: "worktree.discard manifest." })),
 	index: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based child index for actions that target a specific child or transcript." })),
+	childId: Type.Optional(Type.String({ minLength: 1, maxLength: 256, description: "Stable child identity for child-scoped stop requests." })),
 	view: Type.Optional(Type.String({
 		enum: ["fleet", "transcript"],
-		description: "Optional status view: 'fleet' for a read-only fleet surface, or 'transcript' with id/dir (and optional index) to tail a run transcript.",
+		description: "Optional status view. Use view='fleet' for a read-only active foreground/async fleet surface, or view='transcript' with id/dir (and optional index) to tail a run transcript.",
 	})),
 	lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 500, description: "Maximum transcript lines for action='status', view='transcript'. Defaults to 80." })),
 	topic: Type.Optional(Type.String()),
 	message: Type.Optional(Type.String({ description: "Follow-up message for resume, live guidance for steer, or optional startup prompt for project.open." })),
-	mode: Type.Optional(Type.String({ enum: ["steer", "follow_up", "auto"], description: "Delivery mode for action='steer': steer interrupts at the next safe point (default), follow_up waits for the next turn boundary, auto follows up mid-turn." })),
-	steeringRecovery: Type.Optional(Type.Boolean({ description: "For action='steer', allow pause-and-revive recovery after a missed acknowledgment. Defaults true for direct tool calls; false for extension RPC steering." })),
-	additional: Type.Optional(Type.Integer({ minimum: 1, description: "Positive launches to add with action='grant-spawn-budget'. Root interactive parent with native user confirmation only." })),
+	mode: Type.Optional(Type.String({ enum: ["steer", "follow_up", "auto"], description: "Delivery mode for action='steer'. steer interrupts at the next safe point (default), follow_up waits for the next turn boundary, and auto follows up mid-turn but delivers immediately between turns." })),
+	steeringRecovery: Type.Optional(Type.Boolean({ description: "For action='steer', allow pause-and-revive recovery after a missed acknowledgment. Defaults true for direct tool calls in steer mode; extension RPC steering forces false so callers retain exact child ownership." })),
+	additional: Type.Optional(Type.Integer({ minimum: 1, description: "Positive launches to add with action='grant-spawn-budget'. Root interactive parent with native user confirmation only; total grants cannot exceed the original configured cap." })),
+	scope: Type.Optional(Type.String({ enum: ["session", "user", "project"], description: "Scope for action='watchdog.configure'. Defaults to session to avoid persistent settings writes unless user/project is explicit." })),
+	target: Type.Optional(Type.String({ enum: ["main", "children", "child"], description: "Target for watchdog actions." })),
 	focus: Type.Optional(Type.Boolean({ description: "Focus the new Herdr pane for inspector.open or project.open." })),
-	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level override." })),
+	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level for action='watchdog.configure' (off/minimal/low/medium/high/xhigh/max, inherit, or false for off)." })),
+	at: Type.Optional(Type.String({ description: "One-shot trigger for action='schedule.create': a relative delay such as '+10m' or an ISO timestamp with timezone." })),
+	every: Type.Optional(Type.String({ description: "Fixed recurring interval for action='schedule.create', such as '30m', '6h', '2d', or '2w'." })),
+	on: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "integer" }], description: "Calendar selector reserved for a later schedule slice." })),
+	timezone: Type.Optional(Type.String({ description: "IANA timezone reserved for a later calendar schedule slice." })),
+	overlap: Type.Optional(Type.String({ enum: ["skip"], description: "Overlap policy. This slice supports skip only." })),
+	catchUp: Type.Optional(Type.String({ enum: ["none", "latest"], description: "Missed occurrence policy for recurring schedules. Defaults to latest." })),
 	missionId: Type.Optional(Type.String({ description: "Mission id." })),
-	mission: Type.Optional(Type.Unsafe({ ...MissionLaunchOverride, description: "Mission object, or false for no mission. Requires exactly one non-empty title or summary; goal may only be true and then requires budget.tokens." })),
+	mission: Type.Optional(Type.Unsafe({ ...MissionLaunchOverride, description: "Mission object, or false for no mission. Set exactly one non-empty title or summary; objective and labels are optional. goal may only be true and then requires budget.tokens." })),
 	missionUpdate: Type.Optional(Type.Unsafe({ ...MissionUpdateOverride, description: "Mission update: objective, goal false or {paused:boolean}, budget, summary, labels, decisions, artifacts, or delivery receipts." })),
 	missionStatus: Type.Optional(Type.String({ description: "Mission status." })),
 	missionScope: Type.Optional(Type.String({ description: "Mission list scope: project (default) or global pointer index." })),
 	runMode: Type.Optional(Type.String({ description: "Attached run mode." })),
 	runStatus: Type.Optional(Type.String({ description: "Attached run status." })),
 	summary: Type.Optional(Type.String({ description: "Mission close summary." })),
-	// Chain identifier for management (can't reuse 'chain' — that's the execution array)
-	chainName: Type.Optional(Type.String({
-		description: "Chain name for get/update/delete management actions"
-	})),
-	// Agent/chain configuration for create/update (nested to avoid conflicts with execution fields)
+	// Agent configuration for create/update (nested to avoid conflicts with execution fields)
 	config: Type.Optional(Type.Unsafe({
 		anyOf: [
 			{ type: "object", additionalProperties: true },
 			{ type: "string" },
 		],
-		description: "Agent/chain config for create/update. Object or JSON string; presence of steps creates a chain."
+		description: "Agent config for create/update. Object or JSON string."
 	})),
-	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Trusted inline JavaScript statement body; use explicit return for output. Available: runs.run(key, {agent, task, ...}) and runs.run(key, {resume, task}), runs.all([...]), runs.status(id), runs.ref(s), await prompts.render(ref, vars?), emit, console; mission workflows also have async state.get/set. Scripts start async by default. Set worktree:true at workflow or child level for a separate managed worktree; child fields override workflow defaults. Compose sequential and parallel phases dynamically. No filesystem, shell, Pi tools, or host globals." })),
-	chain: Type.Optional(Type.Unsafe({
-		anyOf: [Type.Array(ChainItem, { minItems: 1, description: "Sequential chain of steps" })],
-		description: "Sequential chain of steps. Steps support template variables {task}, {previous}, {chain_dir}, and {outputs.name}; use as: \"name\" on a step to bind {outputs.name} for later steps; { checkpoint: \"name\", message?: \"...\" } pauses for approve-checkpoint / reject-checkpoint; gateOn: \"acceptance\" advances on acceptance instead of execution.",
-	})),
-	tasks: Type.Optional(Type.Unsafe({
-		anyOf: [
-			Type.Array(ParallelTaskSchema, { minItems: 1, description: "Tasks to run in parallel" }),
-			DynamicParallelTemplateSchema,
-		],
-		description: "Top-level parallel tasks array, or a single dynamic fanout child template when expand/collect are present.",
-	})),
-	chatProgress: Type.Optional(Type.String({ enum: ["auto", "off", "terminal", "milestones", "live-card"], description: "WorkflowScript chat progress projection: auto shows a live in-chat card for watched foreground workflows in the same Git repository, milestones for background runs, terminal otherwise." })),
-	worktree: Type.Optional(Type.Boolean({ description: "Managed child isolation. true gives each workflow child a separate git worktree; individual runs.run/runs.all items can override with worktree:false." })),
-	step: Type.Optional(Type.Unsafe({ ...ChainItem, description: "One chain step for action='append-step' only. Not an execution mode." })),
+	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Trusted inline JavaScript statement body. Normally async unless asyncByDefault:false; set async:true when async matters. Use async:false only when the parent must block until completion, never for reviews or gates. Use explicit return for output. Use top-level await, plain helper functions, or explicit Promise chains; nested async function, arrow, and method helpers are rejected. Use await runs.run(key, {agent, task, worktree?, gate?}) or runs.run(key, {resume, task}), where resume is a retained run id or {workflowRunId,key,latest:true} from a durable async workflow receipt. Use runs.all([...]), await runs.steer(key, message, {mode?, index?, ackTimeoutMs?}), runs.status(id), runs.ref(s), emit(value), console, and return. For ordinary parallel fanout, use await runs.all([{key, agent, task}, ...]); it resolves to an ordered array, not a key map, so use results[0], destructuring, or results.map(...), not results.<key>. Do not read .output from unawaited runs.run launches. Stored runs.run promises are only for advanced rolling fanout, and each must later be observed with direct await, Promise.race, or Promise.all. runs.steer targets a prior stable child key, never a raw run id, and must be awaited or returned. Mission workflows also have async state.get(key) and state.set(key, JSONValue). Compose sequential and parallel phases dynamically. Set worktree:true at workflow or child level for a separate managed worktree; child fields override workflow defaults. gate is one host-run command and cannot be combined with acceptance. runs.run accepts one child only. No filesystem, shell, Pi tools, or host globals." })),
+	chatProgress: Type.Optional(Type.String({ enum: ["auto", "off", "live-card"], description: "WorkflowScript chat progress projection. auto shows a live in-chat card only for watched foreground workflows in the same Git repository; it is off otherwise. Explicit live-card requires same-repository async:false; async workflows should omit chatProgress or use auto/off." })),
+	isolation: Type.Optional(Type.String({ enum: ["none", "worktree"], description: "Workflow child isolation. none runs in the shared cwd; worktree requires managed git worktree isolation." })),
+	worktree: Type.Optional(Type.Boolean({ description: "Managed child isolation. true gives each workflow child a separate git worktree; an individual runs.run/runs.all item can override a workflow default with worktree:false." })),
 	context: Type.Optional(Type.String({
-		enum: ["fresh", "fork"],
-		description: "'fresh' or 'fork' to branch from parent session. Explicit context overrides every child in the invocation. If omitted, each requested agent uses its own defaultContext; agents without one run 'fork' fresh.",
+		enum: ["fresh", "fork", "profile"],
+		description: "'fresh' or 'fork' to branch from parent session, or 'profile' to require the selected agent's declared defaultContext. Explicit fresh/fork overrides every child; profile ignores config defaultSubagentContext and fails when an agent has no defaultContext. If omitted, config defaultSubagentContext wins over each agent defaultContext; implicit fork needs a persisted parent session and leaf, else fresh.",
 	})),
-	async: Type.Optional(Type.Boolean({ description: "Run in background (default: false, or per config)" })),
-	clarify: Type.Optional(Type.Boolean({ description: "Show TUI to preview/edit before execution; explicit true keeps the run foreground." })),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Timeout. Defaults to config timeoutMs or 30m for foreground/single async runs. Alias maxRuntimeMs." })),
-	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias of timeoutMs." })),
-	toolTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Optional hard per-tool-call timeout in milliseconds." })),
+	async: Type.Optional(Type.Boolean({ description: "Run in background unless asyncByDefault:false. Set false only when the parent must block until completion." })),
+	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Timeout. Foreground and single async runs use config timeoutMs, else 30m; async composites have no default parent deadline. Alias maxRuntimeMs." })),
+	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias timeoutMs. Foreground and single async runs use config timeoutMs, else 30m; async composites have no default parent deadline." })),
+	toolTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Optional hard per-tool-call timeout in milliseconds; known-fast built-in tools have a five-minute default." })),
 	turnBudget: Type.Optional(TurnBudgetOverride),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	usageBudget: Type.Optional(UsageBudgetOverride),
-	agentScope: Type.Optional(Type.String({ description: "Agent discovery scope: 'user', 'project', or 'both' (default 'both')." })),
+	agentScope: Type.Optional(Type.String({ description: "Agent discovery scope: 'user', 'project', or 'both' (default: 'both'; project wins on name collisions)" })),
 	cwd: Type.Optional(Type.String({ description: "Execution cwd, or target project directory for project.open/status/close." })),
 	artifacts: Type.Optional(Type.Boolean({ description: "Write debug artifacts (default: true)" })),
 	includeProgress: Type.Optional(Type.Boolean({ description: "Include full progress in result (default: false)" })),
 	share: Type.Optional(Type.Boolean({ description: "Upload session to GitHub Gist for sharing (default: false)" })),
 	sessionDir: Type.Optional(
-		Type.String({ description: "Directory to store session logs (default: temp)." }),
+		Type.String({ description: "Directory to store session logs (default: temp; enables sessions even if share=false)" }),
 	),
 	control: Type.Optional(ControlOverrides),
 	// Workflow defaults forwarded to each runs.run/runs.all child unless overridden there.
@@ -351,36 +346,20 @@ const SubagentParamProperties = {
 	})),
 	outputMode: Type.Optional(OutputModeOverride),
 	skill: Type.Optional(SkillOverride),
-	model: Type.Optional(Type.String({ description: "Default child model override (e.g. 'anthropic/claude-sonnet-4')" })),
+	model: Type.Optional(Type.String({ description: "Default child model override. Full provider/id values are accepted; bare ids resolve from the active registry." })),
+	fast: Type.Optional(Type.Boolean({ description: "Opt into priority service tier for supported native OpenAI-Codex child models. Default false. This can increase quota or cost." })),
 	outputSchema: Type.Optional(JsonSchemaObject),
 	agentContract: Type.Optional(AgentContractOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 	gate: Type.Optional(Type.String({ minLength: 1, description: "Host gate command. Cannot be combined with acceptance." })),
 };
 
-const { step: _legacyChainStep, ...subagentParamPropertiesWithoutStep } = SubagentParamProperties;
-const trimmedSubagentParamProperties = {
-	...subagentParamPropertiesWithoutStep,
-	id: Type.Optional(Type.String({
-		description: "Run id/prefix for status/debug.run, interrupt, steer, or mission.attach-run."
-	})),
-	runId: Type.Optional(Type.String({
-		description: "Target run ID for debug.run, interrupt, steer, or mission.attach-run. Prefer id."
-	})),
-};
 const SubagentParamsSchema = Type.Object(SubagentParamProperties);
-const TrimmedSubagentParamsSchema = Type.Object(trimmedSubagentParamProperties);
 
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
-export const SubagentParamsWithoutLegacyChainControls = keepTopLevelParameterDescriptions(TrimmedSubagentParamsSchema);
 
-export function createSubagentParamsSchema(options: { legacyChainControls?: boolean } = {}): typeof SubagentParams | typeof SubagentParamsWithoutLegacyChainControls {
-	// Selesai default: the full schema (task/chain/tasks/clarify/step) is the
-	// model-facing surface. Set legacyChainControls: false in the extension config
-	// to opt into the trimmed workflowScript-only schema.
-	return options.legacyChainControls === false
-		? SubagentParamsWithoutLegacyChainControls
-		: SubagentParams;
+export function createSubagentParamsSchema(): typeof SubagentParams {
+	return SubagentParams;
 }
 
 const SubagentWaitParamsSchema = Type.Object({
@@ -396,6 +375,9 @@ const SubagentWaitParamsSchema = Type.Object({
 	timeoutMs: Type.Optional(Type.Integer({
 		minimum: 1,
 		description: "Give up waiting after this many milliseconds (the runs keep going regardless). Defaults to 1800000 (30 minutes).",
+	})),
+	stopOnAttention: Type.Optional(Type.Boolean({
+		description: "Blocking waits stop when a run needs attention by default. Set false to keep waiting through idle or long-thinking attention; supervisor/contact requests still stop the wait.",
 	})),
 });
 

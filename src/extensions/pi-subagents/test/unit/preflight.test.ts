@@ -7,6 +7,7 @@ import { registerSubagentCapabilityCeiling, resolveSubagentCapabilityCeiling } f
 import { resolveSubagentLaunchContract, SUBAGENT_LAUNCH_CONTRACT_VERSION } from "../../src/api/preflight.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
+import { TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
 
 let tempDir = "";
 let previousHome: string | undefined;
@@ -126,7 +127,7 @@ Project prompt.
 			assert.equal(result.contract.tools.capabilityAudit?.removedExtensionCount, 1);
 			assert.equal(result.contract.tools.disableAmbientExtensions, true);
 			assert.equal(result.contract.roots.sessionFile, path.join(sessionRoot, "run-123", "run-0", "session.jsonl"));
-			assert.equal(result.contract.roots.outputPath, path.join(cwd, ".pi-subagents", "artifacts", "outputs", "run-123", "report.md"));
+			assert.equal(result.contract.roots.outputPath, path.join(TEMP_ARTIFACTS_DIR, "outputs", "run-123", "report.md"));
 			assert.equal(result.contract.roots.lifecycle?.statusPath.endsWith(path.join("run-123", "status.json")), true);
 			assert.equal(result.contract.roots.lifecycle?.eventsPath.endsWith(path.join("run-123", "events.jsonl")), true);
 			assert.equal(result.contract.roots.lifecycle?.processTerminalPath.endsWith(path.join("run-123", "process-terminal.json")), true);
@@ -151,6 +152,184 @@ Project prompt.
 		} finally {
 			handle.dispose();
 		}
+	});
+
+	it("binds canonical extension metadata into public preflight provenance", async () => {
+		const cwd = path.join(tempDir, "bindings-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".selesai", "agents", "binding-worker.md"), `---\nname: binding-worker\ndescription: Binding worker\n---\nWorker.\n`);
+		const omitted = await resolveSubagentLaunchContract({ agent: "binding-worker", cwd, task: "Inspect" });
+		const bound = await resolveSubagentLaunchContract({ agent: "binding-worker", cwd, task: "Inspect", extensionBindings: { "shepherd.dispatch/1": { writeScope: ["src/a.ts"], role: "coder" } } });
+		assert.equal(omitted.ok, true);
+		assert.equal(bound.ok, true);
+		if (omitted.ok && bound.ok) {
+			assert.notEqual(bound.contract.launchContractDigest, omitted.contract.launchContractDigest);
+		}
+		const invalid = await resolveSubagentLaunchContract({ agent: "binding-worker", cwd, extensionBindings: { invalid: true } });
+		assert.equal(invalid.ok, false);
+		if (!invalid.ok) assert.equal(invalid.code, "invalid_extension_bindings");
+	});
+
+	it("binds fast mode runtime extension into public preflight provenance", async () => {
+		const cwd = path.join(tempDir, "fast-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".selesai", "agents", "fast-worker.md"), `---
+name: fast-worker
+description: Fast worker
+model: openai-codex/gpt-5.6-luna
+fast: true
+---
+Worker.
+`);
+		const availableModels = [{ provider: "openai-codex", id: "gpt-5.6-luna", fullId: "openai-codex/gpt-5.6-luna" }];
+		const enabled = await resolveSubagentLaunchContract({ agent: "fast-worker", cwd, task: "Run", availableModels });
+		const disabled = await resolveSubagentLaunchContract({ agent: "fast-worker", cwd, task: "Run", availableModels, fast: false });
+
+		assert.equal(enabled.ok, true);
+		assert.equal(disabled.ok, true);
+		if (enabled.ok && disabled.ok) {
+			assert.ok(enabled.contract.tools.runtimeExtensions.some((entry) => entry.endsWith("fast-mode-extension.ts")));
+			assert.equal(disabled.contract.tools.runtimeExtensions.some((entry) => entry.endsWith("fast-mode-extension.ts")), false);
+			assert.notEqual(enabled.contract.launchContractDigest, disabled.contract.launchContractDigest);
+		}
+	});
+
+	it("enforces maxThinking before a child launch and accepts levels at the ceiling", async () => {
+		const cwd = path.join(tempDir, "thinking-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeJson(path.join(cwd, ".selesai", "settings.json"), { subagents: { maxThinking: "xhigh" } });
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---\nname: worker\ndescription: Project worker\nmodel: test/worker\nthinking: xhigh\n---\nWorker.\n`);
+		const accepted = await resolveSubagentLaunchContract({ agent: "worker", cwd, task: "Inspect", availableModels: [{ provider: "test", id: "worker", fullId: "test/worker" }] });
+		assert.equal(accepted.ok, true);
+		if (accepted.ok) assert.equal(accepted.contract.thinkingCeiling, "xhigh");
+		const rejected = await resolveSubagentLaunchContract({ agent: "worker", cwd, task: "Inspect", thinking: "max", availableModels: [{ provider: "test", id: "worker", fullId: "test/worker" }] });
+		assert.equal(rejected.ok, false);
+		if (!rejected.ok) {
+			assert.equal(rejected.code, "thinking_ceiling");
+			assert.match(rejected.message, /max.*xhigh.*worker/);
+		}
+	});
+
+	it("binds the resolved agent outputMode into the launch digest", async () => {
+		const cwd = path.join(tempDir, "repo-output-mode");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+output: report.md
+outputMode: file-only
+---
+Project prompt.
+`);
+
+		const defaultMode = await resolveSubagentLaunchContract({ agent: "worker", cwd });
+		const explicitDefault = await resolveSubagentLaunchContract({ agent: "worker", cwd, outputMode: "file-only" });
+		const override = await resolveSubagentLaunchContract({ agent: "worker", cwd, outputMode: "inline" });
+
+		assert.equal(defaultMode.ok, true);
+		assert.equal(explicitDefault.ok, true);
+		assert.equal(override.ok, true);
+		assert.equal(defaultMode.contract.launchContractDigest, explicitDefault.contract.launchContractDigest);
+		assert.notEqual(defaultMode.contract.launchContractDigest, override.contract.launchContractDigest);
+	});
+
+	it("rejects an unresolved configured model when the host registry is available", async () => {
+		const cwd = path.join(tempDir, "repo-unresolved-model");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+model: fast
+---
+Project prompt.
+`);
+
+		await assert.rejects(
+			resolveSubagentLaunchContract({
+				agent: "worker",
+				cwd,
+				availableModels: [{ provider: "test", id: "primary", fullId: "test/primary" }],
+			}),
+			/Unknown subagent model 'fast'/,
+		);
+	});
+
+	it("trusts an inherited parent model outside the host registry", async () => {
+		const cwd = path.join(tempDir, "repo-parent-model");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+---
+Project prompt.
+`);
+
+		const result = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			parentModel: { provider: "gateway", id: "parent-model" },
+			availableModels: [{ provider: "test", id: "primary", fullId: "test/primary" }],
+		});
+
+		assert.equal(result.ok, true);
+		assert.equal(result.contract.model, "gateway/parent-model");
+		assert.deepEqual(result.contract.modelCandidates, ["gateway/parent-model"]);
+	});
+
+	it("uses subagents.defaultProvider when resolving launch model ids", async () => {
+		const cwd = path.join(tempDir, "repo-default-provider");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeJson(path.join(process.env.HOME!, ".selesai", "agent", "settings.json"), {
+			subagents: { defaultProvider: "gpu-b" },
+		});
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+model: gpt-5-mini
+---
+Project prompt.
+`);
+
+		const result = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			parentModel: { provider: "openai", id: "gpt-5-mini" },
+			availableModels: [
+				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+				{ provider: "gpu-b", id: "gpt-5-mini", fullId: "gpu-b/gpt-5-mini" },
+			],
+		});
+
+		assert.equal(result.ok, true);
+		assert.equal(result.contract.model, "gpu-b/gpt-5-mini");
+		assert.deepEqual(result.contract.modelCandidates, ["gpu-b/gpt-5-mini"]);
+	});
+
+	it("bypasses native model validation for external CLI runners", async () => {
+		const cwd = path.join(tempDir, "repo-external-model");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeJson(path.join(process.env.HOME!, ".selesai", "agent", "settings.json"), {
+			subagents: { defaultModel: "mock/default-model" },
+		});
+		writeAgent(path.join(cwd, ".selesai", "agents", "external.md"), `---
+name: external
+description: External runner
+runner:
+  type: external-cli
+  command: ${JSON.stringify(process.execPath)}
+---
+Project prompt.
+`);
+
+		const result = await resolveSubagentLaunchContract({
+			agent: "external",
+			cwd,
+			availableModels: [{ provider: "other", id: "known", fullId: "other/known" }],
+		});
+
+		assert.equal(result.ok, true);
+		assert.equal(result.contract.model, undefined);
+		assert.deepEqual(result.contract.modelCandidates, []);
 	});
 
 	it("resolves agent aliases to the canonical launch contract agent", async () => {
@@ -268,6 +447,130 @@ Project prompt.
 
 		const missingAgent = await resolveSubagentLaunchContract({ agent: "missing", cwd });
 		assert.deepEqual(missingAgent, { ok: false, code: "missing_agent", message: "Unknown agent: missing", diagnostics: [] });
+		writeAgent(path.join(cwd, ".selesai", "agents", "broken.md"), `---
+name: broken
+description: Broken worker
+runner:
+  type: unknown
+---
+Broken prompt.
+`);
+		const brokenAgent = await resolveSubagentLaunchContract({ agent: "broken", cwd });
+		assert.equal(brokenAgent.ok, false);
+		assert.equal(brokenAgent.code, "missing_agent");
+		assert.match(brokenAgent.message, /Agent 'broken' has invalid configuration: Agent 'broken' has invalid runner\.type/);
+		assert.deepEqual(brokenAgent.diagnostics, [{ code: "missing_agent", severity: "error", message: brokenAgent.message }]);
+		writeAgent(path.join(cwd, ".selesai", "agents", "code-analysis.zeta-worker.md"), `---
+name: zeta-worker
+package: code-analysis
+description: Broken packaged worker
+runner:
+  type: unknown
+---
+Broken prompt.
+`);
+		const brokenPackagedAgent = await resolveSubagentLaunchContract({ agent: "code-analysis.zeta-worker", cwd, agentScope: "project" });
+		assert.equal(brokenPackagedAgent.ok, false);
+		assert.equal(brokenPackagedAgent.code, "missing_agent");
+		assert.match(brokenPackagedAgent.message, /Agent 'code-analysis\.zeta-worker' has invalid configuration: Agent 'zeta-worker' has invalid runner\.type/);
+		assert.deepEqual(brokenPackagedAgent.diagnostics, [{ code: "missing_agent", severity: "error", message: brokenPackagedAgent.message }]);
+		writeAgent(path.join(cwd, ".selesai", "agents", "reviewer.md"), `---
+name: reviewer
+description: Broken reviewer
+runner:
+  type: unknown
+---
+Broken prompt.
+`);
+		const brokenReviewer = await resolveSubagentLaunchContract({ agent: "reviewer", cwd, agentScope: "both" });
+		assert.equal(brokenReviewer.ok, false);
+		assert.equal(brokenReviewer.code, "missing_agent");
+		assert.match(brokenReviewer.message, /Agent 'reviewer' has invalid configuration: Agent 'reviewer' has invalid runner\.type/);
+		const spacedBrokenReviewer = await resolveSubagentLaunchContract({ agent: " reviewer ", cwd, agentScope: "both" });
+		assert.equal(spacedBrokenReviewer.ok, false);
+		assert.equal(spacedBrokenReviewer.code, "missing_agent");
+		assert.match(spacedBrokenReviewer.message, /Agent ' reviewer ' has invalid configuration: Agent 'reviewer' has invalid runner\.type/);
+		writeAgent(path.join(process.env.SELESAI_CODING_AGENT_DIR!, "agents", "foo.md"), `---
+name: foo
+description: User foo
+---
+User prompt.
+`);
+		writeAgent(path.join(cwd, ".selesai", "agents", "acme.foo.md"), `---
+name: foo
+package: acme
+description: Broken packaged foo
+runner:
+  type: unknown
+---
+Broken prompt.
+`);
+		const localFoo = await resolveSubagentLaunchContract({ agent: "foo", cwd, agentScope: "both" });
+		assert.equal(localFoo.ok, true);
+		const brokenPackagedFoo = await resolveSubagentLaunchContract({ agent: "acme.foo", cwd, agentScope: "both" });
+		assert.equal(brokenPackagedFoo.ok, false);
+		assert.match(brokenPackagedFoo.message, /Agent 'acme\.foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+		writeAgent(path.join(process.env.SELESAI_CODING_AGENT_DIR!, "agents", "package-shadow.md"), `---
+name: package-shadow
+description: User package shadow
+---
+User prompt.
+`);
+		writeAgent(path.join(cwd, ".selesai", "agents", "package-shadow.md"), `---
+name: package-shadow
+package: !!!
+description: Broken package shadow
+---
+Broken prompt.
+`);
+		const brokenPackageShadow = await resolveSubagentLaunchContract({ agent: "package-shadow", cwd, agentScope: "both" });
+		assert.equal(brokenPackageShadow.ok, false);
+		assert.match(brokenPackageShadow.message, /Agent 'package-shadow' has invalid configuration: Agent 'package-shadow' package is invalid after sanitization/);
+		writeAgent(path.join(cwd, ".agents", "shared.md"), `---
+name: shared
+description: Legacy shared
+---
+Legacy prompt.
+`);
+		writeAgent(path.join(cwd, ".selesai", "agents", "shared.md"), `---
+name: shared
+description: Broken canonical shared
+runner:
+  type: unknown
+---
+Broken prompt.
+`);
+		const brokenCanonicalShared = await resolveSubagentLaunchContract({ agent: "shared", cwd, agentScope: "project" });
+		assert.equal(brokenCanonicalShared.ok, false);
+		assert.match(brokenCanonicalShared.message, /Agent 'shared' has invalid configuration: Agent 'shared' has invalid runner\.type/);
+		const packageRoot = path.join(cwd, "package");
+		writeAgent(path.join(packageRoot, "agents", "ambiguous.md"), `---
+name: ambiguous
+package: acme
+description: Package ambiguous
+---
+Package prompt.
+`);
+		fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"] } }));
+		fs.writeFileSync(path.join(cwd, ".selesai", "settings.json"), JSON.stringify({ packages: [packageRoot] }));
+		writeAgent(path.join(process.env.SELESAI_CODING_AGENT_DIR!, "agents", "ambiguous.md"), `---
+name: ambiguous
+description: User ambiguous
+---
+User prompt.
+`);
+		writeAgent(path.join(cwd, ".selesai", "agents", "ambiguous.md"), `---
+name: ambiguous
+description: Broken project ambiguous
+runner:
+  type: unknown
+---
+Broken prompt.
+`);
+		const brokenBeforeAmbiguity = await resolveSubagentLaunchContract({ agent: "ambiguous", cwd, agentScope: "both" });
+		assert.equal(brokenBeforeAmbiguity.ok, false);
+		assert.equal(brokenBeforeAmbiguity.code, "missing_agent");
+		assert.match(brokenBeforeAmbiguity.message, /Agent 'ambiguous' has invalid configuration: Agent 'ambiguous' has invalid runner\.type/);
 
 		const missingSkill = await resolveSubagentLaunchContract({ agent: "worker", cwd });
 		assert.equal(missingSkill.ok, false);
@@ -319,10 +622,14 @@ defaultContext: fork
 Project prompt.
 `);
 
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		fs.writeFileSync(parentSessionFile, '{"type":"session","version":1,"id":"parent","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n', "utf-8");
 		const result = await resolveSubagentLaunchContract({
 			agent: "fanout",
 			cwd,
 			outputSchema: { type: "object", additionalProperties: false },
+			parentSessionFile,
+			parentLeafId: "leaf-current",
 		});
 		assert.equal(result.ok, true);
 		assert.equal(result.contract.context, "fork");
@@ -339,6 +646,114 @@ Project prompt.
 		assert.ok(result.contract.tools.runtimeExtensions.some((extensionPath) => extensionPath.endsWith("fanout-child.ts")));
 		assert.ok(result.contract.tools.extensionArgs.includes("/tmp/config-ext.ts"));
 		assert.ok(result.contract.tools.extensionArgs.includes("/tmp/subagent-only.ts"));
+	});
+
+	it("falls back implicit default fork to fresh when the parent session is not forkable", async () => {
+		const cwd = path.join(tempDir, "repo-implicit-fork");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+defaultContext: fork
+---
+Project prompt.
+`);
+
+		const missingSession = await resolveSubagentLaunchContract({ agent: "worker", cwd });
+		assert.equal(missingSession.ok, true);
+		assert.equal(missingSession.contract.context, "fresh");
+
+		const missingFile = path.join(tempDir, "missing-parent.jsonl");
+		const unpersisted = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			parentSessionFile: missingFile,
+			parentLeafId: "leaf-current",
+		});
+		assert.equal(unpersisted.ok, true);
+		assert.equal(unpersisted.contract.context, "fresh");
+
+		const parentSessionFile = path.join(tempDir, "implicit-parent.jsonl");
+		fs.writeFileSync(parentSessionFile, '{"type":"session","version":1,"id":"parent","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n', "utf-8");
+		const missingLeaf = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			parentSessionFile,
+		});
+		assert.equal(missingLeaf.ok, true);
+		assert.equal(missingLeaf.contract.context, "fresh");
+
+		const explicitFork = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			context: "fork",
+		});
+		assert.equal(explicitFork.ok, true);
+		assert.equal(explicitFork.contract.context, "fork");
+	});
+
+	it("applies defaultSubagentContext fork without overriding explicit fresh", async () => {
+		const cwd = path.join(tempDir, "repo-global-fork");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+defaultContext: fresh
+---
+Project prompt.
+`);
+		writeJson(path.join(process.env.SELESAI_CODING_AGENT_DIR!, "extensions", "subagent", "config.json"), {
+			defaultSubagentContext: "fork",
+		});
+		const parentSessionFile = path.join(tempDir, "global-parent.jsonl");
+		fs.writeFileSync(parentSessionFile, '{"type":"session","version":1,"id":"parent","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n', "utf-8");
+
+		const implicit = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			parentSessionFile,
+			parentLeafId: "leaf-current",
+		});
+		assert.equal(implicit.ok, true);
+		assert.equal(implicit.contract.context, "fork");
+
+		const explicitFresh = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			context: "fresh",
+			parentSessionFile,
+			parentLeafId: "leaf-current",
+		});
+		assert.equal(explicitFresh.ok, true);
+		assert.equal(explicitFresh.contract.context, "fresh");
+
+		const unavailableFork = await resolveSubagentLaunchContract({ agent: "worker", cwd });
+		assert.equal(unavailableFork.ok, true);
+		assert.equal(unavailableFork.contract.context, "fresh");
+	});
+
+	it("applies defaultSubagentContext fresh over an agent fork default", async () => {
+		const cwd = path.join(tempDir, "repo-global-fresh");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+defaultContext: fork
+---
+Project prompt.
+`);
+		writeJson(path.join(process.env.SELESAI_CODING_AGENT_DIR!, "extensions", "subagent", "config.json"), {
+			defaultSubagentContext: "fresh",
+		});
+
+		const implicit = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			parentSessionFile: path.join(tempDir, "global-parent.jsonl"),
+			parentLeafId: "leaf-current",
+		});
+		assert.equal(implicit.ok, true);
+		assert.equal(implicit.contract.context, "fresh");
 	});
 
 	it("fails closed when a capability ceiling denies read required for child skills", async () => {

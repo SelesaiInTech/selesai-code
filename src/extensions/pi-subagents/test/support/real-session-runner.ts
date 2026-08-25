@@ -171,6 +171,7 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 	const envSnapshot = new Map([
 		["HOME", process.env.HOME],
 		["USERPROFILE", process.env.USERPROFILE],
+		["SELESAI_SUBAGENTS_TEMP_ROOT", process.env.SELESAI_SUBAGENTS_TEMP_ROOT],
 		["SELESAI_CODING_AGENT_DIR", process.env.SELESAI_CODING_AGENT_DIR],
 		["SELESAI_SUBAGENT_EXTRA_AGENT_DIRS", process.env.SELESAI_SUBAGENT_EXTRA_AGENT_DIRS],
 		["SELESAI_SUBAGENT_CHILD", process.env.SELESAI_SUBAGENT_CHILD],
@@ -179,7 +180,7 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 		["SELESAI_SUBAGENT_MAX_DEPTH", process.env.SELESAI_SUBAGENT_MAX_DEPTH],
 		["SELESAI_SUBAGENT_PARENT_SESSION", process.env.SELESAI_SUBAGENT_PARENT_SESSION],
 		["SELESAI_SUBAGENT_PI_BINARY", process.env.SELESAI_SUBAGENT_PI_BINARY],
-		["SELESAI_SUBAGENTS_SELESAI_PACKAGE_ROOT", process.env.SELESAI_SUBAGENTS_SELESAI_PACKAGE_ROOT],
+		["SELESAI_SUBAGENTS_CODING_AGENT_PACKAGE_ROOT", process.env.SELESAI_SUBAGENTS_CODING_AGENT_PACKAGE_ROOT],
 	]);
 	const uninstallChildPi = installChildPiShim(options.childText, options.reportChildTools);
 	let session: AgentSession | undefined;
@@ -207,6 +208,7 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 		process.chdir(cwd);
 		process.env.HOME = home;
 		process.env.USERPROFILE = home;
+		process.env.SELESAI_SUBAGENTS_TEMP_ROOT ??= path.join(home, "pi-subagents-temp");
 		process.env.SELESAI_CODING_AGENT_DIR = home;
 		delete process.env.SELESAI_SUBAGENT_EXTRA_AGENT_DIRS;
 		delete process.env.SELESAI_SUBAGENT_CHILD;
@@ -214,7 +216,7 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 		delete process.env.SELESAI_SUBAGENT_DEPTH;
 		delete process.env.SELESAI_SUBAGENT_MAX_DEPTH;
 		delete process.env.SELESAI_SUBAGENT_PARENT_SESSION;
-		delete process.env.SELESAI_SUBAGENTS_SELESAI_PACKAGE_ROOT;
+		delete process.env.SELESAI_SUBAGENTS_CODING_AGENT_PACKAGE_ROOT;
 		for (const [relativePath, content] of Object.entries(options.projectFiles ?? {})) {
 			const target = path.resolve(cwd, relativePath);
 			if (target !== cwd && !target.startsWith(`${cwd}${path.sep}`)) throw new Error(`E2E project file escapes cwd: ${relativePath}`);

@@ -7,6 +7,7 @@ import {
 	evaluateCompletionMutationGuard,
 	expectsImplementationMutation,
 	hasMutationToolCall,
+	validateImplementationToolContract,
 } from "../../src/runs/shared/completion-guard.ts";
 import { isMutatingTool } from "../../src/runs/shared/long-running-guard.ts";
 
@@ -39,6 +40,7 @@ test("implementation task with no mutation triggers the completion guard", () =>
 			expectedMutation: true,
 			attemptedMutation: false,
 			triggered: true,
+			blocked: false,
 		});
 	}
 });
@@ -102,6 +104,7 @@ test("implementation challenges may complete with explicit no-change reports", (
 			expectedMutation: true,
 			attemptedMutation: false,
 			triggered: false,
+			blocked: false,
 		});
 	}
 });
@@ -203,6 +206,7 @@ test("revived implementation tasks that mention implementation challenge remain 
 			expectedMutation: true,
 			attemptedMutation: false,
 			triggered: true,
+			blocked: false,
 		}, followUp);
 	}
 });
@@ -249,6 +253,7 @@ test("declared read-only builtin tools suppress implementation-word false positi
 		expectedMutation: false,
 		attemptedMutation: false,
 		triggered: false,
+		blocked: false,
 	});
 });
 
@@ -263,6 +268,7 @@ test("hyphenated fix adjectives in review tasks do not trigger the completion gu
 		expectedMutation: false,
 		attemptedMutation: false,
 		triggered: false,
+		blocked: false,
 	});
 	assert.equal(
 		expectsImplementationMutation("worker", "Return a review with the top 2-3 must-fix items."),
@@ -283,6 +289,7 @@ test("read-only issue drafting tasks do not trigger on suggested fix wording", (
 		expectedMutation: false,
 		attemptedMutation: false,
 		triggered: false,
+		blocked: false,
 	});
 	assert.equal(expectsImplementationMutation("worker", task), false);
 	assert.equal(
@@ -318,7 +325,64 @@ test("worker with mutating-capable tools still triggers when no mutation is obse
 		expectedMutation: true,
 		attemptedMutation: false,
 		triggered: true,
+		blocked: false,
 	});
+});
+
+test("missing child tools block mutation effects instead of triggering no-edit blame", () => {
+	const result = evaluateCompletionMutationGuard({
+		agent: "worker",
+		task: "Implement the requested source fix",
+		messages: [assistantText("I cannot edit because tools are missing.")],
+		tools: ["read", "fixture_search"],
+		toolAvailabilityError: "Agent 'worker' requested unavailable child tools: fixture_search.",
+	});
+
+	assert.deepEqual(result, {
+		expectedMutation: true,
+		attemptedMutation: false,
+		triggered: false,
+		blocked: true,
+		message: "Agent 'worker' requested unavailable child tools: fixture_search.",
+	});
+});
+
+test("implementation tool contract rejects read-only worker launches", () => {
+	assert.match(
+		validateImplementationToolContract({
+			agent: "worker",
+			task: "Implement the requested source fix",
+			tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+		}) ?? "",
+		/no mutation-capable tools/,
+	);
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Review only and return findings",
+		tools: ["read", "grep", "find", "ls"],
+	}), undefined);
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Implement the requested source fix",
+		tools: ["read", "edit"],
+	}), undefined);
+	assert.match(
+		validateImplementationToolContract({
+			agent: "worker",
+			task: "Implement the requested source fix",
+			tools: ["read", "structured_output"],
+		}) ?? "",
+		/no mutation-capable tools/,
+	);
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Implement the requested source fix",
+		tools: ["read", "/tmp/mutation-tools.ts"],
+	}), undefined);
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Implement the requested source fix",
+	}), undefined);
 });
 
 test("oracle review tasks with bash available do not require mutation", () => {
@@ -334,6 +398,7 @@ test("oracle review tasks with bash available do not require mutation", () => {
 		expectedMutation: false,
 		attemptedMutation: false,
 		triggered: false,
+		blocked: false,
 	});
 });
 
@@ -567,5 +632,63 @@ test("implementation task with Cursor edit thinking does not trigger", () => {
 		expectedMutation: true,
 		attemptedMutation: true,
 		triggered: false,
+		blocked: false,
 	});
+});
+
+test("writer-role tasks with unknown implementation wording reject read-only launch tools", () => {
+	for (const task of [
+		"Address issue #1371 end-to-end: land the fix with tests.",
+		"Resolve backlog item #1371. Land the change and open a PR.",
+		"Work issue #1371. Ship the feature, run the test suite, and report back.",
+	]) {
+		assert.match(validateImplementationToolContract({
+			agent: "worker",
+			task,
+			tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+			requestedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+		}), /no mutation-capable tools/, task);
+	}
+});
+
+test("configured extensions do not rescue clamped-away builtin mutation tools", () => {
+	assert.match(validateImplementationToolContract({
+		agent: "worker",
+		task: "Fix the lane-owned workflowScript launch so writer children get mutation tools.",
+		tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+		configuredExtensions: ["/tmp/provider.ts"],
+		requestedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+	}), /no mutation-capable tools/);
+});
+
+test("read-only agents and pure extension workers keep their launch contracts", () => {
+	assert.equal(validateImplementationToolContract({
+		agent: "reviewer",
+		task: "Review the diff and return findings only.",
+		tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+		acceptanceRole: "read-only",
+	}), undefined);
+
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Implement the requested source fix.",
+		tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+		configuredExtensions: ["/tmp/mutation-extension.ts"],
+		requestedTools: ["read", "grep", "find", "ls", "contact_supervisor"],
+	}), undefined);
+
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Task",
+		tools: ["read"],
+		requestedTools: ["read"],
+	}), undefined);
+
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Summarize the fix",
+		tools: ["read"],
+		requestedTools: ["read"],
+		completionGuard: false,
+	}), undefined);
 });

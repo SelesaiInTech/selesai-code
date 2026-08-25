@@ -13,8 +13,10 @@ import {
 	type ResolvedMcpDirectToolSelection,
 } from "./mcp-direct-tool-allowlist.ts";
 import { resolvePiPackageRoot } from "./pi-spawn.ts";
+import { encodeExtensionBindings, SELESAI_SUBAGENT_EXTENSION_BINDINGS_ENV, type ExtensionBindings } from "./extension-bindings.ts";
 import { RUNTIME_EXTENSION_ACK_PATH_ENV } from "./runtime-acknowledged-extensions.ts";
 import {
+	STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV,
 	STRUCTURED_OUTPUT_CAPTURE_ENV,
 	STRUCTURED_OUTPUT_SCHEMA_ENV,
 } from "./structured-output.ts";
@@ -26,6 +28,7 @@ import {
 	type RunFanoutBudgetDescriptor,
 } from "../../shared/types.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
+import { decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
 import { encodeRunFanoutBudgetDescriptor, RUN_FANOUT_BUDGET_ENV } from "./run-fanout-budget.ts";
 import {
 	TOOL_BUDGET_ENV,
@@ -103,6 +106,14 @@ const FANOUT_CHILD_EXTENSION_PATH = path.join(
 	"extension",
 	"fanout-child.ts",
 );
+const FAST_MODE_EXTENSION_PATH = path.join(
+	path.dirname(fileURLToPath(import.meta.url)),
+	"fast-mode-extension.ts",
+);
+const FAST_MODE_ALLOWED_MODELS = new Set([
+	"openai-codex/gpt-5.6-luna",
+	"openai-codex/gpt-5.6-sol",
+]);
 export const SUBAGENT_CHILD_ENV = "SELESAI_SUBAGENT_CHILD";
 export const SUBAGENT_ORCHESTRATOR_TARGET_ENV =
 	"SELESAI_SUBAGENT_ORCHESTRATOR_TARGET";
@@ -172,7 +183,10 @@ export interface BuildPiArgsInput {
 		schema: JsonSchemaObject;
 		schemaPath: string;
 		outputPath: string;
+		acceptanceReportPath?: string;
 	};
+	fast?: boolean;
+	modelCandidates?: readonly string[];
 	toolBudget?: ResolvedToolBudget;
 	allowZeroToolBudget?: boolean;
 	permissionRules?: PermissionRules;
@@ -186,11 +200,14 @@ export interface BuildPiArgsInput {
 	taskDelivery?: SubagentTaskDelivery;
 	waitToolEnabled?: boolean;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
+	extensionBindings?: ExtensionBindings;
 }
 
 export interface BuildPiArgsResult {
 	args: string[];
 	env: Record<string, string | undefined>;
+	warnings: string[];
 	tempDir?: string;
 	toolDiagnosticPath?: string;
 	runtimeAcknowledgedExtensionsPath?: string;
@@ -234,6 +251,28 @@ export function applyThinkingSuffix(
 	return `${model}:${thinking}`;
 }
 
+function stripThinkingSuffix(model: string): string {
+	const colonIdx = model.lastIndexOf(":");
+	if (colonIdx === -1) return model;
+	return THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1))
+		? model.slice(0, colonIdx)
+		: model;
+}
+
+function resolveFastModeExtension(input: Pick<ResolvePiLaunchToolPlanInput, "fast" | "model" | "modelCandidates" | "agentName">): string[] {
+	if (!input.fast) return [];
+	const candidates = (input.modelCandidates?.length ? input.modelCandidates : input.model ? [input.model] : [])
+		.map(stripThinkingSuffix);
+	if (candidates.length === 0) {
+		throw new Error(`fast mode requires an explicit supported native OpenAI-Codex model${input.agentName ? ` for agent '${input.agentName}'` : ""}.`);
+	}
+	const unsupported = candidates.filter((model) => !FAST_MODE_ALLOWED_MODELS.has(model));
+	if (unsupported.length > 0) {
+		throw new Error(`fast mode supports only ${[...FAST_MODE_ALLOWED_MODELS].join(", ")}; unsupported model${unsupported.length === 1 ? "" : "s"}: ${unsupported.join(", ")}.`);
+	}
+	return [FAST_MODE_EXTENSION_PATH];
+}
+
 export interface ResolvePiLaunchToolPlanInput {
 	tools?: string[];
 	extensions?: string[];
@@ -248,9 +287,13 @@ export interface ResolvePiLaunchToolPlanInput {
 				schemaPath: string;
 				outputPath: string;
 		  };
+	fast?: boolean;
+	model?: string;
+	modelCandidates?: readonly string[];
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	inheritedCapabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	agentName?: string;
+	permissionRules?: PermissionRules;
 }
 
 export interface PiLaunchToolPlan {
@@ -271,6 +314,8 @@ export interface PiLaunchToolPlan {
 	extensionArgs: string[];
 	disableAmbientExtensions: boolean;
 	capabilityAudit?: SubagentCapabilityAudit;
+	/** Non-fatal launch warnings; they do not change behavior. */
+	warnings: string[];
 }
 
 function extensionIdentifier(value: string): string {
@@ -286,6 +331,10 @@ function boundedExtensionIdentifiers(values: string[]): {
 		ids: ids.slice(0, MAX_LAUNCH_RESOLVED_EXTENSION_IDS),
 		omitted: Math.max(0, ids.length - MAX_LAUNCH_RESOLVED_EXTENSION_IDS),
 	};
+}
+
+function hasPermissionRules(rules: PermissionRules | undefined): boolean {
+	return rules !== undefined && Object.keys(rules).length > 0;
 }
 
 export function projectLaunchResolvedChildExtensions(
@@ -433,26 +482,48 @@ export function resolvePiLaunchToolPlan(
 			...internalTools,
 		]),
 	];
+	// Supervisor-coordination names stay in the --tools allowlist but are never
+	// strict requirements: children register contact_supervisor at runtime through
+	// the native supervisor channel (or pi-intercom). The pre-0.50 bridge always
+	// appended intercom alongside contact_supervisor, so that exact pairing is
+	// legacy plumbing, not a user demand for an external intercom provider;
+	// a lone intercom entry stays strictly required (#1207).
+	const legacySupervisorPairing = declaredBuiltinTools.includes("contact_supervisor");
 	const requiredChildTools = explicitToolAllowlist
 		? [
 				...new Set([
 					...(input.tools !== undefined ? declaredBuiltinTools : []),
 					...(input.mcpDirectTools?.length ? effectiveMcpTools : []),
 					...internalTools,
-				]),
+				].filter((tool) => tool !== "contact_supervisor" && (!legacySupervisorPairing || tool !== "intercom"))),
 			]
 		: [];
 	const permSystemExt = capabilityCeiling?.denyExtensions
 		? undefined
-		: resolvePermissionSystemExtension();
+		: hasPermissionRules(input.permissionRules)
+			? resolvePermissionSystemExtension()
+			: undefined;
+	if (input.fast && capabilityCeiling?.denyExtensions) throw new Error("fast mode requires a child runtime extension, but this launch denies extensions.");
+	const fastModeExtensions = resolveFastModeExtension({ fast: input.fast, model: input.model, modelCandidates: input.modelCandidates, agentName: input.agentName });
 	const runtimeExtensions = [
 		PROMPT_RUNTIME_EXTENSION_PATH,
+		...fastModeExtensions,
 		...(fanoutAuthorized ? [FANOUT_CHILD_EXTENSION_PATH] : []),
 		...(permSystemExt ? [permSystemExt] : []),
 	];
 	const disableAmbientExtensions =
 		capabilityCeiling?.denyExtensions === true ||
 		input.extensions !== undefined;
+	const warnings: string[] = [];
+	// An explicit empty list disables ambient extensions, including model providers.
+	if (capabilityCeiling?.denyExtensions !== true && Array.isArray(input.extensions) && input.extensions.length === 0) {
+		const agentLabel = input.agentName ? ` for agent '${input.agentName}'` : "";
+		warnings.push(
+			`extensions: [] override${agentLabel} disables ALL ambient extensions for this child (not just "adds nothing"), `
+				+ "including any model-provider extension needed to resolve a provider-qualified model. "
+				+ "List the extensions this child actually needs instead of an empty array.",
+		);
+	}
 	const configuredExtensions = capabilityCeiling?.denyExtensions
 		? []
 		: [
@@ -533,6 +604,7 @@ export function resolvePiLaunchToolPlan(
 		configuredExtensions,
 		extensionArgs,
 		disableAmbientExtensions,
+		warnings,
 		...(capabilityAudit ? { capabilityAudit } : {}),
 	};
 }
@@ -575,11 +647,15 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		cwd: input.cwd,
 		requireReadTool: input.requireReadTool,
 		structuredOutput: input.structuredOutput,
+		fast: input.fast,
+		model: modelArg,
+		modelCandidates: input.modelCandidates,
 		capabilityCeiling: input.capabilityCeiling,
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(
 			process.env[SUBAGENT_CAPABILITY_CEILING_ENV],
 		),
 		agentName: input.childAgentName,
+		permissionRules: input.permissionRules,
 	});
 	if (toolPlan.explicitToolAllowlist) {
 		args.push(
@@ -637,6 +713,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	}
 
 	const env: Record<string, string | undefined> = {};
+	env[SELESAI_SUBAGENT_EXTENSION_BINDINGS_ENV] = encodeExtensionBindings(input.extensionBindings);
 	const piPackageRoot =
 		process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV] ?? resolvePiPackageRoot();
 	if (piPackageRoot) env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV] = piPackageRoot;
@@ -795,6 +872,11 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	const encodedCapabilityCeiling = encodeSubagentCapabilityCeiling(
 		toolPlan.capabilityCeiling,
 	);
+	const thinkingCeiling = intersectThinkingCeilings(
+		input.thinkingCeiling,
+		decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]),
+	);
+	if (thinkingCeiling) env[SUBAGENT_THINKING_CEILING_ENV] = thinkingCeiling;
 	if (encodedCapabilityCeiling)
 		env[SUBAGENT_CAPABILITY_CEILING_ENV] = encodedCapabilityCeiling;
 	if (encodedPermissionRules)
@@ -802,6 +884,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	if (input.structuredOutput) {
 		env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
 		env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
+		if (input.structuredOutput.acceptanceReportPath) env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = input.structuredOutput.acceptanceReportPath;
 	}
 	if (input.steerInboxDir) {
 		env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
@@ -822,6 +905,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	return {
 		args,
 		env,
+		warnings: toolPlan.warnings,
 		tempDir,
 		toolDiagnosticPath,
 		runtimeAcknowledgedExtensionsPath,

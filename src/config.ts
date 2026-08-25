@@ -814,10 +814,11 @@ export function seedMissingSubagentSettings(
 }
 
 /**
- * Recursively copy a bundled directory tree into the user's agent dir, skipping
- * any file that already exists (user edits survive). Never overwrites. Used to
- * seed bundled skills/themes so the user can inspect and edit them.
- * Returns the list of destination paths that were written.
+ * Recursively copy a bundled directory tree into the user's agent dir,
+ * overwriting any existing file so the bundled copy stays authoritative.
+ * Used to seed/sync bundled skills and themes. User-only files (not present in
+ * the bundled tree) are left untouched. Returns the list of destination paths
+ * that were written.
  */
 function seedBundledDir(
 	destDir: string,
@@ -835,10 +836,9 @@ function seedBundledDir(
 			const srcPath = join(src, entry.name);
 			const dstPath = join(dst, entry.name);
 			if (entry.isDirectory()) {
-				if (!existsSync(dstPath)) mkdirSync(dstPath, { recursive: true, mode: 0o700 });
+				mkdirSync(dstPath, { recursive: true, mode: 0o700 });
 				stack.push({ src: srcPath, dst: dstPath });
 			} else if (entry.isFile() || entry.isSymbolicLink()) {
-				if (existsSync(dstPath)) continue;
 				copyFileSync(srcPath, dstPath);
 				try {
 					chmodSync(dstPath, 0o600);
@@ -891,12 +891,10 @@ export function seedDefaultExtensions(
 
 /**
  * Seed bundled built-in skills into the user's agent dir/skills.
- * Ownership rule: bundled files are installed only when missing, so a new
- * release can supply new bundled skills, but existing user files are never
- * overwritten — user-authored edits survive. User-only skills stay. The
- * authoritative bundled copy still loads directly from the package at boot
- * (additionalSkillPaths), so a stale user copy never loses functionality.
- * Returns the list of destination paths that were written.
+ * The bundled copy is authoritative: existing user copies are overwritten so a
+ * stale installed copy never shadows the shipped skill. User-only skills (not
+ * present in the bundled tree) are left untouched. Returns the list of
+ * destination paths that were written.
  */
 export function seedDefaultSkills(
 	agentDir: string,

@@ -766,7 +766,7 @@ describe("renderSubagentResult fork indicator", () => {
 		}, { expanded: false }, theme);
 
 		const text = widget.render(120).join("\n");
-		assert.match(text, /Press\s+for live detail/);
+		assert.match(text, /Press configured-expand-key for live detail/);
 		assert.match(text, /active 2s ago/);
 		assert.match(text, /⎿  read: package\.json \| 3\.0s/);
 		assert.match(text, /output: \/tmp\/reviewer_output\.md/);

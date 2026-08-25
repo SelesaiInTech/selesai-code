@@ -52,15 +52,15 @@ describe("slash subagent bridge requester context", () => {
     await done;
   });
 
-  it("accepts direct execution inputs before executor dispatch", async () => {
+  it("passes structured single-child execution to the direct path", async () => {
     const events = eventBus();
-    let executeCalls = 0;
+    let executedParams: any;
     registerSlashSubagentBridge({
       events,
       getContext: () => ({ cwd: "/repo" }) as any,
-      execute: async () => {
-        executeCalls++;
-        return { content: [{ type: "text", text: "unexpected" }], details: { mode: "single", results: [] } } as any;
+      execute: async (_id, params) => {
+        executedParams = params;
+        return { content: [{ type: "text", text: "ok" }], details: { mode: "workflow", results: [] } } as any;
       },
     });
 
@@ -68,7 +68,11 @@ describe("slash subagent bridge requester context", () => {
       events.on(RESPONSE, (data: any) => {
         try {
           assert.equal(data.isError, false);
-          assert.equal(executeCalls, 1);
+          assert.equal(executedParams.agent, "worker");
+          assert.equal(executedParams.task, "work");
+          assert.equal(executedParams.async, false);
+          assert.equal(executedParams.output, true);
+          assert.equal(executedParams.workflowScript, undefined);
           resolve();
         } catch (error) {
           reject(error);
@@ -76,11 +80,11 @@ describe("slash subagent bridge requester context", () => {
       });
     });
 
-    events.emit(REQUEST, { requestId: "legacy-single", params: { agent: "worker", task: "work" } });
+    events.emit(REQUEST, { requestId: "structured-single", params: { agent: "worker", task: "work", async: false } });
     await done;
   });
 
-  it("accepts chain and parallel inputs before executor dispatch", async () => {
+  it("rejects removed chain and parallel inputs before executor dispatch", async () => {
     const events = eventBus();
     let executeCalls = 0;
     registerSlashSubagentBridge({
@@ -95,8 +99,9 @@ describe("slash subagent bridge requester context", () => {
     const done = new Promise<void>((resolve, reject) => {
       events.on(RESPONSE, (data: any) => {
         try {
-          assert.equal(data.isError, false);
-          assert.equal(executeCalls, 1);
+          assert.equal(data.isError, true);
+          assert.match(data.errorText, /removed.*workflowScript/i);
+          assert.equal(executeCalls, 0);
           resolve();
         } catch (error) {
           reject(error);

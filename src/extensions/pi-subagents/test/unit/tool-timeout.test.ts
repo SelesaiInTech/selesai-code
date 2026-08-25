@@ -100,10 +100,9 @@ describe("tool timeout formatting and keys", () => {
 });
 
 describe("toolTimeoutFromEnv", () => {
-	it("reads SELESAI_SUBAGENT_TOOL_TIMEOUT_MS from the process env, with PI_ fallback", () => {
+	it("reads SELESAI_SUBAGENT_TOOL_TIMEOUT_MS from the process env", () => {
 		assert.equal(TOOL_TIMEOUT_ENV, "SELESAI_SUBAGENT_TOOL_TIMEOUT_MS");
 		assert.equal(toolTimeoutFromEnv({ SELESAI_SUBAGENT_TOOL_TIMEOUT_MS: "123" }), "123");
-		assert.equal(toolTimeoutFromEnv({ PI_SUBAGENT_TOOL_TIMEOUT_MS: "456" }), "456");
 		assert.equal(toolTimeoutFromEnv({}), undefined);
 	});
 });

@@ -113,7 +113,7 @@ describe("ponytail helpers", () => {
   });
 
   it("filterSkillBodyForMode keeps only requested intensity examples and rows", () => {
-    const body = `---\nname: ponytail\n---\n| **lite** | keep lite |\n| **full** | keep full |\n| **ultra** | keep ultra |\n- lite: Lite example\n- full: Full example\n- ultra: Ultra example\nOther line`;
+    const body = `---\nname: ponytail\n---\n| **lite** | keep lite |\n| **full** | keep full |\n| **ultra** | keep ultra |\n- lite: \"Lite example\"\n- full: \"Full example\"\n- ultra: \"Ultra example\"\nOther line`;
 
     const filtered = filterSkillBodyForMode(body, "ultra");
 

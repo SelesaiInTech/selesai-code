@@ -103,28 +103,6 @@ describe("subagent extension child mode", () => {
 		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
 	});
 
-	it("declares packaged prompts through resources_discover", () => {
-		const script = String.raw`
-			import registerSubagentExtension from "./index.ts";
-			import * as fs from "node:fs";
-			const handlers = new Map();
-			const fakePi = new Proxy({
-				events: { on() { return () => {}; }, emit() {} },
-				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
-				on(event, handler) { handlers.set(event, handler); },
-			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
-			registerSubagentExtension(fakePi);
-			const handler = handlers.get("resources_discover");
-			if (!handler) throw new Error("resources_discover handler not registered");
-			const result = handler({ type: "resources_discover", cwd: process.cwd(), reason: "startup" });
-			if (!result || !Array.isArray(result.promptPaths) || result.promptPaths.length !== 1) throw new Error("expected one promptPath, got " + JSON.stringify(result));
-			const promptDir = result.promptPaths[0];
-			if (!fs.existsSync(promptDir + "/review-loop.md")) throw new Error("review-loop.md not found under " + promptDir);
-			if (!fs.existsSync(promptDir + "/parallel-review.md")) throw new Error("parallel-review.md not found under " + promptDir);
-		`;
-		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
-	});
-
 	it("shows omitted workflow async as background even when asyncByDefault is false", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-workflow-manifest-config-"));
 		try {
@@ -205,6 +183,7 @@ describe("subagent extension child mode", () => {
 
 	it("rejects blank action at the public executor boundary", () => {
 		const script = String.raw`
+			import assert from "node:assert/strict";
 			import registerSubagentExtension from "./index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
 			let registeredTool;
@@ -215,10 +194,10 @@ describe("subagent extension child mode", () => {
 			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
-			const result = await registeredTool.execute("blank-action", { action: "", agent: "reviewer" }, new AbortController().signal, undefined, { cwd: process.cwd(), hasUI: false });
-			if (!result.isError) throw new Error("blank action should be rejected");
-			const text = result.content?.[0]?.text ?? "";
-			if (!text.includes("action must be a non-empty")) throw new Error("unexpected blank action error: " + text);
+			await assert.rejects(
+				registeredTool.execute("blank-action", { action: "", agent: "reviewer" }, new AbortController().signal, undefined, { cwd: process.cwd(), hasUI: false }),
+				/action must be a non-empty/,
+			);
 		`;
 
 		execFileSync(
@@ -612,12 +591,151 @@ describe("subagent extension child mode", () => {
 			}), "utf-8");
 			updateActiveRunIndex(asyncDir, "running");
 			handlers.get("tool_result")({ toolName: "subagent" }, ctx);
-			const asyncWidgets = widgets.filter((entry) => entry.key === "subagent-async");
-			if (!asyncWidgets.some((entry) => typeof entry.value === "function" || typeof entry.value === "string")) throw new Error("management result did not restore active async status: " + JSON.stringify(asyncWidgets));
+			const fleetWidgets = widgets.filter((entry) => entry.key === "subagent-fleet-status");
+			if (!fleetWidgets.some((entry) => typeof entry.value === "function")) throw new Error("management result did not restore active fleet status: " + JSON.stringify(fleetWidgets));
 			handlers.get("session_shutdown")();
 			fs.rmSync(asyncDir, { recursive: true, force: true });
 		`;
 		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
+	});
+
+	it("keeps independent extension runtimes active in one process", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			import { currentCompletionOwnerId } from "./src/shared/completion-owner.ts";
+			const completionOwnerId = currentCompletionOwnerId();
+			function createRuntime(sessionId) {
+				const eventListeners = new Map();
+				const eventDeliveries = new Map();
+				const handlers = new Map();
+				const events = {
+					on(channel, handler) {
+						let listeners = eventListeners.get(channel);
+						if (!listeners) eventListeners.set(channel, listeners = new Set());
+						listeners.add(handler);
+						return () => listeners.delete(handler);
+					},
+					emit(channel, payload) {
+						for (const handler of [...(eventListeners.get(channel) ?? [])]) {
+							eventDeliveries.set(channel, (eventDeliveries.get(channel) ?? 0) + 1);
+							handler(payload);
+						}
+					},
+				};
+				const pi = new Proxy({
+					events,
+					on(channel, handler) { handlers.set(channel, handler); },
+					registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+					sendMessage() {}, getSessionName() { return undefined; },
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				const sessionManager = {
+					getSessionId() { return sessionId; },
+					getSessionFile() { return "/tmp/" + sessionId + ".jsonl"; },
+					getEntries() { return []; },
+				};
+				const ctx = {
+					cwd: process.cwd(), hasUI: false,
+					ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
+					sessionManager,
+					modelRegistry: { getAvailable() { return []; } },
+				};
+				return { pi, events, eventDeliveries, handlers, ctx };
+			}
+
+			const first = createRuntime("independent-first");
+			registerSubagentExtension(first.pi);
+			first.handlers.get("session_start")({ reason: "startup" }, first.ctx);
+			first.events.emit("subagent:async-complete", {
+				id: "independent-baseline", agent: "worker", success: true, summary: "Baseline",
+				exitCode: 0, timestamp: Date.now(), sessionId: "independent-first", completionOwnerId,
+			});
+			const baselineDeliveries = first.eventDeliveries.get("subagent:async-complete") ?? 0;
+			if (baselineDeliveries === 0) throw new Error("first runtime did not register async-complete listeners");
+			const second = createRuntime("independent-second");
+			registerSubagentExtension(second.pi);
+			second.handlers.get("session_start")({ reason: "startup" }, second.ctx);
+
+			await first.handlers.get("agent_end")({}, first.ctx);
+			first.events.emit("subagent:async-complete", {
+				id: "independent-completion", agent: "worker", success: true, summary: "Done",
+				exitCode: 0, timestamp: Date.now(), sessionId: "independent-first", completionOwnerId,
+			});
+			if (first.eventDeliveries.get("subagent:async-complete") !== baselineDeliveries * 2) {
+				throw new Error("first runtime no longer received async-complete after second registration");
+			}
+
+			await first.handlers.get("session_shutdown")();
+			if (process.env.SELESAI_SUBAGENT_PARENT_SESSION !== "independent-second") {
+				throw new Error("independent shutdown cleared another runtime's parent session identity");
+			}
+			await second.handlers.get("agent_end")({}, second.ctx);
+			second.events.emit("subagent:async-complete", {
+				id: "independent-second-completion", agent: "reviewer", success: true, summary: "Done",
+				exitCode: 0, timestamp: Date.now(), sessionId: "independent-second", completionOwnerId,
+			});
+			if ((second.eventDeliveries.get("subagent:async-complete") ?? 0) === 0) {
+				throw new Error("first runtime shutdown removed the second runtime's event subscription");
+			}
+			await second.handlers.get("session_shutdown")();
+			if (process.env.SELESAI_SUBAGENT_PARENT_SESSION !== undefined) {
+				throw new Error("owning shutdown left its parent session identity active");
+			}
+		`;
+
+		execFileSync(
+			process.execPath,
+			["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
+	it("keeps slash snapshots until the last independent runtime shuts down", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			import { buildSlashInitialResult, getSlashRenderableSnapshot } from "./src/slash/slash-live-state.ts";
+			function createRuntime(sessionId) {
+				const handlers = new Map();
+				const events = { on() { return () => {}; }, emit() {} };
+				const pi = new Proxy({
+					events,
+					on(channel, handler) { handlers.set(channel, handler); },
+					registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+					sendMessage() {}, getSessionName() { return undefined; },
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				const ctx = {
+					cwd: process.cwd(), hasUI: false,
+					ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
+					sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return null; }, getEntries() { return []; } },
+					modelRegistry: { getAvailable() { return []; } },
+				};
+				return { pi, handlers, ctx };
+			}
+
+			const first = createRuntime("slash-first");
+			const second = createRuntime("slash-second");
+			registerSubagentExtension(first.pi);
+			first.handlers.get("session_start")({ reason: "startup" }, first.ctx);
+			registerSubagentExtension(second.pi);
+			second.handlers.get("session_start")({ reason: "startup" }, second.ctx);
+			const details = buildSlashInitialResult("slash-isolation", { agent: "worker", task: "Keep this snapshot" });
+			const liveVersion = getSlashRenderableSnapshot(details).version;
+			if (liveVersion <= 0) throw new Error("slash snapshot was not populated");
+
+			await first.handlers.get("session_shutdown")({ reason: "shutdown" });
+			if (getSlashRenderableSnapshot(details).version !== liveVersion) {
+				throw new Error("one runtime shutdown cleared another active runtime's slash snapshot");
+			}
+			await second.handlers.get("session_shutdown")({ reason: "shutdown" });
+			if (getSlashRenderableSnapshot(details).version !== 0) {
+				throw new Error("last runtime shutdown did not clear slash snapshots");
+			}
+		`;
+
+		execFileSync(
+			process.execPath,
+			["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
 	});
 
 	it("disposes pending completion notifications on session shutdown", () => {
@@ -627,6 +745,8 @@ describe("subagent extension child mode", () => {
 		fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ completionBatch: { enabled: true, debounceMs: 150 } }), "utf-8");
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
+			import { currentCompletionOwnerId } from "./src/shared/completion-owner.ts";
+			const completionOwnerId = currentCompletionOwnerId();
 			const pendingTimers = new Map();
 			const realSetTimeout = globalThis.setTimeout;
 			const realClearTimeout = globalThis.clearTimeout;
@@ -667,7 +787,7 @@ describe("subagent extension child mode", () => {
 			sent.length = 0;
 			events.emit("subagent:async-complete", {
 				id: "shutdown-held-completion", agent: "worker", success: true, summary: "Done",
-				exitCode: 0, timestamp: Date.now(), sessionId: "notify-shutdown-session",
+				exitCode: 0, timestamp: Date.now(), sessionId: "notify-shutdown-session", completionOwnerId,
 			});
 			if (sent.length !== 0) throw new Error("completion was not queued before shutdown");
 			const heldTimers = [...pendingTimers.values()];
@@ -700,6 +820,8 @@ describe("subagent extension child mode", () => {
 		fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ completionBatch: { enabled: true, debounceMs: 150 } }), "utf-8");
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
+			import { currentCompletionOwnerId } from "./src/shared/completion-owner.ts";
+			const completionOwnerId = currentCompletionOwnerId();
 			const pendingTimers = new Map();
 			const realSetTimeout = globalThis.setTimeout;
 			const realClearTimeout = globalThis.clearTimeout;
@@ -709,21 +831,26 @@ describe("subagent extension child mode", () => {
 				return token;
 			};
 			globalThis.clearTimeout = (token) => pendingTimers.delete(token);
-			function createRuntime(sessionId) {
-				const eventListeners = new Map();
+			const eventListeners = new Map();
+			const events = {
+				on(channel, handler) {
+					let listeners = eventListeners.get(channel);
+					if (!listeners) eventListeners.set(channel, listeners = new Set());
+					listeners.add(handler);
+					return () => listeners.delete(handler);
+				},
+				emit(channel, payload) {
+					for (const handler of [...(eventListeners.get(channel) ?? [])]) handler(payload);
+				},
+			};
+			const sessionManager = {
+				getSessionId() { return "notify-reload-session"; },
+				getSessionFile() { return null; },
+				getEntries() { return []; },
+			};
+			function createRuntime() {
 				const handlers = new Map();
 				const sent = [];
-				const events = {
-					on(channel, handler) {
-						let listeners = eventListeners.get(channel);
-						if (!listeners) eventListeners.set(channel, listeners = new Set());
-						listeners.add(handler);
-						return () => listeners.delete(handler);
-					},
-					emit(channel, payload) {
-						for (const handler of [...(eventListeners.get(channel) ?? [])]) handler(payload);
-					},
-				};
 				const pi = new Proxy({
 					events,
 					on(channel, handler) { handlers.set(channel, handler); },
@@ -733,34 +860,45 @@ describe("subagent extension child mode", () => {
 				const ctx = {
 					cwd: process.cwd(), hasUI: false,
 					ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
-					sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return null; }, getEntries() { return []; } },
+					sessionManager,
 					modelRegistry: { getAvailable() { return []; } },
 				};
 				return { pi, events, handlers, sent, ctx };
 			}
-			const oldRuntime = createRuntime("notify-reload-old");
+
+			const oldRuntime = createRuntime();
 			registerSubagentExtension(oldRuntime.pi);
-			oldRuntime.handlers.get("session_start")({}, oldRuntime.ctx);
+			oldRuntime.handlers.get("session_start")({ reason: "startup" }, oldRuntime.ctx);
+			const oldListenerCount = eventListeners.get("subagent:async-complete")?.size ?? 0;
+			if (oldListenerCount === 0) throw new Error("old runtime did not register async-complete listeners");
 			oldRuntime.sent.length = 0;
 			const timersBeforeOldCompletion = new Set(pendingTimers.keys());
 			oldRuntime.events.emit("subagent:async-complete", {
 				id: "reload-held-completion", agent: "worker", success: true, summary: "Old",
-				exitCode: 0, timestamp: Date.now(), sessionId: "notify-reload-old",
+				exitCode: 0, timestamp: Date.now(), sessionId: "notify-reload-session", completionOwnerId,
 			});
 			if (oldRuntime.sent.length !== 0) throw new Error("old completion was not queued before reload");
 			const oldCompletionTimers = [...pendingTimers.entries()].filter(([token]) => !timersBeforeOldCompletion.has(token));
 			if (oldCompletionTimers.length === 0) throw new Error("old completion did not schedule a timer");
 
-			const newRuntime = createRuntime("notify-reload-new");
+			const newRuntime = createRuntime();
 			registerSubagentExtension(newRuntime.pi);
-			newRuntime.handlers.get("session_start")({}, newRuntime.ctx);
+			newRuntime.handlers.get("session_start")({ reason: "reload" }, newRuntime.ctx);
+			if (eventListeners.get("subagent:async-complete")?.size !== oldListenerCount) {
+				throw new Error("replacement runtime did not restore its event subscriptions");
+			}
 			for (const [, handler] of oldCompletionTimers) handler();
 			if (oldRuntime.sent.length !== 0) throw new Error("stale completion sent after runtime cleanup");
+			await oldRuntime.handlers.get("session_shutdown")({ reason: "reload" });
+			if (eventListeners.get("subagent:async-complete")?.size !== oldListenerCount
+				|| process.env.SELESAI_SUBAGENT_PARENT_SESSION !== "notify-reload-session") {
+				throw new Error("stale shutdown changed the replacement runtime");
+			}
 
 			const timersBeforeNewCompletion = new Set(pendingTimers.keys());
 			newRuntime.events.emit("subagent:async-complete", {
 				id: "reload-new-completion", agent: "reviewer", success: true, summary: "New",
-				exitCode: 0, timestamp: Date.now(), sessionId: "notify-reload-new",
+				exitCode: 0, timestamp: Date.now(), sessionId: "notify-reload-session", completionOwnerId,
 			});
 			const newCompletionTimers = [...pendingTimers.entries()].filter(([token]) => !timersBeforeNewCompletion.has(token));
 			if (newCompletionTimers.length === 0) throw new Error("new completion did not schedule a timer");
@@ -769,7 +907,7 @@ describe("subagent extension child mode", () => {
 				handler();
 			}
 			if (newRuntime.sent.length !== 1) throw new Error("new notifier was not active after reload cleanup");
-			newRuntime.handlers.get("session_shutdown")();
+			await newRuntime.handlers.get("session_shutdown")({ reason: "shutdown" });
 			globalThis.setTimeout = realSetTimeout;
 			globalThis.clearTimeout = realClearTimeout;
 		`;
@@ -787,7 +925,7 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("does not register the main watchdog command or renderer in parent mode", () => {
+	it("registers the main watchdog command and renderer in parent mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
@@ -808,8 +946,8 @@ describe("subagent extension child mode", () => {
 				},
 			});
 			registerSubagentExtension(fakePi);
-			if (commands.includes("subagents-watchdog")) throw new Error("watchdog command still registered: " + commands.join(", "));
-			if (renderers.includes("subagent_watchdog_warning")) throw new Error("watchdog renderer still registered: " + renderers.join(", "));
+			if (!commands.includes("subagents-watchdog")) throw new Error("watchdog command not registered: " + commands.join(", "));
+			if (!renderers.includes("subagent_watchdog_warning")) throw new Error("watchdog renderer not registered: " + renderers.join(", "));
 		`;
 
 		execFileSync(
@@ -829,9 +967,6 @@ describe("subagent extension child mode", () => {
 	it("returns before registering anything for non-fanout children", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
-			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
-			process.env[SUBAGENT_CHILD_ENV] = "1";
-			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "0";
 			const calls = [];
 			const fakePi = new Proxy({}, {
 				get(_target, prop) {
@@ -857,7 +992,7 @@ describe("subagent extension child mode", () => {
 				"--eval",
 				script,
 			],
-			{ cwd: projectRoot, stdio: "pipe" },
+			{ cwd: projectRoot, env: { ...parentToolEnv(), [SUBAGENT_CHILD_ENV]: "1", [SUBAGENT_FANOUT_CHILD_ENV]: "0" }, stdio: "pipe" },
 		);
 	});
 
@@ -942,11 +1077,10 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
-	it("trims legacy chain controls from the child-safe fanout tool by default", () => {
-		const readRegisteredTool = (legacyChainControls: boolean): { description: string; properties: string[]; id: string; runId: string } => {
+	it("omits legacy chain controls from the child-safe fanout tool", () => {
+		const readRegisteredTool = (): { description: string; properties: string[]; id: string; runId: string } => {
 			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fanout-schema-"));
 			fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
-			fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ legacyChainControls }), "utf-8");
 			const script = String.raw`
 				import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
 				import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
@@ -964,17 +1098,14 @@ describe("subagent extension child mode", () => {
 			return JSON.parse(output) as { description: string; properties: string[]; id: string; runId: string };
 		};
 
-		const trimmed = readRegisteredTool(false);
-		assert.equal(trimmed.properties.includes("step"), false);
-		assert.doesNotMatch(`${trimmed.description}\n${trimmed.id}\n${trimmed.runId}`, /append-step|approve-checkpoint|reject-checkpoint/);
-
-		const legacy = readRegisteredTool(true);
-		assert.equal(legacy.properties.includes("step"), true);
-		assert.match(`${legacy.description}\n${legacy.id}\n${legacy.runId}`, /append-step/);
+		const tool = readRegisteredTool();
+		assert.equal(tool.properties.includes("step"), false);
+		assert.doesNotMatch(`${tool.description}\n${tool.id}\n${tool.runId}`, /append-step|approve-checkpoint|reject-checkpoint/);
 	});
 
 	it("lets fanout children call read-only list but blocks mutating management actions", () => {
 		const script = String.raw`
+			import assert from "node:assert/strict";
 			import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
 			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
 			process.env[SUBAGENT_CHILD_ENV] = "1";
@@ -995,18 +1126,18 @@ describe("subagent extension child mode", () => {
 			};
 			const list = await registeredTool.execute("list-check", { action: "list" }, new AbortController().signal, undefined, ctx);
 			if (list.isError) throw new Error("list should be allowed: " + JSON.stringify(list.content));
-			const create = await registeredTool.execute("create-check", { action: "create", config: { name: "x" } }, new AbortController().signal, undefined, ctx);
-			if (!create.isError) throw new Error("create should be blocked");
-			const text = create.content?.[0]?.text ?? "";
-			if (!text.includes("not available from child-safe subagent fanout mode")) throw new Error("unexpected create error: " + text);
-			const refine = await registeredTool.execute("refine-check", { action: "refine", agent: "worker" }, new AbortController().signal, undefined, ctx);
-			if (!refine.isError) throw new Error("refine should be blocked");
-			const refineText = refine.content?.[0]?.text ?? "";
-			if (!refineText.includes("not available from child-safe subagent fanout mode")) throw new Error("unexpected refine error: " + refineText);
-			const grant = await registeredTool.execute("grant-check", { action: "grant-spawn-budget", additional: 1 }, new AbortController().signal, undefined, { ...ctx, hasUI: true });
-			if (!grant.isError) throw new Error("grant-spawn-budget should be blocked");
-			const grantText = grant.content?.[0]?.text ?? "";
-			if (!grantText.includes("root interactive parent session")) throw new Error("unexpected grant error: " + grantText);
+			await assert.rejects(
+				registeredTool.execute("create-check", { action: "create", config: { name: "x" } }, new AbortController().signal, undefined, ctx),
+				/not available from child-safe subagent fanout mode/,
+			);
+			await assert.rejects(
+				registeredTool.execute("refine-check", { action: "refine", agent: "worker" }, new AbortController().signal, undefined, ctx),
+				/not available from child-safe subagent fanout mode/,
+			);
+			await assert.rejects(
+				registeredTool.execute("grant-check", { action: "grant-spawn-budget", additional: 1 }, new AbortController().signal, undefined, { ...ctx, hasUI: true }),
+				/root interactive parent session/,
+			);
 		`;
 
 		execFileSync(

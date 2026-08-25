@@ -3,9 +3,10 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const {
   DEFAULT_MODE,
+  RUNTIME_MODES,
   getDefaultMode,
+  getQuietStartup,
   normalizeMode,
-  normalizeConfigMode,
   normalizePersistedMode,
   isDeactivationCommand,
   writeDefaultMode,
@@ -14,11 +15,12 @@ const { getPonytailInstructions, filterSkillBodyForMode } = require("./ponytail-
 
 export { filterSkillBodyForMode };
 export const readDefaultMode = getDefaultMode;
+export const readQuietStartup = getQuietStartup;
+
+const RUNTIME_MODE_LIST = RUNTIME_MODES.join("|");
+const PONYTAIL_COMMAND_DESCRIPTION = `Set mode: ${RUNTIME_MODE_LIST}. Commands: status, default <mode>`;
 
 export function resolveSessionMode(entries, fallbackMode = DEFAULT_MODE) {
-  // Unreachable: normalizePersistedMode always returns a valid mode or null,
-  // and the caller passes a valid default.
-  /* v8 ignore next 1 */
   const fallback = normalizePersistedMode(fallbackMode) || DEFAULT_MODE;
   if (!Array.isArray(entries)) return fallback;
 
@@ -46,7 +48,8 @@ export function parsePonytailCommand(text, defaultMode = DEFAULT_MODE) {
   if (primary === "status") return { type: "status" };
 
   if (primary === "default") {
-    const mode = normalizeConfigMode(secondary);
+    // ponytail: a default must be a runtime level; review is session-only (#377).
+    const mode = normalizeMode(secondary);
     return mode ? { type: "set-default", mode } : { type: "invalid", reason: "invalid-default-mode" };
   }
 
@@ -59,12 +62,8 @@ export { writeDefaultMode };
 export default function ponytailExtension(pi) {
   let currentMode = DEFAULT_MODE;
   let configuredDefaultMode = getDefaultMode();
-
   const setMode = (mode, ctx) => {
     const normalized = normalizePersistedMode(mode);
-    // Unreachable: setMode is only called with validated modes from the
-    // command handler and the deactivation input handler.
-    /* v8 ignore next 1 */
     if (!normalized) return;
 
     currentMode = normalized;
@@ -74,8 +73,6 @@ export default function ponytailExtension(pi) {
 
   const sendAlias = (skillName, args, ctx) => {
     const normalized = String(args || "").trim();
-    // Unreachable: the alias command handlers always pass empty args.
-    /* v8 ignore next 1 */
     const message = normalized ? `${skillName} ${normalized}` : skillName;
 
     if (ctx?.isIdle?.() === false) {
@@ -88,7 +85,7 @@ export default function ponytailExtension(pi) {
   };
 
   pi.registerCommand("ponytail", {
-    description: "Set or report Ponytail mode",
+    description: PONYTAIL_COMMAND_DESCRIPTION,
     handler: async (args, ctx) => {
       const parsed = parsePonytailCommand(args, configuredDefaultMode);
 
@@ -98,16 +95,17 @@ export default function ponytailExtension(pi) {
       }
 
       if (parsed.type === "set-default") {
-        const written = writeDefaultMode(parsed.mode);
-        // Unreachable: parsePonytailCommand only returns set-default for
-        // valid config modes, so writeDefaultMode always succeeds.
-        /* v8 ignore next 1 */
-        if (written) {
-          configuredDefaultMode = getDefaultMode();
-          const message = configuredDefaultMode === written
-            ? `Default Ponytail mode set to ${written}.`
-            : `Saved default ${written}, but env override keeps default at ${configuredDefaultMode}.`;
-          ctx?.ui?.notify?.(message, "info");
+        try {
+          const written = writeDefaultMode(parsed.mode);
+          if (written) {
+            configuredDefaultMode = getDefaultMode();
+            const message = configuredDefaultMode === written
+              ? `Default Ponytail mode set to ${written}.`
+              : `Saved default ${written}, but env override keeps default at ${configuredDefaultMode}.`;
+            ctx?.ui?.notify?.(message, "info");
+          }
+        } catch (e) {
+          ctx?.ui?.notify?.(`Failed to save default mode: ${e.message}`, "error");
         }
         return;
       }
@@ -159,12 +157,20 @@ export default function ponytailExtension(pi) {
     const entries = ctx?.sessionManager?.getBranch?.() || ctx?.sessionManager?.getEntries?.() || [];
     configuredDefaultMode = getDefaultMode();
     currentMode = resolveSessionMode(entries, configuredDefaultMode);
-    ctx?.ui?.setStatus?.("ponytail", undefined);
-    ctx?.ui?.notify?.(`Ponytail loaded: ${currentMode}`, "info");
+    if (!getQuietStartup()) {
+      ctx?.ui?.notify?.(`Ponytail loaded: ${currentMode}`, "info");
+    }
   });
+
 
   pi.on("before_agent_start", async (event) => {
     if (!currentMode || currentMode === "off") return;
-    return { systemPrompt: `${event.systemPrompt}\n\n${getPonytailInstructions(currentMode, { compact: true })}` };
+    // Guard a null/undefined event or a missing systemPrompt: don't crash, and
+    // don't prepend the literal string "undefined" to the prompt (#439, #440).
+    const base = event?.systemPrompt ? `${event.systemPrompt}\n\n` : "";
+    // ponytail: full keeps the detailed skill; alternate modes use the compact
+    // ruleset to avoid repeating the same system prompt on every request.
+    const compact = currentMode !== "full";
+    return { systemPrompt: `${base}${getPonytailInstructions(currentMode, { compact })}` };
   });
 }

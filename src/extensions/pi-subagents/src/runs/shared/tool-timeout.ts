@@ -1,5 +1,3 @@
-import { readSubagentEnv } from "../../shared/env.ts";
-
 export const TOOL_TIMEOUT_ENV = "SELESAI_SUBAGENT_TOOL_TIMEOUT_MS";
 
 /** Maximum delay a Node.js timer accepts without overflow. */
@@ -91,5 +89,5 @@ export function resolveToolTimeoutMs(input: ToolTimeoutResolutionInput): { toolT
 
 /** Read the environment override without requiring callers to know the name. */
 export function toolTimeoutFromEnv(env: NodeJS.ProcessEnv = process.env): string | undefined {
-	return readSubagentEnv(env, TOOL_TIMEOUT_ENV);
+	return env[TOOL_TIMEOUT_ENV];
 }

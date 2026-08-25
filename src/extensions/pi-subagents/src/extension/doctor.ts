@@ -134,21 +134,19 @@ function formatSessionLines(input: DoctorReportInput): string[] {
 
 function formatDiscovery(input: DoctorReportInput, deps: DoctorDeps): string[] {
 	return [
-		lineFromCheck("agents/chains", () => {
+		lineFromCheck("agents", () => {
 			const discovered = deps.discoverAgentsAll(input.cwd);
 			const agentCounts = {
 				builtin: discovered.builtin.length,
 				package: discovered.package?.length ?? 0,
 				user: discovered.user.length,
 				project: discovered.project.length,
+				runtime: 0,
 			};
-			const chainCounts = discovered.chains.reduce<Record<AgentSource, number>>((counts, chain) => {
-				counts[chain.source] += 1;
-				return counts;
-			}, { builtin: 0, package: 0, user: 0, project: 0 });
+			const diagnostics = discovered.agentDiagnostics ?? [];
 			return [
 				`- agents: total ${agentCounts.builtin + agentCounts.package + agentCounts.user + agentCounts.project} (${formatSourceCounts(agentCounts)})`,
-				`- chains: total ${discovered.chains.length} (${formatSourceCounts(chainCounts)})`,
+				...diagnostics.map((diagnostic) => `- invalid agent ${diagnostic.name ?? diagnostic.filePath} (${diagnostic.source}): ${diagnostic.error}`),
 			].join("\n");
 		}),
 		lineFromCheck("skills", () => {
@@ -226,6 +224,13 @@ function formatPermissionSystemSection(): string[] {
 	return lines;
 }
 
+function formatWorkflowScriptSection(): string[] {
+	return [
+		"- helpers: runs.run, runs.all, runs.steer, runs.status, runs.ref/refs, emit, console",
+		"- recovery: if runs.all is missing, reload or update pi-subagents; await Promise.all([runs.run(...)]) is also supported",
+	];
+}
+
 export function buildDoctorReport(input: DoctorReportInput): string {
 	const paths = input.paths ?? defaultPaths();
 	const deps = { ...DEFAULT_DEPS, ...input.deps };
@@ -254,6 +259,9 @@ export function buildDoctorReport(input: DoctorReportInput): string {
 		"",
 		"Active async capacity",
 		...formatActiveAsyncCapacitySection(input),
+		"",
+		"Workflow script",
+		...formatWorkflowScriptSection(),
 		"",
 		"Permission system",
 		...formatPermissionSystemSection(),

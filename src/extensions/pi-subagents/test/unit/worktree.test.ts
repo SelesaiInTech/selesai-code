@@ -125,9 +125,9 @@ describe("worktree", () => {
 		}
 	});
 
-	it("rejects worktree base directories inside Selesai extensions", () => {
-		const repoDir = createRepo("selesai-worktree-extension-dir-");
-		const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "selesai-worktree-home-"));
+	it("rejects worktree base directories inside Pi extensions", () => {
+		const repoDir = createRepo("pi-worktree-extension-dir-");
+		const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-home-"));
 		const previousAgentDir = process.env.SELESAI_CODING_AGENT_DIR;
 		const previousHome = process.env.HOME;
 		const previousUserProfile = process.env.USERPROFILE;
@@ -156,9 +156,9 @@ describe("worktree", () => {
 		}
 	});
 
-	it("rejects symlinked worktree base directories inside Selesai extensions", () => {
-		const repoDir = createRepo("selesai-worktree-extension-symlink-");
-		const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "selesai-worktree-home-"));
+	it("rejects symlinked worktree base directories inside Pi extensions", () => {
+		const repoDir = createRepo("pi-worktree-extension-symlink-");
+		const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-home-"));
 		const previousAgentDir = process.env.SELESAI_CODING_AGENT_DIR;
 		const previousHome = process.env.HOME;
 		const previousUserProfile = process.env.USERPROFILE;

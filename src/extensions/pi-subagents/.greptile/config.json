@@ -1,0 +1,33 @@
+{
+  "instructions": "Follow the tracked review policy in .greptile/rules.md. Prefer concrete release-risk findings over speculative improvements. Do not describe a PR as safe to merge or merge-ready unless required changelog credit, focused validation, and exact-head CI gates are satisfied.",
+  "rules": [
+    {
+      "id": "release-risk-findings-only",
+      "rule": "Report only concrete, reachable release risks, direct contract contradictions, or clear local simplifications. Avoid speculative hardening, broad rewrites, and future-proofing suggestions.",
+      "severity": "high"
+    },
+    {
+      "id": "merge-ready-gates",
+      "rule": "Do not state that a PR is safe to merge or merge-ready unless required contributor credit, focused validation, and required CI on the exact PR head are present. If one is missing, call it out as a merge gate rather than a code defect.",
+      "severity": "high"
+    },
+    {
+      "id": "external-contributor-credit",
+      "rule": "When a change includes a CHANGELOG.md entry for material external contributor work, the entry must visibly credit the contributor with their GitHub login/name and PR or issue number, for example: Thanks to @login for #123.",
+      "scope": ["CHANGELOG.md"],
+      "severity": "high"
+    },
+    {
+      "id": "portable-tests",
+      "rule": "Tests must be portable across macOS, Linux, and Windows. Avoid machine-specific absolute Pi/TUI install paths, isolate both HOME and USERPROFILE when testing home-directory behavior, and prefer deterministic filesystem failures over POSIX chmod permission assumptions.",
+      "scope": ["test/**"],
+      "severity": "medium"
+    },
+    {
+      "id": "preserve-error-signals",
+      "rule": "Do not hide useful error signals by wrapping throwing/rejecting code into null, defaults, or less-informative results unless the surrounding code already uses a Result-style contract.",
+      "scope": ["src/**"],
+      "severity": "medium"
+    }
+  ]
+}

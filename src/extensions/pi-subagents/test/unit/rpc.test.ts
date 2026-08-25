@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { stopRequestPath } from "../../src/runs/background/control-channel.ts";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { consumeStopRequestPayload, stopRequestPath } from "../../src/runs/background/control-channel.ts";
 import {
 	SUBAGENT_RPC_PROTOCOL_VERSION,
 	SUBAGENT_RPC_READY_EVENT,
@@ -12,6 +13,7 @@ import {
 	subagentRpcReplyEvent,
 	type SubagentRpcReplyEnvelope,
 } from "../../src/extension/rpc.ts";
+import { SUBAGENT_CHILD_STATUS_EVENT, type Details, type SubagentChildStatusEvent, type SubagentState } from "../../src/shared/types.ts";
 
 class FakeEvents {
 	readonly emitted: Array<{ event: string; data: unknown }> = [];
@@ -88,6 +90,10 @@ describe("subagent extension RPC bridge", () => {
 			"subagent:async-complete",
 		);
 		assert.equal(
+			(reply as { data: { events?: { childStatus?: string } } }).data.events?.childStatus,
+			SUBAGENT_CHILD_STATUS_EVENT,
+		);
+		assert.equal(
 			(reply as { data: { capabilities?: { nonRecoveringSteer?: boolean } } }).data.capabilities?.nonRecoveringSteer,
 			true,
 		);
@@ -95,9 +101,17 @@ describe("subagent extension RPC bridge", () => {
 			(reply as { data: { capabilities?: { resume?: boolean } } }).data.capabilities?.resume,
 			true,
 		);
-		assert.equal(
+		assert.deepEqual(
+			(reply as { data: { capabilities?: { managementActions?: unknown } } }).data.capabilities?.managementActions,
+			["schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.delete"],
+		);
+		assert.deepEqual(
 			(reply as { data: { capabilities?: { fleetStatus?: unknown } } }).data.capabilities?.fleetStatus,
-			undefined,
+			{ version: 1 },
+		);
+		assert.deepEqual(
+			(reply as { data: { capabilities?: { asyncStatusSnapshot?: unknown } } }).data.capabilities?.asyncStatusSnapshot,
+			{ kind: "pi-subagents.async-status-snapshot", version: 1 },
 		);
 
 		bridge.dispose();
@@ -148,6 +162,35 @@ describe("subagent extension RPC bridge", () => {
 		assert.deepEqual((reply as { data: { fleet?: unknown } }).data.fleet, {
 			version: 1, entries: [], totalActive: 0, topLevelAsyncCapacity: { used: 0, limit: 0 }, omitted: 0,
 		});
+
+		bridge.dispose();
+	});
+
+	it("delegates allowlisted schedule management through the active session", async () => {
+		const events = new FakeEvents();
+		const executed: unknown[] = [];
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async (_id, params) => {
+				executed.push(params);
+				return { content: [{ type: "text", text: "ok" }], details: { mode: "management", results: [] } } satisfies AgentToolResult<Details>;
+			},
+		});
+
+		assert.equal((await request(events, "manage-list", "manage", { action: "schedule.list" })).success, true);
+		assert.equal((await request(events, "manage-pause", "manage", { action: "schedule.pause", id: "nightly" })).success, true);
+		assert.deepEqual(executed, [
+			{ action: "schedule.list" },
+			{ action: "schedule.pause", id: "nightly" },
+		]);
+
+		const denied = await request(events, "manage-denied", "manage", { action: "mission.close", id: "mission-1" });
+		assert.equal(denied.success, false);
+		assert.equal((denied as { error: { code: string } }).error.code, "invalid_params");
+		const missingId = await request(events, "manage-missing", "manage", { action: "schedule.run" });
+		assert.equal(missingId.success, false);
+		assert.equal((missingId as { error: { code: string } }).error.code, "invalid_params");
 
 		bridge.dispose();
 	});
@@ -204,6 +247,51 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal(entry.goal, undefined);
 		assert.ok(entry.agent.length <= 96);
 		assert.match(entry.agent, /^worker broken/);
+		bridge.dispose();
+	});
+
+	it("adds a bounded current async status snapshot to status replies", async () => {
+		const events = new FakeEvents();
+		const state = {
+			currentSessionId: "/sessions/parent.jsonl",
+			foregroundControls: new Map(),
+			asyncJobs: new Map([["run-1", {
+				asyncId: "run-1",
+				asyncDir: "/tmp/PRIVATE_RPC_LEAK/run-1",
+				cwd: "/repo/PRIVATE_RPC_LEAK",
+				sessionDir: "/sessions/PRIVATE_RPC_LEAK",
+				outputFile: "/tmp/PRIVATE_RPC_LEAK/output.log",
+				sessionId: "/sessions/parent.jsonl",
+				status: "running",
+				mode: "single",
+				agents: ["worker"],
+				currentTool: "read",
+				steps: [{ agent: "worker", status: "running", currentToolArgs: "PRIVATE_RPC_LEAK args", recentOutput: ["PRIVATE_RPC_LEAK output"] }],
+			}]]),
+			fleetJobs: new Map([["done", {
+				asyncId: "done",
+				asyncDir: "/tmp/done",
+				sessionId: "/sessions/parent.jsonl",
+				status: "complete",
+				agents: ["reviewer"],
+				updatedAt: 50,
+			}]]),
+		} as any;
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx("runtime-session-id", "/sessions/parent.jsonl"),
+			state,
+			execute: async () => ({ content: [], details: { mode: "management", results: [] } } as any),
+		});
+
+		const reply = await request(events, "async-snapshot", "status");
+		const snapshot = (reply as any).data.asyncSnapshot;
+		assert.equal(snapshot.kind, "pi-subagents.async-status-snapshot");
+		assert.equal(snapshot.version, 1);
+		assert.deepEqual(snapshot.runs.map((run: { id: string }) => run.id).sort(), ["done", "run-1"]);
+		assert.equal(JSON.stringify(snapshot).includes("PRIVATE_RPC_LEAK"), false);
+		assert.equal(JSON.stringify(snapshot).includes("currentToolArgs"), false);
+		assert.equal(JSON.stringify(snapshot).includes("recentOutput"), false);
 		bridge.dispose();
 	});
 
@@ -365,25 +453,46 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
-	it("accepts chain, parallel, single, and worktree spawn inputs", async () => {
+	it("rejects removed top-level chain and parallel spawn inputs", async () => {
 		const events = new FakeEvents();
 		let executeCalls = 0;
 		const bridge = registerSubagentRpcBridge({
 			events,
 			getContext: () => ctx(),
-			execute: async () => { executeCalls++; return { content: [], details: { mode: "workflow", results: [] } } as any; },
+			execute: async () => { executeCalls++; throw new Error("unreachable"); },
 		});
 
 		const chainReply = await request(events, "spawn-chain", "spawn", { chain: [{ agent: "worker" }] });
 		const parallelReply = await request(events, "spawn-parallel", "spawn", { tasks: [{ agent: "worker", task: "work" }] });
-		const singleReply = await request(events, "spawn-single", "spawn", { agent: "worker", task: "work" });
-		const worktreeReply = await request(events, "spawn-worktree", "spawn", { worktree: true, workflowScript: "return 1" });
+		const worktreeReply = await request(events, "spawn-worktree", "spawn", { worktree: true });
 
-		assert.equal(chainReply.success, true);
-		assert.equal(parallelReply.success, true);
-		assert.equal(singleReply.success, true);
-		assert.equal(worktreeReply.success, true);
-		assert.equal(executeCalls, 4);
+		assert.equal(chainReply.success, false);
+		assert.equal(parallelReply.success, false);
+		assert.equal(worktreeReply.success, false);
+		assert.match((chainReply as { error?: { message?: string } }).error?.message ?? "", /workflowScript/);
+		assert.equal(executeCalls, 0);
+		bridge.dispose();
+	});
+
+	it("passes structured single-child spawn requests to the direct async path", async () => {
+		const events = new FakeEvents();
+		let executedParams: any;
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async (_id, params) => {
+				executedParams = params;
+				return { content: [{ type: "text", text: "Async: worker [run-1]" }], details: { mode: "workflow", results: [], asyncId: "run-1" } } as any;
+			},
+		});
+
+		const reply = await request(events, "spawn-structured", "spawn", { agent: "worker", task: "Do work" });
+		assert.equal(reply.success, true);
+		assert.equal(executedParams.agent, "worker");
+		assert.equal(executedParams.task, "Do work");
+		assert.equal(executedParams.async, true);
+		assert.equal(executedParams.output, true);
+		assert.equal(executedParams.workflowScript, undefined);
 		bridge.dispose();
 	});
 
@@ -399,19 +508,15 @@ describe("subagent extension RPC bridge", () => {
 			},
 		});
 
-		const direct = await request(events, "spawn-direct", "spawn", { agent: "worker", task: "Do work" });
-		const foreground = await request(events, "spawn-foreground", "spawn", { workflowScript: "return runs.run('main', { agent: 'worker' })", async: false });
+		const foreground = await request(events, "spawn-foreground", "spawn", { agent: "worker", task: "Do work", async: false });
 		const management = await request(events, "spawn-management", "spawn", { action: "list" });
-
-		assert.equal(direct.success, true);
-		assert.equal(executeCalls, 1);
 
 		assert.equal(foreground.success, false);
 		assert.equal((foreground as { error: { code: string; message: string } }).error.code, "invalid_params");
 		assert.match((foreground as { error: { message: string } }).error.message, /detached async/);
 		assert.equal(management.success, false);
 		assert.match((management as { error: { message: string } }).error.message, /does not accept management/);
-		assert.equal(executeCalls, 1);
+		assert.equal(executeCalls, 0);
 
 		bridge.dispose();
 	});
@@ -620,7 +725,205 @@ describe("subagent extension RPC bridge", () => {
 			assert.equal(reply.success, true);
 			assert.equal((reply as { data: { runId?: string; state?: string } }).data.runId, "run-stop");
 			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
-			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), true);
+			assert.equal(consumeStopRequestPayload(asyncDir)?.type, "stop");
+
+			bridge.dispose();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("acknowledges RPC child stop for exactly one async child", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-child-stop-"));
+		try {
+			const events = new FakeEvents();
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const asyncDir = path.join(asyncRoot, "run-stop-child");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-stop-child",
+				sessionId: "/sessions/parent.jsonl",
+				mode: "parallel",
+				state: "running",
+				pid: 4242,
+				startedAt: 100,
+				lastUpdate: 100,
+				steps: [
+					{ agent: "fast", status: "running", runId: "child-a", startedAt: 100 },
+					{ agent: "slow", status: "running", workflowKey: "review", startedAt: 100 },
+				],
+			}, null, 2), "utf-8");
+			const bridge = registerSubagentRpcBridge({
+				events,
+				getContext: () => ctx(),
+				execute: async () => assert.fail("stop should not call executor"),
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+				kill: () => true,
+				now: () => 150,
+			});
+
+			const reply = await request(events, "stop-child-1", "stop", { id: "run-stop-child", childId: "review" });
+
+			assert.equal(reply.success, true);
+			assert.equal((reply as { data: { runId?: string; childId?: string; state?: string } }).data.runId, "run-stop-child");
+			assert.equal((reply as { data: { childId?: string } }).data.childId, "review");
+			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
+			assert.deepEqual(consumeStopRequestPayload(asyncDir), { type: "stop", ts: 150, source: "rpc-stop", targetIndex: 1, childId: "review" });
+			const childStatus = events.emitted.find((entry) => entry.event === SUBAGENT_CHILD_STATUS_EVENT)?.data as SubagentChildStatusEvent | undefined;
+			assert.deepEqual(childStatus, {
+				type: "subagent.child-status",
+				version: 1,
+				runId: "run-stop-child",
+				childId: "review",
+				status: "stopping",
+				ts: 150,
+				reason: "user",
+				source: "rpc",
+				asyncDir,
+				stepIndex: 1,
+				agent: "slow",
+				workflowKey: "review",
+			});
+
+			bridge.dispose();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses the live workflow child stopper for RPC child stop", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-workflow-child-stop-"));
+		try {
+			const events = new FakeEvents();
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const asyncDir = path.join(asyncRoot, "workflow-stop-child");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "workflow-stop-child",
+				sessionId: "/sessions/parent.jsonl",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 100,
+				steps: [
+					{ agent: "worker", status: "running", workflowKey: "slow", startedAt: 100 },
+					{ agent: "worker", status: "running", workflowKey: "sibling", startedAt: 100 },
+				],
+			}, null, 2), "utf-8");
+			const calls: Array<{ childId: string; message?: string }> = [];
+			const state = { workflowChildStops: new Map([["workflow-stop-child", (childId: string, message?: string) => { calls.push({ childId, message }); return true; }]]) } as SubagentState;
+			const bridge = registerSubagentRpcBridge({
+				events,
+				getContext: () => ctx(),
+				execute: async () => assert.fail("stop should not call executor"),
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+				state,
+			});
+
+			const reply = await request(events, "stop-workflow-child", "stop", { id: "workflow-stop-child", childId: "slow" });
+
+			assert.equal(reply.success, true);
+			assert.equal((reply as { data: { childId?: string; state?: string } }).data.childId, "slow");
+			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
+			assert.deepEqual(calls, [{ childId: "slow", message: "Workflow child 'slow' stopped by RPC." }]);
+			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
+			const childStatus = events.emitted.find((entry) => entry.event === SUBAGENT_CHILD_STATUS_EVENT)?.data as SubagentChildStatusEvent | undefined;
+			assert.equal(childStatus?.runId, "workflow-stop-child");
+			assert.equal(childStatus?.childId, "slow");
+			assert.equal(childStatus?.status, "stopping");
+			assert.equal(childStatus?.source, "rpc");
+			assert.equal(childStatus?.workflowKey, "slow");
+
+			bridge.dispose();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses the live workflow controller for RPC run-level workflow stop", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-workflow-run-stop-"));
+		try {
+			const events = new FakeEvents();
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const asyncDir = path.join(asyncRoot, "workflow-run-stop");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "workflow-run-stop",
+				sessionId: "/sessions/parent.jsonl",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 100,
+				steps: [{ agent: "worker", status: "running", workflowKey: "slow", startedAt: 100 }],
+			}, null, 2), "utf-8");
+			const controller = new AbortController();
+			const state = { workflowControllers: new Map([["workflow-run-stop", controller]]) } as SubagentState;
+			const bridge = registerSubagentRpcBridge({
+				events,
+				getContext: () => ctx(),
+				execute: async () => assert.fail("stop should not call executor"),
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+				state,
+			});
+
+			const reply = await request(events, "stop-workflow-run", "stop", { id: "workflow-run-stop" });
+
+			assert.equal(reply.success, true);
+			assert.equal((reply as { data: { runId?: string; state?: string; childId?: string } }).data.runId, "workflow-run-stop");
+			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
+			assert.equal((reply as { data: { childId?: string } }).data.childId, undefined);
+			assert.equal(controller.signal.aborted, true);
+			assert.equal(controller.signal.reason instanceof Error ? controller.signal.reason.message : String(controller.signal.reason), "Workflow stopped by RPC.");
+			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
+
+			bridge.dispose();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects RPC child stop when the child is absent or terminal", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-child-stop-reject-"));
+		try {
+			const events = new FakeEvents();
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const asyncDir = path.join(asyncRoot, "run-stop-child-reject");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-stop-child-reject",
+				sessionId: "/sessions/parent.jsonl",
+				mode: "parallel",
+				state: "running",
+				pid: 4242,
+				startedAt: 100,
+				lastUpdate: 100,
+				steps: [{ agent: "done", status: "complete", workflowKey: "done", startedAt: 100, endedAt: 120 }],
+			}, null, 2), "utf-8");
+			const bridge = registerSubagentRpcBridge({
+				events,
+				getContext: () => ctx(),
+				execute: async () => assert.fail("stop should not call executor"),
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+				kill: () => true,
+				now: () => 150,
+			});
+
+			const missing = await request(events, "stop-child-missing", "stop", { id: "run-stop-child-reject", childId: "missing" });
+			assert.equal(missing.success, false);
+			assert.equal((missing as { error: { code: string } }).error.code, "not_found");
+			const terminal = await request(events, "stop-child-terminal", "stop", { id: "run-stop-child-reject", childId: "done" });
+			assert.equal(terminal.success, false);
+			assert.equal((terminal as { error: { code: string; message: string } }).error.code, "invalid_state");
+			assert.match((terminal as { error: { message: string } }).error.message, /complete/);
+			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
 
 			bridge.dispose();
 		} finally {

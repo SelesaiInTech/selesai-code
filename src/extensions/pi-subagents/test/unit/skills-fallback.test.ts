@@ -686,7 +686,7 @@ Fallback global agent.
 
 		assert.throws(
 			() => resolveSkills(["missing-skill"], tempDir),
-			/Failed to read skills settings file .+\.selesai[\\/]settings\.json/,
+			/Failed to read skills settings file .+\.pi[\\/]settings\.json/,
 		);
 	});
 

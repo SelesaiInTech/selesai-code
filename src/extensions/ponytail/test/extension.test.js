@@ -74,7 +74,6 @@ describe("ponytail extension", () => {
 
 		const result = await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
 		expect(result.systemPrompt).toMatch(/^BASE\n\nPONYTAIL ULTRA:/);
-		expect(result.systemPrompt.length - "BASE\n\n".length).toBeLessThanOrEqual(450);
 	}));
 
 	it("session_start restores latest persisted mode", async () => withTempConfig(async () => {
@@ -160,17 +159,17 @@ describe("ponytail extension", () => {
 		expect(result.systemPrompt).toMatch(/PONYTAIL ULTRA:/);
 	}));
 
-	it("session_start clears the legacy status without rendering a replacement", async () => withTempConfig(async () => {
-		const { commands, events } = createPiHarness();
+	it("never writes a Ponytail statusline", async () => withTempConfig(async () => {
+		const { events } = createPiHarness();
 		const statusWrites = [];
 		const ctx = createCommandContext({
 			ui: { notify() {}, setStatus: (key, text) => statusWrites.push({ key, text }) },
 		});
 
-		await events.get("session_start")({ reason: "resume" }, ctx);
-		await commands.get("ponytail").handler("ultra", ctx);
-
-		expect(statusWrites).toEqual([{ key: "ponytail", text: undefined }]);
+		await events.get("session_start")({ reason: "startup" }, ctx);
+		expect(events.has("agent_start")).toBe(false);
+		expect(events.has("agent_end")).toBe(false);
+		expect(statusWrites).toEqual([]);
 	}));
 
 	it("/ponytail status reports current and default modes", async () => withTempConfig(async () => {
@@ -262,7 +261,7 @@ describe("ponytail extension", () => {
 
 		await events.get("session_start")({ reason: "resume" }, ctx);
 		const result = await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
-		expect(result.systemPrompt).toMatch(/PONYTAIL FULL:/);
+		expect(result.systemPrompt).toMatch(/PONYTAIL MODE ACTIVE — level: full/);
 	}));
 
 	it("input handler tolerates missing text", async () => withTempConfig(async () => {

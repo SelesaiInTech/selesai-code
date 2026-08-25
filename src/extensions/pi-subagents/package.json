@@ -1,14 +1,16 @@
 {
   "name": "pi-subagents",
-  "version": "0.50.0",
-  "description": "Selesai extension for single-agent delegation, chains, parallel groups, and scripted multi-agent workflows",
+  "version": "0.56.0",
+  "description": "Selesai extension for single-agent delegation and scripted multi-agent workflows",
   "author": "Nico Bailon",
   "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./index.ts",
     "./background-work": "./src/api/background-work.ts",
+    "./external-job-provider": "./src/api/external-job-provider.ts",
     "./external-runs": "./src/api/external-runs.ts",
+    "./agents": "./src/api/agents.ts",
     "./delegation": "./src/api/delegation.ts",
     "./capability-ceiling": "./src/api/capability-ceiling.ts",
     "./preflight": "./src/api/preflight.ts",
@@ -52,7 +54,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "npm run test:unit",
-    "test:unit": "node --experimental-strip-types --test test/unit/*.test.ts",
+    "test:unit": "node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/*.test.ts",
     "test:integration": "node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
     "test:e2e": "node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/e2e/*.test.ts",
     "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e"
@@ -89,6 +91,7 @@
     }
   },
   "dependencies": {
+    "acorn": "8.18.0",
     "jiti": "2.7.0",
     "typebox": "1.1.38",
     "yaml": "2.8.3"

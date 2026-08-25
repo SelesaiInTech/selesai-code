@@ -27,7 +27,6 @@
     "git:github.com/MasuRii/pi-tool-display",
     "git:github.com/omaclaren/pi-markdown-preview"
   ],
-  "pruneToolDescriptions": true,
   "quietStartup": true,
   "retry": {
     "enabled": true,

@@ -70,7 +70,7 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 			async: true,
 		});
 
-		assert.equal(details.result.details.mode, "workflow");
+		assert.equal(details.result.details.mode, "single");
 		assert.equal(details.result.details.background, true);
 		assert.equal(details.result.details.asyncId, undefined);
 	});

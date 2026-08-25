@@ -404,7 +404,7 @@ function acceptanceRequiresChildReport(acceptance: ResolvedAcceptanceConfig): bo
 	return acceptance.criteria.length > 0 || acceptance.evidence.length > 0;
 }
 
-export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, options: { reportOptional?: boolean } = {}): string {
+export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, options: { reportOptional?: boolean; structuredOutput?: boolean } = {}): string {
 	if (acceptance.level === "none") return "";
 	if (options.reportOptional && !acceptanceRequiresChildReport(acceptance)) return "";
 	const lines = [
@@ -431,13 +431,15 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, opt
 	}
 	lines.push(
 		"",
-		"Finish with a fenced JSON block tagged `acceptance-report` in this shape:",
+		options.structuredOutput
+			? "Include an `acceptanceReport` object in your final `structured_output` tool call in this shape:"
+			: "Finish with a fenced JSON block tagged `acceptance-report` in this shape:",
 		"Use empty arrays when no items apply; array fields contain strings unless object entries are shown.",
 		"Empty-string entries (`[\"\"]`) are ignored; use `[]` when nothing applies.",
 		"`criteriaSatisfied[].status` must be exactly one of: satisfied, not-satisfied, not-applicable.",
 		"`commandsRun[].result` must be exactly one of: passed, failed, not-run.",
 		"`manualNotes` and `notes` are optional strings; an empty string means no note and does not satisfy `manual-notes` evidence.",
-		"```acceptance-report",
+		...(options.structuredOutput ? [] : ["```acceptance-report"]),
 		JSON.stringify({
 			criteriaSatisfied: acceptance.criteria
 				.filter((criterion) => criterion.severity !== "recommended")
@@ -452,7 +454,7 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, opt
 			reviewFindings: ["blocker: file.ts:12 - issue found, or no blockers"],
 			manualNotes: "anything else the parent should know",
 		}, null, 2),
-		"```",
+		...(options.structuredOutput ? [] : ["```"]),
 	);
 	return lines.join("\n");
 }
@@ -946,7 +948,7 @@ function reportEvidenceStatus(report: AcceptanceReport, kind: AcceptanceEvidence
 }
 
 function checkNoStagedFiles(cwd: string): AcceptanceRuntimeCheck {
-	const result = spawnSync("git", ["status", "--short"], { cwd, encoding: "utf-8" });
+	const result = spawnSync("git", ["status", "--short"], { cwd, encoding: "utf-8", windowsHide: true });
 	if (result.status !== 0) {
 		return { id: "no-staged-files", status: "not-applicable", message: "git status unavailable; no staged-files check skipped" };
 	}
@@ -959,6 +961,7 @@ function checkNoStagedFiles(cwd: string): AcceptanceRuntimeCheck {
 function runStructuralChecks(acceptance: ResolvedAcceptanceConfig, report: AcceptanceReport, cwd: string): AcceptanceRuntimeCheck[] {
 	const checks: AcceptanceRuntimeCheck[] = [];
 	for (const kind of acceptance.evidence) {
+		if (kind === "no-staged-files" && report.noStagedFiles === undefined) continue;
 		const status = reportEvidenceStatus(report, kind);
 		checks.push({
 			id: `evidence:${kind}`,
@@ -1053,11 +1056,11 @@ interface VerifyWorkspaceState {
 }
 
 function readVerifyWorkspaceState(cwd: string): VerifyWorkspaceState | undefined {
-	const repo = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8" });
+	const repo = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", windowsHide: true });
 	if (repo.status !== 0 || !repo.stdout.trim()) return undefined;
 	const repoRoot = fs.realpathSync(repo.stdout.trim());
-	const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf-8" });
-	const diff = spawnSync("git", ["diff", "--binary", "--full-index", "HEAD", "--"], { cwd: repoRoot, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024 });
+	const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf-8", windowsHide: true });
+	const diff = spawnSync("git", ["diff", "--binary", "--full-index", "HEAD", "--"], { cwd: repoRoot, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024, windowsHide: true });
 	if (head.status !== 0 || diff.status !== 0 || !head.stdout.trim()) return undefined;
 	return {
 		kind: "git-tracked",
@@ -1140,6 +1143,49 @@ async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaul
 	return evidenced;
 }
 
+/**
+ * On Windows with `shell: true`, cmd.exe parses the command line itself and an
+ * unquoted executable path containing spaces (e.g. `C:\Program Files\...\tool.exe`)
+ * is split at the first space, so cmd tries to run `C:\Program` and fails.
+ *
+ * The command line is ambiguous, so only an unquoted absolute drive path with
+ * a space in a directory component is safe to identify as an executable. That
+ * path is quoted; everything after it is preserved as arguments.
+ *
+ * Commands that already start with a quote, single-token commands, and commands
+ * whose first token already ends in an executable extension are returned
+ * unchanged. Non-Windows platforms pass the command through untouched.
+ */
+export function quoteExecutableForShell(command: string, platform: string = process.platform): string {
+	if (platform !== "win32") return command;
+	const trimmed = command.trimStart();
+	if (trimmed.startsWith("\"")) return command;
+	const firstToken = trimmed.match(/^\S+/)?.[0];
+	if (/\.(?:exe|bat|cmd|com|ps1)$/i.test(firstToken ?? "")) return command;
+	const match = trimmed.match(/^([A-Za-z]:\\[^"<>|&*?\r\n]*?\s[^"<>|&*?\r\n]*?\\[^"<>|&*?\r\n]*?\.(?:exe|bat|cmd|com|ps1))(?=\s|$)/i);
+	const executable = match?.[1];
+	if (executable && /\s/.test(executable) && !/[A-Za-z]:\\/.test(executable.slice(3))) {
+		const rest = trimmed.slice(executable.length);
+		const leading = command.slice(0, command.length - trimmed.length);
+		return `${leading}"${executable}"${rest}`;
+	}
+	const extensionlessSpacedFilenameMatch = trimmed.match(/^([A-Za-z]:\\[^"<>|&*?\r\n]*?\s[^"<>|&*?\r\n]*?)(?=\s+--|$)/i);
+	const extensionlessSpacedFilename = extensionlessSpacedFilenameMatch?.[1];
+	if (extensionlessSpacedFilename && /\s/.test(extensionlessSpacedFilename.slice(0, extensionlessSpacedFilename.lastIndexOf("\\"))) && !/[A-Za-z]:\\/.test(extensionlessSpacedFilename.slice(3))) {
+		const rest = trimmed.slice(extensionlessSpacedFilename.length);
+		const leading = command.slice(0, command.length - trimmed.length);
+		return `${leading}"${extensionlessSpacedFilename}"${rest}`;
+	}
+	const extensionlessMatch = trimmed.match(/^([A-Za-z]:\\[^"<>|&*?\r\n]*?\s[^"<>|&*?\r\n]*?\\[^"<>|&*?\s\r\n]+)(?=\s|$)/i);
+	const extensionlessExecutable = extensionlessMatch?.[1];
+	if (extensionlessExecutable && /\s/.test(extensionlessExecutable) && !/[A-Za-z]:\\/.test(extensionlessExecutable.slice(3)) && !/\s/.test(extensionlessExecutable.slice(extensionlessExecutable.lastIndexOf("\\") + 1))) {
+		const rest = trimmed.slice(extensionlessExecutable.length);
+		const leading = command.slice(0, command.length - trimmed.length);
+		return `${leading}"${extensionlessExecutable}"${rest}`;
+	}
+	return command;
+}
+
 function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, options: { signal?: AbortSignal; abortMessage?: string } = {}): Promise<AcceptanceVerifyResult> {
 	return new Promise((resolve) => {
 		const startedAt = Date.now();
@@ -1149,7 +1195,7 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 		let timedOut = false;
 		let settled = false;
 		let hardKill: NodeJS.Timeout | undefined;
-		const child = spawn(command.command, {
+		const child = spawn(quoteExecutableForShell(command.command), {
 			cwd,
 			env: effectiveVerifyEnv(command.env),
 			shell: true,
@@ -1228,6 +1274,7 @@ export async function evaluateAcceptance(input: {
 	 */
 	fileOutput?: { content: string; path: string; authoritative?: boolean };
 	report?: AcceptanceReport;
+	reportError?: string;
 	reviewResult?: AcceptanceReviewResult;
 	signal?: AbortSignal;
 	abortMessage?: string;
@@ -1249,7 +1296,9 @@ export async function evaluateAcceptance(input: {
 	};
 	if (acceptance.level === "none") return ledger;
 
-	const parsed = input.report
+	const parsed = input.reportError
+		? { error: input.reportError }
+		: input.report
 		? (() => {
 			const validation = validateAcceptanceReport(input.report);
 			return validation.report

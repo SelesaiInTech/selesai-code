@@ -2,6 +2,7 @@ export const AUTHORITY_ACTIONS = [
 	"discardWorktree",
 	"destructiveCleanup",
 	"spawnBudgetGrant",
+	"scheduleCreate",
 	"stopRun",
 	"steerRun",
 ] as const;
@@ -14,6 +15,7 @@ const DEFAULT_AUTHORITY_POLICY: Record<AuthorityAction, AuthorityDecision> = {
 	discardWorktree: "confirm",
 	destructiveCleanup: "confirm",
 	spawnBudgetGrant: "confirm",
+	scheduleCreate: "auto",
 	stopRun: "auto",
 	steerRun: "auto",
 };

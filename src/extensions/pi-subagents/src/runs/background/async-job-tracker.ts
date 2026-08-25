@@ -8,18 +8,22 @@ import {
 	type AsyncStartedEvent,
 	type ControlEvent,
 	type SteeringNotice,
+	type SubagentChildStatusEvent,
 	type SubagentState,
-	POLL_INTERVAL_MS,
 	DIRS,
+	SUBAGENT_CHILD_STATUS_EVENT,
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_STEERING_NOTICE_EVENT,
+	WIDGET_ANIMATION_INTERVAL_MS,
 } from "../../shared/types.ts";
 import { readStatus, resolveWatchPath } from "../../shared/utils.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { findNestedRouteForRootId, hasLiveNestedDescendants, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, serviceExternalJobBridgeRequests } from "../shared/external-job-bridge.ts";
+import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 
 interface AsyncJobTrackerOptions {
 	completionRetentionMs?: number;
@@ -27,6 +31,9 @@ interface AsyncJobTrackerOptions {
 	pollIntervalMs?: number;
 	resultsDir?: string;
 	widgetEnabled?: boolean;
+	platform?: NodeJS.Platform;
+	onJobTerminal?: () => void;
+	watch?: typeof fs.watch;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
 }
@@ -54,7 +61,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	handleStarted: (data: unknown) => void;
 	handleComplete: (data: unknown) => void;
 	resetJobs: (ctx?: ExtensionContext) => void;
-	restoreActiveJobs: (ctx?: ExtensionContext) => number;
+	restoreActiveJobs: (ctx?: ExtensionContext) => void;
 	dispose: () => void;
 } {
 	const completionRetentionMs = options.completionRetentionMs ?? 10000;
@@ -66,6 +73,10 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const runningJobIds = new Set<string>();
 	let rootWatcher: fs.FSWatcher | undefined;
 	let nextLivenessAt = Date.now() + livenessIntervalMs;
+	let nextWidgetAnimationAt = Date.now() + WIDGET_ANIMATION_INTERVAL_MS;
+	const watch = options.watch ?? fs.watch;
+	const useNativeWatcher = () => shouldUseNativeFsWatch("async-job-tracker", options.platform);
+	const terminalStatus = (status: string) => status === "complete" || status === "failed" || status === "paused" || status === "stopped";
 	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
 		if (state.widgetsSuspended) return;
 		renderWidget(ctx, options.widgetEnabled === false ? [] : jobs);
@@ -85,17 +96,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		}
 	};
 	const requestLastWidgetRender = () => {
-		const ctx = state.lastUiContext;
-		if (!ctx || state.widgetsSuspended || options.widgetEnabled === false) return;
-		try {
-			if (ctx.hasUI) (ctx.ui as { requestRender?: () => void }).requestRender?.();
-		} catch (error) {
-			if (error instanceof Error && error.message.includes("extension ctx is stale")) {
-				state.lastUiContext = null;
-				return;
-			}
-			throw error;
-		}
+		if (options.widgetEnabled === false) return;
+		rerenderLastWidget();
 	};
 	const refreshWidget = (ctx: ExtensionContext) => rerenderWidget(ctx);
 	const restoredControlEventCursor = (asyncDir: string) => {
@@ -139,6 +141,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			mode: run.mode,
 			context: run.context,
 			cwd: run.cwd,
+			sessionRoot: run.sessionRoot,
 			agents: visibleSteps.map((step) => step.agent),
 			currentStep: run.currentStep,
 			chainStepCount: run.chainStepCount,
@@ -218,6 +221,28 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					return;
 				}
 				if (!parsed || typeof parsed !== "object") return;
+				if ((parsed as { type?: unknown }).type === "subagent.child-status") {
+					const event = parsed as Partial<SubagentChildStatusEvent>;
+					if (event.version !== 1 || typeof event.runId !== "string" || typeof event.childId !== "string" || (event.status !== "stopping" && event.status !== "stopped") || typeof event.ts !== "number") return;
+					pi.events.emit(SUBAGENT_CHILD_STATUS_EVENT, {
+						type: "subagent.child-status",
+						version: 1,
+						runId: event.runId,
+						childId: event.childId,
+						status: event.status,
+						ts: event.ts,
+						...(typeof event.reason === "string" ? { reason: event.reason } : {}),
+						source: event.source === "rpc" ? "rpc" : "async",
+						asyncDir: job.asyncDir,
+						...(typeof event.stepIndex === "number" ? { stepIndex: event.stepIndex } : {}),
+						...(typeof event.agent === "string" ? { agent: event.agent } : {}),
+						...(typeof event.childRunId === "string" ? { childRunId: event.childRunId } : {}),
+						...(typeof event.workflowKey === "string" ? { workflowKey: event.workflowKey } : {}),
+						...(typeof event.phase === "string" ? { phase: event.phase } : {}),
+						...(typeof event.label === "string" ? { label: event.label } : {}),
+					} satisfies SubagentChildStatusEvent);
+					return;
+				}
 				if ((parsed as { type?: unknown }).type === "subagent.steering.notice") {
 					const notice = parsed as Partial<SteeringNotice>;
 					if (typeof notice.requestId !== "string" || typeof notice.runId !== "string" || (notice.state !== "failed" && notice.state !== "partial" && notice.state !== "recovered") || typeof notice.message !== "string") return;
@@ -315,7 +340,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	};
 
 	const refreshJob = (job: AsyncJobState): boolean => {
-		const widgetStateBefore = widgetRenderKey(job);
+		const widgetExpanded = state.lastUiContext?.hasUI ? state.lastUiContext.ui.getToolsExpanded?.() ?? false : false;
+		const widgetStateBefore = widgetRenderKey(job, widgetExpanded);
 		let nestedRefreshFailed = false;
 		const refreshNestedProjection = () => {
 			try {
@@ -327,6 +353,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		};
 		try {
 			emitNewControlEvents(job);
+			serviceExternalJobBridgeRequests(job.asyncDir);
 			try {
 				if (job.nestedRoute) reconcileNestedAsyncDescendants(job.nestedRoute, { resultsDir, kill: options.kill, now: options.now });
 			} catch (error) {
@@ -342,6 +369,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					runId: job.asyncId,
 					pid: job.pid,
 					sessionId: job.sessionId,
+					completionOwnerId: job.completionOwnerId,
 					mode: job.mode,
 					agents: job.agents,
 					chainStepCount: job.chainStepCount,
@@ -404,13 +432,14 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				job.turnBudgetExceeded = status.turnBudgetExceeded ?? job.turnBudgetExceeded;
 				job.wrapUpRequested = status.wrapUpRequested ?? job.wrapUpRequested;
 				job.sessionFile = status.sessionFile ?? job.sessionFile;
-				if (job.status === "complete" || job.status === "failed" || job.status === "paused" || job.status === "stopped") {
+				if (terminalStatus(job.status)) {
+					if (!terminalStatus(previousStatus)) options.onJobTerminal?.();
 					rememberFleetJob(state, job);
 					if (!nestedRefreshFailed && !hasLiveNestedDescendants(job.nestedChildren) && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
 						scheduleCleanup(job.asyncId);
 					}
 				}
-				return widgetRenderKey(job) !== widgetStateBefore;
+				return widgetRenderKey(job, widgetExpanded) !== widgetStateBefore;
 			}
 			if (job.status === "queued") {
 				job.status = "running";
@@ -427,7 +456,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			rememberFleetJob(state, job);
 			if (!hasLiveNestedDescendants(job.nestedChildren) && !state.cleanupTimers.has(job.asyncId)) scheduleCleanup(job.asyncId);
 		}
-		return widgetRenderKey(job) !== widgetStateBefore;
+		return widgetRenderKey(job, widgetExpanded) !== widgetStateBefore;
 	};
 
 	const scheduleJobRefresh = (asyncId: string, delayMs = EVENT_REFRESH_DEBOUNCE_MS) => {
@@ -442,6 +471,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	};
 
 	const watchJob = (job: AsyncJobState) => {
+		if (!useNativeWatcher()) return;
 		const watched = jobWatchers.get(job.asyncId) ?? { watchers: new Map<string, fs.FSWatcher>() };
 		const active = job.status === "queued" || job.status === "running";
 		const watchPath = (watchPath: string): boolean => {
@@ -449,11 +479,11 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			const nestedEventSink = job.nestedRoute?.eventSink === watchPath;
 			let watcher: fs.FSWatcher;
 			try {
-				watcher = fs.watch(resolveWatchPath(watchPath), (_event, file) => {
+				watcher = watch(resolveWatchPath(watchPath), (_event, file) => {
 					const rawFileName = file?.toString();
 					const fileName = rawFileName ?? path.basename(watchPath);
 					const nestedEventFile = nestedEventSink && (!rawFileName || rawFileName.endsWith(".json") || rawFileName.endsWith(".jsonl"));
-					if (fileName === "status.json" || fileName === "events.jsonl" || nestedEventFile) {
+					if (fileName === "status.json" || fileName === "events.jsonl" || fileName === EXTERNAL_JOB_BRIDGE_REQUEST_DIR || fileName.endsWith(".json") || nestedEventFile) {
 						scheduleJobRefresh(job.asyncId);
 					}
 					if (watchPath !== job.asyncDir && !nestedEventSink) {
@@ -480,6 +510,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const statusWatched = watchPath(statusPath);
 		if (statusWatched && !hadStatusWatcher) scheduleJobRefresh(job.asyncId);
 		watchPath(path.join(job.asyncDir, "events.jsonl"));
+		watchPath(path.join(job.asyncDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR));
 		if (job.nestedRoute) watchPath(job.nestedRoute.eventSink);
 		if (!statusWatched && active && !watched.retryTimer) {
 			watched.retryTimer = setTimeout(() => {
@@ -497,9 +528,10 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	};
 
 	const watchAsyncRoot = () => {
+		if (!useNativeWatcher()) return;
 		if (rootWatcher) return;
 		try {
-			rootWatcher = fs.watch(resolveWatchPath(asyncDirRoot), (_event, file) => {
+			rootWatcher = watch(resolveWatchPath(asyncDirRoot), (_event, file) => {
 				const runDirName = file?.toString();
 				for (const job of state.asyncJobs.values()) {
 					if (jobWatchers.has(job.asyncId) || (runDirName && path.basename(job.asyncDir) !== runDirName)) continue;
@@ -540,8 +572,11 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				}
 				if (widgetChanged) rerenderLastWidget();
 			}
-			if (runningJobIds.size > 0) requestLastWidgetRender();
-		}, Math.min(POLL_INTERVAL_MS, livenessIntervalMs));
+			if (runningJobIds.size > 0 && now >= nextWidgetAnimationAt) {
+				nextWidgetAnimationAt = now + WIDGET_ANIMATION_INTERVAL_MS;
+				requestLastWidgetRender();
+			}
+		}, Math.min(WIDGET_ANIMATION_INTERVAL_MS, livenessIntervalMs));
 		state.poller.unref?.();
 	};
 
@@ -568,6 +603,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			status: "queued",
 			pid: typeof info.pid === "number" ? info.pid : undefined,
 			...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
+			...(typeof info.completionOwnerId === "string" ? { completionOwnerId: info.completionOwnerId } : {}),
 			mode: info.mode ?? (info.chain ? "chain" : "single"),
 			description: info.goal ?? info.task,
 			agents,
@@ -650,32 +686,26 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		}
 	};
 
-	const restoreActiveJobs = (ctx?: ExtensionContext): number => {
+	const restoreActiveJobs = (ctx?: ExtensionContext) => {
 		if (ctx?.hasUI) state.lastUiContext = ctx;
-		if (!state.currentSessionId) return 0;
-		const sessionIds = state.sessionLineage?.length ? state.sessionLineage : [state.currentSessionId];
+		if (!state.currentSessionId) return;
 		let runs: AsyncRunSummary[];
 		try {
-			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionIds, resultsDir, kill: options.kill, now: options.now });
+			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now });
 		} catch (error) {
 			console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
-			return 0;
+			return;
 		}
-		let adopted = 0;
 		for (const run of runs) {
-			if (state.asyncJobs.has(run.id)) continue;
 			const job = summaryToJob(run);
-			job.adopted = run.sessionId !== undefined && run.sessionId !== state.currentSessionId;
 			state.asyncJobs.set(run.id, job);
 			if (job.status === "running") runningJobIds.add(job.asyncId);
 			rememberFleetJob(state, job);
 			watchJob(job);
-			if (job.adopted) adopted += 1;
 		}
-		if (runs.length === 0) return 0;
+		if (runs.length === 0) return;
 		ensurePoller();
 		rerenderLastWidget();
-		return adopted;
 	};
 
 	return { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs, dispose };

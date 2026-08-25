@@ -86,6 +86,8 @@ export interface SubagentWaitParams {
 	all?: boolean;
 	/** Give up after this many milliseconds. Defaults to 30 minutes. */
 	timeoutMs?: number;
+	/** False keeps a blocking wait open through idle attention; supervisor/contact requests still stop the wait. */
+	stopOnAttention?: boolean;
 }
 
 /** Minimal event-bus surface wait subscribes to (matches pi.events). */
@@ -110,6 +112,8 @@ export interface SubagentWaitDeps {
 	stopOnAttention?: boolean;
 	/** Internal auto-drain mode surfaces failed terminal subagent runs as errors. */
 	failOnFailedRuns?: boolean;
+	/** Internal auto-drain mode surfaces actionable attention as an error. */
+	failOnAttention?: boolean;
 	/** Arm a durable exact-target wait subscription in a long-lived interactive runtime. */
 	subscribe?: (input: { targetKind: "async" | "foreground"; runId: string; requestedId: string; timeoutMs: number }) => { token: string; expiresAt: number };
 	/** Injectable provider protocol surfaces for deterministic tests. */
@@ -226,7 +230,7 @@ function summarizeForegroundChildren(run: ForegroundResumeRun, indices: Set<numb
 }
 
 function foregroundChildrenNeedingAttention(run: ForegroundResumeRun, indices: Set<number>) {
-	return run.children.filter((child) => indices.has(child.index) && child.status === "detached" && child.activityState === "needs_attention");
+	return run.children.filter((child) => indices.has(child.index) && child.status === "detached" && child.activityState === "needs_attention" && child.currentTool === "contact_supervisor");
 }
 
 function formatForegroundAttention(run: ForegroundResumeRun, children: ReturnType<typeof foregroundChildrenNeedingAttention>, elapsedMs: number): AgentToolResult<Details> {
@@ -278,19 +282,19 @@ function attentionRunsForSession(params: SubagentWaitParams, deps: SubagentWaitD
 	return activeRunsForSession(params, deps).filter((run) => needsAttention(run) && initialIds.has(run.id));
 }
 
-/** All runs (any state) for this session, for the final summary. */
-function allRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
+/** Exact initial runs in any state, for the final summary. */
+function runsForIds(runIds: Iterable<string>, deps: SubagentWaitDeps): AsyncRunSummary[] {
 	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
 	const resultsDir = deps.resultsDir ?? DIRS.results;
-	const runs = listAsyncRuns(asyncDirRoot, {
+	return [...runIds].flatMap((runId) => listAsyncRuns(asyncDirRoot, {
 		sessionId: deps.state.currentSessionId ?? undefined,
 		resultsDir,
 		kill: deps.kill,
 		now: deps.now,
 		includeNested: false,
-		...(params.id ? { runId: params.id } : {}),
-	});
-	return params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;
+		runId,
+		exactRunId: true,
+	}));
 }
 
 function summarizeTerminalRuns(runs: AsyncRunSummary[], providerFinishedCount = 0): string {
@@ -453,7 +457,7 @@ async function waitForDetachedForegroundRun(
 			return result(`Remembered foreground run "${run.runId}" disappeared before a terminal child result was recorded. Completion cannot be confirmed; do not launch a replacement without checking the originating child session.`, true);
 		}
 		const pending = current.children.filter((child) => initialDetachedIndices.has(child.index) && child.status === "detached");
-		const attention = deps.stopOnAttention === false ? [] : foregroundChildrenNeedingAttention(current, initialDetachedIndices);
+		const attention = foregroundChildrenNeedingAttention(current, initialDetachedIndices);
 		if (attention.length > 0) return formatForegroundAttention(current, attention, now() - startedAt);
 		if (pending.length === 0) {
 			const outcome = summarizeForegroundChildren(current, initialDetachedIndices);
@@ -555,11 +559,11 @@ export async function waitForSubagents(
 	const initialProviderIds = new Set(providerActive.map(backgroundWorkIdentity));
 	const initialProviderNames = new Set(providerActive.map((item) => item.provider));
 	const initialCount = initialAsyncIds.size + initialProviderIds.size;
-	const stopOnAttention = deps.stopOnAttention !== false;
+	const stopOnAttention = params.stopOnAttention ?? deps.stopOnAttention !== false;
 	let attention = active.filter((run) => needsAttention(run));
 
 	const isDone = (): boolean => {
-		if (stopOnAttention && attention.some((run) => initialAsyncIds.has(run.id))) return true;
+		if (attention.some((run) => initialAsyncIds.has(run.id) && (stopOnAttention || hasSupervisorTool(run)))) return true;
 		const activeAsyncIds = new Set(active.map((run) => run.id));
 		const activeProviderIds = new Set(providerActive.map(backgroundWorkIdentity));
 		if (waitForAll) {
@@ -611,7 +615,7 @@ export async function waitForSubagents(
 	const activeProviderIds = new Set(providerActive.map(backgroundWorkIdentity));
 	const providerFinishedCount = [...initialProviderIds].filter((id) => !activeProviderIds.has(id)).length;
 	try {
-		const allNow = allRunsForSession(waitParams, deps);
+		const allNow = runsForIds(initialAsyncIds, deps);
 		const terminal = allNow.filter((run) => !ACTIVE_STATES.includes(run.state) && initialAsyncIds.has(run.id));
 		finishedAsyncCount = terminal.length;
 		failedAsyncCount = terminal.filter((run) => run.state === "failed").length;
@@ -643,7 +647,7 @@ export async function waitForSubagents(
 		const status = relevantAttention.length > 0 ? "attention required" : "done";
 		return result(
 			`Waited ${elapsed} for ${scope}; ${status}.${outcome}${resumeGuidance}${attentionNote} Completion/control events have been observed; inspect status if a notification is not visible yet.`,
-			deps.failOnFailedRuns === true && failedAsyncCount > 0,
+			(deps.failOnFailedRuns === true && failedAsyncCount > 0) || (deps.failOnAttention === true && relevantAttention.length > 0),
 			completions,
 		);
 	}
@@ -660,7 +664,7 @@ export async function waitForSubagents(
 		: `${finishedCount} of ${initialCount} ${subject} finished`;
 	return result(
 		`Waited ${elapsed}; ${progress}.${outcome}${resumeGuidance}${attentionNote}${remainder} Relevant completion/control events have been observed; inspect status if a notification is not visible yet.`,
-		deps.failOnFailedRuns === true && failedAsyncCount > 0,
+		(deps.failOnFailedRuns === true && failedAsyncCount > 0) || (deps.failOnAttention === true && relevantAttention.length > 0),
 		completions,
 	);
 }

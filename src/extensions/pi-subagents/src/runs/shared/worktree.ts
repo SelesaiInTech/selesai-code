@@ -46,7 +46,7 @@ export interface WorktreeCleanupTask {
 }
 
 export type WorktreeCleanupIntent =
-	| { kind: "preserve"; capturedDiffs?: WorktreeDiff[]; handoffManifestPath?: string }
+	| { kind: "preserve"; capturedDiffs?: WorktreeDiff[]; handoffManifestPath?: string; cleanupBlocker?: string }
 	| {
 		kind: "discard";
 		authorization:
@@ -115,7 +115,7 @@ interface RepoState {
 const DEFAULT_WORKTREE_SETUP_HOOK_TIMEOUT_MS = 30000;
 
 function runGit(cwd: string, args: string[]): GitResult {
-	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8" });
+	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8", windowsHide: true });
 	return {
 		stdout: result.stdout ?? "",
 		stderr: result.stderr ?? "",
@@ -338,6 +338,7 @@ function runWorktreeSetupHook(
 	input: WorktreeSetupHookInput,
 ): string[] {
 	const result = spawnSync(hook.hookPath, [], {
+		windowsHide: true,
 		cwd: input.worktreePath,
 		encoding: "utf-8",
 		input: JSON.stringify(input),
@@ -571,6 +572,17 @@ function cleanupSingleWorktree(
 	const errors: string[] = [];
 	let worktreeRemoved = false;
 	let branchRemoved = false;
+	if (intent.kind === "preserve" && intent.cleanupBlocker) {
+		return {
+			index: worktree.index,
+			path: worktree.path,
+			branch: worktree.branch,
+			worktreeRemoved: false,
+			branchRemoved: false,
+			preserved: true,
+			reason: intent.cleanupBlocker,
+		};
+	}
 	if (intent.kind !== "setup-rollback") {
 		try {
 			removeSyntheticPathsBeforeDiff(worktree);

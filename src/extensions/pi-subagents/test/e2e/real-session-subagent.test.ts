@@ -37,7 +37,7 @@ const ISOLATED_ENV_KEYS = [
 	"SELESAI_SUBAGENT_EXTRA_AGENT_DIRS",
 	"SELESAI_SUBAGENT_PARENT_SESSION",
 	"SELESAI_SUBAGENT_PI_BINARY",
-	"SELESAI_SUBAGENTS_SELESAI_PACKAGE_ROOT",
+	"SELESAI_SUBAGENTS_CODING_AGENT_PACKAGE_ROOT",
 ] as const;
 
 describe("real Pi-session subagent E2E", { skip: !available ? "pi runtime packages not available" : undefined }, () => {
@@ -187,7 +187,7 @@ Report active tools.`;
 		process.env.SELESAI_SUBAGENT_EXTRA_AGENT_DIRS = BOGUS_EXTRA_DIRS;
 		process.env.SELESAI_SUBAGENT_PARENT_SESSION = "polluted-parent";
 		process.env.SELESAI_SUBAGENT_PI_BINARY = BOGUS_PI_BINARY;
-		process.env.SELESAI_SUBAGENTS_SELESAI_PACKAGE_ROOT = BOGUS_PI_PACKAGE_ROOT;
+		process.env.SELESAI_SUBAGENTS_CODING_AGENT_PACKAGE_ROOT = BOGUS_PI_PACKAGE_ROOT;
 
 		try {
 			run = await runRealSubagentSession({

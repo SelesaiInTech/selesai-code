@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
@@ -29,6 +30,23 @@ function writeStatus(asyncRoot: string, runId: string, state: AsyncStatus["state
 		"utf-8",
 	);
 	updateActiveRunIndex(dir, state);
+}
+
+function writeRecoveryDescriptor(asyncRoot: string, runId: string, agent: string, sessionFile: string, cwd: string): void {
+	fs.writeFileSync(path.join(asyncRoot, runId, "recovery-descriptor.json"), JSON.stringify({
+		version: 1,
+		sourceRunId: runId,
+		agent,
+		sessionFile,
+		cwd,
+		systemPromptMode: "append",
+		outputMode: "inline",
+		inheritProjectContext: false,
+		inheritSkills: false,
+		maxSubagentDepth: 0,
+		share: false,
+		runFanoutBudget: createRunFanoutBudget(runId, 64),
+	}), "utf-8");
 }
 
 function makeState(sessionId: string | null): SubagentState {
@@ -200,6 +218,7 @@ describe("subagent_wait tool", () => {
 			fs.writeFileSync(sessionFile, "{}\n", "utf-8");
 			const state = makeState("sess-1");
 			writeStatus(asyncRoot, "run-revive", "running", { sessionId: "sess-1", pid: 999999 });
+			writeRecoveryDescriptor(asyncRoot, "run-revive", "worker", sessionFile, root);
 			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
 				sleep: async () => writeStatus(asyncRoot, "run-revive", "failed", {
 					sessionId: "sess-1",
@@ -214,6 +233,52 @@ describe("subagent_wait tool", () => {
 			assert.match(text, /subagent\(\{ action: "resume", id: "run-revive", message:/);
 			assert.match(text, /before reporting failure or launching a replacement/);
 			assert.match(text, /only if revive fails or the user explicitly asks/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not advertise resume-first when the recovery descriptor is missing", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-no-recovery-descriptor-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "worker-session.jsonl");
+			fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-no-descriptor", "running", { sessionId: "sess-1", pid: 999999 });
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => writeStatus(asyncRoot, "run-no-descriptor", "failed", {
+					sessionId: "sess-1",
+					steps: [{ agent: "worker", status: "failed", sessionFile }],
+				}),
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.doesNotMatch(textOf(result), /Resume-first/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses the single-child run session fallback with a matching recovery descriptor", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-run-session-fallback-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "worker-session.jsonl");
+			fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-session-fallback", "running", { sessionId: "sess-1", pid: 999999 });
+			writeRecoveryDescriptor(asyncRoot, "run-session-fallback", "worker", sessionFile, root);
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => writeStatus(asyncRoot, "run-session-fallback", "failed", {
+					sessionId: "sess-1",
+					sessionFile,
+					steps: [{ agent: "worker", status: "failed" }],
+				}),
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /Resume-first/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -419,6 +484,84 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("can keep blocking through idle attention when stopOnAttention is false", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-tolerant-attn-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+
+			let polls = 0;
+			const sleep = async () => {
+				polls += 1;
+				if (polls === 1) {
+					writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999, activityState: "needs_attention" });
+				}
+				if (polls === 2) writeStatus(asyncRoot, "run-a", "complete", { sessionId: "sess-1" });
+			};
+
+			const result = await waitForSubagents({ all: true, stopOnAttention: false }, undefined, baseDeps(root, state, { sleep }));
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /1 complete/);
+			assert.equal(polls, 2, "tolerant wait should not return on idle attention");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("still stops tolerant waits for supervisor attention", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-tolerant-supervisor-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+
+			let polls = 0;
+			const sleep = async () => {
+				polls += 1;
+				writeStatus(asyncRoot, "run-a", "running", {
+					sessionId: "sess-1",
+					pid: 999999,
+					activityState: "needs_attention",
+					currentTool: "contact_supervisor",
+				});
+			};
+
+			const result = await waitForSubagents({ all: true, stopOnAttention: false }, undefined, baseDeps(root, state, { sleep }));
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /Reply to any pending supervisor request/);
+			assert.match(textOf(result), /run-a/);
+			assert.equal(polls, 1);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("returns an error for internal auto-drain on supervisor attention", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-drain-supervisor-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+
+			const result = await waitForSubagents({ all: true, stopOnAttention: false }, undefined, baseDeps(root, state, {
+				failOnAttention: true,
+				sleep: async () => writeStatus(asyncRoot, "run-a", "running", {
+					sessionId: "sess-1",
+					pid: 999999,
+					activityState: "needs_attention",
+					currentTool: "contact_supervisor",
+				}),
+			}));
+
+			assert.equal(result.isError, true);
+			assert.match(textOf(result), /Reply to any pending supervisor request/);
+			assert.match(textOf(result), /run-a/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("reports runs that already need attention before waiting starts", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-initial-attn-"));
 		try {
@@ -602,6 +745,7 @@ describe("subagent_wait tool", () => {
 						index: 0,
 						status: "detached",
 						activityState: "needs_attention",
+						currentTool: "contact_supervisor",
 						updatedAt: 2,
 					};
 				},
@@ -612,6 +756,45 @@ describe("subagent_wait tool", () => {
 			assert.match(textOf(result), /foreground-blocked/);
 			assert.match(textOf(result), /researcher#0/);
 			assert.match(textOf(result), /Reply to any pending supervisor request/);
+			assert.equal(polls, 1);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps waiting after a resolved supervisor reply even if idle needs_attention remains", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-idle-attn-"));
+		try {
+			const state = makeState("sess-1");
+			state.foregroundRuns = new Map([["foreground-working", {
+				runId: "foreground-working",
+				mode: "single",
+				cwd: root,
+				sessionId: "sess-1",
+				updatedAt: 1,
+				children: [{
+					agent: "worker",
+					index: 0,
+					status: "detached",
+					activityState: "needs_attention",
+					updatedAt: 1,
+				}],
+			}]]);
+			let polls = 0;
+			const result = await waitForSubagents({ id: "foreground-working", timeoutMs: 30_000 }, undefined, baseDeps(root, state, {
+				sleep: async () => {
+					polls += 1;
+					state.foregroundRuns!.get("foreground-working")!.children[0] = {
+						agent: "worker",
+						index: 0,
+						status: "completed",
+						updatedAt: 2,
+					};
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /done/i);
 			assert.equal(polls, 1);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -651,6 +834,7 @@ describe("subagent_wait tool", () => {
 			setTimeout(() => {
 				const child = state.foregroundRuns!.get("foreground-repeated")!.children[0]!;
 				child.activityState = "needs_attention";
+				child.currentTool = "contact_supervisor";
 				events.emit("pi-intercom:detach-request", { runId: "foreground-repeated", childIndex: 0 });
 			}, 15);
 
@@ -743,9 +927,9 @@ describe("subagent_wait tool", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-cross-kind-"));
 		try {
 			const state = makeState("sess-1");
-			writeStatus(path.join(root, "runs"), "shared-async", "running", { sessionId: "sess-1", pid: 999999 });
-			state.foregroundRuns = new Map([["shared-foreground", {
-				runId: "shared-foreground",
+			writeStatus(path.join(root, "runs"), "shared-x-async", "running", { sessionId: "sess-1", pid: 999999 });
+			state.foregroundRuns = new Map([["shared-x-foreground", {
+				runId: "shared-x-foreground",
 				mode: "single",
 				cwd: root,
 				sessionId: "sess-1",
@@ -753,11 +937,11 @@ describe("subagent_wait tool", () => {
 				children: [{ agent: "reviewer", index: 0, status: "detached", updatedAt: 1 }],
 			}]]);
 
-			const result = await waitForSubagents({ id: "shared" }, undefined, baseDeps(root, state));
+			const result = await waitForSubagents({ id: "shared-x" }, undefined, baseDeps(root, state));
 			assert.equal(result.isError, true);
-			assert.match(textOf(result), /Ambiguous subagent run id prefix "shared"/);
-			assert.match(textOf(result), /shared-async/);
-			assert.match(textOf(result), /shared-foreground/);
+			assert.match(textOf(result), /Ambiguous subagent run id prefix "shared-x"/);
+			assert.match(textOf(result), /shared-x-async/);
+			assert.match(textOf(result), /shared-x-foreground/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -768,15 +952,15 @@ describe("subagent_wait tool", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const state = makeState("sess-1");
-			writeStatus(asyncRoot, "run-al", "running", { sessionId: "sess-2", pid: 999999 });
-			writeStatus(asyncRoot, "run-alpha", "running", { sessionId: "sess-1", pid: 999998 });
+			writeStatus(asyncRoot, "run-alph", "running", { sessionId: "sess-2", pid: 999999 });
+			writeStatus(asyncRoot, "run-alpha-current", "running", { sessionId: "sess-1", pid: 999998 });
 
-			const result = await waitForSubagents({ id: "run-al" }, undefined, baseDeps(root, state, {
-				sleep: async () => writeStatus(asyncRoot, "run-alpha", "complete", { sessionId: "sess-1" }),
+			const result = await waitForSubagents({ id: "run-alph" }, undefined, baseDeps(root, state, {
+				sleep: async () => writeStatus(asyncRoot, "run-alpha-current", "complete", { sessionId: "sess-1" }),
 			}));
 
 			assert.equal(result.isError, undefined);
-			assert.match(textOf(result), /run "run-al".*done/is);
+			assert.match(textOf(result), /run "run-alph".*done/is);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -856,9 +1040,9 @@ describe("subagent_wait tool", () => {
 				if (polls === 1) writeStatus(asyncRoot, "run-alpha", "complete", { sessionId: "sess-1" });
 			};
 
-			const result = await waitForSubagents({ id: "run-al" }, undefined, baseDeps(root, state, { sleep }));
+			const result = await waitForSubagents({ id: "run-alph" }, undefined, baseDeps(root, state, { sleep }));
 			assert.equal(result.isError, undefined);
-			assert.match(textOf(result), /run "run-al".*done/is);
+			assert.match(textOf(result), /run "run-alph".*done/is);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -869,13 +1053,14 @@ describe("subagent_wait tool", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const state = makeState("sess-1");
-			writeStatus(asyncRoot, "run", "running", { sessionId: "sess-1", pid: 999999 });
-			writeStatus(asyncRoot, "run-alpha", "running", { sessionId: "sess-1", pid: 999998 });
+			writeStatus(asyncRoot, "prefix-aa-1", "running", { sessionId: "sess-1", pid: 999999 });
+			writeStatus(asyncRoot, "prefix-aa-2", "running", { sessionId: "sess-1", pid: 999998 });
+			writeStatus(asyncRoot, "run", "running", { sessionId: "sess-1", pid: 999997 });
 
-			const ambiguous = await waitForSubagents({ id: "ru" }, undefined, baseDeps(root, state));
+			const ambiguous = await waitForSubagents({ id: "prefix-aa" }, undefined, baseDeps(root, state));
 			assert.equal(ambiguous.isError, true);
-			assert.match(textOf(ambiguous), /Ambiguous subagent run id prefix "ru"/);
-			assert.match(textOf(ambiguous), /run-alpha/);
+			assert.match(textOf(ambiguous), /Ambiguous subagent run id prefix "prefix-aa"/);
+			assert.match(textOf(ambiguous), /prefix-aa-2/);
 
 			let polls = 0;
 			const exact = await waitForSubagents({ id: "run" }, undefined, baseDeps(root, state, {

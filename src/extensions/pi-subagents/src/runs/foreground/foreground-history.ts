@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ForegroundResumeChild, ForegroundResumeRun, SubagentState } from "../../shared/types.ts";
 import { DIRS } from "../../shared/types.ts";
-import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { utf8Tail } from "../../shared/utf8.ts";
 
 export const MAX_REMEMBERED_FOREGROUND_RUNS = 50;
@@ -52,6 +52,7 @@ function compactChild(child: ForegroundResumeChild): ForegroundResumeChild {
 		...(child.transcriptError ? { transcriptError: child.transcriptError } : {}),
 		...(child.acceptance ? { acceptance: child.acceptance } : {}),
 		...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
+		...(child.extensionBindings ? { extensionBindings: child.extensionBindings } : {}),
 		...(child.capabilityCeiling ? { capabilityCeiling: child.capabilityCeiling } : {}),
 		...(child.updatedAt !== undefined ? { updatedAt: child.updatedAt } : {}),
 	};
@@ -118,17 +119,14 @@ export function persistForegroundRunHistory(state: SubagentState, options: { res
 		if (compact) merged.set(compact.runId, compact);
 	}
 	const runs = sortAndBound([...merged.values()], limit);
-	writeAtomicJson(historyPath(resultsDir), { version: HISTORY_VERSION, runs });
+	writePrivateAtomicJson(historyPath(resultsDir), { version: HISTORY_VERSION, runs });
 }
 
-export function restoreForegroundRunHistory(state: SubagentState, options: { resultsDir?: string; sessionId?: string | null; sessionIds?: string[]; limit?: number } = {}): number {
-	const sessionIds = options.sessionIds
-		?? (options.sessionId ? [options.sessionId] : state.sessionLineage)
-		?? (state.currentSessionId ? [state.currentSessionId] : []);
-	if (sessionIds.length === 0) return 0;
-	const accepted = new Set(sessionIds);
+export function restoreForegroundRunHistory(state: SubagentState, options: { resultsDir?: string; sessionId?: string | null; limit?: number } = {}): number {
+	const sessionId = options.sessionId ?? state.currentSessionId;
+	if (!sessionId) return 0;
 	const index = readIndex(options.resultsDir ?? DIRS.results);
-	const runs = sortAndBound(index.runs.filter((run) => run.sessionId !== undefined && accepted.has(run.sessionId)), options.limit ?? MAX_REMEMBERED_FOREGROUND_RUNS);
+	const runs = sortAndBound(index.runs.filter((run) => run.sessionId === sessionId), options.limit ?? MAX_REMEMBERED_FOREGROUND_RUNS);
 	state.foregroundRuns ??= new Map();
 	let restored = 0;
 	for (const run of runs) {

@@ -82,7 +82,7 @@ function buildParallelInitialResult(params: SubagentParamsLike): AgentToolResult
 		details: {
 			mode: "parallel",
 			...(params.async ? { background: true } : {}),
-			...(params.context ? { context: params.context } : {}),
+			...(params.context === "fresh" || params.context === "fork" ? { context: params.context } : {}),
 			results: tasks.map((task, index) => createPlaceholderResult(task.agent, task.task, "running", index)),
 			progress: tasks.map((task, index) => ({
 				index,
@@ -138,7 +138,7 @@ function buildChainInitialResult(params: SubagentParamsLike): AgentToolResult<De
 		details: {
 			mode: "chain",
 			...(params.async ? { background: true } : {}),
-			...(params.context ? { context: params.context } : {}),
+			...(params.context === "fresh" || params.context === "fork" ? { context: params.context } : {}),
 			results,
 			progress: results.map((result, index) => ({
 				index,
@@ -167,7 +167,7 @@ function buildSingleInitialResult(params: SubagentParamsLike): AgentToolResult<D
 		details: {
 			mode: "single",
 			...(params.async ? { background: true } : {}),
-			...(params.context ? { context: params.context } : {}),
+			...(params.context === "fresh" || params.context === "fork" ? { context: params.context } : {}),
 			results: [createPlaceholderResult(agent, task, "running", 0)],
 			progress: [{
 				index: 0,
@@ -184,29 +184,12 @@ function buildSingleInitialResult(params: SubagentParamsLike): AgentToolResult<D
 	};
 }
 
-function buildWorkflowInitialResult(params: SubagentParamsLike): AgentToolResult<Details> {
-	const preview = previewSimpleWorkflowRun(params.workflowScript) ?? {};
-	const task = preview.task ?? "";
-	return {
-		content: [{ type: "text", text: task || "Workflow running." }],
-		details: {
-			mode: "workflow",
-			...(params.context ? { context: params.context } : {}),
-			...(params.async ? { background: true } : {}),
-			results: [],
-			workflow: { trace: [], emits: [], console: [] },
-		},
-	};
-}
-
 export function buildSlashInitialResult(requestId: string, params: SubagentParamsLike): SlashMessageDetails {
 	const result = (params.tasks?.length ?? 0) > 0
 		? buildParallelInitialResult(params)
 		: (params.chain?.length ?? 0) > 0
 			? buildChainInitialResult(params)
-			: params.workflowScript !== undefined
-				? buildWorkflowInitialResult(params)
-				: buildSingleInitialResult(params);
+			: buildSingleInitialResult(params);
 	liveSnapshots.set(requestId, { result, version: nextVersion() });
 	finalSnapshots.delete(requestId);
 	return { requestId, result };
@@ -226,22 +209,9 @@ function cloneResultsWithProgress(
 
 export function applySlashUpdate(requestId: string, update: SlashSubagentUpdate): void {
 	const snapshot = liveSnapshots.get(requestId);
-	if (!snapshot || !snapshot.result.details) return;
-	if (update.workflow) {
-		const nextDetails: Details = {
-			...snapshot.result.details,
-			mode: "workflow",
-			workflow: update.workflow,
-			...(update.chatProgress ? { chatProgress: update.chatProgress } : {}),
-		};
-		liveSnapshots.set(requestId, {
-			result: { ...snapshot.result, details: nextDetails },
-			version: nextVersion(),
-		});
-		return;
-	}
+	if (!snapshot) return;
 	const progress = update.progress;
-	if (!progress) return;
+	if (!progress || !snapshot.result.details) return;
 	const currentStepIndex = progress.findIndex((entry) => entry.status === "running");
 	const nextDetails: Details = {
 		...snapshot.result.details,

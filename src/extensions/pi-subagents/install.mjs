@@ -4,7 +4,7 @@
  * pi-subagents installer
  * 
  * Usage:
- *   npx pi-subagents          # Install to ~/.pi/agent/extensions/subagent
+ *   npx pi-subagents          # Install to ~/.selesai/agent/extensions/subagent
  *   npx pi-subagents --remove # Remove the extension
  */
 
@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-const EXTENSION_DIR = path.join(os.homedir(), ".pi", "agent", "extensions", "subagent");
+const EXTENSION_DIR = path.join(os.homedir(), ".selesai", "agent", "extensions", "subagent");
 const REPO_URL = "https://github.com/nicobailon/pi-subagents.git";
 
 const args = process.argv.slice(2);
@@ -22,7 +22,7 @@ const isHelp = args.includes("--help") || args.includes("-h");
 
 if (isHelp) {
 	console.log(`
-pi-subagents - Pi extension for delegating tasks to subagents
+pi-subagents - Selesai extension for delegating tasks to subagents
 
 Usage:
   npx pi-subagents          Install the extension
@@ -85,7 +85,7 @@ if (fs.existsSync(EXTENSION_DIR)) {
 }
 
 console.log(`
-The extension is now available in pi. Tools added:
+The extension is now available in Selesai. Tools added:
   • subagent - Delegate tasks to agents and inspect run status
   • subagent_wait - Block until background subagent runs finish (delivers their results)
 

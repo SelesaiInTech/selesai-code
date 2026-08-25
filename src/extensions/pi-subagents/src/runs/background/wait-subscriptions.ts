@@ -21,6 +21,20 @@ import {
 
 const SUBSCRIPTION_VERSION = 1;
 const RECONCILE_INTERVAL_MS = 1_000;
+/**
+ * How often the subscriptions directory is re-scanned for expired records left
+ * by other sessions. Rare compared to RECONCILE_INTERVAL_MS because it costs a
+ * directory read, and nothing depends on the sweep being prompt.
+ */
+const FOREIGN_SWEEP_INTERVAL_MS = 60_000;
+/**
+ * How far past expiry a record armed by another session is kept before it is
+ * swept. The owning session settles its own expired records with a "timed out"
+ * notice on the next restore(), so removing one the moment it expires would take
+ * that notice away from a session that simply had not resumed yet. A day is long
+ * enough for an ordinary return and short enough to bound the directory.
+ */
+const FOREIGN_SWEEP_GRACE_MS = 24 * 60 * 60 * 1000;
 
 export interface ArmWaitSubscriptionInput {
 	targetKind: "async" | "foreground";
@@ -95,6 +109,63 @@ export function createWaitSubscriptionManager(
 	state.waitSubscriptions = subscriptions;
 	const unresolvedRestoredForegroundTokens = new Set<string>();
 	let disposed = false;
+	let lastForeignSweepAt = 0;
+
+	/**
+	 * Remove expired records armed by another session.
+	 *
+	 * Only the owning session can be woken, so restore() never loads a foreign
+	 * record into `subscriptions` and reconcileRecord() returns before its
+	 * timeout branch. Nothing reconciles such a record and nothing expires it, so
+	 * a session that arms a wait and never comes back (forked, renamed, deleted)
+	 * leaves one file here per wait, forever.
+	 *
+	 * Kept for FOREIGN_SWEEP_GRACE_MS past expiry so an owner that resumes late
+	 * still finds its record and gets the timeout notice.
+	 *
+	 * Runs on the reconcile timer as well as at restore(), because a record that
+	 * is still live when another session starts would otherwise never be looked
+	 * at again: restore() only fires on session_start, and reconcile() walks the
+	 * in-memory map, which holds current-session records only. A host that keeps
+	 * one session open for hours is exactly where that gap bites.
+	 *
+	 * Never throws: it runs from the reconcile timer.
+	 */
+	const sweepExpiredForeignSubscriptions = (force = false) => {
+		const sweptAt = now();
+		if (!force && sweptAt - lastForeignSweepAt < FOREIGN_SWEEP_INTERVAL_MS) return;
+		lastForeignSweepAt = sweptAt;
+		let files: string[];
+		try {
+			files = fs.readdirSync(subscriptionsDir).filter((file) => file.endsWith(".json"));
+		} catch (error) {
+			if (!isNotFound(error)) console.error(`Failed to scan wait subscriptions in '${subscriptionsDir}':`, error);
+			return;
+		}
+		for (const file of files) {
+			const filePath = path.join(subscriptionsDir, file);
+			let record: WaitSubscriptionRecord | undefined;
+			try {
+				record = parseRecord(JSON.parse(fs.readFileSync(filePath, "utf-8")));
+			} catch (error) {
+				console.error(`Ignoring invalid wait subscription '${filePath}':`, error);
+				continue;
+			}
+			if (!record || file !== `${record.token}.json`) continue;
+			// The owning session keeps its own expired records so reconcileRecord()
+			// can still settle them with the "timed out" notice callers expect.
+			if (record.sessionId === state.currentSessionId) continue;
+			if (sweptAt < record.expiresAt + FOREIGN_SWEEP_GRACE_MS) continue;
+			try {
+				fs.unlinkSync(filePath);
+			} catch (error) {
+				// Losing this race is harmless: another session may have swept the
+				// same expired record. Anything else is reported and retried on the
+				// next sweep rather than interrupting the caller.
+				if (!isNotFound(error)) console.error(`Failed to remove expired wait subscription '${filePath}':`, error);
+			}
+		}
+	};
 
 	const remove = (record: WaitSubscriptionRecord) => {
 		try {
@@ -146,7 +217,7 @@ export function createWaitSubscriptionManager(
 				return;
 			}
 			const detached = run.children.filter((child) => child.status === "detached");
-			if (detached.some((child) => child.activityState === "needs_attention")) {
+			if (detached.some((child) => child.activityState === "needs_attention" && child.currentTool === "contact_supervisor")) {
 				settle(record, "needs attention", "Reply to the pending supervisor request or inspect the run status.");
 				return;
 			}
@@ -160,6 +231,7 @@ export function createWaitSubscriptionManager(
 		const runs = listAsyncRuns(asyncDirRoot, {
 			sessionId: record.sessionId,
 			runId: record.runId,
+			exactRunId: true,
 			resultsDir,
 			kill: options.kill,
 			now,
@@ -187,7 +259,11 @@ export function createWaitSubscriptionManager(
 	};
 
 	const reconcile = () => {
-		if (disposed || !state.currentSessionId) return;
+		if (disposed) return;
+		// Before the session check: with no current session every record is
+		// foreign, and expired ones should still be cleaned up.
+		sweepExpiredForeignSubscriptions();
+		if (!state.currentSessionId) return;
 		for (const record of [...subscriptions.values()]) {
 			try {
 				reconcileRecord(record);
@@ -233,6 +309,9 @@ export function createWaitSubscriptionManager(
 		restore() {
 			subscriptions.clear();
 			unresolvedRestoredForegroundTokens.clear();
+			// Unconditional: a process that starts without a session identity should
+			// still clear records nobody can act on.
+			sweepExpiredForeignSubscriptions(true);
 			if (!state.currentSessionId) return;
 			let files: string[];
 			try {
@@ -245,8 +324,7 @@ export function createWaitSubscriptionManager(
 				try {
 					const record = parseRecord(JSON.parse(fs.readFileSync(path.join(subscriptionsDir, file), "utf-8")));
 					if (!record || file !== `${record.token}.json`) continue;
-					const acceptedSessions = new Set(state.sessionLineage?.length ? state.sessionLineage : [state.currentSessionId]);
-					if (acceptedSessions.has(record.sessionId)) {
+					if (record.sessionId === state.currentSessionId) {
 						subscriptions.set(record.token, record);
 						if (record.targetKind === "foreground" && !state.foregroundRuns?.has(record.runId)) unresolvedRestoredForegroundTokens.add(record.token);
 					}

@@ -11,6 +11,7 @@ import { readNestedControlRequests, resolveNestedRouteFromEnv, type NestedRoute,
 import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom.ts";
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
 import { createSubagentParamsSchema } from "./schemas.ts";
+import { finalizeToolResult } from "./tool-result.ts";
 import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { type Details, type SubagentState } from "../shared/types.ts";
 
@@ -171,18 +172,18 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		allowMutatingManagementActions: false,
 	});
 
-	const params = createSubagentParamsSchema(config);
+	const params = createSubagentParamsSchema();
 	const tool: ToolDefinition<typeof params, Details> = {
 		name: "subagent",
 		label: "Subagent",
 		description: [
 			"Delegate to subagents from child-safe fanout mode.",
-			`Allowed management/control actions: list, get, status, interrupt, resume, steer${config.legacyChainControls === true ? ", append-step" : ""}, doctor.`,
+			"Allowed management/control actions: list, get, status, interrupt, resume, steer, doctor.",
 			"Mutating management actions (create, update, delete, eject, disable, enable, reset, grant-spawn-budget) are blocked in this mode.",
 		].join("\n"),
 		parameters: params,
-		execute(id, params, signal, onUpdate, ctx) {
-			return executor.executePublic(id, params as SubagentParamsLike, signal ?? new AbortController().signal, onUpdate, ctx);
+		async execute(id, params, signal, onUpdate, ctx) {
+			return finalizeToolResult(await executor.executePublic(id, params as SubagentParamsLike, signal ?? new AbortController().signal, onUpdate, ctx));
 		},
 	};
 

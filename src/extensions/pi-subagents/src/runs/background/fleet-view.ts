@@ -156,34 +156,83 @@ function stringifyJsonPreview(value: unknown, maxLength = 240): string {
 	return raw.length > maxLength ? `${raw.slice(0, maxLength)}…` : raw;
 }
 
-function contentText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content.map((part) => {
-		if (!part || typeof part !== "object") return "";
-		const entry = part as { type?: unknown; text?: unknown; name?: unknown; toolName?: unknown; args?: unknown; result?: unknown; content?: unknown };
-		if (typeof entry.text === "string") return entry.text;
-		if (entry.type === "toolCall" || entry.type === "tool_call") {
-			const name = typeof entry.name === "string" ? entry.name : typeof entry.toolName === "string" ? entry.toolName : "tool";
-			return `[tool: ${name}${entry.args === undefined ? "" : ` ${stringifyJsonPreview(entry.args)}`}]`;
-		}
-		if (entry.type === "toolResult" || entry.type === "tool_result") {
-			return `[tool result${entry.result === undefined ? "" : `: ${stringifyJsonPreview(entry.result)}`}]`;
-		}
-		if (entry.content !== undefined) return stringifyJsonPreview(entry.content);
-		return "";
-	}).filter(Boolean).join("\n");
+/** One structured content part of a session JSONL record. Shared by the prose transcript formatter and inspect RPC. */
+export interface SessionTranscriptMessage {
+	role: string;
+	kind: "text" | "toolCall" | "toolResult";
+	text: string;
+	name?: string;
+	isError?: boolean;
+	/** Ordinal of the session record this part came from, so consumers can
+	 *  regroup multi-part messages (one session record can yield several parts). */
+	recordIndex?: number;
 }
 
-function sessionMessageLine(record: unknown): string | undefined {
-	if (!record || typeof record !== "object") return undefined;
+function sessionMessageParts(record: unknown): SessionTranscriptMessage[] {
+	if (!record || typeof record !== "object") return [];
 	const outer = record as { message?: unknown; role?: unknown; content?: unknown; type?: unknown };
 	const message = outer.message && typeof outer.message === "object" ? outer.message as { role?: unknown; content?: unknown } : outer;
 	const role = typeof message.role === "string" ? message.role : undefined;
-	if (!role) return undefined;
-	const text = contentText(message.content).trim();
+	if (!role) return [];
+	const content = message.content;
+	if (typeof content === "string") return content.trim() ? [{ role, kind: "text", text: content }] : [];
+	if (!Array.isArray(content)) return [];
+	const parts: SessionTranscriptMessage[] = [];
+	for (const part of content) {
+		if (!part || typeof part !== "object") continue;
+		const entry = part as { type?: unknown; text?: unknown; name?: unknown; toolName?: unknown; args?: unknown; result?: unknown; content?: unknown; isError?: unknown };
+		if (typeof entry.text === "string") {
+			if (entry.text.trim()) parts.push({ role, kind: "text", text: entry.text });
+			continue;
+		}
+		if (entry.type === "toolCall" || entry.type === "tool_call") {
+			const name = typeof entry.name === "string" ? entry.name : typeof entry.toolName === "string" ? entry.toolName : "tool";
+			parts.push({ role, kind: "toolCall", name, text: `[tool: ${name}${entry.args === undefined ? "" : ` ${stringifyJsonPreview(entry.args)}`}]` });
+			continue;
+		}
+		if (entry.type === "toolResult" || entry.type === "tool_result") {
+			const name = typeof entry.name === "string" ? entry.name : typeof entry.toolName === "string" ? entry.toolName : undefined;
+			parts.push({ role, kind: "toolResult", ...(name ? { name } : {}), ...(entry.isError === true ? { isError: true } : {}), text: `[tool result${entry.result === undefined ? "" : `: ${stringifyJsonPreview(entry.result)}`}]` });
+			continue;
+		}
+		if (entry.content !== undefined) {
+			const preview = stringifyJsonPreview(entry.content);
+			if (preview.trim()) parts.push({ role, kind: "text", text: preview });
+		}
+	}
+	return parts;
+}
+
+function sessionMessageLine(record: unknown): string | undefined {
+	const parts = sessionMessageParts(record);
+	if (parts.length === 0) return undefined;
+	const text = parts.map((part) => part.text).join("\n").trim();
 	if (!text) return undefined;
-	return `${role}: ${text}`;
+	return `${parts[0]!.role}: ${text}`;
+}
+
+/** Structured session tail: parsed content parts, newest last, bounded by
+ *  maxMessages. Same trusted-root containment as the prose transcript tail. */
+export function readSessionMessagesTail(sessionFile: string, maxMessages: number, trustedRoots: string[]): { messages: SessionTranscriptMessage[]; warnings: string[]; truncated: boolean } {
+	const tail = readContainedTextTail(sessionFile, Math.max(maxMessages * 4, maxMessages), trustedRoots, "session");
+	const warnings: string[] = [];
+	if (tail.error) warnings.push(`Session read failed for ${sessionFile}: ${tail.error}`);
+	const parsedMessages: SessionTranscriptMessage[] = [];
+	let malformed = 0;
+	let recordIndex = 0;
+	for (const line of tail.lines) {
+		if (!line.trim()) continue;
+		try {
+			const parsed = JSON.parse(line) as unknown;
+			for (const part of sessionMessageParts(parsed)) parsedMessages.push({ ...part, recordIndex });
+		} catch {
+			malformed++;
+		}
+		recordIndex++;
+	}
+	if (malformed > 0) warnings.push(`Skipped ${malformed} malformed session tail line${malformed === 1 ? "" : "s"}.`);
+	const messages = parsedMessages.slice(-maxMessages);
+	return { messages, warnings, truncated: tail.truncated || parsedMessages.length > messages.length };
 }
 
 function readSessionTranscriptTail(sessionFile: string, maxLines: number, trustedRoots: string[]): { lines: string[]; warnings: string[] } {

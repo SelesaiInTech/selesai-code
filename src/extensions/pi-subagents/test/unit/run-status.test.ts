@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
+import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
@@ -21,6 +22,10 @@ function textContent(result: ReturnType<typeof inspectSubagentStatus>): string {
 }
 
 describe("async run status inspection", () => {
+	afterEach(() => {
+		delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_JOB_PROVIDER_REGISTRY_KEY)];
+	});
+
 	it("repairs stale running status and reports diagnosis plus result path", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-stale-"));
 		let budgetDirectory: string | undefined;
@@ -70,6 +75,45 @@ describe("async run status inspection", () => {
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 			if (budgetDirectory) fs.rmSync(budgetDirectory, { recursive: true, force: true });
+		}
+	});
+
+	it("shows a follow-up hint for completed external-job runs when the provider supports it", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-external-follow-up-"));
+		try {
+			registerExternalJobProvider({
+				name: "surf-oracle",
+				start: () => ({ providerJobId: "job", state: "completed" }),
+				followUp: () => ({ providerJobId: "job-follow-up", state: "completed" }),
+				status: (providerJobId) => ({ providerJobId, state: "completed" }),
+				reattach: (providerJobId) => ({ providerJobId, state: "completed" }),
+				result: (providerJobId) => ({ providerJobId, state: "completed" }),
+			});
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-external-follow-up");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-external-follow-up",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{
+					agent: "gpt-pro",
+					status: "complete",
+					runner: { type: "external-job", provider: "surf-oracle", options: {}, capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false } },
+					externalJob: { provider: "surf-oracle", providerJobId: "job-parent", promptDigest: "digest", options: {}, state: "completed" },
+				}],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-external-follow-up" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /Follow-up: subagent\(\{ action: "resume", id: "run-external-follow-up", index: 0, message: "\.\.\." \}\)/);
+			assert.match(text, /Resume: use the external-job follow-up hint above\./);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 
@@ -1099,20 +1143,39 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("does not advertise a workflow steering command without a live foreground route", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-route-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "workflow-live");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "workflow-live", sessionId: "session", mode: "workflow", state: "running", pid: 12345,
+				startedAt: 100, lastUpdate: 100, steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+			}));
+			const result = inspectSubagentStatus({ id: "workflow-live" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true, now: () => 200 });
+			const text = textContent(result);
+			assert.match(text, /Steer: unavailable; no live foreground route is registered in the active session\./);
+			assert.doesNotMatch(text, /action: "steer", id: "workflow-live"/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects ambiguous async run id prefixes", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-ambiguous-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
-			fs.mkdirSync(path.join(asyncRoot, "run-aa"), { recursive: true });
-			fs.mkdirSync(path.join(asyncRoot, "run-ab"), { recursive: true });
+			fs.mkdirSync(path.join(asyncRoot, "run-aaaa-one"), { recursive: true });
+			fs.mkdirSync(path.join(asyncRoot, "run-aaaa-two"), { recursive: true });
 
-			const result = inspectSubagentStatus({ id: "run-a" }, {
+			const result = inspectSubagentStatus({ id: "run-aaaa" }, {
 				asyncDirRoot: asyncRoot,
 				resultsDir: path.join(root, "results"),
 			});
 
 			assert.equal(result.isError, true);
-			assert.match(textContent(result), /Ambiguous subagent run id prefix 'run-a' matched: async:run-aa, async:run-ab/);
+			assert.match(textContent(result), /Ambiguous subagent run id prefix 'run-aaaa' matched: async:run-aaaa-one, async:run-aaaa-two/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

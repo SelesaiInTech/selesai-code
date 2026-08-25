@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { prepareWorkflowLaunchParams } from "../../src/runs/foreground/subagent-executor.ts";
+import { prepareWorkflowLaunchParams, sanitizeRunPathSegment } from "../../src/runs/foreground/subagent-executor.ts";
 
 describe("workflow launch params", () => {
 	it("keeps omitted workflow child async foreground", () => {
@@ -21,6 +21,40 @@ describe("workflow launch params", () => {
 		);
 	});
 
+	it("passes an omitted child timeout parent deadline for default resolution", () => {
+		const parentDeadlineAt = Date.now() + 60_000;
+		const params = prepareWorkflowLaunchParams(
+			{},
+			{ agent: "worker", task: "Run" },
+			"workflow-run",
+			"run",
+			{ parentDeadlineAt },
+		);
+		assert.equal(params.async, false);
+		assert.equal(params.timeoutMs, undefined);
+		assert.equal(params.workflowParentDeadlineAt, parentDeadlineAt);
+	});
+
+	it("preserves explicit child timeout aliases over the parent deadline", () => {
+		const parentDeadlineAt = Date.now() + 60_000;
+		assert.equal(prepareWorkflowLaunchParams(
+			{},
+			{ agent: "worker", task: "Run", timeoutMs: 90_000 },
+			"workflow-run",
+			"timeout",
+			{ parentDeadlineAt },
+		).timeoutMs, 90_000);
+		const maxRuntimeParams = prepareWorkflowLaunchParams(
+			{},
+			{ agent: "worker", task: "Run", maxRuntimeMs: 90_000 },
+			"workflow-run",
+			"max-runtime",
+			{ parentDeadlineAt },
+		);
+		assert.equal(maxRuntimeParams.maxRuntimeMs, 90_000);
+		assert.equal(maxRuntimeParams.timeoutMs, undefined);
+	});
+
 	it("preserves explicit async workflow children", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(
@@ -35,6 +69,58 @@ describe("workflow launch params", () => {
 				async: true,
 				workflowParentRunId: "workflow-run",
 				workflowKey: "run",
+			},
+		);
+	});
+
+	it("runs omitted external workflow children async while preserving awaited semantics", () => {
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{},
+				{ agent: "gpt-pro", task: "Check weather" },
+				"workflow-run",
+				"weather",
+				{ externalAsyncRequired: true },
+			),
+			{
+				agent: "gpt-pro",
+				task: "Check weather",
+				async: true,
+				workflowAwaitAsync: true,
+				workflowParentRunId: "workflow-run",
+				workflowKey: "weather",
+			},
+		);
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{},
+				{ agent: "gpt-pro", task: "Check weather", async: true },
+				"workflow-run",
+				"weather",
+				{ externalAsyncRequired: true },
+			),
+			{
+				agent: "gpt-pro",
+				task: "Check weather",
+				async: true,
+				workflowParentRunId: "workflow-run",
+				workflowKey: "weather",
+			},
+		);
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{},
+				{ agent: "gpt-pro", task: "Check weather", async: false },
+				"workflow-run",
+				"weather",
+				{ externalAsyncRequired: true },
+			),
+			{
+				agent: "gpt-pro",
+				task: "Check weather",
+				async: false,
+				workflowParentRunId: "workflow-run",
+				workflowKey: "weather",
 			},
 		);
 	});
@@ -59,7 +145,14 @@ describe("workflow launch params", () => {
 		assert.equal(prepareWorkflowLaunchParams({}, { agent: "worker", task: "Run" }, "workflow-run", "sibling").intercomBridge, undefined);
 	});
 
-	it("places workflow child gates inside managed worktree tasks", () => {
+	it("canonicalizes child extension bindings without leaking them to siblings", () => {
+		const bindings = { "shepherd.dispatch/1": { writeScope: ["src/a.ts"], role: "coder" } };
+		const child = prepareWorkflowLaunchParams({ extensionBindings: { "defaults.policy/1": true } }, { agent: "worker", task: "Run", extensionBindings: bindings }, "workflow-run", "bound");
+		assert.deepEqual(child.extensionBindings, bindings);
+		assert.equal(prepareWorkflowLaunchParams({}, { agent: "worker", task: "Run" }, "workflow-run", "plain").extensionBindings, undefined);
+	});
+
+	it("keeps managed worktree children on the single-run contract", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(
 				{},
@@ -68,15 +161,13 @@ describe("workflow launch params", () => {
 				"gated",
 			),
 			{
+				agent: "worker",
+				task: "Implement",
 				worktree: true,
 				async: false,
 				workflowParentRunId: "workflow-run",
 				workflowKey: "gated",
-				tasks: [{
-					agent: "worker",
-					task: "Implement",
-					acceptance: { level: "verified", verify: [{ id: "gate", command: "npm test" }] },
-				}],
+				acceptance: { level: "verified", verify: [{ id: "gate", command: "npm test" }] },
 			},
 		);
 	});
@@ -100,6 +191,44 @@ describe("workflow launch params", () => {
 		);
 	});
 
+	it("does not inherit parent deadlines for retained workflow children", () => {
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{},
+				{ resume: "retained-run", task: "Continue" },
+				"workflow-run",
+				"continue",
+				{ parentDeadlineAt: Date.now() + 60_000 },
+			),
+			{
+				action: "resume",
+				id: "retained-run",
+				message: "Continue",
+				workflowParentRunId: "workflow-run",
+				workflowKey: "continue",
+			},
+		);
+	});
+
+	it("preserves worktree isolation for retained workflow children", () => {
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{},
+				{ resume: "retained-run", task: "Continue", worktree: true },
+				"workflow-run",
+				"continue",
+			),
+			{
+				action: "resume",
+				id: "retained-run",
+				message: "Continue",
+				workflowParentRunId: "workflow-run",
+				workflowKey: "continue",
+				worktree: true,
+			},
+		);
+	});
+
 	it("rejects gate defaults on retained resume items", () => {
 		assert.throws(
 			() => prepareWorkflowLaunchParams(
@@ -119,6 +248,15 @@ describe("workflow launch params", () => {
 			),
 			/gate is not supported with retained resume/,
 		);
+	});
+
+	it("rejects extension binding amendments on retained resume items", () => {
+		assert.throws(() => prepareWorkflowLaunchParams(
+			{ extensionBindings: { "defaults.policy/1": true } },
+			{ resume: "retained-run", task: "Continue" },
+			"workflow-run",
+			"continue",
+		), /original retained child binding/);
 	});
 
 	it("preserves execution limits and fan-out identity when routing retained resume items", () => {
@@ -149,5 +287,27 @@ describe("workflow launch params", () => {
 				toolBudget: { soft: 2, hard: 4, block: "*" },
 			},
 		);
+	});
+
+	describe("sanitizeRunPathSegment", () => {
+		it("replaces Windows-invalid characters and trims separators", () => {
+			assert.equal(sanitizeRunPathSegment("call_VfdHQygxGeL1L49ez04A4tf7|WtnJ9gVpB/jdQGWbnKhfMgDqPGUGmNw"), "call_VfdHQygxGeL1L49ez04A4tf7_WtnJ9gVpB_jdQGWbnKhfMgDqPGUGmNw");
+			assert.equal(sanitizeRunPathSegment(":::path//sub?*<file>|name:::"), "path_sub_file_name");
+			assert.equal(sanitizeRunPathSegment("   ___invalid___   "), "invalid");
+		});
+
+		it("falls back to unknown for empty or all-invalid strings", () => {
+			assert.equal(sanitizeRunPathSegment(""), "unknown");
+			assert.equal(sanitizeRunPathSegment("   "), "unknown");
+			assert.equal(sanitizeRunPathSegment("???///|||"), "unknown");
+		});
+
+		it("bounds oversized segments to the maximum byte length", () => {
+			const longId = "a".repeat(200);
+			const sanitized = sanitizeRunPathSegment(longId, 120);
+			assert.equal(sanitized.length, 120);
+			assert.equal(Buffer.byteLength(sanitized, "utf-8"), 120);
+			assert.equal(sanitized, "a".repeat(120));
+		});
 	});
 });

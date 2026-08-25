@@ -100,13 +100,3 @@ describe("before_agent_start", () => {
 		expect(result).toBeUndefined();
 	});
 });
-
-describe("model_select", () => {
-	it("shows status when the selected model matches, clears otherwise", async () => {
-		const { handlers, ctx } = harness({ rules: [{ match: ["deepseek/*"], prompt: "EXTRA" }] }, undefined);
-		await handlers["model_select"]({ model: model("deepseek", "deepseek-chat") }, ctx);
-		expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("model-prompt-injector", "prompt-inject: active");
-		await handlers["model_select"]({ model: model("openai", "gpt-5") }, ctx);
-		expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("model-prompt-injector", undefined);
-	});
-});

@@ -113,6 +113,19 @@ describe("session revival leases", () => {
 		}
 	});
 
+	it("acquires a lease without a ps start probe when the platform has none", {
+		skip: process.platform === "linux" || process.platform === "win32" ? "platform has a native start probe" : undefined,
+	}, () => {
+		const { root, leases, sessionFile } = fixture("pi-session-lease-no-ps-");
+		try {
+			const lease = acquireSessionLease(request(sessionFile, "no-ps"), { rootDir: leases });
+			assert.match(lease.owner.processStartIdentity ?? "", /^runtime:/);
+			lease.release();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("keys aliases by the canonical session path", { skip: process.platform === "win32" ? "symlink creation is not portable on Windows CI" : undefined }, () => {
 		const { root, leases, sessionFile } = fixture("pi-session-lease-canonical-");
 		try {

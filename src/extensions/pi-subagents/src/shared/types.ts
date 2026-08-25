@@ -8,10 +8,12 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { AgentConfig } from "../agents/agents.ts";
 import type { FSWatcher } from "node:fs";
 import type { ExtensionContext } from "@selesai/code";
-import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
+import type { ModelScopeRule } from "../runs/shared/model-scope.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
 import type { AuthorityPolicyConfig } from "../policy/authority.ts";
+import type { ThinkingLevel } from "./model-info.ts";
 import type { GlobalMissionIndexRecord, MissionRecord, MissionStoreConfig } from "../missions/types.ts";
+import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 
 // ============================================================================
 // Basic Types
@@ -41,7 +43,7 @@ export type WorkflowNodeStatus = "pending" | "running" | "completed" | "failed" 
 
 export interface WorkflowGraphNode {
 	id: string;
-	kind: "step" | "parallel-group" | "dynamic-parallel-group" | "agent" | "checkpoint";
+	kind: "step" | "parallel-group" | "dynamic-parallel-group" | "agent";
 	agent?: string;
 	phase?: string;
 	label: string;
@@ -61,16 +63,6 @@ export interface WorkflowGraphNode {
 	structured?: boolean;
 	acceptanceStatus?: AcceptanceLedgerStatus;
 	error?: string;
-	checkpoint?: ChainCheckpointState;
-}
-
-export interface ChainCheckpointState {
-	name: string;
-	message?: string;
-	status: "pending" | "approved" | "rejected";
-	stepIndex: number;
-	approvedAt?: number;
-	rejectedAt?: number;
 }
 
 export interface WorkflowGraphSnapshot {
@@ -79,6 +71,29 @@ export interface WorkflowGraphSnapshot {
 	phases: Array<{ title: string; nodeIds: string[] }>;
 	nodes: WorkflowGraphNode[];
 	currentNodeId?: string;
+}
+
+export type WorkflowReceiptState = "complete" | "failed" | "paused" | "stopped";
+
+type WorkflowReceiptEntryResumability =
+	| { latestRunId: string; resumability: { state: "resumable" } }
+	| { latestRunId?: string; resumability: { state: "not-resumable"; reason: string } };
+
+export type WorkflowReceiptEntry = WorkflowReceiptEntryResumability & {
+	key: string;
+	agent?: string;
+	requestedContext?: "fresh" | "fork";
+	resolvedContext?: "fresh" | "fork" | "mixed";
+	outputReference?: string;
+	continuation: { runIds: string[] };
+};
+
+export interface WorkflowReceipt {
+	version: 1;
+	workflowRunId: string;
+	state: WorkflowReceiptState;
+	createdAt: number;
+	entries: Record<string, WorkflowReceiptEntry>;
 }
 
 export interface SavedOutputReference {
@@ -171,6 +186,7 @@ export interface ControlConfig {
 export interface ResolvedControlConfig {
 	enabled: boolean;
 	needsAttentionAfterMs: number;
+	needsAttentionAfterMsIsExplicit?: boolean;
 	activeNoticeAfterMs: number;
 	activeNoticeAfterTurns?: number;
 	activeNoticeAfterTokens?: number;
@@ -224,6 +240,10 @@ export interface ControlEvent {
 	currentPath?: string;
 	elapsedMs?: number;
 	recentFailureSummary?: string;
+	workflowKey?: string;
+	phase?: string;
+	label?: string;
+	taskPreview?: string;
 }
 
 export type SubagentResultStatus = "completed" | "failed" | "paused" | "stopped" | "detached";
@@ -282,7 +302,7 @@ export interface ParallelHandoffGroup {
 export interface ParallelHandoffManifest {
 	version: 1;
 	runId: string;
-	mode: "parallel" | "chain";
+	mode: "single" | "parallel" | "chain";
 	source: "foreground" | "async";
 	cwd: string;
 	createdAt: number;
@@ -324,15 +344,52 @@ export interface ReviewProjection {
 }
 
 export interface FileMutationEffect {
-	status: "not-requested" | "not-applicable" | "observed" | "missing";
+	status: "not-requested" | "not-applicable" | "observed" | "missing" | "blocked";
 	expected: boolean;
 	attempted: boolean;
 	message?: string;
 	resolvedBy?: "llm-intent-arbiter";
+	evidence?: TrackedMutationEvidence;
 }
 
 export interface EffectsProjection {
 	fileMutation?: FileMutationEffect;
+}
+
+export interface TrackedMutationSnapshot {
+	source: "tracked-files";
+	trackedOnly: true;
+	cwd: string;
+	gitRoot?: string;
+	dirtyFiles: string[];
+	fingerprints: Record<string, TrackedMutationFingerprint>;
+	truncated?: boolean;
+	unavailable?: string;
+}
+
+export type TrackedMutationFingerprint = { kind: "diff"; digest: string };
+
+export interface TrackedMutationEvidence {
+	source: "tracked-files";
+	trackedOnly: true;
+	changedFiles: string[];
+	attemptedMutation: boolean;
+	truncated?: boolean;
+	unavailable?: string;
+}
+
+export interface TimeoutRecoverySummary {
+	termination: "timed-out" | "stopped";
+	changedFiles: string[];
+	truncated?: boolean;
+	currentTool?: string;
+	currentToolArgs?: string;
+	currentPath?: string;
+	sessionFile?: string;
+	transcriptPath?: string;
+	artifactPaths?: ArtifactPaths;
+	warning: string;
+	message: string;
 }
 
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 3;
@@ -414,6 +471,12 @@ export type ProcessTerminalV1 =
 		reason: ProcessTerminalReason;
 		diagnostic?: string;
 	});
+
+/** Identifies the durable schedule that launched a run, so its completion is attributable. */
+export interface ScheduleOrigin {
+	id: string;
+	name?: string;
+}
 
 export type SteeringActionState = "delivered" | "scheduled" | "pending" | "partial" | "recovered" | "failed";
 export type SteeringTargetState = "scheduled" | "pending" | "routed" | "queued" | "delivered" | "late" | "failed" | "recovered";
@@ -501,6 +564,7 @@ export interface RunFanoutRejection extends RunFanoutBudgetSnapshot {
 export interface SteeringRecoveryDescriptor {
 	version: 1;
 	launchContractDigest?: string;
+	extensionBindings?: ExtensionBindings;
 	runFanoutBudget: RunFanoutBudgetDescriptor;
 	sourceRunId: string;
 	agentContract?: AgentContract;
@@ -508,8 +572,12 @@ export interface SteeringRecoveryDescriptor {
 	sessionFile?: string;
 	cwd: string;
 	model?: string;
+	modelProvider?: string;
+	modelOverrideFromParent?: boolean;
 	fallbackModels?: string[];
+	fast?: boolean;
 	thinking?: string;
+	thinkingCeiling?: ThinkingLevel;
 	tools?: string[];
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
@@ -528,6 +596,8 @@ export interface SteeringRecoveryDescriptor {
 	structuredOutputSchema?: JsonSchemaObject;
 	acceptance?: AcceptanceInput;
 	controlConfig?: ResolvedControlConfig;
+	/** Resolved launch context for this async child. */
+	context?: "fresh" | "fork";
 	/** Raw per-run bridge override. Omitted descriptors continue to use global config. */
 	intercomBridge?: IntercomBridgeConfig;
 	absoluteDeadlineAt?: number;
@@ -911,6 +981,7 @@ export interface SingleResult {
 	context?: "fresh" | "fork";
 	exitCode: number;
 	processSignal?: string | null;
+	timeoutRecovery?: TimeoutRecoverySummary;
 	detached?: boolean;
 	detachedReason?: string;
 	interrupted?: boolean;
@@ -930,6 +1001,13 @@ export interface SingleResult {
 	modelAttempts?: ModelAttempt[];
 	controlEvents?: ControlEvent[];
 	error?: string;
+	/**
+	 * True when the dispatch failed because the input exceeded the model's
+	 * context window. The model fallback loop stops immediately (retrying the
+	 * same input on another model cannot succeed). Callers should treat this as
+	 * a signal to reduce input size or re-decompose the task.
+	 */
+	contextOverflow?: boolean;
 	protocolError?: ProtocolOutputLimit;
 	sessionFile?: string;
 	skills?: string[];
@@ -995,6 +1073,7 @@ export interface WaitCompletionChild {
 	outputState?: SubagentOutputState;
 	error?: string;
 	model?: string;
+	contextOverflow?: boolean;
 	artifactPaths?: Partial<ArtifactPaths>;
 }
 
@@ -1057,7 +1136,6 @@ export interface Details {
 	totalSteps?: number;         // Total steps in chain
 	currentStepIndex?: number;   // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
-	checkpoint?: ChainCheckpointState;
 	outputs?: ChainOutputMap;
 	// Aggregated child usage across all agents in the run
 	totalChildUsage?: Usage;
@@ -1087,9 +1165,9 @@ export interface Details {
 	workflow?: {
 		value?: unknown;
 		trace: Array<{
-			operation: "run" | "status";
+			operation: "run" | "status" | "steer";
 			key: string;
-			state: "started" | "completed" | "failed" | "detached" | "stopped" | "reused";
+			state: "started" | "completed" | "failed" | "detached" | "stopped" | "reused" | "queued" | "delivered" | "missed";
 			agent?: string;
 			runId?: string;
 			phase?: string;
@@ -1099,9 +1177,11 @@ export interface Details {
 		}>;
 		emits: unknown[];
 		console: Array<{ level: "log" | "info" | "warn" | "error"; text: string }>;
+		/** Terminal keyed child receipt. Async workflows also persist it beside status.json. */
+		receipt?: WorkflowReceipt;
 	};
 	chatProgress?: {
-		mode: "off" | "terminal" | "milestones" | "live-card";
+		mode: "off" | "live-card";
 		repoRelation: "same" | "other";
 		repoLabel?: string;
 	};
@@ -1266,6 +1346,7 @@ export interface AsyncStartedEvent {
 	sessionRoot?: string;
 	pid?: number;
 	sessionId?: string;
+	completionOwnerId?: string;
 	mode?: SubagentRunMode;
 	agent?: string;
 	agents?: string[];
@@ -1277,7 +1358,6 @@ export interface AsyncStartedEvent {
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
-	checkpoint?: ChainCheckpointState;
 	launchContractDigest?: string;
 	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
@@ -1298,6 +1378,11 @@ export type AgentRunnerConfig =
 		command: string;
 		args?: string[];
 		promptDelivery?: "stdin";
+	}
+	| {
+		type: "external-job";
+		provider: string;
+		options?: Record<string, unknown>;
 	};
 
 export interface ExternalCliRunnerStatus {
@@ -1314,6 +1399,41 @@ export interface ExternalCliRunnerStatus {
 	};
 }
 
+export interface ExternalJobRunnerStatus {
+	type: "external-job";
+	provider: string;
+	options: Record<string, unknown>;
+	capabilities: {
+		stop: false;
+		steer: false;
+		resume: false;
+		structuredOutput: false;
+		toolEvents: false;
+	};
+}
+
+export interface ExternalJobStatus {
+	provider: string;
+	providerJobId?: string;
+	promptDigest: string;
+	operation?: "start" | "follow-up";
+	sourceRunId?: string;
+	sourceStepIndex?: number;
+	parentProviderJobId?: string;
+	requestId?: string;
+	requestDigest?: string;
+	options: Record<string, unknown>;
+	handleUrl?: string;
+	conversationUrl?: string;
+	resultArtifactPath?: string;
+	state: "queued" | "running" | "completed" | "failed" | "stopped" | "blocked";
+	failureCode?: string;
+	failureMessage?: string;
+	blockingJobId?: string;
+	startedAt?: number;
+	updatedAt?: number;
+}
+
 export interface ExternalProcessStatus {
 	pid?: number;
 	startedAt: number;
@@ -1328,6 +1448,8 @@ export interface ExternalProcessStatus {
 export interface AsyncStatus {
 	lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
 	runId: string;
+	/** Parent Pi process/window that owns local completion delivery. */
+	completionOwnerId?: string;
 	/** Host tool-call id retained when it differs from the internal run id. */
 	toolCallId?: string;
 	sessionId?: string;
@@ -1361,14 +1483,13 @@ export interface AsyncStatus {
 	usageBudget?: UsageBudgetState;
 	pid?: number;
 	cwd?: string;
+	/** Parent-resolved child session root retained for trusted restored transcript lookup. */
+	sessionRoot?: string;
 	currentStep?: number;
 	chainStepCount?: number;
 	pendingAppends?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
-	/** Auto-relaunch count when a workflow budget result triggered a fresh top-level run. */
-	workflowRelaunchCount?: number;
-	checkpoint?: ChainCheckpointState;
 	processTerminal?: ProcessTerminalV1;
 	runFanoutBudget?: RunFanoutBudgetSnapshot;
 	runFanoutBudgetDescriptor?: RunFanoutBudgetDescriptor;
@@ -1380,10 +1501,15 @@ export interface AsyncStatus {
 	workflow?: Details["workflow"];
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
+	/** Set when a durable schedule launched this run, so completions can name their origin. */
+	scheduleOrigin?: ScheduleOrigin;
 	steps?: Array<{
+		/** Stable caller-facing child identity for inspect/status/stop. */
+		childId?: string;
 		agent: string;
-		runner?: ExternalCliRunnerStatus;
+		runner?: ExternalCliRunnerStatus | ExternalJobRunnerStatus;
 		externalProcess?: ExternalProcessStatus;
+		externalJob?: ExternalJobStatus;
 		/** Resolved launch context for this child step. */
 		context?: "fresh" | "fork";
 		/** Short caller-facing task/goal shown in fleet surfaces when available. */
@@ -1398,8 +1524,9 @@ export interface AsyncStatus {
 		parentWorkflowRunId?: string;
 		outputName?: string;
 		structured?: boolean;
-		checkpoint?: ChainCheckpointState;
 		status: "pending" | "running" | "complete" | "completed" | "failed" | "paused" | "stopped" | "rejected";
+		stopRequested?: boolean;
+		stopRequestedAt?: number;
 		children?: NestedRunSummary[];
 		sessionFile?: string;
 		transcriptPath?: string;
@@ -1419,6 +1546,7 @@ export interface AsyncStatus {
 		durationMs?: number;
 		exitCode?: number | null;
 		timedOut?: boolean;
+		timeoutRecovery?: TimeoutRecoverySummary;
 		stopped?: boolean;
 		turnBudget?: TurnBudgetState;
 		turnBudgetExceeded?: boolean;
@@ -1429,8 +1557,11 @@ export interface AsyncStatus {
 		skills?: string[];
 		model?: string;
 		thinking?: string;
+		thinkingCeiling?: ThinkingLevel;
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
+		/** True when the child input exceeded the model context window. */
+		contextOverflow?: boolean;
 		totalCost?: CostSummary;
 		steering?: SteeringStatus;
 		error?: string;
@@ -1467,8 +1598,6 @@ export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
 export interface AsyncJobState {
 	asyncId: string;
 	asyncDir: string;
-	/** True when the job was adopted from a previous session via lineage carry-over. */
-	adopted?: boolean;
 	/** Host tool-call id retained when it differs from the internal run id. */
 	toolCallId?: string;
 	/** Parent-resolved launch directory retained for trusted live artifact lookup. */
@@ -1480,6 +1609,7 @@ export interface AsyncJobState {
 	description?: string;
 	pid?: number;
 	sessionId?: string;
+	completionOwnerId?: string;
 	activityState?: ActivityState;
 	lastActivityAt?: number;
 	currentTool?: string;
@@ -1496,7 +1626,6 @@ export interface AsyncJobState {
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	steps?: AsyncJobStep[];
-	checkpoint?: ChainCheckpointState;
 	stepsTotal?: number;
 	runningSteps?: number;
 	completedSteps?: number;
@@ -1557,6 +1686,8 @@ export interface ForegroundResumeChild {
 	acceptance?: AcceptanceLedger;
 	agentContract?: AgentContract;
 	launchContractDigest?: string;
+	/** Private retained launch authority. Never project into status or result output. */
+	extensionBindings?: ExtensionBindings;
 	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	execution?: ExecutionProjection;
@@ -1574,7 +1705,6 @@ export interface ForegroundResumeRun {
 	/** Originating parent session. Detached exits can outlive the active session. */
 	sessionId?: string;
 	updatedAt: number;
-	checkpoint?: ChainCheckpointState;
 	children: ForegroundResumeChild[];
 }
 
@@ -1667,12 +1797,8 @@ export interface ActiveAsyncCapacitySnapshot {
 export interface SubagentState {
 	baseCwd: string;
 	currentSessionId: string | null;
-	/** Ordered session identities (session file paths) whose workflow estate this session adopts, self first. */
-	sessionLineage?: string[];
-	/** Earliest result-file mtime eligible for adoption from lineage sessions (replay guard). */
-	adoptedResultWindowStart?: number;
-	/** Set when a session switch adopted live workflows; consumed on the first settled turn to inject a carry-over summary. */
-	handoffResumePending?: boolean;
+	/** Reload-stable identity for this parent Pi process/window. */
+	completionOwnerId?: string;
 	/** Runtime-owned artifact resolution inputs used by Fleet transcript targeting. */
 	artifactDirPreference?: ArtifactDirPreference;
 	/** Runtime authority snapshot used by optional inspector controls. */
@@ -1696,6 +1822,8 @@ export interface SubagentState {
 	};
 	/** Current-session top-level async capacity projection. */
 	activeAsyncCapacity?: ActiveAsyncCapacitySnapshot;
+	/** Herdr project panes opened by this Pi session, keyed by project root. */
+	herdrProjectPanes?: Map<string, HerdrProjectPaneSnapshot>;
 	asyncJobs: Map<string, AsyncJobState>;
 	/** Current-session active and recent async runs for the native fleet inspector. */
 	fleetJobs?: Map<string, AsyncJobState>;
@@ -1722,6 +1850,26 @@ export interface SubagentState {
 	waitSubscriptions?: Map<string, WaitSubscriptionRecord>;
 	/** Live in-process workflow controllers. Durable status remains on disk after settlement. */
 	workflowControllers?: Map<string, AbortController>;
+	/** Live in-process workflow child stoppers keyed by parent workflow run id. */
+	workflowChildStops?: Map<string, (childId: string, message?: string) => boolean>;
+}
+
+export interface HerdrProjectPaneSnapshot {
+	projectRoot: string;
+	bindingPath: string;
+	paneId: string;
+	openedAt: string;
+	lastFocusedAt?: string;
+	state: "open" | "stale";
+	agentStatus: string;
+	ownership: "verified" | "unknown" | "mismatch";
+	safeToClose: boolean;
+	refreshedAt: number;
+	summary?: string;
+	tabId?: string;
+	workspaceId?: string;
+	terminalTitle?: string;
+	staleReason?: string;
 }
 
 // ============================================================================
@@ -1757,8 +1905,27 @@ export const SUBAGENT_FOREGROUND_COMPLETE_EVENT = "subagent:foreground-complete"
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";
 export const SUBAGENT_STEERING_NOTICE_EVENT = "subagent:steering-notice";
+export const SUBAGENT_CHILD_STATUS_EVENT = "subagent:child-status";
 export const SUBAGENT_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
 export const SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT = "subagent:result-intercom-delivery";
+
+export interface SubagentChildStatusEvent {
+	type: "subagent.child-status";
+	version: 1;
+	runId: string;
+	childId: string;
+	status: "stopping" | "stopped";
+	ts: number;
+	reason?: string;
+	source?: "rpc" | "async";
+	asyncDir?: string;
+	stepIndex?: number;
+	agent?: string;
+	childRunId?: string;
+	workflowKey?: string;
+	phase?: string;
+	label?: string;
+}
 
 // ============================================================================
 // Execution Options
@@ -1821,22 +1988,29 @@ export interface RunSyncOptions {
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
+	/** Opt into priority service tier for supported native OpenAI-Codex launches. */
+	fast?: boolean;
+	/** The override came from the running parent session, not configuration. */
+	modelOverrideFromParent?: boolean;
 	/** LLM intent arbiter for the completion mutation guard (rescues read-only review runs). */
 	llmIntentArbiter?: import("../runs/shared/llm-intent-arbiter.ts").TaskMutationArbiter;
 	/** Override the agent's default thinking level for this run */
 	thinkingOverride?: AgentConfig["thinking"];
+	thinkingCeiling?: ThinkingLevel;
+	extensionBindings?: ExtensionBindings;
 	/** Registry models available for heuristic bare-model resolution */
 	availableModels?: Array<{ provider: string; id: string; fullId: string }>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */
 	preferredModelProvider?: string;
 	/** Optional subagent model-scope enforcement for fallback candidates */
-	modelScope?: ModelScopeConfig;
+	modelScope?: ModelScopeRule | ModelScopeRule[];
 	/** Skills to make available (overrides agent default if provided) */
 	skills?: string[];
 	structuredOutput?: {
 		schema: JsonSchemaObject;
 		schemaPath: string;
 		outputPath: string;
+		acceptanceReportPath?: string;
 	};
 	agentContract?: AgentContract;
 	acceptance?: AcceptanceInput;
@@ -1912,7 +2086,7 @@ export type FleetKeybindingAction = typeof FLEET_KEYBINDING_ACTIONS[number];
 export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>>;
 
 export interface OrcaProgressTabsConfig {
-	/** Create one Orca terminal tab per running subagent. Experimental and opt-in. */
+	/** Create one Orca observer tab per top-level subagent call. Experimental and opt-in. */
 	enabled?: boolean;
 }
 
@@ -1925,6 +2099,8 @@ export interface MainWindowRendererConfig {
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	/** Set the context for launches that omit an explicit context. */
+	defaultSubagentContext?: "fresh" | "fork";
 	/** Optional shortcut that detaches the active foreground single-subagent run. */
 	foregroundDetachShortcut?: string;
 	/** Show the Claude Code-style navigable fleet. Defaults to true. */
@@ -1935,10 +2111,8 @@ export interface ExtensionConfig {
 	fleetKeybindings?: FleetKeybindingsConfig;
 	/** Show the under-editor async runs widget. Defaults to true, including when FleetView is enabled. */
 	asyncWidget?: boolean;
-	/** Tool description variant registered for the parent-facing subagent tool. Defaults to compact. */
+	/** Tool description variant registered for the parent-facing subagent tool. Defaults to split metadata. */
 	toolDescriptionMode?: ToolDescriptionMode;
-	/** Include legacy append-step and checkpoint controls in the registered tool schema. Defaults to false. */
-	legacyChainControls?: boolean;
 	/** Inline chat rendering for the subagent tool. Defaults to rich. */
 	inlineToolDisplay?: InlineToolDisplay;
 	/** Density controls for the main chat subagent call/result renderer. */
@@ -1954,12 +2128,6 @@ export interface ExtensionConfig {
 	maxSubagentSpawnsPerSession?: number;
 	/** Cumulative logical-child cap for one top-level run tree. Defaults to 64. */
 	maxSubagentSpawnsPerRun?: number;
-	/**
-	 * Max auto-relaunches when a scripted workflow ends with a fan-out budget
-	 * result before the goal is clean. Each relaunch is a fresh top-level run
-	 * with a new fan-out budget. Defaults to 12; 0 means unlimited.
-	 */
-	maxWorkflowAutoRelaunches?: number;
 	/** Optional active top-level async run cap per parent session. Unset or 0 means unlimited. */
 	maxActiveAsyncRunsPerSession?: number;
 	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
@@ -1995,11 +2163,18 @@ export interface ExtensionConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
-	/** Where to store subagent artifact files. Defaults to "project" (cwd/.pi-subagents). Set to "session" for pi session dir, or "temp" for OS temp. */
+	/** Where to store subagent artifact files. Defaults to "session" (the pi session directory, or OS temp when unavailable). Set to "project" for cwd/.pi-subagents. */
 	artifactDir?: ArtifactDirPreference;
 	/** Artifact cleanup retention. Set cleanupDays to 0 to disable cleanup. */
 	artifactConfig?: Pick<ArtifactConfig, "cleanupDays">;
 	intercomBridge?: IntercomBridgeConfig;
+	/** Control how slow result-index scans are logged. Defaults to \"activity\".
+	 *  - \"all\": log every slow scan, including scans that find nothing.
+	 *  - \"activity\": log only slow scans that found or scheduled work. Silences
+	 *    the periodic healthy rescan that inspects zero files while no async runs
+	 *    are pending, which otherwise spams the session transcript.
+	 *  - \"off\": never log slow result-index scans. */
+	resultScanLogging?: "all" | "activity" | "off";
 	proactiveSkillSubagents?: ProactiveSkillSubagentsConfig | false;
 	scheduledRuns?: ScheduledRunsConfig;
 	/** Durable mission behavior. Missions are automatic by default; set enabled:false to disable auto-create. Explicit mission actions/fields still work. */
@@ -2019,7 +2194,7 @@ export const DEFAULT_MAX_OUTPUT: Required<MaxOutputConfig> = {
 
 export const DEFAULT_ARTIFACT_CONFIG: ArtifactConfig = {
 	enabled: true,
-	dir: "project",
+	dir: "session",
 	includeInput: true,
 	includeOutput: true,
 	includeJsonl: false,
@@ -2083,7 +2258,10 @@ export function resolveTempScopeId(options?: {
 
 const MAX_PARALLEL = 8;
 export const MAX_CONCURRENCY = 4;
-export const TEMP_ROOT_DIR = path.join(os.tmpdir(), `pi-subagents-${resolveTempScopeId()}`);
+const configuredTempRoot = process.env.SELESAI_SUBAGENTS_TEMP_ROOT?.trim();
+export const TEMP_ROOT_DIR = configuredTempRoot
+	? path.resolve(configuredTempRoot)
+	: path.join(os.tmpdir(), `pi-subagents-${resolveTempScopeId()}`);
 export const RESULTS_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-results");
 export const ASYNC_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-runs");
 export const CHAIN_RUNS_DIR = path.join(TEMP_ROOT_DIR, "chain-runs");
@@ -2104,9 +2282,10 @@ export const SLASH_SUBAGENT_RESPONSE_EVENT = "subagent:slash:response";
 export const SLASH_SUBAGENT_UPDATE_EVENT = "subagent:slash:update";
 export const SLASH_SUBAGENT_CANCEL_EVENT = "subagent:slash:cancel";
 export const POLL_INTERVAL_MS = 250;
+export const WIDGET_ANIMATION_INTERVAL_MS = 1000;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "append-step", "approve-checkpoint", "reject-checkpoint", "doctor", "watchdog.status", "watchdog.check"] as const;
+export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

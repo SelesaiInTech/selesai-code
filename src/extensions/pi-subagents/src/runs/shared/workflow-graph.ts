@@ -1,4 +1,4 @@
-import { isCheckpointStep, isDynamicParallelStep, isParallelStep, type ChainStep, type SequentialStep } from "../../shared/settings.ts";
+import { isDynamicParallelStep, isParallelStep, type ChainStep, type SequentialStep } from "../../shared/settings.ts";
 import type { SingleResult, SubagentRunMode, WorkflowGraphNode, WorkflowGraphSnapshot, WorkflowNodeStatus } from "../../shared/types.ts";
 
 export interface WorkflowGraphBuildInput {
@@ -81,28 +81,6 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 
 	for (let stepIndex = 0; stepIndex < input.steps.length; stepIndex++) {
 		const step = input.steps[stepIndex]!;
-		if (isCheckpointStep(step)) {
-			const status = normalizeStatus(input.stepStatuses?.[flatIndex]?.status)
-				?? (input.currentStepIndex === stepIndex ? "paused" : "pending");
-			const checkpoint = { name: step.checkpoint, ...(step.message ? { message: step.message } : {}), status: status === "rejected" ? "rejected" as const : status === "completed" ? "approved" as const : "pending" as const, stepIndex };
-			const id = `step-${stepIndex}`;
-			nodes.push({
-				id,
-				kind: "checkpoint",
-				phase: step.phase,
-				label: step.label?.trim() || step.checkpoint,
-				status,
-				flatIndex,
-				stepIndex,
-				checkpoint,
-				error: input.stepStatuses?.[flatIndex]?.error,
-			});
-			pushPhase(phases, step.phase, id);
-			if (status === "paused" || input.currentStepIndex === stepIndex) currentNodeId = id;
-			flatIndex++;
-			continue;
-		}
-
 		if (isParallelStep(step)) {
 			const groupId = `step-${stepIndex}`;
 			const children: WorkflowGraphNode[] = [];

@@ -18,6 +18,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { POLL_INTERVAL_MS } from "../../shared/types.ts";
+import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
 
 export type ControlChannelFs = Pick<typeof fs, "mkdirSync" | "existsSync" | "rmSync" | "watch" | "readdirSync" | "readFileSync" | "realpathSync">;
@@ -54,13 +55,8 @@ export interface StopRequest {
 	ts?: number;
 	source?: string;
 	reason?: string;
-}
-
-export interface CheckpointDecisionRequest {
-	type: "approve-checkpoint" | "reject-checkpoint";
-	ts?: number;
-	source?: string;
-	reason?: string;
+	targetIndex?: number;
+	childId?: string;
 }
 
 export type SteerDeliveryMode = "steer" | "follow_up" | "auto";
@@ -98,6 +94,7 @@ export interface SteerAck {
 }
 
 const STEER_REQUESTS_DIR = "steer-requests";
+const STOP_REQUESTS_DIR = "stop-requests";
 const REVIVAL_BRIEFS_DIR = "revival-briefs";
 export const MAX_STEER_QUEUE_SIZE = 20;
 const STEER_TARGETS_DIR = "steer-targets";
@@ -127,12 +124,9 @@ export function stopRequestPath(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), "stop.json");
 }
 
-export function approveCheckpointRequestPath(asyncDir: string): string {
-	return path.join(controlInboxDir(asyncDir), "approve-checkpoint.json");
-}
-
-export function rejectCheckpointRequestPath(asyncDir: string): string {
-	return path.join(controlInboxDir(asyncDir), "reject-checkpoint.json");
+/** Directory of parent-to-runner stop requests. */
+export function stopRequestsDir(asyncDir: string): string {
+	return path.join(controlInboxDir(asyncDir), STOP_REQUESTS_DIR);
 }
 
 /** Directory of parent-to-runner steering requests. */
@@ -144,8 +138,8 @@ export function steerInboxClosedPath(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), STEER_INBOX_CLOSED_FILE);
 }
 
-export function closeSteerInbox(asyncDir: string, state: string): void {
-	writeAtomicJson(steerInboxClosedPath(asyncDir), { version: 1, closedAt: Date.now(), state });
+export function closeSteerInbox(asyncDir: string, state: string, write: (filePath: string, payload: object) => void = writeAtomicJson): void {
+	write(steerInboxClosedPath(asyncDir), { version: 1, closedAt: Date.now(), state });
 }
 
 /** Per-child inbox consumed by the child prompt runtime inside the Pi process. */
@@ -178,11 +172,22 @@ export function steerAckPathFromDir(dir: string, requestId: string): string {
 }
 
 function assertChildIndex(index: number): void {
-	if (!Number.isInteger(index) || index < 0 || index > 1_000_000) throw new Error("steer child index must be a non-negative integer.");
+	if (!Number.isInteger(index) || index < 0 || index > 1_000_000) throw new Error("child index must be a non-negative integer.");
+}
+
+function validStopChildId(childId: unknown): childId is string {
+	return typeof childId === "string"
+		&& Boolean(childId.trim())
+		&& childId.length <= 256
+		&& !/[\r\n]/.test(childId);
 }
 
 function steerRequestFileName(request: SteerRequest): string {
 	return `${String(request.ts).padStart(13, "0")}-${Buffer.from(request.id).toString("base64url")}.json`;
+}
+
+function stopRequestFileName(request: StopRequest): string {
+	return `${String(request.ts ?? 0).padStart(13, "0")}-${randomUUID()}.json`;
 }
 
 function validSteerRequest(request: Partial<SteerRequest>): request is SteerRequest {
@@ -293,20 +298,12 @@ export function requestAsyncStop(
 	payload: Omit<StopRequest, "type"> = {},
 	deps: { now?: () => number } = {},
 ): string {
-	const requestPath = stopRequestPath(asyncDir);
+	if (payload.targetIndex !== undefined) assertChildIndex(payload.targetIndex);
+	if (payload.childId !== undefined && !validStopChildId(payload.childId)) {
+		throw new Error("stop childId must be a non-empty string without newlines and at most 256 characters.");
+	}
 	const request: StopRequest = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type: "stop" };
-	writeAtomicJson(requestPath, request);
-	return requestPath;
-}
-
-export function requestAsyncCheckpointDecision(
-	asyncDir: string,
-	type: CheckpointDecisionRequest["type"],
-	payload: Omit<CheckpointDecisionRequest, "type"> = {},
-	deps: { now?: () => number } = {},
-): string {
-	const requestPath = type === "approve-checkpoint" ? approveCheckpointRequestPath(asyncDir) : rejectCheckpointRequestPath(asyncDir);
-	const request: CheckpointDecisionRequest = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type };
+	const requestPath = path.join(stopRequestsDir(asyncDir), stopRequestFileName(request));
 	writeAtomicJson(requestPath, request);
 	return requestPath;
 }
@@ -547,31 +544,78 @@ export function consumeTimeoutRequest(
 
 export function consumeStopRequest(
 	asyncDir: string,
-	fsImpl: Pick<typeof fs, "existsSync" | "rmSync"> = fs,
+	fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
 ): boolean {
-	const requestPath = stopRequestPath(asyncDir);
-	if (!fsImpl.existsSync(requestPath)) return false;
+	return consumeStopRequestPayload(asyncDir, fsImpl) !== undefined;
+}
+
+function parseStopRequest(raw: unknown): StopRequest | undefined {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const parsed = raw as Partial<StopRequest>;
+	if (parsed.type !== "stop") return undefined;
+	if (Object.hasOwn(parsed, "targetIndex") && !(Number.isInteger(parsed.targetIndex) && parsed.targetIndex! >= 0 && parsed.targetIndex! <= 1_000_000)) return undefined;
+	if (Object.hasOwn(parsed, "childId") && !validStopChildId(parsed.childId)) return undefined;
+	return {
+		type: "stop",
+		...(typeof parsed.ts === "number" ? { ts: parsed.ts } : {}),
+		...(typeof parsed.source === "string" ? { source: parsed.source } : {}),
+		...(typeof parsed.reason === "string" ? { reason: parsed.reason } : {}),
+		...(parsed.targetIndex !== undefined ? { targetIndex: parsed.targetIndex } : {}),
+		...(validStopChildId(parsed.childId) ? { childId: parsed.childId } : {}),
+	};
+}
+
+function consumeStopRequestFile(
+	requestPath: string,
+	fsImpl: Pick<typeof fs, "rmSync" | "readFileSync">,
+): StopRequest | undefined {
+	let request: StopRequest | undefined;
+	try {
+		request = parseStopRequest(JSON.parse(fsImpl.readFileSync(requestPath, "utf-8")));
+	} catch {
+		request = undefined;
+	}
 	try {
 		fsImpl.rmSync(requestPath, { force: true, recursive: true });
 	} catch {
-		// Already removed by a concurrent check — still counts as consumed.
+		// Already removed by a concurrent check — do not execute it twice.
+		return undefined;
 	}
-	return true;
+	return request;
 }
 
-export function consumeCheckpointDecisionRequest(
+export function consumeStopRequestPayloads(
 	asyncDir: string,
-	fsImpl: Pick<typeof fs, "existsSync" | "rmSync"> = fs,
-): "approved" | "rejected" | undefined {
-	if (fsImpl.existsSync(rejectCheckpointRequestPath(asyncDir))) {
-		try { fsImpl.rmSync(rejectCheckpointRequestPath(asyncDir), { force: true, recursive: true }); } catch {}
-		return "rejected";
+	fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
+): StopRequest[] {
+	const dir = stopRequestsDir(asyncDir);
+	const requests: StopRequest[] = [];
+	if (fsImpl.existsSync(dir)) {
+		let entries: string[];
+		try {
+			entries = fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort();
+		} catch {
+			entries = [];
+		}
+		for (const entry of entries) {
+			const request = consumeStopRequestFile(path.join(dir, entry), fsImpl);
+			if (request) requests.push(request);
+		}
 	}
-	if (fsImpl.existsSync(approveCheckpointRequestPath(asyncDir))) {
-		try { fsImpl.rmSync(approveCheckpointRequestPath(asyncDir), { force: true, recursive: true }); } catch {}
-		return "approved";
+
+	const legacyPath = stopRequestPath(asyncDir);
+	if (fsImpl.existsSync(legacyPath)) {
+		const request = consumeStopRequestFile(legacyPath, fsImpl);
+		if (request) requests.push(request);
 	}
-	return undefined;
+	return requests.sort((left, right) => (left.ts ?? 0) - (right.ts ?? 0));
+}
+
+export function consumeStopRequestPayload(
+	asyncDir: string,
+	fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
+): StopRequest | undefined {
+	return consumeStopRequestPayloads(asyncDir, fsImpl)[0];
 }
 
 /** Parent side: write the authoritative portable interrupt request. */
@@ -601,23 +645,10 @@ export function deliverStopRequest(input: {
 	signal?: NodeJS.Signals;
 	now?: () => number;
 	source?: string;
+	targetIndex?: number;
+	childId?: string;
 }): void {
-	requestAsyncStop(input.asyncDir, input.source ? { source: input.source } : {}, { now: input.now });
-}
-
-export function deliverCheckpointDecisionRequest(input: {
-	asyncDir: string;
-	decision: "approved" | "rejected";
-	now?: () => number;
-	source?: string;
-	reason?: string;
-}): void {
-	requestAsyncCheckpointDecision(
-		input.asyncDir,
-		input.decision === "approved" ? "approve-checkpoint" : "reject-checkpoint",
-		{ ...(input.source ? { source: input.source } : {}), ...(input.reason ? { reason: input.reason } : {}) },
-		{ now: input.now },
-	);
+	requestAsyncStop(input.asyncDir, { ...(input.source ? { source: input.source } : {}), ...(input.targetIndex !== undefined ? { targetIndex: input.targetIndex } : {}), ...(input.childId ? { childId: input.childId } : {}) }, { now: input.now });
 }
 
 /**
@@ -631,13 +662,13 @@ export function watchAsyncControlInbox(
 	opts: {
 		onInterrupt: () => void;
 		onTimeout?: () => void;
-		onStop?: () => void;
+		onStop?: (request: StopRequest) => void;
 		onSteer?: (request: SteerRequest) => void;
-		onCheckpointDecision?: (decision: "approved" | "rejected") => void;
 		onSteerCapability?: (capability: SteerCapability) => void;
 		onSteerAck?: (ack: SteerAck) => void;
 		pollIntervalMs?: number;
 		safetyPollIntervalMs?: number;
+		platform?: NodeJS.Platform;
 		fs?: ControlChannelFs;
 		timers?: ControlChannelTimers;
 	},
@@ -655,11 +686,9 @@ export function watchAsyncControlInbox(
 	const check = (): void => {
 		if (disposed) return;
 		try {
-			if (consumeStopRequest(asyncDir, fsImpl)) opts.onStop?.();
+			for (const stopRequest of consumeStopRequestPayloads(asyncDir, fsImpl)) opts.onStop?.(stopRequest);
 			if (consumeTimeoutRequest(asyncDir, fsImpl)) opts.onTimeout?.();
 			if (consumeInterruptRequest(asyncDir, fsImpl)) opts.onInterrupt();
-			const checkpointDecision = consumeCheckpointDecisionRequest(asyncDir, fsImpl);
-			if (checkpointDecision) opts.onCheckpointDecision?.(checkpointDecision);
 			for (const request of consumeSteerRequests(asyncDir, fsImpl)) opts.onSteer?.(request);
 			for (const capability of consumeSteerCapabilities(asyncDir, fsImpl)) opts.onSteerCapability?.(capability);
 			for (const ack of consumeSteerAcks(asyncDir, fsImpl)) opts.onSteerAck?.(ack);
@@ -707,12 +736,17 @@ export function watchAsyncControlInbox(
 		for (const entry of entries) watchDir(path.join(ackRoot, entry));
 	};
 	try {
-		watchDir(dir);
-		watchDir(steerRequestsDir(asyncDir), true);
-		watchDir(steerCapabilitiesDir(asyncDir), true);
-		watchDir(path.join(dir, STEER_ACKS_DIR), true);
-		watchExistingSteerAckDirs();
-		startSafetyPolling();
+		if (shouldUseNativeFsWatch("runner-control-inbox", opts.platform)) {
+			watchDir(dir);
+			watchDir(stopRequestsDir(asyncDir), true);
+			watchDir(steerRequestsDir(asyncDir), true);
+			watchDir(steerCapabilitiesDir(asyncDir), true);
+			watchDir(path.join(dir, STEER_ACKS_DIR), true);
+			watchExistingSteerAckDirs();
+			startSafetyPolling();
+		} else {
+			startPolling();
+		}
 	} catch {
 		startPolling();
 	}

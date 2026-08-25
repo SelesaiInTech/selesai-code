@@ -3,8 +3,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { handleCreate, handleList, handleManagementAction, handleUpdate } from "../../src/agents/agent-management.ts";
+import { editableAgentConfig, handleCreate, handleList, handleManagementAction, handleUpdate } from "../../src/agents/agent-management.ts";
+import { EXTRA_AGENT_DIRS_ENV } from "../../src/agents/agents.ts";
+import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
+import { SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 
 let tempDir = "";
 let oldAgentDir: string | undefined;
@@ -57,6 +60,37 @@ describe("agent management config parsing", () => {
 		assert.doesNotMatch(readText(result), /- scout \(builtin/);
 	});
 
+	it("lists valid agents and diagnoses malformed agent definitions", () => {
+		const agentsDir = path.join(tempDir, ".selesai", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "broken.md"), "---\nname: broken\ndescription: Broken\nrunner:\n  type: unknown\n---\nBroken agent.\n");
+		fs.writeFileSync(path.join(agentsDir, "working.md"), "---\nname: working\ndescription: Working\n---\nWorking agent.\n");
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+
+		const listed = handleList({}, ctx);
+		assert.equal(listed.isError, false);
+		assert.match(readText(listed), /- working \(project/);
+		assert.match(readText(listed), /Invalid agent definitions:\n- broken \(project\): Agent 'broken' has invalid runner\.type/);
+
+		const invalid = handleManagementAction("get", { agent: "broken" }, ctx);
+		assert.equal(invalid.isError, true);
+		assert.match(readText(invalid), /Agent 'broken' has invalid configuration: Agent 'broken' has invalid runner\.type/);
+		fs.writeFileSync(path.join(agentsDir, "bad-agent.md"), "---\nname: bad-agent\ndescription: Bad agent\nrunner:\n  type: unknown\n---\nBroken agent.\n");
+		const normalizedInvalid = handleManagementAction("get", { agent: "Bad Agent" }, ctx);
+		assert.equal(normalizedInvalid.isError, true);
+		assert.match(readText(normalizedInvalid), /Agent 'Bad Agent' has invalid configuration: Agent 'bad-agent' has invalid runner\.type/);
+
+		fs.writeFileSync(path.join(agentsDir, "code-analysis.zeta-worker.md"), "---\nname: zeta-worker\npackage: code-analysis\ndescription: Broken packaged worker\nrunner:\n  type: unknown\n---\nBroken agent.\n");
+		const invalidPackaged = handleManagementAction("get", { agent: "code-analysis.zeta-worker" }, ctx);
+		assert.equal(invalidPackaged.isError, true);
+		assert.match(readText(invalidPackaged), /Agent 'code-analysis\.zeta-worker' has invalid configuration: Agent 'zeta-worker' has invalid runner\.type/);
+
+		fs.writeFileSync(path.join(agentsDir, "reviewer.md"), "---\nname: reviewer\ndescription: Broken reviewer\nrunner:\n  type: unknown\n---\nBroken agent.\n");
+		const invalidShadow = handleManagementAction("get", { agent: "reviewer" }, ctx);
+		assert.equal(invalidShadow.isError, true);
+		assert.match(readText(invalidShadow), /Agent 'reviewer' has invalid configuration: Agent 'reviewer' has invalid runner\.type/);
+	});
+
 	it("gets only the effective agent detail and respects explicit scope", () => {
 		const projectAgentsDir = path.join(tempDir, ".selesai", "agents");
 		const userAgentsDir = path.join(tempDir, "agent-home", "agents");
@@ -64,16 +98,10 @@ describe("agent management config parsing", () => {
 		fs.mkdirSync(projectAgentsDir, { recursive: true });
 		fs.mkdirSync(userAgentsDir, { recursive: true });
 		fs.mkdirSync(path.join(packageDir, "agents"), { recursive: true });
-		fs.mkdirSync(path.join(packageDir, "chains"), { recursive: true });
 		fs.writeFileSync(path.join(projectAgentsDir, "worker.md"), "---\nname: worker\ndescription: Project worker override\n---\n\nProject worker.\n");
 		fs.writeFileSync(path.join(userAgentsDir, "worker.md"), "---\nname: worker\ndescription: User worker override\n---\n\nUser worker.\n");
-		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"], chains: ["chains"] } }));
+		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"] } }));
 		fs.writeFileSync(path.join(packageDir, "agents", "worker.md"), "---\nname: worker\ndescription: Package worker override\n---\n\nPackage worker.\n");
-		fs.writeFileSync(path.join(packageDir, "chains", "package-flow.chain.json"), JSON.stringify({
-			name: "package-flow",
-			description: "Package flow",
-			chain: [{ agent: "worker", task: "Package task" }],
-		}), "utf-8");
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 
 		const effective = readText(handleManagementAction("get", { agent: "worker" }, ctx));
@@ -86,35 +114,238 @@ describe("agent management config parsing", () => {
 		assert.match(userScoped, /Description: User worker override/);
 		assert.doesNotMatch(userScoped, /Project worker override|Implementation agent for normal tasks/);
 
-		const userChainsDir = path.join(tempDir, "agent-home", "chains");
-		const projectChainsDir = path.join(tempDir, ".selesai", "chains");
-		fs.mkdirSync(userChainsDir, { recursive: true });
-		fs.mkdirSync(projectChainsDir, { recursive: true });
-		fs.writeFileSync(path.join(userChainsDir, "shared-flow.chain.json"), JSON.stringify({
-			name: "shared-flow",
-			description: "User shared flow",
-			chain: [{ agent: "worker", task: "User flow" }],
-		}), "utf-8");
-		fs.writeFileSync(path.join(projectChainsDir, "shared-flow.chain.json"), JSON.stringify({
-			name: "shared-flow",
-			description: "Project shared flow",
-			chain: [{ agent: "worker", task: "Project flow" }],
-		}), "utf-8");
+	});
 
-		const userChain = readText(handleManagementAction("get", { chainName: "shared-flow", agentScope: "user" }, ctx));
-		assert.match(userChain, /Chain: shared-flow \(user\)/);
-		assert.match(userChain, /Description: User shared flow/);
-		assert.doesNotMatch(userChain, /Project shared flow|Project flow/);
+	it("surfaces package source and external-job provider status in list and get", () => {
+		const packageDir = path.join(tempDir, ".selesai", "npm", "node_modules", "test-surf");
+		fs.mkdirSync(path.join(packageDir, "agents"), { recursive: true });
+		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({
+			name: "test-surf",
+			version: "9.8.7",
+			pi: { subagents: { agents: ["agents"] } },
+		}));
+		fs.writeFileSync(path.join(packageDir, "agents", "gpt-pro.md"), `---
+name: gpt-pro
+description: ChatGPT Pro advisor via Surf
+runner:
+  type: external-job
+  provider: test-surf-oracle
+  options:
+    model: pro
+async: true
+---
+Advise only.
+`);
+		const dispose = registerExternalJobProvider({
+			name: "test-surf-oracle",
+			start: () => ({ providerJobId: "job", state: "completed" }),
+			status: () => ({ providerJobId: "job", state: "completed" }),
+			result: () => ({ providerJobId: "job", state: "completed", output: "ok" }),
+			reattach: () => ({ providerJobId: "job", state: "completed" }),
+		});
+		try {
+			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+			const listed = readText(handleList({}, ctx));
+			assert.match(listed, /Package agents/);
+			assert.match(listed, /- gpt-pro \(test-surf@9\.8\.7, external-job:test-surf-oracle ✓\): ChatGPT Pro advisor via Surf/);
 
-		const projectChain = readText(handleManagementAction("get", { chainName: "shared-flow", agentScope: "project" }, ctx));
-		assert.match(projectChain, /Chain: shared-flow \(project\)/);
-		assert.match(projectChain, /Description: Project shared flow/);
-		assert.doesNotMatch(projectChain, /User shared flow|User flow/);
+			const detail = readText(handleManagementAction("get", { agent: "gpt-pro" }, ctx));
+			assert.match(detail, /Source package: test-surf@9\.8\.7/);
+			assert.match(detail, new RegExp(`Package root: ${packageDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+			assert.match(detail, /Runner: external-job via test-surf-oracle ✓/);
+			assert.match(detail, /Runner options: {"model":"pro"}/);
+		} finally {
+			dispose();
+		}
+	});
 
-		for (const agentScope of ["user", "project"] as const) {
-			const packageChain = readText(handleManagementAction("get", { chainName: "package-flow", agentScope }, ctx));
-			assert.match(packageChain, /Chain: package-flow \(package\)/);
-			assert.match(packageChain, /Description: Package flow/);
+	it("keeps external-job provider registry errors visible", () => {
+		const packageDir = path.join(tempDir, ".selesai", "npm", "node_modules", "test-surf");
+		fs.mkdirSync(path.join(packageDir, "agents"), { recursive: true });
+		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({
+			name: "test-surf",
+			version: "9.8.7",
+			pi: { subagents: { agents: ["agents"] } },
+		}));
+		fs.writeFileSync(path.join(packageDir, "agents", "gpt-pro.md"), `---
+name: gpt-pro
+description: ChatGPT Pro advisor via Surf
+runner:
+  type: external-job
+  provider: test-surf-oracle
+---
+Advise only.
+`);
+		const key = Symbol.for(EXTERNAL_JOB_PROVIDER_REGISTRY_KEY);
+		const globals = globalThis as Record<PropertyKey, unknown>;
+		const previous = globals[key];
+		globals[key] = { version: 0, providers: new Map() };
+		try {
+			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+			const listed = readText(handleList({}, ctx));
+			assert.match(listed, /- gpt-pro \(test-surf@9\.8\.7, external-job:test-surf-oracle \?\): ChatGPT Pro advisor via Surf/);
+			assert.match(listed, /External-job provider registry unavailable: Unsupported external-job provider registry/);
+
+			const detail = readText(handleManagementAction("get", { agent: "gpt-pro" }, ctx));
+			assert.match(detail, /Runner: external-job via test-surf-oracle \?/);
+			assert.match(detail, /External-job provider registry unavailable: Unsupported external-job provider registry/);
+		} finally {
+			if (previous === undefined) delete globals[key];
+			else globals[key] = previous;
+		}
+	});
+
+	it("does not apply a malformed project diagnostic to an explicit user get", () => {
+		const projectAgentsDir = path.join(tempDir, ".selesai", "agents");
+		const userAgentsDir = path.join(tempDir, "agent-home", "agents");
+		fs.mkdirSync(projectAgentsDir, { recursive: true });
+		fs.mkdirSync(userAgentsDir, { recursive: true });
+		fs.writeFileSync(path.join(userAgentsDir, "worker.md"), "---\nname: worker\ndescription: User worker\n---\nUser worker.\n");
+		fs.writeFileSync(path.join(projectAgentsDir, "worker.md"), "---\nname: worker\ndescription: Broken project worker\nrunner:\n  type: unknown\n---\nBroken worker.\n");
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+
+		const userScoped = handleManagementAction("get", { agent: "worker", agentScope: "user" }, ctx);
+		assert.equal(userScoped.isError, false);
+		assert.match(readText(userScoped), /Agent: worker \(user\)/);
+		assert.match(readText(userScoped), /Description: User worker/);
+	});
+
+	it("blocks a malformed higher-precedence user agent from an extra user agent", () => {
+		const previousExtraDirs = process.env[EXTRA_AGENT_DIRS_ENV];
+		const extraAgentsDir = path.join(tempDir, "extra-agents");
+		try {
+			process.env[EXTRA_AGENT_DIRS_ENV] = extraAgentsDir;
+			fs.mkdirSync(extraAgentsDir, { recursive: true });
+			fs.writeFileSync(path.join(extraAgentsDir, "foo.md"), "---\nname: foo\ndescription: Extra user foo\n---\nExtra user foo.\n");
+			fs.mkdirSync(path.join(process.env.SELESAI_CODING_AGENT_DIR!, "agents"), { recursive: true });
+			fs.writeFileSync(path.join(process.env.SELESAI_CODING_AGENT_DIR!, "agents", "foo.md"), "---\nname: foo\ndescription: Broken configured user foo\nrunner:\n  type: unknown\n---\nBroken user foo.\n");
+			const result = handleManagementAction("get", { agent: "foo", agentScope: "user" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+			assert.equal(result.isError, true);
+			assert.match(readText(result), /Agent 'foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+		} finally {
+			if (previousExtraDirs === undefined) delete process.env[EXTRA_AGENT_DIRS_ENV];
+			else process.env[EXTRA_AGENT_DIRS_ENV] = previousExtraDirs;
+		}
+	});
+
+	it("blocks a malformed higher-precedence package agent from a lower package agent", () => {
+		const highPackage = path.join(tempDir, "high-package");
+		const lowPackage = path.join(tempDir, "low-package");
+		for (const packageRoot of [highPackage, lowPackage]) {
+			fs.mkdirSync(path.join(packageRoot, "agents"), { recursive: true });
+			fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"] } }));
+		}
+		fs.writeFileSync(path.join(highPackage, "agents", "foo.md"), "---\nname: foo\npackage: acme\ndescription: Broken high package foo\nrunner:\n  type: unknown\n---\nBroken foo.\n");
+		fs.writeFileSync(path.join(lowPackage, "agents", "foo.md"), "---\nname: foo\npackage: acme\ndescription: Valid low package foo\n---\nValid foo.\n");
+		fs.mkdirSync(path.join(tempDir, ".selesai"), { recursive: true });
+		fs.writeFileSync(path.join(tempDir, ".selesai", "settings.json"), JSON.stringify({ packages: [highPackage, lowPackage] }));
+
+		const result = handleManagementAction("get", { agent: "acme.foo" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+		assert.equal(result.isError, true);
+		assert.match(readText(result), /Agent 'acme\.foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+		const localResult = handleManagementAction("get", { agent: "foo" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+		assert.equal(localResult.isError, true);
+		assert.match(readText(localResult), /Agent 'foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+	});
+
+	it("reports a malformed project agent before lower-priority ambiguity", () => {
+		const packageRoot = path.join(tempDir, "package");
+		fs.mkdirSync(path.join(packageRoot, "agents"), { recursive: true });
+		fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"] } }));
+		fs.writeFileSync(path.join(packageRoot, "agents", "foo.md"), "---\nname: foo\npackage: acme\ndescription: Package foo\n---\nPackage foo.\n");
+		fs.mkdirSync(path.join(tempDir, ".selesai", "agents"), { recursive: true });
+		fs.writeFileSync(path.join(tempDir, ".selesai", "settings.json"), JSON.stringify({ packages: [packageRoot] }));
+		fs.writeFileSync(path.join(tempDir, ".selesai", "agents", "foo.md"), "---\nname: foo\ndescription: Broken project foo\nrunner:\n  type: unknown\n---\nBroken foo.\n");
+		fs.mkdirSync(path.join(process.env.SELESAI_CODING_AGENT_DIR!, "agents"), { recursive: true });
+		fs.writeFileSync(path.join(process.env.SELESAI_CODING_AGENT_DIR!, "agents", "foo.md"), "---\nname: foo\ndescription: User foo\n---\nUser foo.\n");
+		const result = handleManagementAction("get", { agent: "foo" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+		assert.equal(result.isError, true);
+		assert.match(readText(result), /Agent 'foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+	});
+
+	it("does not let malformed packaged diagnostics block an un-packaged local name", () => {
+		const projectAgentsDir = path.join(tempDir, ".selesai", "agents");
+		const userAgentsDir = path.join(tempDir, "agent-home", "agents");
+		fs.mkdirSync(projectAgentsDir, { recursive: true });
+		fs.mkdirSync(userAgentsDir, { recursive: true });
+		fs.writeFileSync(path.join(userAgentsDir, "foo.md"), "---\nname: foo\ndescription: User foo\n---\nUser foo.\n");
+		fs.writeFileSync(path.join(projectAgentsDir, "acme.foo.md"), "---\nname: foo\npackage: acme\ndescription: Broken packaged foo\nrunner:\n  type: unknown\n---\nBroken foo.\n");
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+
+		const local = handleManagementAction("get", { agent: "foo" }, ctx);
+		assert.equal(local.isError, false);
+		assert.match(readText(local), /Agent: foo \(user\)/);
+		const packaged = handleManagementAction("get", { agent: "acme.foo" }, ctx);
+		assert.equal(packaged.isError, true);
+		assert.match(readText(packaged), /Agent 'acme\.foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+	});
+
+	it("blocks a malformed invalid-package override of a local agent", () => {
+		const projectAgentsDir = path.join(tempDir, ".selesai", "agents");
+		const userAgentsDir = path.join(tempDir, "agent-home", "agents");
+		fs.mkdirSync(projectAgentsDir, { recursive: true });
+		fs.mkdirSync(userAgentsDir, { recursive: true });
+		fs.writeFileSync(path.join(userAgentsDir, "foo.md"), "---\nname: foo\ndescription: User foo\n---\nUser foo.\n");
+		fs.writeFileSync(path.join(projectAgentsDir, "foo.md"), "---\nname: foo\npackage: !!!\ndescription: Broken package\n---\nBroken foo.\n");
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+
+		const result = handleManagementAction("get", { agent: "foo" }, ctx);
+		assert.equal(result.isError, true);
+		assert.match(readText(result), /Agent 'foo' has invalid configuration: Agent 'foo' package is invalid after sanitization/);
+	});
+
+	it("blocks a malformed .pi agent from falling back to a legacy project agent", () => {
+		const canonicalAgentsDir = path.join(tempDir, ".selesai", "agents");
+		const legacyAgentsDir = path.join(tempDir, ".agents");
+		fs.mkdirSync(canonicalAgentsDir, { recursive: true });
+		fs.mkdirSync(legacyAgentsDir, { recursive: true });
+		fs.writeFileSync(path.join(legacyAgentsDir, "shared.md"), "---\nname: shared\ndescription: Legacy shared\n---\nLegacy shared.\n");
+		fs.writeFileSync(path.join(canonicalAgentsDir, "shared.md"), "---\nname: shared\ndescription: Broken canonical shared\nrunner:\n  type: unknown\n---\nBroken shared.\n");
+		const result = handleManagementAction("get", { agent: "shared" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+		assert.equal(result.isError, true);
+		assert.match(readText(result), /Agent 'shared' has invalid configuration: Agent 'shared' has invalid runner\.type/);
+	});
+
+	it("blocks a malformed custom canonical agent directory from falling back to legacy", () => {
+		const previousPackageRoot = process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		const packageRoot = path.join(tempDir, "coding-agent-root");
+		try {
+			fs.mkdirSync(packageRoot, { recursive: true });
+			fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "@selesai/code", piConfig: { configDir: ".custom-pi" } }));
+			process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV] = packageRoot;
+			const canonicalAgentsDir = path.join(tempDir, ".custom-pi", "agents");
+			const legacyAgentsDir = path.join(tempDir, ".agents");
+			fs.mkdirSync(canonicalAgentsDir, { recursive: true });
+			fs.mkdirSync(legacyAgentsDir, { recursive: true });
+			fs.writeFileSync(path.join(legacyAgentsDir, "shared.md"), "---\nname: shared\ndescription: Legacy shared\n---\nLegacy shared.\n");
+			fs.writeFileSync(path.join(canonicalAgentsDir, "shared.md"), "---\nname: shared\ndescription: Broken canonical shared\nrunner:\n  type: unknown\n---\nBroken shared.\n");
+			const result = handleManagementAction("get", { agent: "shared" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+			assert.equal(result.isError, true);
+			assert.match(readText(result), /Agent 'shared' has invalid configuration: Agent 'shared' has invalid runner\.type/);
+		} finally {
+			if (previousPackageRoot === undefined) delete process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV];
+			else process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV] = previousPackageRoot;
+		}
+	});
+
+	it("blocks a malformed canonical .agents/agents definition from legacy .agents", () => {
+		const previousPackageRoot = process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		const packageRoot = path.join(tempDir, "coding-agent-root");
+		try {
+			fs.mkdirSync(packageRoot, { recursive: true });
+			fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "@selesai/code", piConfig: { configDir: ".agents" } }));
+			process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV] = packageRoot;
+			const legacyAgentsDir = path.join(tempDir, ".agents");
+			const canonicalAgentsDir = path.join(legacyAgentsDir, "agents");
+			fs.mkdirSync(canonicalAgentsDir, { recursive: true });
+			fs.writeFileSync(path.join(legacyAgentsDir, "foo.md"), "---\nname: foo\ndescription: Legacy foo\n---\nLegacy foo.\n");
+			fs.writeFileSync(path.join(canonicalAgentsDir, "foo.md"), "---\nname: foo\ndescription: Broken canonical foo\nrunner:\n  type: unknown\n---\nBroken foo.\n");
+			const result = handleManagementAction("get", { agent: "foo" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+			assert.equal(result.isError, true);
+			assert.match(readText(result), /Agent 'foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+		} finally {
+			if (previousPackageRoot === undefined) delete process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV];
+			else process.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV] = previousPackageRoot;
 		}
 	});
 
@@ -210,41 +441,52 @@ describe("agent management config parsing", () => {
 		assert.match(readText(created), /config\.package is invalid/);
 	});
 
-	it("creates and updates packaged chains while preserving packaged step names", () => {
+	it("rejects durable chain definitions", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		fs.mkdirSync(path.join(tempDir, ".selesai", "agents"), { recursive: true });
-		fs.writeFileSync(path.join(tempDir, ".selesai", "agents", "code-analysis.scout.md"), `---
-name: scout
-package: code-analysis
-description: Fast recon
----
+		const created = handleCreate(
+			{ config: { name: "Review Flow", description: "Review flow", scope: "project", steps: [{ agent: "scout", task: "Inspect" }] } },
+			ctx,
+		);
+		assert.equal(created.isError, true);
+		assert.match(readText(created), /Durable chain definitions were removed/);
 
-Inspect
-`, "utf-8");
+		const agent = handleCreate(
+			{ config: { name: "Scout", description: "Scout", scope: "project" } },
+			ctx,
+		);
+		assert.equal(agent.isError, false);
+		const updated = handleUpdate(
+			{ agent: "scout", config: JSON.stringify({ steps: [{ agent: "scout", task: "Inspect" }] }) },
+			ctx,
+		);
+		assert.equal(updated.isError, true);
+		assert.match(readText(updated), /Durable chain definitions were removed/);
+	});
+
+	it("ignores discovered legacy chains during agent management", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const chainsDir = path.join(tempDir, ".selesai", "chains");
+		fs.mkdirSync(chainsDir, { recursive: true });
+		fs.writeFileSync(path.join(chainsDir, "scout.chain.md"), "---\nname: scout\ndescription: Old scout flow\n---\n\n## worker\nInspect\n", "utf-8");
+		fs.writeFileSync(path.join(chainsDir, "scout-review.chain.md"), "---\nname: scout-review\ndescription: Old review flow\n---\n\n## worker\nReview\n", "utf-8");
+		fs.writeFileSync(path.join(chainsDir, "reference.chain.md"), "---\nname: reference\ndescription: Old reference flow\n---\n\n## scout-review\nUse old agent\n", "utf-8");
 
 		const created = handleCreate(
-			{ config: { name: "Review Flow", package: "Code Analysis", description: "Review flow", scope: "project", steps: [{ agent: "code-analysis.scout", task: "Inspect", toolBudget: { soft: 3, hard: 5, block: ["read"] } }] } },
+			{ config: { name: "Scout", description: "Scout", scope: "project" } },
 			ctx,
 		);
 		assert.equal(created.isError, false);
-		assert.match(readText(created), /Created chain 'code-analysis.review-flow'/);
-		const filePath = path.join(tempDir, ".selesai", "chains", "code-analysis.review-flow.chain.md");
-		let content = fs.readFileSync(filePath, "utf-8");
-		assert.match(content, /^name: review-flow$/m);
-		assert.match(content, /^package: code-analysis$/m);
-		assert.match(content, /^## code-analysis\.scout$/m);
-		assert.match(content, /^toolBudget: \{"soft":3,"hard":5,"block":\["read"\]\}$/m);
 
 		const updated = handleUpdate(
-			{ chainName: "code-analysis.review-flow", config: { package: false } },
+			{ agent: "scout", config: { name: "Scout Review" } },
 			ctx,
 		);
 		assert.equal(updated.isError, false);
-		const updatedPath = path.join(tempDir, ".selesai", "chains", "review-flow.chain.md");
-		assert.equal(fs.existsSync(filePath), false);
-		content = fs.readFileSync(updatedPath, "utf-8");
-		assert.match(content, /^name: review-flow$/m);
-		assert.doesNotMatch(content, /^package:/m);
+		assert.doesNotMatch(readText(updated), /chains/i);
+
+		const deleted = handleManagementAction("delete", { agent: "scout-review" }, ctx);
+		assert.equal(deleted.isError, false);
+		assert.doesNotMatch(readText(deleted), /chains/i);
 	});
 
 	it("creates and updates agents with single-agent launch defaults", () => {
@@ -259,6 +501,7 @@ Inspect
 					timeoutMs: 120_000,
 					turnBudget: { maxTurns: 8, graceTurns: 2 },
 					acceptance: { level: "none", reason: "lightweight reviewer" },
+					outputMode: "file-only",
 				},
 			},
 			ctx,
@@ -271,6 +514,7 @@ Inspect
 		assert.match(content, /^timeoutMs: 120000$/m);
 		assert.match(content, /^turnBudget: \{"maxTurns":8,"graceTurns":2\}$/m);
 		assert.match(content, /^acceptance: \{"level":"none","reason":"lightweight reviewer"\}$/m);
+		assert.match(content, /^outputMode: file-only$/m);
 
 		const got = handleManagementAction("get", { agent: "background-reviewer" }, ctx);
 		assert.equal(got.isError, false);
@@ -278,9 +522,10 @@ Inspect
 		assert.match(readText(got), /Timeout: 120000ms/);
 		assert.match(readText(got), /Turn budget: \{"maxTurns":8,"graceTurns":2\}/);
 		assert.match(readText(got), /Acceptance: \{"level":"none","reason":"lightweight reviewer"\}/);
+		assert.match(readText(got), /Output mode: file-only/);
 
 		const updated = handleUpdate(
-			{ agent: "background-reviewer", config: { async: true, timeoutMs: false, turnBudget: false, acceptance: "" } },
+			{ agent: "background-reviewer", config: { async: true, timeoutMs: false, turnBudget: false, acceptance: "", outputMode: "inline" } },
 			ctx,
 		);
 		assert.equal(updated.isError, false);
@@ -289,6 +534,7 @@ Inspect
 		assert.doesNotMatch(content, /^timeoutMs:/m);
 		assert.doesNotMatch(content, /^turnBudget:/m);
 		assert.doesNotMatch(content, /^acceptance:/m);
+		assert.match(content, /^outputMode: inline$/m);
 
 		const deprecatedFalse = handleUpdate(
 			{ agent: "background-reviewer", config: { acceptance: false } },
@@ -328,6 +574,20 @@ Inspect
 		);
 		assert.equal(invalidAcceptance.isError, true);
 		assert.match(readText(invalidAcceptance), /config\.acceptance level "none" requires a reason/);
+
+		const invalidOutputMode = handleCreate(
+			{
+				config: {
+					name: "bad-output-mode",
+					description: "Bad output mode",
+					scope: "project",
+					outputMode: false,
+				},
+			},
+			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
+		);
+		assert.equal(invalidOutputMode.isError, true);
+		assert.match(readText(invalidOutputMode), /config\.outputMode must be 'inline' or 'file-only'/);
 	});
 
 	it("creates and updates agents with tool budgets", () => {
@@ -365,11 +625,11 @@ Inspect
 		assert.match(readText(agentResult), /config\.toolBudget\.soft must be <= config\.toolBudget\.hard/);
 
 		const chainResult = handleCreate(
-			{ config: { name: "bad-chain-budget", description: "Bad budget", scope: "project", steps: [{ agent: "reviewer", toolBudget: { hard: 2, block: [] } }] } },
+			{ config: { name: "bad-chain-budget", description: "Bad budget", scope: "project", steps: [{ agent: "reviewer" }] } },
 			ctx,
 		);
 		assert.equal(chainResult.isError, true);
-		assert.match(readText(chainResult), /config\.steps\[0\]\.toolBudget\.block must contain at least one tool name/);
+		assert.match(readText(chainResult), /Durable chain definitions were removed/);
 	});
 
 	it("creates, updates, reports, clears, and validates acceptance roles", () => {
@@ -442,18 +702,96 @@ Inspect
 
 		const got = handleManagementAction("get", { agent: "child-tool-user" }, ctx);
 		assert.equal(got.isError, false);
-		assert.match(readText(got), /Subagent-only extensions: \.\/tools\/child-only\.ts, \/opt\/pi\/child\.ts/);
+		assert.ok(readText(got).includes("Subagent-only extensions: " + path.join(tempDir, ".selesai", "agents", "tools", "child-only.ts") + ", /opt/pi/child.ts"));
+	});
+
+	it("preserves relative extension paths during unrelated updates", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const agentPath = path.join(tempDir, ".selesai", "agents", "portable.md");
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.writeFileSync(
+			agentPath,
+			"---\nname: portable\ndescription: Portable agent\nextensions: ./tools/parent.ts, package-extension\nsubagentOnlyExtensions: ../child.ts, ~/shared.ts\n---\nOriginal prompt.\n",
+		);
+
+		const updated = handleUpdate({ agent: "portable", config: { description: "Updated agent" } }, ctx);
+
+		assert.equal(updated.isError, false);
+		const content = fs.readFileSync(agentPath, "utf-8");
+		assert.match(content, /^description: Updated agent$/m);
+		assert.match(content, /^extensions: \.\/tools\/parent\.ts, package-extension$/m);
+		assert.match(content, /^subagentOnlyExtensions: \.\.\/child\.ts, ~\/shared\.ts$/m);
+		assert.ok(!content.includes(tempDir));
+	});
+
+	it("fails when extension frontmatter cannot be reread", () => {
+		const filePath = path.join(tempDir, ".selesai", "agents", "removed.md");
+		assert.throws(
+			() => editableAgentConfig({
+				name: "removed",
+				description: "Removed agent",
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				systemPrompt: "Original prompt.",
+				source: "project",
+				filePath,
+				extensions: [path.join(tempDir, ".selesai", "agents", "tools", "parent.ts")],
+			}),
+			/ENOENT/,
+		);
+	});
+
+	it("returns a structured error when a definition disappears after discovery", () => {
+		const agentPath = path.join(tempDir, ".selesai", "agents", "removed-during-update.md");
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.writeFileSync(
+			agentPath,
+			"---\nname: removed-during-update\ndescription: Temporary agent\nextensions: ./tools/parent.ts\n---\nOriginal prompt.\n",
+		);
+		let cwdReads = 0;
+		const ctx = {
+			get cwd() {
+				cwdReads += 1;
+				// handleUpdate reads cwd again after discovery, which models the definition disappearing between reads.
+				if (cwdReads === 2) fs.unlinkSync(agentPath);
+				return tempDir;
+			},
+			modelRegistry: { getAvailable: () => [] },
+		};
+
+		const updated = handleUpdate({ agent: "removed-during-update", config: { description: "Updated agent" } }, ctx);
+
+		assert.equal(updated.isError, true);
+		assert.match(readText(updated), /Could not reread agent definition .*removed-during-update\.md before updating 'removed-during-update':.*ENOENT/);
+		assert.equal(fs.existsSync(agentPath), false);
 	});
 
 	it("does not serialize settings overrides into custom agent frontmatter during updates", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] } };
+		const userSettingsPath = path.join(process.env.SELESAI_CODING_AGENT_DIR!, "settings.json");
 		const settingsPath = path.join(tempDir, ".selesai", "settings.json");
 		const agentPath = path.join(tempDir, ".selesai", "agents", "implementer.md");
 		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.mkdirSync(path.dirname(userSettingsPath), { recursive: true });
+		fs.writeFileSync(userSettingsPath, JSON.stringify({
+			subagents: {
+				agentOverrides: {
+					implementer: {
+						output: "user.md",
+						defaultReads: ["user.md"],
+						model: "anthropic/claude-sonnet-4-6",
+					},
+				},
+			},
+		}, null, 2), "utf-8");
 		fs.writeFileSync(settingsPath, JSON.stringify({
 			subagents: {
 				agentOverrides: {
 					implementer: {
+						output: "artifacts/implementer.md",
+						outputMode: "file-only",
+						defaultReads: ["CONTEXT.md"],
 						model: "anthropic/claude-sonnet-4-6",
 						systemPromptMode: "append",
 						inheritProjectContext: true,
@@ -473,6 +811,9 @@ Drive the failing test first.
 		const got = handleManagementAction("get", { agent: "implementer" }, ctx);
 		assert.equal(got.isError, false);
 		const beforeText = readText(got);
+		assert.match(beforeText, /Output: artifacts\/implementer\.md/);
+		assert.match(beforeText, /Output mode: file-only/);
+		assert.match(beforeText, /Reads: CONTEXT\.md/);
 		assert.match(beforeText, /Model: anthropic\/claude-sonnet-4-6/);
 		assert.match(beforeText, /System prompt mode: append/);
 		assert.match(beforeText, /Inherit project context: true/);
@@ -486,6 +827,9 @@ Drive the failing test first.
 
 		const content = fs.readFileSync(agentPath, "utf-8");
 		assert.match(content, /^description: Updated implementer$/m);
+		assert.doesNotMatch(content, /^output:/m);
+		assert.doesNotMatch(content, /^outputMode:/m);
+		assert.doesNotMatch(content, /^defaultReads:/m);
 		assert.doesNotMatch(content, /^model:/m);
 		assert.doesNotMatch(content, /^systemPromptMode:/m);
 		assert.doesNotMatch(content, /^inheritProjectContext:/m);
@@ -494,10 +838,42 @@ Drive the failing test first.
 		const gotAfter = handleManagementAction("get", { agent: "implementer" }, ctx);
 		assert.equal(gotAfter.isError, false);
 		const afterText = readText(gotAfter);
+		assert.match(afterText, /Output: artifacts\/implementer\.md/);
+		assert.match(afterText, /Output mode: file-only/);
+		assert.match(afterText, /Reads: CONTEXT\.md/);
 		assert.match(afterText, /Model: anthropic\/claude-sonnet-4-6/);
 		assert.match(afterText, /System prompt mode: append/);
 		assert.match(afterText, /Inherit project context: true/);
 		assert.match(afterText, /Inherit skills: true/);
+	});
+
+	it("preserves blank output and defaultReads frontmatter that blocks settings overrides during updates", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const settingsPath = path.join(tempDir, ".selesai", "settings.json");
+		const agentPath = path.join(tempDir, ".selesai", "agents", "implementer.md");
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.writeFileSync(settingsPath, JSON.stringify({
+			subagents: { agentOverrides: { implementer: { output: "settings.md", defaultReads: ["settings.md"] } } },
+		}, null, 2), "utf-8");
+		fs.writeFileSync(agentPath, `---
+name: implementer
+description: TDD implementer
+output:
+defaultReads:
+---
+
+Drive the failing test first.
+`, "utf-8");
+
+		const updated = handleUpdate({ agent: "implementer", config: { description: "Updated implementer" } }, ctx);
+		assert.equal(updated.isError, false);
+
+		const content = fs.readFileSync(agentPath, "utf-8");
+		assert.match(content, /^output: ?$/m);
+		assert.match(content, /^defaultReads: ?$/m);
+		const after = readText(handleManagementAction("get", { agent: "implementer" }, ctx));
+		assert.doesNotMatch(after, /Output: settings\.md/);
+		assert.doesNotMatch(after, /Reads: settings\.md/);
 	});
 
 	it("preserves explicit default-like frontmatter that blocks settings overrides during updates", () => {
@@ -564,86 +940,6 @@ Drive the failing test first.
 		assert.doesNotMatch(afterText, /Thinking: high/);
 	});
 
-	it("updates JSON chain descriptions without rewriting them as markdown", () => {
-		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		const chainPath = path.join(tempDir, ".selesai", "chains", "dynamic-review.chain.json");
-		fs.mkdirSync(path.dirname(chainPath), { recursive: true });
-		fs.writeFileSync(chainPath, JSON.stringify({
-			name: "dynamic-review",
-			description: "Review dynamic targets",
-			chain: [
-				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
-				{
-					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
-					collect: { as: "reviews" },
-				},
-			],
-		}), "utf-8");
-
-		const updated = handleUpdate({ chainName: "dynamic-review", config: { description: "Updated dynamic review" } }, ctx);
-
-		assert.equal(updated.isError, false);
-		const content = fs.readFileSync(chainPath, "utf-8");
-		assert.doesNotMatch(content, /^---/);
-		const parsed = JSON.parse(content) as { description?: string; chain?: Array<{ collect?: { as?: string } }> };
-		assert.equal(parsed.description, "Updated dynamic review");
-		assert.equal(parsed.chain?.[1]?.collect?.as, "reviews");
-	});
-
-	it("renames and repackages JSON chains while preserving JSON format and extension", () => {
-		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		const chainPath = path.join(tempDir, ".selesai", "chains", "dynamic-review.chain.json");
-		fs.mkdirSync(path.dirname(chainPath), { recursive: true });
-		fs.writeFileSync(chainPath, JSON.stringify({
-			name: "dynamic-review",
-			description: "Review dynamic targets",
-			chain: [{ agent: "scout", task: "Return targets" }],
-		}), "utf-8");
-
-		const updated = handleUpdate({ chainName: "dynamic-review", config: { name: "Review Flow", package: "Code Analysis" } }, ctx);
-
-		assert.equal(updated.isError, false);
-		const updatedPath = path.join(tempDir, ".selesai", "chains", "code-analysis.review-flow.chain.json");
-		assert.equal(fs.existsSync(chainPath), false);
-		const content = fs.readFileSync(updatedPath, "utf-8");
-		assert.doesNotMatch(content, /^---/);
-		const parsed = JSON.parse(content) as { name?: string; package?: string; chain?: Array<{ agent?: string }> };
-		assert.equal(parsed.name, "review-flow");
-		assert.equal(parsed.package, "code-analysis");
-		assert.equal(parsed.chain?.[0]?.agent, "scout");
-	});
-
-	it("gets dynamic JSON chain details and lists invalid chain diagnostics", () => {
-		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		fs.mkdirSync(path.join(tempDir, ".selesai", "chains"), { recursive: true });
-		fs.writeFileSync(path.join(tempDir, ".selesai", "chains", "dynamic-review.chain.json"), JSON.stringify({
-			name: "dynamic-review",
-			description: "Review dynamic targets",
-			chain: [
-				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
-				{
-					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
-					collect: { as: "reviews" },
-				},
-			],
-		}), "utf-8");
-		fs.writeFileSync(path.join(tempDir, ".selesai", "chains", "broken.chain.json"), "{", "utf-8");
-
-		const got = handleManagementAction("get", { chainName: "dynamic-review" }, ctx);
-		assert.equal(got.isError, false);
-		assert.match(readText(got), /Dynamic fanout -> reviews/);
-		assert.match(readText(got), /Expand: targets\/items/);
-		assert.match(readText(got), /Agent: reviewer/);
-
-		const listed = handleManagementAction("list", {}, ctx);
-		assert.equal(listed.isError, false);
-		assert.match(readText(listed), /Chain diagnostics:/);
-		assert.match(readText(listed), /broken\.chain\.json/);
-		assert.match(readText(listed), /Invalid JSON chain/);
-	});
-
 	it("reports builtin runtime-loaded model mappings from current session state", () => {
 		const ctx = {
 			cwd: tempDir,
@@ -662,6 +958,9 @@ Drive the failing test first.
 		assert.match(text, /^Builtin subagent models/m);
 		assert.match(text, /Current session model:\n  openai\/gpt-5-mini/);
 		assert.match(text, /(?:^|\n)scout\n  model:\n    openai\/gpt-5-mini\n  source: inherits current session model(?:\n|$)/);
+		assert.match(text, /Available models in this session's registry/);
+		assert.match(text, /  anthropic\/claude-sonnet-4\n  openai\/gpt-5-mini/);
+		assert.match(text, /Use an exact provider\/id from this list when you pass model/);
 	});
 
 	it("reports override source and disabled builtin state in runtime model mappings", () => {
@@ -695,7 +994,7 @@ Drive the failing test first.
 		assert.match(text, /Source: project override/);
 		assert.match(text, /Requested model setting:\n  claude-sonnet-4/);
 		assert.match(text, /Disabled: true/);
-		assert.match(text.replaceAll("\\", "/"), /Override file:\n  .*\.selesai\/settings\.json/);
+		assert.match(text.replaceAll("\\", "/"), /Override file:\n  .*\.pi\/settings\.json/);
 	});
 
 	it("rejects unknown builtin filters for runtime model mappings", () => {

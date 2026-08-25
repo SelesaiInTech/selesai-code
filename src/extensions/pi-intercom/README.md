@@ -12,7 +12,7 @@ User flow: press Alt+M or run /intercom to pick a session and send a message
 
 ## Why
 
-Sometimes you're running multiple Selesai sessions — one researching, one executing, one reviewing. pi-intercom lets you:
+Sometimes you're running multiple Selesai sessions — one researching, one executing, one reviewing. Selesai-intercom lets you:
 
 - **User-driven orchestration** — Send context or findings from your research session to your execution session
 - **Agent collaboration** — An agent can reach out to another session when it needs help or wants to share results
@@ -20,7 +20,7 @@ Sometimes you're running multiple Selesai sessions — one researching, one exec
 
 Unlike pi-messenger (a shared chat room for multi-agent swarms), pi-intercom is for targeted 1:1 communication where you pick the recipient.
 
-pi-intercom also integrates well with [pi-subagents](https://github.com/nicobailon/pi-subagents): delegated child agents get a child-only `contact_supervisor` tool when `pi-subagents` supplies bridge metadata. Use `reason: "need_decision"` for blocking clarification, `reason: "interview_request"` for multiple structured supervisor answers, and `reason: "progress_update"` for meaningful plan-changing updates. Normal sessions only see the regular `intercom` tool.
+Selesai Intercom also integrates well with [pi-subagents](https://github.com/nicobailon/pi-subagents): delegated child agents get a child-only `contact_supervisor` tool when `pi-subagents` supplies bridge metadata. Use `reason: "need_decision"` for blocking clarification, `reason: "interview_request"` for multiple structured supervisor answers, and `reason: "progress_update"` for meaningful plan-changing updates. Normal sessions only see the regular `intercom` tool.
 
 ## In One Minute
 
@@ -29,7 +29,7 @@ Each Selesai session that has `pi-intercom` loaded and enabled connects to a tin
 ## Install
 
 ```bash
-selesai install npm:pi-intercom
+pi install npm:pi-intercom
 ```
 
 Then restart Selesai. The extension auto-connects to the broker on startup and registers the bundled `pi-intercom` skill for common coordination patterns.
@@ -226,7 +226,7 @@ This matters because the agent receiving the message doesn't need to reconstruct
 
 The broker keeps a bounded in-memory mailbox for recently disconnected explicitly named sessions. If a lightweight CLI sender asks a long-running session something and exits before the answer, the later `reply` is accepted into that mailbox instead of failing with `Session not found`; a process that reconnects with the same explicit name and directory receives the queued reply. Runtime-only unnamed-session aliases never transfer mailbox ownership, and routing never remaps mail back to its sender. This is per-broker runtime state, not durable storage across broker restarts.
 
-Incoming messages carry diagnostic metadata end to end: stable message ID, sender sequence, sender timestamp, broker receive/delivery timestamps, receiver receive timestamp, and injection timestamp. Connected interactive receivers emit `receiver_received`, `acknowledged`, and `injected` as they hand messages to Pi; duplicate IDs are acknowledged but injected at most once per receiving session. Broker mailbox delivery for temporarily disconnected targets can still report queued delivery. If an `ask` times out, the timeout names the message ID and last known delivery state. Timeout is not cancellation: an injected or broker-queued message may remain actionable unless an explicit cancellation path says otherwise.
+Incoming messages carry diagnostic metadata end to end: stable message ID, sender sequence, sender timestamp, broker receive/delivery timestamps, receiver receive timestamp, and injection timestamp. Connected interactive receivers emit `receiver_received`, `acknowledged`, and `injected` as they hand messages to Selesai; duplicate IDs are acknowledged but injected at most once per receiving session. Broker mailbox delivery for temporarily disconnected targets can still report queued delivery. If an `ask` times out, the timeout names the message ID and last known delivery state. Timeout is not cancellation: an injected or broker-queued message may remain actionable unless an explicit cancellation path says otherwise.
 
 Cancellation is explicit: call `intercom({ action: "cancel", messageId })` to request cancellation of a message you originally sent. Connected interactive messages are injected immediately, so the receiver normally reports `cancellation_requested` rather than pretending it removed work from a private queue. Supersede is also explicit: pass `supersedes: "old-message-id"` on a new `send` or `ask`. The broker only allows same sender → same receiver supersedes, marks the old message `superseded`, and sends the replacement with a new ID; an already-steered old message may still be processed. Retries are never automatic; a retry should be a new authored message, optionally linked with `retryOf`.
 
@@ -397,6 +397,7 @@ Create `~/.selesai/agent/intercom/config.json`:
   "brokerArgs": ["--no-install", "tsx"],
   "confirmSend": false,
   "inboundTrigger": "always",
+  "toolVisibility": "always",
   "enabled": true,
   "replyHint": true,
   "status": "researching"
@@ -409,11 +410,12 @@ Create `~/.selesai/agent/intercom/config.json`:
 | `brokerArgs` | `["--no-install", "tsx"]` | Advanced trusted arguments passed to custom `brokerCommand` before the broker script path |
 | `confirmSend` | false | Show a confirmation dialog before ordinary or inferred sends from an interactive session with UI; caller-supplied `replyTo` skips it |
 | `inboundTrigger` | `"always"` | Auto-trigger policy for inbound broker messages: `"always"`, `"replies"`, or `"never"`. Local in-process subagent relay events still trigger the addressed session. |
+| `toolVisibility` | `"always"` | When the generic `intercom` tool enters the active model tool set: `"always"` or `"after-first-use"`. Lazy visibility reveals it after an inbound broker message, a successful overlay send, or loading the bundled skill. It does not hide the child-only `contact_supervisor` tool. |
 | `enabled` | true | Enable/disable intercom entirely |
 | `replyHint` | true | Include reply instruction in incoming messages |
 | `status` | — | Optional custom status suffix shown after the automatic lifecycle status, for example `thinking · researching` |
 
-If `config.json` cannot be parsed or contains an invalid value, pi-intercom fails to load the config and throws an error, so the misconfiguration is surfaced immediately instead of silently changing behavior.
+If `config.json` cannot be parsed or contains an invalid value, pi-intercom logs the error and fails closed for inbound broker auto-triggering by using `inboundTrigger: "never"` until the config is fixed.
 
 Custom broker commands are trusted local configuration: anyone who can edit this config can choose the executable used for future broker auto-spawns. For example, if you have Bun installed and want it to start the broker directly, use:
 
@@ -424,7 +426,9 @@ Custom broker commands are trusted local configuration: anyone who can edit this
 }
 ```
 
-Pi-intercom publishes live session status automatically. Sessions register as `idle`, switch to `thinking` while the agent is running, show `tool:<name>` during tool execution, and return to `idle` on agent completion. If `status` is set in config, it is appended as context instead of replacing the lifecycle status.
+Selesai Intercom publishes live session status automatically. Sessions register as `idle`, switch to `thinking` while the agent is running, show `tool:<name>` during tool execution, and return to `idle` on agent completion. If `status` is set in config, it is appended as context instead of replacing the lifecycle status.
+
+Set `PI_INTERCOM_SCOPE_ID` before starting Selesai to opt a session into an opaque broker routing scope. The value is trimmed. Empty values are treated as unscoped. A scoped session can list, address by full ID, name, ID prefix, or cwd, receive presence and session lifecycle events, recover queued mailbox messages, and use extension-channel owner, publish, and state traffic only with sessions that registered the exact same scope. Scoped sessions and unscoped sessions do not cross this boundary. Existing unscoped behavior is unchanged when the variable is not set.
 
 By default, runtime state and config live under `~/.selesai/agent/intercom`. If Selesai is launched with `SELESAI_CODING_AGENT_DIR`, pi-intercom uses `$SELESAI_CODING_AGENT_DIR/intercom` instead, including `config.json`, broker PID/lock files, sockets, and launcher state.
 
@@ -465,6 +469,35 @@ The broker:
 
 `channel.publish()` accepts payloads up to 16 KiB. A `capable` broadcast includes the sender, so consumers must not blindly republish messages they receive. `channel.commitState()` uses compare-and-swap against the last observed revision. Capabilities registered after the broker connection is established are synchronized without reconnecting. Clients connected to an older broker see the channel as unsupported and do not send extension operations.
 
+### Extension outbox
+
+Same-process extensions can request a user-visible intercom send through the consent-aware outbox. Emit `intercom:outbox-request` with a unique `requestId`; listen for `intercom:outbox-result` and treat `sent`, `rejected`, `blocked`, and `failed` as terminal states. There is no fire-and-forget mode.
+
+```typescript
+import {
+  INTERCOM_OUTBOX_REQUEST_EVENT,
+  INTERCOM_OUTBOX_RESULT_EVENT,
+  type IntercomOutboxResult,
+} from "pi-intercom/extension-api.ts";
+
+pi.events.on(INTERCOM_OUTBOX_RESULT_EVENT, (result: IntercomOutboxResult) => {
+  if (result.requestId === "example-request-1") {
+    // Handle the terminal result.
+  }
+});
+
+pi.events.emit(INTERCOM_OUTBOX_REQUEST_EVENT, {
+  version: 1,
+  requestId: "example-request-1",
+  extensionId: "example-extension",
+  extensionName: "Example Extension",
+  to: "planner",
+  message: "Build finished.",
+});
+```
+
+`confirmSend` applies to outbox requests. If confirmation is required and no UI is available, the request fails closed with `confirmation_unavailable`. The outbox resolves the target through the current session's scoped intercom client, so extensions cannot choose the sender, scope, or resolved target ID. Duplicate `requestId` values are rejected and do not deliver again. Receiver messages include structured `extension_outbox` provenance in message details; provenance is not prepended to the message body.
+
 ## How It Works
 
 ```mermaid
@@ -497,7 +530,7 @@ The broker is a standalone TypeScript process that manages session registration 
 
 Messages use length-prefixed JSON over a local socket/pipe transport (4-byte length + JSON payload) to handle fragmentation properly. The protocol includes request correlation for session listing, explicit delivery failures, validation for malformed or out-of-order messages, a frame-size cap, per-connection local rate limiting, and no-op presence coalescing.
 
-Session IDs are the trusted addressing key. Duplicate names remain allowed for same-user workflows, but sends to ambiguous names fail and users should target the stable session ID shown by `list`/`status` in trust-sensitive flows. Mail queued for a disconnected session is redelivered to a session that reconnects under the same session ID, or to a session that matches both its explicit name and its directory, so a same-named session in a different project never inherits another project's queued messages. Runtime-only `subagent-chat-...` aliases are excluded from name-based mailbox reconnection, and a disconnected mailbox is never remapped to the sender. Set `PI_INTERCOM_STABLE_ID` or `stableId` in `config.json` to pin a session's intercom ID across full process relaunches; `config.json` is machine-global, so a fixed `stableId` there applies to every session on the machine and the newest registration takes over that identity. The broker owns local trust metadata such as `trustedLocal`; `peerUid` is reserved for runtimes that can expose real peer credentials and is left unset otherwise. Client-supplied cwd/model/pid/status are display metadata, not authentication.
+Session IDs are the trusted addressing key within one broker routing scope. Duplicate names remain allowed for same-user workflows, but sends to ambiguous names fail and users should target the stable session ID shown by `list`/`status` in trust-sensitive flows. Mail queued for a disconnected session is redelivered to a session that reconnects under the same session ID, or to a session that matches both its explicit name and its directory, so a same-named session in a different project never inherits another project's queued messages. Runtime-only `subagent-chat-...` aliases are excluded from name-based mailbox reconnection, and a disconnected mailbox is never remapped to the sender. Set `PI_INTERCOM_STABLE_ID` or `stableId` in `config.json` to pin a session's intercom ID across full process relaunches; `config.json` is machine-global, so a fixed `stableId` there applies to every session on the machine and the newest registration takes over that identity only within the same `PI_INTERCOM_SCOPE_ID` boundary. The broker owns local trust metadata such as `trustedLocal`; `peerUid` is reserved for runtimes that can expose real peer credentials and is left unset otherwise. Client-supplied cwd/model/pid/status are display metadata, not authentication.
 
 Async extension work (startup, inbound flushes, reconnects, overlays, and relays) no-ops if the session shuts down or reloads before it settles.
 
@@ -509,7 +542,7 @@ Runtime files live at `~/.selesai/agent/intercom/` by default, or `$SELESAI_CODI
 - `broker.port.json` — Dynamic localhost TCP endpoint, only when Windows TCP transport is explicitly enabled
 - `config.json` — User configuration
 
-Supported `config.json` keys include `stableId` for restart-stable addressing, `status` for a custom status suffix, `inboundTrigger` (`always`, `replies`, or `never`), `replyHint`, `confirmSend`, and advanced broker launch overrides.
+Supported `config.json` keys include `stableId` for restart-stable addressing, `status` for a custom status suffix, `inboundTrigger` (`always`, `replies`, or `never`), `toolVisibility` (`always` or `after-first-use`), `replyHint`, `confirmSend`, and advanced broker launch overrides.
 
 ## Design Decisions
 

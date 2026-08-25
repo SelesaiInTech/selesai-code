@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { SessionManager } from "@selesai/code";
-import { createForkContextResolver, forkedChildRequiresThinkingOff, resolveSubagentContext } from "../../src/shared/fork-context.ts";
+import { canPreferFork, canPreferForkFromSnapshot, createForkContextResolver, forkedChildRequiresThinkingOff, resolveSubagentContext } from "../../src/shared/fork-context.ts";
 
 function writeMinimalSessionFile(filePath: string, id = "session"): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -51,6 +51,41 @@ describe("forkedChildRequiresThinkingOff", () => {
 		];
 		assert.equal(forkedChildRequiresThinkingOff("shared", availableModels, "anthropic"), true);
 		assert.equal(forkedChildRequiresThinkingOff("shared", availableModels, "openai"), false);
+	});
+});
+
+describe("canPreferFork", () => {
+	it("requires a persisted session file and a current leaf", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-prefer-fork-"));
+		try {
+			const parentSessionFile = path.join(tempDir, "parent.jsonl");
+			assert.equal(canPreferFork({
+				getSessionFile: () => undefined,
+				getLeafId: () => "leaf-123",
+			}), false);
+			assert.equal(canPreferFork({
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf-123",
+			}), false);
+			writeMinimalSessionFile(parentSessionFile, "parent");
+			assert.equal(canPreferFork({
+				getSessionFile: () => parentSessionFile,
+			}), false);
+			assert.equal(canPreferFork({
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => null,
+			}), false);
+			assert.equal(canPreferFork({
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf-123",
+			}), true);
+			assert.equal(canPreferForkFromSnapshot({
+				parentSessionFile,
+				leafId: "leaf-123",
+			}), true);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
 	});
 });
 
@@ -152,6 +187,51 @@ describe("createForkContextResolver", () => {
 			assert.ok(childSessionFile);
 			assert.notEqual(childSessionFile, parentSessionFile);
 			assert.equal(fs.existsSync(childSessionFile), true);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("nests forked sessions under a per-parent directory so pi -c never picks them", () => {
+		// Regression test: fork files used to be created as top-level siblings of
+		// the parent session. Pi's findMostRecentSession (`pi -c`) scans that
+		// directory non-recursively and picks the largest-mtime *.jsonl, so a
+		// still-running forked subagent out-writes the idle parent and the next
+		// `pi -c` resumed the subagent instead of the conversation the user left.
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-nested-"));
+		try {
+			const sessionDir = path.join(tempDir, "sessions");
+			const parent = SessionManager.create(tempDir, sessionDir);
+			parent.appendMessage({ role: "user", content: "parent prompt" });
+			parent.appendMessage({ role: "assistant", content: "parent response" });
+			const parentSessionFile = parent.getSessionFile();
+			const leafId = parent.getLeafId();
+
+			assert.ok(parentSessionFile);
+			assert.ok(leafId);
+
+			const resolver = createForkContextResolver({
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => leafId,
+				getSessionDir: () => sessionDir,
+			}, "fork");
+
+			const childSessionFile = resolver.sessionFileForIndex(0);
+			assert.ok(childSessionFile);
+			assert.equal(fs.existsSync(childSessionFile), true);
+
+			// The fork is nested under <sessionDir>/<parentBase>/forks/, never a
+			// top-level sibling of the parent.
+			assert.equal(
+				path.dirname(childSessionFile),
+				path.join(sessionDir, path.basename(parentSessionFile, ".jsonl"), "forks"),
+			);
+			// Top-level listing — what pi -c sees — still contains only the parent.
+			const topLevel = fs.readdirSync(sessionDir).filter((f) => f.endsWith(".jsonl"));
+			assert.deepEqual(topLevel, [path.basename(parentSessionFile)]);
+			// The official parentSession header still records the tree relationship.
+			const header = JSON.parse(fs.readFileSync(childSessionFile, "utf-8").split("\n")[0]);
+			assert.equal(header.parentSession, parentSessionFile);
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}

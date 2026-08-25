@@ -57,8 +57,6 @@ function getConfigDir() {
   }
   if (process.platform === 'win32') {
     return path.join(
-      // Unreachable: APPDATA is always set on Windows.
-      /* v8 ignore next 1 */
       process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
       'ponytail'
     );
@@ -78,15 +76,19 @@ function getClaudeDir() {
 function getDefaultMode() {
   // 1. Environment variable (highest priority)
   const envMode = process.env.PONYTAIL_DEFAULT_MODE;
-  if (envMode && VALID_MODES.includes(envMode.toLowerCase())) {
+  // ponytail: a default must be a runtime level (off/lite/full/ultra); review is
+  // a session-only mode, never a valid default (#377). Validate against
+  // RUNTIME_MODES so a stray env var or config can't make review the default.
+  if (envMode && RUNTIME_MODES.includes(envMode.toLowerCase())) {
     return envMode.toLowerCase();
   }
 
   // 2. Config file
   try {
     const configPath = getConfigPath();
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    if (config.defaultMode && VALID_MODES.includes(config.defaultMode.toLowerCase())) {
+    // Strip UTF-8 BOM (common on Windows-saved files) so JSON.parse doesn't choke
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''));
+    if (config.defaultMode && RUNTIME_MODES.includes(config.defaultMode.toLowerCase())) {
       return config.defaultMode.toLowerCase();
     }
   } catch (e) {
@@ -97,13 +99,37 @@ function getDefaultMode() {
   return DEFAULT_MODE;
 }
 
+// Silence the pi "Ponytail loaded" startup toast while keeping ponytail active.
+// PONYTAIL_QUIET_STARTUP=1 (or any truthy value; 0/false/empty mean "show it")
+// takes precedence, else config.quietStartup === true.
+function getQuietStartup() {
+  const env = process.env.PONYTAIL_QUIET_STARTUP;
+  if (env !== undefined) {
+    const v = env.trim().toLowerCase();
+    return v !== '' && v !== '0' && v !== 'false' && v !== 'no';
+  }
+  try {
+    const config = JSON.parse(fs.readFileSync(getConfigPath(), 'utf8').replace(/^\uFEFF/, ''));
+    return config.quietStartup === true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function writeDefaultMode(mode) {
-  const normalized = normalizeConfigMode(mode);
+  // ponytail: only a runtime level can be a default; review is session-only (#377).
+  const normalized = normalizeMode(mode);
   if (!normalized) return null;
 
   const configPath = getConfigPath();
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify({ defaultMode: normalized }, null, 2), 'utf8');
+  let config = {};
+  try {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''));
+    if (!config || typeof config !== 'object' || Array.isArray(config)) config = {};
+  } catch (_) {}
+  config.defaultMode = normalized;
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
   return normalized;
 }
 
@@ -115,6 +141,7 @@ module.exports = {
   getConfigDir,
   getConfigPath,
   getClaudeDir,
+  getQuietStartup,
   isShellSafe,
   normalizeMode,
   normalizeConfigMode,

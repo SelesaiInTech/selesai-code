@@ -7,6 +7,7 @@ describe("authority policy", () => {
 		assert.equal(resolveAuthorityDecision({ action: "discardWorktree" }), "confirm");
 		assert.equal(resolveAuthorityDecision({ action: "destructiveCleanup" }), "confirm");
 		assert.equal(resolveAuthorityDecision({ action: "spawnBudgetGrant" }), "confirm");
+		assert.equal(resolveAuthorityDecision({ action: "scheduleCreate" }), "auto");
 		assert.equal(resolveAuthorityDecision({ action: "stopRun" }), "auto");
 		assert.equal(resolveAuthorityDecision({ action: "steerRun" }), "auto");
 	});

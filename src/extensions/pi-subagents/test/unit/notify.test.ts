@@ -11,6 +11,8 @@ import registerSubagentNotify, {
 } from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 
+const COMPLETION_OWNER_ID = "completion-owner-a";
+
 function createEventBus() {
 	const emitter = new EventEmitter();
 	return {
@@ -39,7 +41,7 @@ function createPi(currentSessionId = "session-1", registerOptions: RegisterSubag
 
 	// Formatting-focused tests run with batching disabled so single completions
 	// emit synchronously. Batching behavior is covered by the dedicated suite below.
-	const notifier = registerSubagentNotify(pi as never, { currentSessionId }, { batchConfig: { enabled: false }, ...registerOptions });
+	const notifier = registerSubagentNotify(pi as never, { currentSessionId, completionOwnerId: COMPLETION_OWNER_ID }, { batchConfig: { enabled: false }, ...registerOptions });
 
 	return { events, sent, notifier, dispose: () => notifier.dispose() };
 }
@@ -53,7 +55,7 @@ function createBatchingPi(clock: ReturnType<typeof createFakeClock>, currentSess
 			sent.push({ message, options });
 		},
 	};
-	const notifier = registerSubagentNotify(pi as never, { currentSessionId }, {
+	const notifier = registerSubagentNotify(pi as never, { currentSessionId, completionOwnerId: COMPLETION_OWNER_ID }, {
 		batchConfig: { enabled: true, debounceMs: 150, maxWaitMs: 1000, stragglerDebounceMs: 75, stragglerMaxWaitMs: 400, stragglerWindowMs: 2000 },
 		timers: clock.api,
 		now: clock.now,
@@ -105,6 +107,7 @@ function completionResult(overrides: Record<string, unknown> = {}) {
 		exitCode: 0,
 		timestamp: 123,
 		sessionId: "session-a",
+		completionOwnerId: COMPLETION_OWNER_ID,
 		...overrides,
 	};
 }
@@ -121,6 +124,7 @@ describe("registerSubagentNotify", () => {
 			exitCode: 0,
 			timestamp: 123,
 			sessionId: "session-1",
+			completionOwnerId: COMPLETION_OWNER_ID,
 		});
 
 		assert.equal(sent.length, 1);
@@ -146,6 +150,13 @@ describe("registerSubagentNotify", () => {
 		const { notifier, sent } = createPi("session-a");
 		assert.equal(await notifier.deliver(completionResult({ id: "direct-accepted" })), true);
 		assert.equal(sent.length, 1);
+	});
+
+	it("rejects async completion delivery for a missing or different parent owner", async () => {
+		const { notifier, sent } = createPi("session-a");
+		assert.equal(await notifier.deliver(completionResult({ id: "missing-owner", completionOwnerId: undefined })), false);
+		assert.equal(await notifier.deliver(completionResult({ id: "different-owner", completionOwnerId: "completion-owner-b" })), false);
+		assert.equal(sent.length, 0);
 	});
 
 	it("does not wake the session when background delivery explicitly disables triggerTurn", async () => {
@@ -224,6 +235,7 @@ describe("registerSubagentNotify", () => {
 			taskIndex: 1,
 			totalTasks: 3,
 			sessionId: "session-1",
+			completionOwnerId: COMPLETION_OWNER_ID,
 		});
 
 		assert.equal(sent.length, 1);
@@ -249,6 +261,7 @@ describe("registerSubagentNotify", () => {
 			timestamp: 456,
 			sessionFile: "/tmp/session.jsonl",
 			sessionId: "session-1",
+			completionOwnerId: COMPLETION_OWNER_ID,
 		});
 
 		assert.deepEqual(sent, [{
@@ -272,6 +285,7 @@ describe("registerSubagentNotify", () => {
 			summary: "Paused after interrupt. Waiting for explicit next action.",
 			timestamp: 789,
 			sessionId: "session-1",
+			completionOwnerId: COMPLETION_OWNER_ID,
 		});
 
 		assert.equal(sent.length, 1);
@@ -279,6 +293,34 @@ describe("registerSubagentNotify", () => {
 			message: {
 				customType: "subagent-notify",
 				content: "Background task paused: **worker**\n\nPaused after interrupt. Waiting for explicit next action.",
+				display: true,
+			},
+			options: { triggerTurn: true },
+		});
+	});
+
+	it("labels detached-only workflow completions as paused and prints workflow child ids", () => {
+		const { events, sent } = createPi();
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "workflow-1",
+			runId: "workflow-1",
+			mode: "workflow",
+			agent: "workflow",
+			success: false,
+			state: "paused",
+			summary: "Run 'detaches' detached for intercom coordination.",
+			results: [{ workflowKey: "detaches", agent: "worker", runId: "child-1", status: "paused", success: false }],
+			timestamp: 790,
+			sessionId: "session-1",
+			completionOwnerId: COMPLETION_OWNER_ID,
+		});
+
+		assert.equal(sent.length, 1);
+		assert.deepEqual(sent[0], {
+			message: {
+				customType: "subagent-notify",
+				content: "Background task paused: **workflow**\n\nRun 'detaches' detached for intercom coordination.\n\nWorkflow run: workflow-1\nChild runs: detaches=child-1 (paused)",
 				display: true,
 			},
 			options: { triggerTurn: true },
@@ -484,6 +526,29 @@ describe("completion formatting helpers", () => {
 		);
 	});
 
+	it("round-trips workflow correlation metadata", () => {
+		const details = buildCompletionDetails({
+			id: "workflow-2",
+			runId: "workflow-2",
+			mode: "workflow",
+			agent: "workflow",
+			success: false,
+			state: "paused",
+			summary: "Run 'review' detached for supervisor handoff.",
+			reconciledFromDetachedChild: "child-2",
+			results: [{ workflowKey: "review", agent: "reviewer", runId: "child-2", status: "paused" }],
+		});
+
+		assert.equal(details.status, "paused");
+		assert.equal(details.workflowRunId, "workflow-2");
+		assert.deepEqual(details.childRuns, [{ runId: "child-2", workflowKey: "review", agent: "reviewer", status: "paused" }]);
+		assert.equal(details.reconciledFromDetachedChild, "child-2");
+		const parsed = parseSubagentNotifyContent(formatSingleCompletion(details));
+		assert.equal(parsed?.workflowRunId, "workflow-2");
+		assert.deepEqual(parsed?.childRuns, [{ runId: "child-2", workflowKey: "review", status: "paused" }]);
+		assert.equal(parsed?.reconciledFromDetachedChild, "child-2");
+	});
+
 	it("reports false when Pi rejects sendMessage synchronously", async () => {
 		const pi = { events: createEventBus(), sendMessage() { throw new Error("runtime inactive"); } };
 		const notifier = registerSubagentNotify(pi as never, { currentSessionId: "session-a" }, { batchConfig: { enabled: false } });
@@ -515,5 +580,44 @@ describe("completion formatting helpers", () => {
 		const details: SubagentNotifyDetails = buildCompletionDetails({ id: "x", agent: null, success: true, summary: "ok", timestamp: 1 });
 		assert.equal(details.agent, "unknown");
 		assert.equal(details.status, "completed");
+	});
+});
+
+describe("scheduled completions", () => {
+	// A schedule fires with nobody watching, so its completion has to be visible to
+	// the operator and attributable by the agent that receives it.
+	const scheduledResult = {
+		id: "run-1",
+		source: "async" as const,
+		agent: "workflow",
+		success: true,
+		summary: "Workflow completed with 1 child run(s).",
+		scheduleOrigin: { id: "45daa203", name: "authz-facts-efficacy" },
+	};
+
+	it("carries the schedule origin from the result into the notice", () => {
+		const details = buildCompletionDetails(scheduledResult);
+		assert.deepEqual(details.scheduleOrigin, { id: "45daa203", name: "authz-facts-efficacy" });
+		assert.match(formatSingleCompletion(details), /Scheduled run from \*\*authz-facts-efficacy\*\* \(schedule 45daa203\)\./);
+	});
+
+	it("round-trips the origin without absorbing it into the result preview", () => {
+		const parsed = parseSubagentNotifyContent(formatSingleCompletion(buildCompletionDetails(scheduledResult)));
+		assert.deepEqual(parsed?.scheduleOrigin, { id: "45daa203", name: "authz-facts-efficacy" });
+		assert.equal(parsed?.resultPreview, "Workflow completed with 1 child run(s).");
+	});
+
+	it("keeps attribution when a scheduled run is batched with other completions", () => {
+		const { scheduleOrigin: _origin, ...plain } = scheduledResult;
+		const grouped = formatGroupedCompletion([buildCompletionDetails({ ...plain, agent: "worker" }), buildCompletionDetails(scheduledResult)]);
+		assert.match(grouped, /2\. workflow — scheduled run from authz-facts-efficacy \(schedule 45daa203\)/);
+		assert.doesNotMatch(grouped, /1\. worker —/);
+	});
+
+	it("leaves an ordinary successful completion without an origin", () => {
+		const { scheduleOrigin: _origin, ...withoutSchedule } = scheduledResult;
+		const parsed = parseSubagentNotifyContent(formatSingleCompletion(buildCompletionDetails(withoutSchedule)));
+		assert.equal(parsed?.scheduleOrigin, undefined);
+		assert.equal(parsed?.resultPreview, "Workflow completed with 1 child run(s).");
 	});
 });

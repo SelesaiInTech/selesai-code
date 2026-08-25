@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { formatRetainedChildren, listRetainedChildren } from "../../src/runs/background/retained-children.ts";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 
 interface WriteRunOptions {
@@ -12,10 +13,11 @@ interface WriteRunOptions {
 	state?: "complete" | "failed" | "paused" | "stopped";
 	stepStatus?: "complete" | "completed" | "failed" | "paused" | "stopped";
 	sessionFile?: "present" | "missing" | "omitted";
-	runner?: "external-cli";
+	runner?: "external-cli" | "external-job";
 	recoveryDescriptor?: "present" | "missing" | "invalid";
 	recoverySourceRunId?: string;
 	recoveryAgent?: string;
+	recoveryCwd?: string;
 }
 
 function writeRetainedRun(root: string, index: number, options: WriteRunOptions = {}): void {
@@ -45,16 +47,18 @@ function writeRetainedRun(root: string, index: number, options: WriteRunOptions 
 			description: `  Task ${index}  with   spacing ${"x".repeat(140)}  `,
 			endedAt: 1_000 + index,
 			...(options.runner === "external-cli" ? { runner: { type: "external-cli", command: "codex", args: [], promptDelivery: "stdin", capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false } } } : {}),
+			...(options.runner === "external-job" ? { runner: { type: "external-job", provider: "surf-oracle", options: {}, capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false } } } : {}),
 			...(options.sessionFile === "omitted" ? {} : { sessionFile }),
 			tokens: { input: index, output: index + 1, total: index * 2 + 1 },
 		}],
 	}), "utf-8");
+	updateActiveRunIndex(asyncDir, state);
 	if (options.recoveryDescriptor === "invalid") {
 		fs.writeFileSync(path.join(asyncDir, "recovery-descriptor.json"), JSON.stringify({
 			version: 2,
 			sourceRunId: runId,
 			agent: "worker",
-			cwd: root,
+			cwd: options.recoveryCwd ?? root,
 			systemPromptMode: "replace",
 			outputMode: "inline",
 		}), "utf-8");
@@ -64,7 +68,7 @@ function writeRetainedRun(root: string, index: number, options: WriteRunOptions 
 			runFanoutBudget: createRunFanoutBudget(runId, 64),
 			sourceRunId: options.recoverySourceRunId ?? runId,
 			agent: options.recoveryAgent ?? "worker",
-			cwd: root,
+			cwd: options.recoveryCwd ?? root,
 			systemPromptMode: "replace",
 			inheritProjectContext: false,
 			inheritSkills: false,
@@ -137,16 +141,18 @@ describe("retained child roster", () => {
 			writeRetainedRun(root, 6, { recoveryDescriptor: "invalid" });
 			writeRetainedRun(root, 7, { recoverySourceRunId: "other-run" });
 			writeRetainedRun(root, 8, { recoveryAgent: "reviewer" });
+			writeRetainedRun(root, 9, { runner: "external-job" });
 
 			const children = listRetainedChildren(path.join(root, "runs"), "parent-a");
 			const formatted = formatRetainedChildren(children);
 
 			assert.deepEqual(children.map((child) => [child.runId, child.resumability]), [
+				["child-9", { state: "not-resumable", reason: "external runner" }],
 				["child-8", { state: "not-resumable", reason: "recovery descriptor belongs to agent reviewer" }],
 				["child-7", { state: "not-resumable", reason: "recovery descriptor belongs to run other-run" }],
 				["child-6", { state: "not-resumable", reason: `invalid recovery descriptor: Invalid async recovery descriptor '${path.join(root, "runs", "child-6", "recovery-descriptor.json")}': version must be 1.` }],
 				["child-5", { state: "not-resumable", reason: "missing recovery descriptor" }],
-				["child-4", { state: "not-resumable", reason: "external CLI runner" }],
+				["child-4", { state: "not-resumable", reason: "external runner" }],
 				["child-3", { state: "not-resumable", reason: "stopped run" }],
 				["child-2", { state: "not-resumable", reason: `persisted session file is missing: ${path.join(root, "sessions", "child-2.jsonl")}` }],
 				["child-1", { state: "not-resumable", reason: "no persisted session file" }],
@@ -155,11 +161,28 @@ describe("retained child roster", () => {
 			assert.match(formatted, /resumability: not resumable \(recovery descriptor belongs to run other-run\)/);
 			assert.match(formatted, /resumability: not resumable \(invalid recovery descriptor:/);
 			assert.match(formatted, /resumability: not resumable \(missing recovery descriptor\)/);
-			assert.match(formatted, /resumability: not resumable \(external CLI runner\)/);
+			assert.match(formatted, /resumability: not resumable \(external runner\)/);
 			assert.match(formatted, /resumability: not resumable \(stopped run\)/);
 			assert.match(formatted, /resumability: not resumable \(no persisted session file\)/);
 			assert.doesNotMatch(formatted, /resume: subagent/);
 			assert.match(formatted, /No resumable retained child is listed\. Launch a same-role fallback challenge and label it as fallback\./);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not advertise a retained child when its required cwd is missing", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-retained-children-missing-cwd-"));
+		try {
+			const missingCwd = path.join(root, "removed-worktree");
+			writeRetainedRun(root, 1, { recoveryCwd: missingCwd });
+
+			const children = listRetainedChildren(path.join(root, "runs"), "parent-a");
+			const formatted = formatRetainedChildren(children);
+
+			assert.equal(children[0]?.resumability.state, "not-resumable");
+			assert.match(children[0]?.resumability.state === "not-resumable" ? children[0].resumability.reason : "", /required cwd is missing|resume dependency unavailable/);
+			assert.doesNotMatch(formatted, /resume: subagent/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

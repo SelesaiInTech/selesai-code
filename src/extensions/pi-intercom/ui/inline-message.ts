@@ -67,6 +67,7 @@ export class InlineMessageComponent implements Component {
         const count = this.message.content.attachments.length;
         meta.push(`${count} attachment${count === 1 ? "" : "s"}`);
       }
+      if (this.message.provenance?.type === "extension_outbox") meta.push(`Via ${this.message.provenance.extensionName}`);
       if (this.message.replyTo && !this.message.expectsReply) meta.push(`Reply to ${this.message.replyTo.slice(0, 8)}`);
       meta.push("Ctrl+O to expand");
 
@@ -103,6 +104,11 @@ export class InlineMessageComponent implements Component {
     if (this.message.replyTo && !this.message.expectsReply) {
       lines.push(frameLine(""));
       lines.push(frameLine(this.theme.fg("dim", ` Reply to ${this.message.replyTo.slice(0, 8)}`)));
+    }
+
+    if (this.message.provenance?.type === "extension_outbox") {
+      lines.push(frameLine(""));
+      lines.push(frameLine(this.theme.fg("dim", ` Via extension: ${this.message.provenance.extensionName}`)));
     }
 
     lines.push(this.theme.fg("muted", `╰${borderChar.repeat(bodyWidth)}╯`));

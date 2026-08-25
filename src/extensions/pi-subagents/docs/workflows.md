@@ -10,7 +10,7 @@ Use orchestration as parent-agent guidance, not as a runtime workflow mode. For 
 clarify → scout → worker → fresh reviewers → worker
 ```
 
-Packaged `worker`, `oracle`, and `advisor` default to forked context when a launch omits `context`; pass `context: "fresh"` when you intentionally want a fresh child run.
+Packaged `worker`, `oracle`, and `advisor` default to forked context when a launch omits `context`. If the parent has no persisted session file or current leaf yet, that implicit default falls back to `fresh`. Pass `context: "fresh"` when you intentionally want a fresh child run, or `context: "fork"` when fork must remain strict.
 
 Child-safety boundaries are enforced at runtime:
 
@@ -35,7 +35,9 @@ Add `autofix` to `/parallel-review` or `/parallel-cleanup` to apply only the syn
 
 ## Scripted workflows (workflowScript)
 
-All model-facing subagent execution is expressed through `workflowScript` in the `subagent` tool. Use stable keys and ordinary JavaScript for one child, sequence, and parallelism. Scripts are ordinary JavaScript statement bodies. Use an explicit `return` for a useful result:
+All model-facing subagent execution is expressed through `workflowScript` in the `subagent` tool. Use stable keys and ordinary JavaScript for one child, sequence, and parallelism. For ordinary parallel fanout, use `await runs.all([{ key, agent, task }, ...])`. It resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from unawaited `runs.run` launches. Store a `runs.run` promise only when the script later observes it with `await`, `Promise.race`, or `Promise.all`, such as steering a live child before awaiting its result. Scripts are ordinary JavaScript statement bodies. Use an explicit `return` for a useful result:
+
+Child results cross into the script as plain JSON data. Non-JSON host metadata is omitted, so use returned fields such as `runId`, `ok`, `output`, and `structuredOutput` for workflow control.
 
 ```js
 subagent({ workflowScript: `
@@ -46,6 +48,153 @@ subagent({ workflowScript: `
   ]);
   return reviews.map(result => result.output);
 ` });
+```
+
+Keep helper functions portable across Node and Bun. Use top-level `await`, plain helper functions that return `runs.run(...)`, or explicit Promise chains. Do not define nested `async function` helpers, async arrows, or async methods inside `workflowScript`; native async helpers hide child-launch observation in Bun and are rejected.
+
+```js
+subagent({ workflowScript: `
+  function scan() {
+    return runs.run("scan", { agent: "scout", task: "Scan the codebase" });
+  }
+  const result = await scan();
+  return result.output;
+` });
+```
+
+Chaining is still supported. The supported form is scripted chaining: await one `runs.run(...)` result, then pass its output into the next step. Parallel fanout uses `runs.all(...)` inside the same script.
+
+```js
+subagent({ workflowScript: `
+  const plan = await runs.run("plan", { agent: "scout", task: "Plan the migration" });
+  const patch = await runs.run("patch", { agent: "worker", task: "Implement this plan:\n" + plan.output });
+  return patch.output;
+` });
+```
+
+### Steering a workflow child
+
+Use `await runs.steer(key, message, options?)` after `runs.run` or `runs.all` has launched that stable key. Scripts do not target raw run ids. The optional fields are `mode: "steer" | "follow_up" | "auto"`, a non-negative child `index`, and a positive `ackTimeoutMs`.
+
+```js
+subagent({ workflowScript: `
+  const writer = runs.run("writer", { agent: "worker", task: "Implement the change" });
+  const evidence = await runs.run("evidence", { agent: "scout", task: "Find the exact contract" });
+  const receipt = await runs.steer("writer", "Also check: " + evidence.output, { mode: "follow_up" });
+  return { writer: await writer, receipt };
+` });
+```
+
+The receipt state is `queued`, `delivered`, `missed`, or `failed`. `delivered` means the child Pi session accepted the input. It does not mean the model followed it. `missed` means the keyed child became terminal or had no live route before delivery. This first slice uses the existing foreground and async steering transports but does not start steering recovery. Workflow traces include one steering attempt entry and one receipt entry.
+
+Always await or return a `runs.steer` promise. The workflow waits for an observed steering side effect to settle before it exits and rejects fire-and-forget calls. Use ordinary `Promise.race` when the first child or steering receipt should advance the script. There is no callback API or child inbox access.
+
+### Advanced rolling child runs
+
+`runs.run` starts a keyed child when you call it. You do not need separate `runs.start`, `runs.next`, or `runs.collect` helpers for rolling councils or staged reviews. This is the advanced exception to ordinary `runs.all` fanout: keep launched promises only when the script later observes each one with direct `await`, `Promise.race`, or `Promise.all`. Use `Promise.race` to wait for the next completed child, steer a still-running sibling by its stable key, and use `Promise.all` to collect the remaining children.
+
+```js
+subagent({ workflowScript: `
+  let pending = [
+    { key: "analysis-a", promise: runs.run("analysis-a", { agent: "reviewer", task: "Analyze option A" }).then((result) => ({ key: "analysis-a", result })) },
+    { key: "analysis-b", promise: runs.run("analysis-b", { agent: "reviewer", task: "Analyze option B" }).then((result) => ({ key: "analysis-b", result })) },
+    { key: "critic", promise: runs.run("critic", { agent: "reviewer", task: "Find the strongest objection" }).then((result) => ({ key: "critic", result })) }
+  ];
+
+  const first = await Promise.race(pending.map((child) => child.promise));
+  pending = pending.filter((child) => child.key !== first.key);
+
+  const target = pending.find((child) => child.key === "critic") ?? pending[0];
+  const receipt = await runs.steer(target.key, "Challenge this early result:\n" + first.result.output, { mode: "auto" });
+  const rest = await Promise.all(pending.map((child) => child.promise));
+
+  return { first: first.result.output, rest: rest.map((child) => child.result.output), receipt };
+` });
+```
+
+The workflow trace records the run completions and steering receipt. Scripts still never see raw async directories, inbox paths, or session files. If the keyed child is terminal, stale, or has no live route when `runs.steer` runs, the receipt reports `missed` or `failed` and the script can decide whether to continue.
+
+Use named outputs when later workflow steps need structured data or durable references:
+
+```js
+subagent({ workflowScript: `
+  const inventory = await runs.run("inventory", {
+    agent: "scout",
+    task: "List the files that need review.",
+    outputSchema: {
+      type: "object",
+      properties: { files: { type: "array", items: { type: "string" } } },
+      required: ["files"],
+      additionalProperties: false
+    }
+  });
+  return runs.run("review", {
+    agent: "reviewer",
+    task: "Review these files: " + inventory.structuredOutput.files.join(", ")
+  });
+` });
+```
+
+For dynamic fanout, have one step return a structured list, check it in JavaScript, then map the bounded entries into `runs.all(...)`:
+
+```js
+subagent({ workflowScript: `
+  const targets = await runs.run("targets", {
+    agent: "scout",
+    task: "Return up to five source files that need review.",
+    outputSchema: {
+      type: "object",
+      properties: { files: { type: "array", items: { type: "string" }, maxItems: 5 } },
+      required: ["files"],
+      additionalProperties: false
+    }
+  });
+  const files = targets.structuredOutput.files.slice(0, 5);
+  return runs.all(files.map((file, index) => ({
+    key: "review-" + index,
+    agent: "reviewer",
+    task: "Review " + file
+  })));
+` });
+```
+
+For intermediate data that only later steps need, prefer the prior child's returned output or `structuredOutput` instead of writing shared files:
+
+```js
+subagent({ workflowScript: `
+  const scan = await runs.run("scan", { agent: "scout", task: "Find the files that need fixes." });
+  return runs.run("fix", { agent: "worker", task: "Implement these findings:\n" + scan.output });
+` });
+```
+
+`{chain_dir}` remains available inside scripted workflow step templates for legacy-compatible path templates. It expands to the workflow cwd, not to private temporary storage.
+
+### Migrating old chain shapes
+
+Legacy top-level `chain`, `tasks`, `parallel`, `chainDir`, `/chain`, `/parallel`, `/run-chain`, and durable `.chain.md` execution are no longer the public workflow API. Rewrite them as JavaScript:
+
+```js
+// Old shape, no longer supported:
+// { chain: [{ agent: "scout", task: "Scan" }, { agent: "worker", task: "Fix from {previous}" }] }
+
+// Current shape:
+{ workflowScript: `
+  const scan = await runs.run("scan", { agent: "scout", task: "Scan" });
+  return runs.run("fix", { agent: "worker", task: "Fix from: " + scan.output });
+` }
+```
+
+```js
+// Old shape, no longer supported:
+// { tasks: [{ agent: "reviewer", task: "Review API" }, { agent: "reviewer", task: "Review UI" }] }
+
+// Current shape:
+{ workflowScript: `
+  return runs.all([
+    { key: "api", agent: "reviewer", task: "Review API" },
+    { key: "ui", agent: "reviewer", task: "Review UI" }
+  ]);
+` }
 ```
 
 For long task text with Markdown fences or shell blocks, use quoted lines instead of a raw template literal:
@@ -62,15 +211,38 @@ return runs.run("test", { agent: "worker", task });
 
 A plain workflow creates one enclosing mission by default. Its children do not create separate missions. The result exposes the id as `details.missionId`, and human-readable output ends with `Mission: <id> (<status>)`. Pass `mission:false` for an ephemeral workflow with no mission or durable `state` global.
 
-For watched same-repo workflows, pass `async:false` to show the live in-chat workflow card. `chatProgress` can force `off` or `live-card` when the automatic policy is not what you want. Foreground workflows default to a 30-minute timeout; async workflows have no default timeout. See the [tool reference](tool-reference.md) for the full parameter list.
+### Repeatable workflows
+
+Use stable child keys and keep process logic in ordinary JavaScript. `runs.run` launches one child, `runs.all` launches independent children together, and later steps can use each completed child's `output`. Put long task text in arrays joined with `"\n"` so Markdown fences do not conflict with the script string.
+
+For a process you run often, save the task as a prompt template under `.pi/prompts/` or `~/.selesai/agent/prompts/` and launch it with `/prompt-workflow`. The adapter compiles prompt steps into `workflowScript`, so templates describe the work instead of embedding raw `subagent` tool-call JSON. You can ask the parent agent to create or update these prompt files from a process described in natural language.
+
+```md
+---
+description: Review a release candidate
+subagent: reviewer
+fresh: true
+---
+Review $@. Return concrete findings with source proof, or state that no issue was found.
+```
+
+For first-pass review prompts, filter by evidence rather than by severity. Ask the
+reviewer to label concrete current findings P0/P1/P2 and end with `Merge verdict:
+BLOCK`, `Merge verdict: OK`, or `Merge verdict: OK with notes`. Reserve
+`blockers only` for final pre-merge re-checks after P1/P2 findings are already
+known, or for explicit emergency hotfix lanes.
+
+```text
+/prompt-workflow review-release-candidate v0.51.0
+```
+
+For watched same-repo workflows, pass `async:false` only when the parent must block until completion. That blocking mode also shows the live in-chat workflow card. `chatProgress` can force `off` or `live-card` when the automatic policy is not what you want. Blocking workflows default to a 30-minute timeout; async workflows have no default timeout. See the [tool reference](tool-reference.md) for the full parameter list.
 
 The legacy `/chain`, `/parallel`, and `/run-chain` commands are not registered.
 
 ## Direct commands
 
 Use `/run <agent> [task] [--bg] [--fork]` for one child.
-
-Host extensions that need to launch a scripted workflow programmatically can use the exported `launchSlashSubagent(pi, ctx, params)` seam from `src/slash/slash-commands.ts`; it routes through the normal public executor with async delivery, result handling, and UI rendering.
 
 ## Worktree isolation
 
@@ -92,7 +264,7 @@ Configure the worktree base directory and setup hook in [configuration.md](confi
 
 ## Supervisor coordination (child asks parent)
 
-Child agents can talk back to the parent Selesai session without installing `pi-intercom`. `pi-subagents` provides the child-facing `contact_supervisor` tool and the parent-facing `subagent_supervisor({ action: "reply" })` path natively. Generic `intercom` remains available only when an explicitly loaded external provider supplies it.
+Child agents can talk back to the parent Pi session without installing `pi-intercom`. `pi-subagents` provides the child-facing `contact_supervisor` tool and the parent-facing `subagent_supervisor({ action: "reply" })` path natively. Generic `intercom` remains available only when an explicitly loaded external provider supplies it.
 
 Use it for work where the child might need a decision instead of guessing:
 
@@ -112,9 +284,11 @@ The child uses one dedicated coordination tool, `contact_supervisor`, with a `re
 
 Children should not ask for clarification when the only conflict is review-only/no-edit versus progress-writing or artifact-writing instructions; no-edit wins.
 
-The parent replies with `subagent_supervisor({ action: "reply", replyTo, message })` or checks pending requests with `subagent_supervisor({ action: "pending" })`. Supervisor messages are scoped to the exact Selesai session id that spawned the child. A second Selesai session in the same repository does not receive those requests.
+The parent replies with `subagent_supervisor({ action: "reply", replyTo, message })` or checks pending requests with `subagent_supervisor({ action: "pending" })`. Supervisor messages are scoped to the exact Pi session id that spawned the child. A second Pi session in the same repository does not receive those requests.
 
 Child-side routine completion handoffs are not expected. If a child appears stalled, needs-attention notices show up in the parent session with useful next actions, such as checking `subagent({ action: "status" })`, interrupting the run, or nudging the child.
+
+If a `workflowScript` child detaches through `contact_supervisor`, the enclosing async workflow stays `paused` until that child exits. Then the extension reconciles it to `complete` or `failed`. Wait on the child until that happens.
 
 If messages do not show up, run `/subagents-doctor`. Advanced users can tune the bridge with `intercomBridge` in [configuration.md](configuration.md).
 

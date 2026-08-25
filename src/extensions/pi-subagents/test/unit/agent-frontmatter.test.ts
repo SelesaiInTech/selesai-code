@@ -215,6 +215,26 @@ Review carefully.`.replace(" description:", "description:"));
 		assert.deepEqual(discoverAgents(project, "project").agents.find((agent) => agent.name === "external")?.runner, external.runner);
 	}));
 
+	it("parses and serializes an external-job runner", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-external-job-agent-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".selesai", "agents", "gpt-pro.md"), `---
+name: gpt-pro
+description: Surf GPT Pro advisor
+runner:
+  type: external-job
+  provider: surf-oracle
+  options:
+    tier: pro
+async: true
+---
+Review carefully.`);
+
+		const gptPro = discoverAgents(project, "project").agents.find((agent) => agent.name === "gpt-pro")!;
+		assert.deepEqual(gptPro.runner, { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } });
+		assert.match(serializeAgent(gptPro), /runner:\n  type: external-job\n  provider: surf-oracle/);
+	}));
+
 	it("rejects invalid and Pi-only external runner fields", () => withTempHome(() => {
 		const invalidCases = [
 			"type: unknown\n  command: node",
@@ -222,17 +242,55 @@ Review carefully.`.replace(" description:", "description:"));
 			"type: external-cli\n  command: node\n  args: nope",
 			"type: external-cli\n  command: node\n  args: [ok, 1]",
 			"type: external-cli\n  command: node\n  promptDelivery: argv",
+			"type: external-job\n  provider: ''",
+			"type: external-job\n  provider: surf-oracle\n  options: []",
 		];
 		for (const [index, runner] of invalidCases.entries()) {
 			const project = fs.mkdtempSync(path.join(os.tmpdir(), `pi-subagents-invalid-runner-${index}-`));
 			tempDirs.push(project);
 			writeAgent(path.join(project, ".selesai", "agents", "external.md"), `---\nname: external\ndescription: External\nrunner:\n  ${runner}\n---\nBody`);
-			assert.throws(() => discoverAgents(project, "project"), /invalid runner\.type|non-empty command|args must be an array of strings|promptDelivery must be 'stdin'/);
+			const discovered = discoverAgents(project, "project");
+			assert.equal(discovered.agents.some((agent) => agent.name === "external"), false);
+			assert.match(discovered.agentDiagnostics?.[0]?.error ?? "", /invalid runner\.type|non-empty command|args must be an array of strings|promptDelivery must be 'stdin'|provider string|options must be a JSON-serializable object/);
 		}
 		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-runner-pi-only-"));
 		tempDirs.push(project);
 		writeAgent(path.join(project, ".selesai", "agents", "external.md"), `---\nname: external\ndescription: External\nrunner:\n  type: external-cli\n  command: node\nmodel: provider/model\n---\nBody`);
-		assert.throws(() => discoverAgents(project, "project"), /unsupported Pi-only fields: model/);
+		assert.match(discoverAgents(project, "project").agentDiagnostics?.[0]?.error ?? "", /unsupported Pi-only fields: model/);
+	}));
+
+	it("keeps valid agents executable when another agent is malformed", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-agent-isolation-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".selesai", "agents", "broken.md"), "---\nname: broken\ndescription: Broken\nrunner:\n  type: unknown\n---\nBody");
+		writeAgent(path.join(project, ".selesai", "agents", "working.md"), "---\nname: working\ndescription: Working\n---\nBody");
+
+		const discovered = discoverAgents(project, "project");
+		assert.ok(discovered.agents.some((agent) => agent.name === "working"));
+		assert.equal(discovered.agentDiagnostics?.[0]?.name, "broken");
+	}));
+
+	it("keeps a lower-priority agent available when a project override is malformed", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-agent-shadow-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".selesai", "agents", "reviewer.md"), "---\nname: reviewer\ndescription: Broken reviewer\nrunner:\n  type: unknown\n---\nBody");
+
+		const discovered = discoverAgents(project, "both");
+		assert.equal(discovered.agents.find((agent) => agent.name === "reviewer")?.source, "builtin");
+		assert.equal(discovered.agentDiagnostics?.find((diagnostic) => diagnostic.name === "reviewer")?.source, "project");
+	}));
+
+	it("records the runtime name for malformed packaged agents", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-packaged-agent-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".selesai", "agents", "code-analysis.zeta-worker.md"), "---\nname: zeta-worker\npackage: code-analysis\ndescription: Broken packaged worker\nrunner:\n  type: unknown\n---\nBody");
+
+		const discovered = discoverAgents(project, "project");
+		assert.equal(discovered.agents.some((agent) => agent.name === "code-analysis.zeta-worker"), false);
+		assert.deepEqual(discovered.agentDiagnostics?.[0] && { name: discovered.agentDiagnostics[0].name, runtimeName: discovered.agentDiagnostics[0].runtimeName }, {
+			name: "zeta-worker",
+			runtimeName: "code-analysis.zeta-worker",
+		});
 	}));
 });
 
@@ -334,8 +392,8 @@ Do work
 		assert.deepEqual(worker?.skills, ["review-checklist", "safe-bash"]);
 		assert.deepEqual(worker?.skillPath, ["./private-skills", "../shared-skills"]);
 		assert.deepEqual(worker?.fallbackModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
-		assert.deepEqual(worker?.extensions, ["./extension-one.ts", "./extension-two.ts"]);
-		assert.deepEqual(worker?.subagentOnlyExtensions, ["./child-only.ts", "./child-helper.ts"]);
+		assert.deepEqual(worker?.extensions, [path.join(dir, ".selesai", "agents", "extension-one.ts"), path.join(dir, ".selesai", "agents", "extension-two.ts")]);
+		assert.deepEqual(worker?.subagentOnlyExtensions, [path.join(dir, ".selesai", "agents", "child-only.ts"), path.join(dir, ".selesai", "agents", "child-helper.ts")]);
 	});
 
 	it("preserves MCP-only tools as an explicit empty builtin allowlist", () => {
@@ -381,8 +439,8 @@ Do work
 		assert.deepEqual(worker?.skills, ["review-checklist", "safe-bash"]);
 		assert.deepEqual(worker?.skillPath, ["./private-skills", "../shared-skills"]);
 		assert.deepEqual(worker?.fallbackModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
-		assert.deepEqual(worker?.extensions, ["./extension-one.ts", "./extension-two.ts"]);
-		assert.deepEqual(worker?.subagentOnlyExtensions, ["./child-only.ts", "./child-helper.ts"]);
+		assert.deepEqual(worker?.extensions, [path.join(dir, ".selesai", "agents", "extension-one.ts"), path.join(dir, ".selesai", "agents", "extension-two.ts")]);
+		assert.deepEqual(worker?.subagentOnlyExtensions, [path.join(dir, ".selesai", "agents", "child-only.ts"), path.join(dir, ".selesai", "agents", "child-helper.ts")]);
 	});
 });
 
@@ -417,10 +475,10 @@ Do work
 		const agentsDir = path.join(dir, ".selesai", "agents");
 		fs.mkdirSync(agentsDir, { recursive: true });
 		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---\nname: worker\ndescription: Worker\npermission:\n  bash: deny\n---\n`, "utf-8");
-		assert.throws(() => discoverAgents(dir, "project"), /pi-guard/);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /pi-guard/);
 
 		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---\nname: worker\ndescription: Worker\npermission:\n  write: ask\npermissions:\n  edit: deny\n---\n`, "utf-8");
-		assert.throws(() => discoverAgents(dir, "project"), /cannot declare both permission and permissions/);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /cannot declare both permission and permissions/);
 	});
 });
 
@@ -481,10 +539,73 @@ Do work
 		assert.match(oracle?.systemPrompt ?? "", /If no supervisor channel is available/);
 		assert.equal(agents.some((candidate) => candidate.name === "planner"), false);
 		assert.equal(agents.some((candidate) => candidate.name === "context-builder"), false);
+		assert.equal(agents.some((candidate) => candidate.name === "gpt-pro"), false);
+	});
+
+	it("keeps bundled agent definitions from module load during package file updates", () => {
+		const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-hot-update-"));
+		tempDirs.push(fixture);
+		fs.cpSync(path.join(process.cwd(), "src"), path.join(fixture, "src"), { recursive: true });
+		fs.cpSync(path.join(process.cwd(), "agents"), path.join(fixture, "agents"), { recursive: true });
+		fs.symlinkSync(path.join(process.cwd(), "node_modules"), path.join(fixture, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+		writeJson(path.join(fixture, "package.json"), { type: "module" });
+		writeAgent(path.join(fixture, "challenge.mjs"), `
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { discoverAgentsAll } from "./src/agents/agents.ts";
+
+const scoutPath = path.join(process.cwd(), "agents", "scout.md");
+fs.writeFileSync(scoutPath, \`---
+name: scout
+description: Future scout
+runner:
+  type: future-runner
+---
+
+Review with the future runner.
+\`, "utf-8");
+
+const discovered = discoverAgentsAll(process.cwd());
+const scout = discovered.builtin.find((candidate) => candidate.name === "scout");
+
+		assert.equal(scout?.runner, undefined);
+		assert.equal(discovered.agentDiagnostics?.some((diagnostic) => diagnostic.filePath === scoutPath), false);
+`);
+
+		execFileSync(process.execPath, ["--experimental-strip-types", "challenge.mjs"], { cwd: fixture, stdio: "pipe" });
 	});
 });
 
 describe("agent frontmatter launch defaults", () => {
+	it("parses, serializes, and validates outputMode defaults", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-output-mode-"));
+		tempDirs.push(dir);
+		const filePath = path.join(dir, ".selesai", "agents", "worker.md");
+		writeAgent(filePath, `---
+name: worker
+description: Worker
+outputMode: file-only
+---
+
+Do work
+`);
+
+		const worker = discoverAgents(dir, "project").agents.find((agent) => agent.name === "worker");
+		assert.equal(worker?.outputMode, "file-only");
+		assert.match(serializeAgent(worker!), /^outputMode: file-only$/m);
+
+		writeAgent(filePath, `---
+name: worker
+description: Worker
+outputMode: artifact-only
+---
+
+Do work
+`);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /Agent 'worker' has invalid outputMode frontmatter; expected 'inline' or 'file-only'/);
+	});
+
 	it("serializes and discovers single-agent launch defaults", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-launch-defaults-"));
 		tempDirs.push(dir);
@@ -556,10 +677,7 @@ acceptance: none
 
 Do work
 `);
-		assert.throws(
-			() => discoverAgents(dir, "project"),
-			/Agent 'worker' acceptance frontmatter level "none" requires a reason/,
-		);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /Agent 'worker' acceptance frontmatter level "none" requires a reason/);
 	});
 
 	it("parses, serializes, and validates acceptance roles", () => {
@@ -588,10 +706,7 @@ acceptanceRole: observer
 
 Explore the codebase
 `);
-		assert.throws(
-			() => discoverAgents(dir, "project"),
-			/Agent 'explorer' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'/,
-		);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /Agent 'explorer' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'/);
 	});
 
 	it("rejects invalid launch defaults instead of silently ignoring them", () => {
@@ -606,10 +721,7 @@ async: sometimes
 Do work
 `);
 
-		assert.throws(
-			() => discoverAgents(dir, "project"),
-			/Agent 'worker' has invalid async frontmatter; expected true or false/,
-		);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /Agent 'worker' has invalid async frontmatter; expected true or false/);
 	});
 
 	it("rejects oversized toolTimeoutMs frontmatter at discovery", () => {
@@ -624,10 +736,7 @@ toolTimeoutMs: 2147483648
 Do work
 `);
 
-		assert.throws(
-			() => discoverAgents(dir, "project"),
-			/Agent 'worker' has invalid toolTimeoutMs frontmatter; expected a positive integer no larger than 2147483647/,
-		);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /Agent 'worker' has invalid toolTimeoutMs frontmatter; expected a positive integer no larger than 2147483647/);
 	});
 });
 
@@ -680,6 +789,7 @@ describe("package-provided agents and chains", () => {
 		const chainsRoot = path.join(dir, ".selesai", "npm", "node_modules", "@scope", "chain-workflow");
 		writeJson(path.join(workflowRoot, "package.json"), {
 			name: "my-pi-workflow",
+			version: "1.2.3",
 			"pi-subagents": {
 				agents: ["./agents"],
 			},
@@ -715,6 +825,10 @@ Review the task.
 		const packagedAgent = all.package.find((agent) => agent.name === "my-workflow.reviewer");
 		assert.ok(packagedAgent);
 		assert.equal(packagedAgent.source, "package");
+		assert.equal(packagedAgent.packageName, "my-workflow");
+		assert.equal(packagedAgent.packageSourceName, "my-pi-workflow");
+		assert.equal(packagedAgent.packageSourceVersion, "1.2.3");
+		assert.equal(packagedAgent.packageSourceRoot, workflowRoot);
 		assert.equal(packagedAgent.filePath, path.join(workflowRoot, "agents", "reviewer.md"));
 		assert.equal(discoverAgents(dir, "both").agents.find((agent) => agent.name === "my-workflow.reviewer")?.source, "package");
 
@@ -1415,7 +1529,68 @@ Do work
 
 		const result = discoverAgents(dir, "project");
 		const worker = result.agents.find((agent) => agent.name === "worker");
-		assert.deepEqual(worker?.subagentOnlyExtensions, ["./tools/child-search.ts", "/opt/pi/child-only.ts"]);
+		assert.deepEqual(worker?.subagentOnlyExtensions, [path.join(agentsDir, "tools", "child-search.ts"), "/opt/pi/child-only.ts"]);
+	});
+});
+
+describe("agent frontmatter fast mode", () => {
+	it("parses and serializes fast mode", () => {
+		const agent: AgentConfig = {
+			name: "worker",
+			description: "Worker",
+			systemPrompt: "Do work",
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
+			inheritSkills: false,
+			source: "project",
+			filePath: "/tmp/worker.md",
+			fast: true,
+		};
+
+		const serialized = serializeAgent(agent);
+		assert.match(serialized, /fast: true/);
+
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-fast-mode-"));
+		tempDirs.push(dir);
+		const agentsDir = path.join(dir, ".selesai", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---
+name: worker
+description: Worker
+model: openai-codex/gpt-5.6-luna
+fast: true
+---
+
+Do work
+`, "utf-8");
+
+		const result = discoverAgents(dir, "project");
+		const worker = result.agents.find((candidate) => candidate.name === "worker");
+		assert.equal(worker?.fast, true);
+		assert.equal(worker?.extraFields?.fast, undefined);
+	});
+
+	it("adds the fast extension only for allowlisted native models", () => {
+		const allowed = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			model: "openai-codex/gpt-5.6-luna:low",
+			fast: true,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.ok(allowed.args.some((arg) => arg.endsWith("fast-mode-extension.ts")));
+		assert.throws(() => buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			model: "anthropic/claude-sonnet-4",
+			fast: true,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		}), /fast mode supports only/);
 	});
 });
 
@@ -1481,6 +1656,7 @@ Do work
 			const builtins = discoverAgentsAll(dir).builtin;
 			assert.ok(builtins.length > 0);
 			for (const agent of builtins) {
+				if (agent.runner?.type === "external-cli" || agent.runner?.type === "external-job") continue;
 				assert.ok(agent.tools && agent.tools.length > 0, `${agent.name} should have explicit tools frontmatter`);
 			}
 		} finally {
@@ -1734,6 +1910,7 @@ Review
 
 		const result = discoverAgentsAll(dir);
 		assert.equal(result.project.some((agent) => agent.filePath.endsWith("scout.md")), false);
+		assert.match(result.agentDiagnostics?.find((diagnostic) => diagnostic.filePath.endsWith("scout.md"))?.error ?? "", /Agent 'scout' package is invalid after sanitization/);
 		assert.equal(result.chains.some((chain) => chain.filePath.endsWith("review.chain.md")), false);
 	});
 });
@@ -1867,7 +2044,7 @@ Canonical prompt
 		assert.equal(result.projectDir, path.join(dir, ".selesai", "agents"));
 	});
 
-	it("discovers project chains from .selesai/chains", () => {
+	it("discovers project chains from .pi/chains", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-chain-dirs-"));
 		tempDirs.push(dir);
 		fs.mkdirSync(path.join(dir, ".selesai", "agents"), { recursive: true });
@@ -1898,7 +2075,7 @@ Inspect canonical
 		assert.equal(result.projectChainDir, path.join(dir, ".selesai", "chains"));
 	});
 
-	it("prefers project .selesai/chains over user chains on name collisions", () => {
+	it("prefers project .pi/chains over user chains on name collisions", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-chain-collision-"));
 		const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-user-chain-home-"));
 		tempDirs.push(dir, home);

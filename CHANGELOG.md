@@ -2,6 +2,17 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.12] - 2026-08-25
+
+### Added
+- **Configurable built-in tools.** Use `defaultTools` to select the built-in tools enabled by default, or SDK `tools` and `excludeTools` to allowlist and remove individual tools; `powershell`, `grep`, `find`, and `ls` now participate in this unified tool configuration.
+- **Upgraded collaboration extensions.** Bundled pi-subagents 0.56.0 adds fast OpenAI-Codex child runs, extension bindings, model selection controls, external-job follow-ups, child-scoped stops, durable workflow receipts, and improved workflow safeguards. Bundled pi-intercom 0.12.0 adds consent-aware extension outbox sends, scoped session routing, safer endpoint-bound delivery/retries, pending-ask records, and optional after-first-use tool visibility.
+- **Design and output skills.** Added bundled skills for higher-quality frontend, brand, image-to-code, and image-generation workflows, plus complete-output enforcement and web-design reviews.
+- **Unlazy skill.** Added the bundled `unlazy` skill for completion discipline — acceptance gates, depth-tree decomposition, reverified checks, and evidence-backed reporting via scripts/templates/tests shipped under `src/skills/unlazy`.
+
+### Changed
+- **Pi 0.84.3 runtime update.** Updated the embedded Pi runtime and selected agent-session behavior.
+
 ## [0.9.11] - 2026-08-25
 
 ### Fixed

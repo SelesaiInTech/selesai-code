@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { Key } from "@earendil-works/pi-tui";
 import { FLEET_KEYBINDING_ACTIONS, type ArtifactDirPreference, type ExtensionConfig } from "../shared/types.ts";
@@ -25,8 +26,19 @@ function isValidKeyId(value: string): boolean {
 		&& parts.every((modifier) => KEY_MODIFIERS.has(modifier));
 }
 
-function validateRemovedScheduledRunsConfig(value: unknown): void {
-	if (value !== undefined) throw new Error("config.scheduledRuns is no longer supported");
+export function resolveScheduledStoreRoot(value: string): string {
+	const expanded = value.startsWith("~/") ? path.join(os.homedir(), value.slice(2)) : value;
+	if (!path.isAbsolute(expanded)) throw new Error(`config.scheduledRuns.storeRoot must be an absolute path or "~/...", got ${JSON.stringify(value)}`);
+	return path.normalize(expanded);
+}
+
+function validateScheduledRunsConfig(value: unknown): void {
+	if (value === undefined) return;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.scheduledRuns must be a JSON object");
+	const storeRoot = (value as Record<string, unknown>).storeRoot;
+	if (storeRoot === undefined) return;
+	if (typeof storeRoot !== "string" || !storeRoot.trim()) throw new Error("config.scheduledRuns.storeRoot must be a non-empty string");
+	resolveScheduledStoreRoot(storeRoot);
 }
 
 function validateFleetKeybindingsConfig(value: unknown): void {
@@ -82,6 +94,9 @@ function validateMainWindowRendererConfig(value: unknown): void {
 }
 
 function validateConfig(config: Record<string, unknown>): void {
+	if (config.defaultSubagentContext !== undefined && config.defaultSubagentContext !== "fresh" && config.defaultSubagentContext !== "fork") {
+		throw new Error('config.defaultSubagentContext must be "fresh" or "fork"');
+	}
 	if (config.foregroundDetachShortcut !== undefined
 		&& (typeof config.foregroundDetachShortcut !== "string" || !isValidKeyId(config.foregroundDetachShortcut))) {
 		throw new Error("config.foregroundDetachShortcut must be a valid keybinding string such as \"ctrl+b\"");
@@ -89,25 +104,19 @@ function validateConfig(config: Record<string, unknown>): void {
 	if (config.artifactDir !== undefined && !ARTIFACT_DIR_PREFERENCES.has(config.artifactDir as ArtifactDirPreference)) {
 		throw new Error(`config.artifactDir must be "project", "session", or "temp"`);
 	}
-	if (config.legacyChainControls !== undefined && typeof config.legacyChainControls !== "boolean") {
-		throw new Error("config.legacyChainControls must be a boolean");
-	}
 	if (config.maxActiveAsyncRunsPerSession !== undefined
 		&& (typeof config.maxActiveAsyncRunsPerSession !== "number"
 			|| !Number.isInteger(config.maxActiveAsyncRunsPerSession)
 			|| config.maxActiveAsyncRunsPerSession < 0)) {
 		throw new Error("config.maxActiveAsyncRunsPerSession must be a non-negative integer");
 	}
-	if (config.maxWorkflowAutoRelaunches !== undefined
-		&& (typeof config.maxWorkflowAutoRelaunches !== "number"
-			|| !Number.isInteger(config.maxWorkflowAutoRelaunches)
-			|| config.maxWorkflowAutoRelaunches < 0)) {
-		throw new Error("config.maxWorkflowAutoRelaunches must be a non-negative integer");
+	if (config.resultScanLogging !== undefined && config.resultScanLogging !== "all" && config.resultScanLogging !== "activity" && config.resultScanLogging !== "off") {
+		throw new Error('config.resultScanLogging must be "all", "activity", or "off"');
 	}
 	validateMissionStoreConfig(config.missions);
 	validateAuthorityPolicy(config.authorityPolicy);
 	validatePermissionConfig(config.permissions);
-	validateRemovedScheduledRunsConfig(config.scheduledRuns);
+	validateScheduledRunsConfig(config.scheduledRuns);
 	validateFleetKeybindingsConfig(config.fleetKeybindings);
 	validateArtifactConfig(config.artifactConfig);
 	validateMainWindowRendererConfig(config.mainWindowRenderer);

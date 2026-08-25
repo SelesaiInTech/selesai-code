@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, it } from "node:test";
 import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
 import { writeNodeCommand } from "../support/node-command.ts";
@@ -13,9 +12,16 @@ const tempDirs: string[] = [];
 afterEach(() => {
 	const progressDir = path.join(TEMP_ROOT_DIR, "orca-progress");
 	for (const dir of tempDirs.splice(0)) {
-		const key = createHash("sha256").update(path.resolve(dir)).digest("hex").slice(0, 20);
+		let scope = path.resolve(dir);
+		try { scope = fs.realpathSync(dir); } catch { /* use the lexical path */ }
+		const key = createHash("sha256").update(scope).digest("hex").slice(0, 20);
 		fs.rmSync(path.join(progressDir, `counter-${key}`), { force: true });
 		fs.rmSync(path.join(progressDir, `counter-${key}.lock`), { recursive: true, force: true });
+		if (fs.existsSync(progressDir)) {
+			for (const name of fs.readdirSync(progressDir)) {
+				if (name.startsWith(`create-${key}-`) && (name.endsWith(".ready") || name.endsWith(".pending"))) fs.rmSync(path.join(progressDir, name), { force: true });
+			}
+		}
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
 	if (fs.existsSync(progressDir)) {
@@ -91,7 +97,7 @@ describe("Orca progress-tab observer", () => {
 		const repo = path.resolve(import.meta.dirname, "../..");
 		const exitCode = await runProcess(
 			process.execPath,
-			[path.join(path.dirname(fileURLToPath(import.meta.resolve("jiti/package.json"))), "lib", "jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath],
+			[path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath],
 			repo,
 			{
 				...process.env,
@@ -112,7 +118,68 @@ describe("Orca progress-tab observer", () => {
 		const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
 		assert.deepEqual(args.slice(0, 2), ["terminal", "create"]);
 		assert.equal(args[args.indexOf("--worktree") + 1], `path:${path.resolve(dir)}`);
-		assert.equal(args[args.indexOf("--title") + 1], "subagent · worker · 1");
+		assert.equal(args[args.indexOf("--title") + 1], "subagents · worker · 1");
+	});
+
+	it("uses one observer tab for a background parallel run", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-orca-parallel-"));
+		tempDirs.push(dir);
+		const asyncDir = path.join(dir, "async");
+		const agentDir = path.join(dir, "agent-dir");
+		const captures = path.join(dir, "orca-captures");
+		fs.mkdirSync(asyncDir);
+		fs.mkdirSync(captures);
+		fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
+		fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ orcaProgressTabs: { enabled: true } }));
+		const fakeOrca = writeNodeCommand(dir, "orca", "const fs=require('fs'),path=require('path');const args=process.argv.slice(2);fs.writeFileSync(path.join(process.env.ORCA_TEST_CAPTURE_DIR, process.pid+'.json'),JSON.stringify(args))");
+		const fakePi = writeNodeCommand(dir, "pi", "process.stdout.write(JSON.stringify({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'parallel result'}]}})+'\\n')");
+
+		const resultPath = path.join(dir, "result.json");
+		const configPath = path.join(dir, "config.json");
+		fs.writeFileSync(configPath, JSON.stringify({
+			id: "orca-observer-parallel",
+			sessionId: "session-orca-parallel",
+			steps: [{
+				parallel: [
+					{ agent: "worker", task: "One", systemPrompt: "Use native Pi", systemPromptMode: "replace", inheritProjectContext: false, inheritSkills: false },
+					{ agent: "reviewer", task: "Two", systemPrompt: "Use native Pi", systemPromptMode: "replace", inheritProjectContext: false, inheritSkills: false },
+				],
+				concurrency: 2,
+			}],
+			resultPath,
+			cwd: dir,
+			placeholder: "{previous}",
+			artifactConfig: { enabled: false },
+			asyncDir,
+			resultMode: "parallel",
+		}));
+		const repo = path.resolve(import.meta.dirname, "../..");
+		const exitCode = await runProcess(
+			process.execPath,
+			[path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath],
+			repo,
+			{
+				...process.env,
+				SELESAI_CODING_AGENT_DIR: agentDir,
+				SELESAI_SUBAGENT_ORCA_BINARY: fakeOrca,
+				SELESAI_SUBAGENT_PI_BINARY: fakePi,
+				ORCA_TEST_CAPTURE_DIR: captures,
+			},
+		);
+
+		assert.equal(exitCode, 0);
+		await waitForFileCount(captures, 1);
+		const captureFiles = fs.readdirSync(captures);
+		assert.equal(captureFiles.length, 1);
+		const args = JSON.parse(fs.readFileSync(path.join(captures, captureFiles[0]!), "utf-8")) as string[];
+		assert.equal(args[args.indexOf("--title") + 1], "subagents · parallel-worker-reviewer · 1");
+		const progressDir = path.join(TEMP_ROOT_DIR, "orca-progress");
+		const log = fs.readdirSync(progressDir).find((name) => name.startsWith("orca-observer-parallel-0-") && name.endsWith(".log"));
+		assert.ok(log);
+		const text = fs.readFileSync(path.join(progressDir, log), "utf-8");
+		assert.match(text, /2 children/);
+		assert.match(text, /child 1\/2 · worker/);
+		assert.match(text, /child 2\/2 · reviewer/);
 	});
 
 	it("allocates unique worktree-wide numbers across concurrent processes and nested cwd values", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
@@ -123,7 +190,8 @@ describe("Orca progress-tab observer", () => {
 		fs.mkdirSync(nested, { recursive: true });
 		const captures = path.join(dir, "captures");
 		fs.mkdirSync(captures);
-		const fakeOrca = writeNodeCommand(dir, "orca", "const fs=require('fs'),path=require('path');const args=process.argv.slice(2);fs.writeFileSync(path.join(process.env.ORCA_TEST_CAPTURE_DIR, process.pid+'.json'),JSON.stringify(args))");
+		const orderFile = path.join(dir, "order.txt");
+		const fakeOrca = writeNodeCommand(dir, "orca", "const fs=require('fs'),path=require('path');const args=process.argv.slice(2);const title=args[args.indexOf('--title')+1];fs.appendFileSync(process.env.ORCA_TEST_ORDER,title+'\\n');fs.writeFileSync(path.join(process.env.ORCA_TEST_CAPTURE_DIR, process.pid+'.json'),JSON.stringify(args))");
 		const repo = path.resolve(import.meta.dirname, "../..");
 		const moduleUrl = new URL("../../src/runs/shared/orca-progress-tabs.ts", import.meta.url).href;
 		const childScript = `import {createOrcaProgressTab} from ${JSON.stringify(moduleUrl)};const tab=createOrcaProgressTab({cwd:process.env.CHILD_CWD,runId:'concurrent-sequence',agent:'worker',index:0,config:{enabled:true}});if(!tab)throw new Error('tab unavailable');setTimeout(()=>tab.finish('failed'),100);setTimeout(()=>{},180);`;
@@ -131,7 +199,7 @@ describe("Orca progress-tab observer", () => {
 			process.execPath,
 			["--experimental-strip-types", "--input-type=module", "--eval", childScript],
 			repo,
-			{ ...process.env, SELESAI_SUBAGENT_ORCA_BINARY: fakeOrca, ORCA_TEST_CAPTURE_DIR: captures, CHILD_CWD: index % 2 === 0 ? dir : nested },
+			{ ...process.env, SELESAI_SUBAGENT_ORCA_BINARY: fakeOrca, ORCA_TEST_CAPTURE_DIR: captures, ORCA_TEST_ORDER: orderFile, CHILD_CWD: index % 2 === 0 ? dir : nested },
 		));
 		assert.deepEqual(await Promise.all(processes), Array(8).fill(0));
 		await waitForFileCount(captures, 8);
@@ -139,6 +207,8 @@ describe("Orca progress-tab observer", () => {
 			const args = JSON.parse(fs.readFileSync(path.join(captures, name), "utf-8")) as string[];
 			return args[args.indexOf("--title") + 1];
 		}).sort((left, right) => Number(left.split(" · ").at(-1)) - Number(right.split(" · ").at(-1)));
-		assert.deepEqual(titles, Array.from({ length: 8 }, (_, index) => `subagent · worker · ${index + 1}`));
+		assert.deepEqual(titles, Array.from({ length: 8 }, (_, index) => `subagents · worker · ${index + 1}`));
+		const createdOrder = fs.readFileSync(orderFile, "utf-8").trim().split("\n");
+		assert.deepEqual(createdOrder, titles);
 	});
 });

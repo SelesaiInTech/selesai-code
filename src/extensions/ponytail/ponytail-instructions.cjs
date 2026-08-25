@@ -6,17 +6,14 @@ const path = require('path');
 const { DEFAULT_MODE, normalizeMode, normalizePersistedMode } = require('./ponytail-config.cjs');
 
 const INDEPENDENT_MODES = new Set(['review']);
-const SKILL_PATH = path.join(__dirname, '..', '..', 'skills', 'ponytail', 'SKILL.md');
 const COMPACT_MODE_RULES = {
   lite: 'Build the ask; name a lazier alternative.',
   full: 'Enforce ladder; shortest diff.',
   ultra: 'YAGNI first; delete; challenge the rest.',
 };
+const SKILL_PATH = path.join(__dirname, '..', '..', 'skills', 'ponytail', 'SKILL.md');
 
 function filterSkillBodyForMode(body, mode) {
-  // Unreachable: normalizeMode returns a valid mode or null, and the caller
-  // passes a valid mode.
-  /* v8 ignore next 1 */
   const effectiveMode = normalizeMode(mode) || DEFAULT_MODE;
   const withoutFrontmatter = String(body || '').replace(/^---[\s\S]*?---\s*/, '');
 
@@ -33,7 +30,11 @@ function filterSkillBodyForMode(body, mode) {
         if (labelMode) return labelMode === effectiveMode;
       }
 
-      const exampleLabel = line.match(/^-\s*([^:]+):\s*/);
+      // Require a quoted value: every worked example is `- lite: "..."`. Without
+      // this, an ordinary rule bullet that happens to start with a mode word
+      // (e.g. "- Full: ...") is silently dropped in every other mode — it looks
+      // like a worked example but is really prose meant to survive verbatim.
+      const exampleLabel = line.match(/^-\s*([^:]+):\s*"/);
       if (exampleLabel) {
         const labelMode = normalizeMode(exampleLabel[1].trim());
         if (labelMode) return labelMode === effectiveMode;
@@ -65,7 +66,7 @@ function getFallbackInstructions(mode) {
     'Deletion over addition. Boring over clever. Fewest files possible. ' +
     'Ship the lazy version and question the complex request in the same response — never stall. ' +
     'Between two same-size stdlib options, pick the one correct on edge cases. ' +
-    'Mark intentional simplifications with a `ponytail:` comment — a shortcut with a known ceiling names the ceiling and the upgrade path in the comment.\n\n' +
+    'Mark deliberate simplifications that cut a real corner with a known ceiling, using a `ponytail:` comment that names the ceiling and upgrade path.\n\n' +
     '## Output\n\n' +
     'Code first. Then at most three short lines: what was skipped, when to add it. ' +
     'If the explanation is longer than the code, delete the explanation. ' +
@@ -93,9 +94,6 @@ function getPonytailInstructions(mode, options) {
     return 'PONYTAIL MODE ACTIVE — level: ' + configuredMode + '. Behavior defined by /ponytail-' + configuredMode + ' skill.';
   }
 
-  // Unreachable: normalizePersistedMode above already falls back to
-  // DEFAULT_MODE, so normalizeMode always returns a valid mode here.
-  /* v8 ignore next 1 */
   const effectiveMode = normalizeMode(configuredMode) || DEFAULT_MODE;
   if (options?.compact === true) return getCompactInstructions(effectiveMode);
 

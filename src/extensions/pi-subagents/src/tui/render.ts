@@ -3,6 +3,7 @@
  */
 
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { getMarkdownTheme, keyText, type ExtensionContext } from "@selesai/code";
 import { Container, Markdown, Spacer, Text, visibleWidth, type Component } from "@earendil-works/pi-tui";
@@ -17,7 +18,7 @@ import {
 	type WorkflowNodeStatus,
 	type MainWindowRendererConfig,
 	MAX_WIDGET_JOBS,
-	POLL_INTERVAL_MS,
+	WIDGET_ANIMATION_INTERVAL_MS,
 	WIDGET_KEY,
 } from "../shared/types.ts";
 import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
@@ -535,7 +536,76 @@ function compactCurrentActivity(progress: AgentProgress): string {
 	return formatCurrentToolLine(progress, getTermWidth() - 4, false, snapshotNow) ?? buildLiveStatusLine(progress, snapshotNow) ?? "thinking…";
 }
 
-export function widgetRenderKey(job: AsyncJobState): string {
+function textDigest(text: string): string {
+	return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
+function displayTextRenderKey(text: string): unknown[] {
+	const normalized = sanitizeDisplayText(text);
+	return [normalized.length, textDigest(normalized)];
+}
+
+function expandedStepActivityRenderKey(step: AsyncJobStep): unknown[] {
+	return [
+		step.recentTools?.slice(-3).map((tool) => [tool.tool, displayTextRenderKey(tool.args), tool.endMs]),
+		compactRecentOutputLines(step.recentOutput).map(displayTextRenderKey),
+	];
+}
+
+function widgetStepRenderKey(step: AsyncJobStep, index: number, expanded = false): unknown[] {
+	return [
+		step.index ?? index,
+		step.agent,
+		step.workflowKey,
+		step.phase,
+		step.label,
+		step.status,
+		step.activityState,
+		step.lastActivityAt,
+		step.currentTool,
+		step.currentToolArgs,
+		step.currentToolStartedAt,
+		step.currentPath,
+		step.turnCount,
+		step.toolCount,
+		step.startedAt,
+		step.endedAt,
+		step.durationMs,
+		step.tokens?.total,
+		step.model,
+		step.thinking,
+		step.context,
+		step.error,
+		expanded ? expandedStepActivityRenderKey(step) : undefined,
+		nestedRenderKey(step.children, expanded),
+	];
+}
+
+function nestedRenderKey(children: NestedRunSummary[] | undefined, expanded = false): unknown[] {
+	return (children ?? []).map((child) => [
+		child.id,
+		child.state,
+		child.agent,
+		child.model,
+		child.thinking,
+		child.activityState,
+		child.lastActivityAt,
+		child.currentTool,
+		child.currentToolStartedAt,
+		child.currentPath,
+		child.turnCount,
+		child.toolCount,
+		child.startedAt,
+		child.endedAt,
+		child.lastUpdate,
+		child.error,
+		child.totalTokens?.total,
+		child.steps?.map((step, index) => widgetStepRenderKey({ ...step, agent: step.agent, status: step.status }, index, expanded)),
+		nestedRenderKey(child.children, expanded),
+	]);
+}
+
+export function widgetRenderKey(job: AsyncJobState, expanded = false): string {
 	return JSON.stringify({
 		asyncDir: job.asyncDir,
 		status: job.status,
@@ -551,8 +621,8 @@ export function widgetRenderKey(job: AsyncJobState): string {
 		currentStep: job.currentStep,
 		chainStepCount: job.chainStepCount,
 		parallelGroups: job.parallelGroups,
-		steps: job.steps,
-		nestedChildren: job.nestedChildren,
+		steps: job.steps?.map((step, index) => widgetStepRenderKey(step, index, expanded)),
+		nestedChildren: nestedRenderKey(job.nestedChildren, expanded),
 		stepsTotal: job.stepsTotal,
 		runningSteps: job.runningSteps,
 		completedSteps: job.completedSteps,
@@ -1510,7 +1580,7 @@ function buildWidgetComponent(jobs: AsyncJobState[], expanded: boolean): (_tui: 
 		const container = new Container();
 		container.render = (renderWidth: number): string[] => {
 			const width = Math.max(0, renderWidth - 2);
-			const frame = Math.floor(Date.now() / POLL_INTERVAL_MS);
+			const frame = Math.floor(Date.now() / WIDGET_ANIMATION_INTERVAL_MS);
 			const buildLines = (): string[] => expanded
 				? buildWidgetLines(jobs, theme, width, true, frame)
 				: jobs.length === 1
@@ -1676,8 +1746,9 @@ function workflowRowStateLabel(row: WorkflowChatProgressRow, theme: Theme): stri
 }
 
 function workflowOverallState(rows: WorkflowChatProgressRow[], hasTerminalValue: boolean, isError?: boolean): "running" | "complete" | "failed" | "paused" {
-	if (isError || rows.some((row) => row.state === "failed")) return "failed";
+	if (rows.some((row) => row.state === "failed")) return "failed";
 	if (rows.some((row) => row.state === "detached")) return "paused";
+	if (isError) return "failed";
 	if ((rows.length > 0 && rows.every((row) => row.state === "complete")) || hasTerminalValue) return "complete";
 	return "running";
 }
@@ -1878,7 +1949,7 @@ export function renderSubagentResult(
 	const layout = resolveMainWindowRenderLayout(rendererConfig);
 	const compact = (component: Component): Component => capCompactMainWindowResult(component, layout, theme, !options.expanded);
 	const d = result.details;
-	if (d?.mode === "workflow" && d.chatProgress?.mode === "live-card" && !result.isError && d.workflow?.value === undefined) {
+	if (d?.mode === "workflow" && d.chatProgress?.mode === "live-card" && d.workflow?.value === undefined && (!result.isError || (d.workflow?.trace.length ?? 0) > 0)) {
 		return compact(renderWorkflowChatProgress(d, result, theme, options.expanded ? resolveMainWindowRenderLayout() : layout, frame));
 	}
 	if (!d || !d.results.length) {

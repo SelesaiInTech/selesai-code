@@ -56,6 +56,48 @@ export function resolveSubagentContext(value: unknown): SubagentExecutionContext
 	return value === "fork" ? "fork" : "fresh";
 }
 
+export interface PreferredForkAvailability {
+	getSessionFile(): string | undefined;
+	getLeafId?: () => string | null;
+}
+
+export interface PreferredForkSnapshot {
+	parentSessionFile?: string | null;
+	leafId?: string | null;
+}
+
+export interface SubagentLaunchContextInput {
+	explicitContext?: SubagentExecutionContext;
+	agentDefaultContext?: SubagentExecutionContext;
+	defaultSubagentContext?: SubagentExecutionContext;
+	canUseImplicitFork: boolean;
+}
+
+/** Resolve the actual launch context from explicit, global, and agent preferences. */
+export function resolveSubagentLaunchContext(input: SubagentLaunchContextInput): SubagentExecutionContext {
+	if (input.explicitContext !== undefined) return input.explicitContext;
+	const preferredContext = input.defaultSubagentContext ?? input.agentDefaultContext ?? "fresh";
+	return preferredContext === "fork" && input.canUseImplicitFork ? "fork" : "fresh";
+}
+
+/** True when an implicit `defaultContext: fork` can create a real branch now.
+ * Explicit `context: "fork"` stays strict and does not use this preference. */
+export function canPreferFork(sessionManager: PreferredForkAvailability): boolean {
+	return canPreferForkFromSnapshot({
+		parentSessionFile: sessionManager.getSessionFile(),
+		leafId: sessionManager.getLeafId?.() ?? null,
+	});
+}
+
+export function canPreferForkFromSnapshot(input: PreferredForkSnapshot): boolean {
+	if (!input.parentSessionFile || !input.leafId) return false;
+	try {
+		return fs.existsSync(input.parentSessionFile);
+	} catch {
+		return false;
+	}
+}
+
 /** Decide whether a resolved child model uses Anthropic's provider or message API, which
  * requires the sanitized fork to disable thinking. Unknown models stay conservative. */
 export function forkedChildRequiresThinkingOff(
@@ -166,7 +208,23 @@ export function createForkContextResolver(
 	const openSession = options.openSession
 		?? sessionManager.openSession
 		?? ((file: string, dir?: string) => SessionManager.open(file, dir));
-	const sessionDir = sessionManager.getSessionDir?.();
+	// Fork files must not land in the parent's top-level session directory.
+	// Pi's recent-session discovery (`pi -c` → findMostRecentSession) is
+	// non-recursive and picks the largest-mtime *.jsonl in that directory, so
+	// a still-running forked subagent — which keeps appending after the parent
+	// went idle — would hijack the next `pi -c` away from the conversation the
+	// user actually left. Nesting fork sessions in a per-parent directory keeps
+	// them invisible to that discovery; the `parentSession` header still
+	// records the tree relationship. The directory mirrors
+	// getSubagentSessionRoot() plus a "forks" level so fork files never sit
+	// loose next to run-N/ result directories. Derived from the file path
+	// rather than getSessionDir() so it also works when the manager cannot
+	// report its directory.
+	const sessionDir = path.join(
+		path.dirname(parentSessionFile),
+		path.basename(parentSessionFile, ".jsonl"),
+		"forks",
+	);
 	const cachedResolutions = new Map<number, ForkContextResolution>();
 
 	const resolveFork = (index = 0): ForkContextResolution => {

@@ -24,7 +24,6 @@ import type {
 	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { Type } from "typebox";
 import { contentText } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
@@ -106,7 +105,7 @@ import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
-import { createAllToolDefinitions, stripToolParameterDescriptions } from "./tools/index.ts";
+import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 import { captionImageWithModel } from "./vision-caption.ts";
@@ -419,6 +418,7 @@ export class AgentSession {
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
+			includeAllExtensionTools: true,
 		});
 	}
 
@@ -2759,39 +2759,6 @@ export class AgentSession {
 		);
 	}
 
-	private _createToolCatalogDefinition(): ToolDefinition {
-		return {
-			name: "tool_catalog",
-			label: "Tool catalog",
-			description: "Discover inactive tools by capability or activate named tools. Activated tools are available on the next turn.",
-			parameters: Type.Object({
-				query: Type.Optional(Type.String({ description: "Capability or tool name to search for" })),
-				activate: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Exact inactive tool names to activate" })),
-			}),
-			execute: async (_toolCallId, params: any) => {
-				const query = params.query?.trim().toLowerCase();
-				const active = new Set(this.getActiveToolNames());
-				const requested: string[] = Array.isArray(params.activate)
-					? Array.from(new Set((params.activate as unknown[]).filter((name): name is string => typeof name === "string")))
-					: [];
-				const available = Array.from(this._toolDefinitions.values()).filter(({ definition }) => definition.name !== "tool_catalog");
-				const known = new Set(available.map(({ definition }) => definition.name));
-				const unknown = requested.filter((name) => !known.has(name));
-				const activate = requested.filter((name) => known.has(name));
-				if (activate.length > 0) this.setActiveToolsByName([...active, ...activate]);
-				const matches = available
-					.filter(({ definition }) => !query || `${definition.name} ${definition.description}`.toLowerCase().includes(query))
-					.map(({ definition }) => `- ${definition.name}: ${definition.description}`);
-				const result = [
-					activate.length > 0 ? `Activated: ${activate.join(", ")}. They are available on the next turn.` : undefined,
-					unknown.length > 0 ? `Unknown or unavailable: ${unknown.join(", ")}.` : undefined,
-					matches.length > 0 ? `Available tools:\n${matches.join("\n")}` : query ? "No matching tools." : "No additional tools available.",
-				].filter(Boolean).join("\n\n");
-				return { content: [{ type: "text", text: result }], details: { activated: activate, unknown } };
-			},
-		};
-	}
-
 	private _refreshToolRegistry(options?: { activeToolNames?: string[]; includeAllExtensionTools?: boolean }): void {
 		const previousRegistryNames = new Set(this._toolRegistry.keys());
 		const previousActiveToolNames = this.getActiveToolNames();
@@ -2860,18 +2827,6 @@ export class AgentSession {
 		}
 		this._toolRegistry = toolRegistry;
 
-		if (this.settingsManager.getPruneToolDescriptions()) {
-			const keepDescriptions = new Set<string>();
-			for (const [name, entry] of definitionRegistry) {
-				if (entry.definition.keepParameterDescriptions) keepDescriptions.add(name);
-			}
-			for (const [name, tool] of toolRegistry) {
-				if (!keepDescriptions.has(name)) {
-					toolRegistry.set(name, stripToolParameterDescriptions(tool));
-				}
-			}
-		}
-
 		const nextActiveToolNames = (
 			options?.activeToolNames ? [...options.activeToolNames] : [...previousActiveToolNames]
 		).filter((name) => isAllowedTool(name));
@@ -2921,8 +2876,6 @@ export class AgentSession {
 		this._baseToolDefinitions = new Map(
 			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
 		);
-		this._baseToolDefinitions.set("tool_catalog", this._createToolCatalogDefinition());
-
 		const extensionsResult = this._resourceLoader.getExtensions();
 		if (options.flagValues) {
 			for (const [name, value] of options.flagValues) {
@@ -2945,7 +2898,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write", "tool_catalog"];
+			: ["read", "bash", "edit", "write"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,

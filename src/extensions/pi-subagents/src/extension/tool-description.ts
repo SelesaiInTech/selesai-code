@@ -6,53 +6,66 @@ import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 const CUSTOM_TOOL_DESCRIPTION_FILE = "subagent-tool-description.md";
 const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
 
+export const DEFAULT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to configured subagents. For execution, omit action and use {agent, task?} for one child or workflowScript for orchestration. For multi-step or parallel work, make exactly one top-level subagent call with workflowScript and async:true; launch children only inside that script and do not make another top-level call for them. Use runs.run('key',{agent,task}) for one child, await runs.all([{key:'a',agent:'reviewer',task:'...'},{key:'b',agent:'reviewer',task:'...'}]) for ordinary parallel children, and read its ordered array result with indexes, destructuring, or .map(...), not by key property. Use action only for management/control. Use guide or the pi-subagents skill for advanced workflow details.`;
+
+export const SUBAGENT_TOOL_PROMPT_SNIPPET = "Delegate to subagents; orchestrate in one workflowScript call.";
+
+export const SUBAGENT_TOOL_PROMPT_GUIDELINES = [
+	"Use subagent only when delegation is needed. Before executing, call { action: \"list\" } and run only executable, non-disabled agents.",
+	"Omit action for execution. Use { agent, task? } only for one child; use workflowScript for multi-step or parallel work.",
+	"workflowScript means exactly one top-level subagent tool call with async:true. Inside it, use runs.run/runs.all to launch children; do not make another top-level subagent call for those children.",
+	"For ordinary parallel work, use await runs.all([{key,agent,task}, ...]); it resolves to an ordered array, not a key map, so use results[0], destructuring, or results.map(...), not results.<key>. Do not read .output from unawaited runs.run launches. Stored runs.run promises are only for advanced rolling fanout and each must later be observed with direct await, Promise.race, or Promise.all.",
+	"Keep one writer per cwd/worktree unless writers run in isolated worktrees.",
+	"To pass an explicit model to a child, first call { action: \"models\" } and copy an exact provider/id (e.g. openai-codex/gpt-5.6-sol); bare ids resolve only when unique in the registry, and agent names (gpt-pro, advisor) are not model ids.",
+	"Use guide or the pi-subagents skill for advanced scheduling, missions, steering, and retention.",
+];
+
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and only run executable/non-disabled agents.
 • Keep execution and management separate: omit action for structured single-child or workflowScript execution; use action only for management/control.
-• Async/background runs are the default. Use async:false only when a blocking foreground result is needed. After an async launch, continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll status just to wait; use subagent_wait only when the current request must finish in this turn.
+• Async/background runs are the normal default unless config sets asyncByDefault:false; set async:true explicitly when async behavior matters. Use async:false only when the parent must block until completion. Async mode still shows progress. Final reviews and gate checks stay async; needing a result is not a blocking reason. After an async launch, continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll status just to wait; use subagent_wait only when the current request must finish in this turn.
 • Ordinary child subagents are not orchestrators. Only explicitly configured fanout children may use the child-safe subagent tool, still bounded by depth/session limits.
 • Oracle/advisor consultations should use supervisor dialogue for material unknowns when available; request one-shot only when desired.
 • Keep one writer for the same cwd/worktree. Use fresh-context read-only reviewers for independent review, then have the parent synthesize and apply fixes.
 • Async runs expose asyncId/asyncDir with status.json, events.jsonl, output logs, status via { action: "status", id }, and lifecycle diagnostics via { action: "debug.run", id }. Include output paths and residual risks when reporting results.`;
 
-export const FULL_SUBAGENT_TOOL_DESCRIPTION = `Delegate one child with { agent, task }, compose steps with { chain }, fan out with { tasks }, or orchestrate with { workflowScript }; omit action. Use action only for management/control actions.
+export const FULL_SUBAGENT_TOOL_DESCRIPTION = `Run one child with { agent, task? }; use { workflowScript } for orchestration. Omit action for execution. Use action only for management/control actions.
 
-EXECUTION (use exactly one mode):
+EXECUTION:
 • Before executing, use { action: "list" } and run only executable/non-disabled configured agents.
-• SINGLE: { agent, task? } launches one child. Omit task for a self-contained agent.
-• CHAIN: { chain: [{ agent: "explorer", task: "..." }, { agent: "builder", task: "Implement from {previous}" }] } runs sequential steps. Steps support template variables {task}, {previous}, {chain_dir}, and {outputs.name}; use as: "name" on a step to bind {outputs.name} for later steps, phase/label for status readability, outputSchema for structured results, and { checkpoint: "name", message?: "..." } for human gates paused until approve-checkpoint / reject-checkpoint. Set gateOn: "acceptance" to advance on acceptance instead of execution. agentContract: { version: 1 } gives generic result projections.
-• PARALLEL: { tasks: [{ agent, task }, ...], concurrency? } runs top-level parallel children (count: N repeats one template). Parallel groups also work inside chain steps with { parallel: [...] }, plus dynamic fanout via { expand: { from: { output, path }, item?, maxItems, parallel: {...}, collect: { as, outputSchema? } } }.
-• SCRIPTED WORKFLOW: { workflowScript: "return runs.run('main', {agent:'worker', task:'...'})" }. Use stable-key runs.run for one child and runs.all for parallel children; ordinary JavaScript provides sequence, branching, filtering, retries, and aggregation. workflowScript is an ordinary JavaScript statement body, so use an explicit return for a useful result. For task text with Markdown fences or shell blocks, build quoted lines instead of nesting raw template literals: \`const task=["Run:","\`\`\`bash","npm test","\`\`\`"].join("\n")\`. Scripts start asynchronously by default; pass async:false only for a small foreground run. Same-repo foreground workflows default to a live in-chat card; set chatProgress to auto, off, terminal, milestones, or live-card to control that projection. Workflow-level child controls default onto each runs.run launch, and explicit child fields override them. Use await prompts.render("package:name" | "user:name" | "project:name", vars?) for reusable plain task text, then pass the result explicitly as task. Use {action:"children.list"} to list recent retained children with resumable/not-resumable states. Resume only rows reported resumable; {action:"resume", id:"run-id", message:"..."} keeps the stored agent/model/tool contract, or use runs.run(key, {resume:"run-id", task:"follow-up"}) inside workflowScript. Workflow resumes wait for completed output, and loops must continue from each latest returned runId. If no resumable child is listed, launch a same-role fallback challenge and label it as fallback. For repository mutation lanes, set worktree:true on a direct single child, chain, workflow, or individual runs.run/runs.all item for managed isolation; each parallel child gets a separate worktree and handoff artifact. A workflow usageBudget is enforced once across the workflow. Available globals are runs.run, runs.all, runs.status, runs.ref/refs, prompts.render, emit, console, and standard JavaScript only. Workflows get async state.get(key) and state.set(key, JSONValue) through their automatic or explicit mission; mission:false workflows do not have a state global. Scripts cannot access filesystem, shell, arbitrary Pi tools, or host globals.
+• When passing an explicit model to a child (on the call or a runs.run/runs.all item), first call { action: "models" } and copy an exact provider/id; bare ids resolve only when unique in the registry, and agent names (e.g. gpt-pro, advisor) are not model ids.
+• SINGLE CHILD: { agent:"worker", task:"..." }. This structured form starts exactly one direct child. Fields such as model, context, cwd, worktree, output, budgets, acceptance, and async apply to that child. Do not combine agent/task with action or workflowScript.
+• WORKFLOW SCRIPT: { workflowScript: "return runs.run('main', {agent:'worker', task:'...'})" }. Use stable-key runs.run for one child and await runs.all([{key,agent,task}, ...]) for ordinary parallel children. runs.all resolves to an ordered array, not a key map, so use results[0], array destructuring, or results.map((result) => result.output), not results.<key>. Do not read .output from unawaited runs.run launches. Stored runs.run promises are only for advanced rolling fanout and each must later be observed with direct await, Promise.race, or Promise.all. Ordinary JavaScript provides sequence, branching, filtering, retries, and aggregation. workflowScript is an ordinary JavaScript statement body, so use an explicit return for a useful result. Use top-level await, plain helper functions, or explicit Promise chains; nested async function, arrow, and method helpers are rejected. For task text with Markdown fences or shell blocks, build quoted lines instead of nesting raw template literals: \`const task=["Run:","\`\`\`bash","npm test","\`\`\`"].join("\\n")\`. Scripts normally start async unless config sets asyncByDefault:false; set async:true explicitly when async behavior matters. Pass async:false only when the parent must block until completion, never for final reviews or gates. Same-repo blocking workflows default to a live in-chat card; explicit live-card requires same-repository async:false, so async workflows should omit chatProgress or use auto/off. Workflow-level child controls default onto each runs.run launch, and explicit child fields override them. Use {action:"children.list"} to list recent retained workflow children with resumable/not-resumable reasons. Resume only rows reported resumable. For a simple follow-up or implementation challenge, use {action:"resume", id:"run-id", message:"..."}. Resume keeps the stored agent/model/tool contract. If no resumable child is listed, launch a same-role fallback challenge and label it as fallback. Inside workflowScript, continue one with runs.run(key, {resume:"run-id", task:"follow-up"}); workflow resumes wait for completed output, and loops must continue from each latest returned runId. Await runs.steer(key, message, {mode?, index?, ackTimeoutMs?}) to guide a prior keyed child without exposing its run id; receipts are queued, delivered, missed, or failed. Always await or return runs.steer. For repository mutation lanes, set worktree:true on the workflow or individual runs.run/runs.all item for managed isolation; each parallel child gets a separate worktree and handoff artifact. A workflow usageBudget is enforced once across the workflow. Available globals are runs.run, runs.all, runs.steer, runs.status, runs.ref/refs, emit, console, and standard JavaScript only. Workflows get async state.get(key) and state.set(key, JSONValue) through their automatic or explicit mission; mission:false workflows do not have a state global. Scripts cannot access filesystem, shell, arbitrary Pi tools, or host globals.
 • Sequential example: { workflowScript: "const a = await runs.run('analyze', {agent:'agent-a', task:'Analyze the request'}); return (await runs.run('plan', {agent:'agent-b', task:'Plan from: '+a.output})).output" }
 • Parallel example: { workflowScript: "const [a,b] = await runs.all([{key:'correctness',agent:'agent-a',task:'Review correctness'},{key:'tests',agent:'agent-b',task:'Review tests'}]); return {correctness:a.output,tests:b.output}" }
-• Optional context is "fresh" or "fork". timeoutMs/maxRuntimeMs apply to foreground and async runs; foreground defaults to 30 minutes absent call/agent. Omit acceptance for read-only calls; evidence levels end at verified, and acceptance.review.required requests independent writer review. For one host-run verification command, gate: "npm test" on a runs.run/runs.all item is shorthand; it cannot be combined with acceptance.
+• Optional context is "fresh", "fork", or "profile". profile requires the selected agent's declared defaultContext and ignores config defaultSubagentContext. Explicit fresh/fork wins. When omitted, config defaultSubagentContext wins over agent defaultContext. timeoutMs/maxRuntimeMs apply to foreground and async workflows; foreground workflows default to 30 minutes and async workflows have no default timeout. Omit acceptance for reviewer/read-only calls; evidence levels end at verified, and acceptance.review.required requests independent writer review.
 • Durable mission attachment is automatic by default. Use missionId to attach an existing mission, mission:{...} to override auto-create, or mission:false for ephemeral work. A mission object needs exactly one non-empty title or summary; objective and labels are optional. goal may only be true and requires budget:{tokens}.
 
 MANAGEMENT / CONTROL (use action; omit execution fields):
-• list, get, models, guide, children.list, create, update, delete, eject, disable, enable, reset, doctor, grant-spawn-budget, worktree.discard, refine/refine.show/refine.rollback, mission.create/list/show/update/resolve-decision/attach-run/close, inspector.open/status/close, project.open/status/close, and watchdog actions remain available. Use {action:"guide", topic:"overview"} for packaged current-version help; topics are overview, workflows, agents, missions, observability, tool-reference, configuration, models, watchdog, and extension-api.
+• list, get, models, guide, children.list, create, update, delete, eject, disable, enable, reset, status, debug.run, doctor, grant-spawn-budget, worktree.discard, refine/refine.show/refine.rollback, mission.create/list/show/update/resolve-decision/attach-run/close, inspector.open/status/close, project.open/status/close, and watchdog actions remain available. Use {action:"guide", topic:"overview"} for packaged current-version help; topics are overview, workflows, agents, missions, observability, tool-reference, configuration, models, watchdog, and extension-api.
 • status, interrupt, stop, resume, and steer manage live or persisted runs. Use status view:"fleet" for an overview or view:"transcript" with id and optional index to tail output.
-• { action: "append-step", id: "...", step: {agent:"agent-c", task:"Use {previous}"} } appends one step to an already-running durable chain. step is control-only, not an execution mode; use { chain: [...] } for new chains.
-• approve-checkpoint and reject-checkpoint decide a paused chain checkpoint.
+• Create durable project schedules with { action:"schedule.create", id?, name?, at:"+10m" | ISO, workflowScript:"return runs.run('main', {agent:'worker', task:'...'})" } or { every:"6h", workflowScript:"..." }. Manage them with schedule.list/show/history/pause/resume/run/run-due/delete. This first slice supports fixed intervals; calendar schedules and schedule mission attachment are deferred.
 
 ${SUBAGENT_SAFETY_GUIDANCE}`;
 
-export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Delegate one child with { agent, task }, compose steps with { chain }, fan out with { tasks }, or orchestrate with { workflowScript }; omit action. Use action only for management/control actions.
+export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Run one child with { agent, task? }; use { workflowScript } for orchestration. Omit action for execution. Use action only for management/control actions.
 
 EXECUTE:
 • Call { action:"list" } first and use only executable/non-disabled agents.
-• SINGLE {agent, task?}; CHAIN {chain:[{agent,task,...}]} with {previous}/{outputs.name} templates and { checkpoint } human gates; PARALLEL {tasks:[...], concurrency?} with optional count and in-chain { parallel: [...] } / dynamic { expand }+{ collect } fanout.
-• SCRIPT {workflowScript:"return runs.run('main', {agent:'worker', task:'...'})"}. Use stable-key runs.run for one child and runs.all for parallel work. Use await prompts.render("package:name" | "user:name" | "project:name", vars?) for reusable task text and pass it explicitly to runs.run. Use {action:"children.list"} for recent retained children and resume only rows reported resumable, with {action:"resume", id, message} or runs.run(key,{resume:"run-id",task:"follow-up"}); workflow resumes wait for completion and loops continue from the latest returned runId. Workflows get async state.get/state.set through their automatic or explicit mission; mission:false does not. Scripts are ordinary JavaScript statement bodies; use explicit return for a useful result. For task text with Markdown fences or shell blocks, build quoted lines instead of nesting raw template literals: \`const task=["Run:","\`\`\`bash","npm test","\`\`\`"].join("\n")\`. Use JavaScript for sequence, branching, retries, and aggregation. For repository mutation lanes, use worktree:true on a direct single child, chain, or runs.run/runs.all item for managed isolation. Scripts start async by default; async:false is the foreground escape hatch and auto-enables a same-repo live chat card unless chatProgress is off/terminal/milestones.
+• Passing an explicit model? Call {action:"models"} first and copy an exact provider/id; bare ids resolve only when unique in the registry; agent names (e.g. gpt-pro, advisor) are not model ids.
+• SINGLE {agent:"worker",task:"..."} starts exactly one direct child. Fields apply to that child. Do not combine agent/task with action or workflowScript.
+• SCRIPT {workflowScript:"return runs.run('main', {agent:'worker', task:'...'})"}. Use stable-key runs.run for one child and await runs.all([{key,agent,task}, ...]) for ordinary parallel work. runs.all resolves to an ordered array, not a key map; use results[0], destructuring, or results.map(...), not results.<key>. Do not read .output from unawaited runs.run launches. Stored runs.run promises are only for advanced rolling fanout and each must later be observed with direct await, Promise.race, or Promise.all. Await runs.steer(key,message,options?) to guide a prior keyed child; it returns queued, delivered, missed, or failed and never accepts a raw run id. Always await or return steering calls. Use {action:"children.list"} for recent retained workflow children and resume only rows reported resumable. Use {action:"resume",id:"run-id",message:"..."} for a simple follow-up or challenge; resume keeps the stored agent/model/tool contract. If none is resumable, launch a same-role fallback challenge and label it as fallback. Inside workflowScript use runs.run(key,{resume:"run-id",task:"follow-up"}) when the script must wait for completion and continue from the latest returned runId. Workflows get async state.get/state.set through their automatic or explicit mission; mission:false does not. Scripts are ordinary JavaScript statement bodies; use explicit return for a useful result. Use top-level await, plain helper functions, or explicit Promise chains; nested async function, arrow, and method helpers are rejected. For task text with Markdown fences or shell blocks, build quoted lines instead of nesting raw template literals: \`const task=["Run:","\`\`\`bash","npm test","\`\`\`"].join("\\n")\`. Use JavaScript for sequence, branching, retries, and aggregation. For repository mutation lanes, use worktree:true on the workflow or runs.run/runs.all item for managed isolation. Scripts normally start async unless config sets asyncByDefault:false; set async:true explicitly when async behavior matters. async:false blocks the parent until completion and auto-enables a same-repo live chat card unless chatProgress is off; explicit live-card requires same-repository async:false, so async workflows should omit chatProgress or use auto/off.
 • Example: {workflowScript:"const [a,b]=await runs.all([{key:'a',agent:'agent-a',task:'Implement A',worktree:true},{key:'b',agent:'agent-b',task:'Implement B',worktree:true}]); return [a.output,b.output]"}
-• context can be fresh or fork. timeoutMs/maxRuntimeMs apply to foreground and async runs; foreground defaults to 30 minutes absent call/agent. Omit acceptance for read-only calls.
+• context can be fresh, fork, or profile. profile requires the selected agent's declared defaultContext and ignores defaultSubagentContext. Explicit fresh/fork wins; omitted context follows defaultSubagentContext before agent defaultContext. timeoutMs/maxRuntimeMs apply to foreground and async workflows; foreground workflows default to 30 minutes and async workflows have no default timeout. Omit acceptance for reviewer/read-only calls.
 
 MANAGE / CONTROL:
-• Use action without execution fields for list/get/models/guide/authoring, refine/refine.show/refine.rollback, mission, watchdog, status, interrupt, stop, resume, steer, diagnostics, and other management actions. guide reads shipped current-version docs by topic.
-• append-step uses step:{...} only for an already-running durable chain; step is not an execution mode.
+• Use action without execution fields for list/get/models/guide/authoring, refine/refine.show/refine.rollback, mission, watchdog, status, interrupt, stop, resume, steer, script-only scheduling, diagnostics, and other management actions. guide reads shipped current-version docs by topic.
 • A mission object needs exactly one non-empty title or summary; objective and labels are optional. goal may only be true and requires budget:{tokens}.
 
 ASYNC / SAFETY:
-• Omitted async detaches background work. Do not sleep or poll merely to wait; use subagent_wait only when this turn must receive results.
+• Omitted async follows asyncByDefault config; set async:true explicitly when async behavior matters. Continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll merely to wait; use subagent_wait only when this turn must receive results.
 • Ordinary children are not orchestrators. Keep one writer per cwd/worktree and use fresh read-only reviewers for independent checks.
+• Oracle/advisor consultations use available supervisor dialogue for material unknowns; request one-shot when desired.
 • Status and artifacts live under asyncId/asyncDir with status.json, events.jsonl, output logs, and {action:"status",id:"..."}.`;
 
 
@@ -70,12 +83,25 @@ export interface ToolDescriptionOptions {
 	warn?: (message: string) => void;
 }
 
+export interface SubagentToolPromptMetadata {
+	promptSnippet?: string;
+	promptGuidelines?: string[];
+}
+
+export function buildSubagentToolPromptMetadata(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}): SubagentToolPromptMetadata {
+	if (config.toolDescriptionMode !== undefined) return {};
+	return {
+		promptSnippet: SUBAGENT_TOOL_PROMPT_SNIPPET,
+		promptGuidelines: SUBAGENT_TOOL_PROMPT_GUIDELINES,
+	};
+}
+
 export function resolveToolDescriptionMode(config: Pick<ExtensionConfig, "toolDescriptionMode">, options?: ToolDescriptionOptions): ToolDescriptionMode {
 	const mode = config.toolDescriptionMode;
-	if (mode === undefined) return "compact";
+	if (mode === undefined) return "full";
 	if (isToolDescriptionMode(mode)) return mode;
 	warn(options, `Ignoring invalid toolDescriptionMode ${JSON.stringify(mode)}; expected "full", "compact", or "custom".`);
-	return "compact";
+	return "full";
 }
 
 function customDescriptionPaths(options?: ToolDescriptionOptions): string[] {
@@ -157,20 +183,8 @@ function withMandatorySafetyGuidance(description: string): string {
 		: SUBAGENT_SAFETY_GUIDANCE;
 }
 
-const LEGACY_CHAIN_CONTROL_GUIDANCE_LINES = new Set([
-	'• { action: "append-step", id: "...", step: {agent:"agent-c", task:"Use {previous}"} } appends one step to an already-running durable chain. step is control-only, not an execution mode; use { chain: [...] } for new chains.',
-	'• approve-checkpoint and reject-checkpoint decide a paused chain checkpoint.',
-	'• append-step uses step:{...} only for an already-running durable chain; step is not an execution mode.',
-]);
-
-function withoutLegacyChainControlGuidance(description: string): string {
-	return description
-		.split("\n")
-		.filter((line) => !LEGACY_CHAIN_CONTROL_GUIDANCE_LINES.has(line.trim()))
-		.join("\n");
-}
-
-export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode" | "legacyChainControls"> = {}, options?: ToolDescriptionOptions): string {
+export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}, options?: ToolDescriptionOptions): string {
+	if (config.toolDescriptionMode === undefined) return DEFAULT_SUBAGENT_TOOL_DESCRIPTION;
 	const mode = resolveToolDescriptionMode(config, options);
 	let description: string;
 	if (mode === "compact") description = COMPACT_SUBAGENT_TOOL_DESCRIPTION;
@@ -178,9 +192,9 @@ export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "tool
 		const custom = loadCustomToolDescription(options);
 		if (custom) description = withMandatorySafetyGuidance(custom);
 		else {
-			warn(options, `${CUSTOM_TOOL_DESCRIPTION_FILE} was not found or valid for toolDescriptionMode "custom"; using compact description.`);
-			description = COMPACT_SUBAGENT_TOOL_DESCRIPTION;
+			warn(options, `${CUSTOM_TOOL_DESCRIPTION_FILE} was not found or valid for toolDescriptionMode "custom"; using full description.`);
+			description = FULL_SUBAGENT_TOOL_DESCRIPTION;
 		}
 	} else description = FULL_SUBAGENT_TOOL_DESCRIPTION;
-	return config.legacyChainControls === false ? withoutLegacyChainControlGuidance(description) : description;
+	return description;
 }

@@ -155,6 +155,68 @@ afterEach(() => {
 });
 
 describe("buildPiArgs session wiring", () => {
+	it("keeps empty-extension warnings in the resolved plan without logging", () => {
+		const originalWarn = console.warn;
+		const warnCalls: string[] = [];
+		console.warn = (...args: unknown[]) => {
+			warnCalls.push(args.map(String).join(" "));
+		};
+		try {
+			const plan = resolvePiLaunchToolPlan({
+				extensions: [],
+				agentName: "quota-reviewer",
+			});
+			assert.equal(plan.disableAmbientExtensions, true);
+			assert.equal(plan.warnings.length, 1);
+			assert.match(plan.warnings[0]!, /extensions: \[\] override for agent 'quota-reviewer'/);
+			assert.match(plan.warnings[0]!, /disables ALL ambient extensions/);
+			assert.deepEqual(warnCalls, []);
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	it("keeps empty-extension warnings quiet across repeated argument builds", () => {
+		const originalWarn = console.warn;
+		const warnCalls: string[] = [];
+		console.warn = (...args: unknown[]) => {
+			warnCalls.push(args.map(String).join(" "));
+		};
+		try {
+			buildPiArgs({
+				baseArgs: [],
+				task: "Test warning output.",
+				inheritProjectContext: true,
+				inheritSkills: true,
+				extensions: [],
+				childAgentName: "quota-reviewer",
+			});
+			buildPiArgs({
+				baseArgs: [],
+				task: "Retry warning output.",
+				inheritProjectContext: true,
+				inheritSkills: true,
+				extensions: [],
+				childAgentName: "quota-reviewer",
+			});
+			assert.deepEqual(warnCalls, []);
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	it("does not warn when extensions are omitted (ambient extensions inherited normally)", () => {
+		const plan = resolvePiLaunchToolPlan({});
+		assert.equal(plan.disableAmbientExtensions, false);
+		assert.deepEqual(plan.warnings, []);
+	});
+
+	it("does not warn when extensions is a non-empty explicit list", () => {
+		const plan = resolvePiLaunchToolPlan({ extensions: ["./tools/provider-ext.ts"] });
+		assert.equal(plan.disableAmbientExtensions, true);
+		assert.deepEqual(plan.warnings, []);
+	});
+
 	it("projects launch-resolved extension identifiers without raw paths", () => {
 		const privateExt = path.join(
 			os.tmpdir(),
@@ -806,11 +868,53 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			toolsArg,
 			"read,grep,find,ls,bash,edit,write,contact_supervisor",
 		);
+		// Supervisor-coordination names are runtime-registered in children, so
+		// they are never strict requirements even when named explicitly (#1207).
 		assert.deepEqual(
 			JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"),
-			toolsArg.split(","),
+			["read", "grep", "find", "ls", "bash", "edit", "write"],
 		);
 		assert.equal(env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV], toolDiagnosticPath);
+	});
+
+	it("strips the legacy supervisor pairing from requirements", () => {
+		const { args, env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read", "intercom", "contact_supervisor"],
+		});
+
+		assert.equal(
+			args[args.indexOf("--tools") + 1],
+			"read,intercom,contact_supervisor",
+		);
+		assert.deepEqual(
+			JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"),
+			["read"],
+		);
+	});
+
+	it("keeps a lone explicit intercom tool strict", () => {
+		const { args, env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read", "intercom"],
+		});
+
+		assert.equal(
+			args[args.indexOf("--tools") + 1],
+			"read,intercom",
+		);
+		assert.deepEqual(
+			JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"),
+			["read", "intercom"],
+		);
 	});
 
 	it("launches the bundled reviewer without mutation-capable tools", () => {
@@ -909,7 +1013,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		);
 	});
 
-	it("matches pi-mcp-adapter 2.20.1 metadata cache hashes", () => {
+	it("matches pi-mcp-adapter 2.26.0 metadata cache hashes", () => {
 		process.env.MCP_HASH_ROOT = "/tmp/mcp-root";
 		process.env.MCP_HASH_TOKEN = "token-value";
 
@@ -930,15 +1034,21 @@ describe("buildPiArgs system prompt mode wiring", () => {
 						Authorization: "Bearer ${MCP_HASH_TOKEN}",
 						Secret: "!op read test",
 					},
+					requestHeadersCommand: {
+						command: "headers --token $env:MCP_HASH_TOKEN",
+						args: ["--root", "{env:MCP_HASH_ROOT}"],
+						env: { TOKEN: "${MCP_HASH_TOKEN}", SECRET_COMMAND: "!op read test" },
+						timeoutMs: 2500,
+					},
 					auth: "bearer",
 					bearerTokenEnv: "MCP_HASH_TOKEN",
 				}),
 				computeMcpServerHash({ socket: "{env:MCP_HASH_ROOT}/rmcp.sock" }),
 			],
 			[
-				"e78fc93f972eabed6a17c81a253765e013089b082dc8c0a05e9dfe6cb0cb8248",
-				"90c5d968d664477fe0c72f3978c744ae9e44c8b0adc529685d0c5f337061b4a5",
-				"a1d6c326455134aa82feb4523939d6f987f85577fa4cae410f6fb8408cbf750d",
+				"2c6d629872df1d4243906b17c57ebf688d8be0426e471bc2b0c956d952823c63",
+				"a7d142f0300b3fc6cce3039823eab3d9da9635a20f8d0c5d1c414d6c2da83968",
+				"592c6a094c7ba78133bffa5498e268e70dac7b9c450f9c23d9a46585a54edb50",
 			],
 		);
 	});
@@ -985,7 +1095,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		writeMcpFixture(fixture, {
 			serverName: "github",
 			definition: { command: "github-mcp", protocolVersion: "2025-03-26" },
-			configHash: "25b77b7189f1c5fe80b028cb84eb393532528231ac39081fe97c4e2ee7fa086b",
+			configHash: "e2be19d9c42c791c8c125397cc9a5c1b592effe15c422a7f7d5fbf2eb6397251",
 			tools: [{ name: "search_repositories" }],
 		});
 

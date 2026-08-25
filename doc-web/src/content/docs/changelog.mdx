@@ -5,6 +5,14 @@ title: Changelog
 
 This history follows Selesai release tags reachable from the `main` branch. Tags from unrelated Pi history are excluded. Starting with 0.8.0, Selesai uses `selesai-v*` tags to avoid collisions with imported Pi tags.
 
+## 0.9.12 — Configurable tools, upgraded extensions & design skills
+
+- Built-in tools are now configurable: `defaultTools` selects the built-ins enabled by default, and SDK callers can use `tools`/`excludeTools` to allowlist and remove individual tools. `powershell`, `grep`, `find`, and `ls` participate in this unified tool configuration.
+- Bundled pi-subagents upgraded to 0.56.0: fast OpenAI-Codex child runs, extension bindings, `maxThinking`/default-provider model controls, external-job follow-ups, child-scoped stops, durable workflow receipts, and safer workflow safeguards.
+- Bundled pi-intercom upgraded to 0.12.0: consent-aware extension outbox sends, scoped session routing, endpoint-bound delivery with safe retries, pending-ask records, and optional after-first-use tool visibility.
+- Embedded Pi runtime updated to 0.84.3 with selected agent-session behavior updates.
+- Added bundled skills for premium branding, frontend taste, image-to-code and image-generation workflows, complete-output enforcement, and web-design reviews.
+
 ## 0.9.11 — Pi-compatible automatic skill discovery
 
 - Skills in `~/.agents/skills/` and project/ancestor `.agents/skills/` directories are now enabled automatically, matching the Pi coding agent. No `skills` section is required in settings for normal skill discovery.

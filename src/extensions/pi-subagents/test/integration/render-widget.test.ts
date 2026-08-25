@@ -204,7 +204,7 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /Agent 1\/3: reviewer · running · active now · 5 turns · 18 tool uses · 44k token/);
 		assert.match(text, /Agent 2\/3: reviewer · running · active 2s ago · 4 turns · 13 tool uses · 22k token/);
 		assert.match(text, /Agent 3\/3: reviewer · running · grep \| 1\.0s · 3 turns · 11 tool uses · 19k token/);
-		assert.match(text, /Press\s+for live detail/);
+		assert.match(text, /Press configured-expand-key for live detail/);
 		assert.doesNotMatch(text, /widget truncated/);
 		assert.ok(lines.length <= 10, "collapsed component should stay under Pi's string-widget cap even though it bypasses it");
 	});
@@ -441,7 +441,7 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /Agent 1\/3: reviewer · running · 2 tool uses/);
 		assert.match(text, /⎿  active now/);
 		assert.match(text, /Agent 2\/3: reviewer · running\n\s+⎿  read \| 2\.0s/);
-		assert.match(text, /Press\s+for live detail/);
+		assert.match(text, /Press configured-expand-key for live detail/);
 		assert.match(text, /Agent 3\/3: reviewer · complete · 1\.5k token/);
 	});
 
@@ -549,11 +549,11 @@ describe("subagent async widget rendering", () => {
 		};
 
 		const collapsedText = buildWidgetLines([job], theme, 180).join("\n");
-		assert.match(collapsedText, /Press\s+for live detail/);
+		assert.match(collapsedText, /Press configured-expand-key for live detail/);
 		assert.doesNotMatch(collapsedText, /found renderWidget/);
 
 		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
-		assert.doesNotMatch(expandedText, /Press\s+for live detail/);
+		assert.doesNotMatch(expandedText, /Press configured-expand-key for live detail/);
 		assert.match(expandedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
 		assert.match(expandedText, outputPathPattern("/tmp/1/output-0.log"));
 		assert.match(expandedText, /grep: async widget/);
@@ -746,12 +746,12 @@ describe("subagent async widget rendering", () => {
 		assert.match(collapsedText, /async subagent worker · background/);
 		assert.match(collapsedText, /Step 1\/1: worker · running/);
 		assert.match(collapsedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
-		assert.match(collapsedText, /Press\s+for live detail/);
+		assert.match(collapsedText, /Press configured-expand-key for live detail/);
 		assert.match(collapsedText, outputPathPattern("/tmp/single-run/output-0.log"));
 		assert.doesNotMatch(collapsedText, /reading render widget/);
 
 		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
-		assert.doesNotMatch(expandedText, /Press\s+for live detail/);
+		assert.doesNotMatch(expandedText, /Press configured-expand-key for live detail/);
 		assert.match(expandedText, /reading render widget/);
 	});
 
@@ -772,7 +772,7 @@ describe("subagent async widget rendering", () => {
 
 		assert.match(text, /⎿  read 1\.0s/);
 		assert.doesNotMatch(text, /Step 1\/1/);
-		assert.doesNotMatch(text, /Press\s+for live detail/);
+		assert.doesNotMatch(text, /Press configured-expand-key for live detail/);
 	});
 
 	it("includes logical chain context for active async chain parallel groups", () => {
@@ -823,7 +823,7 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /chain · step 2\/2/);
 		assert.match(text, /Step 1\/2: parallel group · 3\/3 done/);
 		assert.match(text, /Step 2\/2: writer · running · 1 tool use/);
-		assert.match(text, /Press\s+for live detail/);
+		assert.match(text, /Press configured-expand-key for live detail/);
 		assert.match(text, outputPathPattern("/tmp/chain/output-3.log"));
 		assert.doesNotMatch(text, /step 4\/4/);
 		assert.doesNotMatch(text, /Step 4\/4/);
@@ -985,12 +985,12 @@ describe("subagent async widget rendering", () => {
 			);
 			const first = component.render(180);
 
-			Date.now = () => 1_250;
+			Date.now = () => 2_000;
 			const second = component.render(180);
 			const withoutRunningGlyphs = (lines: string[]) => lines.map((line) => line.replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/gu, ""));
 
 			assert.equal(renderRequests, 0, "the component must not own the repaint cadence");
-			assert.notDeepEqual(second, first, "the render clock should advance quiet running glyphs");
+			assert.notDeepEqual(second, first, "the animation clock should advance quiet running glyphs");
 			assert.deepEqual(withoutRunningGlyphs(second), withoutRunningGlyphs(first), "only running glyphs should change");
 			assert.notEqual(firstRunningGlyph(first[0] ?? ""), firstRunningGlyph(second[0] ?? ""), "header glyph should advance");
 			assert.notEqual(firstRunningGlyph(first[1] ?? ""), firstRunningGlyph(second[1] ?? ""), "job glyph should advance");

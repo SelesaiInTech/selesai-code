@@ -1,4 +1,4 @@
-# Selesai Subagents: Management Authoring Rpc
+# Pi Subagents: Management Authoring Rpc
 
 This file is a detailed reference loaded from `skills/pi-subagents/SKILL.md`.
 
@@ -6,7 +6,7 @@ This file is a detailed reference loaded from `skills/pi-subagents/SKILL.md`.
 
 The `subagent(...)` tool also supports management actions.
 
-### List available agents and chains
+### List available agents and legacy chain records
 
 ```typescript
 subagent({ action: "list" })
@@ -85,7 +85,7 @@ subagent({ action: "reset", agent: "reviewer" })
 Use management actions when the system needs to create or edit subagents on
 demand without dropping into raw file editing.
 
-Management actions create or update user/project agent files. `config.name` is the local frontmatter name; optional `config.package` registers and looks up the runtime name as `{package}.{name}`. Use the dotted runtime name for `get`, `update`, `delete`, slash commands, and chain steps. For small builtin changes such as a model swap, prefer `subagents.agentOverrides` in settings.
+Management actions create or update user/project agent files. `config.name` is the local frontmatter name; optional `config.package` registers and looks up the runtime name as `{package}.{name}`. Use the dotted runtime name for `get`, `update`, `delete`, slash commands, and scripted workflow steps. For small builtin changes such as a model swap, prefer `subagents.agentOverrides` in settings. Durable `.chain.md` definitions are legacy records, not a current authoring target; use `workflowScript` or `/prompt-workflow` for repeatable orchestration.
 
 ## Creating and Editing Agents by File
 
@@ -129,11 +129,11 @@ That is only a starting point. Omit `package` for the traditional unqualified ru
 
 `aliases` is an optional comma-separated or block-list set of alternate names for selecting an agent. Aliases resolve to the canonical `name` for execution, status, persistence, and config. Exact canonical names take precedence over aliases, and alias collisions between distinct canonical agents fail as ambiguous. Management create/update accepts a comma-separated string, string array, or `false`/empty string to clear aliases.
 
-`acceptance` is a single-agent launch default. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. An explicit tool-call value wins; chain and parallel acceptance remains configured on the task or step. Management create/update accepts the same policy object, and `acceptance: ""` clears the frontmatter default (`false` remains the deprecated disabled-policy shorthand).
+`acceptance` is a single-agent launch default. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. An explicit tool-call value wins; scripted workflow child acceptance remains configured on the `runs.run` or `runs.all` item. Management create/update accepts the same policy object, and `acceptance: ""` clears the frontmatter default (`false` remains the deprecated disabled-policy shorthand).
 
 `acceptanceRole` is `read-only` or `writer` and controls automatic acceptance inference only. Explicit task mutation or no-edit intent wins; otherwise the role replaces agent-name guessing. Omission preserves the current name heuristics. The field does not grant or revoke tools. Management accepts `false` or an empty string to clear it.
 
-`tools` is a strict child allowlist, not an extension loader. For a named extension tool, keep its registered name in `tools` and load its provider through normal Selesai discovery, `extensions`, a path-like `tools` entry, or `subagentOnlyExtensions`. For example, pair `tools: read, fixture_search` with `subagentOnlyExtensions: ./tools/fixture-search.ts` when the provider should exist only in that agent's child sessions. The child now fails with the unavailable names and provider-loading guidance instead of silently continuing when a requested tool is absent; internal `structured_output` is allowed automatically when an output schema requires it.
+`tools` is a strict child allowlist, not an extension loader. For a named extension tool, keep its registered name in `tools` and load its provider through normal Pi discovery, `extensions`, a path-like `tools` entry, or `subagentOnlyExtensions`. For example, pair `tools: read, fixture_search` with `subagentOnlyExtensions: ./tools/fixture-search.ts` when the provider should exist only in that agent's child sessions. The child now fails with the unavailable names and provider-loading guidance instead of silently continuing when a requested tool is absent; internal `structured_output` is allowed automatically when an output schema requires it.
 
 `skillPath` adds invocation-private skill files or discovery directories relative to the agent file; it does not select them, so list the desired names under `skills`. Local matches win, unresolved or unreadable matches use normal discovery, and local candidates never enter the parent/global catalog. Use `memory: { scope: "project" | "user", path: "<name>" }` for opt-in role-specific durable memory under the dedicated `agent-memory/` namespace; it is separate from parent/session project memory.
 
@@ -143,8 +143,7 @@ copying a full builtin file.
 ## Prompt Template Integration
 
 The package includes prompt shortcuts for common workflows: `/parallel-review`,
-`/review-loop`, `/parallel-research`, `/parallel-context-build`,
-`/parallel-handoff-plan`, `/gather-context-and-clarify`, and
+`/review-loop`, `/parallel-research`, `/gather-context-and-clarify`, and
 `/parallel-cleanup`. Use them when the user wants repeatable review,
 review/fix loops, research, context handoff, implementation handoff,
 clarification, or cleanup-review patterns. `/parallel-review autofix` and
@@ -153,12 +152,10 @@ fixes worth doing now. Parent agents can also apply the same recipes directly
 with `subagent(...)` when the user describes the workflow in natural language
 instead of invoking a slash command.
 
-Additional user prompt templates can delegate into `pi-subagents` through the native `/prompt-workflow` and `/chain-prompts` commands. This is useful when a slash command should always run through a particular agent or with forked context. Prompt frontmatter can set `subagent`, `model`, `skill`, `cwd`, `fresh`, `fork`, or `inheritContext` for the native adapter; a `chain:` frontmatter list (names separated by ` -> `) runs the templates as a sequence, and `/chain-prompts` runs that sequence as a native chain.
-
-Native chain and parallel steps are also launchable directly from the command line: `/chain <agent> <task> | <agent> <task> [--bg] [--fork] [--fresh]`, `/parallel <agent> <task> | <agent> <task> [--bg]`, and `/run-chain <name>` for saved `.chain.md` / `.chain.json` workflows (`/run-chain list` lists them). Saved chains are managed like agents through `{ action: "create" | "get" | "update" | "delete" }` with `chainName`, and discovered from user (`~/.selesai/agent/chains/`) and project (`.selesai/chains/`) chains dirs plus package `chains` metadata.
+Additional user prompt templates can delegate into `pi-subagents` through the native `/prompt-workflow` command. This is useful when a slash command should always run through a particular agent or with forked context. Prompt frontmatter can set `subagent`, `model`, `skill`, `cwd`, `fresh`, `fork`, or `inheritContext` for the native adapter.
 
 ## Extension RPC
 
-Other Selesai extensions can call `pi-subagents` through the in-process event bus. The RPC channels are `subagents:rpc:v1:ready`, `subagents:rpc:v1:request`, and per-request replies at `subagents:rpc:v1:reply:<requestId>`. Envelopes use `{ version: 1, requestId, method, params }`, and replies use `{ version: 1, requestId, success, data | error }`. `ping` advertises the exact process-local async completion event as `events.asyncComplete` for RPC-spawn consumers.
+Other Pi extensions can call `pi-subagents` through the in-process event bus. The RPC channels are `subagents:rpc:v1:ready`, `subagents:rpc:v1:request`, and per-request replies at `subagents:rpc:v1:reply:<requestId>`. Envelopes use `{ version: 1, requestId, method, params }`, and replies use `{ version: 1, requestId, success, data | error }`. `ping` advertises the exact process-local async completion event as `events.asyncComplete` for RPC-spawn consumers.
 
-Methods: `ping`, `status`, `spawn`, `steer`, `interrupt`, `resume`, and `stop`. `ping` capability metadata advertises optional projections: `capabilities.launchResolvedExtensions` advertises parent-resolved opaque launch-extension identifiers in status details; `capabilities.runtimeAcknowledgedExtensions` advertises the best-effort child-runtime acknowledgement projection fed by cooperating extensions emitting `subagent:acknowledge-extension`. Foreground `details.results[]` rows carry a stable numeric `index`; correlate children by `(runId, index)` rather than row position. Consumers should read status/result artifacts and RPC projections instead of scraping terminal output and must ignore unknown fields. `spawn` requires `workflowScript`, is async-only, and rejects management actions, `async: false`, or `clarify: true`; it reuses the normal executor, so discovery, validation, session attribution, configured spawn caps, child-safety depth, artifacts, and async status are shared with the `subagent` tool. `status`, acknowledged async `steer`, and `interrupt` map to the normal control actions. RPC steer disables pause-and-revive recovery and advertises `capabilities.nonRecoveringSteer`, preserving the caller's authority over the exact spawned child. `resume` requires a target plus non-empty message and delegates to the package-owned revival path; it may set a caller-owned `file-only` output path but cannot override the persisted child model, tools, budgets, session ownership, or exclusive session lease. For retained-child workflows, list children first and resume only rows reported `resumable`; otherwise start a same-role fallback challenge and label it as fallback. `stop` targets running async runs through the existing timeout control channel. `pi.events` is process-local, so separate Selesai processes and child subagents need lifecycle artifact files or `pi-intercom` instead.
+Methods: `ping`, `status`, `spawn`, `steer`, `interrupt`, `resume`, and `stop`. `ping` capability metadata advertises optional projections: `capabilities.fleetStatus: { version: 1 }` adds bounded current-session `data.fleet` records (opaque reconciliation `key`, resolved `agent`, optional `role`, `model`, `effort`, caller-facing `goal`, `startedAt`, split `{ input, output, total }` tokens, plus `totalActive`/`omitted` overflow counts) to successful `status` replies; `capabilities.launchResolvedExtensions` advertises parent-resolved opaque launch-extension identifiers in status details; `capabilities.runtimeAcknowledgedExtensions` advertises the best-effort child-runtime acknowledgement projection fed by cooperating extensions emitting `subagent:acknowledge-extension`. Foreground `details.results[]` rows carry a stable numeric `index`; correlate children by `(runId, index)` rather than row position. Consumers should read status/result artifacts and RPC projections instead of scraping terminal output and must ignore unknown fields. `spawn` requires `workflowScript`, is async-only, and rejects management actions, `async: false`, or `clarify: true`; it reuses the normal executor, so discovery, validation, session attribution, configured spawn caps, child-safety depth, artifacts, and async status are shared with the `subagent` tool. `status`, acknowledged async `steer`, and `interrupt` map to the normal control actions. RPC steer disables pause-and-revive recovery and advertises `capabilities.nonRecoveringSteer`, preserving the caller's authority over the exact spawned child. `resume` requires a target plus non-empty message and delegates to the package-owned revival path; it may set a caller-owned `file-only` output path but cannot override the persisted child model, tools, budgets, session ownership, or exclusive session lease. For retained-child workflows, list children first and resume only rows reported `resumable`; otherwise start a same-role fallback challenge and label it as fallback. `stop` targets running async runs through the existing timeout control channel. `pi.events` is process-local, so separate Pi processes and child subagents need lifecycle artifact files or `pi-intercom` instead.

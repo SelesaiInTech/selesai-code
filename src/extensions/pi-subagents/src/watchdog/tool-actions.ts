@@ -114,6 +114,7 @@ export function handleWatchdogToolAction(action: string, params: WatchdogToolPar
 			if (!runtime) return result("Subagent watchdog runtime is unavailable.", true);
 			return result(buildWatchdogStatus(runtime.getSnapshot(ctx.cwd), ctx));
 		}
+		if (action === "watchdog.recommend-model") return result(buildRecommendationText(ctx));
 		if (action === "watchdog.check") return result(buildCheckText(runtime, ctx));
 		if (action !== "watchdog.configure") return result(`Unknown watchdog action: ${action}`, true);
 
@@ -150,5 +151,5 @@ export function handleWatchdogToolAction(action: string, params: WatchdogToolPar
 	}
 }
 
-export const WATCHDOG_TOOL_ACTIONS = ["watchdog.status", "watchdog.check"] as const;
+export const WATCHDOG_TOOL_ACTIONS = ["watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model"] as const;
 export const WATCHDOG_THINKING_VALUES = ["inherit", ...THINKING_LEVELS] as const;

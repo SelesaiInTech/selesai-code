@@ -3,12 +3,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@selesai/code";
-import { resolveAgentName, type AgentConfig, type AgentScope } from "../../agents/agents.ts";
+import { findBlockingAgentDiagnostic, resolveAgentName, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope } from "../../agents/agents.ts";
 import { getArtifactsDir, getChainRunsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import { ChainClarifyComponent, type ChainClarifyResult } from "./chain-clarify.ts";
+import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
+import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { resolveEffectiveThinking, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
-import { executeChain } from "./chain-execution.ts";
 import {
 	beginForegroundChild,
 	finishForegroundChild,
@@ -26,9 +26,11 @@ import { buildDoctorReport } from "../../extension/doctor.ts";
 import { readSubagentGuide } from "../../extension/subagent-guide.ts";
 import { normalizePublicSubagentExecution } from "../../extension/public-execution.ts";
 import { runSync } from "./execution.ts";
-import { buildModelCandidates, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelCandidate, type ParentModel } from "../shared/model-fallback.ts";
+import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
+import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
+import { buildModelCandidates, inheritsParentModel, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelCandidate, type ParentModel } from "../shared/model-fallback.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
-import type { ModelScopeConfig } from "../shared/model-scope.ts";
+import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
 import { recordRun } from "../shared/run-history.ts";
 import {
@@ -53,12 +55,15 @@ import {
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable, workflowAwaitedAsyncResultPath } from "../background/async-execution.ts";
 import { updateActiveRunIndex } from "../background/active-run-index.ts";
+import { steeringReceipt } from "../background/steering.ts";
 import { acquireActiveAsyncCapacity, ActiveAsyncCapacityError, getActiveAsyncCapacitySnapshot, resolveMaxActiveAsyncRunsPerSession, transferActiveAsyncCapacity, type ActiveAsyncCapacityHandle } from "../background/active-async-capacity.ts";
+import { isScheduledRunAction, type ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
 import { normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
-import { createForkContextResolver, forkedChildRequiresThinkingOff } from "../../shared/fork-context.ts";
+import { canPreferFork, createForkContextResolver, forkedChildRequiresThinkingOff, resolveSubagentLaunchContext } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
+import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
@@ -68,6 +73,7 @@ import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
+import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
@@ -83,10 +89,10 @@ import {
 	resolveSubagentResultStatus,
 	stripDetailsOutputsForIntercomReceipt,
 } from "../../intercom/result-intercom.ts";
-import { applySteeringRecoveryAgentConfig, buildRevivedAsyncTask, resolveAsyncResumeTarget, resolveAsyncRunLocation } from "../background/async-resume.ts";
-import { deliverCheckpointDecisionRequest, deliverInterruptRequest, readRevivalBriefs, requestAsyncSteer, type SteerDeliveryMode } from "../background/control-channel.ts";
+import { applySteeringRecoveryAgentConfig, asyncReviveRequiresRecoveryDescriptor, buildRevivedAsyncTask, readAsyncRecoveryDescriptor, resolveAsyncResumeTarget, resolveAsyncRunLocation } from "../background/async-resume.ts";
+import { deliverInterruptRequest, readRevivalBriefs, requestAsyncSteer, type SteerDeliveryMode } from "../background/control-channel.ts";
 import { updateSteeringTarget, waitForSteeringAction } from "../background/steering.ts";
-import { steerAsyncRun } from "./async-steering-action.ts";
+import { canQueueRetainedAsyncFollowUp, steerAsyncRun } from "./async-steering-action.ts";
 import {
 	removeWorkflowForegroundSteeringRoute,
 	resolveWorkflowForegroundSteeringTarget,
@@ -96,13 +102,17 @@ import {
 } from "./workflow-foreground-steering.ts";
 import { stopAsyncRun } from "./async-stop-action.ts";
 import { dismissRecoveredWorkflow } from "./async-dismiss-action.ts";
+import { promotePausedWorkflowIfSettled, reconcileDetachedWorkflowChildCompletion } from "./workflow-detach-reconcile.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath, waitForImportedAsyncRoot } from "../background/chain-root-attachment.ts";
 import { resultFilePath, writeAsyncResultFile } from "../background/result-files.ts";
 import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, snapshotNestedEventFiles, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
+import { isStoppableAsyncStatusStep, resolveAsyncStatusChild } from "../shared/child-identity.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
+import { getExternalJobProvider } from "../../api/external-job-provider.ts";
+import { externalJobFollowUpRequestDigest, externalJobFollowUpRequestId, externalJobFollowUpRunId, externalJobPromptDigest, externalJobStableJson } from "../shared/external-job-runner.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
 import { attachMissionToLaunchResult, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
@@ -112,9 +122,8 @@ import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
-import { previewSimpleWorkflowRun, runWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../workflows/scripted-workflow.ts";
-import { resolveAutoRelaunchDecision, resolveMaxWorkflowAutoRelaunches } from "../../workflows/workflow-auto-relaunch.ts";
-import { renderWorkflowPrompt } from "../../shared/prompt-resources.ts";
+import { previewSimpleWorkflowRun, runWorkflowScript, WorkflowScriptError, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
+import { buildWorkflowReceipt, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
 import { resolveWorkflowChatProgress, type WorkflowChatProgressProjection } from "../../workflows/chat-progress.ts";
 import {
 	cleanupWorktrees,
@@ -148,7 +157,9 @@ import {
 	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
 	type RunFanoutBudgetDescriptor,
+	type SteeringRecoveryDescriptor,
 	type SingleResult,
+	type SubagentChildStatusEvent,
 	type ToolBudgetConfig,
 	type TurnBudgetConfig,
 	type UsageBudgetConfig,
@@ -168,10 +179,11 @@ import {
 	resolveCurrentMaxSubagentDepth,
 	resolveMaxSubagentSpawnsPerRun,
 	wrapForkTask,
+	type ScheduleOrigin,
 } from "../../shared/types.ts";
 
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "mission.create", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "refine", "refine.rollback", "dismiss"]);
-const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["delete", "eject", "disable", "reset", "mission.close", "worktree.discard", "refine.rollback", "inspector.close", "project.close", "stop", "interrupt", "reject-checkpoint"]);
+const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "refine", "refine.rollback", "dismiss", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
+const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["delete", "eject", "disable", "reset", "mission.close", "worktree.discard", "refine.rollback", "inspector.close", "project.close", "stop", "interrupt", "schedule.delete"]);
 
 function editDistance(left: string, right: string): number {
 	const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
@@ -254,6 +266,7 @@ interface TaskParam {
 	reads?: string[] | boolean;
 	progress?: boolean;
 	model?: string;
+	fast?: boolean;
 	skill?: string | string[] | boolean;
 	outputSchema?: JsonSchemaObject;
 	acceptance?: AcceptanceInput;
@@ -268,6 +281,7 @@ export interface SubagentParamsLike {
 	dir?: string;
 	handoffPath?: string;
 	index?: number;
+	childId?: string;
 	view?: "fleet" | "transcript";
 	lines?: number;
 	topic?: string;
@@ -277,29 +291,37 @@ export interface SubagentParamsLike {
 	type?: string;
 	agent?: string;
 	task?: string;
+	extensionBindings?: ExtensionBindings;
 	/** Retained async child run id. Valid only on workflow runs.run items. */
 	resume?: string;
 	message?: string;
 	steeringRecovery?: boolean;
 	mode?: SteerDeliveryMode;
 	workflowScript?: string;
-	chatProgress?: "auto" | "off" | "terminal" | "milestones" | "live-card";
+	chatProgress?: "auto" | "off" | "live-card";
+	isolation?: "none" | "worktree";
 	step?: ChainStep;
 	/** Internal workflow ownership metadata; not part of the public schema. */
 	workflowParentRunId?: string;
 	workflowKey?: string;
+	/** Set by the scheduler so this run's completion can name the schedule that produced it. */
+	scheduleOrigin?: ScheduleOrigin;
 	workflowChildAsyncId?: string;
+	workflowAwaitAsync?: boolean;
+	workflowParentDeadlineAt?: number;
 	suppressRoutineResultIntercom?: boolean;
 	/** Internal inherited cumulative run-tree budget. */
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	/** Internal workflow host admission proof. */
 	runFanoutAdmitted?: boolean;
+	/** Internal inherited tool/agent ceiling for delegated child launches. */
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	/** Internal durable-run compatibility fields. Public callers must use workflowScript. */
 	chain?: ChainStep[];
 	tasks?: TaskParam[];
 	concurrency?: number;
 	worktree?: boolean;
-	context?: "fresh" | "fork";
+	context?: "fresh" | "fork" | "profile";
 	/** Per-run intercom bridge config. It replaces the global config for this launch only. */
 	intercomBridge?: IntercomBridgeConfig;
 	async?: boolean;
@@ -322,6 +344,7 @@ export interface SubagentParamsLike {
 	artifacts?: boolean;
 	includeProgress?: boolean;
 	model?: string;
+	fast?: boolean;
 	thinking?: string | false;
 	scope?: string;
 	target?: string;
@@ -337,8 +360,6 @@ export interface SubagentParamsLike {
 	acceptance?: AcceptanceInput;
 	gate?: string;
 	agentContract?: AgentContract;
-	schedule?: string;
-	scheduleName?: string;
 	at?: string;
 	every?: string;
 	on?: string | number;
@@ -371,16 +392,20 @@ interface ExecutorDeps {
 	config: ExtensionConfig;
 	asyncByDefault: boolean;
 	waitToolEnabled?: boolean;
+	handleScheduledRunAction?: (params: SubagentParamsLike, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>;
+	watchdog?: MainWatchdogRuntime;
 	tempArtifactsDir: string;
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
 	expandTilde: (p: string) => string;
-	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[]; modelScope?: ModelScopeConfig };
+	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"] };
 	allowMutatingManagementActions?: boolean;
+	activateSupervisorTransport?: () => void;
+	refreshResultDelivery?: () => void;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 }
 
-type ForkSessionFileForTask = (agentName: string, idx?: number, modelOverride?: string) => string | undefined;
-type ForkThinkingOverrideForTask = (agentName: string, idx?: number, modelOverride?: string) => AgentConfig["thinking"] | undefined;
+type ForkSessionFileForTask = (agentName: string, idx?: number, modelOverride?: string, modelOverrideFromParent?: boolean) => string | undefined;
+type ForkThinkingOverrideForTask = (agentName: string, idx?: number, modelOverride?: string, modelOverrideFromParent?: boolean) => AgentConfig["thinking"] | undefined;
 
 interface ExecutionContextData {
 	params: SubagentParamsLike;
@@ -458,6 +483,7 @@ function promptAuditRedoParams(value: unknown, rewrittenTask: string): SubagentP
 	delete params.workflowParentRunId;
 	delete params.workflowKey;
 	delete params.workflowChildAsyncId;
+	delete params.workflowParentDeadlineAt;
 	delete params.suppressRoutineResultIntercom;
 	if (params.worktree === true && Array.isArray(params.tasks)) delete params.cwd;
 	return params;
@@ -549,7 +575,7 @@ function countRequestedSubagentSpawns(params: SubagentParamsLike, config: Extens
 function staticRunFanoutPaths(params: SubagentParamsLike): string[] {
 	if (params.tasks) return params.tasks.map((_, index) => `tasks[${index}]`);
 	if (params.chain) return params.chain.flatMap((step, stepIndex) => {
-		if (isDynamicParallelStep(step) || "checkpoint" in step) return [];
+		if (isDynamicParallelStep(step)) return [];
 		if (isParallelStep(step)) return step.parallel.map((_, itemIndex) => `chain[${stepIndex}].parallel[${itemIndex}]`);
 		return [`chain[${stepIndex}]`];
 	});
@@ -623,7 +649,7 @@ function foregroundChildActivityFromProgress(progress: SingleResult["progress"] 
 	};
 }
 
-function rememberForegroundRun(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[]; checkpoint?: Details["checkpoint"] }): void {
+function rememberForegroundRun(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[]; extensionBindings?: ExtensionBindings }): void {
 	state.foregroundRuns ??= new Map();
 	const previous = state.foregroundRuns.get(input.runId);
 	const updatedAt = Date.now();
@@ -633,7 +659,6 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 		cwd: input.cwd,
 		...(input.sessionId ? { sessionId: input.sessionId } : {}),
 		updatedAt,
-		...(input.checkpoint ? { checkpoint: input.checkpoint } : {}),
 		children: input.results.map((result, index) => {
 			const child = {
 				agent: result.agent,
@@ -666,6 +691,7 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 				...(result.detachedReason ? { detachedReason: result.detachedReason } : {}),
 				...(result.acceptance ? { acceptance: result.acceptance } : {}),
 				...(result.launchContractDigest ? { launchContractDigest: result.launchContractDigest } : {}),
+				...(input.extensionBindings ? { extensionBindings: input.extensionBindings } : {}),
 				...(result.launchResolvedExtensions ? { launchResolvedExtensions: result.launchResolvedExtensions } : {}),
 				...(result.runtimeAcknowledgedExtensions ? { runtimeAcknowledgedExtensions: result.runtimeAcknowledgedExtensions } : {}),
 				...(result.capabilityCeiling ? { capabilityCeiling: result.capabilityCeiling } : {}),
@@ -784,13 +810,13 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	});
 }
 
-function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
+function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; extensionBindings?: ExtensionBindings; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
 	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
-	const acceptedSessions = new Set(state.sessionLineage?.length ? state.sessionLineage : [state.currentSessionId]);
-	const sessionRuns = [...state.foregroundRuns.values()].filter((run) => run.sessionId !== undefined && acceptedSessions.has(run.sessionId));
-	const direct = sessionRuns.find((run) => run.runId === requested);
-	const matches = direct ? [direct] : sessionRuns.filter((run) => run.runId.startsWith(requested));
+	const direct = state.foregroundRuns.get(requested);
+	const matches = direct?.sessionId === state.currentSessionId
+		? [direct]
+		: options.exactOnly ? [] : [...state.foregroundRuns.values()].filter((run) => run.sessionId === state.currentSessionId && run.runId.startsWith(requested));
 	if (matches.length === 0) return undefined;
 	if (matches.length > 1) throw new Error(`Ambiguous foreground run id prefix '${requested}' matched: ${matches.map((run) => run.runId).join(", ")}. Provide a longer id.`);
 	const run = matches[0]!;
@@ -815,6 +841,7 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 		...(child.model ? { model: child.model } : {}),
 		...(child.thinking ? { thinking: child.thinking } : {}),
 		...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
+		...(child.extensionBindings ? { extensionBindings: normalizeExtensionBindings(child.extensionBindings)!.value } : {}),
 		...(child.capabilityCeiling ? { capabilityCeiling: child.capabilityCeiling } : {}),
 	};
 }
@@ -834,11 +861,16 @@ type NestedResumeSourceTarget = {
 	thinking?: AgentConfig["thinking"];
 	launchContractDigest?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	recoveryDescriptor?: SteeringRecoveryDescriptor;
 };
 type ResumeSourceTarget = AsyncResumeSourceTarget | ForegroundResumeSourceTarget | NestedResumeSourceTarget;
 
 function isAsyncRunNotFound(error: unknown): boolean {
 	return error instanceof Error && error.message.startsWith("Async run not found.");
+}
+
+function isMissingExactAsyncStatusFile(error: unknown, requested: string): boolean {
+	return error instanceof Error && error.message === `Status file not found for async run '${requested}'.`;
 }
 
 function isResumeAmbiguity(error: unknown): boolean {
@@ -858,7 +890,7 @@ function isExactResumeError(error: unknown, source: "async" | "foreground", requ
 	return new RegExp(`\\b${source} run '${escapeRegExp(requested)}'`, "i").test(error.message);
 }
 
-function resolveResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { asyncRequireSessionFile?: boolean } = {}): ResumeSourceTarget {
+function resolveResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { asyncRequireSessionFile?: boolean; exactOnly?: boolean } = {}): ResumeSourceTarget {
 	const requested = (params.id ?? params.runId)?.trim() ?? "";
 	let foregroundTarget: ForegroundResumeSourceTarget | undefined;
 	let foregroundError: unknown;
@@ -866,15 +898,18 @@ function resolveResumeTarget(params: SubagentParamsLike, state: SubagentState, o
 	let asyncError: unknown;
 
 	try {
-		const target = resolveForegroundResumeTarget(params, state);
+		const target = resolveForegroundResumeTarget(params, state, options);
 		if (target) foregroundTarget = { kind: "revive", source: "foreground", ...target };
 	} catch (error) {
 		foregroundError = error;
 	}
 	try {
+		const asyncParams = options.exactOnly && requested && !params.dir
+			? { ...params, dir: path.join(DIRS.async, requested) }
+			: params;
 		asyncTarget = {
 			source: "async",
-			...resolveAsyncResumeTarget(params, {}, compactOptional<NonNullable<Parameters<typeof resolveAsyncResumeTarget>[2]>>({
+			...resolveAsyncResumeTarget(asyncParams, {}, compactOptional<NonNullable<Parameters<typeof resolveAsyncResumeTarget>[2]>>({
 				requireSessionFile: options.asyncRequireSessionFile,
 				sessionId: state.currentSessionId ?? undefined,
 			})),
@@ -891,7 +926,7 @@ function resolveResumeTarget(params: SubagentParamsLike, state: SubagentState, o
 		throw new Error(`Resume id '${requested}' is ambiguous between foreground run '${foregroundTarget.runId}' and async run '${asyncTarget.runId}'. Provide a full run id.`);
 	}
 	if (foregroundTarget) {
-		if (isExactResumeError(asyncError, "async", requested)) throw asyncError;
+		if (isExactResumeError(asyncError, "async", requested) && !isMissingExactAsyncStatusFile(asyncError, requested)) throw asyncError;
 		if (isResumeAmbiguity(asyncError) && !resumeTargetExact(foregroundTarget, requested)) throw asyncError;
 		return foregroundTarget;
 	}
@@ -947,11 +982,48 @@ function emitAdvisoryControlEvent(pi: ExtensionAPI, channel: string, payload: un
 	}
 }
 
+function persistAsyncWorkflowControlEvent(input: {
+	job: AsyncJobState;
+	event: ControlEvent;
+	controlConfig: ResolvedControlConfig;
+	intercomBridge: IntercomBridgeState;
+	childIntercomTarget?: string;
+}): void {
+	const channels = input.event.type === "active_long_running"
+		? input.controlConfig.notifyChannels.filter((channel) => channel !== "intercom")
+		: input.controlConfig.notifyChannels;
+	if (channels.length === 0) return;
+	const record = {
+		ts: Date.now(),
+		runId: input.job.asyncId,
+		type: "subagent.control",
+		event: input.event,
+		channels,
+		childIntercomTarget: input.childIntercomTarget,
+		noticeText: formatControlNoticeMessage(input.event, input.childIntercomTarget),
+		...(input.intercomBridge.active && input.intercomBridge.orchestratorTarget && channels.includes("intercom")
+			? {
+				intercom: {
+					to: input.intercomBridge.orchestratorTarget,
+					message: formatControlIntercomMessage(input.event, input.childIntercomTarget),
+				},
+			}
+			: {}),
+	};
+	try {
+		fs.appendFileSync(path.join(input.job.asyncDir, "events.jsonl"), `${JSON.stringify(record)}\n`, "utf-8");
+	} catch (error) {
+		if (!isStorageCapacityError(error)) throw error;
+		console.error("Failed to append async workflow control event while storage is full:", error);
+	}
+}
+
 function emitControlNotification(input: {
 	pi: ExtensionAPI;
 	controlConfig: ResolvedControlConfig;
 	intercomBridge: IntercomBridgeState;
 	event: ControlEvent;
+	source?: "foreground" | "async";
 }): void {
 	if (!shouldNotifyControlEvent(input.controlConfig, input.event)) return;
 	const childIntercomTarget = input.intercomBridge.active
@@ -959,7 +1031,7 @@ function emitControlNotification(input: {
 		: undefined;
 	const payload = {
 		event: input.event,
-		source: "foreground" as const,
+		source: input.source ?? "foreground",
 		childIntercomTarget,
 		noticeText: formatControlNoticeMessage(input.event, childIntercomTarget),
 	};
@@ -992,9 +1064,9 @@ function interruptAsyncRun(
 		};
 	}
 	const activeSteps = status.steps?.filter((step) => step.status === "running") ?? [];
-	if (activeSteps.length > 0 && activeSteps.every((step) => step.runner?.type === "external-cli")) {
+	if (activeSteps.length > 0 && activeSteps.every((step) => step.runner?.type === "external-cli" || step.runner?.type === "external-job")) {
 		return {
-			content: [{ type: "text", text: `Interrupt is unsupported for one-shot external CLI async run ${target.asyncId}; use stop instead.` }],
+			content: [{ type: "text", text: `Interrupt is unsupported for external async run ${target.asyncId}; use stop instead.` }],
 			isError: true,
 			details: { mode: "management", results: [] },
 		};
@@ -1211,7 +1283,7 @@ function appendStepToAsyncChain(input: {
 		const startIndex = (status.chainStepCount ?? status.steps?.length ?? 0) + pendingAppendRequests.reduce((total, request) => total + request.steps.length, 0);
 		const appendPaths = chain.flatMap((step, localIndex) => {
 			const absoluteIndex = startIndex + localIndex;
-			if (isDynamicParallelStep(step) || "checkpoint" in step) return [];
+			if (isDynamicParallelStep(step)) return [];
 			if (isParallelStep(step)) return step.parallel.map((_, itemIndex) => `chain[${absoluteIndex}].parallel[${itemIndex}]`);
 			return [`chain[${absoluteIndex}]`];
 		});
@@ -1275,6 +1347,14 @@ function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: s
 	return realSessionFile;
 }
 
+export function readNestedRecoveryDescriptor(asyncDir: string | undefined, runId: string, agent: string): SteeringRecoveryDescriptor | undefined {
+	const recoveryDescriptor = readAsyncRecoveryDescriptor(asyncDir);
+	if (!recoveryDescriptor) return undefined;
+	if (recoveryDescriptor.sourceRunId !== runId) throw new Error(`Nested run '${runId}' has a recovery descriptor for a different source run.`);
+	if (recoveryDescriptor.agent !== agent) throw new Error(`Nested run '${runId}' has a recovery descriptor for a different agent.`);
+	return recoveryDescriptor;
+}
+
 function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "nested" }, trustedSessionRoots: string[]): NestedResumeSourceTarget {
 	const run = match.match.run;
 	if (run.state === "running" || run.state === "queued") throw new Error(`Nested run '${run.id}' is live; route the follow-up to the owner process instead.`);
@@ -1283,6 +1363,7 @@ function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "neste
 	if (!agent) throw new Error(`Could not determine child agent for nested run '${run.id}'.`);
 	const state = run.state === "complete" || run.state === "failed" || run.state === "paused" ? run.state : "failed";
 	const asyncDir = resolveNestedAsyncDir(match.match.rootRunId, run);
+	const recoveryDescriptor = readNestedRecoveryDescriptor(asyncDir, run.id, agent);
 	return compactOptional<NestedResumeSourceTarget>({
 		kind: "revive",
 		source: "nested",
@@ -1293,6 +1374,7 @@ function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "neste
 		cwd: asyncDir ? path.dirname(asyncDir) : undefined,
 		sessionFile: validateNestedSessionFile(run, trustedSessionRoots),
 		...(run.capabilityCeiling ? { capabilityCeiling: run.capabilityCeiling } : {}),
+		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 	});
 }
 
@@ -1369,12 +1451,12 @@ async function directNestedAsyncSteer(input: { target: ResolvedSubagentRunId & {
 	const targets = targetIndexes.map((index) => ({ index, state: steps[index]?.status === "pending" ? "scheduled" as const : "pending" as const }));
 	if (targets.every((target) => target.state === "scheduled")) {
 		const scheduled = { requestId, state: "scheduled" as const, deliveryStatus: "queued" as const, sourceRunId: run.id, targets };
-		return { content: [{ type: "text", text: `Steering scheduled for nested async run ${run.id} (request ${requestId}).` }], details: { mode: "management", results: [], steering: scheduled } };
+		return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering scheduled for nested async run ${run.id} (request ${requestId}).`) }], details: { mode: "management", results: [], steering: scheduled } };
 	}
 	const waited = await waitForSteeringAction(omitUndefinedProperties({ asyncDir, sourceRunId: run.id, requestId, timeoutMs: 3_000, signal: input.signal }));
 	const result = waited ?? { requestId, state: "pending" as const, deliveryStatus: "queued" as const, sourceRunId: run.id, targets };
 	const stateText = result.state === "failed" ? "failed" : result.state === "partial" ? "partial" : result.deliveryStatus === "queued" ? "queued" : result.state === "delivered" ? "delivered" : "pending";
-	return { content: [{ type: "text", text: `Steering ${stateText} for nested async run ${run.id} (request ${requestId}).` }], ...(result.state === "failed" || result.state === "partial" ? { isError: true } : {}), details: { mode: "management", results: [], steering: result } };
+	return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering ${stateText} for nested async run ${run.id} (request ${requestId}).`) }], ...(result.state === "failed" || result.state === "partial" ? { isError: true } : {}), details: { mode: "management", results: [], steering: result } };
 }
 
 async function interruptNestedRun(target: ResolvedSubagentRunId & { kind: "nested" }): Promise<AgentToolResult<Details>> {
@@ -1404,13 +1486,148 @@ async function steerNestedRun(input: { target: ResolvedSubagentRunId & { kind: "
 	return { content: [{ type: "text", text: `Nested run ${run.id} is not a live async Pi child session with a steering inbox. action='steer' cannot target foreground nested runs.` }], isError: true, details: { mode: "management", results: [] } };
 }
 
+function externalJobOptionsEqual(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+	return externalJobStableJson(left) === externalJobStableJson(right);
+}
+
+function providerFollowUpSupport(providerName: string): { ok: true } | { ok: false; message: string } {
+	try {
+		const provider = getExternalJobProvider(providerName);
+		if (!provider) return { ok: false, message: `External-job provider '${providerName}' is not registered. Load the provider package, then retry action='resume'.` };
+		if (typeof provider.followUp !== "function") return { ok: false, message: `External-job provider '${providerName}' does not support follow-up. Update or reload the provider package, then retry action='resume'.` };
+		return { ok: true };
+	} catch (error) {
+		return { ok: false, message: `External-job provider registry unavailable: ${error instanceof Error ? error.message : String(error)}` };
+	}
+}
+
+function externalJobFollowUpStarted(input: { sourceRunId: string; runId: string; asyncDir: string; duplicate?: boolean; interactive: boolean }): AgentToolResult<Details> {
+	const lines = [
+		input.duplicate ? `External-job follow-up already exists for ${input.sourceRunId}.` : `Started external-job follow-up for ${input.sourceRunId}.`,
+		`Follow-up run: ${input.runId}`,
+		`Async dir: ${input.asyncDir}`,
+		`Status if needed: subagent({ action: "status", id: "${input.runId}" })`,
+	];
+	return { content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n"), input.interactive) }], details: { mode: "single", results: [], asyncId: input.runId, asyncDir: input.asyncDir } };
+}
+
 function externalRunnerControlError(asyncDir: string, action: "steer" | "resume"): AgentToolResult<Details> | undefined {
 	const status = readStatus(asyncDir);
-	if (!status?.steps?.length || !status.steps.every((step) => step.runner?.type === "external-cli")) return undefined;
+	if (!status?.steps?.length || !status.steps.every((step) => step.runner?.type === "external-cli" || step.runner?.type === "external-job")) return undefined;
 	const message = action === "steer"
-		? "One-shot external CLI runners do not accept live steer messages."
-		: "One-shot external CLI runners do not persist sessions and cannot be resumed.";
+		? "External runners do not accept live steer messages."
+		: "External runners do not persist Pi sessions and cannot be resumed.";
 	return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
+}
+
+async function resumeExternalJobFollowUp(input: {
+	target: AsyncResumeSourceTarget;
+	followUp: string;
+	baseAgentConfig: AgentConfig;
+	effectiveCwd: string;
+	requestCwd: string;
+	ctx: ExtensionContext;
+	deps: ExecutorDeps;
+	parentModel?: ParentModel;
+	modelScope?: ModelScopeConfig;
+	intercomBridge: IntercomBridgeState;
+	parentSessionFile: string | null;
+	absoluteDeadlineAt?: number;
+}): Promise<AgentToolResult<Details>> {
+	if (input.target.kind === "live" || input.target.state === "running" || input.target.state === "queued") {
+		return { content: [{ type: "text", text: `External-job run '${input.target.runId}' is still running. Wait for completion, then use subagent({ action: "resume", id: "${input.target.runId}", message: "..." }).` }], isError: true, details: { mode: "management", results: [] } };
+	}
+	const runner = input.target.runner;
+	const externalJob = input.target.externalJob;
+	if (runner?.type !== "external-job") return { content: [{ type: "text", text: "Internal error: external-job follow-up was requested for a non-external-job runner." }], isError: true, details: { mode: "management", results: [] } };
+	if (!externalJob) return { content: [{ type: "text", text: `External-job run '${input.target.runId}' has no persisted provider metadata. Cannot follow up without the parent provider job id.` }], isError: true, details: { mode: "management", results: [] } };
+	if (externalJob.provider !== runner.provider) return { content: [{ type: "text", text: `External-job run '${input.target.runId}' has mismatched provider metadata. Refusing to follow up.` }], isError: true, details: { mode: "management", results: [] } };
+	if (!externalJobOptionsEqual(externalJob.options, runner.options)) return { content: [{ type: "text", text: `External-job run '${input.target.runId}' has mismatched provider options. Refusing to follow up.` }], isError: true, details: { mode: "management", results: [] } };
+	if (!externalJob.providerJobId) return { content: [{ type: "text", text: `External-job run '${input.target.runId}' has no parent provider job id. Cannot follow up without reopening or redispatching, so this fails closed.` }], isError: true, details: { mode: "management", results: [] } };
+	if (externalJob.state !== "completed") return { content: [{ type: "text", text: `External-job run '${input.target.runId}' provider state is ${externalJob.state}. Wait for completion, then use action='resume'.` }], isError: true, details: { mode: "management", results: [] } };
+	const support = providerFollowUpSupport(runner.provider);
+	if (!support.ok) return { content: [{ type: "text", text: support.message }], isError: true, details: { mode: "management", results: [] } };
+
+	const promptDigest = externalJobPromptDigest(input.followUp);
+	const requestDigest = externalJobFollowUpRequestDigest({ provider: runner.provider, parentProviderJobId: externalJob.providerJobId, promptDigest, options: runner.options });
+	const requestId = externalJobFollowUpRequestId(requestDigest);
+	const runId = externalJobFollowUpRunId(requestDigest);
+	const asyncDir = path.join(DIRS.async, runId);
+	const currentSessionId = input.deps.state.currentSessionId;
+	if (!currentSessionId) return { content: [{ type: "text", text: "External-job follow-up requires an active parent session." }], isError: true, details: { mode: "management", results: [] } };
+	if (fs.existsSync(asyncDir) || fs.existsSync(resultFilePath(DIRS.results, runId))) {
+		return externalJobFollowUpStarted({ sourceRunId: input.target.runId, runId, asyncDir, duplicate: true, interactive: input.ctx.hasUI });
+	}
+
+	const depthState = checkSubagentDepth(input.deps.config.maxSubagentDepth);
+	if (depthState.blocked) {
+		return { content: [{ type: "text", text: `Nested subagent resume blocked (depth=${depthState.depth}, max=${depthState.maxDepth}). Complete the follow-up directly instead.` }], isError: true, details: { mode: "management", results: [] } };
+	}
+	const topLevelResume = depthState.depth === 0 && !resolveInheritedNestedRouteFromEnv() && !input.deps.state.workflowControllers?.has(input.target.runId);
+	let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
+	try {
+		activeAsyncCapacity = topLevelResume ? acquireActiveAsyncCapacity({
+			sessionId: currentSessionId,
+			limit: resolveMaxActiveAsyncRunsPerSession(input.deps.config.maxActiveAsyncRunsPerSession),
+			runId,
+			kind: "runner",
+			asyncDir,
+		}, { liveWorkflowRunIds: new Set(input.deps.state.workflowControllers?.keys() ?? []) }) : undefined;
+	} catch (error) {
+		if (error instanceof ActiveAsyncCapacityError) return { content: [{ type: "text", text: error.message }], isError: true, details: { mode: "single", results: [], activeAsyncCapacity: error.snapshot } };
+		return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "single", results: [] } };
+	}
+
+	const artifactConfig: ArtifactConfig = omitUndefinedProperties({ ...DEFAULT_ARTIFACT_CONFIG, enabled: true, dir: input.deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir });
+	const artifactsDir = getArtifactsDir(input.parentSessionFile, input.effectiveCwd, artifactConfig.dir);
+	const parentModel = input.parentModel;
+	const agentConfig: AgentConfig = {
+		...input.baseAgentConfig,
+		runner: { type: "external-job", provider: runner.provider, options: runner.options },
+	};
+	const result = executeAsyncSingle(runId, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
+		agent: input.target.agent,
+		task: input.followUp,
+		goal: input.followUp,
+		agentConfig,
+		recoveryAgentConfig: agentConfig,
+		ctx: compactOptional<Parameters<typeof executeAsyncSingle>[1]["ctx"]>({
+			pi: input.deps.pi,
+			cwd: input.requestCwd,
+			currentSessionId,
+			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+			currentModelProvider: parentModel?.provider,
+			currentModel: parentModel,
+			modelScope: input.modelScope,
+			interactive: input.ctx.hasUI,
+			permissions: input.deps.config.permissions,
+		}),
+		cwd: input.effectiveCwd,
+		artifactsDir,
+		artifactConfig,
+		shareEnabled: false,
+		...(input.parentSessionFile ? { sessionRoot: input.deps.getSubagentSessionRoot(input.parentSessionFile) } : {}),
+		maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
+		waitToolEnabled: input.deps.waitToolEnabled,
+		worktreeSetupHook: input.deps.config.worktreeSetupHook,
+		worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
+		worktreeBaseDir: input.deps.config.worktreeBaseDir,
+		controlConfig: resolveControlConfig(input.deps.config.control, undefined),
+		controlIntercomTarget: input.intercomBridge.active ? input.intercomBridge.orchestratorTarget : undefined,
+		childIntercomTarget: input.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
+		availableModels: input.ctx.modelRegistry.getAvailable().map(toModelInfo),
+		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
+		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
+		capabilityCeiling: resolveCurrentSubagentCapabilityCeiling(currentSessionId),
+		runFanoutBudget: createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
+		activeAsyncCapacity,
+		externalJobFollowUp: { sourceRunId: input.target.runId, sourceStepIndex: input.target.index, parentProviderJobId: externalJob.providerJobId, requestId, requestDigest },
+	}));
+	if (result.isError) {
+		activeAsyncCapacity?.rollback();
+		return result;
+	}
+	return externalJobFollowUpStarted({ sourceRunId: input.target.runId, runId: result.details.asyncId ?? runId, asyncDir: result.details.asyncDir ?? asyncDir, interactive: input.ctx.hasUI });
 }
 
 async function resumeAsyncRun(input: {
@@ -1477,11 +1694,7 @@ async function resumeAsyncRun(input: {
 			];
 			target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
 		} else {
-			if (resolved?.kind === "async" && resolved.location.asyncDir) {
-				const unsupported = externalRunnerControlError(resolved.location.asyncDir, "resume");
-				if (unsupported) return unsupported;
-			}
-			target = resolveResumeTarget(input.params, input.deps.state, { asyncRequireSessionFile: !attachChain });
+			target = resolveResumeTarget(input.params, input.deps.state, { asyncRequireSessionFile: false });
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -1519,10 +1732,11 @@ async function resumeAsyncRun(input: {
 	const modelScope = discovered.modelScope;
 	const sessionName = resolveIntercomSessionTarget(input.deps.pi.getSessionName(), input.ctx.sessionManager.getSessionId());
 	const recoveryDescriptor = "recoveryDescriptor" in target ? target.recoveryDescriptor : undefined;
+	const recoveryContext = recoveryDescriptor?.context ?? (input.params.context === "profile" ? undefined : input.params.context);
 	const intercomBridge = resolveIntercomBridge({
 		config: input.deps.config.intercomBridge,
 		override: input.params.intercomBridge ?? recoveryDescriptor?.intercomBridge,
-		context: input.params.context,
+		context: recoveryContext,
 		orchestratorTarget: sessionName,
 	});
 	const agents = intercomBridge.active
@@ -1538,6 +1752,7 @@ async function resumeAsyncRun(input: {
 		inheritSkills: recoveryDescriptor.inheritSkills,
 		source: "project",
 		filePath: recoveryDescriptor.agentFilePath ?? path.join(getProjectSubagentsDir(recoveryDescriptor.cwd), "recovery-agent"),
+		...(discovered.maxThinking ? { maxThinking: discovered.maxThinking } : {}),
 	} : undefined);
 	if (!baseAgentConfig) {
 		return {
@@ -1545,6 +1760,26 @@ async function resumeAsyncRun(input: {
 			isError: true,
 			details: { mode: "management", results: [] },
 		};
+	}
+	if (target.source === "async" && target.runner?.type === "external-cli") {
+		return { content: [{ type: "text", text: "External runners do not persist Pi sessions and cannot be resumed." }], isError: true, details: { mode: "management", results: [] } };
+	}
+	if (target.source === "async" && target.runner?.type === "external-job") {
+		if (attachChain) return { content: [{ type: "text", text: "External-job follow-up does not support chain attachment. Use action='resume' with message instead." }], isError: true, details: { mode: "management", results: [] } };
+		return resumeExternalJobFollowUp({
+			target,
+			followUp,
+			baseAgentConfig,
+			effectiveCwd,
+			requestCwd: input.requestCwd,
+			ctx: input.ctx,
+			deps: input.deps,
+			parentModel: input.parentModel,
+			modelScope,
+			intercomBridge,
+			parentSessionFile,
+			absoluteDeadlineAt: input.absoluteDeadlineAt,
+		});
 	}
 
 	if (attachChain) {
@@ -1562,7 +1797,7 @@ async function resumeAsyncRun(input: {
 				details: { mode: "chain", results: [] },
 			};
 		}
-		const runId = randomUUID().slice(0, 8);
+		const runId = randomUUID();
 		const topLevelResume = depth === 0 && !resolveInheritedNestedRouteFromEnv() && !input.params.workflowParentRunId;
 		let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
 		try {
@@ -1618,6 +1853,7 @@ async function resumeAsyncRun(input: {
 			sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
 			chainSkills: normalized === false ? [] : (normalized ?? []),
 			agentContract: input.params.agentContract,
+			fast: input.params.fast,
 			dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
 			waitToolEnabled: input.deps.waitToolEnabled,
@@ -1630,6 +1866,7 @@ async function resumeAsyncRun(input: {
 			globalConcurrencyLimit: input.deps.config.globalConcurrencyLimit,
 			runFanoutBudget: createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
 			capabilityCeiling: intersectSubagentCapabilityCeilings("capabilityCeiling" in target ? target.capabilityCeiling : undefined, resolveCurrentSubagentCapabilityCeiling(input.deps.state.currentSessionId)),
+			thinkingCeiling: target.thinkingCeiling,
 			activeAsyncCapacity,
 		}));
 		if (result.isError) {
@@ -1652,12 +1889,12 @@ async function resumeAsyncRun(input: {
 	const effectiveFollowUp = [...queuedBriefs.map(({ request }) => request.message), followUp].filter(Boolean).join("\n\n");
 	const revivalSessionFile = target.sessionFile;
 	if (!revivalSessionFile) {
-		return { content: [{ type: "text", text: `Async child '${target.runId}' has no persisted session file to resume.` }], isError: true, details: { mode: "management", results: [] } };
+		return { content: [{ type: "text", text: `Async run '${target.runId}' child ${target.index} does not have a persisted session file to resume from.` }], isError: true, details: { mode: "management", results: [] } };
 	}
-	if (target.source === "async" && !recoveryDescriptor) {
+	if (target.source === "async" && asyncReviveRequiresRecoveryDescriptor(target)) {
 		return { content: [{ type: "text", text: `Async child '${target.runId}' is missing its required run fan-out recovery identity. Start a new run instead.` }], isError: true, details: { mode: "management", results: [] } };
 	}
-	const runId = randomUUID().slice(0, 8);
+	const runId = randomUUID();
 	const topLevelResume = depth === 0 && !resolveInheritedNestedRouteFromEnv() && !input.params.workflowParentRunId;
 	let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
 	try {
@@ -1718,14 +1955,20 @@ async function resumeAsyncRun(input: {
 			sourceRunId: target.runId,
 			...(input.deps.state.currentSessionId ? { parentSessionId: input.deps.state.currentSessionId } : {}),
 		},
+		context: recoveryContext,
 		modelOverride: recoveryDescriptor?.model ?? target.model,
+		fast: recoveryDescriptor?.fast,
+		modelOverrideFromParent: recoveryDescriptor?.modelOverrideFromParent,
 		thinkingOverride: recoveryDescriptor?.thinking ?? target.thinking,
+		thinkingCeiling: recoveryDescriptor?.thinkingCeiling ?? ("thinkingCeiling" in target ? target.thinkingCeiling : undefined),
+		extensionBindings: recoveryDescriptor?.extensionBindings ?? ("extensionBindings" in target ? target.extensionBindings : undefined),
 		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
 		maxSubagentDepth: recoveryDescriptor?.maxSubagentDepth ?? resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
 		waitToolEnabled: input.deps.waitToolEnabled,
 		worktreeSetupHook: input.deps.config.worktreeSetupHook,
 		worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
+		worktree: input.params.worktree === true,
 		controlConfig: recoveryDescriptor?.controlConfig ?? resolveControlConfig(input.deps.config.control, input.params.control),
 		intercomBridge: input.params.intercomBridge ?? recoveryDescriptor?.intercomBridge,
 		controlIntercomTarget: intercomBridge.active ? intercomBridge.orchestratorTarget : undefined,
@@ -1769,7 +2012,7 @@ async function resumeAsyncRun(input: {
 		const sourceStatus = readStatus(sourceAsyncDir);
 		if (sourceStatus?.steering) {
 			for (const brief of queuedBriefs) updateSteeringTarget(sourceStatus.steering, brief.request.id, target.index, "delivered", Date.now());
-			writeAtomicJson(path.join(sourceAsyncDir, "status.json"), sourceStatus);
+			createCapacityResilientJsonWriter({ keepAlive: true }).write(path.join(sourceAsyncDir, "status.json"), sourceStatus);
 		}
 	}
 
@@ -1810,6 +2053,7 @@ async function resumeAsyncRun(input: {
 			...(completed.model ? { model: completed.model } : {}),
 			...(completed.attemptedModels ? { attemptedModels: completed.attemptedModels } : {}),
 			...(completed.modelAttempts ? { modelAttempts: completed.modelAttempts } : {}),
+			...(completed.contextOverflow ? { contextOverflow: true } : {}),
 			...(completed.structuredOutput !== undefined ? { structuredOutput: completed.structuredOutput } : {}),
 			...(completed.structuredOutputPath ? { structuredOutputPath: completed.structuredOutputPath } : {}),
 			...(completed.structuredOutputSchemaPath ? { structuredOutputSchemaPath: completed.structuredOutputSchemaPath } : {}),
@@ -1867,14 +2111,35 @@ function formatFailedSingleRunOutput(result: SingleResult, displayOutput: string
 	return lines.join("\n");
 }
 
-function createForegroundControlNotifier(data: Pick<ExecutionContextData, "controlConfig" | "intercomBridge">, deps: Pick<ExecutorDeps, "pi" | "state">): (event: ControlEvent) => void {
+function createForegroundControlNotifier(data: Pick<ExecutionContextData, "controlConfig" | "contextPolicy" | "intercomBridge" | "params">, deps: Pick<ExecutorDeps, "pi" | "state">): (event: ControlEvent) => void {
 	return (event) => {
 		applyControlEventToRememberedForegroundRun(deps.state, event);
+		const eventBridge = intercomBridgeAppliesToAgent(data.intercomBridge, data.contextPolicy, event.agent)
+			? data.intercomBridge
+			: { ...data.intercomBridge, active: false };
+		const parentWorkflowRunId = data.params.workflowParentRunId;
+		const asyncWorkflow = typeof parentWorkflowRunId === "string" ? deps.state.asyncJobs.get(parentWorkflowRunId) : undefined;
+		const workflowKey = typeof data.params.workflowKey === "string" && data.params.workflowKey.trim()
+			? data.params.workflowKey.trim()
+			: undefined;
+		const enriched = workflowKey && !event.workflowKey ? { ...event, workflowKey } : event;
+		if (asyncWorkflow) {
+			persistAsyncWorkflowControlEvent({
+				job: asyncWorkflow,
+				event: enriched,
+				controlConfig: data.controlConfig,
+				intercomBridge: eventBridge,
+				childIntercomTarget: eventBridge.active
+					? resolveSubagentIntercomTarget(enriched.runId, enriched.agent, enriched.index)
+					: undefined,
+			});
+		}
 		emitControlNotification({
 			pi: deps.pi,
 			controlConfig: data.controlConfig,
-			intercomBridge: data.intercomBridge,
-			event,
+			intercomBridge: eventBridge,
+			event: enriched,
+			source: asyncWorkflow ? "async" : "foreground",
 		});
 	};
 }
@@ -1960,22 +2225,34 @@ async function maybeBuildForegroundIntercomReceipt(input: {
 	};
 }
 
-function canonicalizeAgentName(name: string, agents: AgentConfig[]): { name?: string; error?: string } {
+function canonicalizeAgentName(name: string, agents: AgentConfig[], diagnostics?: AgentDiscoveryDiagnostic[]): { name?: string; error?: string } {
 	const resolved = resolveAgentName(name, agents);
+	const candidates = resolved.error ? agents.filter((agent) => resolveAgentName(name, [agent]).agent) : resolved.agent;
+	const diagnostic = findBlockingAgentDiagnostic(name, candidates, diagnostics);
+	if (diagnostic) return { error: `Agent '${name}' has invalid configuration: ${diagnostic.error}` };
 	if (resolved.error) return { error: resolved.error };
 	if (!resolved.agent) return { error: `Unknown agent: ${name}` };
 	return { name: resolved.agent.name };
 }
 
-function canonicalizeExecutionParams(params: SubagentParamsLike, agents: AgentConfig[]): { params?: SubagentParamsLike; error?: string } {
+function canonicalizeExecutionParams(params: SubagentParamsLike, agents: AgentConfig[], diagnostics?: AgentDiscoveryDiagnostic[]): { params?: SubagentParamsLike; error?: string } {
 	const resolve = (name: string, location?: string): { name?: string; error?: string } => {
-		const result = canonicalizeAgentName(name, agents);
+		const result = canonicalizeAgentName(name, agents, diagnostics);
 		return result.error && location ? { error: `${result.error} (${location})` } : result;
 	};
 	if (params.agent) {
 		const result = resolve(params.agent);
 		if (result.error) return { error: result.error };
 		params = omitUndefinedProperties({ ...params, agent: result.name });
+		const agent = agents.find((candidate) => candidate.name === result.name);
+		if (params.extensionBindings !== undefined && (agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job")) return { error: `extensionBindings is not supported for runner.type='${agent.runner.type}'.` };
+	}
+	if (params.extensionBindings !== undefined) {
+		try {
+			params = { ...params, extensionBindings: normalizeExtensionBindings(params.extensionBindings)!.value };
+		} catch (error) {
+			return { error: error instanceof Error ? error.message : String(error) };
+		}
 	}
 	if (params.tasks) {
 		const tasks: TaskParam[] = [];
@@ -2173,13 +2450,44 @@ interface AgentDefaultContextPolicy {
 	usesFork: boolean;
 }
 
-function resolveAgentDefaultContextPolicy(params: SubagentParamsLike, agents: AgentConfig[]): AgentDefaultContextPolicy {
-	if (params.context !== undefined) {
-		return resolveExplicitContextPolicy(params);
+type AgentDefaultContextPolicyResult = AgentDefaultContextPolicy | { error: string };
+
+function resolveAgentDefaultContextPolicy(
+	params: SubagentParamsLike,
+	agents: AgentConfig[],
+	defaultSubagentContext: ExtensionConfig["defaultSubagentContext"],
+	canUseDefaultFork = false,
+): AgentDefaultContextPolicyResult {
+	if (params.context === "profile") {
+		const byName = new Map(agents.map((agent) => [agent.name, agent]));
+		for (const agentName of collectRequestedAgentNames(params)) {
+			const agent = byName.get(agentName);
+			if (agent && agent.defaultContext === undefined) {
+				return { error: `context: "profile" requires agent '${agentName}' to declare defaultContext.` };
+			}
+		}
+		const contextForAgent = (agentName: string): ContextMode => {
+			const context = byName.get(agentName)?.defaultContext;
+			if (context === undefined) throw new Error(`context: "profile" requires agent '${agentName}' to declare defaultContext.`);
+			return context;
+		};
+		const contextSummary = summarizeContextModes(collectRequestedAgentNames(params).map(contextForAgent));
+		return {
+			params,
+			contextForAgent,
+			contextSummary,
+			usesFork: contextSummary === "fork" || contextSummary === "mixed",
+		};
 	}
+	if (params.context === "fresh" || params.context === "fork") return resolveExplicitContextPolicy(params);
 	const byName = new Map(agents.map((agent) => [agent.name, agent]));
 	const contextForAgent = (agentName: string): ContextMode =>
-		byName.get(agentName)?.defaultContext === "fork" ? "fork" : "fresh";
+		resolveSubagentLaunchContext({
+			explicitContext: undefined,
+			agentDefaultContext: byName.get(agentName)?.defaultContext,
+			defaultSubagentContext,
+			canUseImplicitFork: canUseDefaultFork,
+		});
 	const requestedAgentNames = collectRequestedAgentNames(params);
 	const contextSummary = summarizeContextModes(requestedAgentNames.map((name) => contextForAgent(name)));
 	const usesFork = contextSummary === "fork" || contextSummary === "mixed";
@@ -2192,7 +2500,10 @@ function resolveAgentDefaultContextPolicy(params: SubagentParamsLike, agents: Ag
 }
 
 function resolveExplicitContextPolicy(params: SubagentParamsLike): AgentDefaultContextPolicy {
-	const context = params.context === "fork" ? "fork" : "fresh";
+	const context = resolveSubagentLaunchContext({
+		explicitContext: params.context === "profile" ? undefined : params.context,
+		canUseImplicitFork: false,
+	});
 	return {
 		params,
 		contextForAgent: () => context,
@@ -2213,6 +2524,31 @@ function shouldForkAgent(contextPolicy: AgentDefaultContextPolicy, agentName: st
 	return contextPolicy.contextForAgent(agentName) === "fork";
 }
 
+function intercomBridgeAppliesToAgent(bridge: IntercomBridgeState, contextPolicy: AgentDefaultContextPolicy, agentName: string): boolean {
+	if (!bridge.active) return false;
+	return bridge.mode !== "fork-only" || shouldForkAgent(contextPolicy, agentName);
+}
+
+function applyScopedIntercomBridgeToAgents(agents: AgentConfig[], bridge: IntercomBridgeState, contextPolicy: AgentDefaultContextPolicy): AgentConfig[] {
+	if (!bridge.active) return agents;
+	return agents.map((agent) => intercomBridgeAppliesToAgent(bridge, contextPolicy, agent.name)
+		? applyIntercomBridgeToAgent(agent, bridge)
+		: agent);
+}
+
+function resolveChildIntercomTargetFactory(bridge: IntercomBridgeState, contextPolicy: AgentDefaultContextPolicy, runId: string): ((agent: string, index: number) => string | undefined) | undefined {
+	if (!bridge.active) return undefined;
+	return (agent, index) => intercomBridgeAppliesToAgent(bridge, contextPolicy, agent)
+		? resolveSubagentIntercomTarget(runId, agent, index)
+		: undefined;
+}
+
+function resolveRunLevelIntercomTarget(bridge: IntercomBridgeState, contextPolicy: AgentDefaultContextPolicy): string | undefined {
+	if (!bridge.active) return undefined;
+	if (bridge.mode === "fork-only" && contextPolicy.contextSummary === "mixed") return undefined;
+	return bridge.orchestratorTarget;
+}
+
 function summarizeResultContext(details: Details, fallback: ContextSummary | undefined): ContextSummary | undefined {
 	return summarizeContextModes(details.results.map((result) => result.context)) ?? fallback;
 }
@@ -2224,7 +2560,7 @@ function buildRequestedModeError(params: SubagentParamsLike, message: string): A
 			isError: true,
 			details: { mode: getRequestedModeLabel(params), results: [] },
 		},
-		params.context,
+		params.context === "profile" ? undefined : params.context,
 	);
 }
 
@@ -2232,12 +2568,16 @@ function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: Agen
 	if ((params.chain?.length ?? 0) > 0 || (params.tasks?.length ?? 0) > 0 || !params.agent) return params;
 	const agent = agents.find((candidate) => candidate.name === params.agent);
 	if (!agent) return params;
+	const parentTimeoutMs = params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs === undefined && params.workflowParentDeadlineAt !== undefined
+		? Math.max(1, params.workflowParentDeadlineAt - Date.now())
+		: undefined;
 	return {
 		...params,
 		...(params.async === undefined && agent.defaultAsync !== undefined ? { async: agent.defaultAsync } : {}),
 		...(params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs !== undefined
 			? { timeoutMs: agent.defaultTimeoutMs }
 			: {}),
+		...(parentTimeoutMs !== undefined ? { timeoutMs: parentTimeoutMs } : {}),
 		...(params.turnBudget === undefined && agent.defaultTurnBudget !== undefined
 			? { turnBudget: agent.defaultTurnBudget }
 			: {}),
@@ -2508,7 +2848,8 @@ function resolveStaticLaunchSummary(input: {
 	thinkingOverrideForTask: ForkThinkingOverrideForTask;
 }): StaticLaunchSummary {
 	const agentConfig = input.agents.find((agent) => agent.name === input.agent);
-	const externalRunner = agentConfig?.runner?.type === "external-cli";
+	const externalRunner = agentConfig?.runner?.type === "external-cli" || agentConfig?.runner?.type === "external-job";
+	const modelScopes = resolveModelScopesForAgent(input.modelScope, input.agent, input.parentModel);
 	const model = externalRunner
 		? undefined
 		: resolveEffectiveSubagentModel(
@@ -2516,8 +2857,8 @@ function resolveStaticLaunchSummary(input: {
 			agentConfig?.model,
 			input.parentModel,
 			input.availableModels,
-			input.currentProvider,
-			input.modelScope === undefined ? {} : { scope: input.modelScope },
+			agentConfig?.modelProvider ?? input.currentProvider,
+			modelScopes.length === 0 ? {} : { scope: modelScopes },
 		);
 	const thinkingOverride = externalRunner ? undefined : input.thinkingOverrideForTask(input.agent, input.index, model);
 	const thinking = externalRunner ? undefined : resolveEffectiveThinking(model, thinkingOverride ?? agentConfig?.thinking);
@@ -2677,7 +3018,68 @@ function preflightForkSessionsForStaticTasks(
 	}
 }
 
-function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentToolResult<Details> | null {
+async function waitForWorkflowAsyncSingleResult(
+	params: SubagentParamsLike,
+	launchResult: AgentToolResult<Details>,
+	options: { runId: string; task: string; signal?: AbortSignal; state: SubagentState; kill?: ExecutorDeps["kill"] },
+): Promise<AgentToolResult<Details>> {
+	if (params.workflowAwaitAsync !== true || !launchResult.details.asyncDir) return launchResult;
+	const asyncDir = launchResult.details.asyncDir;
+	const resultPath = workflowAwaitedAsyncResultPath(asyncDir);
+	const stopOnAbort = () => { stopAsyncRun(options.state, options.runId, options.kill, { asyncDir, resolvedId: options.runId }); };
+	if (options.signal?.aborted) stopOnAbort();
+	else options.signal?.addEventListener("abort", stopOnAbort, { once: true });
+	let completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>;
+	try {
+		completed = await waitForImportedAsyncRoot({ runId: options.runId, asyncDir, resultPath, index: 0 }, omitUndefinedProperties({
+			shouldAbort: () => options.signal?.aborted === true,
+			timeoutMessage: "Workflow stopped before async child completed.",
+		}));
+	} finally {
+		options.signal?.removeEventListener("abort", stopOnAbort);
+	}
+	fs.rmSync(resultPath, { force: true });
+	const totalCost = completed.totalCost;
+	const childResult: SingleResult = omitUndefinedProperties({
+		index: 0,
+		agent: completed.agent,
+		task: options.task,
+		exitCode: completed.exitCode,
+		usage: {
+			input: totalCost?.inputTokens ?? 0,
+			output: totalCost?.outputTokens ?? 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			cost: totalCost?.costUsd ?? 0,
+			turns: 0,
+		},
+		finalOutput: completed.output,
+		outputState: completed.output.trim() ? "present" as const : "absent" as const,
+		...(completed.error ? { error: completed.error } : {}),
+		...(completed.timedOut ? { timedOut: true } : {}),
+		...(completed.stopped ? { stopped: true } : {}),
+		...(completed.sessionFile ? { sessionFile: completed.sessionFile } : {}),
+		...(completed.model ? { model: completed.model } : {}),
+		...(completed.attemptedModels ? { attemptedModels: completed.attemptedModels } : {}),
+		...(completed.modelAttempts ? { modelAttempts: completed.modelAttempts } : {}),
+		...(completed.contextOverflow ? { contextOverflow: true } : {}),
+		...(completed.structuredOutput !== undefined ? { structuredOutput: completed.structuredOutput } : {}),
+		...(completed.structuredOutputPath ? { structuredOutputPath: completed.structuredOutputPath } : {}),
+		...(completed.structuredOutputSchemaPath ? { structuredOutputSchemaPath: completed.structuredOutputSchemaPath } : {}),
+		...(completed.acceptance ? { acceptance: completed.acceptance } : {}),
+	});
+	return {
+		content: [{ type: "text", text: completed.output || completed.error || `Async workflow child ${options.runId} completed without output.` }],
+		...(completed.success ? {} : { isError: true }),
+		details: {
+			...launchResult.details,
+			runId: options.runId,
+			results: [childResult],
+		},
+	};
+}
+
+async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Promise<AgentToolResult<Details> | null> {
 	const {
 		params,
 		effectiveCwd,
@@ -2701,27 +3103,6 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 	const hasSingle = !hasChain && !hasTasks && Boolean(params.agent);
 	if (!effectiveAsync) return null;
 
-	if (hasChain && params.chain) {
-		const chainWorktreeTaskCwdError = buildChainWorktreeTaskCwdError(params.chain as ChainStep[], effectiveCwd);
-		if (chainWorktreeTaskCwdError) {
-			return {
-				content: [{ type: "text", text: chainWorktreeTaskCwdError }],
-				isError: true,
-				details: { mode: "chain" as const, results: [] },
-			};
-		}
-	}
-
-	if (hasTasks && params.tasks) {
-		const maxParallelTasks = resolveTopLevelParallelMaxTasks(deps.config.parallel?.maxTasks);
-		if (params.tasks.length > maxParallelTasks) {
-			return buildParallelModeError(`Max ${maxParallelTasks} tasks`);
-		}
-		if (params.worktree) {
-			const worktreeTaskCwdError = buildParallelWorktreeTaskCwdError(params.tasks, effectiveCwd);
-			if (worktreeTaskCwdError) return buildParallelModeError(worktreeTaskCwdError);
-		}
-	}
 
 	if (!isAsyncAvailable()) {
 		return {
@@ -2746,121 +3127,9 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
 	const currentProvider = parentModel?.provider;
-	const controlIntercomTarget = intercomBridge.active ? intercomBridge.orchestratorTarget : undefined;
-	const childIntercomTarget = intercomBridge.active ? (agent: string, index: number) => resolveSubagentIntercomTarget(id, agent, index) : undefined;
+	const controlIntercomTarget = resolveRunLevelIntercomTarget(intercomBridge, contextPolicy);
+	const childIntercomTarget = resolveChildIntercomTargetFactory(intercomBridge, contextPolicy, id);
 
-	if (hasTasks && params.tasks) {
-		const skillOverrides = params.tasks.map((task) => normalizeSkillInput(task.skill));
-		const parallelTasks = params.tasks.map((task, index) => compactOptional<ParallelTaskItem>({
-			agent: task.agent,
-			task: shouldForkAgent(contextPolicy, task.agent) ? wrapForkTask(task.task) : task.task,
-			cwd: task.cwd,
-			...(task.model !== undefined ? { model: task.model } : {}),
-			...(skillOverrides[index] !== undefined ? { skill: skillOverrides[index] } : {}),
-			...(task.output !== undefined && task.output !== true ? { output: task.output } : {}),
-			...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
-			...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
-			...(task.progress !== undefined ? { progress: task.progress } : {}),
-			...(task.toolBudget !== undefined ? { toolBudget: task.toolBudget } : {}),
-			...(task.outputSchema !== undefined ? { outputSchema: task.outputSchema } : {}),
-			...(task.agentContract !== undefined ? { agentContract: task.agentContract } : {}),
-			...(task.acceptance !== undefined ? { acceptance: task.acceptance } : {}),
-		}));
-		return executeAsyncChain(id, compactOptional<Parameters<typeof executeAsyncChain>[1]>({
-			chain: [compactOptional<ParallelStep>({
-				parallel: parallelTasks,
-				concurrency: resolveTopLevelParallelConcurrency(params.concurrency, deps.config.parallel?.concurrency),
-				worktree: params.worktree,
-			})],
-			resultMode: "parallel",
-			goal: params.tasks[0]?.task ?? "",
-			agents,
-			ctx: asyncCtx,
-			availableModels,
-			cwd: effectiveCwd,
-			maxOutput: params.maxOutput,
-			artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
-			artifactConfig,
-			shareEnabled,
-			sessionRoot,
-			chainSkills: [],
-			activeAsyncCapacity: data.activeAsyncCapacity,
-			sessionFilesByFlatIndex: params.tasks.map((task, index) => sessionFileForTask(task.agent, index, task.model)),
-			thinkingOverridesByFlatIndex: params.tasks.map((task, index) => thinkingOverrideForTask(task.agent, index, task.model)),
-			contextForAgent: contextPolicy.contextForAgent,
-			maxSubagentDepth: currentMaxSubagentDepth,
-			waitToolEnabled: deps.waitToolEnabled,
-			worktreeSetupHook: deps.config.worktreeSetupHook,
-			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
-			worktreeBaseDir: deps.config.worktreeBaseDir,
-			controlConfig,
-			agentContract: params.agentContract,
-			controlIntercomTarget,
-			childIntercomTarget,
-			nestedRoute,
-			timeoutMs: data.timeoutMs,
-			turnBudget: data.turnBudget,
-			toolBudget: data.toolBudget,
-			usageBudget: data.usageBudget,
-			configToolBudget: data.configToolBudget,
-			callToolTimeoutMs: data.params?.toolTimeoutMs,
-			configToolTimeoutMs: data.configToolTimeoutMs,
-			capabilityCeiling: data.capabilityCeiling,
-			runFanoutBudget: data.runFanoutBudget,
-			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
-			parentWorkflowRunId: params.workflowParentRunId,
-			workflowKey: params.workflowKey,
-		}));
-	}
-
-	if (hasChain && params.chain) {
-		const normalized = normalizeSkillInput(params.skill);
-		const chainSkills = normalized === false ? [] : (normalized ?? []);
-		const rawChain = params.chain as ChainStep[];
-		const chain = wrapChainTasksForFork(rawChain, contextPolicy);
-		return executeAsyncChain(id, compactOptional<Parameters<typeof executeAsyncChain>[1]>({
-			chain,
-			task: params.task,
-			goal: resolveAsyncEventGoal(params.task, rawChain),
-			agents,
-			ctx: asyncCtx,
-			availableModels,
-			cwd: effectiveCwd,
-			maxOutput: params.maxOutput,
-			artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
-			artifactConfig,
-			shareEnabled,
-			sessionRoot,
-			chainSkills,
-			activeAsyncCapacity: data.activeAsyncCapacity,
-			sessionFilesByFlatIndex: collectChainSessionFiles(chain, sessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems),
-			thinkingOverridesByFlatIndex: collectChainThinkingOverrides(chain, thinkingOverrideForTask, deps.config.chain?.dynamicFanout?.maxItems),
-			contextForAgent: contextPolicy.contextForAgent,
-			dynamicFanoutMaxItems: deps.config.chain?.dynamicFanout?.maxItems,
-			maxSubagentDepth: currentMaxSubagentDepth,
-			waitToolEnabled: deps.waitToolEnabled,
-			worktreeSetupHook: deps.config.worktreeSetupHook,
-			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
-			worktreeBaseDir: deps.config.worktreeBaseDir,
-			controlConfig,
-			agentContract: params.agentContract,
-			controlIntercomTarget,
-			childIntercomTarget,
-			nestedRoute,
-			timeoutMs: data.timeoutMs,
-			turnBudget: data.turnBudget,
-			toolBudget: data.toolBudget,
-			usageBudget: data.usageBudget,
-			configToolBudget: data.configToolBudget,
-			callToolTimeoutMs: data.params?.toolTimeoutMs,
-			configToolTimeoutMs: data.configToolTimeoutMs,
-			capabilityCeiling: data.capabilityCeiling,
-			runFanoutBudget: data.runFanoutBudget,
-			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
-			parentWorkflowRunId: params.workflowParentRunId,
-			workflowKey: params.workflowKey,
-		}));
-	}
 
 	if (hasSingle) {
 		const a = agents.find((x) => x.name === params.agent);
@@ -2873,17 +3142,22 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		}
 		const rawOutput = params.output !== undefined ? params.output : a.output;
 		const effectiveOutput = normalizeSingleOutputOverride(rawOutput, a.output);
-		const effectiveOutputMode = params.outputMode ?? "inline";
+		const effectiveOutputMode = params.outputMode ?? a.outputMode ?? "inline";
 		const normalizedSkills = normalizeSkillInput(params.skill);
 		const skills = normalizedSkills === false ? [] : normalizedSkills;
 		const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, a.maxSubagentDepth);
-		const externalRunnerWithoutExplicitModel = a.runner?.type === "external-cli"
+		const externalRunnerWithoutExplicitModel = (a.runner?.type === "external-cli" || a.runner?.type === "external-job")
 			&& params.model === undefined
 			&& (a.model === undefined || (a.modelSource?.type === "subagents.defaultModel" && a.model === a.modelSource.model));
-		const modelOverride = a.runner?.type === "external-cli"
+		if ((a.runner?.type === "external-cli" || a.runner?.type === "external-job") && (params.fast ?? a.fast) === true) {
+			return buildRequestedModeError(params, `Agent '${a.name}' uses runner.type='${a.runner.type}' and does not support fast mode.`);
+		}
+		const modelScopes = resolveModelScopesForAgent(data.modelScope, a.name, parentModel);
+		const modelOverride = a.runner?.type === "external-cli" || a.runner?.type === "external-job"
 			? params.model ?? (externalRunnerWithoutExplicitModel ? undefined : a.model)
-			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope });
-		return executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
+			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, a.modelProvider ?? currentProvider, modelScopes.length === 0 ? {} : { scope: modelScopes });
+		const modelOverrideFromParent = inheritsParentModel(params.model as string | undefined, a.model, parentModel);
+		const asyncResult = executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 			agent: params.agent!,
 			task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
 			goal: params.task ?? "",
@@ -2898,7 +3172,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			shareEnabled,
 			activeAsyncCapacity: data.activeAsyncCapacity,
 			sessionRoot,
-			sessionFile: sessionFileForTask(params.agent!, 0, modelOverride),
+			sessionFile: sessionFileForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
 			context: contextPolicy.contextForAgent(params.agent!),
 			skills,
 			output: effectiveOutput,
@@ -2906,9 +3180,13 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			...(params.reads !== undefined ? { reads: params.reads } : {}),
 			outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
 			modelOverride,
-			thinkingOverride: externalRunnerWithoutExplicitModel ? undefined : thinkingOverrideForTask(params.agent!, 0, modelOverride),
+			fast: params.fast,
+			modelOverrideFromParent,
+			thinkingOverride: externalRunnerWithoutExplicitModel ? undefined : thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
+			thinkingCeiling: a.maxThinking,
 			maxSubagentDepth,
 			waitToolEnabled: deps.waitToolEnabled,
+			...(params.worktree === true ? { worktree: true } : {}),
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: deps.config.worktreeBaseDir,
@@ -2919,6 +3197,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			nestedRoute,
 			agentContract: params.agentContract,
 			structuredOutputSchema: params.outputSchema,
+			extensionBindings: params.extensionBindings,
 			acceptance: params.acceptance,
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
@@ -2931,314 +3210,19 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			runFanoutBudget: data.runFanoutBudget,
 			parentWorkflowRunId: params.workflowParentRunId,
 			workflowKey: params.workflowKey,
+			workflowAwaitAsync: params.workflowAwaitAsync,
 		}));
+		return waitForWorkflowAsyncSingleResult(params, asyncResult, { runId: id, task: params.task ?? "", signal: data.signal, state: deps.state, kill: deps.kill });
 	}
 
 	return null;
 }
 
-async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Promise<AgentToolResult<Details>> {
-	const {
-		params,
-		effectiveCwd,
-		agents,
-		ctx,
-		signal,
-		runId,
-		shareEnabled,
-		sessionDirForIndex,
-		sessionFileForIndex,
-		sessionFileForTask,
-		thinkingOverrideForTask,
-		artifactsDir,
-		artifactConfig,
-		onUpdate,
-		sessionRoot,
-		controlConfig,
-		contextPolicy,
-	} = data;
-	const onControlEvent = createForegroundControlNotifier(data, deps);
-	const childIntercomTarget = data.intercomBridge.active ? resolveSubagentIntercomTarget : undefined;
-	const foregroundControl = deps.state.foregroundControls.get(runId);
-	const normalized = normalizeSkillInput(params.skill);
-	const chainSkills = normalized === false ? [] : (normalized ?? []);
-	const chain = wrapChainTasksForFork(params.chain as ChainStep[], contextPolicy);
-	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
-	const chainCtx = normalizeParentModel(ctx.model) || !data.parentModel ? ctx : ({ ...ctx, model: data.parentModel } as ExtensionContext);
-	const chainResult = await executeChain(compactOptional<Parameters<typeof executeChain>[0]>({
-		chain,
-		task: params.task,
-		agents,
-		ctx: chainCtx,
-		modelScope: data.modelScope,
-		intercomEvents: deps.pi.events,
-		signal,
-		runId,
-		cwd: effectiveCwd,
-		shareEnabled,
-		sessionDirForIndex,
-		sessionFileForIndex,
-		sessionFileForTask,
-		thinkingOverrideForTask,
-		contextForAgent: contextPolicy.contextForAgent,
-		artifactsDir,
-		artifactConfig,
-		includeProgress: params.includeProgress,
-		clarify: params.clarify,
-		onUpdate,
-		onControlEvent,
-		controlConfig,
-		agentContract: params.agentContract,
-		childIntercomTarget: childIntercomTarget ? (agent, index) => childIntercomTarget(runId, agent, index) : undefined,
-		orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
-		foregroundControl,
-		nestedRoute: foregroundControl?.nestedRoute,
-		chainSkills,
-		chainDir: params.chainDir ?? getChainRunsDir(effectiveCwd, artifactConfig.dir),
-		dynamicFanoutMaxItems: deps.config.chain?.dynamicFanout?.maxItems,
-		maxSubagentDepth: currentMaxSubagentDepth,
-		worktreeSetupHook: deps.config.worktreeSetupHook,
-		worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
-		worktreeBaseDir: deps.config.worktreeBaseDir,
-		timeoutMs: data.timeoutMs,
-		deadlineAt: data.deadlineAt,
-		turnBudget: data.turnBudget,
-		onDetachedExit: (index, result) => {
-			try {
-				updateRememberedForegroundChild(deps.state, { runId, mode: "chain", cwd: effectiveCwd, sessionId: data.parentSessionId, index, result, events: deps.pi.events });
-			} finally {
-				removeForegroundControlIfIdle(deps.state, runId);
-			}
-		},
-		onForegroundChildSettled: () => {
-			removeForegroundControlIfIdle(deps.state, runId);
-		},
-		toolBudget: data.toolBudget,
-		usageBudget: data.usageBudget,
-		configToolBudget: data.configToolBudget,
-		callToolTimeoutMs: data.params?.toolTimeoutMs,
-		configToolTimeoutMs: data.configToolTimeoutMs,
-		permissions: deps.config.permissions,
-		globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
-		capabilityCeiling: data.capabilityCeiling,
-		runFanoutBudget: data.runFanoutBudget,
-	}));
-
-	if (chainResult.requestedAsync) {
-		if (!isAsyncAvailable()) {
-			return {
-				content: [{ type: "text", text: "Background mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed." }],
-				isError: true,
-				details: { mode: "chain" as const, results: [] },
-			};
-		}
-		const id = data.asyncRunId;
-		const capacity = acquireClarifiedBackgroundCapacity(data, deps, "chain", id);
-		if (capacity.errorResult) return capacity.errorResult;
-		const parentModel = data.parentModel;
-		const asyncCtx = compactOptional<Parameters<typeof executeAsyncSingle>[1]["ctx"]>({
-			pi: deps.pi,
-			cwd: ctx.cwd,
-			currentSessionId: data.parentSessionId!,
-			parentSessionId: data.parentPiSessionId,
-			currentModelProvider: parentModel?.provider,
-			currentModel: parentModel,
-			modelScope: data.modelScope,
-			interactive: ctx.hasUI,
-		permissions: deps.config.permissions,
-		});
-		const rawAsyncChain = chainResult.requestedAsync.chain;
-		const asyncChain = wrapChainTasksForFork(rawAsyncChain, contextPolicy);
-		const firstAgent = firstChainAgent(rawAsyncChain);
-		try {
-			return executeAsyncChain(id, compactOptional<Parameters<typeof executeAsyncChain>[1]>({
-				chain: asyncChain,
-				task: params.task,
-				goal: resolveAsyncEventGoal(params.task, rawAsyncChain, firstAgent ? shouldForkAgent(contextPolicy, firstAgent) : false),
-				agents,
-				ctx: asyncCtx,
-				availableModels: ctx.modelRegistry.getAvailable().map(toModelInfo),
-				cwd: effectiveCwd,
-				maxOutput: params.maxOutput,
-				artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
-				artifactConfig,
-				shareEnabled,
-				sessionRoot,
-				chainSkills: chainResult.requestedAsync.chainSkills,
-				activeAsyncCapacity: capacity.activeAsyncCapacity,
-				sessionFilesByFlatIndex: collectChainSessionFiles(asyncChain, sessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems),
-				thinkingOverridesByFlatIndex: collectChainThinkingOverrides(asyncChain, thinkingOverrideForTask, deps.config.chain?.dynamicFanout?.maxItems),
-				contextForAgent: contextPolicy.contextForAgent,
-				dynamicFanoutMaxItems: deps.config.chain?.dynamicFanout?.maxItems,
-				maxSubagentDepth: currentMaxSubagentDepth,
-				waitToolEnabled: deps.waitToolEnabled,
-				worktreeSetupHook: deps.config.worktreeSetupHook,
-				worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
-				worktreeBaseDir: deps.config.worktreeBaseDir,
-				controlConfig,
-				agentContract: params.agentContract,
-				controlIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
-				childIntercomTarget: data.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index) : undefined,
-				nestedRoute: data.nestedRoute,
-				timeoutMs: data.timeoutMs,
-				turnBudget: data.turnBudget,
-				toolBudget: data.toolBudget,
-				usageBudget: data.usageBudget,
-				configToolBudget: data.configToolBudget,
-				callToolTimeoutMs: data.params?.toolTimeoutMs,
-				configToolTimeoutMs: data.configToolTimeoutMs,
-				capabilityCeiling: data.capabilityCeiling,
-				runFanoutBudget: data.runFanoutBudget,
-				globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
-			}));
-		} finally {
-			finalizeClarifiedBackgroundCapacity(data, deps, capacity.activeAsyncCapacity);
-		}
-	}
-
-	const rawChainDetails = chainResult.details ? compactOptional<Details>({ ...chainResult.details, runId, timeoutMs: data.timeoutMs }) : undefined;
-	if (foregroundControl && rawChainDetails) {
-		updateForegroundNestedProjection(foregroundControl);
-		attachRootChildrenToSteps(runId, rawChainDetails.results, foregroundControl.nestedChildren);
-		rawChainDetails.totalCost = sumResultsCost(rawChainDetails.results);
-		const usageBudget = usageBudgetState(data.usageBudget, rawChainDetails.totalCost);
-		if (usageBudget === undefined) delete rawChainDetails.usageBudget;
-		else rawChainDetails.usageBudget = usageBudget;
-	}
-	const chainDetails = rawChainDetails ? compactForegroundDetails(rawChainDetails) : undefined;
-	if (chainDetails) rememberForegroundRun(deps.state, { runId, mode: "chain", cwd: effectiveCwd, sessionId: data.parentSessionId, results: chainDetails.results, checkpoint: chainDetails.checkpoint });
-	const intercomReceipt = chainDetails && !chainDetails.results.some((result) => result.interrupted || result.detached)
-		? await maybeBuildForegroundIntercomReceipt({
-			pi: deps.pi,
-			intercomBridge: data.intercomBridge,
-			runId,
-			mode: "chain",
-			details: chainDetails,
-			...(foregroundControl?.nestedChildren?.length ? { nestedChildren: foregroundControl.nestedChildren } : {}),
-		})
-		: null;
-	if (intercomReceipt) {
-		return {
-			...chainResult,
-			content: [{ type: "text", text: intercomReceipt.text }],
-			details: intercomReceipt.details,
-		};
-	}
-
-	return chainDetails ? { ...chainResult, details: chainDetails } : chainResult;
-}
-
-interface ForegroundParallelRunInput {
-	tasks: TaskParam[];
-	taskTexts: string[];
-	taskDescriptions: string[];
-	agents: AgentConfig[];
-	ctx: ExtensionContext;
-	state: SubagentState;
-	intercomEvents: IntercomEventBus;
-	parentSessionId: string | null;
-	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
-	runFanoutBudget: RunFanoutBudgetDescriptor;
-	signal: AbortSignal;
-	runId: string;
-	sessionDirForIndex: (idx?: number) => string | undefined;
-	sessionFileForIndex: (idx?: number) => string | undefined;
-	sessionFileForTask: ForkSessionFileForTask;
-	thinkingOverrideForTask: ForkThinkingOverrideForTask;
-	shareEnabled: boolean;
-	artifactConfig: ArtifactConfig;
-	artifactsDir: string;
-	outputBaseDir: string;
-	maxOutput?: MaxOutputConfig;
-	paramsCwd: string;
-	progressDir: string;
-	maxSubagentDepths: number[];
-	waitToolEnabled?: boolean;
-	availableModels: ModelInfo[];
-	modelScope?: ModelScopeConfig;
-	parentModel?: ParentModel;
-	modelOverrides: (string | undefined)[];
-	behaviors: Array<ReturnType<typeof resolveStepBehavior>>;
-	firstProgressIndex: number;
-	controlConfig: ResolvedControlConfig;
-	contextPolicy: AgentDefaultContextPolicy;
-	onControlEvent?: (event: ControlEvent) => void;
-	childIntercomTarget?: (agent: string, index: number) => string | undefined;
-	orchestratorIntercomTarget?: string;
-	foregroundControl?: SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never;
-	concurrencyLimit: number;
-	globalSemaphore?: Semaphore;
-	liveResults: (SingleResult | undefined)[];
-	liveProgress: (AgentProgress | undefined)[];
-	onUpdate?: (r: AgentToolResult<Details>) => void;
-	worktreeSetup?: WorktreeSetup;
-	timeoutMs?: number;
-	deadlineAt?: number;
-	/** Per-call per-tool timeout, resolved separately for each task's agent. */
-	toolTimeoutMs?: number;
-	/** Raw global config.toolTimeoutMs, used by each task's resolver. */
-	configToolTimeoutMs?: number;
-	turnBudget?: ResolvedTurnBudget;
-	usageBudget?: UsageBudgetConfig;
-	toolBudgets: (ResolvedToolBudget | undefined)[];
-	agentContract?: AgentContract;
-	permissions?: ExtensionConfig["permissions"];
-}
-function buildParallelModeError(message: string): AgentToolResult<Details> {
-	return {
-		content: [{ type: "text", text: message }],
-		isError: true,
-		details: { mode: "parallel" as const, results: [] },
-	};
-}
-
-function acquireClarifiedBackgroundCapacity(
-	data: ExecutionContextData,
-	deps: ExecutorDeps,
-	mode: "single" | "parallel" | "chain",
-	asyncRunId: string,
-): { activeAsyncCapacity?: ActiveAsyncCapacityHandle; errorResult?: AgentToolResult<Details> } {
-	if (!data.topLevelAsyncCapacityEligible || !data.parentSessionId) return {};
-	const liveWorkflowRunIds = new Set(deps.state.workflowControllers?.keys() ?? []);
-	const activeLimit = resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession);
-	try {
-		const activeAsyncCapacity = acquireActiveAsyncCapacity({
-			sessionId: data.parentSessionId,
-			limit: activeLimit,
-			runId: asyncRunId,
-			kind: "runner",
-			asyncDir: path.join(DIRS.async, asyncRunId),
-		}, { liveWorkflowRunIds });
-		deps.state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(data.parentSessionId, activeLimit, { liveWorkflowRunIds });
-		return { activeAsyncCapacity };
-	} catch (error) {
-		if (error instanceof ActiveAsyncCapacityError) {
-			deps.state.activeAsyncCapacity = error.snapshot;
-			return { errorResult: { content: [{ type: "text", text: error.message }], isError: true, details: { mode, results: [], activeAsyncCapacity: error.snapshot } } };
-		}
-		throw error;
-	}
-}
-
-function finalizeClarifiedBackgroundCapacity(
-	data: ExecutionContextData,
-	deps: ExecutorDeps,
-	activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined,
-): void {
-	if (!activeAsyncCapacity || !data.parentSessionId) return;
-	if (!activeAsyncCapacity.owner.runnerStartedAt) activeAsyncCapacity.rollback();
-	deps.state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(
-		data.parentSessionId,
-		resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession),
-		{ liveWorkflowRunIds: new Set(deps.state.workflowControllers?.keys() ?? []) },
-	);
-}
-
-function createParallelWorktreeSetup(
+function createSingleWorktreeSetup(
 	enabled: boolean | undefined,
 	cwd: string,
 	runId: string,
-	tasks: TaskParam[],
+	agent: string,
 	setupHook: ExtensionConfig["worktreeSetupHook"],
 	setupHookTimeoutMs: ExtensionConfig["worktreeSetupHookTimeoutMs"],
 	baseDir: ExtensionConfig["worktreeBaseDir"],
@@ -3246,8 +3230,8 @@ function createParallelWorktreeSetup(
 	if (!enabled) return {};
 	try {
 		return {
-			setup: createWorktrees(cwd, runId, tasks.length, omitUndefinedProperties({
-				agents: tasks.map((task) => task.agent),
+			setup: createWorktrees(cwd, runId, 1, omitUndefinedProperties({
+				agents: [agent],
 				setupHook: setupHook
 					? { hookPath: setupHook, ...(setupHookTimeoutMs === undefined ? {} : { timeoutMs: setupHookTimeoutMs }) }
 					: undefined,
@@ -3256,17 +3240,8 @@ function createParallelWorktreeSetup(
 		};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		return { errorResult: buildParallelModeError(message) };
+		return { errorResult: { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } } };
 	}
-}
-
-function buildParallelWorktreeTaskCwdError(
-	tasks: ReadonlyArray<{ agent: string; cwd?: string }>,
-	sharedCwd: string,
-): string | undefined {
-	const conflict = findWorktreeTaskCwdConflict(tasks, sharedCwd);
-	if (!conflict) return undefined;
-	return formatWorktreeTaskCwdConflict(conflict, sharedCwd);
 }
 
 function resolveConfiguredSingleRunOutputBaseDir(deps: ExecutorDeps): string | undefined {
@@ -3275,8 +3250,15 @@ function resolveConfiguredSingleRunOutputBaseDir(deps: ExecutorDeps): string | u
 		: undefined;
 }
 
+export function sanitizeRunPathSegment(value: string, maxBytes = 120): string {
+	const sanitized = value.trim().replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+	if (!sanitized) return "unknown";
+	if (Buffer.byteLength(sanitized, "utf-8") <= maxBytes) return sanitized;
+	return sanitized.slice(0, maxBytes).replace(/_+$/, "") || "unknown";
+}
+
 function resolveSingleRunOutputBaseDir(deps: ExecutorDeps, artifactsDir: string, runId: string): string {
-	return resolveConfiguredSingleRunOutputBaseDir(deps) ?? path.join(artifactsDir, "outputs", runId);
+	return resolveConfiguredSingleRunOutputBaseDir(deps) ?? path.join(artifactsDir, "outputs", sanitizeRunPathSegment(runId));
 }
 
 function resolveWorkflowAggregateOutputPath(
@@ -3284,9 +3266,7 @@ function resolveWorkflowAggregateOutputPath(
 	ctxCwd: string,
 	workflowCwd: string,
 	outputBaseDir: string,
-	configuredOutputBaseDir: string | undefined,
 ): string | undefined {
-	if (typeof output === "string" && output && !path.isAbsolute(output) && !configuredOutputBaseDir) return path.resolve(workflowCwd, output);
 	return resolveSingleOutputPath(output, ctxCwd, workflowCwd, outputBaseDir);
 }
 
@@ -3295,12 +3275,13 @@ function workflowChildDefaultOutput(aggregateOutputPath: string | undefined, art
 		const parsed = path.parse(aggregateOutputPath);
 		return path.join(parsed.dir, `${parsed.name}.${workflowKey}${parsed.ext || ".md"}`);
 	}
-	return path.join(artifactsDir, "outputs", workflowRunId, `${workflowKey}.md`);
+	return path.join(artifactsDir, "outputs", sanitizeRunPathSegment(workflowRunId), `${workflowKey}.md`);
 }
 
-function writeWorkflowAggregateOutput(outputPath: string | undefined, text: string): string | undefined {
+function writeWorkflowAggregateOutput(outputPath: string | undefined, text: string, producedChildOutputPaths: ReadonlySet<string>): string | undefined {
 	if (!outputPath) return undefined;
 	try {
+		if (producedChildOutputPaths.has(outputPath)) return undefined;
 		fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 		fs.writeFileSync(outputPath, text, "utf-8");
 		return undefined;
@@ -3321,23 +3302,41 @@ function resolveWorkflowChildOutputPath(input: {
 	aggregateOutputPath?: string;
 	configuredOutputBaseDir?: string;
 	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[] };
+	agents: AgentConfig[];
 	workflowAgentScope?: unknown;
+	state?: SubagentState;
 	key: string;
 	params: Record<string, unknown>;
-}): string | undefined {
+}): { path?: string; inherited: boolean } {
+	if (typeof input.params.resume === "string") {
+		if (!input.state) return { path: undefined, inherited: false };
+		const index = input.params.index;
+		const target = resolveResumeTarget({
+			id: input.params.resume.trim(),
+			...(typeof index === "number" && Number.isInteger(index) ? { index } : {}),
+		}, input.state);
+		return { path: "recoveryDescriptor" in target ? target.recoveryDescriptor?.outputPath : undefined, inherited: false };
+	}
 	const rawOutput = input.params.output;
 	const hasExplicitOutput = typeof rawOutput === "string" || typeof rawOutput === "boolean";
 	const childCwd = typeof input.params.cwd === "string" ? resolveChildCwd(input.workflowCwd, input.params.cwd) : input.workflowCwd;
 	const agentScope = resolveExecutionAgentScope(input.params.agentScope ?? input.workflowAgentScope);
-	const agents = input.discoverAgents(childCwd, agentScope).agents;
-	const agent = typeof input.params.agent === "string" ? resolveAgentName(input.params.agent, agents).agent : undefined;
+	const discoveredAgents = input.discoverAgents(childCwd, agentScope).agents;
+	const agent = typeof input.params.agent === "string"
+		? resolveAgentName(input.params.agent, discoveredAgents).agent ?? resolveAgentName(input.params.agent, input.agents).agent
+		: undefined;
 	const agentOutput = typeof agent?.output === "string" ? agent.output : undefined;
 	const output = rawOutput === true || rawOutput === "true"
 		? agentOutput
 		: hasExplicitOutput
 			? rawOutput
-			: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.workflowRunId, input.key);
-	return resolveSingleOutputPath(output, input.ctxCwd, childCwd, input.configuredOutputBaseDir);
+			: input.aggregateOutputPath
+				? workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.workflowRunId, input.key)
+				: agentOutput;
+	return {
+		path: resolveSingleOutputPath(output, input.ctxCwd, childCwd, input.configuredOutputBaseDir ?? path.join(input.artifactsDir, "outputs", sanitizeRunPathSegment(input.workflowRunId))),
+		inherited: !hasExplicitOutput && !input.aggregateOutputPath && agentOutput !== undefined,
+	};
 }
 
 function workflowChildOutputClaims(input: {
@@ -3348,20 +3347,37 @@ function workflowChildOutputClaims(input: {
 	aggregateOutputPath?: string;
 	configuredOutputBaseDir?: string;
 	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[] };
+	agents: AgentConfig[];
 	workflowAgentScope?: unknown;
+	state: SubagentState;
 	claimedOutputPaths: Map<string, string>;
 	entries: Array<{ key: string; params: Record<string, unknown> }>;
-}): { error?: string; claims?: Map<string, string> } {
+}): { error?: string; claims?: Map<string, string>; overrides?: Map<string, string> } {
+	const resolvedEntries = input.entries.map(({ key, params }) => ({
+		key,
+		...resolveWorkflowChildOutputPath({ ...input, key, params }),
+	}));
+	const paths = new Map<string, number>();
+	for (const claimedPath of input.claimedOutputPaths.keys()) paths.set(claimedPath, 1);
+	for (const { path: resolved } of resolvedEntries) {
+		if (resolved) paths.set(resolved, (paths.get(resolved) ?? 0) + 1);
+	}
+	const overrides = new Map<string, string>();
+	for (const entry of resolvedEntries) {
+		if (entry.inherited && entry.path && (paths.get(entry.path) ?? 0) > 1) {
+			const output = workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.workflowRunId, entry.key);
+			overrides.set(entry.key, output);
+			entry.path = output;
+		}
+	}
 	const claims = new Map(input.claimedOutputPaths);
-	for (const { key, params } of input.entries) {
-		const resolved = resolveWorkflowChildOutputPath({ ...input, key, params });
+	for (const { key, path: resolved } of resolvedEntries) {
 		if (!resolved) continue;
-		if (input.aggregateOutputPath && resolved === input.aggregateOutputPath) return { error: `Workflow child '${key}' output resolves to the workflow aggregate output path: ${resolved}. Use a distinct child output path.` };
 		const previous = claims.get(resolved);
 		if (previous) return { error: `Workflow children '${previous}' and '${key}' resolve output to the same path: ${resolved}. Use distinct child output paths.` };
 		claims.set(resolved, key);
 	}
-	return { claims };
+	return { claims, overrides };
 }
 
 function applyWorkflowChildOutputClaims(target: Map<string, string>, claims: Map<string, string>): void {
@@ -3380,82 +3396,70 @@ function prepareWorkflowChildLaunchParams(input: {
 	aggregateOutputPath?: string;
 	configuredOutputBaseDir?: string;
 	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[] };
+	agents: AgentConfig[];
 	workflowAgentScope?: unknown;
-	options?: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor };
+	outputOverride?: string;
+	options?: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; capabilityCeiling?: ResolvedSubagentCapabilityCeiling };
 }): SubagentParamsLike {
 	let childParams = input.childParams;
-	if (input.childParams.output === undefined && input.childParams.resume === undefined) {
+	if (input.childParams.output === undefined && input.childParams.resume === undefined && input.outputOverride !== undefined) {
+		childParams = { ...input.childParams, output: input.outputOverride };
+	} else if (input.childParams.output === undefined && input.childParams.resume === undefined && input.aggregateOutputPath !== undefined) {
 		childParams = { ...input.childParams, output: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.parentWorkflowRunId, input.workflowKey) };
 	} else if (input.childParams.resume === undefined) {
-		const resolvedOutput = resolveWorkflowChildOutputPath({ ctxCwd: input.ctxCwd, workflowCwd: input.workflowCwd, artifactsDir: input.artifactsDir, workflowRunId: input.parentWorkflowRunId, aggregateOutputPath: input.aggregateOutputPath, configuredOutputBaseDir: input.configuredOutputBaseDir, discoverAgents: input.discoverAgents, workflowAgentScope: input.workflowAgentScope, key: input.workflowKey, params: input.childParams });
-		if (resolvedOutput) childParams = { ...input.childParams, output: resolvedOutput };
+		const resolvedOutput = resolveWorkflowChildOutputPath({ ctxCwd: input.ctxCwd, workflowCwd: input.workflowCwd, artifactsDir: input.artifactsDir, workflowRunId: input.parentWorkflowRunId, aggregateOutputPath: input.aggregateOutputPath, configuredOutputBaseDir: input.configuredOutputBaseDir, discoverAgents: input.discoverAgents, agents: input.agents, workflowAgentScope: input.workflowAgentScope, key: input.workflowKey, params: input.childParams });
+		if (resolvedOutput.path) childParams = { ...input.childParams, output: resolvedOutput.path };
 	}
-	return prepareWorkflowLaunchParams(input.workflowDefaults, childParams, input.parentWorkflowRunId, input.workflowKey, input.options);
+	const childCwd = typeof childParams.cwd === "string" ? resolveChildCwd(input.workflowCwd, childParams.cwd) : input.workflowCwd;
+	const agentScope = resolveExecutionAgentScope(childParams.agentScope ?? input.workflowAgentScope);
+	const discoveredAgents = input.discoverAgents(childCwd, agentScope).agents;
+	const agent = typeof childParams.agent === "string"
+		? resolveAgentName(childParams.agent, discoveredAgents).agent ?? resolveAgentName(childParams.agent, input.agents).agent
+		: undefined;
+	const externalAsyncRequired = agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job";
+	return prepareWorkflowLaunchParams(input.workflowDefaults, childParams, input.parentWorkflowRunId, input.workflowKey, { ...input.options, externalAsyncRequired });
 }
 
-function buildChainWorktreeTaskCwdError(chain: ChainStep[], sharedCwd: string): string | undefined {
-	for (let stepIndex = 0; stepIndex < chain.length; stepIndex++) {
-		const step = chain[stepIndex]!;
-		if (!isParallelStep(step) || !step.worktree) continue;
-		const stepCwd = resolveChildCwd(sharedCwd, step.cwd);
-		const conflict = findWorktreeTaskCwdConflict(step.parallel, stepCwd);
-		if (!conflict) continue;
-		const detail = formatWorktreeTaskCwdConflict(conflict, stepCwd);
-		return `parallel chain step ${stepIndex + 1}: ${detail}`;
-	}
-	return undefined;
-}
-
-function resolveParallelTaskCwd(
-	task: TaskParam,
-	paramsCwd: string,
-	worktreeSetup: WorktreeSetup | undefined,
-	index: number,
-): string {
-	if (worktreeSetup) return worktreeSetup.worktrees[index]!.agentCwd;
-	return resolveChildCwd(paramsCwd, task.cwd);
-}
-
-function finalizeParallelWorktreeHandoff(input: {
+function finalizeSingleWorktreeHandoff(input: {
 	worktreeSetup: WorktreeSetup;
 	artifactsDir: string;
 	runId: string;
 	cwd: string;
-	tasks: TaskParam[];
-	results: SingleResult[];
+	agent: string;
+	result: SingleResult;
 }): { suffix: string; reference?: NonNullable<Details["parallelHandoff"]> } {
 	const diffsDir = path.join(input.artifactsDir, "worktree-diffs", input.runId);
-	const diffs = diffWorktrees(input.worktreeSetup, input.tasks.map((task) => task.agent), diffsDir);
+	const diffs = diffWorktrees(input.worktreeSetup, [input.agent], diffsDir);
 	const diffSummary = formatWorktreeDiffSummary(diffs);
 	const manifestPath = parallelHandoffPath(input.artifactsDir, input.runId);
 	const handoff = {
 		manifestPath,
 		runId: input.runId,
-		mode: "parallel" as const,
+		mode: "single" as const,
 		source: "foreground" as const,
 		cwd: input.cwd,
 		stepIndex: 0,
 		flatStartIndex: 0,
 		setup: input.worktreeSetup,
 		diffs,
-		results: input.results.map((result) => ({
-			agent: result.agent,
+		results: [{
+			agent: input.result.agent,
 			status: resolveSubagentResultStatus(omitUndefinedProperties({
-				exitCode: result.exitCode,
-				interrupted: result.interrupted,
-				detached: result.detached,
-				state: result.stopped ? "stopped" : undefined,
-				processSignal: result.processSignal,
-				timedOut: result.timedOut,
-				stopped: result.stopped,
-				turnBudgetExceeded: result.turnBudgetExceeded,
+				exitCode: input.result.exitCode,
+				interrupted: input.result.interrupted,
+				detached: input.result.detached,
+				state: input.result.stopped ? "stopped" : undefined,
+				processSignal: input.result.processSignal,
+				timedOut: input.result.timedOut,
+				stopped: input.result.stopped,
+				turnBudgetExceeded: input.result.turnBudgetExceeded,
 			})),
-			summary: resultSummaryForIntercom(result),
-			...(result.artifactPaths?.outputPath ? { outputPath: result.artifactPaths.outputPath } : {}),
-			...(result.structuredOutput !== undefined ? { structuredOutput: result.structuredOutput } : {}),
-			...(result.structuredOutputPath ? { structuredOutputPath: result.structuredOutputPath } : {}),
-			...(result.sessionFile ? { sessionPath: result.sessionFile } : {}),
-		})),
+			summary: resultSummaryForIntercom(input.result),
+			...(input.result.artifactPaths?.outputPath ? { outputPath: input.result.artifactPaths.outputPath } : {}),
+			...(input.result.structuredOutput !== undefined ? { structuredOutput: input.result.structuredOutput } : {}),
+			...(input.result.structuredOutputPath ? { structuredOutputPath: input.result.structuredOutputPath } : {}),
+			...(input.result.sessionFile ? { sessionPath: input.result.sessionFile } : {}),
+		}],
 	};
 	try {
 		writeParallelHandoffGroup(handoff);
@@ -3467,654 +3471,6 @@ function finalizeParallelWorktreeHandoff(input: {
 		};
 	} catch (error) {
 		return { suffix: [diffSummary, formatParallelHandoffError(error)].filter(Boolean).join("\n\n") };
-	}
-}
-
-function findDuplicateParallelOutputPath(input: {
-	tasks: TaskParam[];
-	behaviors: ResolvedStepBehavior[];
-	paramsCwd: string;
-	ctxCwd: string;
-	outputBaseDir: string;
-	worktreeSetup?: WorktreeSetup;
-}): string | undefined {
-	const seen = new Map<string, { index: number; agent: string }>();
-	for (let index = 0; index < input.tasks.length; index++) {
-		const behavior = input.behaviors[index];
-		if (!behavior?.output) continue;
-		const task = input.tasks[index]!;
-		const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd, input.worktreeSetup, index);
-		const outputPath = resolveSingleOutputPath(behavior.output, input.ctxCwd, taskCwd, input.outputBaseDir);
-		if (!outputPath) continue;
-		const previous = seen.get(outputPath);
-		if (previous) {
-			return `Parallel tasks ${previous.index + 1} (${previous.agent}) and ${index + 1} (${task.agent}) resolve output to the same path: ${outputPath}. Use distinct output paths.`;
-		}
-		seen.set(outputPath, { index, agent: task.agent });
-	}
-	return undefined;
-}
-
-async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Promise<SingleResult[]> {
-	// Pre-warm fork session files sequentially before concurrent dispatch to avoid
-	// races where multiple workers simultaneously try to branch the same parent session.
-	for (let i = 0; i < input.tasks.length; i++) {
-		input.sessionFileForTask(input.tasks[i]!.agent, i, input.modelOverrides[i]);
-	}
-	const completedResults: SingleResult[] = [];
-	if (input.foregroundControl) retainForegroundSchedulingOwner(input.foregroundControl);
-	return mapConcurrent(input.tasks, input.concurrencyLimit, async (task, index) => {
-		const budgetState = usageBudgetState(input.usageBudget, sumResultsCost(completedResults));
-		if (budgetState?.exhausted) {
-			return {
-				index,
-				agent: task.agent,
-				task: input.taskTexts[index] ?? "(skipped)",
-				exitCode: 1,
-				messages: [],
-				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
-				error: usageBudgetExceededMessage(budgetState),
-				skipped: true,
-			} as SingleResult;
-		}
-		const behavior = input.behaviors[index];
-		const effectiveSkills = behavior?.skills;
-		const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd, input.worktreeSetup, index);
-		const readInstructions = behavior
-			? buildChainInstructions({ ...behavior, output: false, progress: false }, taskCwd, false)
-			: { prefix: "", suffix: "" };
-		const progressInstructions = behavior
-			? buildChainInstructions({ ...behavior, output: false, reads: false }, input.progressDir, index === input.firstProgressIndex)
-			: { prefix: "", suffix: "" };
-		const outputPath = resolveSingleOutputPath(behavior?.output, input.ctx.cwd, taskCwd, input.outputBaseDir);
-		const agentConfig = input.agents.find((agent) => agent.name === task.agent);
-		const taskText = injectSingleOutputInstruction(
-			`${readInstructions.prefix}${input.taskTexts[index]!}${progressInstructions.suffix}`,
-			outputPath,
-			agentConfig,
-		);
-		const interruptController = new AbortController();
-		if (input.foregroundControl) {
-			const model = input.modelOverrides[index];
-			const thinking = resolveEffectiveThinking(model, input.thinkingOverrideForTask(task.agent, index, model));
-			beginForegroundChild(input.foregroundControl, {
-				index,
-				agent: task.agent,
-				authoredTask: input.taskDescriptions[index] ?? "",
-				effectivePrompt: taskText,
-				cwd: taskCwd,
-				...(outputPath ? { outputPath } : {}),
-				rerun: { params: compactOptional<Record<string, unknown>>({
-					agent: task.agent,
-					task: input.taskDescriptions[index] ?? "",
-					async: false,
-					cwd: input.worktreeSetup ? undefined : taskCwd,
-					worktree: input.worktreeSetup ? true : false,
-					context: input.contextPolicy.contextForAgent(task.agent),
-					share: input.shareEnabled || undefined,
-					maxOutput: input.maxOutput,
-					timeoutMs: input.timeoutMs,
-					toolTimeoutMs: input.toolTimeoutMs,
-					configToolTimeoutMs: input.configToolTimeoutMs,
-					turnBudget: input.turnBudget,
-					...(model ? { model } : {}),
-					...(effectiveSkills !== undefined ? { skill: effectiveSkills } : {}),
-					...(outputPath ? { output: outputPath } : {}),
-					...(behavior?.outputMode !== undefined ? { outputMode: behavior.outputMode } : {}),
-					...(behavior?.reads !== undefined ? { reads: behavior.reads } : {}),
-					...(behavior?.progress !== undefined ? { progress: behavior.progress } : {}),
-					...(task.toolBudget !== undefined ? { toolBudget: task.toolBudget } : {}),
-					...(task.outputSchema !== undefined ? { outputSchema: task.outputSchema } : {}),
-					...(task.acceptance !== undefined ? { acceptance: task.acceptance } : {}),
-					...(task.agentContract !== undefined || input.agentContract !== undefined ? { agentContract: task.agentContract ?? input.agentContract } : {}),
-				}) },
-				description: `${task.agent} child`,
-				...(model ? { model } : {}),
-				...(thinking ? { thinking } : {}),
-				interrupt: () => {
-					if (interruptController.signal.aborted) return false;
-					interruptController.abort();
-					return true;
-				},
-			});
-		}
-		const structuredRuntime = task.outputSchema
-			? createStructuredOutputRuntime(task.outputSchema, path.join(input.artifactsDir, "structured-output", input.runId))
-			: undefined;
-		let detachedReceipt = false;
-		const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskText, compactOptional<Parameters<typeof runSync>[4]>({
-			permissions: input.permissions,
-			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
-			llmIntentArbiter: createTaskMutationArbiter(input.ctx),
-			...workflowForegroundSteeringLaunchOptions(input.foregroundControl, index),
-			context: input.contextPolicy.contextForAgent(task.agent),
-			runFanoutBudget: { ...input.runFanoutBudget, parentPath: `${input.runFanoutBudget.parentPath ? `${input.runFanoutBudget.parentPath}/` : ""}tasks[${index}]` },
-			cwd: taskCwd,
-			signal: input.signal,
-			interruptSignal: interruptController.signal,
-			allowIntercomDetach: agentConfig?.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
-			intercomEvents: input.intercomEvents,
-			runId: input.runId,
-			index,
-			sessionDir: input.sessionDirForIndex(index),
-			sessionFile: input.sessionFileForTask(task.agent, index, input.modelOverrides[index]),
-			share: input.shareEnabled,
-			artifactsDir: input.artifactConfig.enabled ? input.artifactsDir : undefined,
-			artifactConfig: input.artifactConfig,
-			maxOutput: input.maxOutput,
-			outputPath,
-			outputMode: behavior?.outputMode,
-			maxSubagentDepth: input.maxSubagentDepths[index],
-			waitToolEnabled: input.waitToolEnabled,
-			capabilityCeiling: input.capabilityCeiling,
-			controlConfig: input.controlConfig,
-			onControlEvent: input.onControlEvent,
-			onDetachedExit: (result) => {
-				try {
-					updateRememberedForegroundChild(input.state, { runId: input.runId, mode: "parallel", cwd: taskCwd, sessionId: input.parentSessionId, index, result, events: input.intercomEvents });
-				} finally {
-					try {
-						if (input.foregroundControl) finishForegroundChild(input.foregroundControl, index);
-					} finally {
-						removeForegroundControlIfIdle(input.state, input.runId);
-					}
-				}
-			},
-			intercomSessionName: input.childIntercomTarget?.(task.agent, index),
-			orchestratorIntercomTarget: input.orchestratorIntercomTarget,
-			nestedRoute: input.foregroundControl?.nestedRoute,
-			modelOverride: input.modelOverrides[index],
-			thinkingOverride: input.thinkingOverrideForTask(task.agent, index, input.modelOverrides[index]),
-			availableModels: input.availableModels,
-			preferredModelProvider: input.parentModel?.provider,
-			modelScope: input.modelScope,
-			skills: effectiveSkills === false ? [] : effectiveSkills,
-			structuredOutput: structuredRuntime,
-			agentContract: task.agentContract ?? input.agentContract,
-			acceptance: task.acceptance,
-			acceptanceContext: { mode: "parallel" },
-			onEffectivePrompt: input.foregroundControl ? (prompt) => updateLiveEffectivePrompt(input.foregroundControl!, index, prompt) : undefined,
-			timeoutMs: input.timeoutMs,
-			toolTimeoutMs: input.toolTimeoutMs,
-			configToolTimeoutMs: input.configToolTimeoutMs,
-			deadlineAt: input.deadlineAt,
-			turnBudget: input.turnBudget,
-			toolBudget: input.toolBudgets[index],
-			onUpdate: input.onUpdate
-				? (progressUpdate) => {
-					const stepResults = progressUpdate.details?.results || [];
-					const stepProgress = progressUpdate.details?.progress || [];
-					if (input.foregroundControl && stepProgress.length > 0) {
-						updateForegroundChild(input.foregroundControl, index, stepProgress[0]);
-					}
-					if (stepResults.length > 0) input.liveResults[index] = stepResults[0];
-					if (stepProgress.length > 0) input.liveProgress[index] = stepProgress[0];
-					const mergedResults = input.liveResults.filter((result): result is SingleResult => result !== undefined);
-					const mergedProgress = input.liveProgress.filter((progress): progress is AgentProgress => progress !== undefined);
-					input.onUpdate?.({
-						content: progressUpdate.content,
-						details: compactOptional<Details>({
-							mode: "parallel",
-							results: mergedResults,
-							progress: mergedProgress,
-							controlEvents: progressUpdate.details?.controlEvents,
-							totalSteps: input.tasks.length,
-						}),
-					});
-				}
-				: undefined,
-		})).then((result) => {
-			detachedReceipt = result.detached === true;
-			return result;
-		}).finally(() => {
-			// mapConcurrent rejects before siblings settle, so every attached child
-			// attempts idle removal after releasing its own control. Detached receipts
-			// transfer both responsibilities to the authoritative exit callback.
-			if (!detachedReceipt) {
-				if (input.foregroundControl) finishForegroundChild(input.foregroundControl, index);
-				removeForegroundControlIfIdle(input.state, input.runId);
-			}
-		});
-		completedResults.push(result);
-		return result;
-	}, input.globalSemaphore, () => {
-		if (input.foregroundControl) settleForegroundSchedulingOwner(input.foregroundControl);
-		removeForegroundControlIfIdle(input.state, input.runId);
-	});
-}
-
-async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): Promise<AgentToolResult<Details>> {
-	const {
-		params,
-		effectiveCwd,
-		agents,
-		ctx,
-		signal,
-		runId,
-		sessionDirForIndex,
-		sessionFileForIndex,
-		sessionFileForTask,
-		thinkingOverrideForTask,
-		shareEnabled,
-		artifactConfig,
-		artifactsDir,
-		backgroundRequestedWhileClarifying,
-		onUpdate,
-		sessionRoot,
-		controlConfig,
-		contextPolicy,
-	} = data;
-	const onControlEvent = createForegroundControlNotifier(data, deps);
-	const childIntercomTarget = data.intercomBridge.active ? resolveSubagentIntercomTarget : undefined;
-	const allProgress: AgentProgress[] = [];
-	const allArtifactPaths: ArtifactPaths[] = [];
-	const tasks = params.tasks!;
-	const maxParallelTasks = resolveTopLevelParallelMaxTasks(deps.config.parallel?.maxTasks);
-	const parallelConcurrency = resolveTopLevelParallelConcurrency(params.concurrency, deps.config.parallel?.concurrency);
-
-	if (tasks.length > maxParallelTasks)
-		return {
-			content: [{ type: "text", text: `Max ${maxParallelTasks} tasks` }],
-			isError: true,
-			details: { mode: "parallel" as const, results: [] },
-		};
-
-	const agentConfigs: AgentConfig[] = [];
-	for (const t of tasks) {
-		const config = agents.find((a) => a.name === t.agent);
-		if (!config) {
-			return {
-				content: [{ type: "text", text: `Unknown agent: ${t.agent}` }],
-				isError: true,
-				details: { mode: "parallel" as const, results: [] },
-			};
-		}
-		agentConfigs.push(config);
-	}
-
-	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
-	const maxSubagentDepths = agentConfigs.map((config) =>
-		resolveChildMaxSubagentDepth(currentMaxSubagentDepth, config.maxSubagentDepth),
-	);
-	const toolBudgets: (ResolvedToolBudget | undefined)[] = [];
-	for (let index = 0; index < tasks.length; index++) {
-		const resolved = resolveEffectiveToolBudget(omitUndefinedProperties({ stepBudget: tasks[index]?.toolBudget, runBudget: data.toolBudget, agentBudget: agentConfigs[index]?.toolBudget, configBudget: data.configToolBudget }));
-		if (resolved.error) return buildParallelModeError(resolved.error);
-		toolBudgets.push(resolved.toolBudget);
-	}
-
-	if (params.worktree) {
-		const worktreeTaskCwdError = buildParallelWorktreeTaskCwdError(tasks, effectiveCwd);
-		if (worktreeTaskCwdError) return buildParallelModeError(worktreeTaskCwdError);
-	}
-
-	const parentModel = data.parentModel;
-	const currentProvider = parentModel?.provider;
-	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
-	let taskTexts = tasks.map((t) => t.task);
-	const skillOverrides: (string[] | false | undefined)[] = tasks.map((t) =>
-		normalizeSkillInput(t.skill),
-	);
-	const behaviorOverrides: StepOverrides[] = tasks.map((task, index) => ({
-		...(task.output !== undefined && task.output !== true ? { output: task.output } : {}),
-		...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
-		...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
-		...(task.progress !== undefined ? { progress: task.progress } : {}),
-		...(skillOverrides[index] !== undefined ? { skills: skillOverrides[index] } : {}),
-		...(task.model !== undefined ? { model: task.model } : {}),
-	}));
-	const modelOverrides: (string | undefined)[] = tasks.map((_, i) =>
-		agentConfigs[i]?.runner?.type === "external-cli"
-			? undefined
-			: resolveEffectiveSubagentModel(behaviorOverrides[i]?.model, agentConfigs[i]?.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope }),
-	);
-
-	if (params.clarify === true && ctx.hasUI) {
-		const behaviors = agentConfigs.map((c, i) =>
-			resolveStepBehavior(c, behaviorOverrides[i]!),
-		);
-		const availableSkills = discoverAvailableSkills(effectiveCwd);
-
-		const result = await ctx.ui.custom<ChainClarifyResult>(
-			(tui, theme, _kb, done) =>
-				new ChainClarifyComponent(
-					tui, theme,
-					agentConfigs,
-					taskTexts,
-					"",
-					undefined,
-					behaviors,
-					availableModels,
-					currentProvider,
-					availableSkills,
-					done,
-					"parallel",
-				),
-			{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
-		);
-
-		if (!result || !result.confirmed) {
-			return { content: [{ type: "text", text: "Cancelled" }], details: { mode: "parallel", results: [] } };
-		}
-
-		taskTexts = result.templates;
-		for (let i = 0; i < result.behaviorOverrides.length; i++) {
-			const override = result.behaviorOverrides[i];
-			if (override?.model !== undefined) {
-				modelOverrides[i] = agentConfigs[i]?.runner?.type === "external-cli"
-					? undefined
-					: resolveEffectiveSubagentModel(override.model, agentConfigs[i]?.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope });
-				behaviorOverrides[i]!.model = override.model;
-			}
-			if (override?.output !== undefined) behaviorOverrides[i]!.output = override.output;
-			if (override?.reads !== undefined) behaviorOverrides[i]!.reads = override.reads;
-			if (override?.progress !== undefined) behaviorOverrides[i]!.progress = override.progress;
-			if (override?.skills !== undefined) {
-				skillOverrides[i] = override.skills;
-				behaviorOverrides[i]!.skills = override.skills;
-			}
-		}
-
-		if (result.runInBackground) {
-			if (!isAsyncAvailable()) {
-				return {
-					content: [{ type: "text", text: "Background mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed." }],
-					isError: true,
-					details: { mode: "parallel" as const, results: [] },
-				};
-			}
-			const id = data.asyncRunId;
-			const capacity = acquireClarifiedBackgroundCapacity(data, deps, "parallel", id);
-			if (capacity.errorResult) return capacity.errorResult;
-			const asyncCtx = compactOptional<Parameters<typeof executeAsyncSingle>[1]["ctx"]>({
-				pi: deps.pi,
-				cwd: ctx.cwd,
-				currentSessionId: data.parentSessionId!,
-				parentSessionId: data.parentPiSessionId,
-				currentModelProvider: parentModel?.provider,
-				currentModel: parentModel,
-				modelScope: data.modelScope,
-				interactive: ctx.hasUI,
-		permissions: deps.config.permissions,
-			});
-			const parallelTasks = tasks.map((t, i) => {
-				const taskText = shouldForkAgent(contextPolicy, t.agent) ? wrapForkTask(taskTexts[i]!) : taskTexts[i]!;
-				const progress = taskDisallowsFileUpdates(taskText) ? false : behaviorOverrides[i]?.progress;
-				return compactOptional<ParallelTaskItem>({
-					agent: t.agent,
-					task: taskText,
-					cwd: t.cwd,
-					...(behaviorOverrides[i]?.model !== undefined ? { model: behaviorOverrides[i]!.model } : {}),
-					...(skillOverrides[i] !== undefined ? { skill: skillOverrides[i] } : {}),
-					...(behaviorOverrides[i]?.output !== undefined ? { output: behaviorOverrides[i]!.output } : {}),
-					...(behaviorOverrides[i]?.outputMode !== undefined ? { outputMode: behaviorOverrides[i]!.outputMode } : {}),
-					...(behaviorOverrides[i]?.reads !== undefined ? { reads: behaviorOverrides[i]!.reads } : {}),
-					...(progress !== undefined ? { progress } : {}),
-					...(t.toolBudget !== undefined ? { toolBudget: t.toolBudget } : {}),
-					...(t.outputSchema !== undefined ? { outputSchema: t.outputSchema } : {}),
-					...(t.acceptance !== undefined ? { acceptance: t.acceptance } : {}),
-					...(t.agentContract !== undefined ? { agentContract: t.agentContract } : {}),
-				});
-			});
-			try {
-				return executeAsyncChain(id, compactOptional<Parameters<typeof executeAsyncChain>[1]>({
-					chain: [compactOptional<ParallelStep>({ parallel: parallelTasks, concurrency: parallelConcurrency, worktree: params.worktree })],
-					resultMode: "parallel",
-					goal: taskTexts[0] ?? "",
-					agents,
-					ctx: asyncCtx,
-					availableModels,
-					cwd: effectiveCwd,
-					maxOutput: params.maxOutput,
-					artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
-					artifactConfig,
-					shareEnabled,
-					sessionRoot,
-					chainSkills: [],
-					activeAsyncCapacity: capacity.activeAsyncCapacity,
-					sessionFilesByFlatIndex: tasks.map((task, index) => sessionFileForTask(task.agent, index, modelOverrides[index])),
-					thinkingOverridesByFlatIndex: tasks.map((task, index) => thinkingOverrideForTask(task.agent, index, modelOverrides[index])),
-					contextForAgent: contextPolicy.contextForAgent,
-					maxSubagentDepth: currentMaxSubagentDepth,
-					waitToolEnabled: deps.waitToolEnabled,
-					worktreeSetupHook: deps.config.worktreeSetupHook,
-					worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
-					worktreeBaseDir: deps.config.worktreeBaseDir,
-					controlConfig,
-					agentContract: params.agentContract,
-					controlIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
-					childIntercomTarget: data.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index) : undefined,
-					nestedRoute: data.nestedRoute,
-					timeoutMs: data.timeoutMs,
-					turnBudget: data.turnBudget,
-					usageBudget: data.usageBudget,
-					toolBudget: data.toolBudget,
-					configToolBudget: data.configToolBudget,
-					callToolTimeoutMs: data.params?.toolTimeoutMs,
-					configToolTimeoutMs: data.configToolTimeoutMs,
-					globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
-					runFanoutBudget: data.runFanoutBudget,
-				}));
-			} finally {
-				finalizeClarifiedBackgroundCapacity(data, deps, capacity.activeAsyncCapacity);
-			}
-		}
-	}
-
-	const behaviors = tasks.map((task, index) => {
-		let behavior = suppressProgressForReadOnlyTask(resolveStepBehavior(agentConfigs[index]!, behaviorOverrides[index]!), taskTexts[index]);
-		if (behaviorOverrides[index]?.output === undefined && typeof behavior.output === "string" && !path.isAbsolute(behavior.output)) {
-			behavior = { ...behavior, output: path.join("parallel-0", `${index}-${task.agent}`, behavior.output) };
-		}
-		return behavior;
-	});
-	const firstProgressIndex = behaviors.findIndex((behavior) => behavior.progress);
-	const liveResults: (SingleResult | undefined)[] = new Array(tasks.length).fill(undefined);
-	const liveProgress: (AgentProgress | undefined)[] = new Array(tasks.length).fill(undefined);
-	const foregroundControl = deps.state.foregroundControls.get(runId);
-	const { setup: worktreeSetup, errorResult } = createParallelWorktreeSetup(
-		params.worktree,
-		effectiveCwd,
-		runId,
-		tasks,
-		deps.config.worktreeSetupHook,
-		deps.config.worktreeSetupHookTimeoutMs,
-		deps.config.worktreeBaseDir,
-	);
-	if (errorResult) return errorResult;
-
-	let worktreeCleanupHandled = false;
-	let pendingHandoff: Details["parallelHandoff"];
-	try {
-		if (worktreeSetup) {
-			pendingHandoff = writePendingParallelHandoff({
-				manifestPath: parallelHandoffPath(artifactsDir, runId),
-				runId,
-				mode: "parallel",
-				source: "foreground",
-				cwd: effectiveCwd,
-				stepIndex: 0,
-				flatStartIndex: 0,
-				setup: worktreeSetup,
-			});
-		}
-		const outputBaseDir = path.join(artifactsDir, "outputs", runId);
-		const duplicateOutputError = findDuplicateParallelOutputPath(omitUndefinedProperties({
-			tasks,
-			behaviors,
-			paramsCwd: effectiveCwd,
-			ctxCwd: ctx.cwd,
-			outputBaseDir,
-			worktreeSetup,
-		}));
-		if (duplicateOutputError) return buildParallelModeError(duplicateOutputError);
-		for (let index = 0; index < tasks.length; index++) {
-			const taskCwd = resolveParallelTaskCwd(tasks[index]!, effectiveCwd, worktreeSetup, index);
-			const outputPath = resolveSingleOutputPath(behaviors[index]?.output, ctx.cwd, taskCwd, outputBaseDir);
-			const validationError = validateFileOnlyOutputMode(behaviors[index]?.outputMode, outputPath, `Parallel task ${index + 1} (${tasks[index]!.agent})`);
-			if (validationError) return buildParallelModeError(validationError);
-		}
-
-		const parallelProgressPrecreated = firstProgressIndex !== -1;
-		const parallelProgressDir = path.join(artifactsDir, "progress", runId);
-		if (parallelProgressPrecreated) writeInitialProgressFile(parallelProgressDir);
-
-		const taskDescriptions = taskTexts.map((taskText) => taskText.trim());
-		for (let i = 0; i < taskTexts.length; i++) {
-			if (shouldForkAgent(contextPolicy, tasks[i]!.agent)) taskTexts[i] = wrapForkTask(taskTexts[i]!);
-		}
-
-		const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
-		const results = await runForegroundParallelTasks(compactOptional<ForegroundParallelRunInput>({
-			tasks,
-			permissions: deps.config.permissions,
-			taskTexts,
-			taskDescriptions,
-			agents,
-			ctx,
-			state: deps.state,
-			intercomEvents: deps.pi.events,
-			parentSessionId: data.parentSessionId,
-			capabilityCeiling: data.capabilityCeiling,
-			runFanoutBudget: data.runFanoutBudget,
-			signal,
-			runId,
-			sessionDirForIndex,
-			sessionFileForIndex,
-			sessionFileForTask,
-			thinkingOverrideForTask,
-			shareEnabled,
-			artifactConfig,
-			artifactsDir,
-			outputBaseDir,
-			maxOutput: params.maxOutput,
-			paramsCwd: effectiveCwd,
-			progressDir: parallelProgressDir,
-			availableModels,
-			modelScope: data.modelScope,
-			parentModel,
-			modelOverrides,
-			behaviors,
-			firstProgressIndex: parallelProgressPrecreated ? -1 : firstProgressIndex,
-			controlConfig,
-			contextPolicy,
-			onControlEvent,
-			childIntercomTarget: childIntercomTarget ? (agent, index) => childIntercomTarget(runId, agent, index) : undefined,
-			orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
-			foregroundControl,
-			concurrencyLimit: parallelConcurrency,
-			globalSemaphore: new Semaphore(deps.config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT),
-			maxSubagentDepths,
-			waitToolEnabled: deps.waitToolEnabled,
-			liveResults,
-			liveProgress,
-			onUpdate,
-			worktreeSetup,
-			timeoutMs: data.timeoutMs,
-			deadlineAt,
-			toolTimeoutMs: data.params?.toolTimeoutMs,
-			configToolTimeoutMs: data.configToolTimeoutMs,
-			turnBudget: data.turnBudget,
-			usageBudget: data.usageBudget,
-			toolBudgets,
-			agentContract: params.agentContract,
-		}));
-		for (let i = 0; i < results.length; i++) {
-			const run = results[i]!;
-			recordRun(run.agent, taskTexts[i]!, run.exitCode, run.progressSummary?.durationMs ?? 0);
-		}
-
-		for (const result of results) {
-			if (result.progress) allProgress.push(result.progress);
-			if (result.artifactPaths) allArtifactPaths.push(result.artifactPaths);
-		}
-
-		if (foregroundControl) {
-			updateForegroundNestedProjection(foregroundControl);
-			attachRootChildrenToSteps(runId, results, foregroundControl.nestedChildren);
-		}
-		const detached = results.find((result) => result.detached);
-		let handoff: ReturnType<typeof finalizeParallelWorktreeHandoff> | undefined;
-		if (worktreeSetup) {
-			worktreeCleanupHandled = true;
-			handoff = detached
-				? { suffix: pendingHandoff ? formatParallelHandoffReference(pendingHandoff) : "", reference: pendingHandoff }
-				: finalizeParallelWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: effectiveCwd, tasks, results });
-		}
-		const interrupted = results.find((result) => result.interrupted);
-		const totalCost = sumResultsCost(results);
-		const details = compactForegroundDetails(compactOptional<Details>({
-			mode: "parallel",
-			runId,
-			timeoutMs: data.timeoutMs,
-			results,
-			progress: params.includeProgress ? allProgress : undefined,
-			artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
-			totalChildUsage: sumResultsUsage(results),
-			totalCost,
-			usageBudget: usageBudgetState(data.usageBudget, totalCost),
-			...(handoff?.reference ? { parallelHandoff: handoff.reference } : {}),
-		}));
-		rememberForegroundRun(deps.state, { runId, mode: "parallel", cwd: effectiveCwd, sessionId: data.parentSessionId, results: details.results });
-		if (interrupted) {
-			return {
-				content: [{ type: "text", text: `Parallel run paused after interrupt (${interrupted.agent}). Waiting for explicit next action.` }],
-				details,
-			};
-		}
-		if (detached) {
-			const handoffSuffix = handoff?.suffix ? `\n\n${handoff.suffix}` : "";
-			return {
-				content: [{ type: "text", text: `Parallel run detached for intercom coordination (${detached.agent}). Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.${handoffSuffix}` }],
-				details,
-			};
-		}
-
-		const suppressRoutineResultIntercom = shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: params.suppressRoutineResultIntercom, results });
-		if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
-		if (!suppressRoutineResultIntercom) {
-			const intercomReceipt = await maybeBuildForegroundIntercomReceipt({
-				pi: deps.pi,
-				intercomBridge: data.intercomBridge,
-				runId,
-				mode: "parallel",
-				details,
-				...(params.workflowParentRunId !== undefined ? { preserveDetailsOutputs: true } : {}),
-				...(foregroundControl?.nestedChildren?.length ? { nestedChildren: foregroundControl.nestedChildren } : {}),
-			});
-			if (intercomReceipt) {
-				return {
-					content: [{ type: "text", text: intercomReceipt.text }],
-					details: intercomReceipt.details,
-				};
-			}
-		}
-
-		const worktreeSuffix = handoff?.suffix ?? "";
-		const ok = results.filter((result) => result.exitCode === 0).length;
-		const downgradeNote = backgroundRequestedWhileClarifying ? " (background requested, but clarify kept this run foreground)" : "";
-		const aggregatedOutput = aggregateParallelOutputs(
-			results.map((result) => ({
-				agent: result.agent,
-				output: result.truncation?.text || getSingleResultOutput(result),
-				exitCode: result.exitCode,
-				...(result.error === undefined ? {} : { error: result.error }),
-				...(result.timedOut === undefined ? {} : { timedOut: result.timedOut }),
-			})),
-			(i, agent) => `=== Task ${i + 1}: ${agent} ===`,
-		);
-
-		const summary = `${ok}/${results.length} succeeded${downgradeNote}`;
-		const fullContent = worktreeSuffix
-			? `${summary}\n\n${aggregatedOutput}\n\n${worktreeSuffix}`
-			: `${summary}\n\n${aggregatedOutput}`;
-
-		return {
-			content: [{ type: "text", text: fullContent }],
-			details,
-		};
-	} finally {
-		if (worktreeSetup && !worktreeCleanupHandled) cleanupWorktrees(worktreeSetup);
 	}
 }
 
@@ -4138,7 +3494,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		contextPolicy,
 	} = data;
 	const onControlEvent = createForegroundControlNotifier(data, deps);
-	const childIntercomTarget = data.intercomBridge.active ? resolveSubagentIntercomTarget(runId, params.agent!, 0) : undefined;
+	const childBridgeActive = intercomBridgeAppliesToAgent(data.intercomBridge, contextPolicy, params.agent!);
+	const childIntercomTarget = childBridgeActive ? resolveSubagentIntercomTarget(runId, params.agent!, 0) : undefined;
 	const allProgress: AgentProgress[] = [];
 	const allArtifactPaths: ArtifactPaths[] = [];
 	const agentConfig = agents.find((a) => a.name === params.agent);
@@ -4155,126 +3512,54 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const parentModel = data.parentModel;
 	const currentProvider = parentModel?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
+	const modelScopes = resolveModelScopesForAgent(data.modelScope, agentConfig.name, parentModel);
 	let task = params.task ?? "";
 	let modelOverride: string | undefined = resolveEffectiveSubagentModel(
 		params.model as string | undefined,
 		agentConfig.model,
 		parentModel,
 		availableModels,
-		currentProvider,
-		data.modelScope === undefined ? {} : { scope: data.modelScope },
+		agentConfig.modelProvider ?? currentProvider,
+		modelScopes.length === 0 ? {} : { scope: modelScopes },
 	);
+	const modelOverrideFromParent = inheritsParentModel(params.model as string | undefined, agentConfig.model, parentModel);
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	let readsOverride: string[] | false | undefined = params.reads;
 	const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
 	let effectiveOutput = normalizeSingleOutputOverride(rawOutput, agentConfig.output);
-	const effectiveOutputMode = params.outputMode ?? "inline";
+	const effectiveOutputMode = params.outputMode ?? agentConfig.outputMode ?? "inline";
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
 	const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, agentConfig.maxSubagentDepth);
 
-	if (params.clarify === true && ctx.hasUI) {
-		const behavior = resolveStepBehavior(agentConfig, omitUndefinedProperties({ output: effectiveOutput, skills: skillOverride }));
-		const availableSkills = discoverAvailableSkills(effectiveCwd);
 
-		const result = await ctx.ui.custom<ChainClarifyResult>(
-			(tui, theme, _kb, done) =>
-				new ChainClarifyComponent(
-					tui, theme,
-					[agentConfig],
-					[task],
-					task,
-					undefined,
-					[behavior],
-					availableModels,
-					currentProvider,
-					availableSkills,
-					done,
-					"single",
-				),
-			{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
-		);
-
-		if (!result || !result.confirmed) {
-			return { content: [{ type: "text", text: "Cancelled" }], details: { mode: "single", results: [] } };
-		}
-
-		task = result.templates[0]!;
-		const override = result.behaviorOverrides[0];
-		if (override?.model !== undefined) modelOverride = resolveEffectiveSubagentModel(override.model, agentConfig.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope });
-		if (override?.output !== undefined) effectiveOutput = normalizeSingleOutputOverride(override.output, agentConfig.output);
-		if (override?.skills !== undefined) skillOverride = override.skills;
-		if (override?.reads !== undefined) readsOverride = override.reads;
-
-		if (result.runInBackground) {
-			if (!isAsyncAvailable()) {
-				return {
-					content: [{ type: "text", text: "Background mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed." }],
-					isError: true,
-					details: { mode: "single" as const, results: [] },
-				};
-			}
-			const id = data.asyncRunId;
-			const capacity = acquireClarifiedBackgroundCapacity(data, deps, "single", id);
-			if (capacity.errorResult) return capacity.errorResult;
-			const asyncCtx = compactOptional<Parameters<typeof executeAsyncSingle>[1]["ctx"]>({
-				pi: deps.pi,
-				cwd: ctx.cwd,
-				currentSessionId: data.parentSessionId!,
-				parentSessionId: data.parentPiSessionId,
-				currentModelProvider: parentModel?.provider,
-				currentModel: parentModel,
-				modelScope: data.modelScope,
-				interactive: ctx.hasUI,
-		permissions: deps.config.permissions,
+	const sourceCwd = effectiveCwd;
+	const { setup: worktreeSetup, errorResult: worktreeSetupError } = createSingleWorktreeSetup(
+		params.worktree,
+		sourceCwd,
+		runId,
+		params.agent!,
+		deps.config.worktreeSetupHook,
+		deps.config.worktreeSetupHookTimeoutMs,
+		deps.config.worktreeBaseDir,
+	);
+	if (worktreeSetupError) return worktreeSetupError;
+	const singleCwd = worktreeSetup?.worktrees[0]?.agentCwd ?? sourceCwd;
+	let pendingHandoff: Details["parallelHandoff"];
+	if (worktreeSetup) {
+		try {
+			pendingHandoff = writePendingParallelHandoff({
+				manifestPath: parallelHandoffPath(artifactsDir, runId),
+				runId,
+				mode: "single",
+				source: "foreground",
+				cwd: sourceCwd,
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: worktreeSetup,
 			});
-			try {
-				return executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
-					agent: params.agent!,
-					task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(task) : task,
-					goal: task,
-					agentConfig,
-					recoveryAgentConfig: data.recoveryAgents.find((agent) => agent.name === params.agent),
-					ctx: asyncCtx,
-					availableModels,
-					cwd: effectiveCwd,
-					maxOutput: params.maxOutput,
-					artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
-					artifactConfig,
-					shareEnabled,
-					activeAsyncCapacity: capacity.activeAsyncCapacity,
-					sessionRoot,
-					sessionFile: sessionFileForTask(params.agent!, 0, modelOverride),
-					context: contextPolicy.contextForAgent(params.agent!),
-					skills: skillOverride === false ? [] : skillOverride,
-					output: effectiveOutput,
-					outputMode: effectiveOutputMode,
-					...(readsOverride !== undefined ? { reads: readsOverride } : {}),
-					outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
-					modelOverride,
-					thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
-					maxSubagentDepth,
-					waitToolEnabled: deps.waitToolEnabled,
-					worktreeSetupHook: deps.config.worktreeSetupHook,
-					worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
-					worktreeBaseDir: deps.config.worktreeBaseDir,
-					controlConfig,
-					intercomBridge: params.intercomBridge,
-					controlIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
-					childIntercomTarget: data.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index) : undefined,
-					nestedRoute: data.nestedRoute,
-					agentContract: params.agentContract,
-					structuredOutputSchema: params.outputSchema,
-					acceptance: params.acceptance,
-					timeoutMs: data.timeoutMs,
-					turnBudget: data.turnBudget,
-					toolBudget: effectiveToolBudget.toolBudget,
-					usageBudget: data.usageBudget,
-					allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
-					runFanoutBudget: data.runFanoutBudget,
-				}));
-			} finally {
-				finalizeClarifiedBackgroundCapacity(data, deps, capacity.activeAsyncCapacity);
-			}
+		} catch (error) {
+			cleanupWorktrees(worktreeSetup);
+			return { content: [{ type: "text", text: formatParallelHandoffError(error) }], isError: true, details: { mode: "single", results: [] } };
 		}
 	}
 
@@ -4283,18 +3568,19 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		task = wrapForkTask(task);
 	}
 	const cleanTask = task;
-	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, effectiveCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
+	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, singleCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
 	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
 	if (validationError) {
+		if (worktreeSetup) cleanupWorktrees(worktreeSetup);
 		return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [] } };
 	}
 	const structuredRuntime = params.outputSchema
-		? createStructuredOutputRuntime(params.outputSchema, artifactConfig.enabled ? path.join(artifactsDir, "structured-output", runId) : undefined)
+		? createStructuredOutputRuntime(params.outputSchema, artifactConfig.enabled ? path.join(artifactsDir, "structured-output", runId) : undefined, { captureAcceptanceReport: params.acceptance !== false })
 		: undefined;
 	// Reads: caller override > agent defaultReads > none. `~`/`~/` expand to home;
 	// absolute paths pass through; relative paths resolve against the child cwd.
 	const reads = readsOverride !== undefined ? readsOverride : agentConfig.defaultReads ?? false;
-	const readPaths = Array.isArray(reads) ? resolveExistingReadPaths(reads, effectiveCwd) : [];
+	const readPaths = Array.isArray(reads) ? resolveExistingReadPaths(reads, singleCwd) : [];
 	const readsInstruction = readPaths.length > 0
 		? `[Read from: ${readPaths.join(", ")}]\n\n`
 		: "";
@@ -4311,13 +3597,13 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	let detachForeground: ((reason?: string) => boolean) | undefined;
 	const foregroundControl = deps.state.foregroundControls.get(runId);
 	if (foregroundControl) {
-		const thinking = resolveEffectiveThinking(modelOverride, thinkingOverrideForTask(params.agent!, 0, modelOverride));
+		const thinking = resolveEffectiveThinking(modelOverride, thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent));
 		beginForegroundChild(foregroundControl, omitUndefinedProperties({
 			index: 0,
 			agent: params.agent!,
 			authoredTask,
 			effectivePrompt: task,
-			cwd: effectiveCwd,
+			cwd: singleCwd,
 			outputPath,
 			rerun: { params: { ...params, task: authoredTask, async: params.async ?? false } },
 			description: foregroundControl.description,
@@ -4349,14 +3635,14 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			...workflowForegroundSteeringLaunchOptions(foregroundControl, 0),
 			context: data.contextPolicy.contextForAgent(params.agent!),
 			runFanoutBudget: params.runFanoutAdmitted ? data.runFanoutBudget : { ...data.runFanoutBudget, parentPath: `${data.runFanoutBudget.parentPath ? `${data.runFanoutBudget.parentPath}/` : ""}single` },
-			cwd: effectiveCwd,
+			cwd: singleCwd,
 			signal,
 			interruptSignal: interruptController.signal,
 			allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
 			intercomEvents: deps.pi.events,
 			runId,
 			sessionDir: sessionDirForIndex(0),
-			sessionFile: sessionFileForTask(params.agent!, 0, modelOverride),
+			sessionFile: sessionFileForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
 			share: shareEnabled,
 			artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 			artifactConfig,
@@ -4369,14 +3655,18 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			controlConfig,
 			onControlEvent,
 			intercomSessionName: childIntercomTarget,
-			orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
+			orchestratorIntercomTarget: childBridgeActive ? data.intercomBridge.orchestratorTarget : undefined,
 			nestedRoute: foregroundControl?.nestedRoute,
 			index: 0,
 			modelOverride,
-			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
+			fast: params.fast,
+			modelOverrideFromParent,
+			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
+			thinkingCeiling: agentConfig.maxThinking,
+			extensionBindings: params.extensionBindings,
 			availableModels,
 			preferredModelProvider: currentProvider,
-			modelScope: data.modelScope,
+			modelScope: modelScopes,
 			skills: effectiveSkills,
 			structuredOutput: structuredRuntime,
 			agentContract: params.agentContract,
@@ -4389,9 +3679,20 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			onDetachedExit: (result) => {
 				try {
 					try {
-						updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events, notify: params.workflowParentRunId === undefined });
+						updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events, notify: true });
 					} catch {
 						// Remembered foreground state is best-effort; run history and cleanup must still complete.
+					}
+					const workflowParentRunId = params.workflowParentRunId ?? foregroundControl?.parentWorkflowRunId;
+					if (workflowParentRunId) {
+						reconcileDetachedWorkflowChildCompletion({
+							state: deps.state,
+							workflowRunId: workflowParentRunId,
+							childRunId: runId,
+							result,
+							events: deps.pi.events,
+							workflowKey: params.workflowKey ?? foregroundControl?.workflowKey,
+						});
 					}
 				} finally {
 					try {
@@ -4416,6 +3717,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			capabilityCeiling: data.capabilityCeiling,
 			allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
 		}));
+	} catch (error) {
+		if (worktreeSetup) cleanupWorktrees(worktreeSetup);
+		throw error;
 	} finally {
 		// An attached runSync rejection still owns its child and structured runtime.
 		// A successful detached receipt transfers both to onDetachedExit while the
@@ -4427,6 +3731,13 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	}
 	if (!r.detached) {
 		recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
+	}
+
+	let worktreeHandoff: ReturnType<typeof finalizeSingleWorktreeHandoff> | undefined;
+	if (worktreeSetup) {
+		worktreeHandoff = r.detached
+			? { suffix: pendingHandoff ? formatParallelHandoffReference(pendingHandoff) : "", reference: pendingHandoff }
+			: finalizeSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd, agent: params.agent!, result: r });
 	}
 
 	if (r.progress) allProgress.push(r.progress);
@@ -4463,8 +3774,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		totalChildUsage: sumResultsUsage([r]),
 		totalCost,
 		usageBudget: usageBudgetState(data.usageBudget, totalCost),
+		...(worktreeHandoff?.reference ? { parallelHandoff: worktreeHandoff.reference } : {}),
 	}));
-	rememberForegroundRun(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, results: details.results });
+	rememberForegroundRun(deps.state, { runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, results: details.results, extensionBindings: params.extensionBindings });
 
 	const suppressRoutineResultIntercom = shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: params.suppressRoutineResultIntercom, results: [r] });
 	if (!r.detached && !r.interrupted && !suppressRoutineResultIntercom) {
@@ -4487,6 +3799,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		}
 	}
 
+	const worktreeSuffix = worktreeHandoff?.suffix ? `\n\n${worktreeHandoff.suffix}` : "";
 	if (r.detached) {
 		const statusRecovery = `subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.`;
 		const blockingRecovery = `subagent_wait({ id: "${runId}" }). Use ${statusRecovery}`;
@@ -4496,26 +3809,26 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				? `Detached at user request: ${params.agent}. The child continues independently. Register a completion wake-up with subagent_wait({ id: "${runId}", nonBlocking: true }), or use ${statusRecovery}`
 				: `Detached before task completion: ${params.agent}. Wait with ${blockingRecovery}`;
 		return {
-			content: [{ type: "text", text: message }],
+			content: [{ type: "text", text: `${message}${worktreeSuffix}` }],
 			details,
 		};
 	}
 
 	if (r.interrupted) {
 		return {
-			content: [{ type: "text", text: `Run paused after interrupt (${params.agent}). Waiting for explicit next action.` }],
+			content: [{ type: "text", text: `Run paused after interrupt (${params.agent}). Waiting for explicit next action.${worktreeSuffix}` }],
 			details,
 		};
 	}
 
 	if (r.exitCode !== 0)
 		return {
-			content: [{ type: "text", text: formatFailedSingleRunOutput(r, finalizedOutput.displayOutput) }],
+			content: [{ type: "text", text: `${formatFailedSingleRunOutput(r, finalizedOutput.displayOutput)}${worktreeSuffix}` }],
 			details,
 			isError: true,
 		};
 	return {
-		content: [{ type: "text", text: finalizedOutput.displayOutput || "(no output)" }],
+		content: [{ type: "text", text: `${finalizedOutput.displayOutput || "(no output)"}${worktreeSuffix}` }],
 		details,
 	};
 }
@@ -4607,13 +3920,20 @@ export function bindMissionWorkflowChildAsyncLaunch(
 	return { ...params, workflowChildAsyncId: id };
 }
 
-function workflowChildResult(key: string, result: AgentToolResult<Details>): WorkflowScriptChildResult {
+function workflowChildResult(
+	key: string,
+	result: AgentToolResult<Details>,
+	childParams: Record<string, unknown> = {},
+	resumeState?: SubagentState,
+): WorkflowScriptChildResult {
 	const receiptOutput = result.content.map((part) => part.type === "text" ? part.text : "").filter(Boolean).join("\n");
 	const output = result.details.results.length === 1 && result.details.results[0]?.finalOutput !== undefined
 		? result.details.results[0].finalOutput
 		: receiptOutput;
 	const detached = result.details.results.some((child) => child.detached);
-	const ok = result.isError !== true && !detached;
+	const interrupted = result.details.results.some((child) => child.interrupted);
+	const stopped = result.details.results.some((child) => child.stopped);
+	const ok = result.isError !== true && !detached && !interrupted && !stopped;
 	const artifactPaths = new Set<string>();
 	if (result.details.asyncDir) artifactPaths.add(result.details.asyncDir);
 	if (result.details.parallelHandoff?.path) artifactPaths.add(result.details.parallelHandoff.path);
@@ -4624,18 +3944,154 @@ function workflowChildResult(key: string, result: AgentToolResult<Details>): Wor
 	}
 	const structured = result.details.results.map((child) => child.structuredOutput).filter((value) => value !== undefined);
 	const resolvedAgents = [...new Set(result.details.results.map((child) => child.agent).filter((agent): agent is string => Boolean(agent)))];
+	const resolvedContexts = [...new Set(result.details.results.map((child) => child.context).filter((context): context is "fresh" | "fork" => context === "fresh" || context === "fork"))];
+	const runId = result.details.runId ?? result.details.asyncId;
+	let resumability: WorkflowScriptChildResult["resumability"];
+	if (!runId || !resumeState) {
+		resumability = { state: "not-resumable", reason: runId ? "resumability was not inspected" : "child produced no run id" };
+	} else {
+		try {
+			const target = resolveResumeTarget({ id: runId }, resumeState, { asyncRequireSessionFile: true, exactOnly: true });
+			resumability = target.kind === "revive"
+				? { state: "resumable" }
+				: { state: "not-resumable", reason: "child is still running" };
+		} catch (error) {
+			resumability = { state: "not-resumable", reason: error instanceof Error ? error.message : String(error) };
+		}
+	}
+	const requestedContext = childParams.context === "fresh" || childParams.context === "fork" ? childParams.context : undefined;
+	const resolvedContext = result.details.context ?? (resolvedContexts.length === 1 ? resolvedContexts[0] : resolvedContexts.length > 1 ? "mixed" : undefined);
+	const resumeSourceRunId = typeof childParams.resume === "string" && childParams.resume.trim() ? childParams.resume.trim() : undefined;
+	const continuationRunIds = [...new Set([resumeSourceRunId, runId].filter((value): value is string => Boolean(value)))];
+	const outputReference = result.details.results.find((child) => child.savedOutputPath)?.savedOutputPath
+		?? result.details.results.find((child) => child.outputReference?.path)?.outputReference?.path;
 	return {
 		key,
 		ok,
 		...(resolvedAgents.length === 1 ? { agent: resolvedAgents[0] } : {}),
-		...(result.details.runId || result.details.asyncId ? { runId: result.details.runId ?? result.details.asyncId } : {}),
+		...(runId ? { runId } : {}),
 		output,
 		...(!ok ? { error: receiptOutput || output || "Child run failed." } : {}),
 		...(detached ? { detached: true } : {}),
+		...(interrupted ? { interrupted: true } : {}),
+		...(stopped ? { stopped: true } : {}),
 		...(structured.length === 1 ? { structuredOutput: structured[0] } : structured.length > 1 ? { structuredOutput: structured } : {}),
+		...(requestedContext ? { requestedContext } : {}),
+		...(resolvedContext ? { resolvedContext } : {}),
+		...(outputReference ? { outputReference } : {}),
+		resumability,
+		continuation: { runIds: continuationRunIds },
 		artifactPaths: [...artifactPaths],
 		results: result.details.results,
 	};
+}
+
+function workflowSteerReceipt(key: string, result: AgentToolResult<Details>): WorkflowSteerResult {
+	const steering = result.details.steering;
+	const error = result.content.map((part) => part.type === "text" ? part.text : "").filter(Boolean).join("\n") || undefined;
+	if (!steering) return { key, state: "failed", ...(error ? { error } : {}) };
+	const state = result.isError === true || steering.state === "failed" || steering.state === "partial"
+		? "failed"
+		: steering.deliveryStatus === "delivered" ? "delivered" : "queued";
+	return {
+		key,
+		state,
+		requestId: steering.requestId,
+		deliveryStatus: steering.deliveryStatus,
+		targets: steering.targets.map((target) => ({ index: target.index, state: target.state, ...(target.reason ? { reason: target.reason } : {}) })),
+		...(state === "failed" && error ? { error } : {}),
+	};
+}
+
+function resolveKeyedWorkflowResume(
+	reference: WorkflowReceiptResumeReference,
+	state: SubagentState,
+): { runId: string; runIds: string[] } {
+	const entry = resolveWorkflowReceiptResumeEntry({
+		reference,
+		asyncDirRoot: DIRS.async,
+		assertResumable(runId) {
+			const target = resolveResumeTarget({ id: runId }, state, { asyncRequireSessionFile: true, exactOnly: true });
+			if (target.kind !== "revive") throw new Error(`Workflow receipt child '${reference.key}' latest run '${runId}' is still running.`);
+		},
+	});
+	const runId = entry.latestRunId;
+	if (!runId) throw new Error(`Workflow receipt child '${reference.key}' has no retained run id.`);
+	return { runId, runIds: entry.continuation.runIds };
+}
+
+function terminalWorkflowReceipt(
+	workflowRunId: string,
+	state: WorkflowReceiptState,
+	children: WorkflowScriptChildResult[],
+): WorkflowReceipt {
+	return buildWorkflowReceipt({ workflowRunId, state, children });
+}
+
+export async function steerWorkflowChildByKey(input: {
+	state: SubagentState;
+	workflowRunId: string;
+	key: string;
+	message: string;
+	options: WorkflowSteerOptions;
+	signal?: AbortSignal;
+	asyncDirRoot?: string;
+	resolveRunId?: () => string | undefined;
+}): Promise<WorkflowSteerResult> {
+	const asyncDirRoot = input.asyncDirRoot ?? DIRS.async;
+	const ackTimeoutMs = input.options.ackTimeoutMs ?? 3_000;
+	const deadline = Date.now() + ackTimeoutMs;
+	while (true) {
+		const control = [...input.state.foregroundControls.values()].find((candidate) => candidate.parentWorkflowRunId === input.workflowRunId
+			&& candidate.workflowKey === input.key
+			&& Boolean(candidate.workflowSteeringDir)
+			&& (candidate.activeChildren?.size ?? 0) > 0);
+		if (control) {
+			const result = await steerWorkflowForegroundTarget({
+				target: { control, workflowRunId: input.workflowRunId, sourceRunId: control.runId },
+				message: input.message,
+				mode: input.options.mode,
+				index: input.options.index,
+				ackTimeoutMs: Math.max(1, deadline - Date.now()),
+				signal: input.signal,
+			});
+			return workflowSteerReceipt(input.key, result);
+		}
+
+		const workflowStatus = readStatus(path.join(asyncDirRoot, input.workflowRunId));
+		const step = workflowStatus?.steps?.find((candidate) => candidate.workflowKey === input.key);
+		const childRunId = step?.runId ?? input.resolveRunId?.();
+		if (childRunId) {
+			const asyncDir = path.join(asyncDirRoot, childRunId);
+			const childStatus = reconcileAsyncRun(asyncDir).status;
+			if (childStatus && childStatus.state !== "running" && childStatus.state !== "queued" && (input.options.mode !== "follow_up" || !canQueueRetainedAsyncFollowUp(childStatus, input.options.index))) {
+				return { key: input.key, state: "missed", error: `Workflow child '${input.key}' is ${childStatus.state}.` };
+			}
+			if (childStatus) {
+				const result = await steerAsyncRun({
+					state: input.state,
+					runId: childRunId,
+					message: input.message,
+					mode: input.options.mode,
+					index: input.options.index,
+					ackTimeoutMs: Math.max(1, deadline - Date.now()),
+					location: { asyncDir },
+					signal: input.signal,
+				});
+				return workflowSteerReceipt(input.key, result);
+			}
+		}
+		if (step && step.status !== "running" && step.status !== "pending") {
+			return { key: input.key, state: "missed", error: `Workflow child '${input.key}' is ${step.status}.` };
+		}
+		if (workflowStatus && workflowStatus.state !== "running" && workflowStatus.state !== "queued") {
+			return { key: input.key, state: "missed", error: `Workflow '${input.workflowRunId}' is ${workflowStatus.state}.` };
+		}
+		if (input.signal?.aborted || Date.now() >= deadline) {
+			return { key: input.key, state: "missed", error: `Workflow child '${input.key}' had no live steering route.` };
+		}
+		await new Promise<void>((resolve) => setTimeout(resolve, Math.min(10, Math.max(1, deadline - Date.now()))));
+	}
 }
 
 export function prepareWorkflowLaunchParams(
@@ -4643,9 +4099,20 @@ export function prepareWorkflowLaunchParams(
 	childParams: Record<string, unknown>,
 	parentWorkflowRunId: string,
 	workflowKey: string,
-	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor } = {},
+	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; externalAsyncRequired?: boolean; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } = {},
 ): SubagentParamsLike {
+	const capabilityCeiling = intersectSubagentCapabilityCeilings(workflowDefaults.capabilityCeiling, options.capabilityCeiling);
+	const parentTimeoutMs = options.parentDeadlineAt === undefined
+		|| childParams.timeoutMs !== undefined
+		|| childParams.maxRuntimeMs !== undefined
+		|| workflowDefaults.timeoutMs !== undefined
+		|| workflowDefaults.maxRuntimeMs !== undefined
+		? undefined
+		: Math.max(1, options.parentDeadlineAt - Date.now());
 	if (typeof childParams.resume === "string") {
+		if (childParams.extensionBindings !== undefined || workflowDefaults.extensionBindings !== undefined) {
+			throw new Error("extensionBindings is not supported with retained resume; resume uses the original retained child binding.");
+		}
 		if (childParams.gate !== undefined || workflowDefaults.gate !== undefined) {
 			throw new Error("gate is not supported with retained resume; resume uses the retained child contract.");
 		}
@@ -4653,33 +4120,41 @@ export function prepareWorkflowLaunchParams(
 		const turnBudget = childParams.turnBudget ?? workflowDefaults.turnBudget;
 		const toolBudget = childParams.toolBudget ?? workflowDefaults.toolBudget;
 		const intercomBridge = childParams.intercomBridge ?? workflowDefaults.intercomBridge;
+		const worktree = childParams.worktree ?? workflowDefaults.worktree;
 		return {
 			action: "resume",
 			id: childParams.resume.trim(),
+			...(typeof childParams.index === "number" && Number.isInteger(childParams.index) ? { index: childParams.index } : {}),
 			message: typeof childParams.task === "string" ? childParams.task.trim() : "",
 			workflowParentRunId: parentWorkflowRunId,
 			workflowKey,
+			...(worktree !== undefined ? { worktree: worktree as boolean } : {}),
 			...(options.runFanoutBudget ? { runFanoutBudget: { ...options.runFanoutBudget, parentPath: `${options.runFanoutBudget.parentPath ? `${options.runFanoutBudget.parentPath}/` : ""}workflow[${workflowKey}]` } } : {}),
 			...(options.missionDetached ? { mission: false } : {}),
 			...(timeoutMs !== undefined ? { timeoutMs: timeoutMs as number } : {}),
 			...(turnBudget !== undefined ? { turnBudget: turnBudget as TurnBudgetConfig } : {}),
 			...(toolBudget !== undefined ? { toolBudget: toolBudget as ToolBudgetConfig } : {}),
 			...(intercomBridge !== undefined ? { intercomBridge: intercomBridge as IntercomBridgeConfig } : {}),
+			...(capabilityCeiling ? { capabilityCeiling } : {}),
 		};
 	}
 	const launchParams = {
 		...workflowDefaults,
-		async: false,
+		async: options.externalAsyncRequired === true && childParams.async === undefined && workflowDefaults.async === undefined ? true : false,
 		...childParams,
+		...(options.externalAsyncRequired === true && childParams.async === undefined && workflowDefaults.async === undefined ? { workflowAwaitAsync: true } : {}),
 		...(options.missionDetached ? { mission: false } : {}),
 		workflowParentRunId: parentWorkflowRunId,
 		workflowKey,
+		...(parentTimeoutMs !== undefined ? { workflowParentDeadlineAt: options.parentDeadlineAt } : {}),
 		...(options.runFanoutBudget ? { runFanoutBudget: { ...options.runFanoutBudget, parentPath: `${options.runFanoutBudget.parentPath ? `${options.runFanoutBudget.parentPath}/` : ""}workflow[${workflowKey}]` } } : {}),
 		...(options.suppressRoutineResultIntercom ? { suppressRoutineResultIntercom: true } : {}),
+		...(capabilityCeiling ? { capabilityCeiling } : {}),
 	} as SubagentParamsLike;
+	if (launchParams.extensionBindings !== undefined) launchParams.extensionBindings = normalizeExtensionBindings(launchParams.extensionBindings)!.value;
 	const normalizedGate = normalizeGateParams(launchParams);
 	if (!normalizedGate.ok) throw new Error(normalizedGate.error);
-	return prepareWorkflowChildParams(normalizedGate.params);
+	return normalizedGate.params;
 }
 
 type GateParamsNormalizationResult =
@@ -4695,41 +4170,6 @@ function normalizeGateParams(params: SubagentParamsLike): GateParamsNormalizatio
 	if (params.gate === undefined) return { ok: true, params };
 	const { gate: _gate, ...rest } = params;
 	return { ok: true, params: { ...rest, ...(normalized.acceptance !== undefined ? { acceptance: normalized.acceptance } : {}) } };
-}
-
-function prepareWorkflowChildParams(params: SubagentParamsLike): SubagentParamsLike {
-	if (params.worktree !== true || !params.agent) return params;
-	const {
-		agent,
-		task = "",
-		model,
-		skill,
-		output,
-		outputMode,
-		outputSchema,
-		acceptance,
-		agentContract,
-		toolBudget,
-		reads,
-		...runParams
-	} = params;
-	return {
-		...runParams,
-		worktree: true,
-		tasks: [{
-			agent,
-			task,
-			...(model !== undefined ? { model } : {}),
-			...(skill !== undefined ? { skill } : {}),
-			...(output !== undefined ? { output } : {}),
-			...(reads !== undefined ? { reads } : {}),
-			...(outputMode !== undefined ? { outputMode } : {}),
-			...(outputSchema !== undefined ? { outputSchema } : {}),
-			...(acceptance !== undefined ? { acceptance } : {}),
-			...(agentContract !== undefined ? { agentContract } : {}),
-			...(toolBudget !== undefined ? { toolBudget } : {}),
-		}],
-	};
 }
 
 function formatWorkflowValue(value: unknown): string {
@@ -4751,6 +4191,38 @@ function workflowChatProgressUpdate(
 	return {
 		content: [{ type: "text", text: "Workflow running." }],
 		details: { mode: "workflow", runId, results: [], workflow, chatProgress },
+	};
+}
+
+function createScheduledOwnerState(source: SubagentState, ownerSessionId: string, ctx: ExtensionContext): SubagentState {
+	const ownerSpawns = source.subagentSpawns?.sessionId === ownerSessionId
+		? {
+			...source.subagentSpawns,
+			grantHistory: [...(source.subagentSpawns.grantHistory ?? [])],
+		}
+		: undefined;
+	return {
+		...source,
+		baseCwd: ctx.cwd,
+		currentSessionId: ownerSessionId,
+		parentSessionFile: ctx.sessionManager.getSessionFile() ?? null,
+		subagentInProgress: false,
+		...(ownerSpawns ? { subagentSpawns: ownerSpawns } : { subagentSpawns: undefined }),
+		herdrProjectPanes: new Map(),
+		asyncJobs: new Map(),
+		fleetJobs: new Map(),
+		foregroundRuns: new Map(),
+		foregroundControls: new Map(),
+		lastForegroundControlId: null,
+		cleanupTimers: new Map(),
+		lastUiContext: null,
+		poller: null,
+		completionSeen: new Map(),
+		watcher: null,
+		watcherRestartTimer: null,
+		waitSubscriptions: new Map(),
+		workflowControllers: new Map(),
+		workflowChildStops: new Map(),
 	};
 }
 
@@ -4782,11 +4254,19 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	) => Promise<AgentToolResult<Details>>;
+	/** Scheduled launches retain their owning context without replacing the live active session. */
+	executeScheduled: (
+		id: string,
+		params: SubagentParamsLike,
+		signal: AbortSignal,
+		ctx: ExtensionContext,
+	) => Promise<AgentToolResult<Details>>;
 } {
 	const delegatedThinkingOverrides = new WeakMap<object, AgentConfig["thinking"]>();
 	const delegatedZeroToolBudgets = new WeakSet<object>();
 	const delegatedExecutions = new WeakSet<object>();
 	const warnedArtifactPackageDirs = new Set<string>();
+	const scheduledOwnerExecutors = new Map<string, ReturnType<typeof createSubagentExecutor>>();
 	const execute = async (
 		_id: string,
 		params: SubagentParamsLike,
@@ -4807,12 +4287,21 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (!normalizedGate.ok) return buildRequestedModeError(params, normalizedGate.error);
 		const requestParams = normalizedGate.params;
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
+		if (normalizedAction === "resume" && requestParams.extensionBindings !== undefined) return buildRequestedModeError(requestParams, "extensionBindings is not supported with action='resume'; resume uses the original retained child binding.");
 		if (requestParams.workflowScript !== undefined && normalizedAction === undefined) {
+			if (requestParams.extensionBindings !== undefined) {
+				try {
+					requestParams.extensionBindings = normalizeExtensionBindings(requestParams.extensionBindings)!.value;
+				} catch (error) {
+					return buildRequestedModeError(requestParams, error instanceof Error ? error.message : String(error));
+				}
+			}
 			const parentCwd = ctx.cwd;
 			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? (requestParams.async === false ? resolveConfigDefaultTimeoutMs(deps.config.timeoutMs) ?? DEFAULT_FOREGROUND_TIMEOUT_MS : undefined);
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
 			const workflowCwd = resolveRequestedCwd(parentCwd, requestParams.cwd);
+			const workflowAgents = deps.discoverAgents(workflowCwd, resolveExecutionAgentScope(requestParams.agentScope)).agents;
 			const workflowArtifactConfig: ArtifactConfig = omitUndefinedProperties({
 				...DEFAULT_ARTIFACT_CONFIG,
 				enabled: requestParams.artifacts !== false,
@@ -4824,7 +4313,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const warning = getProjectArtifactPackagingWarning(workflowCwd);
 				if (warning) console.warn(`[pi-subagents] ${warning}`);
 			}
-			const workflowPrompts = { render: (ref: string, vars?: unknown) => renderWorkflowPrompt(ref, vars, workflowCwd) };
 			const chatProgressResult = resolveWorkflowChatProgress({ requested: requestParams.chatProgress, parentCwd, workflowCwd, background: requestParams.async !== false });
 			if (chatProgressResult.error) return { content: [{ type: "text", text: chatProgressResult.error }], isError: true, details: { mode: "workflow", results: [] } };
 			const chatProgress = chatProgressResult.projection!;
@@ -4901,12 +4389,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			};
 			if (workflowRunId) {
 				const toolCallId = _id;
+				const workflowSessionRoot = requestParams.sessionDir
+					? path.resolve(deps.expandTilde(requestParams.sessionDir))
+					: trustedSessionRootsForStatus(ctx, deps)[0];
 				const asyncDir = path.join(DIRS.async, workflowRunId);
 				const resultPath = resultFilePath(DIRS.results, workflowRunId);
 				const statusPath = path.join(asyncDir, "status.json");
 				const eventsPath = path.join(asyncDir, "events.jsonl");
 				const startedAt = Date.now();
 				const currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+				const workflowCapabilityCeiling = intersectSubagentCapabilityCeilings(requestParams.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(currentSessionId));
+				const completionOwnerId = deps.state.completionOwnerId ?? currentCompletionOwnerId();
+				deps.state.completionOwnerId = completionOwnerId;
 				try {
 					fs.mkdirSync(asyncDir, { recursive: true });
 					writeRunFanoutBudgetDescriptor(asyncDir, workflowFanoutBudget);
@@ -4917,6 +4411,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				const controller = new AbortController();
 				deps.state.workflowControllers ??= new Map();
+				deps.state.workflowChildStops ??= new Map();
 				deps.state.workflowControllers.set(workflowRunId, controller);
 				workflowCapacity?.markWorkflowStarted();
 				if (workflowCapacity) deps.state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(currentSessionId, resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession), { liveWorkflowRunIds: new Set(deps.state.workflowControllers.keys()) });
@@ -4924,51 +4419,114 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					runId: workflowRunId,
 					toolCallId,
 					sessionId: currentSessionId ?? undefined,
+					completionOwnerId,
 					mode: "workflow",
 					state: "running",
 					startedAt,
 					lastUpdate: startedAt,
 					...(timeout !== undefined ? { deadlineAt: startedAt + timeout, timeoutMs: timeout } : {}),
 					cwd: workflowCwd,
+					...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}),
+					...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}),
 					pid: process.pid,
 					steps: [],
 					workflow: { trace: [], emits: [], console: [] },
 					runFanoutBudget: getRunFanoutBudgetSnapshot(workflowFanoutBudget),
 				};
-				const appendWorkflowEvent = (event: Record<string, unknown>) => fs.appendFileSync(eventsPath, `${JSON.stringify({ ts: Date.now(), runId: workflowRunId, ...event })}\n`, "utf-8");
-				let indexedState: AsyncStatus["state"] | undefined;
-				const persist = () => {
-					status.lastUpdate = Date.now();
-					writeAtomicJson(statusPath, status);
-					if (indexedState !== status.state) {
-						updateActiveRunIndex(asyncDir, status.state, status.toolCallId);
-						indexedState = status.state;
+				const appendWorkflowEvent = (event: Record<string, unknown>) => {
+					try {
+						fs.appendFileSync(eventsPath, `${JSON.stringify({ ts: Date.now(), runId: workflowRunId, ...event })}\n`, "utf-8");
+					} catch (error) {
+						// The event log is a journal, not workflow truth. Callers append from
+						// inside run-result handling, so losing an entry to a full disk or to a
+						// transient Windows lock must not fail the run being recorded.
+						console.error(`Failed to append async workflow event '${eventsPath}':`, error);
 					}
-					const job = deps.state.asyncJobs.get(workflowRunId);
-					if (job) {
-						job.status = status.state;
-						job.updatedAt = status.lastUpdate;
-						job.activityState = status.activityState;
-						job.lastActivityAt = status.lastActivityAt;
-						job.currentTool = status.currentTool;
-						job.currentToolStartedAt = status.currentToolStartedAt;
-						job.currentPath = status.currentPath;
-						job.turnCount = status.turnCount;
-						job.toolCount = status.toolCount;
-						job.currentStep = status.currentStep;
-						if (status.steps) {
-							job.steps = status.steps.map((step, index) => ({ ...step, index }));
-							job.agents = status.steps.map((step) => step.agent);
-						} else {
-							delete job.steps;
-							delete job.agents;
+				};
+				let indexedState: AsyncStatus["state"] | undefined;
+				const indexPersistence = createCapacityResilientJsonWriter({
+					keepAlive: true,
+					onSuccess: (_filePath, payload) => { indexedState = (payload as { state: AsyncStatus["state"] }).state; },
+					onError: (error, filePath) => console.error(`Failed to update async workflow index '${filePath}':`, error),
+				});
+				const queueActiveRunIndex = (): void => {
+					const state = status.state;
+					if (indexedState === state && indexPersistence.pendingCount() === 0) return;
+					indexPersistence.write(asyncDir, { state, toolCallId: status.toolCallId }, (_filePath, payload) => {
+						const indexPayload = payload as { state: AsyncStatus["state"]; toolCallId?: string };
+						updateActiveRunIndex(asyncDir, indexPayload.state, indexPayload.toolCallId, { retryCapacityErrors: true });
+					});
+				};
+				const runPersistence = createCapacityResilientJsonWriter({
+					keepAlive: true,
+					onSuccess: (filePath) => { if (filePath === statusPath) queueActiveRunIndex(); },
+					onError: (error, filePath) => console.error(`Failed to persist async workflow state '${filePath}':`, error),
+					write: (filePath, payload) => filePath === resultPath
+						? writeAsyncResultFile(filePath, payload as Record<string, unknown>)
+						: writeAtomicJson(filePath, payload),
+				});
+				let initialPersistenceComplete = false;
+				let persistClosed = false;
+				let statusPersistenceDegraded = false;
+				// Progress journalling runs from admit, launch, the launch and progress observers,
+				// onTrace and onEmit -- all inside the promises a workflowScript awaits. Those
+				// callers pass tolerateStatusWriteFailure so a transient lock on status.json cannot
+				// mark a finished child failed or abort its still-running siblings. Initial and
+				// terminal writes stay fail-fast on purpose: no child work is at risk by then, and
+				// silently dropping a terminal write would leave status.json and the active-run
+				// index pinned at "running" after the result already says complete.
+				const persist = (options: { tolerateStatusWriteFailure?: boolean } = {}) => {
+					if (persistClosed) return;
+					const liveJob = deps.state.asyncJobs.get(workflowRunId);
+					if (liveJob && (liveJob.status === "complete" || liveJob.status === "failed") && status.state !== "complete" && status.state !== "failed") return;
+					status.lastUpdate = Date.now();
+					if (!initialPersistenceComplete) {
+						writeAtomicJson(statusPath, status);
+						initialPersistenceComplete = true;
+						queueActiveRunIndex();
+					} else if (options.tolerateStatusWriteFailure) {
+						try {
+							runPersistence.write(statusPath, status);
+							statusPersistenceDegraded = false;
+						} catch (error) {
+							const message = `Failed to persist async workflow state ${statusPath}: ${error instanceof Error ? error.message : String(error)}`;
+							console.error(message, error);
+							if (!statusPersistenceDegraded) {
+								statusPersistenceDegraded = true;
+								try {
+									appendWorkflowEvent({ type: "subagent.workflow.status_write_failed", error: message });
+								} catch (eventError) {
+									console.error(`Failed to record degraded status persistence for '${statusPath}':`, eventError);
+								}
+							}
 						}
-						job.workflow = status.workflow;
+					} else {
+						runPersistence.write(statusPath, status);
+					}
+					if (liveJob) {
+						liveJob.status = status.state;
+						liveJob.updatedAt = status.lastUpdate;
+						liveJob.activityState = status.activityState;
+						liveJob.lastActivityAt = status.lastActivityAt;
+						liveJob.currentTool = status.currentTool;
+						liveJob.currentToolStartedAt = status.currentToolStartedAt;
+						liveJob.currentPath = status.currentPath;
+						liveJob.turnCount = status.turnCount;
+						liveJob.toolCount = status.toolCount;
+						liveJob.currentStep = status.currentStep;
+						if (status.steps) {
+							liveJob.steps = status.steps.map((step, index) => ({ ...step, index }));
+							liveJob.agents = status.steps.map((step) => step.agent);
+						} else {
+							delete liveJob.steps;
+							delete liveJob.agents;
+						}
+						liveJob.workflow = status.workflow;
 					}
 				};
 				const writeWorkflowResult = (payload: Record<string, unknown>): boolean => {
 					try {
-						writeAsyncResultFile(resultPath, payload);
+						runPersistence.write(resultPath, payload);
 						return true;
 					} catch (error) {
 						const message = `Failed to write async workflow result ${resultPath}: ${error instanceof Error ? error.message : String(error)}`;
@@ -4998,20 +4556,33 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					status.toolCount = toolCounts.length > 0 ? toolCounts.reduce((total, count) => total + count, 0) : undefined;
 					status.currentStep = runningSteps.length === 1 ? steps.indexOf(runningSteps[0]!) : undefined;
 				};
-				const workflowJob: AsyncJobState = { asyncId: workflowRunId, asyncDir, toolCallId, cwd: workflowCwd, status: "running", sessionId: currentSessionId ?? undefined, mode: "workflow", agents: [], steps: [], startedAt, updatedAt: startedAt, ...(timeout !== undefined ? { timeoutMs: timeout, deadlineAt: startedAt + timeout } : {}), workflow: status.workflow };
+				const workflowJob: AsyncJobState = { asyncId: workflowRunId, asyncDir, toolCallId, cwd: workflowCwd, ...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}), status: "running", sessionId: currentSessionId ?? undefined, mode: "workflow", agents: [], steps: [], startedAt, updatedAt: startedAt, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), ...(timeout !== undefined ? { timeoutMs: timeout, deadlineAt: startedAt + timeout } : {}), workflow: status.workflow };
 				deps.state.asyncJobs.set(workflowRunId, workflowJob);
 				deps.state.fleetJobs ??= new Map();
 				deps.state.fleetJobs.set(workflowRunId, workflowJob);
-				persist();
+				try {
+					persist();
+				} catch (error) {
+					deps.state.workflowControllers?.delete(workflowRunId);
+					deps.state.asyncJobs.delete(workflowRunId);
+					deps.state.fleetJobs?.delete(workflowRunId);
+					workflowCapacity?.rollback();
+					indexPersistence.dispose();
+					return { content: [{ type: "text", text: `Failed to create async workflow storage: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "workflow", results: [] } };
+				}
 				appendWorkflowEvent({ type: "subagent.workflow.started" });
 				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;
 				void Promise.resolve().then(async () => {
+					const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
 					const workflowResults: SingleResult[] = [];
+					const workflowChildRunIds = new Map<string, string>();
 					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
 					const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 					const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
-					const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, workflowRunId), configuredOutputBaseDir);
+					const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, workflowRunId));
 					const claimedOutputPaths = new Map<string, string>();
+					const childOutputOverrides = new Map<string, string>();
+					const producedChildOutputPaths = new Set<string>();
 					const workflowSteps = new Map<string, NonNullable<AsyncStatus["steps"]>[number]>();
 					let projectedTraceLength = 0;
 					let projectedTraceTail: NonNullable<Details["workflow"]>["trace"][number] | undefined;
@@ -5069,62 +4640,59 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								status.steps?.push(step);
 								workflowSteps.set(entry.key, step);
 							}
+							const projectedStep = workflowSteps.get(entry.key);
+							if (entry.state === "stopped" && projectedStep) {
+								appendWorkflowEvent({
+									type: "subagent.child-status",
+									version: 1,
+									childId: entry.key,
+									status: "stopped",
+									reason: "user",
+									source: "async",
+									stepIndex: status.steps?.indexOf(projectedStep),
+									agent: projectedStep.agent,
+									...(projectedStep.runId ? { childRunId: projectedStep.runId } : {}),
+									workflowKey: entry.key,
+									...(projectedStep.phase ? { phase: projectedStep.phase } : {}),
+									...(projectedStep.label ? { label: projectedStep.label } : {}),
+								});
+							}
 						}
 						projectedTraceLength = trace.length;
 						projectedTraceTail = trace.at(-1);
 						projectWorkflowActivity();
-						persist();
+						persist({ tolerateStatusWriteFailure: true });
 						appendWorkflowEvent({ type: "subagent.workflow.trace", trace });
 					};
 					try {
-						const autoRelaunchCap = resolveMaxWorkflowAutoRelaunches(deps.config.maxWorkflowAutoRelaunches);
-						let relaunched = 0;
-						let capReached = false;
-						let stallReason: "fanout-limited" | "usage-budget" | "no-progress" | undefined;
-						let workflow: Awaited<ReturnType<typeof runWorkflowScript>> | undefined;
-						let roundProgress = { launched: 0, fanoutRejected: 0, usageBudgetBlocked: 0, stateWrites: 0 };
-						while (true) {
-							if (relaunched > 0) {
-								workflowFanoutBudget = createRunFanoutBudget(`${workflowRunId}#${relaunched + 1}`, workflowFanoutBudget.limit);
-								workflowSteps.clear();
-								projectedTraceLength = 0;
-								projectedTraceTail = undefined;
-								status = { ...status, steps: [], currentStep: undefined, workflow: { trace: [], emits: [], console: [] } };
-							}
-							roundProgress = { launched: 0, fanoutRejected: 0, usageBudgetBlocked: 0, stateWrites: 0 };
-							workflow = await runWorkflowScript({
-								script: workflowScript,
+						const workflow = await runWorkflowScript({
+							script: workflowScript,
 							timeoutMs: timeout,
 							signal: controller.signal,
-							prompts: workflowPrompts,
-							...(workflowState ? { state: { get: (key: string) => workflowState.get(key), set: (key: string, value: unknown) => { roundProgress.stateWrites += 1; workflowState.set(key, value); } } } : {}),
+							registerStopChild: (stop) => {
+								if (stop) deps.state.workflowChildStops?.set(workflowRunId, stop);
+								else deps.state.workflowChildStops?.delete(workflowRunId);
+							},
+							...(workflowState ? { state: workflowState } : {}),
 							onTrace: updateTrace,
 							admit: (calls) => {
-								const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, claimedOutputPaths, entries: calls });
+								const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, state: deps.state, claimedOutputPaths, entries: calls });
 								if (outputClaims.error) throw new Error(outputClaims.error);
-								try {
-									status.runFanoutBudget = claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
-								} catch (error) {
-									if (error instanceof RunFanoutLimitError) roundProgress.fanoutRejected += calls.length;
-									throw error;
-								}
+								status.runFanoutBudget = claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
 								if (outputClaims.claims) applyWorkflowChildOutputClaims(claimedOutputPaths, outputClaims.claims);
-								persist();
+								if (outputClaims.overrides) for (const [key, output] of outputClaims.overrides) childOutputOverrides.set(key, output);
+								persist({ tolerateStatusWriteFailure: true });
 							},
 							onEmit: (emits) => {
 								// Each emit is validated at the host boundary in runWorkflowScript before onEmit fires.
 								status.workflow = { ...(status.workflow ?? { trace: [], console: [] }), emits };
-								persist();
+								persist({ tolerateStatusWriteFailure: true });
 								appendWorkflowEvent({ type: "subagent.workflow.emit", value: emits.at(-1) });
 							},
 							launch: async (key, childParams, workflowSignal, admission) => {
-								if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
+								if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."), childParams, deps.state);
 								const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
-								if (budgetState?.exhausted) {
-									roundProgress.usageBudgetBlocked += 1;
-									return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
-								}
-								roundProgress.launched += 1;
+								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)), childParams, deps.state);
 								const childPhase = typeof childParams.phase === "string" && childParams.phase.trim() ? childParams.phase.trim() : undefined;
 								const childLabel = typeof childParams.label === "string" && childParams.label.trim() ? childParams.label.trim() : undefined;
 								recordMissionWorkflowChild(missionBinding, workflowRunId, key, {
@@ -5136,7 +4704,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								});
 								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, () => {
 									const childRequest = bindMissionWorkflowChildAsyncLaunch(
-										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget } }), runFanoutAdmitted: admission.admitted },
+										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling } }), runFanoutAdmitted: admission.admitted },
 										missionBinding,
 										deps.asyncByDefault,
 									);
@@ -5147,7 +4715,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 											step.sessionFile = launch.sessionFile;
 											step.async = launch.async;
 											if (launch.runId) step.runId = launch.runId;
-											persist();
+											persist({ tolerateStatusWriteFailure: true });
 										}
 										recordMissionWorkflowChild(missionBinding, workflowRunId, key, { status: "running", agent: launch.agent, ...(launch.sessionFile ? { sessionPath: launch.sessionFile } : {}) });
 									});
@@ -5170,7 +4738,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										step.thinking = progress.thinking;
 										step.error = progress.error;
 										projectWorkflowActivity();
-										persist();
+										persist({ tolerateStatusWriteFailure: true });
 										recordMissionWorkflowChild(missionBinding, workflowRunId, key, {
 											status: step.status,
 											heartbeat: { status: step.status, ...(childPhase ? { phase: childPhase } : {}) },
@@ -5178,7 +4746,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									}, ctx, preserveActiveSession);
 								});
 								workflowResults.push(...result.details.results);
-								const child = workflowChildResult(key, result);
+								for (const childResult of result.details.results) {
+									if (childResult.savedOutputPath) producedChildOutputPaths.add(childResult.savedOutputPath);
+								}
+								const child = workflowChildResult(key, result, childParams, deps.state);
+								if (child.runId) workflowChildRunIds.set(key, child.runId);
 								const step = status.steps?.find((candidate) => candidate.workflowKey === key);
 								if (step) {
 									step.async = Boolean(result.details.asyncId || result.details.asyncDir);
@@ -5202,46 +4774,27 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								return child;
 							},
 							status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession)),
+							resolveResume: (reference) => resolveKeyedWorkflowResume(reference, deps.state),
+							steer: (key, message, options, workflowSignal) => steerWorkflowChildByKey({ state: deps.state, workflowRunId, key, message, options, signal: workflowSignal, resolveRunId: () => workflowChildRunIds.get(key) }),
 						});
-							const decision = resolveAutoRelaunchDecision(workflow?.value, relaunched, autoRelaunchCap, roundProgress);
-							if (!decision.relaunch) {
-								capReached = decision.capped;
-								stallReason = decision.stallReason;
-								break;
-							}
-							relaunched += 1;
-							status = { ...status, workflowRelaunchCount: relaunched };
-							persist();
-							appendWorkflowEvent({ type: "subagent.workflow.relaunched", relaunched });
-						}
-						if (!workflow) throw new Error("Workflow script produced no result.");
 						const returnPreview = formatWorkflowValue(workflow.value).slice(0, 1_000);
 						const emitPreview = workflow.emits.length > 0 ? ` Emitted: ${workflow.emits.map(formatWorkflowValue).join(", ").slice(0, 1_000)}` : "";
-						const relaunchNote = relaunched > 0 ? `Auto-relaunched ${relaunched} time(s) with a fresh fan-out budget. ` : "";
-						const summary = `${relaunchNote}Workflow completed with ${workflow.children.length} child run(s). Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).`;
+						const summary = `Workflow completed with ${workflow.children.length} child run(s). Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).`;
+						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, summary, producedChildOutputPaths);
+						const resultSummary = appendWorkflowOutputWarning(summary, outputWarning);
 						const workflowUsage = sumResultsUsage(workflowResults);
-						if (capReached || stallReason) {
-							const relaunchCapError = stallReason === "usage-budget"
-								? "Workflow auto-relaunch stopped because the usage budget is exhausted; a fresh fan-out budget cannot make another child run."
-								: stallReason === "fanout-limited"
-									? `Workflow auto-relaunch stopped because the fan-out budget rejected ${roundProgress.fanoutRejected} child launch(es) and the fresh budget has the same limit.`
-									: stallReason === "no-progress"
-										? "Workflow auto-relaunch stopped because the budget result made no progress: no child launched and no workflow state changed."
-										: `Workflow auto-relaunch cap reached after ${relaunched} relaunch(es); the goal is not clean yet. The progress file is current; raise config.maxWorkflowAutoRelaunches or relaunch manually.`;
-							status = compactOptional<AsyncStatus>({ ...status, state: "failed", error: relaunchCapError, endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console } });
-							const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, relaunchCapError);
-							const resultSummary = appendWorkflowOutputWarning(relaunchCapError, outputWarning);
-							if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: false, state: "failed", summary: resultSummary, error: relaunchCapError, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
-							persist();
-							appendWorkflowEvent({ type: "subagent.workflow.completed", state: "failed", error: status.error });
-						} else {
-							const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, summary);
-							const resultSummary = appendWorkflowOutputWarning(summary, outputWarning);
-							status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
-							if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
-							persist();
-							appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(status.error ? { error: status.error } : {}) });
+						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
+						const receipt = terminalWorkflowReceipt(workflowRunId, "complete", workflow.children);
+						let workflowReceipt: { path: string; receipt: WorkflowReceipt } | undefined;
+						try {
+							workflowReceipt = { path: writeWorkflowReceipt(asyncDir, receipt), receipt };
+						} catch (receiptError) {
+							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
+						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						persist();
+						persistClosed = true;
+						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(status.error ? { error: status.error } : {}) });
 					} catch (error) {
 						const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
 						const stopped = controller.signal.aborted;
@@ -5251,18 +4804,41 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const state = stopped ? "stopped" : pauseForDetached ? "paused" : "failed";
 						for (const step of status.steps ?? []) {
 							if (step.workflowKey && detachedChildKeys.has(step.workflowKey)) {
+								if (step.status === "completed" || step.status === "complete" || step.status === "failed") continue;
 								step.status = "paused";
 								step.activityState = "needs_attention";
+							} else if (pauseForDetached && step.status === "running") {
+								step.status = "stopped";
+								step.stopped = true;
+								delete step.activityState;
 							}
 						}
 						status = compactOptional<AsyncStatus>({ ...status, state, stopped: stopped || undefined, activityState: pauseForDetached ? "needs_attention" : undefined, error: error instanceof Error ? error.message : String(error), endedAt: Date.now(), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } });
-						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, status.error ?? (pauseForDetached ? "Workflow paused." : "Workflow failed."));
-						const resultSummary = appendWorkflowOutputWarning(status.error ?? (pauseForDetached ? "Workflow paused." : "Workflow failed."), outputWarning);
-						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: false, state: status.state, summary: resultSummary, error: status.error, stopped: status.stopped, activityState: status.activityState, results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.detached ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (pauseForDetached) {
+							const promoted = promotePausedWorkflowIfSettled(status);
+							if (promoted) status = promoted;
+						}
+						const terminalSummary = status.state === "complete"
+							? "Workflow completed after detached child finished."
+							: status.error ?? (pauseForDetached ? "Workflow paused." : "Workflow failed.");
+						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, terminalSummary, producedChildOutputPaths);
+						const resultSummary = appendWorkflowOutputWarning(terminalSummary, outputWarning);
+						const receiptState: WorkflowReceiptState = status.state === "complete" ? "complete" : status.state === "paused" ? "paused" : status.state === "stopped" ? "stopped" : "failed";
+						const receipt = terminalWorkflowReceipt(workflowRunId, receiptState, partial.children);
+						let workflowReceipt: { path: string; receipt: WorkflowReceipt } | undefined;
+						try {
+							workflowReceipt = { path: writeWorkflowReceipt(asyncDir, receipt), receipt };
+						} catch (receiptError) {
+							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
+						}
+						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						persist();
-						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, error: status.error, ...(status.activityState ? { activityState: status.activityState } : {}) });
+						persistClosed = true;
+						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(status.error ? { error: status.error } : {}), ...(status.activityState ? { activityState: status.activityState } : {}) });
 					} finally {
+						persistClosed = true;
 						deps.state.workflowControllers?.delete(workflowRunId);
+						deps.state.workflowChildStops?.delete(workflowRunId);
 						deps.state.activeAsyncCapacity = workflowCapacity?.reconcile(new Set(deps.state.workflowControllers?.keys() ?? []))
 							?? deps.state.activeAsyncCapacity;
 					}
@@ -5275,10 +4851,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = requestParams;
 			const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 			const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
-			const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, _id), configuredOutputBaseDir);
+			const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, _id));
 			const claimedOutputPaths = new Map<string, string>();
+			const childOutputOverrides = new Map<string, string>();
+			const producedChildOutputPaths = new Set<string>();
 			const workflowResults: SingleResult[] = [];
+			const workflowChildRunIds = new Map<string, string>();
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
+			const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
+			const workflowCapabilityCeiling = intersectSubagentCapabilityCeilings(requestParams.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(resolveCurrentSessionId(ctx.sessionManager)));
 			const sendWorkflowProgress = () => {
 				const update = workflowChatProgressUpdate(_id, chatProgress, liveWorkflow);
 				if (update) onUpdate?.(update);
@@ -5288,26 +4869,26 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					script: requestParams.workflowScript,
 					timeoutMs: timeout,
 					signal,
-					prompts: workflowPrompts,
 					...(workflowState ? { state: workflowState } : {}),
 					onTrace: (trace) => {
 						liveWorkflow = { ...liveWorkflow, trace };
 						sendWorkflowProgress();
 					},
 					admit: (calls) => {
-						const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId: _id, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, claimedOutputPaths, entries: calls });
+						const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId: _id, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, state: deps.state, claimedOutputPaths, entries: calls });
 						if (outputClaims.error) throw new Error(outputClaims.error);
 						claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
 						if (outputClaims.claims) applyWorkflowChildOutputClaims(claimedOutputPaths, outputClaims.claims);
+						if (outputClaims.overrides) for (const [key, output] of outputClaims.overrides) childOutputOverrides.set(key, output);
 					},
 					onEmit: (emits) => {
 						liveWorkflow = { ...liveWorkflow, emits };
 						sendWorkflowProgress();
 					},
 					launch: async (key, childParams, workflowSignal, admission) => {
-						if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
+						if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."), childParams, deps.state);
 						const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
-						if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
+						if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)), childParams, deps.state);
 						const childPhase = typeof childParams.phase === "string" && childParams.phase.trim() ? childParams.phase.trim() : undefined;
 						const childLabel = typeof childParams.label === "string" && childParams.label.trim() ? childParams.label.trim() : undefined;
 						recordMissionWorkflowChild(missionBinding, _id, key, {
@@ -5319,7 +4900,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						});
 						const result = await runMissionWorkflowChild(missionBinding, _id, key, childPhase, () => {
 							const childRequest = bindMissionWorkflowChildAsyncLaunch(
-								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget } }), runFanoutAdmitted: admission.admitted },
+								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling } }), runFanoutAdmitted: admission.admitted },
 								missionBinding,
 								deps.asyncByDefault,
 							);
@@ -5339,8 +4920,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							}, ctx, preserveActiveSession);
 						});
 						workflowResults.push(...result.details.results);
+						for (const childResult of result.details.results) {
+							if (childResult.savedOutputPath) producedChildOutputPaths.add(childResult.savedOutputPath);
+						}
 						if (result.details.asyncDir && missionBinding) writeMissionAsyncBinding(result.details.asyncDir, missionBinding);
-						const child = workflowChildResult(key, result);
+						const child = workflowChildResult(key, result, childParams, deps.state);
+						if (child.runId) workflowChildRunIds.set(key, child.runId);
 						const childStatus = missionWorkflowChildStatus(result);
 						recordMissionWorkflowChild(missionBinding, _id, key, {
 							status: childStatus,
@@ -5354,18 +4939,21 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						return child;
 					},
 					status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession)),
+					resolveResume: (reference) => resolveKeyedWorkflowResume(reference, deps.state),
+					steer: (key, message, options, workflowSignal) => steerWorkflowChildByKey({ state: deps.state, workflowRunId: _id, key, message, options, signal: workflowSignal, resolveRunId: () => workflowChildRunIds.get(key) }),
 				});
+				const receipt = terminalWorkflowReceipt(_id, "complete", workflow.children);
 				const traceLines = workflow.trace.map((entry) => `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.durationMs !== undefined ? ` in ${entry.durationMs}ms` : ""}${entry.error ? ` — ${entry.error}` : ""}`);
 				const sections = ["Workflow completed.", `Return:\n${formatWorkflowValue(workflow.value)}`];
 				if (workflow.emits.length > 0) sections.push(`Emitted:\n${workflow.emits.map(formatWorkflowValue).join("\n")}`);
 				if (workflow.console.length > 0) sections.push(`Console:\n${workflow.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`);
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
 				const workflowText = sections.join("\n\n");
-				const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText);
+				const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText, producedChildOutputPaths);
 				const displayText = appendWorkflowOutputWarning(workflowText, outputWarning);
 				return attachWorkflowMission(withRunFanoutBudget({
 					content: [{ type: "text", text: displayText }],
-					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, chatProgress }),
+					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console, receipt }, chatProgress }),
 				}, workflowFanoutBudget));
 			} catch (error) {
 				const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
@@ -5376,16 +4964,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (partial.console.length > 0) sections.push(`Console:\n${partial.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`);
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
 				const workflowText = sections.join("\n\n");
-				const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText);
+				const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText, producedChildOutputPaths);
 				const displayText = appendWorkflowOutputWarning(workflowText, outputWarning);
+				const receipt = terminalWorkflowReceipt(_id, "failed", partial.children);
 				return attachWorkflowMission(withRunFanoutBudget({
 					content: [{ type: "text", text: displayText }],
 					isError: true,
-					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console }, chatProgress }),
+					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console, receipt }, chatProgress }),
 				}, workflowFanoutBudget));
 			}
 		}
-		const directParams = prepareWorkflowChildParams(requestParams);
+		const directParams = requestParams;
 		const requestCwd = resolveRequestedCwd(ctx.cwd, directParams.cwd);
 		const paramsWithResolvedCwd = directParams.cwd === undefined ? directParams : { ...directParams, cwd: requestCwd };
 		const action = paramsWithResolvedCwd.action;
@@ -5434,7 +5023,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
 					return { content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }], isError: true, details: { mode: "management", results: [] } };
 				}
-				return handleHerdrProjectPaneAction(action as (typeof HERDR_PROJECT_PANE_ACTIONS)[number], paramsWithResolvedCwd, { cwd: requestCwd, signal });
+				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+				return handleHerdrProjectPaneAction(action as (typeof HERDR_PROJECT_PANE_ACTIONS)[number], paramsWithResolvedCwd, { cwd: requestCwd, state: deps.state, signal });
 			}
 			if ((HERDR_INSPECTOR_ACTIONS as readonly string[]).includes(action)) {
 				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
@@ -5464,7 +5054,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					...(currentSessionId ? { currentSessionId } : {}),
 				});
 			}
-			const policyAction = action === "stop" ? "stopRun" : action === "steer" ? "steerRun" : undefined;
+			const policyAction = action === "stop" ? "stopRun" : action === "steer" ? "steerRun" : action === "schedule.create" ? "scheduleCreate" : undefined;
 			if (policyAction) {
 				const decision = resolveAuthorityDecision({ action: policyAction, ...(deps.config.authorityPolicy === undefined ? {} : { policy: deps.config.authorityPolicy }) });
 				if (decision === "forbid") {
@@ -5475,6 +5065,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					const confirmed = await ctx.ui.confirm(`Authorize subagent ${action}?`, `Authority policy requires confirmation before '${action}'.`);
 					if (!confirmed) return { content: [{ type: "text", text: `Action '${action}' canceled; authority was not granted.` }], details: { mode: "management", results: [] } };
 				}
+			}
+			if ((WATCHDOG_TOOL_ACTIONS as readonly string[]).includes(action)) {
+				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
+					return {
+						content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
+						isError: true,
+						details: { mode: "management" as const, results: [] },
+					};
+				}
+				return handleWatchdogToolAction(action, paramsWithResolvedCwd, ctx, deps.watchdog);
 			}
 			if (action === "refine" || action === "refine.show" || action === "refine.rollback") {
 				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
@@ -5587,7 +5187,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			if (action === "children.list") {
 				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-				const children = listRetainedChildren(DIRS.async, deps.state.sessionLineage?.length ? deps.state.sessionLineage : [deps.state.currentSessionId]);
+				const children = listRetainedChildren(DIRS.async, deps.state.currentSessionId);
 				return {
 					content: [{ type: "text", text: formatRetainedChildren(children) }],
 					details: { mode: "management", results: [] },
@@ -5621,7 +5221,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							cwd: requestCwd,
 							config: deps.config,
 							state: deps.state,
-							context: paramsWithResolvedCwd.context,
+							context: paramsWithResolvedCwd.context === "profile" ? undefined : paramsWithResolvedCwd.context,
 							requestedSessionDir: paramsWithResolvedCwd.sessionDir,
 							currentSessionFile,
 							currentSessionId,
@@ -5691,61 +5291,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					}
 				}
 				return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots })));
-			}
-
-			if (action === "approve-checkpoint" || action === "reject-checkpoint") {
-				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
-				if (!targetRunId && !paramsWithResolvedCwd.dir) {
-					return { content: [{ type: "text", text: `action='${action}' requires id or dir.` }], isError: true, details: { mode: "management", results: [] } };
-				}
-				try {
-					const resolved = targetRunId ? resolveSubagentRunId(targetRunId, omitUndefinedProperties({ state: deps.state, nested: nestedResolutionScopeForExecutor(deps) })) : undefined;
-					const decision = action === "approve-checkpoint" ? "approved" : "rejected";
-					if (resolved?.kind === "foreground") {
-						const run = deps.state.foregroundRuns?.get(resolved.id);
-						if (!run?.checkpoint || run.checkpoint.status !== "pending") {
-							return { content: [{ type: "text", text: `Run '${resolved.id}' is not paused at an approval checkpoint.` }], isError: true, details: { mode: "management", results: [] } };
-						}
-						if (deps.state.currentSessionId && run.sessionId !== deps.state.currentSessionId) {
-							return { content: [{ type: "text", text: `Run '${resolved.id}' was not found in the active session.` }], isError: true, details: { mode: "management", results: [] } };
-						}
-						const decidedAt = Date.now();
-						const checkpoint: NonNullable<Details["checkpoint"]> = decision === "approved"
-							? { ...run.checkpoint, status: "approved", approvedAt: decidedAt }
-							: { ...run.checkpoint, status: "rejected", rejectedAt: decidedAt };
-						run.checkpoint = checkpoint;
-						run.updatedAt = decidedAt;
-						return {
-							content: [{ type: "text", text: `Checkpoint '${checkpoint.name}' ${decision} for foreground run ${resolved.id}.` }],
-							details: { mode: "management", results: [], checkpoint },
-						};
-					}
-					const location = paramsWithResolvedCwd.dir
-						? resolveAsyncRunLocation(paramsWithResolvedCwd, DIRS.async, DIRS.results)
-						: resolved?.kind === "async"
-							? resolved.location
-							: undefined;
-					if (!location?.asyncDir) {
-						return { content: [{ type: "text", text: `action='${action}' targets paused foreground or async checkpoints. No matching run found.` }], isError: true, details: { mode: "management", results: [] } };
-					}
-					const status = readStatus(location.asyncDir);
-					const runId = status?.runId ?? location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir);
-					if (!status?.checkpoint || status.state !== "paused") {
-						return { content: [{ type: "text", text: `Run '${runId}' is not paused at an approval checkpoint.` }], isError: true, details: { mode: "management", results: [] } };
-					}
-					if (deps.state.currentSessionId && status.sessionId !== deps.state.currentSessionId) {
-						return { content: [{ type: "text", text: `Run '${runId}' was not found in the active session.` }], isError: true, details: { mode: "management", results: [] } };
-					}
-					deliverCheckpointDecisionRequest({ asyncDir: location.asyncDir, decision, source: "subagent-action", ...(paramsWithResolvedCwd.message ? { reason: paramsWithResolvedCwd.message } : {}) });
-					return {
-						content: [{ type: "text", text: `Checkpoint '${status.checkpoint.name}' ${decision} for run ${runId}.` }],
-						details: { mode: "management", results: [], checkpoint: { ...status.checkpoint, status: decision } },
-					};
-				} catch (error) {
-					const text = error instanceof Error ? error.message : String(error);
-					return { content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } };
-				}
 			}
 			if (action === "resume") {
 				return resumeAsyncRun(omitUndefinedProperties({ params: paramsWithResolvedCwd, requestCwd, ctx, deps, parentModel: requestParentModel, signal }));
@@ -5844,6 +5389,26 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (action === "append-step") {
 				return appendStepToAsyncChain(omitUndefinedProperties({ params: paramsWithResolvedCwd, requestCwd, ctx, deps, parentModel: requestParentModel }));
 			}
+			if (action.startsWith("schedule.")) {
+				if (!isScheduledRunAction(action)) {
+					return { content: [{ type: "text", text: unknownSubagentActionMessage(action) }], isError: true, details: { mode: "management", results: [] } };
+				}
+				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
+					return {
+						content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
+						isError: true,
+						details: { mode: "management", results: [] },
+					};
+				}
+				if (!deps.handleScheduledRunAction) {
+					return {
+						content: [{ type: "text", text: `Action '${action}' is not available in this subagent context.` }],
+						isError: true,
+						details: { mode: "management", results: [] },
+					};
+				}
+				return deps.handleScheduledRunAction(paramsWithResolvedCwd, ctx);
+			}
 			if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
 				return {
 					content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
@@ -5870,6 +5435,40 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
 				const workflowController = targetRunId ? deps.state.workflowControllers?.get(targetRunId) : undefined;
 				if (workflowController) {
+					if (paramsWithResolvedCwd.childId !== undefined) {
+						const workflowRunId = targetRunId!;
+						const asyncJob = deps.state.asyncJobs.get(workflowRunId);
+						if (!asyncJob?.asyncDir) return { content: [{ type: "text", text: `Status file not found for async workflow '${workflowRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
+						const status = readStatus(asyncJob.asyncDir);
+						if (!status) return { content: [{ type: "text", text: `Status file not found for async workflow '${workflowRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
+						const resolution = resolveAsyncStatusChild(status, paramsWithResolvedCwd.childId);
+						if (!resolution.ok) return { content: [{ type: "text", text: resolution.message }], isError: true, details: { mode: "management", results: [] } };
+						if (!isStoppableAsyncStatusStep(resolution.child.step)) return { content: [{ type: "text", text: `Child '${paramsWithResolvedCwd.childId}' in async run '${targetRunId}' is ${resolution.child.step.status}; stop only supports pending or running children.` }], isError: true, details: { mode: "management", results: [] } };
+						const stopChild = deps.state.workflowChildStops?.get(targetRunId!);
+						if (!stopChild) return { content: [{ type: "text", text: `Workflow ${targetRunId} child stop is unavailable in this extension runtime.` }], isError: true, details: { mode: "management", results: [] } };
+						if (!stopChild(resolution.child.id)) return { content: [{ type: "text", text: `Child '${paramsWithResolvedCwd.childId}' in workflow ${workflowRunId} is not available to stop.` }], isError: true, details: { mode: "management", results: [] } };
+						try {
+							fs.appendFileSync(path.join(asyncJob.asyncDir, "events.jsonl"), `${JSON.stringify({
+								type: "subagent.child-status",
+								version: 1,
+								runId: workflowRunId,
+								childId: resolution.child.id,
+								status: "stopping",
+								ts: Date.now(),
+								reason: "user",
+								source: "async",
+								stepIndex: resolution.child.index,
+								agent: resolution.child.step.agent,
+								...(resolution.child.step.runId ? { childRunId: resolution.child.step.runId } : {}),
+								...(resolution.child.step.workflowKey ? { workflowKey: resolution.child.step.workflowKey } : {}),
+								...(resolution.child.step.phase ? { phase: resolution.child.step.phase } : {}),
+								...(resolution.child.step.label ? { label: resolution.child.step.label } : {}),
+							} satisfies SubagentChildStatusEvent)}\n`, "utf-8");
+						} catch (error) {
+							console.error(`Failed to append child status event for workflow ${workflowRunId}:`, error);
+						}
+						return { content: [{ type: "text", text: `Stop requested for child ${resolution.child.id} in async workflow ${workflowRunId}.` }], details: { mode: "management", results: [] } };
+					}
 					workflowController.abort(new Error("Workflow stopped by user."));
 					return { content: [{ type: "text", text: `Stop requested for async workflow ${targetRunId}.` }], details: { mode: "management", results: [] } };
 				}
@@ -5881,7 +5480,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						if (existingStatus?.mode === "workflow" && existingStatus.state === "running") {
 							return { content: [{ type: "text", text: `Workflow ${existingStatus.runId} is not controlled by this extension runtime; reload recovery cannot stop it safely.` }], isError: true, details: { mode: "management", results: [] } };
 						}
-						const stopResult = stopAsyncRun(deps.state, location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir), deps.kill, location);
+						const stopResult = stopAsyncRun(deps.state, location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir), deps.kill, location, paramsWithResolvedCwd.childId);
 						return stopResult ?? { content: [{ type: "text", text: `No running or queued async run was found for '${targetRunId ?? paramsWithResolvedCwd.dir}'.` }], isError: true, details: { mode: "management", results: [] } };
 					} catch (error) {
 						const text = error instanceof Error ? error.message : String(error);
@@ -5908,6 +5507,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					resolved?.kind === "async" ? resolved.id : targetRunId,
 					deps.kill,
 					resolved?.kind === "async" ? resolved.location : undefined,
+					paramsWithResolvedCwd.childId,
 				);
 				if (stopResult) return stopResult;
 				return {
@@ -5970,6 +5570,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				cwd: requestCwd,
 				config: deps.config,
 				currentSessionId: deps.state.currentSessionId ?? ctx.sessionManager.getSessionId() ?? undefined,
+				runtimeAgentOwner: deps.pi,
 			});
 		}
 
@@ -6015,26 +5616,37 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
 		const discovered = deps.discoverAgents(effectiveCwd, scope);
 		const discoveredAgents = discovered.agents;
-		const canonicalParams = canonicalizeExecutionParams(effectiveParams, discoveredAgents);
+		const canonicalParams = canonicalizeExecutionParams(effectiveParams, discoveredAgents, discovered.agentDiagnostics);
 		if (canonicalParams.error) return buildRequestedModeError(effectiveParams, canonicalParams.error);
 		effectiveParams = canonicalParams.params!;
 		const modelScope = discovered.modelScope;
 		effectiveParams = applySingleAgentLaunchDefaults(effectiveParams, discoveredAgents);
 		const turnBudget = resolveTurnBudgetConfig(effectiveParams.turnBudget ?? deps.config.turnBudget);
 		if (turnBudget.error) return buildRequestedModeError(effectiveParams, turnBudget.error);
-		const contextPolicy = resolveAgentDefaultContextPolicy(effectiveParams, discoveredAgents);
+		// An agent-level defaultContext is a preference, unlike an explicit request.
+		// Prefer fork only when the parent session is persisted and has a current leaf;
+		// otherwise use fresh immediately instead of launching a guaranteed-to-fail fork.
+		// Explicit context:"fork" remains strict.
+		const contextPolicyResult = resolveAgentDefaultContextPolicy(
+			effectiveParams,
+			discoveredAgents,
+			deps.config.defaultSubagentContext,
+			canPreferFork(ctx.sessionManager),
+		);
+		if ("error" in contextPolicyResult) return buildRequestedModeError(effectiveParams, contextPolicyResult.error);
+		const contextPolicy = contextPolicyResult;
 		effectiveParams = contextPolicy.params;
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({
 			config: deps.config.intercomBridge,
 			override: effectiveParams.intercomBridge,
-			context: effectiveParams.context ?? (contextPolicy.usesFork ? "fork" : undefined),
+			context: effectiveParams.context === "fresh" || effectiveParams.context === "fork"
+				? effectiveParams.context
+				: contextPolicy.usesFork ? "fork" : undefined,
 			orchestratorTarget: sessionName,
 		});
-		const agents = intercomBridge.active
-			? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
-			: discoveredAgents;
-		const runId = randomUUID().slice(0, 8);
+		const agents = applyScopedIntercomBridgeToAgents(discoveredAgents, intercomBridge, contextPolicy);
+		const runId = randomUUID();
 		const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
 		const nestedParentAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
 		const shareEnabled = effectiveParams.share === true;
@@ -6068,30 +5680,33 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
 		let forkThinkingOverrideForIndex: (idx?: number) => AgentConfig["thinking"] | undefined = () => undefined;
-		let prepareForkThinking = (_agentName: string, _index: number, _modelOverride?: string): void => {};
+		let prepareForkThinking = (_agentName: string, _index: number, _modelOverride?: string, _modelOverrideFromParent?: boolean): void => {};
 		const forkThinkingRequirements = new Map<number, boolean>();
 		const forkThinkingDowngrades = new Map<number, string>();
 		try {
 			const forkAvailableModels = contextPolicy.usesFork ? ctx.modelRegistry.getAvailable().map(toModelInfo) : [];
 			const parentModel = requestParentModel;
-			prepareForkThinking = (agentName, index, modelOverride) => {
+			prepareForkThinking = (agentName, index, modelOverride, modelOverrideFromParent) => {
 				const agentConfig = agents.find((agent) => agent.name === agentName);
-				if (agentConfig?.runner?.type === "external-cli") {
+				if (agentConfig?.runner?.type === "external-cli" || agentConfig?.runner?.type === "external-job") {
 					forkThinkingRequirements.set(index, true);
 					return;
 				}
-				const primaryModel = resolveEffectiveSubagentModel(
-					modelOverride,
-					agentConfig?.model,
-					parentModel,
-					forkAvailableModels,
-					parentModel?.provider,
-				);
+				const primaryModel = modelOverrideFromParent
+					? modelOverride
+					: resolveEffectiveSubagentModel(
+						modelOverride,
+						agentConfig?.model,
+						parentModel,
+						forkAvailableModels,
+						agentConfig?.modelProvider ?? parentModel?.provider,
+					);
 				const candidates = buildModelCandidates(
 					primaryModel,
 					agentConfig?.fallbackModels,
 					forkAvailableModels,
-					parentModel?.provider,
+					agentConfig?.modelProvider ?? parentModel?.provider,
+					{ primaryModelFromParent: modelOverrideFromParent ?? inheritsParentModel(modelOverride, agentConfig?.model, parentModel) },
 				);
 				forkThinkingRequirements.set(
 					index,
@@ -6107,9 +5722,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		} catch (error) {
 			return toExecutionErrorResult(effectiveParams, error, contextPolicy.contextSummary);
 		}
-		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
-		const backgroundRequestedWhileClarifying = (hasChain || hasTasks) && requestedAsync && effectiveParams.clarify === true;
-		const effectiveAsync = requestedAsync && effectiveParams.clarify !== true;
 		const selectedAgentNames = hasSingle
 			? [effectiveParams.agent!]
 			: hasTasks
@@ -6117,9 +5729,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				: (effectiveParams.chain ?? []).flatMap((step) => getStepAgents(step as ChainStep));
 		const externalAgent = selectedAgentNames
 			.map((name) => agents.find((agent) => agent.name === name))
-			.find((agent) => agent?.runner?.type === "external-cli");
+			.find((agent) => agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job");
+		const externalAsyncRequired = Boolean(externalAgent) && effectiveParams.async === undefined && effectiveParams.clarify !== true && effectiveParams.foregroundOnly !== true;
+		const requestedAsync = externalAsyncRequired ? true : effectiveParams.async ?? deps.asyncByDefault;
+		const backgroundRequestedWhileClarifying = (hasChain || hasTasks) && requestedAsync && effectiveParams.clarify === true;
+		const effectiveAsync = requestedAsync && effectiveParams.clarify !== true;
 		if (externalAgent && (!effectiveAsync || effectiveParams.foregroundOnly === true)) {
-			return buildRequestedModeError(effectiveParams, `Agent '${externalAgent.name}' uses runner.type='external-cli', which currently supports async/background execution only. Omit async or pass async:true; clarify and foregroundOnly are unsupported.`);
+			return buildRequestedModeError(effectiveParams, `Agent '${externalAgent.name}' uses runner.type='${externalAgent.runner?.type}', which currently supports async/background execution only. Omit async or pass async:true; clarify and foregroundOnly are unsupported.`);
 		}
 		const foregroundTimeout = resolveSingleAgentLaunchTimeout(
 			effectiveParams,
@@ -6203,20 +5819,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 		const sessionDirForIndex = (idx?: number) =>
 			path.join(sessionRoot, `run-${idx ?? 0}`);
-		const forkSessionFileForTask: ForkSessionFileForTask = (agentName, idx = 0, modelOverride) => {
+		const forkSessionFileForTask: ForkSessionFileForTask = (agentName, idx = 0, modelOverride, modelOverrideFromParent) => {
 			if (!shouldForkAgent(contextPolicy, agentName)) return undefined;
-			prepareForkThinking(agentName, idx, modelOverride);
+			prepareForkThinking(agentName, idx, modelOverride, modelOverrideFromParent);
 			return forkSessionFileForIndex(idx);
 		};
-		const forkThinkingOverrideForTask: ForkThinkingOverrideForTask = (agentName, idx = 0, modelOverride) => {
+		const forkThinkingOverrideForTask: ForkThinkingOverrideForTask = (agentName, idx = 0, modelOverride, modelOverrideFromParent) => {
 			if (!shouldForkAgent(contextPolicy, agentName)) return delegatedThinkingOverride;
-			prepareForkThinking(agentName, idx, modelOverride);
+			prepareForkThinking(agentName, idx, modelOverride, modelOverrideFromParent);
 			const override = forkThinkingOverrideForIndex(idx);
 			if (override === "off") forkThinkingDowngrades.set(idx, agentName);
 			return override ?? delegatedThinkingOverride;
 		};
-		const childSessionFileForTask: ForkSessionFileForTask = (agentName, idx, modelOverride) =>
-			forkSessionFileForTask(agentName, idx, modelOverride) ?? path.join(sessionDirForIndex(idx), "session.jsonl");
+		const childSessionFileForTask: ForkSessionFileForTask = (agentName, idx, modelOverride, modelOverrideFromParent) =>
+			forkSessionFileForTask(agentName, idx, modelOverride, modelOverrideFromParent) ?? path.join(sessionDirForIndex(idx), "session.jsonl");
 		const childSessionFileForIndex = (idx?: number) =>
 			path.join(sessionDirForIndex(idx), "session.jsonl");
 		try {
@@ -6322,7 +5938,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			parentModel: requestParentModel,
 			parentSessionId: requestSessionId,
 			parentPiSessionId: requestPiSessionId,
-			capabilityCeiling: resolveCurrentSubagentCapabilityCeiling(requestSessionId),
+			capabilityCeiling: intersectSubagentCapabilityCeilings(effectiveParams.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(requestSessionId)),
 			runFanoutBudget,
 			topLevelAsyncCapacityEligible,
 			activeAsyncCapacity,
@@ -6398,6 +6014,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			};
 			deps.state.foregroundControls.set(runId, foregroundControl);
 			deps.state.lastForegroundControlId = runId;
+			deps.activateSupervisorTransport?.();
+			deps.refreshResultDelivery?.();
 		}
 
 		const writeNestedForegroundEvent = (type: "subagent.nested.started" | "subagent.nested.completed", result?: AgentToolResult<Details>): void => {
@@ -6431,7 +6049,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				startedLaunches = selectedAgentNames.map((agent) => ({ agent }));
 			}
 			const agentsForSummary = startedLaunches.map((launch) => launch.agent);
-			const leafIntercomTarget = intercomBridge.active && agentsForSummary[0]
+			const leafIntercomTarget = agentsForSummary[0] && intercomBridgeAppliesToAgent(intercomBridge, contextPolicy, agentsForSummary[0])
 				? resolveSubagentIntercomTarget(runId, agentsForSummary[0], 0)
 				: undefined;
 			try {
@@ -6504,7 +6122,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					workflowLaunchObserver(launch);
 				}
 			}
-			const asyncResult = runAsyncPath(execData, deps);
+			const asyncResult = await runAsyncPath(execData, deps);
 			if (asyncResult) {
 				asyncLaunchFailed = asyncResult.isError === true;
 				return attachMission(withRunFanoutBudget(withResolvedContext(withForkThinkingNotes(asyncResult, forkThinkingDowngrades), contextPolicy.contextSummary), runFanoutBudget));
@@ -6514,16 +6132,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				nestedForegroundStarted = true;
 			}
 			const runFanoutAnnotateContent = !delegatedExecution;
-			if (hasChain && effectiveParams.chain) {
-				const result = await runChainPath(execData, deps);
-				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return attachMission(withRunFanoutBudget(withResolvedContext(withForkThinkingNotes(result, forkThinkingDowngrades), contextPolicy.contextSummary), runFanoutBudget, { annotateContent: runFanoutAnnotateContent }));
-			}
-			if (hasTasks && effectiveParams.tasks) {
-				const result = await runParallelPath(execData, deps);
-				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return attachMission(withRunFanoutBudget(withResolvedContext(withForkThinkingNotes(result, forkThinkingDowngrades), contextPolicy.contextSummary), runFanoutBudget, { annotateContent: runFanoutAnnotateContent }));
-			}
 			if (hasSingle) {
 				const result = await runSinglePath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
@@ -6580,7 +6188,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
-		const normalized = normalizePublicSubagentExecution(params);
+		const normalized = normalizePublicSubagentExecution(params, { asyncByDefault: deps.asyncByDefault });
 		if (!normalized.ok) {
 			return Promise.resolve({ content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } });
 		}
@@ -6609,5 +6217,23 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		return execute(id, delegatedParams, signal, onUpdate, ctx);
 	};
 
-	return { execute: executeWithSingleDispatchGuard, executePublic, executeDelegated };
+	const executeScheduled = (
+		id: string,
+		params: SubagentParamsLike,
+		signal: AbortSignal,
+		ctx: ExtensionContext,
+	) => {
+		const ownerSessionId = resolveCurrentSessionId(ctx.sessionManager);
+		let ownerExecutor = scheduledOwnerExecutors.get(ownerSessionId);
+		if (!ownerExecutor) {
+			ownerExecutor = createSubagentExecutor({
+				...deps,
+				state: createScheduledOwnerState(deps.state, ownerSessionId, ctx),
+			});
+			scheduledOwnerExecutors.set(ownerSessionId, ownerExecutor);
+		}
+		return ownerExecutor.execute(id, params, signal, undefined, ctx);
+	};
+
+	return { execute: executeWithSingleDispatchGuard, executePublic, executeDelegated, executeScheduled };
 }
