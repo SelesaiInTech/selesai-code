@@ -7,13 +7,13 @@ The format is intentionally simple and release-oriented.
 ## Unreleased
 
 ### Added
-- None.
+- The zero-config default has a safety net now. When DuckDuckGo blocks a search (which happens fast on VPS and datacenter IPs), web search falls back to Tavily's keyless endpoint, no account or API key needed, so a fresh install still returns results instead of an error. Set `PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK=1` if you'd rather it just fail. (#42)
 
 ### Changed
-- None.
+- The keyless DuckDuckGo default is a lot harder to bot-wall. It sends real browser headers and retries once when a page looks blocked, instead of going out as an obvious script and getting bounced on the first request. (#42)
 
 ### Fixed
-- None.
+- Blocked searches are labeled honestly. A bot-wall page comes back as "blocked" (which triggers the fallback) instead of "couldn't parse", including the 200-status pages that mix a no-results message with a bot-wall notice. (#42)
 
 ### Breaking
 - None.
