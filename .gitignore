@@ -26,3 +26,6 @@ coverage/
 !.grepai/config.yaml
 
 coverage-*/
+
+# Unlazy completion ledgers (local planning artifacts)
+.unlazy/

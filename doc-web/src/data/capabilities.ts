@@ -40,6 +40,22 @@ export const categories: { id: Category; en: string; indonesian: string }[] = [
 export const capabilities: Capability[] = [
 
   {
+    slug: "auto-model",
+    category: "terminal-workspace",
+    en: { displayName: "Automatic model routing", benefit: "Classify eligible idle prompts into four difficulty tiers and switch among configured, scope-limited models; disabled by default." },
+    id: { displayName: "Routing model otomatis", benefit: "Klasifikasikan prompt idle yang memenuhi syarat ke empat tier kesulitan dan beralih di antara model yang dikonfigurasi serta dibatasi scope; nonaktif secara default." },
+    sourcePaths: ["src/extensions/auto-model/"],
+    sourceLinks: [
+      links("Auto-model extension", "src/extensions/auto-model/"),
+      links("Auto-model plan", "docs/plans/auto-model-routing-extension.md"),
+    ],
+    guideRoute: "capabilities/workspace/auto-model",
+    piComparison: "bundled",
+    distribution: "bundled",
+    manifestEntry: "./auto-model",
+    runtimeSurface: "mixed",
+  },
+  {
     slug: "pi-subagents",
     category: "delegation-and-workflows",
     en: { displayName: "Subagent delegation", benefit: "Run focused in-tree agent roles in foreground, background, parallel, or chained modes with tooling and model controls." },

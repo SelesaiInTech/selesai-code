@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.15] - 2026-08-26
+
+### Added
+- **Bundled automatic model routing.** The new `auto-model` extension is disabled by default and can be configured with `/auto-model-settings`. It classifies eligible idle prompts into four tiers (`simple`, `medium`, `complex`, and `reasoning`), selects configured models limited to the current scope, and falls back to the current model when no target is available. Manual model selection suspends routing until explicitly enabled again; routing is serialized and does not run while the session is busy.
+
 ## [0.9.14] - 2026-08-26
 
 ### Changed

@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.9.15 — Routing model otomatis bawaan
+
+- Menambahkan extension bawaan `auto-model`, nonaktif secara default.
+- Konfigurasikan dengan `/auto-model-settings`: klasifikasikan prompt idle yang memenuhi syarat ke `simple`, `medium`, `complex`, atau `reasoning`, lalu arahkan ke model yang tersedia dalam scope saat ini.
+- Pemilihan model manual menangguhkan routing sampai `/auto-model-settings enable`; routing berjalan serial dan melewati input sibuk, dari extension, dan streaming.
+
 ## 0.9.14 — Workflow adaptif dan bootstrap tool
 
 - Mengganti extension `/workflow-*` tetap dengan skill `$workflow` bawaan, yang hanya memilih tahap perencanaan, research, penulisan, review, dan fix yang dibutuhkan tugas.

@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.9.15 — Bundled automatic model routing
+
+- Added the bundled `auto-model` extension, disabled by default.
+- Configure it with `/auto-model-settings`: classify eligible idle prompts into `simple`, `medium`, `complex`, or `reasoning`, then route to configured models available in the current scope.
+- Manual model selection suspends routing until `/auto-model-settings enable`; routing is serialized and skips busy, extension, and streaming input.
+
 ## 0.9.14 — Adaptive workflows and tool bootstrap
 
 - Replaced the fixed `/workflow-*` extension with the bundled `$workflow` skill, which selects only the planning, research, writing, review, and fix stages a task needs.

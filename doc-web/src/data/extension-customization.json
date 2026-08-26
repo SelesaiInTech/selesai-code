@@ -1,6 +1,49 @@
 {
   "catalog": [
     {
+      "slug": "auto-model",
+      "distribution": "bundled",
+      "overview": {
+        "en": "Automatic model routing classifies eligible idle prompts into four tiers and switches to configured models. It is disabled by default and manual selection suspends routing until re-enabled.",
+        "id": "Routing model otomatis mengklasifikasikan prompt idle yang memenuhi syarat ke empat tier dan beralih ke model yang dikonfigurasi. Fitur nonaktif secara default dan pemilihan manual menangguhkan routing sampai diaktifkan kembali."
+      },
+      "sourcePaths": [
+        "src/extensions/auto-model/config.ts",
+        "src/extensions/auto-model/classifier.ts",
+        "src/extensions/auto-model/index.ts"
+      ],
+      "scopes": [
+        {
+          "label": { "en": "Global configuration", "id": "Konfigurasi global" },
+          "path": "~/.selesai/agent/extensions/auto-model/config.json",
+          "precedence": { "en": "Base layer, overridden by trusted project configuration.", "id": "Layer dasar, ditimpa konfigurasi proyek tepercaya." }
+        },
+        {
+          "label": { "en": "Trusted project configuration", "id": "Konfigurasi proyek tepercaya" },
+          "path": ".selesai/extensions/auto-model/config.json",
+          "precedence": { "en": "Overrides global configuration when the project is trusted.", "id": "Menimpa konfigurasi global saat proyek tepercaya." }
+        }
+      ],
+      "settings": [
+        { "key": "enabled", "type": "boolean", "default": "false", "description": { "en": "Enable automatic routing.", "id": "Aktifkan routing otomatis." }, "persistence": "config.json" },
+        { "key": "classifier.type", "type": "string", "default": "llm", "allowedValues": "llm, heuristic", "description": { "en": "Choose LLM classification or local heuristic fallback classification.", "id": "Pilih klasifikasi LLM atau klasifikasi fallback heuristic lokal." }, "persistence": "config.json" },
+        { "key": "classifier.model", "type": "string", "default": "(unset)", "description": { "en": "Available provider/model used for classification when classifier.type is llm.", "id": "provider/model tersedia yang dipakai klasifikasi saat classifier.type adalah llm." }, "persistence": "config.json" },
+        { "key": "classifier.timeoutMs", "type": "number", "default": "3000", "description": { "en": "Classifier timeout in milliseconds.", "id": "Timeout classifier dalam milidetik." }, "persistence": "config.json" },
+        { "key": "classifier.contextTurns", "type": "number", "default": "3", "description": { "en": "Maximum prior user turns included in classification context.", "id": "Maksimum turn user sebelumnya yang disertakan dalam konteks klasifikasi." }, "persistence": "config.json" },
+        { "key": "classifier.contextCharsPerTurn", "type": "number", "default": "300", "description": { "en": "Maximum characters retained per prior user turn.", "id": "Maksimum karakter yang dipertahankan per turn user sebelumnya." }, "persistence": "config.json" },
+        { "key": "tiers.simple|medium|complex|reasoning", "type": "string", "default": "(unset)", "description": { "en": "Available provider/model target for each difficulty tier.", "id": "Target provider/model yang tersedia untuk setiap tier kesulitan." }, "persistence": "config.json" }
+      ],
+      "envVars": [],
+      "controls": [
+        { "name": "/auto-model-settings", "description": { "en": "Open the TUI tier/model picker.", "id": "Buka picker tier/model di TUI." } },
+        { "name": "/auto-model-settings show|enable|disable", "description": { "en": "Inspect or change routing state.", "id": "Periksa atau ubah status routing." } },
+        { "name": "/auto-model-settings set <tier> <provider/model>", "description": { "en": "Set a tier target from the available scoped models.", "id": "Atur target tier dari model yang tersedia dalam scope." } },
+        { "name": "/auto-model-settings classifier <llm|heuristic> [provider/model]", "description": { "en": "Choose the classifier mode and optional model.", "id": "Pilih mode classifier dan model opsional." } },
+        { "name": "/auto-model-settings test <prompt>", "description": { "en": "Classify a prompt without switching the current model.", "id": "Klasifikasikan prompt tanpa mengganti model saat ini." } }
+      ],
+      "noConfig": false
+    },
+    {
       "slug": "pi-subagents",
       "distribution": "bundled",
       "overview": {

@@ -6,7 +6,8 @@
 	"pi": {
 		"extensions": [
 			"./agent-browser.ts",
-		"./copy-turn.ts",
+			"./auto-model",
+			"./copy-turn.ts",
 			"./context-compaction-reminder.ts",
 			"./enable-readonly-tools.ts",
 			"./preview-tools-disabled.ts",
