@@ -1,8 +1,6 @@
-# Selesai-in-doc — local changes backup log
+# Selesai-in-doc — fork-maintenance record
 
-This folder records **every change we add on top of the upstream base** (`earendil-works/pi`),
-so that when we merge in / rebase on a new `pi-coding-agent` release we have a clean, re-applicable
-record of our additions and don't lose them.
+This folder records only Selesai modifications to original Pi/upstream code that must be reconsidered when updating the upstream base. It is the input record for fork upgrades, not a general feature log.
 
 ## Files
 
@@ -14,9 +12,9 @@ record of our additions and don't lose them.
 
 ## When to update this log
 
-- Every time a feature is added or changed, update the relevant doc in this folder.
-- Prefer **small, additive, re-appliable** captures over prose — the goal is that a future
-  agent (or a human) can re-apply the delta cleanly onto a fresh upstream checkout.
+Add or update an entry only when a Selesai-owned behavior modifies an original upstream/Pi file and that modification could conflict with, be replaced by, or require reconciliation against a future upstream change. Do not record Selesai-only new files, ordinary documentation, generated output, or changes with no upstream-upgrade maintenance burden.
+
+Each entry names the behavior, modified upstream-origin files/symbols, why the delta matters during an upgrade, focused validation, and any upstream surface to inspect.
 
 ## How this fork is rooted
 

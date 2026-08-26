@@ -24,8 +24,7 @@
     "imageCaptionContextTokens": 16384
   },
   "packages": [
-    "git:github.com/MasuRii/pi-tool-display",
-    "git:github.com/omaclaren/pi-markdown-preview"
+    "git:github.com/MasuRii/pi-tool-display"
   ],
   "quietStartup": true,
   "retry": {
