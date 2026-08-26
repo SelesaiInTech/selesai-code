@@ -8,6 +8,7 @@
 			"./agent-browser.ts",
 		"./copy-turn.ts",
 			"./context-compaction-reminder.ts",
+			"./enable-readonly-tools.ts",
 			"./pi-intercom/index.ts",
 			"./ponytail/index.js",
 			"./question",
