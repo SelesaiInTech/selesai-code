@@ -2,6 +2,14 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.9.14] - 2026-08-26
+
+### Changed
+- **Adaptive workflow skill.** Replaced fixed `/workflow-*` commands with the bundled `$workflow` skill, which selects only the required pi-subagents planning, research, writing, review, and fix stages.
+- **Workflow artifacts.** Built-in workflow roles persist named reports for the next stage, while the parent keeps one writer and final acceptance.
+- **Question flexibility.** Select and multi-select questions now permit an Other answer by default; set `allowOther: false` to restrict choices.
+- **Tool bootstrap.** The standard read-only tool catalog activates after the first durable tool call. Preview-export tools remain hidden without disabling Markdown preview rendering.
+
 ## [0.9.13] - 2026-08-26
 
 ### Changed

@@ -8,3 +8,5 @@ update documentations about the changes related in `./doc-web` if needed.
 commit
 push
 republish npm
+
+$@

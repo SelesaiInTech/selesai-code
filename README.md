@@ -60,18 +60,13 @@ Run parallel commentator agents for correctness, tests, and unnecessary complexi
 Have the builder implement this plan, then review the result.
 ```
 
-### Durable workflows
+### Adaptive implementation workflow
 
-Selesai includes a workflow engine with four modes:
+Selesai's `workflow` skill is a parent-directed implementation policy, not a fixed slash-command pipeline. It chooses the smallest useful flow for the task: direct implementation for a trivial change; optional reconnaissance or research for uncertainty; one writer; then only the review, fix, and validation passes the risk warrants.
 
-| Mode | Flow | Best for |
-| --- | --- | --- |
-| `prototype` | grill → research → plan → reuse → handoff → build/review loop → audit | New prototypes that need discovery and external research |
-| `quicktype` | grill → plan → reuse → handoff → build/review loop → audit | Quicker prototype: same flow without research |
-| `task` | plan → reuse → handoff → build/review loop | Direct implementation work |
-| `loop` | build/review loop | Work with an already-agreed plan |
+The parent remains the decision-maker and keeps one writer per checkout. Reviewers inspect the shared working-tree diff directly, while the parent selectively passes synthesized findings to a scoped fix worker. A handoff artifact is optional—use one only for cross-session continuity, a milestone boundary, or a durable user-facing record.
 
-Workflows persist their state and phase artifacts on disk, can be resumed explicitly, and require an explicit close step. Users start and resume them directly with `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, or `/workflow-loop`; the agent cannot initiate a workflow.
+Invoke it inline with `$workflow`, or ask Selesai to orchestrate an implementation. Material architecture or product decisions are resolved before implementation, using an oracle or Council Mode when appropriate.
 
 ### Web research
 
@@ -140,7 +135,7 @@ Skills are shipped with Selesai and loaded at boot. They include:
 - `handoff` and `handoff-text` for session continuity
 - `improve-codebase` for architecture and maintainability reviews
 - `ponytail-review`, `ponytail-audit`, `ponytail-gain`, `ponytail-debt`, and `ponytail-help`
-- `workflow-creation` for building durable workflow modes
+- `workflow` for adaptive implementation orchestration
 
 Invoke one inline with `$skill-name` (for example, `$grill-me`).
 

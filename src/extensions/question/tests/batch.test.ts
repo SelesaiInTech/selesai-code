@@ -22,7 +22,7 @@ describe("question batch helpers", () => {
 					{ value: "red", label: "Red", description: undefined },
 					{ value: "blue", label: "Blue", description: undefined },
 				],
-				allowOther: false,
+				allowOther: true,
 			},
 			{
 				id: "notes",
@@ -70,7 +70,7 @@ describe("question batch helpers", () => {
 			context: "ctx",
 			type: "multiselect",
 			options: [{ value: "a", label: "A", description: "desc" }],
-			allowOther: false,
+			allowOther: true,
 		});
 	});
 

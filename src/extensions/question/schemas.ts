@@ -20,14 +20,14 @@ const SelectQuestionSchema = Type.Object({
 	...QuestionBase,
 	type: StringEnum(["select"] as const),
 	options: Type.Array(OptionSchema, { minItems: 1, description: "Available choices" }),
-	allowOther: Type.Optional(Type.Boolean({ description: "Allow a custom Other text answer" })),
+	allowOther: Type.Optional(Type.Boolean({ description: "Allow a custom Other text answer (default: true)" })),
 }, { additionalProperties: false });
 
 const MultiSelectQuestionSchema = Type.Object({
 	...QuestionBase,
 	type: StringEnum(["multiselect"] as const),
 	options: Type.Array(OptionSchema, { minItems: 1, description: "Available choices" }),
-	allowOther: Type.Optional(Type.Boolean({ description: "Allow custom Other text alongside selected values" })),
+	allowOther: Type.Optional(Type.Boolean({ description: "Allow custom Other text alongside selected values (default: true)" })),
 }, { additionalProperties: false });
 
 const TextQuestionSchema = Type.Object({

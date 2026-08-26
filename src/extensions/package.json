@@ -20,7 +20,6 @@
 			"./rtk.ts",
 			"./tokenin-onboarding.ts",
 			"./undo.ts",
-			"./workflow",
 			"./pi-subagents",
 			"./pi-web-agent",
 			"./web-agent-onboarding.ts",

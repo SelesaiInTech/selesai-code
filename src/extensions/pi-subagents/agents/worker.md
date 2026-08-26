@@ -8,7 +8,8 @@ inheritProjectContext: true
 inheritSkills: false
 tools: read, grep, find, ls, bash, edit, write, contact_supervisor
 defaultContext: fork
-defaultReads: context.md, plan.md
+output: implementation.md
+defaultReads: context.md, research.md, plan.md, implementation.md, review.md
 defaultProgress: true
 ---
 

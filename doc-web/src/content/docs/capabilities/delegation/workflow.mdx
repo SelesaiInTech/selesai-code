@@ -1,82 +1,67 @@
 ---
 draft: false
-title: Durable workflows
+title: Adaptive implementation workflow
 ---
 
-import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-The `workflow` extension ships the four workflow mode shapes as **pi-subagents scripted auto-loop workflows**. Four commands are bundled: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, and `/workflow-loop`. Each launches a `workflowScript` through pi-subagents — the mode's phases run as `runs.run` steps, and the build↔review round auto-repeats until the commentator reports clean. A `workflowScript` has no checkpoints, so there are no human gates. Durable state lives in the auto-created mission per launch.
+`workflow` is a bundled skill that helps the parent agent orchestrate implementation with `pi-subagents`. It replaces the former `/workflow-*` extension and its fixed, auto-looping pipelines.
 
-<ExtensionStatus
-  distribution="bundled"
-  manifestEntry="./workflow"
-  runtimeSurface="mixed"
-  locale="en"
-/>
+Use it inline with `$workflow`, or ask Selesai to orchestrate an implementation. It is a policy layer, not a separate runtime or slash-command system.
 
 ## Setup and prerequisites
 
-- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
-- It launches scripted workflows through the `pi-subagents` extension, which must be loaded (it is bundled too).
-- Requires an interactive TUI session.
-- The Selesai agent roster (`architect`, `builder`, `commentator`, `explorer`, `recapper`, `researcher`) provides the workflow phases.
+`workflow` and `pi-subagents` are bundled. No separate installation is required.
 
 ## What it sets up
 
-- Registers one slash command per mode: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, `/workflow-loop`.
-- Each command launches a pi-subagents scripted workflow (`launchSlashSubagent`) with the goal injected into the mode's `workflowScript`.
+It supplies parent-only orchestration guidance; it does not register a workflow runtime or slash commands.
 
 ## What you can configure
 
-<ExtensionCustomization slug="workflow" locale="en" />
-
+The skill has no persistent settings. Adapt the requested flow to the task, then use normal `pi-subagents` controls for delegated runs.
 
 ## What you can do
 
-- Start a plan/implement/review cycle:
-
-<div class="install-command">
-  <pre><code>/workflow-task add a persistent todo store with sqlite</code></pre>
-  <button type="button" class="copy-button" data-command="/workflow-task add a persistent todo store with sqlite" aria-label="Copy command to clipboard">Copy</button>
-  <span class="copy-status" role="status" aria-live="polite"></span>
-</div>
-
-### Mode scripts
-
-| Mode | Scripted phases |
-| --- | --- |
-| `task` | architect (plan) → explorer (reuse) → recapper (handoff) → auto build→review→fix loop (builder → commentator → builder fix, until clean) |
-| `prototype` | parallel researcher (research) + explorer (codebase reuse) → architect (plan) → recapper (handoff) → auto build→review→fix loop (builder → commentator → builder fix, until clean) → commentator (audit of uncommitted diff) |
-| `quicktype` | architect (plan) → explorer (reuse) → recapper (handoff) → auto build→review→fix loop (builder → commentator → builder fix, until clean) → commentator (audit of uncommitted diff) |
-| `loop` | auto build→review→fix loop (builder → commentator → builder fix, until clean) — direct rounds for an already-agreed plan |
-
-- Modes use `runs.run` for ordered work; prototype also uses `runs.all` for independent discovery. The conditional build/review loop remains a `workflowScript`, so it has no checkpoints; the commentator's independent review is its gate.
-- Each launch emits its goal at start (visible in `subagent status` → workflow emits and the live card) and names the mission after the goal (`mission.list` / `mission.show`).
-- The build→review→fix round auto-repeats until the reviewer's output matches the `WORKFLOW_REVIEW_STATUS: clean` marker **and** lists no `Remaining work:` section; `runs.run` keys are unique per round (`build-1`, `review-1`, `fix-1`, `build-2`, …). A blocking review (or a clean review that still lists remaining work) triggers a fix round that addresses only the reviewer's findings; the next build continues from the review's remaining-work notes.
-- Durable process state lives in the auto-created **mission** per launch (state, artifacts, decisions, receipts); inspect with `mission.list` / `mission.show`.
-- When the per-run fan-out budget (`maxSubagentSpawnsPerRun`) is exhausted mid-loop, the async workflow auto-relaunches as a fresh top-level run with a new budget and keeps looping until the commentator reports clean or the auto-relaunch cap (`maxWorkflowAutoRelaunches`, default 12; 0 = unlimited) is reached. The plan and progress file carry all state between relaunches.
-- Workflows launch asynchronously; recover or continue via `mission.list` and the async run `status`.
+Invoke `$workflow` inline, or ask Selesai to orchestrate the implementation.
 
 ## Commands, tools, and shortcuts
 
-| Command | Description |
-| --- | --- |
-| `/workflow-prototype <goal>` | Run the full prototype scripted workflow (parallel research + codebase reuse → plan → handoff → auto loop → audit). |
-| `/workflow-quicktype <goal>` | Run the quicker prototype scripted workflow without research. |
-| `/workflow-task <goal>` | Run the task scripted workflow (plan → reuse → handoff → auto loop). |
-| `/workflow-loop <goal>` | Run a direct auto build→review→fix loop for an already-agreed plan. |
+Use `$workflow`; coordinated launches use the existing `subagent` tool.
+
+<ExtensionCustomization slug="workflow" locale="en" />
 
 ## Limits and safety
 
-- Workflows launch asynchronously (`async: true`); the live result card, snapshots, and notifications come from pi-subagents' slash UX.
-- Each command needs a non-empty goal; an empty invocation shows usage instead of launching.
-- The previous durable engine (state machine, `workflow.json` run state, `write_workflow_artifact` / `end_workflow` tools, and marker-validated phase artifacts) is gone. The four modes are scripted auto-loop workflows: the build→review→fix round repeats until the commentator reports clean, and there are no human gates.
-- The old `workflow.json` resume note stays as the migration note: active runs from the old engine are not resumable.
+The parent remains responsible for scope, acceptance, and deciding when to stop. Keep one writer per checkout.
 
-## Migration
+## How it works
 
-Active runs from the old engine (`.selesai/artifacts/*/workflow.json`) are **not resumable**. The old run files can be deleted; start fresh with `/workflow-<mode> <goal>`.
+The parent inspects the task first and chooses the smallest safe flow:
+
+| Situation | Flow |
+| --- | --- |
+| Small, localized change | Implement locally and run a focused check. |
+| Bounded implementation | Optional codebase reconnaissance → one writer → focused validation. |
+| Uncertain code or external dependency | Reconnaissance and/or research → parent decision or plan → one writer → relevant review. |
+| Material architecture or product decision | Resolve the decision first; use an oracle or multiple perspectives only when warranted. |
+| Broad or risky work | Serial milestones: decide/plan → one writer → review/validation → scoped fix → re-review if the fix is material. |
+
+The parent remains the decision-maker and final acceptor. Keep one writer per checkout; only independent read-only discovery, research, review, and validation should run in parallel.
+
+## Using delegated stages
+
+The skill uses the `pi-subagents` `workflowScript` API when coordination is needed. Built-in roles can persist concise artifacts such as `context.md`, `research.md`, `plan.md`, implementation reports, and reviews. Pass only the artifacts a later role needs through `reads`; reviewers should inspect the actual current diff.
+
+A handoff is optional. Use one for cross-session continuity, a milestone boundary, or a durable user-facing record—not as a mandatory pipeline stage.
+
+## Review and fixes
+
+For work that merits independent review, define focused acceptance checks before the writer starts. Run only the review lenses that matter to the change, synthesize accepted findings in the parent, then give one scoped fix task to the writer. Re-review only after a material fix. Stop once focused validation is sufficient, no actionable blockers remain, or a user decision is required.
+
+## Migration from `/workflow-*`
+
+The legacy `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, and `/workflow-loop` commands were removed. Start a new task with `$workflow` instead. Existing pi-subagents missions and receipts remain available as delegated-work evidence, but they do not make a fixed pipeline authoritative.
 
 <SourceEvidence slug="workflow" />

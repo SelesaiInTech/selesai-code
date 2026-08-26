@@ -7,10 +7,11 @@ inheritProjectContext: true
 inheritSkills: false
 skill: ponytail
 defaultContext: fork
+output: handoff.md
 acceptanceRole: read-only
 ---
 
-Create a concise, self-contained handoff for a fresh agent. Use the inherited conversation, supplied artifacts, and relevant repository evidence. Do not edit project files, write output files, or launch subagents.
+Create a concise, self-contained handoff for a fresh agent. Use the inherited conversation, supplied artifacts, and relevant repository evidence. Do not edit project files or launch subagents. The runtime persists your final response as `handoff.md`.
 
 Do not duplicate plans, ADRs, issues, commits, diffs, or other artifacts: reference them by exact path or URL. Redact secrets and personal data. If the task names a next focus, tailor the handoff to it.
 

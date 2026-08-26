@@ -70,7 +70,7 @@ export function prepareQuestions(value: unknown): { questions: PreparedQuestion[
 			...common,
 			type: raw.type,
 			options: preparedOptions.options,
-			allowOther: raw.allowOther ?? false,
+			allowOther: raw.allowOther ?? true,
 		});
 	}
 	return { questions };

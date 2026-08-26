@@ -26,25 +26,11 @@ export interface GuidePreferencesUpdate {
 // or prompt from the root README without reproducing the README in the overlay.
 export const GUIDE_FEATURES: readonly GuideFeature[] = [
   {
-    id: "workflow-task",
+    id: "workflow",
     section: "Start here",
-    title: "Task",
-    example: '/workflow-task "<goal>"',
-    introducedIn: "0.5.13",
-  },
-  {
-    id: "workflow-quicktype",
-    section: "Start here",
-    title: "Quicktype",
-    example: '/workflow-quicktype "<goal>"',
-    introducedIn: "0.5.13",
-  },
-  {
-    id: "workflow-prototype",
-    section: "Start here",
-    title: "Prototype",
-    example: '/workflow-prototype "<goal>"',
-    introducedIn: "0.5.13",
+    title: "Workflow",
+    example: '"Use $workflow to orchestrate this implementation."',
+    introducedIn: "0.9.14",
   },
   {
     id: "settings",
@@ -101,8 +87,7 @@ export const GUIDE_DISMISS_HINT = "Press any key to continue";
 
 export const GUIDE_COMPACT_LINES = [
   "/guide full · /settings",
-  '/workflow-task "<goal>" · /workflow-quicktype "<goal>"',
-  '/workflow-prototype "<goal>"',
+  '"Use $workflow to orchestrate this implementation."',
   '"Ask the researcher to research <topic>."',
   "/skill:* · /undo · /handoff-new <next focus>",
 ] as const;

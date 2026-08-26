@@ -3,6 +3,13 @@ draft: false
 title: Changelog
 ---
 
+## 0.9.14 — Workflow adaptif dan bootstrap tool
+
+- Mengganti extension `/workflow-*` tetap dengan skill `$workflow` bawaan, yang hanya memilih tahap perencanaan, research, penulisan, review, dan fix yang dibutuhkan tugas.
+- Laporan agen workflow kini menyimpan artefak bernama sehingga tahap berikutnya hanya mengonsumsi konteks yang diperlukan.
+- Pertanyaan pilihan kini menyertakan opsi Other secara default; gunakan `allowOther: false` untuk membatasi jawaban pada pilihan yang tersedia.
+- Katalog tool read-only standar kini tersedia setelah pemanggilan tool durable pertama, sementara tool preview-export tetap tersembunyi dari agen tanpa menonaktifkan preview Markdown.
+
 ## 0.9.13 — Penyegaran dokumentasi
 
 - Merombak halaman beranda dokumentasi dengan tipografi hero yang lebih tajam, copy instalasi dan kemampuan yang lebih ringkas, serta reveal kemampuan yang aman untuk prefers-reduced-motion.

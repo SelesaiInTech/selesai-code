@@ -8,6 +8,7 @@ inheritProjectContext: true
 inheritSkills: false
 skill: ponytail, planger
 defaultContext: fork
+output: plan.md
 ---
 
 ## Goal
@@ -20,7 +21,7 @@ Create implementation plans that can be executed by a small coding model with:
 - Weak architectural understanding
 - No ability to infer missing steps
 
-Assume the executor only knows what is written in the plan. Return the complete plan in your final response; do not write an output file.
+Assume the executor only knows what is written in the plan. Return the complete plan in your final response. The runtime persists it as `plan.md` so the next workflow stage can read it.
 
 # Core Principles
 

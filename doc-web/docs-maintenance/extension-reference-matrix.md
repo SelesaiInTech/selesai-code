@@ -18,7 +18,6 @@ extension documentation accurate. It is not published as user-facing content.
 | rtk | bundled | `./rtk.ts` | automatic | skills/rtk.mdx | id/skills/rtk.mdx | rtk.ts |
 | tokenin-onboarding | bundled | `./tokenin-onboarding.ts` | command | workspace/tokenin-onboarding.mdx | id/workspace/tokenin-onboarding.mdx | tokenin-onboarding.ts |
 | undo | bundled | `./undo.ts` | command | continuity/undo.mdx | id/continuity/undo.mdx | undo.ts |
-| workflow | bundled | `./workflow` | mixed | delegation/workflow.mdx | id/delegation/workflow.mdx | extension.ts, adapter.ts, modes |
 | pi-subagents | bundled | `./pi-subagents` | mixed | delegation/pi-subagents.mdx | id/delegation/pi-subagents.mdx | README, slash-commands, config |
 | pi-web-agent | bundled | `./pi-web-agent` | mixed | research/web-agent.mdx | id/research/web-agent.mdx | extension.ts, commands, backends |
 | web-agent-onboarding | bundled | `./web-agent-onboarding.ts` | command | workspace/web-agent-onboarding.mdx | id/workspace/web-agent-onboarding.mdx | web-agent-onboarding.ts |
@@ -136,16 +135,6 @@ extension documentation accurate. It is not published as user-facing content.
 - **Persistence scope**: Per-session undo stack.
 - **Test / source evidence**: `src/extensions/undo.ts`.
 - **Limits / failure behavior**: Only undoes tracked mutating actions; non-tracked changes may not be reversible.
-
-### workflow
-
-- **Startup behavior**: Loaded automatically at boot via `./workflow`; state-machine-driven project workflows.
-- **Prerequisites**: Bundled; model API key.
-- **Config / settings / env**: None. Workflow modes, phases, prompts, validators, loop caps, artifact base path, and mode-owned behavior are defined in source. Users choose a mode and pass a goal/resume argument; they do not edit workflow behavior through user configuration files.
-- **Commands / tools / shortcuts**: `/prototype`, `/quick`, `/task`, phase lifecycle APIs.
-- **Persistence scope**: Resumable state files and artifacts per workflow run.
-- **Test / source evidence**: `src/extensions/workflow/extension.ts`, `adapter.ts`, `modes/`, tests.
-- **Limits / failure behavior**: State machine may keep a phase armed after a failed gate; review phase output before proceeding.
 
 ### pi-subagents
 

@@ -100,5 +100,6 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 - Saran routing berbasis tugas bersifat advisori dan heuristik: tidak pernah meluncurkan atau menjadwalkan pekerjaan, dan preflight saat launch tetap menjadi titik penegakan.
 - Discovery file agen terurut; project agent menggantikan user agent, dan user agent menggantikan builtin dengan nama yang sama.
 - Skill `pi-subagents` adalah panduan dokumentasi/prompt, bukan entrypoint extension yang diinstal secara terpisah. Skill ini dikirim baik di dalam extension maupun sebagai skill bawaan tingkat-atas (`src/skills/pi-subagents/`) yang dimuat dari package saat boot dan di-seed ke direktori agent saat first run.
+- Skill `workflow` bawaan adalah panduan parent untuk mengoordinasikan pi-subagents, bukan pipeline slash-command tetap. Skill ini hanya memilih tahap rekonesans, perencanaan, penulisan, review, dan fix yang diperlukan tugas.
 
 <SourceEvidence slug="pi-subagents" />

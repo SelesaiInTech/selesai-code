@@ -452,64 +452,6 @@
       "noConfig": false
     },
     {
-      "slug": "workflow",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Workflow modes are source-owned, extensible pi-subagents orchestrations. Users pick a mode and pass a goal; mode definitions are not edited through config files.",
-        "id": "Mode workflow adalah orkestrasi pi-subagents yang dapat diperluas dan dimiliki source. User memilih mode dan memberikan goal; definisi mode tidak diedit melalui file konfigurasi."
-      },
-      "sourcePaths": [
-        "src/extensions/workflow/extension.ts",
-        "src/extensions/workflow/modes.ts"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Mode-owned source",
-            "id": "Source milik mode"
-          },
-          "path": "src/extensions/workflow/modes.ts (source-owned)",
-          "precedence": {
-            "en": "Mode definitions choose native ordered/parallel pi-subagents runs or a scripted auto-loop; they are defined in source, not user files.",
-            "id": "Definisi mode memilih run pi-subagents native berurutan/paralel atau auto-loop berskrip; semuanya didefinisikan di source, bukan file user."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "mode",
-          "type": "string",
-          "default": "(selected by command)",
-          "allowedValues": "\"prototype\", \"quicktype\", \"task\", \"loop\"",
-          "description": {
-            "en": "Selected at runtime by invoking /workflow-prototype, /workflow-quicktype, /workflow-task, or /workflow-loop.",
-            "id": "Dipilih saat runtime dengan memanggil /workflow-prototype, /workflow-quicktype, /workflow-task, atau /workflow-loop."
-          },
-          "persistence": "invocation only"
-        },
-        {
-          "key": "goal argument",
-          "type": "string",
-          "description": {
-            "en": "Passed as a command argument (the mode's goal); not stored in a config file.",
-            "id": "Diberikan sebagai argumen command (goal mode); tidak disimpan di file konfigurasi."
-          },
-          "persistence": "command argument"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "/workflow-prototype, /workflow-quicktype, /workflow-task, /workflow-loop",
-          "description": {
-            "en": "Launch the selected pi-subagents workflow mode with the goal.",
-            "id": "Meluncurkan mode workflow pi-subagents yang dipilih dengan goal."
-          }
-        }
-      ],
-      "noConfig": true
-    },
-    {
       "slug": "pi-web-agent",
       "distribution": "bundled",
       "overview": {
@@ -2161,6 +2103,42 @@
           "description": {
             "en": "Re-run the install flow any time, including after declining.",
             "id": "Jalankan ulang alur instalasi kapan saja, termasuk setelah menolak."
+          }
+        }
+      ],
+      "noConfig": true
+    },
+    {
+      "slug": "workflow",
+      "distribution": "core",
+      "overview": {
+        "en": "A bundled parent-only skill that chooses the smallest safe pi-subagents implementation flow.",
+        "id": "Skill bawaan khusus parent yang memilih alur implementasi pi-subagents aman yang paling kecil."
+      },
+      "sourcePaths": [
+        "src/skills/workflow/SKILL.md"
+      ],
+      "scopes": [
+        {
+          "label": {
+            "en": "Skill policy",
+            "id": "Kebijakan skill"
+          },
+          "path": "src/skills/workflow/SKILL.md (source-defined)",
+          "precedence": {
+            "en": "The parent adapts stages to the task; no user configuration file controls the flow.",
+            "id": "Parent menyesuaikan tahap dengan tugas; tidak ada file konfigurasi user yang mengontrol alur."
+          }
+        }
+      ],
+      "settings": [],
+      "envVars": [],
+      "controls": [
+        {
+          "name": "$workflow",
+          "description": {
+            "en": "Apply adaptive implementation orchestration guidance.",
+            "id": "Terapkan panduan orkestrasi implementasi adaptif."
           }
         }
       ],

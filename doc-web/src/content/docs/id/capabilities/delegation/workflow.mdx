@@ -1,82 +1,67 @@
 ---
 draft: false
-title: Workflow tahan lama
+title: Workflow implementasi adaptif
 ---
 
-import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-Extension `workflow` menyediakan empat bentuk mode workflow sebagai **workflow auto-loop scripted pi-subagents**. Empat perintah dibundel: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, dan `/workflow-loop`. Setiap perintah meluncurkan `workflowScript` melalui pi-subagents — fase mode berjalan sebagai langkah `runs.run`, dan putaran build↔review berulang otomatis hingga commentator melaporkan bersih. `workflowScript` tidak memiliki checkpoint, jadi tidak ada gate manusia. State tahan lama berada di mission yang dibuat otomatis per peluncuran.
+`workflow` adalah skill bawaan yang membantu agen parent mengorkestrasi implementasi dengan `pi-subagents`. Skill ini menggantikan extension `/workflow-*` lama beserta pipeline auto-loop tetapnya.
 
-<ExtensionStatus
-  distribution="bundled"
-  manifestEntry="./workflow"
-  runtimeSurface="mixed"
-  locale="id"
-/>
+Gunakan secara inline dengan `$workflow`, atau minta Selesai mengorkestrasi implementasi. Ini adalah lapisan kebijakan, bukan runtime atau sistem slash-command terpisah.
 
 ## Penyiapan dan prasyarat
 
-- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
-- Workflow scripted diluncurkan melalui extension `pi-subagents`, yang juga dibundel dan harus dimuat.
-- Memerlukan sesi TUI interaktif.
-- Roster agent Selesai (`architect`, `builder`, `commentator`, `explorer`, `recapper`, `researcher`) menyediakan fase-fase workflow.
+`workflow` dan `pi-subagents` dibundel. Tidak diperlukan instalasi terpisah.
 
 ## Yang disiapkan
 
-- Mendaftarkan satu slash command per mode: `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, `/workflow-loop`.
-- Setiap command meluncurkan workflow scripted pi-subagents (`launchSlashSubagent`) dengan goal disuntikkan ke `workflowScript` mode tersebut.
+Skill ini menyediakan panduan orkestrasi khusus parent; skill ini tidak mendaftarkan runtime workflow atau slash command.
 
 ## Yang dapat dikonfigurasi
 
-<ExtensionCustomization slug="workflow" locale="id" />
-
+Skill ini tidak memiliki pengaturan persisten. Sesuaikan alur yang diminta dengan tugas, lalu gunakan kontrol `pi-subagents` normal untuk run yang didelegasikan.
 
 ## Yang dapat dilakukan
 
-- Memulai siklus plan/implement/review:
-
-<div class="install-command">
-  <pre><code>/workflow-task add a persistent todo store with sqlite</code></pre>
-  <button type="button" class="copy-button" data-command="/workflow-task add a persistent todo store with sqlite" aria-label="Copy command to clipboard">Copy</button>
-  <span class="copy-status" role="status" aria-live="polite"></span>
-</div>
-
-### Skrip mode
-
-| Mode | Fase scripted |
-| --- | --- |
-| `task` | architect (plan) → explorer (reuse) → recapper (handoff) → auto loop build→review→fix (builder → commentator → builder fix, hingga bersih) |
-| `prototype` | researcher (research) + explorer (reuse codebase) paralel → architect (plan) → recapper (handoff) → auto loop build→review→fix (builder → commentator → builder fix, hingga bersih) → commentator (audit diff yang belum di-commit) |
-| `quicktype` | architect (plan) → explorer (reuse) → recapper (handoff) → auto loop build→review→fix (builder → commentator → builder fix, hingga bersih) → commentator (audit diff yang belum di-commit) |
-| `loop` | auto loop build→review→fix (builder → commentator → builder fix, hingga bersih) — putaran langsung untuk rencana yang sudah disepakati |
-
-- Mode memakai `runs.run` untuk pekerjaan berurutan; prototype juga memakai `runs.all` untuk discovery independen. Loop build/review kondisional tetap berupa `workflowScript`, sehingga tidak memiliki checkpoint; review independen commentator adalah gate-nya.
-- Setiap peluncuran meng-emit goal-nya di awal (terlihat di `subagent status` → workflow emits dan kartu live) dan menamai mission sesuai goal (`mission.list` / `mission.show`).
-- Putaran build→review→fix berulang otomatis hingga output reviewer cocok dengan marker `WORKFLOW_REVIEW_STATUS: clean` **dan** tidak memuat bagian `Remaining work:`; kunci `runs.run` unik per putaran (`build-1`, `review-1`, `fix-1`, `build-2`, …). Review yang blocking (atau review bersih yang masih mencantumkan pekerjaan tersisa) memicu putaran fix yang hanya mengerjakan temuan reviewer; build berikutnya melanjutkan dari catatan sisa pekerjaan review.
-- State proses tahan lama berada di **mission** yang dibuat otomatis per peluncuran (state, artifact, keputusan, receipt); periksa dengan `mission.list` / `mission.show`.
-- Saat budget fan-out per-run (`maxSubagentSpawnsPerRun`) habis di tengah loop, workflow async me-relaunch otomatis sebagai run top-level baru dengan budget baru dan terus berputar hingga commentator melaporkan bersih atau cap auto-relaunch (`maxWorkflowAutoRelaunches`, default 12; 0 = tak terbatas) tercapai. Plan dan progress file membawa semua state antar relaunch.
-- Workflow diluncurkan secara asinkron; pulihkan atau lanjutkan melalui `mission.list` dan `status` run async.
+Panggil `$workflow` secara inline, atau minta Selesai mengorkestrasi implementasi.
 
 ## Perintah, tool, dan shortcut
 
-| Perintah | Deskripsi |
-| --- | --- |
-| `/workflow-prototype <goal>` | Jalankan workflow scripted prototype penuh (research + reuse codebase paralel → plan → handoff → auto loop → audit). |
-| `/workflow-quicktype <goal>` | Jalankan workflow scripted prototype lebih cepat tanpa research. |
-| `/workflow-task <goal>` | Jalankan workflow scripted task (plan → reuse → handoff → auto loop). |
-| `/workflow-loop <goal>` | Jalankan auto loop build→review→fix langsung untuk rencana yang sudah disepakati. |
+Gunakan `$workflow`; peluncuran terkoordinasi memakai tool `subagent` yang sudah ada.
+
+<ExtensionCustomization slug="workflow" locale="id" />
 
 ## Batasan dan keamanan
 
-- Workflow diluncurkan secara asinkron (`async: true`); kartu hasil langsung, snapshot, dan notifikasi berasal dari UX slash pi-subagents.
-- Setiap command membutuhkan goal yang tidak kosong; pemanggilan kosong menampilkan usage alih-alih meluncurkan.
-- Engine tahan lama sebelumnya (state machine, run state `workflow.json`, tool `write_workflow_artifact` / `end_workflow`, dan artifact fase yang divalidasi marker) sudah dihapus. Empat mode adalah workflow auto-loop scripted: putaran build→review→fix berulang hingga commentator melaporkan bersih, dan tidak ada gate manusia.
-- Catatan resume `workflow.json` lama tetap sebagai catatan migrasi: run aktif dari engine lama tidak dapat dilanjutkan.
+Parent tetap bertanggung jawab atas cakupan, penerimaan, dan keputusan kapan berhenti. Pertahankan satu writer per checkout.
 
-## Migrasi
+## Cara kerja
 
-Run aktif dari engine lama (`.selesai/artifacts/*/workflow.json`) **tidak dapat dilanjutkan**. File run lama dapat dihapus; mulai baru dengan `/workflow-<mode> <goal>`.
+Agen parent memeriksa tugas terlebih dahulu lalu memilih alur aman yang paling kecil:
+
+| Situasi | Alur |
+| --- | --- |
+| Perubahan kecil dan lokal | Implementasikan secara lokal lalu jalankan pemeriksaan terfokus. |
+| Implementasi terbatas | Rekonesans codebase opsional → satu writer → validasi terfokus. |
+| Kode atau dependensi eksternal tidak pasti | Rekonesans dan/atau research → keputusan atau rencana parent → satu writer → review yang relevan. |
+| Keputusan arsitektur atau produk yang material | Selesaikan keputusan terlebih dahulu; gunakan oracle atau beberapa perspektif hanya jika perlu. |
+| Pekerjaan luas atau berisiko | Milestone serial: putuskan/rencanakan → satu writer → review/validasi → fix terarah → review ulang jika fix material. |
+
+Agen parent tetap menjadi pengambil keputusan dan penerima akhir. Pertahankan satu writer per checkout; hanya discovery, research, review, dan validasi read-only yang independen yang boleh berjalan paralel.
+
+## Menggunakan tahap delegasi
+
+Skill ini memakai API `workflowScript` dari `pi-subagents` saat koordinasi dibutuhkan. Peran bawaan dapat menyimpan artefak ringkas seperti `context.md`, `research.md`, `plan.md`, laporan implementasi, dan review. Teruskan hanya artefak yang dibutuhkan peran berikutnya melalui `reads`; reviewer harus memeriksa diff aktual saat ini.
+
+Handoff bersifat opsional. Gunakan untuk kelanjutan lintas-sesi, batas milestone, atau catatan permanen yang ditujukan untuk user—bukan sebagai tahap pipeline wajib.
+
+## Review dan perbaikan
+
+Untuk pekerjaan yang perlu review independen, tetapkan pemeriksaan penerimaan terfokus sebelum writer mulai. Jalankan hanya sudut review yang material untuk perubahan, sintesiskan temuan yang diterima di parent, lalu berikan satu tugas fix terarah kepada writer. Review ulang hanya setelah fix yang material. Berhenti saat validasi terfokus cukup, tidak ada blocker yang dapat ditindaklanjuti, atau keputusan user diperlukan.
+
+## Migrasi dari `/workflow-*`
+
+Command lama `/workflow-prototype`, `/workflow-quicktype`, `/workflow-task`, dan `/workflow-loop` telah dihapus. Mulai tugas baru dengan `$workflow`. Mission dan receipt pi-subagents yang sudah ada tetap tersedia sebagai bukti pekerjaan terdelegasi, tetapi tidak menjadikan pipeline tetap sebagai sumber kebenaran.
 
 <SourceEvidence slug="workflow" />

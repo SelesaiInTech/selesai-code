@@ -49,15 +49,14 @@ test("full and compact guide content expose README commands and examples", () =>
   const compact = GUIDE_COMPACT_LINES.join("\n");
 
   assert.match(full, /\/settings/);
-  assert.match(full, /\/workflow-task/);
-  assert.match(full, /\/workflow-prototype/);
+  assert.match(full, /\$workflow/);
   assert.match(full, /Ask the architect to challenge this plan/);
   assert.match(full, /Ask the researcher to research <topic> and cite sources/);
   assert.match(full, /\/skill:\*/);
   assert.match(full, /\/handoff-new Next: fix <problem>; start with a coding plan/);
   assert.doesNotMatch(full, /question\(|\/intercom|powerline/);
   assert.match(compact, /\/settings/);
-  assert.match(compact, /\/workflow-task/);
+  assert.match(compact, /\$workflow/);
   assert.match(compact, /Ask the researcher to research <topic>/);
 });
 

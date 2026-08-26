@@ -1,0 +1,35 @@
+---
+draft: false
+title: Bootstrap tool
+---
+
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+Selesai mula-mula hanya mengekspos permukaan tool bootstrap, lalu mengaktifkan katalog tool read-only standar setelah pemanggilan tool yang durable pertama. Tool preview-export tetap tidak tersedia untuk agen, sementara rendering preview Markdown tetap berfungsi.
+
+## Penyiapan dan prasyarat
+
+Perilaku ini dibundel dan otomatis. Tidak perlu setup atau konfigurasi.
+
+## Yang disiapkan
+
+- Mengaktifkan katalog tool read-only standar setelah bootstrap.
+- Menjaga tool preview-export tersembunyi dari permukaan tool agen.
+
+## Yang dapat dikonfigurasi
+
+Tidak ada pengaturan yang ditujukan untuk user. Visibilitas tool didefinisikan oleh source.
+
+## Yang dapat dilakukan
+
+Gunakan tool read-only normal setelah pemanggilan bootstrap tanpa perlu mengaktifkan extension secara manual.
+
+## Perintah, tool, dan shortcut
+
+Tidak ada command atau shortcut untuk extension bootstrap internal ini.
+
+## Batasan dan keamanan
+
+Pemanggilan bootstrap harus selesai sebelum katalog standar lengkap diekspos. Menyembunyikan tool preview-export hanya memengaruhi visibilitas tool agen; ini tidak menonaktifkan rendering preview Markdown.
+
+<SourceEvidence slug="tool-bootstrap" />

@@ -3,6 +3,13 @@ draft: false
 title: Changelog
 ---
 
+## 0.9.14 — Adaptive workflows and tool bootstrap
+
+- Replaced the fixed `/workflow-*` extension with the bundled `$workflow` skill, which selects only the planning, research, writing, review, and fix stages a task needs.
+- Workflow agent reports now persist named artifacts so later stages can consume only the context they need.
+- Choice questions now include an Other option by default; pass `allowOther: false` to restrict answers to listed choices.
+- The standard read-only tool catalog now becomes available after the first durable tool call, while preview-export tools stay hidden from agents without disabling Markdown previews.
+
 ## 0.9.13 — Documentation refresh
 
 - Reworked the documentation homepage with sharper hero typography, tighter installation and capability copy, and reduced-motion-safe capability reveals.
