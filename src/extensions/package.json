@@ -9,6 +9,7 @@
 		"./copy-turn.ts",
 			"./context-compaction-reminder.ts",
 			"./enable-readonly-tools.ts",
+			"./preview-tools-disabled.ts",
 			"./pi-intercom/index.ts",
 			"./ponytail/index.js",
 			"./question",
