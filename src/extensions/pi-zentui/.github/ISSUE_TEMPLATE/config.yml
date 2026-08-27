@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: pi-zentui npm package
+    url: https://www.npmjs.com/package/pi-zentui
+    about: Check the latest published pi-zentui version.
+  - name: Pi project
+    url: https://github.com/earendil-works/pi
+    about: Use the Pi project for issues in core Pi behavior outside Zentui's footer, editor, and message styling.

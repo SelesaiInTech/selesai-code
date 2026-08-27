@@ -28,7 +28,6 @@ const REQUIRED_HEADINGS_ID = [
 // Explicit mapping from src/extensions/package.json pi.extensions entries to the
 // relative MDX path under doc-web/src/content/docs/capabilities/ (and id/capabilities/).
 const BUNDLED_EXTENSION_GUIDES = {
-  "./auto-model": "workspace/auto-model",
   "./copy-turn.ts": "continuity/copy-turn",
   "./context-compaction-reminder.ts": "continuity/context-reminder",
   "./pi-intercom/index.ts": "continuity/intercom",
@@ -42,13 +41,12 @@ const BUNDLED_EXTENSION_GUIDES = {
   "./tokenin-onboarding.ts": "workspace/tokenin-onboarding",
   "./undo.ts": "continuity/undo",
   "./enable-readonly-tools.ts": "workspace/tool-bootstrap",
-  "./preview-tools-disabled.ts": "workspace/tool-bootstrap",
   "./pi-subagents": "delegation/pi-subagents",
   "./pi-web-agent": "research/web-agent",
   "./web-agent-onboarding.ts": "workspace/web-agent-onboarding",
-  "./pi-powerline-footer": "workspace/powerline-footer",
-  "./model-prompt-injector": "workspace/ollama-provider",
-  "./custom-provider-ollama": "workspace/ollama-provider",
+  "./model-prompt-injector": "workspace/model-prompt-injector",
+  "./tps.ts": "workspace/tps",
+  "./pi-zentui/extensions/zentui/index.ts": "workspace/zentui",
 };
 
 function loadCapabilities() {

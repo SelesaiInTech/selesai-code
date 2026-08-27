@@ -89,15 +89,12 @@ This is the interaction layer used by the workflow modes and available to normal
 
 The interactive terminal runs Pi's native **fullscreen TUI mode** by default: the chat scrolls inside an alternate-screen viewport while the input editor, status line, and widgets stay fixed in a dock at the bottom. Choose `regular` (inline output) at any time with `--tui-mode regular`, the `tuiMode` setting, or the `TUI mode` entry in `/settings`.
 
-The bundled `pi-powerline-footer` improves the interactive display with:
+The bundled `pi-zentui` and TPS tracker improve the interactive display with:
 
-- a powerline status bar for model, thinking level, path, git state, context, tokens, cost, cache, and session data
-- status, editor, and widgets that live in Pi's native fixed dock (the old terminal-split compositor was decommissioned)
-- a file-backed queue/inbox for deferred ideas and compaction-safe prompts (`# <idea>`, `/idea`, `/ideas`, and `/queue`), plus session-aware `/cd`
-- a recurring `/guide` tour with compact and remembered-dismissal modes, covering workflows, delegation/research prompts, skills, handoff, and recovery
-- persistent bash mode with shell state, transcript output, history, and ghost suggestions
-- editor stash/restore, prompt history, clipboard shortcuts, and editor boundary navigation
-- themed working-vibe messages, Nerd Font detection, configurable presets, layout, placement, and cost display
+- a Starship-inspired statusline or a hidden zero-row footer, plus Opencode-style editor and user-message surfaces, configured live via `/zentui` (saved to `~/.selesai/agent/zentui.json`)
+- independent `enabled` controls for the editor, user messages, working line, and selector borders, so each surface can be styled or turned off without coupling to the others
+- live tokens-per-second status for the main model and subagent runs, with reliability gates against stalls and tool calls
+- a compact footer format template covering cwd, git state, runtime, context, and token segments
 
 ### Coordination between sessions
 

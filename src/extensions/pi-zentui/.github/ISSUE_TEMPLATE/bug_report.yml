@@ -1,0 +1,110 @@
+name: Bug report
+description: Report Zentui behavior that appears broken
+title: "bug: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a pi-zentui bug. Please include enough Pi, terminal, font, and config detail to reproduce the issue.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues before opening this one.
+          required: true
+        - label: I can reproduce this with the latest published pi-zentui version or current main.
+          required: false
+        - label: I am using a Nerd Font when reporting icon or glyph issues.
+          required: false
+
+  - type: input
+    id: zentui-version
+    attributes:
+      label: Zentui version
+      description: npm package version, git commit, or install source.
+      placeholder: "0.2.7 / main@abc123 / local checkout"
+    validations:
+      required: true
+
+  - type: input
+    id: pi-version
+    attributes:
+      label: Pi version
+      placeholder: "0.74.x"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-source
+    attributes:
+      label: Install source
+      options:
+        - npm
+        - git
+        - local checkout
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the terminal/UI details that can affect Zentui rendering or behavior.
+      placeholder: |
+        OS:
+        Terminal app:
+        Shell:
+        Node version:
+        Font:
+        Pi theme/settings:
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Zentui config
+      description: Paste relevant values from ~/.pi/agent/zentui.json. Remove secrets if any.
+      render: json
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Screenshots or terminal recordings are especially useful for terminal UI bugs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or errors
+      description: Include relevant Pi output, stack traces, or extension errors.
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context

@@ -1,51 +1,72 @@
-/* Selesai: sharp terminal energy, calm documentation ergonomics. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+/* Selesai docs in the ClickHouse design language:
+   near-pure black canvas, one electric yellow, flat hairline surfaces. No shadows, no gradients, no second accent. */
 :root {
-  --sl-hue-accent: 84;
-  --sl-color-accent-low: hsl(84 70% 13%);
-  --sl-color-accent: hsl(84 96% 58%);
-  --sl-color-accent-high: hsl(84 100% 76%);
-  --sl-color-text-accent: var(--sl-color-accent-high);
-  --sl-color-text-invert: hsl(84 70% 8%);
-  --sl-color-bg: hsl(210 18% 5%);
-  --sl-color-bg-nav: hsl(210 18% 6% / 88%);
-  --sl-color-bg-sidebar: hsl(210 16% 7%);
-  --sl-color-bg-inline-code: hsl(210 13% 12%);
-  --sl-color-hairline-light: hsl(210 10% 18%);
-  --sl-color-hairline: hsl(210 12% 12%);
-  --sl-color-hairline-shade: hsl(210 14% 10%);
+  --sl-color-black: #0a0a0a;
+  --sl-color-accent-low: #3a3a1f;
+  --sl-color-accent: #faff69;
+  --sl-color-accent-high: #faff69;
+  --sl-color-text-accent: #faff69;
+  --sl-color-text-invert: #0a0a0a;
+  --sl-color-bg: #0a0a0a;
+  --sl-color-bg-nav: rgb(10 10 10 / 88%);
+  --sl-color-bg-sidebar: #0a0a0a;
+  --sl-color-bg-inline-code: #1a1a1a;
+  --sl-color-hairline-shade: #242424;
+  --sl-color-hairline: #2a2a2a;
+  --sl-color-hairline-light: #3a3a3a;
+  --sl-color-white: #ffffff;
+  --sl-color-text: #cccccc;
+  --sl-color-gray-1: #e6e6e6;
+  --sl-color-gray-2: #cccccc;
+  --sl-color-gray-3: #888888;
+  --sl-color-gray-4: #5a5a5a;
+  --sl-color-gray-5: #3a3a3a;
+  --sl-color-gray-6: #2a2a2a;
   --sl-sidebar-width: 17.5rem;
   --sl-content-width: 55rem;
-  --selesai-surface: hsl(210 14% 8%);
-  --selesai-surface-raised: hsl(210 13% 11%);
-  --selesai-border: hsl(0 0% 100% / 10%);
-  --selesai-border-hover: hsl(84 96% 58% / 58%);
-  --selesai-purple: hsl(263 90% 68%);
-  --selesai-status-ok: hsl(84 70% 50%);
-  --selesai-status-warn: hsl(38 90% 58%);
-  --sl-font: "Inter", "Aptos", "Segoe UI Variable", sans-serif;
-  --sl-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --selesai-surface: #1a1a1a;
+  --selesai-surface-raised: #242424;
+  --selesai-border: #2a2a2a;
+  --selesai-border-strong: #3a3a3a;
+  --selesai-border-hover: #3a3a3a;
+  --selesai-status-ok: #22c55e;
+  --selesai-status-warn: #f59e0b;
+  --sl-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --sl-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
+/* Docs keep a light mode for accessibility; it stays paper-white with the yellow reserved for fills. */
 :root[data-theme="light"] {
-  --sl-color-accent-low: hsl(84 55% 90%);
-  --sl-color-accent: hsl(91 78% 37%);
-  --sl-color-accent-high: hsl(96 77% 23%);
-  --sl-color-text-accent: hsl(96 77% 26%);
-  --sl-color-text-invert: white;
-  --sl-color-bg: hsl(60 14% 97%);
-  --sl-color-bg-nav: hsl(60 20% 98% / 90%);
-  --sl-color-bg-sidebar: hsl(60 16% 95%);
-  --sl-color-bg-inline-code: hsl(60 10% 91%);
-  --sl-color-hairline-light: hsl(60 8% 85%);
-  --sl-color-hairline: hsl(60 10% 90%);
-  --sl-color-hairline-shade: hsl(60 8% 88%);
-  --selesai-surface: white;
-  --selesai-surface-raised: hsl(60 20% 99%);
-  --selesai-border: hsl(210 15% 10% / 12%);
-  --selesai-border-hover: hsl(91 78% 37% / 58%);
-  --selesai-purple: hsl(263 72% 52%);
-  --selesai-status-ok: hsl(91 78% 32%);
-  --selesai-status-warn: hsl(32 90% 42%);
+  --sl-color-black: #ffffff;
+  --sl-color-accent-low: #f5f6cf;
+  --sl-color-accent: #faff69;
+  --sl-color-accent-high: #5c6100;
+  --sl-color-text-accent: #5c6100;
+  --sl-color-text-invert: #0a0a0a;
+  --sl-color-bg: #fdfdf8;
+  --sl-color-bg-nav: rgb(253 253 248 / 88%);
+  --sl-color-bg-sidebar: #fbfbf4;
+  --sl-color-bg-inline-code: #f2f3e2;
+  --sl-color-hairline-shade: #e8e8da;
+  --sl-color-hairline: #e2e2d2;
+  --sl-color-hairline-light: #d4d4c2;
+  --sl-color-white: #0a0a0a;
+  --sl-color-text: #2b2b24;
+  --sl-color-gray-1: #3c3c32;
+  --sl-color-gray-2: #4c4c40;
+  --sl-color-gray-3: #6f6f60;
+  --sl-color-gray-4: #94948a;
+  --sl-color-gray-5: #d4d4c2;
+  --sl-color-gray-6: #e8e8da;
+  --selesai-surface: #ffffff;
+  --selesai-surface-raised: #f6f7ea;
+  --selesai-border: #e2e2d2;
+  --selesai-border-strong: #d4d4c2;
+  --selesai-border-hover: #b9b9a0;
+  --selesai-status-ok: #15803d;
+  --selesai-status-warn: #b45309;
 }
 
 html {
@@ -58,7 +79,7 @@ body {
 
 ::selection {
   background: var(--sl-color-accent);
-  color: var(--sl-color-text-invert);
+  color: #0a0a0a;
 }
 
 header.header {
@@ -79,7 +100,8 @@ header.header {
 
 .site-title {
   gap: 0.7rem;
-  font-weight: 750;
+  color: var(--sl-color-white);
+  font-weight: 700;
   letter-spacing: -0.025em;
 }
 
@@ -98,20 +120,17 @@ header.header {
 
 #starlight__sidebar a,
 #starlight__sidebar summary {
-  border-radius: 0.55rem;
+  border-radius: 0.5rem;
 }
 
+/* Active nav item = ClickHouse active tab: surface fill, white text. */
 #starlight__sidebar a[aria-current="page"] {
-  box-shadow: 0 0 0 1px hsl(84 96% 58% / 22%) inset;
+  background: var(--selesai-surface);
+  color: var(--sl-color-white);
+  box-shadow: none;
 }
 
-.main-frame {
-  background-image:
-    radial-gradient(circle at 65% -10%, hsl(84 80% 50% / 7%), transparent 28rem),
-    radial-gradient(circle at 100% 40%, hsl(263 80% 55% / 4%), transparent 30rem);
-  background-attachment: fixed;
-}
-
+/* Flat canvas. Depth comes from surface contrast, not atmospheric decoration. */
 .content-panel {
   border-color: var(--selesai-border) !important;
 }
@@ -121,7 +140,7 @@ header.header {
 .sl-markdown-content h3,
 [data-page-title] {
   color: var(--sl-color-white);
-  font-weight: 750;
+  font-weight: 700;
   letter-spacing: -0.035em;
 }
 
@@ -130,13 +149,14 @@ header.header {
 }
 
 .sl-markdown-content a:not(.capability-card):not([class]) {
-  text-decoration-color: color-mix(in srgb, var(--sl-color-accent) 45%, transparent);
+  color: var(--sl-color-text-accent);
+  text-decoration-color: color-mix(in srgb, var(--sl-color-text-accent) 45%, transparent);
   text-underline-offset: 0.2em;
 }
 
 .sl-markdown-content code:not(:where(.not-content *)) {
   border: 1px solid var(--selesai-border);
-  border-radius: 0.35rem;
+  border-radius: 0.25rem;
   padding: 0.14em 0.38em;
 }
 
@@ -164,10 +184,9 @@ header.header {
     max-height: calc(100vh - var(--sl-nav-height) - 2rem);
     padding: 0;
     overflow: auto;
-    border: 1px solid var(--selesai-border);
-    border-radius: 0.6rem;
+    border: 1px solid var(--selesai-border-strong);
+    border-radius: 0.75rem;
     background: var(--sl-color-bg);
-    box-shadow: 0 1rem 2.5rem hsl(0 0% 0% / 35%);
     z-index: 20;
   }
 
@@ -176,7 +195,6 @@ header.header {
     overflow: visible;
     border: 0;
     background: transparent;
-    box-shadow: none;
   }
 
   .floating-toc { position: relative; }
@@ -197,22 +215,21 @@ header.header {
     aspect-ratio: auto;
     margin: 0;
     padding: 0 0.8rem;
-    border: 1px solid var(--selesai-border);
-    border-radius: 0.65rem;
-    background: var(--selesai-surface-raised);
+    border: 1px solid var(--selesai-border-strong);
+    border-radius: 0.5rem;
+    background: var(--selesai-surface);
     color: var(--sl-color-gray-2);
-    box-shadow: 0 0.5rem 1.5rem hsl(0 0% 0% / 25%);
     cursor: pointer;
-    font: 600 var(--sl-text-sm) / 1 var(--sl-font-system);
+    font: 600 var(--sl-text-sm) / 1 var(--sl-font);
     letter-spacing: -0.01em;
     white-space: nowrap;
   }
   .floating-toc.is-collapsed .floating-toc__toggle:hover {
-    border-color: color-mix(in srgb, var(--sl-color-accent) 55%, var(--selesai-border));
+    border-color: var(--selesai-border-hover);
     color: var(--sl-color-white);
   }
   .floating-toc__close-icon { display: none; }
-  .floating-toc__list-icon { width: 1rem; height: 1rem; color: var(--sl-color-accent); }
+  .floating-toc__list-icon { width: 1rem; height: 1rem; color: var(--sl-color-text-accent); }
   .floating-toc__reveal-label,
   .floating-toc__reveal-arrow { display: inline; }
   .floating-toc__reveal-arrow { font-size: 1.3rem; line-height: 0.8; }
@@ -265,7 +282,7 @@ header.header {
   padding: 1.2rem 1.4rem;
   border: 1px solid var(--selesai-border);
   border-radius: 0.75rem;
-  background: var(--selesai-surface-raised);
+  background: var(--selesai-surface);
 }
 
 .comparison-legend h2 {
@@ -298,16 +315,19 @@ header.header {
   border: 1px solid currentColor;
   border-radius: 999px;
   font-size: var(--sl-text-2xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--sl-color-gray-2);
   vertical-align: 0.08em;
 }
 
+/* The one yellow badge: the Selesai-difference signal. */
 .legend-badge--difference {
-  color: var(--sl-color-accent-high);
-  background: var(--sl-color-accent-low);
+  border-color: transparent;
+  background: var(--sl-color-accent);
+  color: #0a0a0a;
+  font-weight: 700;
 }
 
 .legend-badge--bundled {
@@ -317,76 +337,56 @@ header.header {
 /* Homepage */
 [data-page-title] .accent,
 .hero .accent {
-  background: linear-gradient(100deg, var(--sl-color-accent) 5%, hsl(160 92% 60%) 95%);
-  background-clip: text;
-  color: transparent;
-  -webkit-background-clip: text;
-}
-
-.hero {
-  position: relative;
-}
-
-.hero::before {
-  position: absolute;
-  z-index: -1;
-  width: 30rem;
-  height: 30rem;
-  border-radius: 50%;
-  background: var(--sl-color-accent);
-  content: "";
-  filter: blur(140px);
-  opacity: 0.12;
-  pointer-events: none;
+  color: var(--sl-color-text-accent);
 }
 
 .hero h1[data-page-title] {
   font-size: clamp(var(--sl-text-4xl), 4vw + 0.5rem, var(--sl-text-7xl));
+  font-weight: 700;
   letter-spacing: -0.04em;
-  line-height: 1.04;
-}
-
-.hero .tagline {
-  max-width: 52ch;
-}
-
-.terminal-card {
-  position: relative;
-}
-
-.terminal-card::after {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  border: 1px solid var(--selesai-border);
-  content: "";
-  pointer-events: none;
+  line-height: 1.05;
 }
 
 .hero .tagline {
   max-width: 46rem;
   color: var(--sl-color-gray-2);
-  line-height: 1.65;
+  line-height: 1.6;
+}
+
+/* ClickHouse buttons: 8px radius, yellow primary with black type, dark secondary. */
+.sl-link-button.primary {
+  background: var(--sl-color-accent);
+  color: #0a0a0a;
+}
+
+.sl-link-button.primary:hover,
+.sl-link-button.primary:focus-visible {
+  background: #e6eb52;
+  color: #0a0a0a;
 }
 
 .hero .actions a {
-  border-radius: 0.7rem;
-  font-weight: 750;
+  height: 2.5rem;
+  padding-inline: 1.25rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  transition: background-color 180ms ease, border-color 180ms ease;
 }
 
+/* Code-window card: flat dark surface, hairline border, JetBrains Mono. */
 .terminal-card {
   width: min(100%, 30rem);
   overflow: hidden;
-  border: 1px solid var(--selesai-border);
-  border-radius: 1rem;
-  background: hsl(210 20% 5% / 92%);
-  box-shadow: 0 32px 80px hsl(210 50% 2% / 55%), 0 1px 0 hsl(0 0% 100% / 8%) inset;
-  color: hsl(210 15% 72%);
-  font-family: var(--__sl-font-mono);
+  border: 1px solid var(--selesai-border-strong);
+  border-radius: 0.75rem;
+  background: var(--selesai-surface);
+  color: var(--sl-color-gray-2);
+  font-family: var(--sl-font-mono);
   font-size: clamp(0.72rem, 1.6vw, 0.88rem);
   line-height: 1.75;
   text-align: start;
-  transform: perspective(900px) rotateY(-4deg) rotateX(2deg);
 }
 
 .terminal-card__bar {
@@ -395,19 +395,19 @@ header.header {
   gap: 0.38rem;
   padding: 0.8rem 1rem;
   border-bottom: 1px solid var(--selesai-border);
-  background: hsl(210 14% 9%);
+  background: var(--selesai-surface);
 }
 
 .terminal-card__bar i {
   width: 0.58rem;
   height: 0.58rem;
   border-radius: 50%;
-  background: hsl(210 8% 28%);
+  background: var(--selesai-border-strong);
 }
 
 .terminal-card__bar span {
   margin-inline-start: auto;
-  color: hsl(210 8% 48%);
+  color: var(--sl-color-gray-3);
   font-size: 0.68rem;
 }
 
@@ -421,11 +421,11 @@ header.header {
 
 .terminal-card .prompt,
 .terminal-card .success {
-  color: var(--sl-color-accent);
+  color: var(--sl-color-text-accent);
 }
 
 .terminal-card .muted {
-  color: hsl(210 8% 48%);
+  color: var(--sl-color-gray-3);
 }
 
 .trust-strip {
@@ -437,12 +437,12 @@ header.header {
 }
 
 .trust-strip span {
-  padding: 0.45rem 0.8rem;
+  padding: 0.35rem 0.75rem;
   border: 1px solid var(--selesai-border);
   border-radius: 999px;
   background: var(--selesai-surface);
-  color: var(--sl-color-gray-2);
-  font-family: var(--__sl-font-mono);
+  color: var(--sl-color-gray-3);
+  font-family: var(--sl-font-mono);
   font-size: 0.72rem;
 }
 
@@ -455,20 +455,22 @@ header.header {
   margin-block-end: 2rem;
 }
 
+/* Caption-uppercase eyebrow: Inter 600, wide tracking, the yellow signal. */
 .eyebrow {
   margin: 0 0 0.7rem !important;
-  color: var(--sl-color-accent-high);
-  font-family: var(--__sl-font-mono);
-  font-size: 0.72rem;
-  font-weight: 750;
-  letter-spacing: 0.12em;
+  color: var(--sl-color-text-accent);
+  font-family: var(--sl-font);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .home-section__heading h2 {
   margin: 0;
   font-size: clamp(2rem, 5vw, 3.5rem);
-  letter-spacing: -0.045em;
+  font-weight: 700;
+  letter-spacing: -0.035em;
 }
 
 .home-section__heading p:last-child {
@@ -480,8 +482,8 @@ header.header {
   display: inline-flex;
   align-items: center;
   gap: 0.55rem;
-  color: var(--sl-color-accent-high);
-  font-weight: 750;
+  color: var(--sl-color-text-accent);
+  font-weight: 600;
   text-decoration: none;
 }
 
@@ -494,8 +496,8 @@ header.header {
   margin: 1.25rem 0 1.75rem;
   padding: 0.9rem 1rem;
   border: 1px solid var(--selesai-border);
-  border-radius: 0.55rem;
-  background: var(--selesai-surface-raised);
+  border-radius: 0.5rem;
+  background: var(--selesai-surface);
 }
 
 .extension-status.is-bundled {
@@ -560,6 +562,7 @@ header.header {
   border-collapse: collapse;
   margin: 1rem 0 1.5rem;
   font-size: var(--sl-text-sm);
+  font-variant-numeric: tabular-nums;
 }
 
 .sl-markdown-content .ref-table th,
@@ -571,7 +574,7 @@ header.header {
 }
 
 .sl-markdown-content .ref-table th {
-  background: var(--selesai-surface-raised);
+  background: var(--selesai-surface);
   font-weight: 600;
 }
 
@@ -593,6 +596,15 @@ header.header {
   .extension-status__meta dt {
     margin-top: 0.35rem;
   }
+
+  .capability-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .trust-strip {
+    justify-content: flex-start;
+    margin-bottom: 3rem;
+  }
 }
 
 /* Warning treatment for external prerequisites */
@@ -603,7 +615,7 @@ header.header {
   padding: 0.85rem 1rem;
   margin: 1rem 0 1.5rem;
   border: 1px solid var(--selesai-status-warn);
-  border-radius: 0.55rem;
+  border-radius: 0.5rem;
   background: color-mix(in srgb, var(--selesai-status-warn) 10%, transparent);
 }
 
@@ -629,21 +641,6 @@ header.header {
   letter-spacing: 0.02em;
 }
 
-@media (max-width: 44rem) {
-  .capability-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .terminal-card {
-    transform: none;
-  }
-
-  .trust-strip {
-    justify-content: flex-start;
-    margin-bottom: 3rem;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
@@ -660,6 +657,6 @@ header.header {
 }
 
 *:focus-visible {
-  outline: 2px solid var(--sl-color-accent);
+  outline: 2px solid var(--sl-color-text-accent);
   outline-offset: 3px;
 }

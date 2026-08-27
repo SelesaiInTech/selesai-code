@@ -5,7 +5,7 @@ title: Tool bootstrap
 
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-Selesai initially exposes only its bootstrap tool surface, then enables the standard read-only tools after the first durable tool call. Preview-export tools remain unavailable to agents while Markdown preview rendering continues to work.
+Selesai initially exposes only its bootstrap tool surface (`read`, `bash`, `edit`, `write`), then registers the standard read-only tools (`grep`, `find`, `ls`) after the first successful durable tool call.
 
 ## Setup and prerequisites
 
@@ -13,8 +13,8 @@ This behavior is bundled and automatic. No setup or configuration is required.
 
 ## What it sets up
 
-- Enables the standard read-only tool catalog after bootstrap.
-- Keeps preview-export tools hidden from the agent tool surface.
+- Registers `grep`, `find`, and `ls` after the first successful bootstrap-tool call.
+- Keeps the bootstrap surface stable until that first call succeeds.
 
 ## What you can configure
 
@@ -26,10 +26,10 @@ Use the normal read-only tools after the bootstrap call without manually enablin
 
 ## Commands, tools, and shortcuts
 
-There are no commands or shortcuts for these internal bootstrap extensions.
+There are no commands or shortcuts for this internal bootstrap extension.
 
 ## Limits and safety
 
-The bootstrap call must complete before the full standard catalog is exposed. Hiding preview-export tools affects only agent tool visibility; it does not disable Markdown preview rendering.
+The first durable tool call must complete before the read-only catalog is registered. Failed tool calls do not trigger registration.
 
 <SourceEvidence slug="tool-bootstrap" />

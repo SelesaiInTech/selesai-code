@@ -2,6 +2,28 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.10.0] - 2026-08-27
+
+### Added
+- **Zentui TUI.** The bundled `pi-zentui` extension brings a Starship-inspired statusline, Opencode-style editor and user-message surfaces, working-line takeover, and a hidden zero-row footer option. Editor, user messages, working line, and selector borders have independent `enabled` fields; the footer uses one `style` (`native`, `starship`, or `hidden`). Configure live via `/zentui`, which persists to `~/.selesai/agent/zentui.json`.
+- **TPS tracker.** The bundled `tps` extension shows live tokens-per-second for the main model and subagent runs in the status area. Final main-model TPS is gated against stalls, short streams, sparse updates, and implausible rates; tool-call-bound measurements are excluded.
+- **Broader theme catalog.** Added 58 new terminal themes (including Catppuccin Mocha, Dracula, Gruvbox, Nord, Rose Pine, Solarized Dark, and Tokyo Night), shipped under `src/themes/`.
+- **Design-reference skill.** The bundled `design-references` skill looks up `DESIGN.md` references from VoltAgent's awesome-design-md collection when asked for design references or a "feel like <site>" direction.
+
+### Changed
+- **Default thinking level** is now `high` (was `max`).
+- **Default image caption model** is now `tokenin/qwen3.8-27b` (was `tokenin/gemma-4`).
+- **Celestial Max and Celestial Ultra** now accept image input.
+- **Default packages** no longer include `pi-markdown-preview`; `pi-tool-display` remains.
+- **Docs redesign.** The documentation site now uses a ClickHouse-inspired black-and-yellow design language, and capability cards gained a "core differentiator" badge variant.
+
+### Removed
+- **`auto-model` extension.** Automatic model routing (added in 0.9.15) has been removed from the bundled manifest.
+- **`pi-powerline-footer` extension.** The powerline footer, guide tour, queue/inbox, bash mode, and stash features were removed; Zentui and the TPS tracker cover the display surface.
+- **`preview-tools-disabled` extension.**
+- **`custom-provider-ollama` bundled provider.** The bundled Ollama provider was removed from the manifest; use the model-prompt-injector surface for provider plumbing or install the provider separately.
+- **Orphaned `powerline` setting.** The `powerline` default setting, consumed only by the removed footer extension, was dropped.
+
 ## [0.9.15] - 2026-08-26
 
 ### Added

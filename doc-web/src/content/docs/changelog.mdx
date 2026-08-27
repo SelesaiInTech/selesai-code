@@ -3,6 +3,17 @@ draft: false
 title: Changelog
 ---
 
+## 0.10.0 — Zentui TUI, TPS tracker, and new defaults
+
+- Added the bundled `pi-zentui` extension: a Starship-inspired statusline, Opencode-style editor and user-message surfaces, working-line takeover, and a hidden zero-row footer option. Editor, user messages, working line, and selector borders have independent `enabled` fields; the footer uses one `style` (`native`, `starship`, or `hidden`). Configure live with `/zentui`, persisted to `~/.selesai/agent/zentui.json`.
+- Added the bundled TPS tracker: live tokens-per-second for the main model and subagent runs in the status area, gated against stalls, short streams, sparse updates, and implausible rates.
+- Added 58 new terminal themes (Catppuccin Mocha, Dracula, Gruvbox, Nord, Rose Pine, Solarized Dark, Tokyo Night, and more) under `src/themes/`.
+- Added the bundled `design-references` skill for looking up DESIGN.md references from VoltAgent's awesome-design-md collection.
+- Default thinking level is now `high` (was `max`); the default image caption model is now `tokenin/qwen3.8-27b` (was `tokenin/gemma-4`).
+- Celestial Max and Celestial Ultra now accept image input.
+- Removed the bundled `auto-model`, `pi-powerline-footer`, `preview-tools-disabled`, and `custom-provider-ollama` extensions; the orphaned `powerline` setting was dropped.
+- The documentation site now uses a ClickHouse-inspired black-and-yellow design language, and capability cards gained a core-differentiator badge variant.
+
 ## 0.9.15 — Bundled automatic model routing
 
 - Added the bundled `auto-model` extension, disabled by default.

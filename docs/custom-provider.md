@@ -13,7 +13,6 @@ See these complete provider examples:
 
 - [`examples/extensions/custom-provider-anthropic/`](../examples/extensions/custom-provider-anthropic/)
 - [`examples/extensions/custom-provider-gitlab-duo/`](../examples/extensions/custom-provider-gitlab-duo/)
-- [`src/extensions/custom-provider-ollama/`](../src/extensions/custom-provider-ollama/) - Ollama (local) - OpenAI-compatible local models via Ollama; bundled with Selesai (also usable standalone via `selesai -e ./src/extensions/custom-provider-ollama`)
 
 ## Table of Contents
 

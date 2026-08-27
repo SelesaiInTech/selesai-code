@@ -6,11 +6,9 @@
 	"pi": {
 		"extensions": [
 			"./agent-browser.ts",
-			"./auto-model",
 			"./copy-turn.ts",
 			"./context-compaction-reminder.ts",
 			"./enable-readonly-tools.ts",
-			"./preview-tools-disabled.ts",
 			"./pi-intercom/index.ts",
 			"./ponytail/index.js",
 			"./question",
@@ -24,8 +22,8 @@
 			"./pi-subagents",
 			"./pi-web-agent",
 			"./web-agent-onboarding.ts",
-			"./pi-powerline-footer",
-			"./custom-provider-ollama"
+			"./tps.ts",
+			"./pi-zentui/extensions/zentui/index.ts"
 		]
 	}
 }

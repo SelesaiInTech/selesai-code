@@ -1,0 +1,63 @@
+name: Feature request
+description: Suggest a new Zentui capability or configuration option
+title: "feat: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for proposed changes to pi-zentui's Pi footer, editor, previous-message styling, config, or runtime/git segments.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues before opening this one.
+          required: true
+        - label: This request is specific to Zentui's Pi footer, editor, user-message styling, config, or status segments.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What workflow does this improve in Pi with Zentui enabled?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the desired UI, config, or behavior change.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Footer/status line
+        - Runtime/language detection
+        - Git status
+        - Editor/input box
+        - User message styling
+        - Config or /zentui settings
+        - Packaging/install
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing Zentui config, Pi settings, or workarounds considered.
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples or prior art
+      description: Starship, Opencode, terminal themes, screenshots, mockups, or links that explain the request.

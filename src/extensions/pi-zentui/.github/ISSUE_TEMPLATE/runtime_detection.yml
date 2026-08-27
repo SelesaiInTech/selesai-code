@@ -1,0 +1,103 @@
+name: Runtime/language detection
+description: Request or report runtime/language detection behavior
+title: "runtime: "
+labels: ["runtime", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for Zentui footer runtime/language segments: missing runtimes, incorrect detection, version display, or new runtime support.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues before opening this one.
+          required: true
+        - label: I checked whether the relevant runtime/version command is available in the same shell where Pi runs.
+          required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Request type
+      options:
+        - Existing runtime not detected
+        - Existing runtime detected incorrectly
+        - Add a new runtime/language
+        - Version command/display issue
+    validations:
+      required: true
+
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime or language
+      placeholder: "Node.js, Python, Rust, Zig, etc."
+    validations:
+      required: true
+
+  - type: textarea
+    id: project-files
+    attributes:
+      label: Project files and detection signals
+      description: List relevant files in the project root and subdirectories that should influence detection.
+      placeholder: |
+        package.json
+        .node-version
+        pyproject.toml
+        src/...
+    validations:
+      required: true
+
+  - type: textarea
+    id: version-output
+    attributes:
+      label: Version command output
+      description: Include the command and output, if applicable.
+      placeholder: |
+        $ node --version
+        v20.11.1
+      render: shell
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Zentui segment
+      placeholder: "via  v20.11.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Zentui segment
+    validations:
+      required: true
+
+  - type: input
+    id: zentui-version
+    attributes:
+      label: Zentui version
+      placeholder: "0.2.7 / main@abc123 / local checkout"
+    validations:
+      required: true
+
+  - type: input
+    id: pi-version
+    attributes:
+      label: Pi version
+      placeholder: "0.74.x"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        OS:
+        Shell:
+        Terminal app:
+        Install source:

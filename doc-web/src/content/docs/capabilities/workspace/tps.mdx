@@ -1,0 +1,53 @@
+---
+draft: false
+title: TPS tracker
+---
+
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+The TPS tracker is a bundled extension that shows live tokens-per-second (tok/s) for the main model and subagent runs in the status area. Live status stays approximate; final main-model TPS is computed from provider output usage with reliability gates against stalls, short streams, and tool calls.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./tps.ts"
+  runtimeSurface="automatic"
+  locale="en"
+/>
+
+## Setup and prerequisites
+
+- Bundled with Selesai and loaded automatically; no installation or configuration is required.
+- The status line appears in interactive TUI sessions; headless runs still record measurements but have no status surface to draw on.
+
+## What it sets up
+
+- Shows live tok/s for the main model while it streams, using provider output usage when available and an estimate otherwise.
+- Tracks subagent runs separately: live per-agent tok/s during execution, a summary after each run, and aggregated subagent totals.
+- Applies pi-tps-style reliability gates: stalls, very short streams, sparse updates, and implausible rates are filtered out of the final measurement.
+- Marks tool-call-bound measurements so they do not count as clean main-model TPS.
+
+## What you can configure
+
+<ExtensionCustomization slug="tps" locale="en" />
+
+There are no user settings: thresholds are fixed constants in the extension source.
+
+## What you can do
+
+- Watch main-model throughput live while Selesai answers.
+- See per-subagent throughput while delegated agents run, including parallel and chained modes.
+- Read the final reliable TPS summary at the end of a generation or subagent run.
+
+## Commands, tools, and shortcuts
+
+No slash commands or shortcuts are registered. The extension only writes the `tps` status slot.
+
+## Limits and safety
+
+- Live numbers are estimates by design; the final main-model figure is the only reliability-gated value.
+- Rates are capped at a plausible maximum and dropped when stream quality does not meet the gates.
+- The extension never reads prompt or message content — only timing and usage counters.
+
+<SourceEvidence slug="tps" />

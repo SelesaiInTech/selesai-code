@@ -1,0 +1,58 @@
+---
+draft: false
+title: Zentui TUI
+---
+
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+Zentui is a bundled Starship-inspired statusline and Opencode-style TUI for Selesai. It gives four surfaces independent ownership and styling — the editor, user messages, the working line, and the footer — with an optional Starship-style statusline.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./pi-zentui/extensions/zentui/index.ts"
+  runtimeSurface="mixed"
+  locale="en"
+/>
+
+## Setup and prerequisites
+
+- Bundled with Selesai and loaded automatically; no separate install is needed.
+- Requires an interactive TUI session; it has no effect in headless mode.
+- Editor, user-message, working-line, and selector-border surfaces each have an independent `enabled` field; the footer uses one `style`: `native`, `starship`, or `hidden`.
+
+## What it sets up
+
+- **Editor** — Opencode, Opencode copy-friendly, Accent Rail, and Minimalist input treatments.
+- **User messages** — framed, framed copy-friendly, compact, and labeled transcript messages.
+- **Working line** — optional ownership of Pi's complete in-progress row and settled turn summary.
+- **Footer** — Pi's native footer, a Starship-style statusline, or a hidden zero-row footer, with configurable segments and a compact footer format template.
+- Registers the `/zentui` command for live configuration and quick toggles.
+
+## What you can configure
+
+<ExtensionCustomization slug="zentui" locale="en" />
+
+Run `/zentui` to configure Appearance, Editor, User messages, Working line, Footer, Segments, Git, and Extensions. Use `Tab` and `Shift+Tab` to switch sections; changes apply live and are saved to `~/.selesai/agent/zentui.json`.
+
+## What you can do
+
+- Toggle surfaces individually: `/zentui editor toggle`, `/zentui messages toggle`, `/zentui statusline toggle`, `/zentui viewport-indicators toggle`.
+- Configure the working line takeover with `/zentui working-line`.
+- Set the compact footer format template: `/zentui format "$cwd on branch $git_branch$git_status using $runtime $fill $context"`.
+- Switch the footer style between `native`, `starship`, and `hidden` without coupling it to other components.
+
+## Commands, tools, and shortcuts
+
+- `/zentui` — open the live configuration picker.
+- `/zentui <surface> toggle` — flip one surface without opening the picker.
+- `/zentui format <template>` — set the compact footer format.
+
+## Limits and safety
+
+- Only interactive TUI sessions render Zentui surfaces.
+- The Starship footer path display defaults to `basename`; opt into `repository` mode to omit the repository directory itself.
+- Configuration is a single user-level file; there is no project layer.
+
+<SourceEvidence slug="zentui" />

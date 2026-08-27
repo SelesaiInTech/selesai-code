@@ -1,0 +1,53 @@
+---
+draft: false
+title: Pelacak TPS
+---
+
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+Pelacak TPS adalah ekstensi bawaan yang menampilkan token-per-detik (tok/s) langsung untuk model utama dan run subagent di area status. Status langsung sengaja bersifat perkiraan; TPS akhir model utama dihitung dari usage output provider dengan gate keandalan terhadap stall, stream pendek, dan panggilan tool.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./tps.ts"
+  runtimeSurface="automatic"
+  locale="id"
+/>
+
+## Penyiapan dan prasyarat
+
+- Dibundel bersama Selesai dan dimuat otomatis; tidak diperlukan instalasi atau konfigurasi.
+- Baris status muncul di sesi TUI interaktif; run headless tetap mencatat pengukuran tetapi tidak memiliki permukaan status untuk ditampilkan.
+
+## Yang disiapkan
+
+- Menampilkan tok/s langsung untuk model utama saat streaming, menggunakan usage output provider bila tersedia dan perkiraan bila tidak.
+- Melacak run subagent secara terpisah: tok/s per-agent langsung saat eksekusi, ringkasan setelah setiap run, dan total subagent yang digabungkan.
+- Menerapkan gate keandalan gaya pi-tps: stall, stream yang sangat pendek, pembaruan jarang, dan laju yang tidak masuk akal disaring dari pengukuran akhir.
+- Menandai pengukuran yang terikat panggilan tool agar tidak dihitung sebagai TPS model utama yang bersih.
+
+## Yang dapat dikonfigurasi
+
+<ExtensionCustomization slug="tps" locale="id" />
+
+Tidak ada pengaturan user: ambang batas adalah konstanta tetap di sumber ekstensi.
+
+## Yang dapat dilakukan
+
+- Memantau throughput model utama langsung saat Selesai menjawab.
+- Melihat throughput per-subagent langsung saat agent delegasi berjalan, termasuk mode paralel dan berantai.
+- Membaca ringkasan TPS akhir yang andal di akhir generasi atau run subagent.
+
+## Perintah, tool, dan shortcut
+
+Tidak ada slash command atau shortcut yang didaftarkan. Ekstensi hanya menulis slot status `tps`.
+
+## Batasan dan keamanan
+
+- Angka langsung adalah perkiraan secara desain; angka akhir model utama adalah satu-satunya nilai yang melewati gate keandalan.
+- Laju dibatasi pada maksimum yang masuk akal dan diabaikan saat kualitas stream tidak memenuhi gate.
+- Ekstensi tidak pernah membaca isi prompt atau pesan — hanya pengatur waktu dan penghitung usage.
+
+<SourceEvidence slug="tps" />

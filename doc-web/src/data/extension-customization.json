@@ -1,49 +1,6 @@
 {
   "catalog": [
     {
-      "slug": "auto-model",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Automatic model routing classifies eligible idle prompts into four tiers and switches to configured models. It is disabled by default and manual selection suspends routing until re-enabled.",
-        "id": "Routing model otomatis mengklasifikasikan prompt idle yang memenuhi syarat ke empat tier dan beralih ke model yang dikonfigurasi. Fitur nonaktif secara default dan pemilihan manual menangguhkan routing sampai diaktifkan kembali."
-      },
-      "sourcePaths": [
-        "src/extensions/auto-model/config.ts",
-        "src/extensions/auto-model/classifier.ts",
-        "src/extensions/auto-model/index.ts"
-      ],
-      "scopes": [
-        {
-          "label": { "en": "Global configuration", "id": "Konfigurasi global" },
-          "path": "~/.selesai/agent/extensions/auto-model/config.json",
-          "precedence": { "en": "Base layer, overridden by trusted project configuration.", "id": "Layer dasar, ditimpa konfigurasi proyek tepercaya." }
-        },
-        {
-          "label": { "en": "Trusted project configuration", "id": "Konfigurasi proyek tepercaya" },
-          "path": ".selesai/extensions/auto-model/config.json",
-          "precedence": { "en": "Overrides global configuration when the project is trusted.", "id": "Menimpa konfigurasi global saat proyek tepercaya." }
-        }
-      ],
-      "settings": [
-        { "key": "enabled", "type": "boolean", "default": "false", "description": { "en": "Enable automatic routing.", "id": "Aktifkan routing otomatis." }, "persistence": "config.json" },
-        { "key": "classifier.type", "type": "string", "default": "llm", "allowedValues": "llm, heuristic", "description": { "en": "Choose LLM classification or local heuristic fallback classification.", "id": "Pilih klasifikasi LLM atau klasifikasi fallback heuristic lokal." }, "persistence": "config.json" },
-        { "key": "classifier.model", "type": "string", "default": "(unset)", "description": { "en": "Available provider/model used for classification when classifier.type is llm.", "id": "provider/model tersedia yang dipakai klasifikasi saat classifier.type adalah llm." }, "persistence": "config.json" },
-        { "key": "classifier.timeoutMs", "type": "number", "default": "3000", "description": { "en": "Classifier timeout in milliseconds.", "id": "Timeout classifier dalam milidetik." }, "persistence": "config.json" },
-        { "key": "classifier.contextTurns", "type": "number", "default": "3", "description": { "en": "Maximum prior user turns included in classification context.", "id": "Maksimum turn user sebelumnya yang disertakan dalam konteks klasifikasi." }, "persistence": "config.json" },
-        { "key": "classifier.contextCharsPerTurn", "type": "number", "default": "300", "description": { "en": "Maximum characters retained per prior user turn.", "id": "Maksimum karakter yang dipertahankan per turn user sebelumnya." }, "persistence": "config.json" },
-        { "key": "tiers.simple|medium|complex|reasoning", "type": "string", "default": "(unset)", "description": { "en": "Available provider/model target for each difficulty tier.", "id": "Target provider/model yang tersedia untuk setiap tier kesulitan." }, "persistence": "config.json" }
-      ],
-      "envVars": [],
-      "controls": [
-        { "name": "/auto-model-settings", "description": { "en": "Open the TUI tier/model picker.", "id": "Buka picker tier/model di TUI." } },
-        { "name": "/auto-model-settings show|enable|disable", "description": { "en": "Inspect or change routing state.", "id": "Periksa atau ubah status routing." } },
-        { "name": "/auto-model-settings set <tier> <provider/model>", "description": { "en": "Set a tier target from the available scoped models.", "id": "Atur target tier dari model yang tersedia dalam scope." } },
-        { "name": "/auto-model-settings classifier <llm|heuristic> [provider/model]", "description": { "en": "Choose the classifier mode and optional model.", "id": "Pilih mode classifier dan model opsional." } },
-        { "name": "/auto-model-settings test <prompt>", "description": { "en": "Classify a prompt without switching the current model.", "id": "Klasifikasikan prompt tanpa mengganti model saat ini." } }
-      ],
-      "noConfig": false
-    },
-    {
       "slug": "pi-subagents",
       "distribution": "bundled",
       "overview": {
@@ -1261,454 +1218,6 @@
       "noConfig": false
     },
     {
-      "slug": "pi-powerline-footer",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Powerline-footer merges global and project settings.json values for its status bar, queue/inbox, shortcuts, guide state, working-vibe behavior, and session-aware directory switching. Theme overrides can be edited in the agent-dir theme.json.",
-        "id": "Powerline-footer menggabungkan nilai settings.json global dan proyek untuk status bar, queue/inbox, shortcut, state panduan, perilaku working-vibe, dan perpindahan direktori yang mengikuti sesi. Penimpaan tema dapat diedit di theme.json direktori agent."
-      },
-      "sourcePaths": [
-        "src/extensions/pi-powerline-footer/types.ts",
-        "src/extensions/pi-powerline-footer/powerline-config.ts",
-        "src/extensions/pi-powerline-footer/queue/store.ts",
-        "src/extensions/pi-powerline-footer/cd-command.ts",
-        "src/extensions/pi-powerline-footer/currency-rates.ts",
-        "src/extensions/pi-powerline-footer/shortcuts.ts",
-        "src/extensions/pi-powerline-footer/bash-mode/types.ts",
-        "src/extensions/pi-powerline-footer/guide.ts",
-        "src/extensions/pi-powerline-footer/theme.ts",
-        "src/extensions/pi-powerline-footer/working-vibes.ts",
-        "src/extensions/pi-powerline-footer/icons.ts",
-        "src/extensions/pi-powerline-footer/presets.ts"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Global settings",
-            "id": "Pengaturan global"
-          },
-          "path": "~/.selesai/agent/settings.json",
-          "precedence": {
-            "en": "Default layer; overridden by project settings for keys present in the project file.",
-            "id": "Lapis default; ditimpa oleh pengaturan proyek untuk kunci yang ada di file proyek."
-          }
-        },
-        {
-          "label": {
-            "en": "Project settings",
-            "id": "Pengaturan proyek"
-          },
-          "path": ".selesai/settings.json",
-          "precedence": {
-            "en": "Overrides global settings for the same keys.",
-            "id": "Menimpa pengaturan global untuk kunci yang sama."
-          }
-        },
-        {
-          "label": {
-            "en": "Extension theme file",
-            "id": "File tema ekstensi"
-          },
-          "path": "~/.selesai/agent/extensions/powerline-footer/theme.json",
-          "precedence": {
-            "en": "Agent-dir override takes precedence over the package-local fallback and survives package updates.",
-            "id": "Override direktori agent didahulukan daripada fallback lokal package dan bertahan saat package diperbarui."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "powerline",
-          "type": "string | object",
-          "default": "\"default\"",
-          "allowedValues": "\"default\", \"minimal\", \"compact\", \"full\", \"nerd\", \"ascii\" or object",
-          "description": {
-            "en": "Status-line preset, or an object with preset, layout, queue, customItems, placement, and display options.",
-            "id": "Preset status-line, atau objek dengan preset, layout, queue, customItems, placement, dan opsi tampilan."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.preset",
-          "type": "string",
-          "default": "\"default\"",
-          "allowedValues": "\"default\", \"minimal\", \"compact\", \"full\", \"nerd\", \"ascii\"",
-          "description": {
-            "en": "Built-in segment layout; use powerline.layout for a custom arrangement.",
-            "id": "Tata letak segmen bawaan; gunakan powerline.layout untuk susunan kustom."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.customItems",
-          "type": "array | object",
-          "description": {
-            "en": "Custom status items. Each item has id, statusKey, position (left/right/secondary), color, prefix, hideWhenMissing, excludeFromExtensionStatuses. Can be supplied as an array or an object keyed by id.",
-            "id": "Item status kustom. Setiap item memiliki id, statusKey, position (left/right/secondary), color, prefix, hideWhenMissing, excludeFromExtensionStatuses. Dapat diberikan sebagai array atau objek dengan kunci id."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.fixedEditorPromptGlyph",
-          "type": "string",
-          "default": "\"\"",
-          "description": {
-            "en": "Optional glyph shown before the prompt.",
-            "id": "Glyph opsional yang ditampilkan sebelum prompt."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.disabledSegments",
-          "type": "string[]",
-          "default": "[]",
-          "description": {
-            "en": "Hide built-in segment ids or configured custom:<id> segments after layout is resolved.",
-            "id": "Sembunyikan id segmen bawaan atau segmen custom:<id> yang dikonfigurasi setelah layout diselesaikan."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.layout",
-          "type": "object",
-          "default": "(preset layout)",
-          "description": {
-            "en": "Override left, right, and/or secondary segment order; omitted rows retain the preset.",
-            "id": "Override urutan segmen left, right, dan/atau secondary; baris yang dihilangkan mempertahankan preset."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.separator",
-          "type": "string",
-          "default": "(preset separator)",
-          "allowedValues": "powerline, powerline-thin, slash, pipe, block, none, ascii, dot, chevron, star",
-          "description": {
-            "en": "Choose a separator independently of the preset.",
-            "id": "Pilih separator secara independen dari preset."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.placement",
-          "type": "string",
-          "default": "\"above\"",
-          "allowedValues": "\"above\", \"below\"",
-          "description": {
-            "en": "Place the primary powerline row above or below the editor.",
-            "id": "Tempatkan baris powerline utama di atas atau di bawah editor."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.welcome",
-          "type": "boolean",
-          "default": "true",
-          "description": {
-            "en": "Show the Powerline welcome overlay at startup.",
-            "id": "Tampilkan welcome overlay Powerline saat startup."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.queue.captureSigil",
-          "type": "string | false",
-          "default": "\"#\"",
-          "description": {
-            "en": "Leading sigil used by '# <idea>' capture; false disables sigil capture in favor of /idea.",
-            "id": "Sigil awal yang digunakan oleh capture '# <idea>'; false menonaktifkan capture sigil dan memakai /idea."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.git.hostIcon",
-          "type": "boolean",
-          "default": "false",
-          "description": {
-            "en": "Replace the branch icon with a detected GitHub, GitLab, Bitbucket, or generic git host icon.",
-            "id": "Ganti ikon branch dengan ikon host GitHub, GitLab, Bitbucket, atau git generik yang terdeteksi."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.cost.currency",
-          "type": "string",
-          "default": "\"USD\"",
-          "allowedValues": "USD, CNY, EUR, GBP, JPY, CAD, AUD, CHF, INR, KRW",
-          "description": {
-            "en": "Currency for cost display; non-USD rates are fetched in the background and cached.",
-            "id": "Mata uang untuk tampilan biaya; kurs non-USD diambil di background dan dicache."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.cost.subscriptionDisplay",
-          "type": "string",
-          "default": "\"subscription\"",
-          "allowedValues": "\"subscription\", \"reported-cost\", \"both\"",
-          "description": {
-            "en": "Choose whether subscription sessions show the subscription marker, reported cost, or both.",
-            "id": "Pilih apakah sesi subscription menampilkan penanda subscription, biaya yang dilaporkan, atau keduanya."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.context.format",
-          "type": "string",
-          "default": "\"full\"",
-          "allowedValues": "\"full\", \"percent\"",
-          "description": {
-            "en": "Show full context usage or a compact percentage.",
-            "id": "Tampilkan penggunaan context lengkap atau persentase ringkas."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerline.cache_read.format",
-          "type": "string",
-          "default": "\"both\"",
-          "allowedValues": "\"tokens\", \"percent\", \"both\"",
-          "description": {
-            "en": "Show cache-read tokens, cache-hit rate, or both.",
-            "id": "Tampilkan token cache-read, rasio cache-hit, atau keduanya."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerlineShortcuts.stashHistory",
-          "type": "string",
-          "default": "\"ctrl+alt+h\"",
-          "description": {
-            "en": "Stash current prompt history.",
-            "id": "Stash riwayat prompt saat ini."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerlineShortcuts.copyEditor",
-          "type": "string",
-          "default": "\"ctrl+alt+c\"",
-          "description": {
-            "en": "Copy editor content.",
-            "id": "Salin konten editor."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerlineShortcuts.cutEditor",
-          "type": "string",
-          "default": "\"ctrl+alt+x\"",
-          "description": {
-            "en": "Cut editor content.",
-            "id": "Potong konten editor."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerlineShortcuts.ideaCapture",
-          "type": "string | null",
-          "default": "null",
-          "description": {
-            "en": "Optional shortcut that captures current editor text as a project idea.",
-            "id": "Shortcut opsional yang menyimpan teks editor saat ini sebagai ide proyek."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerlineShortcuts.queueOpen",
-          "type": "string | null",
-          "default": "\"ctrl+alt+q\"",
-          "description": {
-            "en": "Open the queued-prompt picker.",
-            "id": "Buka pemilih prompt yang terantre."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerlineShortcuts.editorStart",
-          "type": "string",
-          "default": "\"super+shift+up\"",
-          "description": {
-            "en": "Move cursor to editor start.",
-            "id": "Pindahkan kursor ke awal editor."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "powerlineShortcuts.editorEnd",
-          "type": "string",
-          "default": "\"super+shift+down\"",
-          "description": {
-            "en": "Move cursor to editor end.",
-            "id": "Pindahkan kursor ke akhir editor."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "bashMode.toggleShortcut",
-          "type": "string",
-          "default": "\"ctrl+shift+b\"",
-          "description": {
-            "en": "Toggle persistent bash mode.",
-            "id": "Toggle mode bash persisten."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "bashMode.transcriptMaxLines",
-          "type": "number",
-          "default": "2000",
-          "description": {
-            "en": "Maximum lines retained in the bash transcript.",
-            "id": "Jumlah baris maksimum yang disimpan dalam transcript bash."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "bashMode.transcriptMaxBytes",
-          "type": "number",
-          "default": "524288 (512 KiB)",
-          "description": {
-            "en": "Maximum bytes retained in the bash transcript.",
-            "id": "Jumlah byte maksimum yang disimpan dalam transcript bash."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "selesaiGuide.mode",
-          "type": "string",
-          "default": "\"compact\"",
-          "allowedValues": "\"full\", \"compact\", \"off\"",
-          "description": {
-            "en": "Guide tour display mode. Defaults to compact when unset.",
-            "id": "Mode tampilan tur panduan. Default compact jika tidak diatur."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "selesaiGuide.lastSeenVersion",
-          "type": "string",
-          "default": "(not set)",
-          "description": {
-            "en": "Last guide version the user has seen. Updated automatically.",
-            "id": "Versi panduan terakhir yang dilihat user. Diperbarui otomatis."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "workingVibe",
-          "type": "string",
-          "default": "(not configured)",
-          "description": {
-            "en": "Working-vibe theme. Set to \"off\" to disable file-based vibes.",
-            "id": "Tema working-vibe. Atur \"off\" untuk menonaktifkan vibe berbasis file."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "workingVibeMode",
-          "type": "string",
-          "default": "\"generate\"",
-          "allowedValues": "\"file\", \"generate\"",
-          "description": {
-            "en": "Working-vibe source mode: read from a vibe file or generate dynamically.",
-            "id": "Mode sumber working-vibe: baca dari file vibe atau generate secara dinamis."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "workingVibeModel",
-          "type": "string",
-          "default": "(built-in default)",
-          "description": {
-            "en": "Model used to generate working vibes.",
-            "id": "Model yang digunakan untuk generate working vibes."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "workingVibeFallback",
-          "type": "string",
-          "default": "\"Working\"",
-          "description": {
-            "en": "Fallback text shown while a vibe is being generated.",
-            "id": "Teks fallback yang ditampilkan saat vibe sedang di-generate."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "workingVibePrompt",
-          "type": "string",
-          "default": "(built-in template)",
-          "description": {
-            "en": "Custom prompt template for generated working vibes.",
-            "id": "Template prompt kustom untuk working vibes yang di-generate."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "workingVibeRefreshInterval",
-          "type": "number",
-          "default": "30 (seconds)",
-          "description": {
-            "en": "Refresh interval in seconds for generated vibes.",
-            "id": "Interval refresh dalam detik untuk vibe yang di-generate."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "workingVibeMaxLength",
-          "type": "number",
-          "default": "65",
-          "description": {
-            "en": "Maximum rendered length of a working vibe.",
-            "id": "Panjang maksimum yang dirender dari working vibe."
-          },
-          "persistence": "settings.json"
-        }
-      ],
-      "envVars": [
-        {
-          "key": "POWERLINE_NERD_FONTS",
-          "description": {
-            "en": "Set to 1 to force Nerd Font icons, or 0 to force ASCII. When unset, common terminals are auto-detected.",
-            "id": "Atur 1 untuk memaksa ikon Nerd Font, atau 0 untuk memaksa ASCII. Bila tidak diatur, terminal umum dideteksi otomatis."
-          }
-        }
-      ],
-      "controls": [
-        {
-          "name": "status-bar segments and presets",
-          "description": {
-            "en": "Rendered automatically; controlled by settings.",
-            "id": "Dirender otomatis; dikontrol oleh pengaturan."
-          }
-        },
-        {
-          "name": "/idea, /ideas, /queue",
-          "description": {
-            "en": "Capture, inspect, and deliver deferred ideas or prompts.",
-            "id": "Simpan, periksa, dan kirim ide atau prompt tertunda."
-          }
-        },
-        {
-          "name": "/cd [path]",
-          "description": {
-            "en": "Show or switch the current conversation directory.",
-            "id": "Tampilkan atau ganti direktori percakapan saat ini."
-          }
-        },
-        {
-          "name": "persistent bash mode toggle",
-          "description": {
-            "en": "Default Ctrl+Shift+B (configurable via bashMode.toggleShortcut).",
-            "id": "Default Ctrl+Shift+B (dapat dikonfigurasi via bashMode.toggleShortcut)."
-          }
-        }
-      ],
-      "noConfig": false
-    },
-    {
       "slug": "tokenin-onboarding",
       "distribution": "bundled",
       "overview": {
@@ -2185,6 +1694,54 @@
           }
         }
       ],
+      "noConfig": true
+    },
+    {
+      "slug": "zentui",
+      "distribution": "bundled",
+      "overview": {
+        "en": "Zentui configures independent editor, user-message, working-line, footer, segment, git, and extension surfaces from one zentui.json, with live /zentui pickers.",
+        "id": "Zentui mengonfigurasi permukaan editor, pesan user, working line, footer, segmen, git, dan ekstensi yang independen dari satu zentui.json, dengan picker /zentui langsung."
+      },
+      "sourcePaths": [
+        "src/extensions/pi-zentui/extensions/zentui/config.ts"
+      ],
+      "scopes": [
+        { "label": { "en": "Zentui config", "id": "Konfigurasi zentui" }, "path": "~/.selesai/agent/zentui.json", "precedence": { "en": "Single file written by /zentui; no project layer.", "id": "Satu file yang ditulis /zentui; tidak ada lapisan proyek." } }
+      ],
+      "settings": [
+        { "key": "components.editor.style", "type": "string", "default": "opencode", "description": { "en": "Editor surface: opencode, opencode-copy-friendly, accent-rail, or minimalist.", "id": "Permukaan editor: opencode, opencode-copy-friendly, accent-rail, atau minimalist." }, "persistence": "zentui.json" },
+        { "key": "components.footer.style", "type": "string", "default": "native", "description": { "en": "Footer style: native, starship, or hidden.", "id": "Gaya footer: native, starship, atau hidden." }, "persistence": "zentui.json" },
+        { "key": "components.userMessages.style", "type": "string", "default": "framed", "description": { "en": "User-message style: framed, framed-copy-friendly, compact, or labeled.", "id": "Gaya pesan user: framed, framed-copy-friendly, compact, atau labeled." }, "persistence": "zentui.json" },
+        { "key": "components.workingLine.enabled", "type": "boolean", "default": "true", "description": { "en": "Take over Pi's complete working-line row and settled turn summary.", "id": "Ambil alih baris working line lengkap Pi dan ringkasan turn yang selesai." }, "persistence": "zentui.json" },
+        { "key": "components.footer.styles.starship.pathDisplay.mode", "type": "string", "default": "basename", "description": { "en": "Starship footer path display: basename, full, or repository.", "id": "Tampilan path footer starship: basename, full, atau repository." }, "persistence": "zentui.json" }
+      ],
+      "envVars": [],
+      "controls": [
+        { "name": "/zentui", "description": { "en": "Open the live configuration picker; changes save to zentui.json.", "id": "Buka picker konfigurasi langsung; perubahan disimpan ke zentui.json." } },
+        { "name": "/zentui editor toggle", "description": { "en": "Toggle the editor surface without opening the picker.", "id": "Toggle permukaan editor tanpa membuka picker." } },
+        { "name": "/zentui messages toggle", "description": { "en": "Toggle user-message framing without opening the picker.", "id": "Toggle framing pesan user tanpa membuka picker." } },
+        { "name": "/zentui working-line", "description": { "en": "Configure working-line takeover and turn summary.", "id": "Konfigurasikan pengambilalihan working line dan ringkasan turn." } },
+        { "name": "/zentui format <template>", "description": { "en": "Set the compact footer format template.", "id": "Atur template format footer compact." } }
+      ],
+      "noConfig": false
+    },
+    {
+      "slug": "tps",
+      "distribution": "bundled",
+      "overview": {
+        "en": "The TPS tracker is automatic: it listens to message and tool events, shows live tok/s in the status area, and needs no configuration.",
+        "id": "Pelacak TPS bersifat otomatis: mendengarkan event message dan tool, menampilkan tok/s langsung di area status, dan tidak memerlukan konfigurasi."
+      },
+      "sourcePaths": [
+        "src/extensions/tps.ts"
+      ],
+      "scopes": [],
+      "settings": [
+        { "key": "tps status", "type": "status line", "default": "live tok/s", "description": { "en": "Live tokens-per-second for the main model and subagent runs; fixed reliability gates, not user-configurable.", "id": "Token-per-detik langsung untuk model utama dan run subagent; gate keandalan tetap, tidak dapat dikonfigurasi user." }, "persistence": "source-defined" }
+      ],
+      "envVars": [],
+      "controls": [],
       "noConfig": true
     }
   ]

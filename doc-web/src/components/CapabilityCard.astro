@@ -38,7 +38,7 @@ const badge =
   <h3 class="capability-card__title">{name}</h3>
   <p class="capability-card__benefit">{benefit}</p>
   <div class="capability-card__footer">
-    <span class="capability-card__badge">{badge}</span>
+    <span class:list={["capability-card__badge", { "capability-card__badge--difference": capability.piComparison === "core-differentiator" }]}>{badge}</span>
     <span class="capability-card__arrow" aria-hidden="true">→</span>
   </div>
 </a>
@@ -53,34 +53,17 @@ const badge =
     overflow: hidden;
     padding: 1.4rem;
     border: 1px solid var(--selesai-border);
-    border-radius: 1rem;
+    border-radius: 0.75rem;
     background: var(--selesai-surface);
     color: var(--sl-color-text);
     text-decoration: none;
-    box-shadow: 0 1px 0 rgb(255 255 255 / 4%) inset;
-    transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
-  }
-
-  .capability-card::before {
-    position: absolute;
-    inset: 0 0 auto;
-    height: 2px;
-    background: linear-gradient(90deg, var(--sl-color-accent), transparent 70%);
-    content: "";
-    opacity: 0;
-    transition: opacity 180ms ease;
+    transition: border-color 180ms ease, background-color 180ms ease;
   }
 
   .capability-card:hover,
   .capability-card:focus-visible {
     border-color: var(--selesai-border-hover);
-    box-shadow: 0 18px 50px rgb(0 0 0 / 18%);
-    transform: translateY(-3px);
-  }
-
-  .capability-card:hover::before,
-  .capability-card:focus-visible::before {
-    opacity: 1;
+    background: var(--selesai-surface-raised);
   }
 
   .capability-card:focus-visible {
@@ -137,11 +120,21 @@ const badge =
 
   .capability-card__badge {
     padding: 0.32rem 0.65rem;
-    border: 1px solid var(--selesai-border);
+    border: 1px solid var(--selesai-border-strong);
     border-radius: 999px;
-    background: var(--sl-color-accent-low);
-    color: var(--sl-color-accent-high);
+    background: var(--selesai-surface);
+    color: var(--sl-color-gray-2);
     font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  /* The yellow badge is reserved for the Selesai-difference signal. */
+  .capability-card__badge--difference {
+    border-color: transparent;
+    background: var(--sl-color-accent);
+    color: #0a0a0a;
     font-weight: 700;
   }
 

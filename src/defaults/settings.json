@@ -11,7 +11,7 @@
   },
   "defaultModel": "celestial-pro",
   "defaultProvider": "tokenin",
-  "defaultThinkingLevel": "max",
+  "defaultThinkingLevel": "high",
   "doubleEscapeAction": "tree",
   "editorPaddingX": 0,
   "outputPad": 0,
@@ -20,12 +20,11 @@
   "hideThinkingBlock": false,
   "images": {
     "autoResize": true,
-    "imageCaptionModel": "tokenin/gemma-4",
+    "imageCaptionModel": "tokenin/qwen3.8-27b",
     "imageCaptionContextTokens": 16384
   },
   "packages": [
-    "git:github.com/MasuRii/pi-tool-display",
-    "git:github.com/omaclaren/pi-markdown-preview"
+    "git:github.com/MasuRii/pi-tool-display"
   ],
   "quietStartup": true,
   "retry": {
@@ -36,9 +35,6 @@
   "terminal": {
     "clearOnShrink": false,
     "showImages": true
-  },
-  "powerline": {
-    "cache_read": { "format": "both" }
   },
   "subagents": {
     "agentOverrides": {

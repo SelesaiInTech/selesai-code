@@ -3,6 +3,17 @@ draft: false
 title: Changelog
 ---
 
+## 0.10.0 — Zentui TUI, pelacak TPS, dan default baru
+
+- Menambahkan ekstensi bawaan `pi-zentui`: statusline terinspirasi Starship, permukaan editor dan pesan user bergaya Opencode, pengambilalihan working line, dan opsi footer nol-baris tersembunyi. Editor, pesan user, working line, dan border selector memiliki field `enabled` independen; footer menggunakan satu `style` (`native`, `starship`, atau `hidden`). Konfigurasi langsung dengan `/zentui`, disimpan ke `~/.selesai/agent/zentui.json`.
+- Menambahkan pelacak TPS bawaan: token-per-detik langsung untuk model utama dan run subagent di area status, dengan gate terhadap stall, stream pendek, pembaruan jarang, dan laju yang tidak masuk akal.
+- Menambahkan 58 tema terminal baru (Catppuccin Mocha, Dracula, Gruvbox, Nord, Rose Pine, Solarized Dark, Tokyo Night, dan lainnya) di `src/themes/`.
+- Menambahkan skill bawaan `design-references` untuk mencari referensi DESIGN.md dari koleksi awesome-design-md VoltAgent.
+- Level thinking default sekarang `high` (sebelumnya `max`); model caption gambar default sekarang `tokenin/qwen3.8-27b` (sebelumnya `tokenin/gemma-4`).
+- Celestial Max dan Celestial Ultra kini menerima input gambar.
+- Menghapus ekstensi bawaan `auto-model`, `pi-powerline-footer`, `preview-tools-disabled`, dan `custom-provider-ollama`; pengaturan `powerline` yatim dihapus.
+- Situs dokumentasi kini menggunakan bahasa desain hitam-kuning terinspirasi ClickHouse, dan kartu kemampuan mendapat varian badge pembeda inti.
+
 ## 0.9.15 — Routing model otomatis bawaan
 
 - Menambahkan extension bawaan `auto-model`, nonaktif secara default.

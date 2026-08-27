@@ -1,0 +1,106 @@
+name: Rendering, icon, or color issue
+description: Report visual glitches, missing glyphs, layout issues, or color/theme problems
+title: "rendering: "
+labels: ["bug", "rendering", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for Zentui footer, editor, previous-message, icon, color, or terminal layout problems.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues before opening this one.
+          required: true
+        - label: I am using a Nerd Font or verified whether the issue reproduces with one.
+          required: true
+        - label: I checked whether switching the affected component style or disabling custom styling changes the behavior, if relevant.
+          required: false
+
+  - type: input
+    id: zentui-version
+    attributes:
+      label: Zentui version
+      placeholder: "0.2.7 / main@abc123 / local checkout"
+    validations:
+      required: true
+
+  - type: input
+    id: pi-version
+    attributes:
+      label: Pi version
+      placeholder: "0.74.x"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-source
+    attributes:
+      label: Install source
+      options:
+        - npm
+        - git
+        - local checkout
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: terminal
+    attributes:
+      label: Terminal and display environment
+      placeholder: |
+        OS:
+        Terminal app:
+        Font name/version:
+        Terminal width:
+        Theme/colorscheme:
+        Multiplexer, if any (tmux, screen, etc.):
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      options:
+        - Footer/status line
+        - Editor/input box
+        - Previous user message styling
+        - Runtime/git segment
+        - Colors/theme mapping
+        - Opencode (copy-friendly) editor style
+        - Framed (copy-friendly) user-message style
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot or recording
+      description: Drag an image or recording here if possible. Please avoid secrets in terminal output.
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant Zentui config
+      description: Paste relevant values from ~/.pi/agent/zentui.json.
+      render: json
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected rendering
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual rendering
+    validations:
+      required: true

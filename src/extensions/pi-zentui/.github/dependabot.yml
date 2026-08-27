@@ -1,0 +1,47 @@
+version: 2
+
+updates:
+  # npm dependencies in this package
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "main"
+    open-pull-requests-limit: 5
+    groups:
+      # Low-noise grouped PRs for minor and patch updates.
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Major npm updates are intentionally not auto-merged; keep them visible
+      # as a separate stream so reviewers can evaluate breaking changes.
+      major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+
+  # GitHub Actions workflow versions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "main"
+    open-pull-requests-limit: 5
+    groups:
+      first-party-and-known:
+        patterns:
+          - "actions/*"
+          - "github/*"
+        update-types:
+          - "minor"
+          - "patch"
+      third-party-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

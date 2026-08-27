@@ -1,0 +1,60 @@
+{
+	"name": "pi-zentui",
+	"version": "0.21.0",
+	"description": "A Starship-inspired statusline and Opencode-style TUI for Pi.",
+	"type": "module",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/lmilojevicc/pi-zentui.git"
+	},
+	"homepage": "https://github.com/lmilojevicc/pi-zentui#readme",
+	"bugs": {
+		"url": "https://github.com/lmilojevicc/pi-zentui/issues"
+	},
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"pi-theme",
+		"starship",
+		"tui"
+	],
+	"files": [
+		"extensions"
+	],
+	"scripts": {
+		"lint": "biome check .",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"pi:dev": "${PI_BIN:-/opt/homebrew/bin/pi} --no-extensions -e ./extensions/zentui/index.ts",
+		"pi:install-local": "${PI_BIN:-/opt/homebrew/bin/pi} install ./ -l",
+		"fmt": "biome format --write .",
+		"fmt:check": "biome format .",
+		"verify": "npm run lint && npm run typecheck && npm run test",
+		"pack:check": "npm pack --dry-run",
+		"prepublishOnly": "npm run verify && npm run pack:check"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": ">=0.80.5",
+		"@earendil-works/pi-coding-agent": ">=0.80.5",
+		"@earendil-works/pi-tui": ">=0.80.5"
+	},
+	"pi": {
+		"extensions": [
+			"./extensions"
+		],
+		"image": "https://raw.githubusercontent.com/lmilojevicc/pi-zentui/main/assets/zentui.png"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.0",
+		"@earendil-works/pi-ai": "^0.84.0",
+		"@earendil-works/pi-coding-agent": "^0.84.0",
+		"@earendil-works/pi-tui": "^0.84.0",
+		"@types/node": "^26.0.0",
+		"typescript": "^7.0.2",
+		"vitest": "^4.1.8"
+	}
+}

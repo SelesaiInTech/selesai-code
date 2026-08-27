@@ -30,7 +30,7 @@
           "id": "celestial-max",
           "name": "Celestial Max",
           "reasoning": true,
-          "input": ["text"],
+          "input": ["text", "image"],
           "contextWindow": 393216,
           "maxTokens": 64000,
           "thinkingLevelMap": {
@@ -46,7 +46,7 @@
           "id": "celestial-ultra",
           "name": "Celestial Ultra",
           "reasoning": true,
-          "input": ["text"],
+          "input": ["text", "image"],
           "contextWindow": 393216,
           "maxTokens": 64000,
           "thinkingLevelMap": {
