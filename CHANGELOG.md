@@ -4,9 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.6] - 2026-08-27
+
+### Highlights
+- Rewind now handles clean local submodule commits instead of leaving nested checkouts at the wrong revision.
+- Unsupported submodule states now stop with a clear warning before Rewind claims an exact restore.
+- Retention is safer during session replacement and concurrent snapshot updates.
+
 ### Fixed
+- Rewind now restores clean local submodule commit changes and refuses dirty, missing, added, removed, or nested submodule states before it reports success. Thanks to [@EpochalEngineer](https://github.com/EpochalEngineer) for #10.
 - Retention now waits for in-flight startup sweeps during session replacement and preserves concurrent keepalive-ref updates. Thanks to [@jesseylin](https://github.com/jesseylin) for #11.
-- Exact rewind now handles clean local submodule commits and refuses unsupported or dirty submodule states instead of silently claiming restore success. Thanks to [@EpochalEngineer](https://github.com/EpochalEngineer) for #10.
 
 ## [1.8.5] - 2026-07-28
 
