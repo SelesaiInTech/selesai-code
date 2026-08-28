@@ -93,9 +93,13 @@ type SessionEntry = {
 	id?: string | number;
 	timestamp?: string | number;
 	usage?: SessionUsage;
+	customType?: string;
+	data?: unknown;
 	message?: {
 		role?: string;
 		usage?: SessionUsage;
+		provider?: string;
+		responseId?: string;
 	};
 };
 
@@ -103,6 +107,16 @@ type SelectedUsage = {
 	usage: SessionUsage | undefined;
 	location: "message" | "entry";
 	isAssistant: boolean;
+};
+
+/** A cost-reconcile entry written by the cost-reconcile extension. */
+export type CostReconcileData = {
+	version?: number;
+	provider?: string;
+	model?: string;
+	responseId?: string;
+	cost?: number;
+	reconciledAt?: number;
 };
 
 type UsageCacheEntry = {
@@ -206,6 +220,15 @@ function normalizedUsage(usage: SessionUsage | undefined) {
 }
 
 function entryIdentity(entry: SessionEntry): string {
+	if (entry.type === "custom") {
+		return JSON.stringify([
+			entry.id ?? null,
+			entry.timestamp ?? null,
+			entry.type ?? null,
+			entry.customType ?? null,
+			entry.data ?? null,
+		]);
+	}
 	const selected = usageForEntry(entry);
 	if (!selected) return "unsupported";
 	const usage = normalizedUsage(selected.usage);
@@ -214,6 +237,7 @@ function entryIdentity(entry: SessionEntry): string {
 		entry.timestamp ?? null,
 		entry.type ?? null,
 		entry.message?.role ?? null,
+		entry.customType ?? null,
 		selected.location,
 		usage.input,
 		usage.output,
@@ -236,6 +260,19 @@ function computeUsageTotals(entries: readonly SessionEntry[]): UsageTotals {
 	let latestCacheHitRate: number | undefined;
 	let cost = 0;
 
+	// Costs reconciled from the gateway (authoritative billed amounts) keyed by
+	// `provider:responseId`. When present they replace the rate-card estimate
+	// for that response.
+	const reconciledCosts = new Map<string, number>();
+	for (const entry of entries) {
+		if (entry.type !== "custom" || entry.customType !== "cost-reconcile") continue;
+		const data = entry.data as CostReconcileData | undefined;
+		if (!data || typeof data !== "object") continue;
+		if (typeof data.provider !== "string" || typeof data.responseId !== "string") continue;
+		if (typeof data.cost !== "number" || !Number.isFinite(data.cost) || data.cost < 0) continue;
+		reconciledCosts.set(`${data.provider}:${data.responseId}`, data.cost);
+	}
+
 	for (const entry of entries) {
 		const selected = usageForEntry(entry);
 		if (!selected) continue;
@@ -245,7 +282,15 @@ function computeUsageTotals(entries: readonly SessionEntry[]): UsageTotals {
 		output = addUsageTotal(output, usage.output);
 		cacheRead = addUsageTotal(cacheRead, usage.cacheRead);
 		cacheWrite = addUsageTotal(cacheWrite, usage.cacheWrite);
-		cost = addUsageTotal(cost, usage.cost);
+		const entryCost = usage.cost;
+		let effectiveCost = entryCost;
+		const provider = entry.message?.provider;
+		const responseId = entry.message?.responseId;
+		if (provider && responseId) {
+			const reconciled = reconciledCosts.get(`${provider}:${responseId}`);
+			if (reconciled !== undefined) effectiveCost = reconciled;
+		}
+		cost = addUsageTotal(cost, effectiveCost);
 		if (selected.isAssistant) {
 			latestCacheHitRate = calculateCacheHitRate(usage.input, usage.cacheRead, usage.cacheWrite);
 		}

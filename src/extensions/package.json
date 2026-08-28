@@ -6,8 +6,10 @@
 	"pi": {
 		"extensions": [
 			"./agent-browser.ts",
+		"./auto-session-name.ts",
 			"./copy-turn.ts",
 			"./context-compaction-reminder.ts",
+			"./cost-reconcile.ts",
 			"./enable-readonly-tools.ts",
 			"./pi-intercom/index.ts",
 			"./ponytail/index.js",
@@ -20,6 +22,7 @@
 			"./tokenin-onboarding.ts",
 			"./undo.ts",
 			"./pi-subagents",
+			"./pi-tool-display",
 			"./pi-web-agent",
 			"./web-agent-onboarding.ts",
 			"./tps.ts",

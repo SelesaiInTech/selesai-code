@@ -3,6 +3,14 @@ draft: false
 title: Changelog
 ---
 
+## 0.11.0 — Auto session naming, cost reconciliation, and bundled tool display
+
+- Added **auto session naming**: the session is named on every user message using the currently selected model. Only user-message history is sent (no tool results, assistant replies, or thinking), output is capped at 10 tokens with a 5-word name limit, and the call runs in the background so it never delays your message. Thinking is explicitly disabled for gateways that ignore the standard `thinking: {type:"disabled"}` field.
+- Added **cost reconciliation**: real billed costs reported by gateways (LiteLLM `x-litellm-response-cost` header, OpenRouter `usage.cost`/`total_cost`) are recorded as session entries, and the zentui footer prefers these authoritative amounts over rate-card estimates.
+- Added **tool display** as a bundled extension: compact OpenCode-style tool rendering, diff visualization, output truncation, a native user message box, and the `/tool-display` command with presets.
+- Changed read-only tool bootstrap: `grep`, `find`, and `ls` are registered only when not already owned by another extension, so boxed renderers are no longer discarded on startup.
+- Changed zentui user messages to use the `accent` color, and the footer now refreshes once after settle so late cost reconciliation is picked up.
+
 ## 0.10.2 — Startup banner, skill categories, and theme loading fix
 
 - Added a startup brand banner in the interactive TUI: an ASCII logo followed by boxed listings of loaded skills (grouped by category) and active tools, dismissed automatically on the first user message.

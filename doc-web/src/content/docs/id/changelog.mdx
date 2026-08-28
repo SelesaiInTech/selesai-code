@@ -3,6 +3,14 @@ draft: false
 title: Changelog
 ---
 
+## 0.11.0 — Penamaan sesi otomatis, rekonsiliasi biaya, dan tool display bawaan
+
+- Menambahkan **penamaan sesi otomatis**: sesi diberi nama pada setiap pesan user menggunakan model yang sedang dipilih. Hanya riwayat pesan user yang dikirim (tanpa hasil tool, balasan assistant, atau thinking), output dibatasi 10 token dengan batas nama 5 kata, dan panggilan berjalan di latar belakang sehingga tidak pernah menunda pesan Anda. Thinking dinonaktifkan secara eksplisit untuk gateway yang mengabaikan field standar `thinking: {type:"disabled"}`.
+- Menambahkan **rekonsiliasi biaya**: biaya tagihan nyata yang dilaporkan gateway (header LiteLLM `x-litellm-response-cost`, OpenRouter `usage.cost`/`total_cost`) dicatat sebagai entri sesi, dan footer zentui mengutamakan jumlah otoritatif ini daripada estimasi rate card.
+- Menambahkan **tool display** sebagai ekstensi bawaan: rendering tool bergaya OpenCode yang ringkas, visualisasi diff, pemotongan output, kotak pesan user native, dan perintah `/tool-display` dengan preset.
+- Mengubah bootstrap tool read-only: `grep`, `find`, dan `ls` didaftarkan hanya jika belum dimiliki ekstensi lain, sehingga renderer boxed tidak lagi dibuang saat startup.
+- Mengubah pesan user zentui untuk menggunakan warna `accent`, dan footer kini menyegarkan sekali setelah settle sehingga rekonsiliasi biaya yang terlambat ikut terbaca.
+
 ## 0.10.2 — Banner startup, kategori skill, dan perbaikan pemuatan tema
 
 - Menambahkan banner startup di TUI interaktif: logo ASCII diikuti daftar skill yang dimuat (dikelompokkan per kategori) dan tool aktif dalam kotak, otomatis menghilang pada pesan user pertama.

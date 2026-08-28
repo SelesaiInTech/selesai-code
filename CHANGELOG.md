@@ -2,6 +2,19 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.11.0] - 2026-08-29
+
+### Added
+- **Auto session naming.** The new `auto-session-name` extension names the session on every user message using the currently selected model. It sends only user-message history (no tool results, assistant replies, or thinking) with a 10-token output cap and a 5-word name limit, and runs in the background so it never delays your message. Thinking is explicitly disabled via `reasoning_effort: "none"` for gateways that ignore the standard `thinking: {type:"disabled"}` field.
+- **Cost reconciliation.** The new `cost-reconcile` extension records the real billed cost reported by gateways (LiteLLM `x-litellm-response-cost` header, OpenRouter `usage.cost`/`total_cost`) as session entries; the zentui footer prefers these authoritative amounts over rate-card estimates.
+- **Tool display.** The `pi-tool-display` extension is now bundled: compact OpenCode-style tool rendering, diff visualization, output truncation, a native user message box, and the `/tool-display` command with presets.
+
+### Changed
+- **Read-only tool bootstrap.** `grep`, `find`, and `ls` are registered only when not already owned by another extension (e.g. `pi-tool-display`), so boxed renderers are no longer discarded on startup.
+- **Zentui user messages.** The user-message markdown theme now uses the `accent` color instead of `userMessageText`.
+- **Zentui cost totals.** The footer refreshes once ~12s after settle so late gateway cost reconciliation is picked up.
+- **Bundled extensions.** `pi-tool-display`'s user-owned `config.json` is excluded from the shipped package; the default `packages` list no longer installs it from git.
+
 ## [0.10.2] - 2026-08-28
 
 ### Added

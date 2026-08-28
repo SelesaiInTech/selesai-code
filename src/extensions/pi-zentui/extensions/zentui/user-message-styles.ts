@@ -45,7 +45,7 @@ function makeMarkdownTheme(theme: Theme | undefined): MarkdownTheme {
 
 function renderMarkdown(text: string, width: number, theme: Theme | undefined): string[] {
 	const renderer = new Markdown(text, 0, 0, makeMarkdownTheme(theme), {
-		color: (content) => themeFg(theme, "userMessageText", content),
+		color: (content) => themeFg(theme, "accent", content),
 	});
 	const lines = renderer.render(Math.max(1, width));
 	return lines.length > 0 ? lines : [""];

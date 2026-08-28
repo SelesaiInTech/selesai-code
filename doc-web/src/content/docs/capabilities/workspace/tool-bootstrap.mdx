@@ -14,6 +14,7 @@ This behavior is bundled and automatic. No setup or configuration is required.
 ## What it sets up
 
 - Registers `grep`, `find`, and `ls` after the first successful bootstrap-tool call.
+- Skips a tool that is already owned by another extension (e.g. `pi-tool-display`), so existing renderers are never discarded.
 - Keeps the bootstrap surface stable until that first call succeeds.
 
 ## What you can configure

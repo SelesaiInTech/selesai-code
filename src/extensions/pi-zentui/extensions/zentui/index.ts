@@ -1385,6 +1385,16 @@ export default function (pi: ExtensionAPI) {
 				// A transcript persistence failure must not break settlement cleanup.
 			}
 		}
+		// Gateway cost reconciliation lands a few seconds after settle; refresh
+		// once late so the cost label picks up authoritative totals when they
+		// arrive. Best-effort: harmless in non-TUI contexts.
+		sessionLifecycle.defer(
+			() => {
+				invalidateUsageTotalsCache();
+				refreshInteractiveState(ctx);
+			},
+			12_000,
+		);
 	});
 	pi.on("tool_execution_start", (event, ctx) => {
 		liveContext.clear();

@@ -46,6 +46,8 @@ export default defineConfig({
 		alias: {
 			// Self-reference resolves to the built package in this flattened fork.
 			"@selesai/code": resolve(__dirname, "dist/index.js"),
+			// Bundled pi extensions import the upstream package; map it to the host core too.
+			"@earendil-works/pi-coding-agent": resolve(__dirname, "dist/index.js"),
 		},
 	},
 });

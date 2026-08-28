@@ -23,9 +23,6 @@
     "imageCaptionModel": "tokenin/qwen3.8-27b",
     "imageCaptionContextTokens": 16384
   },
-  "packages": [
-    "git:github.com/MasuRii/pi-tool-display"
-  ],
   "quietStartup": true,
   "retry": {
     "enabled": true,

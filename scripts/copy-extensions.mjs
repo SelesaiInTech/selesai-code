@@ -11,6 +11,8 @@ await cp(source, target, {
 	filter(entry) {
 		const relative = path.relative(source, entry);
 		return !relative.split(/[\\/]+/).includes("node_modules")
-			&& !relative.split(/[\\/]+/).includes(".git");
+			&& !relative.split(/[\\/]+/).includes(".git")
+			// pi-tool-display config.json is a user-owned runtime artifact; never ship it.
+			&& !(relative.startsWith("pi-tool-display") && path.basename(entry) === "config.json");
 	},
 });

@@ -22,6 +22,7 @@ function setup() {
 			handler = registeredHandler;
 		}),
 		registerTool: vi.fn((tool: { name: string }) => active.add(tool.name)),
+		getAllTools: vi.fn(() => [...active].map((name) => ({ name }))),
 	};
 	enableReadonlyTools(pi as any);
 	return { active, handler, pi };
@@ -48,5 +49,15 @@ describe("enable-readonly-tools", () => {
 		handler({ toolName: "bash", isError: false }, { cwd: "/other" });
 		expect(pi.registerTool).toHaveBeenCalledTimes(3);
 		expect(createGrepToolDefinition).toHaveBeenCalledWith("/project");
+	});
+
+	it("does not replace a display extension's existing readonly renderers", () => {
+		const { active, handler, pi } = setup();
+		active.add("grep");
+		active.add("find");
+		active.add("ls");
+
+		handler({ toolName: "read", isError: false }, { cwd: "/project" });
+		expect(pi.registerTool).not.toHaveBeenCalled();
 	});
 });

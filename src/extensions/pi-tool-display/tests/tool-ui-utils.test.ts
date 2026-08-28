@@ -1,0 +1,413 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import {
+  countWriteContentLines,
+  getWriteContentSizeBytes,
+  shouldRenderWriteCallSummary,
+} from "../src/write-display-utils.ts";
+import {
+  extractUserMessageMarkdownState,
+} from "../src/user-message-box-markdown.ts";
+import {
+  createUserMessageMarkdownLineRenderer,
+  patchNativeUserMessagePrototype,
+  shouldBypassUserMessageMarkdownRebuild,
+} from "../src/user-message-box-renderer.ts";
+import {
+  patchUserMessageRenderPrototype,
+  type PatchableUserMessagePrototype,
+} from "../src/user-message-box-patch.ts";
+import {
+  addUserMessageVerticalPadding,
+  applyUserMessageBackground,
+  normalizeUserMessageContentLine,
+  normalizeUserMessageContentLines,
+} from "../src/user-message-box-utils.ts";
+import {
+  buildCollapsedDiffHintText,
+  clampRenderedLineToWidth,
+} from "../src/line-width-safety.ts";
+import { buildPendingEditPreviewData } from "../src/pending-diff-preview.ts";
+
+const codePointWidthOps = {
+  measure: (text: string): number => [...text].length,
+  truncate: (text: string, maxWidth: number): string =>
+    [...text].slice(0, Math.max(0, maxWidth)).join(""),
+};
+
+
+test("pending edit preview matches LF edit input against CRLF files", () => {
+  const baseDir = mkdtempSync(join(tmpdir(), "pi-tool-display-preview-"));
+
+  try {
+    const filePath = join(baseDir, "sample.txt");
+    writeFileSync(filePath, "alpha\r\nbeta\r\ngamma\r\n", "utf8");
+
+    const preview = buildPendingEditPreviewData(
+      {
+        path: "sample.txt",
+        edits: [
+          {
+            oldText: "alpha\nbeta",
+            newText: "alpha\nupdated",
+          },
+        ],
+      },
+      baseDir,
+    );
+
+    assert.equal(preview?.notice, undefined);
+    assert.equal(preview?.nextContent, "alpha\r\nupdated\r\ngamma\r\n");
+    assert.equal(preview?.previousContent, "alpha\r\nbeta\r\ngamma\r\n");
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("pending edit preview reports a concise notice for true edit mismatches", () => {
+  const baseDir = mkdtempSync(join(tmpdir(), "pi-tool-display-preview-miss-"));
+
+  try {
+    writeFileSync(join(baseDir, "sample.txt"), "alpha\nbeta\n", "utf8");
+
+    const preview = buildPendingEditPreviewData(
+      {
+        path: "sample.txt",
+        edits: [
+          {
+            oldText: "missing",
+            newText: "updated",
+          },
+        ],
+      },
+      baseDir,
+    );
+
+    assert.equal(preview?.nextContent, undefined);
+    assert.equal(preview?.notice, "Preview not shown: edit #1 did not match the current file contents.");
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("write call summary moves metrics onto the first line when the result header omits them", () => {
+  assert.equal(
+    shouldRenderWriteCallSummary({
+      hasContent: true,
+      hasDetailedResultHeader: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRenderWriteCallSummary({
+      hasContent: true,
+      hasDetailedResultHeader: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRenderWriteCallSummary({
+      hasContent: false,
+      hasDetailedResultHeader: false,
+    }),
+    false,
+  );
+});
+
+test("write content line counting ignores trailing newlines", () => {
+  assert.equal(countWriteContentLines("alpha\nbeta\n"), 2);
+  assert.equal(countWriteContentLines("alpha\r\nbeta"), 2);
+  assert.equal(countWriteContentLines(""), 0);
+});
+
+test("write content size uses utf-8 bytes", () => {
+  assert.equal(getWriteContentSizeBytes("hello"), 5);
+  assert.equal(getWriteContentSizeBytes("é"), 2);
+});
+
+test("user message patch reapplies on reload when an older patch version is already present", () => {
+  const originalRender = (width: number): string[] => [`original:${width}`];
+  const prototype: PatchableUserMessagePrototype = {
+    render: (width: number): string[] => [`stale:${width}`],
+    __piUserMessageOriginalRender: originalRender,
+    __piUserMessageNativePatched: true,
+    __piUserMessagePatchVersion: 1,
+  };
+
+  patchUserMessageRenderPrototype(prototype, 5, (baseRender) => {
+    return function patched(width: number): string[] {
+      return [`patched:${baseRender.call(this, width).join("|")}`];
+    };
+  });
+
+  assert.deepEqual(prototype.render(14), ["patched:original:14"]);
+  assert.equal(prototype.__piUserMessagePatchVersion, 5);
+  assert.equal(prototype.__piUserMessageNativePatched, true);
+});
+
+test("user message markdown extraction removes nested background styling", () => {
+  const theme = { heading: () => "" };
+  const color = (text: string): string => text;
+  const extracted = extractUserMessageMarkdownState({
+    children: [
+      { lines: 1 },
+      {
+        text: "Hello **WezTerm**",
+        theme,
+        defaultTextStyle: {
+          color,
+          bgColor: (text: string): string => text,
+          bold: true,
+        },
+      },
+    ],
+  });
+
+  assert.equal(extracted?.text, "Hello **WezTerm**");
+  assert.equal(extracted?.theme, theme);
+  assert.equal(extracted?.defaultTextStyle?.color, color);
+  assert.equal(extracted?.defaultTextStyle?.bold, true);
+  assert.equal("bgColor" in (extracted?.defaultTextStyle ?? {}), false);
+});
+
+test("user message markdown extraction finds markdown nested inside the native box", () => {
+  const theme = { heading: () => "" };
+  const color = (text: string): string => text;
+  const extracted = extractUserMessageMarkdownState({
+    children: [
+      {
+        children: [
+          {
+            text: "Nested **markdown**",
+            theme,
+            defaultTextStyle: {
+              color,
+              bgColor: (text: string): string => text,
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(extracted?.text, "Nested **markdown**");
+  assert.equal(extracted?.theme, theme);
+  assert.equal(extracted?.defaultTextStyle?.color, color);
+  assert.equal("bgColor" in (extracted?.defaultTextStyle ?? {}), false);
+});
+
+test("user message markdown renderer reuses cached markdown renders for identical state", () => {
+  let rendererCreationCount = 0;
+  let renderCallCount = 0;
+  const renderMarkdown = createUserMessageMarkdownLineRenderer((state) => {
+    rendererCreationCount++;
+    return {
+      render(width: number): string[] {
+        renderCallCount++;
+        return [`${state.text}:${width}`];
+      },
+    };
+  });
+
+  const instance = {};
+  const theme = { heading: () => "" };
+
+  assert.deepEqual(
+    renderMarkdown(instance, { text: "cached", theme, defaultTextStyle: { bold: true } }, 24),
+    ["cached:24"],
+  );
+  assert.deepEqual(
+    renderMarkdown(instance, { text: "cached", theme, defaultTextStyle: { bold: true } }, 24),
+    ["cached:24"],
+  );
+  assert.equal(rendererCreationCount, 1);
+  assert.equal(renderCallCount, 1);
+
+  assert.deepEqual(
+    renderMarkdown(instance, { text: "cached", theme, defaultTextStyle: { bold: true } }, 48),
+    ["cached:48"],
+  );
+  assert.equal(rendererCreationCount, 1);
+  assert.equal(renderCallCount, 2);
+
+  assert.deepEqual(
+    renderMarkdown(instance, { text: "updated", theme, defaultTextStyle: { bold: true } }, 48),
+    ["updated:48"],
+  );
+  assert.equal(rendererCreationCount, 2);
+  assert.equal(renderCallCount, 3);
+});
+
+test("user message markdown rebuild guard bypasses oversized payloads", () => {
+  assert.equal(
+    shouldBypassUserMessageMarkdownRebuild({
+      text: "short message",
+      theme: {},
+    }),
+    false,
+  );
+  assert.equal(
+    shouldBypassUserMessageMarkdownRebuild({
+      text: `${"line\n".repeat(2000)}tail`,
+      theme: {},
+    }),
+    true,
+  );
+});
+
+test("user message renderer adds one top and bottom padding row inside the box", () => {
+  assert.deepEqual(addUserMessageVerticalPadding(["Ping"]), ["", "Ping", ""]);
+  assert.deepEqual(addUserMessageVerticalPadding(["Line 1", "Line 2"]), ["", "Line 1", "Line 2", ""]);
+});
+
+test("native user message renderer inserts one blank spacer line before the box", () => {
+  const prototype: PatchableUserMessagePrototype = {
+    render: () => ["Original user content"],
+  };
+
+  patchNativeUserMessagePrototype(prototype, () => undefined, () => true);
+
+  const rendered = prototype.render(24);
+
+  assert.equal(rendered[0], "");
+  assert.match(rendered[1] ?? "", /^╭/);
+});
+
+test("native user message renderer wraps body at the padded content width", () => {
+  const contentWidth = 16;
+  const totalWidth = contentWidth + 4;
+  const message = `${"X".repeat(contentWidth)}YZ`;
+  const requestedWidths: number[] = [];
+  const prototype: PatchableUserMessagePrototype = {
+    render: (width: number): string[] => {
+      requestedWidths.push(width);
+      const lines: string[] = [];
+      for (let index = 0; index < message.length; index += width) {
+        lines.push(message.slice(index, index + width));
+      }
+      return lines;
+    },
+  };
+
+  patchNativeUserMessagePrototype(prototype, () => undefined, () => true);
+
+  const rendered = prototype.render(totalWidth);
+  const borderedRows = rendered.filter((line) =>
+    line.startsWith("│") || line.startsWith("╭") || line.startsWith("╰"),
+  );
+
+  assert.equal(requestedWidths[0], contentWidth);
+  assert.ok(
+    rendered.some((line) => line.includes("YZ")),
+    "tail content should wrap instead of being clipped",
+  );
+  assert.ok(borderedRows.every((line) => visibleWidth(line) === totalWidth));
+});
+
+test("user message blank ansi lines are cleared before wrapping", () => {
+  assert.equal(normalizeUserMessageContentLine("\u001b[0m"), "");
+  assert.equal(normalizeUserMessageContentLine("   \u001b[31m\u001b[0m"), "");
+  assert.equal(normalizeUserMessageContentLine("\u001b]133;A\u0007   \u001b]133;B\u0007"), "");
+
+  const normalized = normalizeUserMessageContentLine("\u001b[31mhello\u001b[0m");
+  assert.match(normalized, /hello/);
+  assert.doesNotMatch(normalized, /\u001b\[0m/);
+
+  const withoutOsc = normalizeUserMessageContentLine("\u001b]133;A\u0007hello\u001b]133;B\u0007");
+  assert.equal(withoutOsc, "hello");
+
+  const hyperlink = "\u001b]8;;https://example.com\u001b\\link\u001b]8;;\u001b\\";
+  assert.equal(normalizeUserMessageContentLine(hyperlink), hyperlink);
+});
+
+test("user message background painting keeps trailing padding inside explicit background cells", () => {
+  const rendered = applyUserMessageBackground(
+    {
+      getBgAnsi: () => "\u001b[48;5;24m",
+    },
+    "\u001b[31mhello\u001b[0m   ",
+  );
+
+  assert.ok(rendered.startsWith("\u001b[48;5;24m"));
+  assert.match(rendered, /hello/);
+  assert.equal(rendered.indexOf("\u001b[49m"), rendered.lastIndexOf("\u001b[49m"));
+  assert.equal(rendered.slice(rendered.lastIndexOf("\u001b[49m") - 3, rendered.lastIndexOf("\u001b[49m")), "   ");
+  assert.doesNotMatch(rendered, /\u001b\[0m/);
+
+  const hyperlink = "\u001b]8;;https://example.com\u001b\\link\u001b]8;;\u001b\\";
+  const hyperlinkRendered = applyUserMessageBackground(undefined, hyperlink);
+  assert.equal(hyperlinkRendered, hyperlink);
+});
+
+test("user message background painting falls back to theme bg helper", () => {
+  const rendered = applyUserMessageBackground(
+    {
+      bg: (_color, text) => `bg(${text})`,
+    },
+    "\u001b[32mworld\u001b[49m",
+  );
+
+  assert.equal(rendered, "bg(\u001b[32mworld)");
+});
+
+test("user message content trims edge padding but preserves intentional interior breaks", () => {
+  assert.deepEqual(normalizeUserMessageContentLines(["", "hello", ""]), ["hello"]);
+  assert.deepEqual(normalizeUserMessageContentLines(["", "hello", "", "world", ""]), [
+    "hello",
+    "",
+    "world",
+  ]);
+  assert.deepEqual(normalizeUserMessageContentLines(["\u001b[0m", "   "]), []);
+  assert.deepEqual(
+    normalizeUserMessageContentLines([
+      "\u001b]133;A\u0007   ",
+      "hello",
+      "\u001b]133;B\u0007\u001b]133;C\u0007   ",
+    ]),
+    ["hello"],
+  );
+});
+
+test("collapsed diff hint shrinks to fit narrow panes", () => {
+  const hint = buildCollapsedDiffHintText(
+    {
+      remainingLines: 3970,
+      hiddenHunks: 1,
+    },
+    35,
+    codePointWidthOps,
+  );
+
+  assert.ok(codePointWidthOps.measure(hint) <= 35);
+  assert.match(hint, /3970/);
+  assert.doesNotMatch(hint, /Ctrl\+O/);
+});
+
+test("collapsed diff hint keeps full guidance when width allows", () => {
+  const hint = buildCollapsedDiffHintText(
+    {
+      remainingLines: 12,
+      hiddenHunks: 2,
+    },
+    80,
+    codePointWidthOps,
+  );
+
+  assert.equal(hint, "… (12 more diff lines • 2 more hunks • Ctrl+O to expand)");
+});
+
+test("line width clamp never returns text wider than the requested width", () => {
+  const clamped = clampRenderedLineToWidth(
+    "… (3970 more diff lines • Ctrl+O to expand)",
+    35,
+    codePointWidthOps,
+  );
+
+  assert.ok(codePointWidthOps.measure(clamped) <= 35);
+  assert.equal(clampRenderedLineToWidth("hello", 0, codePointWidthOps), "");
+});
+

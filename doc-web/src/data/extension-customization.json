@@ -1743,6 +1743,68 @@
       "envVars": [],
       "controls": [],
       "noConfig": true
+    },
+    {
+      "slug": "auto-session-name",
+      "distribution": "bundled",
+      "overview": {
+        "en": "Auto session naming is automatic: on every user message it asks the current model for a short name using only user-message history, and never blocks the message send.",
+        "id": "Penamaan sesi otomatis bersifat otomatis: pada setiap pesan user ia meminta nama singkat ke model saat ini hanya dari riwayat pesan user, dan tidak pernah memblokir pengiriman pesan."
+      },
+      "sourcePaths": [
+        "src/extensions/auto-session-name.ts"
+      ],
+      "scopes": [],
+      "settings": [],
+      "envVars": [],
+      "controls": [],
+      "noConfig": true
+    },
+    {
+      "slug": "cost-reconcile",
+      "distribution": "bundled",
+      "overview": {
+        "en": "Cost reconciliation is automatic: it captures provider-reported costs from LLM responses and records them as session entries; the zentui footer prefers them over rate-card estimates.",
+        "id": "Rekonsiliasi biaya bersifat otomatis: ia menangkap biaya yang dilaporkan provider dari respons LLM dan mencatatnya sebagai entri sesi; footer zentui mengutamakannya daripada estimasi rate card."
+      },
+      "sourcePaths": [
+        "src/extensions/cost-reconcile.ts"
+      ],
+      "scopes": [],
+      "settings": [],
+      "envVars": [],
+      "controls": [],
+      "noConfig": true
+    },
+    {
+      "slug": "pi-tool-display",
+      "distribution": "bundled",
+      "overview": {
+        "en": "Tool display configures compact tool rendering, diff views, output truncation, and the native user message box from one config.json, with /tool-display presets.",
+        "id": "Tool display mengonfigurasi rendering tool ringkas, tampilan diff, pemotongan output, dan kotak pesan user native dari satu config.json, dengan preset /tool-display."
+      },
+      "sourcePaths": [
+        "src/extensions/pi-tool-display/src/types.ts",
+        "src/extensions/pi-tool-display/config/config.example.json"
+      ],
+      "scopes": [
+        { "label": { "en": "Tool display config", "id": "Konfigurasi tool display" }, "path": "~/.selesai/agent/extensions/pi-tool-display/config.json", "precedence": { "en": "Single user-level file written by /tool-display; no project layer.", "id": "Satu file tingkat user yang ditulis /tool-display; tidak ada lapisan proyek." } }
+      ],
+      "settings": [
+        { "key": "readOutputMode", "type": "string", "default": "hidden", "description": { "en": "Read tool output mode: hidden, summary, or preview.", "id": "Mode output tool read: hidden, summary, atau preview." }, "persistence": "config.json" },
+        { "key": "searchOutputMode", "type": "string", "default": "hidden", "description": { "en": "Search tool output mode: hidden, count, or preview.", "id": "Mode output tool search: hidden, count, atau preview." }, "persistence": "config.json" },
+        { "key": "bashOutputMode", "type": "string", "default": "opencode", "description": { "en": "Bash output mode: opencode, summary, or preview.", "id": "Mode output bash: opencode, summary, atau preview." }, "persistence": "config.json" },
+        { "key": "previewLines", "type": "number", "default": "8", "description": { "en": "Lines shown in preview mode.", "id": "Baris yang ditampilkan dalam mode preview." }, "persistence": "config.json" },
+        { "key": "boxedToolCalls", "type": "boolean", "default": "true", "description": { "en": "Draw an ASCII border around each tool call and its output.", "id": "Gambar border ASCII di sekitar setiap panggilan tool dan outputnya." }, "persistence": "config.json" },
+        { "key": "enableNativeUserMessageBox", "type": "boolean", "default": "true", "description": { "en": "Use the native user message box.", "id": "Gunakan kotak pesan user native." }, "persistence": "config.json" }
+      ],
+      "envVars": [],
+      "controls": [
+        { "name": "/tool-display show", "description": { "en": "Show the effective config summary.", "id": "Tampilkan ringkasan konfigurasi efektif." } },
+        { "name": "/tool-display preset <opencode|balanced|verbose|boxed>", "description": { "en": "Apply a rendering preset.", "id": "Terapkan preset rendering." } },
+        { "name": "/tool-display reset", "description": { "en": "Reset to the default boxed preset.", "id": "Reset ke preset boxed bawaan." } }
+      ],
+      "noConfig": false
     }
   ]
 }

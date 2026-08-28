@@ -58,8 +58,17 @@ function makeAssistantEntry(
 	return makeMessageUsageEntry("assistant", makeUsage(input, output, cost, cacheRead, cacheWrite));
 }
 
-function makeMessageUsageEntry(role: string, usage: TestUsage | undefined) {
-	return { type: "message", message: { role, usage } };
+function makeMessageUsageEntry(role: string, usage: TestUsage | undefined, extra: Record<string, unknown> = {}) {
+	return { type: "message", message: { role, usage, ...extra } };
+}
+
+function makeReconcileEntry(provider: string, responseId: string, cost: number) {
+	return {
+		type: "custom",
+		customType: "cost-reconcile",
+		id: `reconcile-${provider}-${responseId}`,
+		data: { version: 1, provider, model: "test-model", responseId, cost, reconciledAt: 0 },
+	};
 }
 
 function makeSummaryUsageEntry(
@@ -112,6 +121,45 @@ describe("usage formatting", () => {
 		});
 		expect(buildTokenLabel(totals, cacheHitIcon)).toBe("↑2.0M ↓100k");
 		expect(buildCostLabel(totals)).toBe("$26.000");
+	});
+
+	it("prefers reconciled gateway cost over the rate-card estimate", () => {
+		const assistant = makeMessageUsageEntry("assistant", makeUsage(1_000, 500, 0.42), {
+			provider: "openrouter",
+			responseId: "gen-abc123",
+		});
+		const reconcile = makeReconcileEntry("openrouter", "gen-abc123", 0.0123);
+		const ctx = makeSessionContext([assistant, reconcile]);
+
+		const totals = getUsageTotals(ctx as never);
+
+		expect(totals.cost).toBe(0.0123);
+		expect(buildCostLabel(totals)).toBe("$0.012");
+	});
+
+	it("keeps the rate-card estimate when no reconcile entry exists", () => {
+		const assistant = makeMessageUsageEntry("assistant", makeUsage(1_000, 500, 0.42), {
+			provider: "openrouter",
+			responseId: "gen-abc123",
+		});
+		const ctx = makeSessionContext([assistant]);
+
+		const totals = getUsageTotals(ctx as never);
+
+		expect(totals.cost).toBe(0.42);
+	});
+
+	it("reconcile entries do not double-count when the estimate is zero", () => {
+		const assistant = makeMessageUsageEntry("assistant", makeUsage(1_000, 500, 0), {
+			provider: "openrouter",
+			responseId: "gen-abc123",
+		});
+		const reconcile = makeReconcileEntry("openrouter", "gen-abc123", 0.0123);
+		const ctx = makeSessionContext([assistant, reconcile]);
+
+		const totals = getUsageTotals(ctx as never);
+
+		expect(totals.cost).toBe(0.0123);
 	});
 
 	it("formats cache atoms independently and omits zero totals", () => {

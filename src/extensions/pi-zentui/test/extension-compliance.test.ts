@@ -2157,7 +2157,7 @@ describe("Pi docs compliance", () => {
 		const raw = new UserMessageComponent("hello").render(80).join("\n");
 		expect(raw).toMatch(/\[accent\]│|\u001b\[34m│\u001b\[0m/);
 		expect(raw).toMatch(/\[borderMuted\]────|\u001b\[90m────/);
-		expect(rendered).toContain("[userMessageText]");
+		expect(rendered).toContain("[accent]");
 		expect(rendered).toContain("[bold]");
 		expect(rendered).not.toContain("**zentui**");
 		expect(rendered).not.toContain("claude-sonnet");
@@ -2296,8 +2296,8 @@ describe("Pi docs compliance", () => {
 
 		expect(cachedRender).toBe(firstRender);
 		expect(invalidate).toHaveBeenCalledTimes(1);
-		expect(invalidatedRender).toContain("[second:userMessageText]hello");
-		expect(invalidatedRender).not.toContain("[first:userMessageText]hello");
+		expect(invalidatedRender).toContain("[second:accent]hello");
+		expect(invalidatedRender).not.toContain("[first:accent]hello");
 	});
 
 	it("renders selector borders from their independent canonical color source", () => {

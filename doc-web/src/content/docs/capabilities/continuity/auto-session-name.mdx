@@ -1,0 +1,56 @@
+---
+draft: false
+title: Auto session naming
+---
+
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+The `auto-session-name` extension names the session on every user message using the currently selected model. It sends only user-message history (no tool results, assistant replies, or thinking), caps the name at five words, and runs in the background so it never delays your message.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./auto-session-name.ts"
+  runtimeSurface="automatic"
+  locale="en"
+/>
+
+## Setup and prerequisites
+
+- Bundled with Selesai and loaded automatically; no separate install is required.
+- Uses the currently selected model and its existing API credentials; if no key is available, naming is skipped.
+- Works in interactive sessions; it names the session as user messages arrive.
+
+## What it sets up
+
+- Listens to the `input` event and ignores extension-sourced messages, slash commands, and empty text.
+- Collects the current user prompt plus up to 20 previous user messages (newest first, 200 characters each) as the only context.
+- Asks the model for a 1–5 word session name with a 10-token output cap, then applies it via `setSessionName`.
+- Disables thinking explicitly (`reasoning_effort: "none"`) so reasoning models do not burn the naming budget on internal reasoning.
+- Runs the naming call fire-and-forget in the background; the user message is sent immediately.
+
+## What you can configure
+
+<ExtensionCustomization slug="auto-session-name" locale="en" />
+
+There are no user-facing settings. The name length, context limits, and token cap are constants in the extension source.
+
+## What you can do
+
+- Keep session names current automatically as the conversation topic changes.
+- See the name update without running `/name` manually after each message.
+- Send messages without any added latency from the naming call.
+
+## Commands, tools, and shortcuts
+
+- None. The extension is fully automatic.
+- The equivalent manual command remains `/name`.
+
+## Limits and safety
+
+- Naming is best-effort; a failed or slow naming call never blocks or breaks the message flow.
+- Only the latest message's naming call may set the name; slower older responses are discarded.
+- The naming request contains user message text only. No tool results, assistant replies, or thinking content are sent.
+
+<SourceEvidence slug="auto-session-name" />

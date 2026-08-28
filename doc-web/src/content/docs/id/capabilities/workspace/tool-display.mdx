@@ -1,0 +1,57 @@
+---
+draft: false
+title: Tool display
+---
+
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+Ekstensi `pi-tool-display` menjaga panggilan tool tetap ringkas secara bawaan, menambahkan rendering diff yang lebih kaya untuk edit file, memotong output tool yang bertele-tele, dan memperbaiki detail UI chat inti seperti label thinking dan kotak prompt user native.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./pi-tool-display"
+  runtimeSurface="mixed"
+  locale="id"
+/>
+
+## Penyiapan dan prasyarat
+
+- Dibundel bersama Selesai dan dimuat otomatis; tidak perlu diinstal terpisah.
+- Membutuhkan sesi TUI interaktif; tidak berpengaruh dalam mode headless.
+- Template config awal dikirim di `config/config.example.json`; config runtime dibuat saat pertama kali digunakan.
+
+## Yang disiapkan
+
+- **Rendering tool** — output bergaya OpenCode yang ringkas untuk `read`, `grep`, `find`, `ls`, `bash`, `edit`, dan `write`, dengan panggilan tool ber-box ASCII secara bawaan.
+- **Visualisasi diff** — rendering lebih kaya untuk edit file dengan mode tampilan dan indikator yang dapat dikonfigurasi.
+- **Pemotongan output** — mode hidden/summary/preview per keluarga tool dengan batas baris.
+- **Kotak pesan user native** dan label thinking yang lebih baik.
+- Mendaftarkan perintah `/tool-display` untuk konfigurasi langsung dan preset.
+
+## Yang dapat dikonfigurasi
+
+<ExtensionCustomization slug="pi-tool-display" locale="id" />
+
+Jalankan `/tool-display` untuk menampilkan config efektif, menerapkan preset (`opencode`, `balanced`, `verbose`, `boxed`), atau reset ke bawaan. Opsi lanjutan ada di `config.json` di bawah direktori ekstensi agent.
+
+## Yang dapat dilakukan
+
+- Menjaga output tool tetap ringkas dengan `/tool-display preset opencode` atau gaya `boxed` bawaan.
+- Beralih ke `balanced` untuk ringkasan dengan jumlah baris, atau `verbose` untuk preview yang lebih besar.
+- Menyesuaikan mode output per tool, jumlah baris preview, dan rendering diff di `config.json`.
+
+## Perintah, tool, dan shortcut
+
+- `/tool-display show` — tampilkan ringkasan config efektif.
+- `/tool-display preset <opencode|balanced|verbose|boxed>` — terapkan preset rendering.
+- `/tool-display reset` — reset ke preset boxed bawaan.
+
+## Batasan dan keamanan
+
+- Hanya sesi TUI interaktif yang merender permukaan tool display.
+- Ekstensi mendaftarkan renderer tool-nya hanya jika tool belum dimiliki ekstensi lain, sehingga renderer yang ada tidak pernah dibuang.
+- Konfigurasi adalah satu file tingkat user; tidak ada lapisan proyek.
+
+<SourceEvidence slug="pi-tool-display" />

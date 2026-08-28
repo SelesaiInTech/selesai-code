@@ -29,6 +29,9 @@ const REQUIRED_HEADINGS_ID = [
 // relative MDX path under doc-web/src/content/docs/capabilities/ (and id/capabilities/).
 const BUNDLED_EXTENSION_GUIDES = {
   "./copy-turn.ts": "continuity/copy-turn",
+  "./auto-session-name.ts": "continuity/auto-session-name",
+  "./cost-reconcile.ts": "workspace/cost-reconcile",
+  "./pi-tool-display": "workspace/tool-display",
   "./context-compaction-reminder.ts": "continuity/context-reminder",
   "./pi-intercom/index.ts": "continuity/intercom",
   "./ponytail/index.js": "skills/ponytail",

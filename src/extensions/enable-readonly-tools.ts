@@ -13,8 +13,12 @@ export default function (pi: ExtensionAPI) {
 	pi.on("tool_execution_end", (event, ctx) => {
 		if (enabled || event.isError || !bootstrapTools.has(event.toolName)) return;
 		enabled = true;
-		pi.registerTool(createGrepToolDefinition(ctx.cwd));
-		pi.registerTool(createFindToolDefinition(ctx.cwd));
-		pi.registerTool(createLsToolDefinition(ctx.cwd));
+
+		// pi-tool-display may already own these renderer definitions. Re-registering
+		// Pi's plain built-ins here silently discarded its boxed grep/find/ls views.
+		const active = new Set(pi.getAllTools().map((tool) => tool.name));
+		if (!active.has("grep")) pi.registerTool(createGrepToolDefinition(ctx.cwd));
+		if (!active.has("find")) pi.registerTool(createFindToolDefinition(ctx.cwd));
+		if (!active.has("ls")) pi.registerTool(createLsToolDefinition(ctx.cwd));
 	});
 }

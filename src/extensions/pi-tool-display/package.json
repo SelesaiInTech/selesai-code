@@ -1,0 +1,86 @@
+{
+  "name": "pi-tool-display",
+  "version": "0.5.0",
+  "description": "Compact tool call rendering, diff visualization, and output truncation extension for Pi coding agent. Hides, collapses, and truncates verbose tool output for cleaner TUI display.",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./tool-display-api-consumer": {
+      "types": "./tool-display-api-consumer.d.ts",
+      "default": "./tool-display-api-consumer.js"
+    }
+  },
+  "files": [
+    "index.ts",
+    "tool-display-api-consumer.js",
+    "tool-display-api-consumer.d.ts",
+    "src",
+    "config/config.example.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "npm run typecheck",
+    "test": "tsx --test tests/*.test.ts",
+    "check": "npm run lint && npm run test",
+    "typecheck": "tsc -p tsconfig.json",
+    "postinstall": "node -e \"const fs=require('fs'),cp=require('child_process'),p=require('path');const cwd=process.cwd();const normalized=cwd.split(p.sep).join('/');if(!normalized.includes('/.pi/agent/extensions/'))process.exit(0);const s=p.resolve(cwd,'../../scripts/patch-vulnerable-deps.mjs');if(!fs.existsSync(s))process.exit(0);const r=cp.spawnSync(process.execPath,[s,'--target',cwd,'--quiet'],{stdio:'inherit'});process.exit(r.status||0)\""
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "pi-coding-agent",
+    "pi-tui",
+    "coding-agent",
+    "tui",
+    "tool-rendering",
+    "tool-output",
+    "diff-visualization",
+    "output-truncation",
+    "hide",
+    "collapse",
+    "truncate",
+    "compact",
+    "diff",
+    "output-mode"
+  ],
+  "author": "MasuRii",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MasuRii/pi-tool-display.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MasuRii/pi-tool-display/issues"
+  },
+  "homepage": "https://github.com/MasuRii/pi-tool-display#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.74.0 || ^0.75.0 || ^0.77.0 || ^0.78.0 || ^0.79.0 || ^0.80.0",
+    "@earendil-works/pi-tui": "^0.74.0 || ^0.75.0 || ^0.77.0 || ^0.78.0 || ^0.79.0 || ^0.80.0"
+  },
+  "overrides": {
+    "file-type": ">=21.3.1",
+    "protobufjs": "7.6.3",
+    "ws": "8.21.0"
+  },
+  "devDependencies": {
+    "tsx": "4.22.4",
+    "typescript": "6.0.3",
+    "@earendil-works/pi-coding-agent": "^0.80.3"
+  }
+}

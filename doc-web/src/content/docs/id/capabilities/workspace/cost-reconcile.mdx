@@ -1,0 +1,52 @@
+---
+draft: false
+title: Rekonsiliasi biaya
+---
+
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+Ekstensi `cost-reconcile` mencatat biaya tagihan nyata yang dilaporkan provider dalam payload responsnya sendiri, sehingga total biaya sesi sesuai dengan tagihan aktual, bukan estimasi rate card.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./cost-reconcile.ts"
+  runtimeSurface="automatic"
+  locale="id"
+/>
+
+## Penyiapan dan prasyarat
+
+- Dibundel bersama Selesai dan dimuat otomatis; tidak perlu diinstal terpisah.
+- Bekerja dengan gateway yang melaporkan biaya dalam respons: LiteLLM (header `x-litellm-response-cost`), OpenRouter (`usage.cost` / `total_cost`), dan `cost.total` berbentuk objek.
+- Provider yang payload-nya tidak memuat biaya (OpenAI/Anthropic first-party) tidak mencatat apa pun; estimasi rate card mereka cocok dengan tagihan saat harga katalog dikonfigurasi.
+
+## Yang disiapkan
+
+- Memasang `fetch` pembungkus tee sekali per proses yang memindai respons API LLM untuk biaya yang dilaporkan provider dan id respons.
+- Pada `message_end`, menulis entri sesi kustom `cost-reconcile` per id respons (dibatasi per sesi).
+- Footer zentui mengutamakan entri hasil rekonsiliasi daripada total rate card saat keduanya ada untuk id respons yang sama, dan menyegarkan sekali setelah settle agar rekonsiliasi yang terlambat ikut terbaca.
+
+## Yang dapat dikonfigurasi
+
+<ExtensionCustomization slug="cost-reconcile" locale="id" />
+
+Tidak ada pengaturan user. Batas penangkapan adalah konstanta di sumber ekstensi.
+
+## Yang dapat dilakukan
+
+- Melihat total biaya sesi yang sesuai dengan tagihan gateway sebenarnya.
+- Menjaga label biaya footer zentui akurat untuk gateway bergaya OpenRouter dan katalog kustom dengan harga bertanggal.
+
+## Perintah, tool, dan shortcut
+
+- Tidak ada. Ekstensi sepenuhnya otomatis.
+
+## Batasan dan keamanan
+
+- Penangkapan bersifat best-effort: body respons di-tee dan dipindai di latar belakang; aliran respons utama tidak pernah diubah.
+- Body dipindai hingga batas ukuran; kecocokan biaya terakhir dalam stream yang menang (usage tiba di chunk akhir).
+- Ekstensi tidak pernah membaca atau menyimpan isi pesan — hanya id respons, nama provider/model, dan angka biaya yang dilaporkan.
+
+<SourceEvidence slug="cost-reconcile" />
