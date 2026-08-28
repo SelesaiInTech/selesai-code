@@ -9,6 +9,7 @@ import {
 	markFirstRunComplete,
 	seedDefaultConfigFile,
 	seedDefaultExtensions,
+	seedDefaultThemes,
 	seedMissingSubagentSettings,
 	seedDefaultSkills,
 } from "../config.js";
@@ -191,5 +192,27 @@ describe("agent dir bootstrap", () => {
 
 		expect(seedDefaultExtensions(dir, join(bundled, "extensions"))).toEqual([]);
 		expect(readFileSync(join(dir, "extensions", "question.ts"), "utf-8")).toBe("export default 'user';");
+	});
+
+	it("removes older seeded themes only when identical to bundled files", () => {
+		mkdirSync(join(bundled, "themes"), { recursive: true });
+		mkdirSync(join(dir, "themes"), { recursive: true });
+		writeFileSync(join(bundled, "themes", "nord.json"), "{}");
+		writeFileSync(join(dir, "themes", "nord.json"), "{}");
+		writeFileSync(join(dir, "themes", "custom.json"), "{}");
+
+		expect(seedDefaultThemes(dir, join(bundled, "themes"))).toEqual([join(dir, "themes", "nord.json")]);
+		expect(existsSync(join(dir, "themes", "nord.json"))).toBe(false);
+		expect(existsSync(join(dir, "themes", "custom.json"))).toBe(true);
+	});
+
+	it("keeps user-edited themes that differ from bundled files", () => {
+		mkdirSync(join(bundled, "themes"), { recursive: true });
+		mkdirSync(join(dir, "themes"), { recursive: true });
+		writeFileSync(join(bundled, "themes", "nord.json"), "{}");
+		writeFileSync(join(dir, "themes", "nord.json"), "\"user\"");
+
+		expect(seedDefaultThemes(dir, join(bundled, "themes"))).toEqual([]);
+		expect(readFileSync(join(dir, "themes", "nord.json"), "utf-8")).toBe("\"user\"");
 	});
 });

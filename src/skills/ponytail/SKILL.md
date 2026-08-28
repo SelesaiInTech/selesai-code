@@ -1,5 +1,6 @@
 ---
 name: ponytail
+category: simplicity
 description: >
   Forces the laziest solution that actually works, simplest, shortest, most
   minimal. Channels a senior dev who has seen everything: question whether the

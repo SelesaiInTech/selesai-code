@@ -1,5 +1,6 @@
 ---
 name: workflow
+category: orchestration
 description: Adaptively orchestrate non-trivial implementation work with Selesai subagents. Use when the user asks to use a workflow, orchestrate a task, run an implementation/review/fix loop, or coordinate architecture, workers, and reviewers. Choose only the necessary stages; do not use static slash-command flows.
 ---
 

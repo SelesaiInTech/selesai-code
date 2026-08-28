@@ -1,6 +1,6 @@
 {
 	"name": "@selesai/code",
-	"version": "0.10.1",
+	"version": "0.10.2",
 	"description": "Maintained, extension-first Pi coding agent with built-in workflows, subagents, web research, questions, skills, and an enhanced terminal UI.",
 	"type": "module",
 	"repository": {

@@ -904,15 +904,17 @@ export function seedDefaultSkills(
 }
 
 /**
- * Seed bundled built-in themes into the user's agent dir/themes.
- * Skips existing files (user edits survive). Never overwrites.
- * Returns the list of destination paths that were written.
+ * Bundled themes load directly from the installed package via
+ * additionalThemePaths. Do not copy them into the user's agent dir, otherwise
+ * startup discovers both copies and every theme reports a name collision.
+ * Remove files copied by older releases only when they are byte-identical to
+ * bundled files, so user-edited themes survive.
  */
 export function seedDefaultThemes(
 	agentDir: string,
 	bundledThemesDir: string = getBundledThemesDir(),
 ): string[] {
-	return seedBundledDir(join(agentDir, "themes"), bundledThemesDir);
+	return removeIdenticalBundledFiles(join(agentDir, "themes"), bundledThemesDir);
 }
 
 /**

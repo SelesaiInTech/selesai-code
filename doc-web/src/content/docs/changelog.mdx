@@ -3,6 +3,13 @@ draft: false
 title: Changelog
 ---
 
+## 0.10.2 — Startup banner, skill categories, and theme loading fix
+
+- Added a startup brand banner in the interactive TUI: an ASCII logo followed by boxed listings of loaded skills (grouped by category) and active tools, dismissed automatically on the first user message.
+- Skills can now declare a `category` frontmatter field; the startup skills box labels each skill with its category (e.g. `[design] brandkit`).
+- Changed `quietStartup`: it no longer hides the brand banner — only the keybinding help and the loaded-resources listing. The logo always appears.
+- Fixed theme loading: bundled themes now load directly from the installed package instead of being copied into `~/.selesai/agent/themes`, eliminating duplicate-theme name collisions on startup. Stale copies left by older releases are removed only when byte-identical to the bundled files, so user-edited themes survive.
+
 ## 0.10.1 — Vision caption model picker fix
 
 - Fixed the "Vision caption model" picker in `/settings`: selecting a model (or `off`) now updates the displayed value and closes the submenu correctly. Previously the selection was saved to `settings.json` but the settings row kept showing the old model, so the change appeared to have no effect.

@@ -123,6 +123,7 @@ import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
+import { StartupBox } from "./components/startup-box.ts";
 import { EarendilAnnouncementComponent } from "./components/earendil-announcement.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
@@ -231,6 +232,16 @@ function isDeadTerminalError(error: unknown): boolean {
 
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
 	"Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage. Disable this warning in /settings.";
+
+const SELESAI_LOGO = [
+	" ____    ____    __       ____    ____    ______  ______",
+	"/\\  _`\\ /\\  _`\\ /\\ \\     /\\  _`\\ /\\  _`\\ /\\  _  \\/\\__  _\\",
+	"\\ \\,\\L\\_\\ \\ \\L\\_\\ \\ \\    \\ \\ \\L\\_\\ \\,\\L\\_\\ \\ \\L\\ \\/_/\\ \\/",
+	" \\/_\\__ \\\\ \\  _\\L\\ \\ \\  __\\ \\  _\\L\\/_\\__ \\\\ \\  __ \\ \\ \\ \\",
+	"   /\\ \\L\\ \\ \\ \\L\\ \\ \\ \\L\\ \\\\ \\ \\L\\ \\/\\ \\L\\ \\ \\ \\/\\ \\ \\_\\ \\__",
+	"   \\ `\\____\\ \\____/\\ \\____/ \\ \\____/\\ `\\____\\ \\_\\ \\_\\/\\_____\\",
+	"    \\/_____/\\/___/  \\/___/   \\/___/  \\/_____/\\/_/\\/_/\\/_____/",
+].join("\n");
 
 function isAnthropicSubscriptionAuthKey(apiKey: string | undefined): boolean {
 	return typeof apiKey === "string" && apiKey.startsWith("sk-ant-oat");
@@ -518,6 +529,9 @@ export class InteractiveMode {
 
 	// Built-in header (logo + keybinding hints + changelog)
 	private builtInHeader: Component | undefined = undefined;
+
+	// Startup banner (logo + loaded resources) dismisses on first user message
+	private startupBannerDismissed = false;
 
 	// Custom header from extension (undefined = use built-in header)
 	private customHeader: (Component & { dispose?(): void }) | undefined = undefined;
@@ -919,66 +933,45 @@ export class InteractiveMode {
 
 		await this.themeController.applyFromSettings();
 
-		// Add header with keybindings from config (unless silenced)
-		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
+		// Brand banner always appears; quiet startup only hides keybinding help.
+		const logo = `${theme.bold(theme.fg("accent", SELESAI_LOGO))}\n${theme.fg("dim", `  ${APP_NAME} v${this.version} · /help for commands`)}`;
 
-			// Build startup instructions using keybinding hint helpers
-			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
+		// Build startup instructions using keybinding hint helpers
+		const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
 
-			const expandedInstructions = [
-				hint("app.interrupt", "to interrupt"),
-				hint("app.clear", "to clear"),
-				rawKeyHint(`${keyText("app.clear")} twice`, "to exit"),
-				hint("app.exit", "to exit (empty)"),
-				hint("app.suspend", "to suspend"),
-				keyHint("tui.editor.deleteToLineEnd", "to delete to end"),
-				hint("app.thinking.cycle", "to cycle thinking level"),
-				rawKeyHint(`${keyText("app.model.cycleForward")}/${keyText("app.model.cycleBackward")}`, "to cycle models"),
-				hint("app.model.select", "to select model"),
-				hint("app.tools.expand", "to expand tools"),
-				hint("app.thinking.toggle", "to expand thinking"),
-				hint("app.editor.external", "for external editor"),
-				rawKeyHint("/", "for commands"),
-				rawKeyHint("!", "to run bash"),
-				rawKeyHint("!!", "to run bash (no context)"),
-				hint("app.message.followUp", "to queue follow-up"),
-				hint("app.message.dequeue", "to edit all queued messages"),
-				hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
-				rawKeyHint("drop files", "to attach"),
-			].join("\n");
-			const compactInstructions = [
-				hint("app.interrupt", "interrupt"),
-				rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
-				rawKeyHint("/", "commands"),
-				rawKeyHint("!", "bash"),
-				hint("app.tools.expand", "more"),
-			].join(theme.fg("muted", " · "));
-			const compactOnboarding = theme.fg(
-				"dim",
-				`Press ${keyText("app.tools.expand")} to show full startup help and loaded resources.`,
-			);
-			const onboarding = theme.fg(
-				"dim",
-				`Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`,
-			);
-			this.builtInHeader = new ExpandableText(
-				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,
-				() => `${logo}\n${expandedInstructions}\n\n${onboarding}`,
-				this.getStartupExpansionState(),
-				1,
-				0,
-			);
+		const expandedInstructions = [
+			hint("app.interrupt", "to interrupt"),
+			hint("app.clear", "to clear"),
+			rawKeyHint(`${keyText("app.clear")} twice`, "to exit"),
+			hint("app.exit", "to exit (empty)"),
+			hint("app.suspend", "to suspend"),
+			keyHint("tui.editor.deleteToLineEnd", "to delete to end"),
+			hint("app.thinking.cycle", "to cycle thinking level"),
+			rawKeyHint(`${keyText("app.model.cycleForward")}/${keyText("app.model.cycleBackward")}`, "to cycle models"),
+			hint("app.model.select", "to select model"),
+			hint("app.tools.expand", "to expand tools"),
+			hint("app.thinking.toggle", "to expand thinking"),
+			hint("app.editor.external", "for external editor"),
+			rawKeyHint("/", "for commands"),
+			rawKeyHint("!", "to run bash"),
+			rawKeyHint("!!", "to run bash (no context)"),
+			hint("app.message.followUp", "to queue follow-up"),
+			hint("app.message.dequeue", "to edit all queued messages"),
+			hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
+			rawKeyHint("drop files", "to attach"),
+		].join("\n");
+		this.builtInHeader = new ExpandableText(
+			() => logo,
+			() => `${logo}\n\n${expandedInstructions}`,
+			this.getStartupExpansionState(),
+			1,
+			0,
+		);
 
-			// Setup UI layout
-			this.headerContainer.addChild(new Spacer(1));
-			this.headerContainer.addChild(this.builtInHeader);
-			this.headerContainer.addChild(new Spacer(1));
-		} else {
-			// Minimal header when silenced
-			this.builtInHeader = new Text("", 0, 0);
-			this.headerContainer.addChild(this.builtInHeader);
-		}
+		// Setup UI layout
+		this.headerContainer.addChild(new Spacer(1));
+		this.headerContainer.addChild(this.builtInHeader);
+		this.headerContainer.addChild(new Spacer(1));
 		this.ui.requestRender();
 
 		// Ensure fd and rg are available after mounting the TUI (downloads if missing, adds to PATH via getBinDir)
@@ -1631,38 +1624,14 @@ export class InteractiveMode {
 		showDiagnosticsWhenQuiet?: boolean;
 	}): void {
 		// Resource rendering is idempotent; chat clears no longer clear this separate container.
+		if (this.startupBannerDismissed) return;
 		this.loadedResourcesContainer.clear();
 
-		const showListing = options?.force || this.options.verbose || !this.settingsManager.getQuietStartup();
+		const showListing = options?.force || !this.startupBannerDismissed || this.options.verbose || !this.settingsManager.getQuietStartup();
 		const showDiagnostics = showListing || options?.showDiagnosticsWhenQuiet === true;
 		if (!showListing && !showDiagnostics) {
 			return;
 		}
-
-		const sectionHeader = (name: string, color: ThemeColor = "mdHeading") => theme.fg(color, `[${name}]`);
-		const formatCompactList = (items: string[], options?: { sort?: boolean }): string => {
-			const labels = items.map((item) => item.trim()).filter((item) => item.length > 0);
-			if (options?.sort !== false) {
-				labels.sort((a, b) => a.localeCompare(b));
-			}
-			return theme.fg("dim", `  ${labels.join(", ")}`);
-		};
-		const addLoadedSection = (
-			name: string,
-			collapsedBody: string,
-			expandedBody = collapsedBody,
-			color: ThemeColor = "mdHeading",
-		): void => {
-			const section = new ExpandableText(
-				() => `${sectionHeader(name, color)}\n${collapsedBody}`,
-				() => `${sectionHeader(name, color)}\n${expandedBody}`,
-				this.getStartupExpansionState(),
-				0,
-				0,
-			);
-			this.loadedResourcesContainer.addChild(section);
-			this.loadedResourcesContainer.addChild(new Spacer(1));
-		};
 
 		const skillsResult = this.session.resourceLoader.getSkills();
 		const promptsResult = this.session.resourceLoader.getPrompts();
@@ -1699,89 +1668,18 @@ export class InteractiveMode {
 		}
 
 		if (showListing) {
-			const systemPromptSource = this.session.resourceLoader.getSystemPromptSource();
-			const contextFiles = [
-				...(systemPromptSource ? [systemPromptSource] : []),
-				...this.session.resourceLoader.getAppendSystemPromptSources(),
-				...this.session.resourceLoader.getAgentsFiles().agentsFiles,
-			];
-			if (contextFiles.length > 0) {
-				this.loadedResourcesContainer.addChild(new Spacer(1));
-				const contextList = contextFiles
-					.map((f) => theme.fg("dim", `  ${this.formatDisplayPath(f.path)}`))
-					.join("\n");
-				const contextCompactList = formatCompactList(
-					contextFiles.map((contextFile) => this.formatContextPath(contextFile.path)),
-					{ sort: false },
-				);
-				addLoadedSection("Context", contextCompactList, contextList);
-			}
-
 			const skills = skillsResult.skills;
 			if (skills.length > 0) {
-				const groups = this.buildScopeGroups(
-					skills.map((skill) => ({ path: skill.filePath, sourceInfo: skill.sourceInfo })),
+				const skillLabels = skills.map((skill) =>
+					skill.category ? `[${skill.category}] ${skill.name}` : skill.name,
 				);
-				const skillList = this.formatScopeGroups(groups, {
-					formatPath: (item) => this.formatDisplayPath(item.path),
-					formatPackagePath: (item) => this.getShortPath(item.path, item.sourceInfo),
-				});
-				const skillCompactList = formatCompactList(skills.map((skill) => skill.name));
-				addLoadedSection("Skills", skillCompactList, skillList);
+				this.loadedResourcesContainer.addChild(new StartupBox("Skills", skillLabels));
+				this.loadedResourcesContainer.addChild(new Spacer(1));
 			}
-
-			const templates = this.session.promptTemplates;
-			if (templates.length > 0) {
-				const groups = this.buildScopeGroups(
-					templates.map((template) => ({ path: template.filePath, sourceInfo: template.sourceInfo })),
-				);
-				const templateByPath = new Map(templates.map((t) => [t.filePath, t]));
-				const templateList = this.formatScopeGroups(groups, {
-					formatPath: (item) => {
-						const template = templateByPath.get(item.path);
-						return template ? `/${template.name}` : this.formatDisplayPath(item.path);
-					},
-					formatPackagePath: (item) => {
-						const template = templateByPath.get(item.path);
-						return template ? `/${template.name}` : this.formatDisplayPath(item.path);
-					},
-				});
-				const promptCompactList = formatCompactList(templates.map((template) => `/${template.name}`));
-				addLoadedSection("Prompts", promptCompactList, templateList);
-			}
-
-			if (extensions.length > 0) {
-				const groups = this.buildScopeGroups(extensions);
-				const extList = this.formatScopeGroups(groups, {
-					formatPath: (item) => this.formatExtensionDisplayPath(item.path),
-					formatPackagePath: (item) =>
-						this.formatExtensionDisplayPath(this.getShortPath(item.path, item.sourceInfo)),
-				});
-				const extensionCompactList = formatCompactList(this.getCompactExtensionLabels(extensions));
-				addLoadedSection("Extensions", extensionCompactList, extList, "mdHeading");
-			}
-
-			// Show loaded themes (excluding built-in)
-			const loadedThemes = themesResult.themes;
-			const customThemes = loadedThemes.filter((t) => t.sourcePath);
-			if (customThemes.length > 0) {
-				const groups = this.buildScopeGroups(
-					customThemes.map((loadedTheme) => ({
-						path: loadedTheme.sourcePath!,
-						sourceInfo: loadedTheme.sourceInfo,
-					})),
-				);
-				const themeList = this.formatScopeGroups(groups, {
-					formatPath: (item) => this.formatDisplayPath(item.path),
-					formatPackagePath: (item) => this.getShortPath(item.path, item.sourceInfo),
-				});
-				const themeCompactList = formatCompactList(
-					customThemes.map(
-						(loadedTheme) =>
-							loadedTheme.name ?? this.getCompactPathLabel(loadedTheme.sourcePath!, loadedTheme.sourceInfo),
-					),
-				);
-				addLoadedSection("Themes", themeCompactList, themeList);
+			const tools = this.session.getActiveToolNames();
+			if (tools.length > 0) {
+				this.loadedResourcesContainer.addChild(new StartupBox("Tools", tools));
+				this.loadedResourcesContainer.addChild(new Spacer(1));
 			}
 		}
 
@@ -1836,6 +1734,15 @@ export class InteractiveMode {
 				this.loadedResourcesContainer.addChild(new Spacer(1));
 			}
 		}
+	}
+
+	/** Dismiss the startup banner (logo + loaded resources) on first user message. */
+	private dismissStartupBanner(): void {
+		if (this.startupBannerDismissed) return;
+		this.startupBannerDismissed = true;
+		this.headerContainer.clear();
+		this.loadedResourcesContainer.clear();
+		this.ui.requestRender();
 	}
 
 	/**
@@ -3084,6 +2991,7 @@ export class InteractiveMode {
 						this.editor.setText(text);
 						return;
 					}
+					this.dismissStartupBanner();
 					this.editor.addToHistory?.(text);
 					await this.handleBashCommand(command, isExcluded);
 					this.isBashMode = false;
@@ -3095,10 +3003,12 @@ export class InteractiveMode {
 			// Queue input during compaction (extension commands execute immediately)
 			if (this.session.isCompacting) {
 				if (this.isExtensionCommand(text)) {
+					this.dismissStartupBanner();
 					this.editor.addToHistory?.(text);
 					this.editor.setText("");
 					await this.session.prompt(text, { images });
 				} else {
+					this.dismissStartupBanner();
 					this.queueCompactionMessage(text, "steer", images);
 				}
 				return;
@@ -3107,6 +3017,7 @@ export class InteractiveMode {
 			// If streaming, use prompt() with steer behavior
 			// This handles extension commands (execute immediately), prompt template expansion, and queueing
 			if (this.session.isStreaming) {
+				this.dismissStartupBanner();
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
 				await this.session.prompt(text, { streamingBehavior: "steer", images });
@@ -3118,6 +3029,7 @@ export class InteractiveMode {
 			// Normal message submission
 			// First, move any pending bash components to chat
 			this.flushPendingBashComponents();
+			this.dismissStartupBanner();
 
 			const input = { text, images };
 			if (this.onInputCallback) {
@@ -3801,6 +3713,11 @@ export class InteractiveMode {
 		if (compactionCount > 0) {
 			const times = compactionCount === 1 ? "1 time" : `${compactionCount} times`;
 			this.showStatus(`Session compacted ${times}`);
+		}
+
+		// Resume: jump to the end of the transcript
+		if (entries.length > 0) {
+			this.transcriptScrollView?.scrollToEnd();
 		}
 	}
 

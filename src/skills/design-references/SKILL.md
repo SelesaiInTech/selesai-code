@@ -1,5 +1,6 @@
 ---
 name: design-references
+category: design
 description: Design-reference lookup from VoltAgent's Awesome DESIGN.md collection. Use when the user asks for design references or inspiration, or wants a page/product to feel like a known site or brand (Linear, Stripe, Apple, etc.).
 license: MIT
 ---

@@ -1,5 +1,6 @@
 ---
 name: pi-subagents
+category: orchestration
 description: |
   Delegate work to builtin or custom subagents with single-agent, parallel,
   scripted-chaining, async, forked-context, and coordinated workflows. Use

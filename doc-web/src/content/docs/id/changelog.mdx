@@ -3,6 +3,13 @@ draft: false
 title: Changelog
 ---
 
+## 0.10.2 — Banner startup, kategori skill, dan perbaikan pemuatan tema
+
+- Menambahkan banner startup di TUI interaktif: logo ASCII diikuti daftar skill yang dimuat (dikelompokkan per kategori) dan tool aktif dalam kotak, otomatis menghilang pada pesan user pertama.
+- Skill kini dapat mendeklarasikan field frontmatter `category`; kotak skill startup menampilkan label kategori setiap skill (mis. `[design] brandkit`).
+- Mengubah `quietStartup`: tidak lagi menyembunyikan banner startup — hanya bantuan keybinding dan daftar resource yang dimuat. Logo selalu tampil.
+- Memperbaiki pemuatan tema: tema bawaan kini dimuat langsung dari paket terinstal alih-alih disalin ke `~/.selesai/agent/themes`, menghilangkan tabrakan nama tema duplikat saat startup. Salinan lama dari rilis sebelumnya dihapus hanya jika identik byte dengan file bawaan, sehingga tema yang sudah diedit user tetap aman.
+
 ## 0.10.1 — Perbaikan pemilih model caption vision
 
 - Memperbaiki pemilih "Vision caption model" di `/settings`: memilih model (atau `off`) kini memperbarui nilai yang ditampilkan dan menutup submenu dengan benar. Sebelumnya pilihan tersimpan ke `settings.json` tetapi baris pengaturan tetap menampilkan model lama, sehingga perubahan tampak tidak berpengaruh.

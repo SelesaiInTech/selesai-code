@@ -1,5 +1,6 @@
 ---
 name: ponytail-help
+category: simplicity
 description: >
   Quick-reference card for all ponytail modes, skills, and commands.
   One-shot display, not a persistent mode. Trigger: /ponytail-help,

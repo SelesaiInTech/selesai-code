@@ -1,5 +1,6 @@
 ---
 name: improve-codebase
+category: planning
 description: improve codebase quality
 disable-model-invocation: true
 ---

@@ -1,5 +1,6 @@
 ---
 name: ponytail-debt
+category: simplicity
 description: >
   Harvest every `ponytail:` comment in the codebase into a debt ledger, so the
   deliberate shortcuts and deferrals ponytail leaves behind get tracked instead

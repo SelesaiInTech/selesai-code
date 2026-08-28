@@ -2,6 +2,16 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.10.2] - 2026-08-28
+
+### Added
+- **Startup brand banner.** The interactive TUI now shows an ASCII logo banner on startup, followed by boxed listings of loaded skills (grouped by category) and active tools. The banner dismisses automatically on the first user message.
+- **Skill categories.** Skills can declare a `category` frontmatter field; the startup skills box labels each skill with its category (e.g. `[design] brandkit`).
+
+### Changed
+- **`quietStartup` no longer hides the brand banner.** It now only suppresses the keybinding help and the loaded-resources listing; the logo banner always appears and is dismissed on the first user message.
+- **Theme seeding.** Bundled themes now load directly from the installed package instead of being copied into `~/.selesai/agent/themes`. Copies left by older releases are removed at startup only when they are byte-identical to the bundled files, so user-edited themes survive. This also fixes the duplicate-theme name collisions on startup.
+
 ## [0.10.1] - 2026-08-28
 
 ### Fixed

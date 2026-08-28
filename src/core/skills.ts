@@ -67,6 +67,7 @@ function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string): void {
 export interface SkillFrontmatter {
 	name?: string;
 	description?: string;
+	category?: string;
 	"disable-model-invocation"?: boolean;
 	[key: string]: unknown;
 }
@@ -74,6 +75,7 @@ export interface SkillFrontmatter {
 export interface Skill {
 	name: string;
 	description: string;
+	category?: string;
 	filePath: string;
 	baseDir: string;
 	sourceInfo: SourceInfo;
@@ -310,6 +312,7 @@ function loadSkillFromFile(
 			skill: {
 				name,
 				description: frontmatter.description,
+				category: frontmatter.category?.trim() || undefined,
 				filePath,
 				baseDir: skillDir,
 				sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
