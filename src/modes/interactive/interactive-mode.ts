@@ -4470,7 +4470,7 @@ export class InteractiveMode {
 							this.session.scopedModels,
 							(model) => {
 								this.settingsManager.setImageCaptionModel(model ? `${model.provider}/${model.id}` : undefined);
-								selectorDone();
+								selectorDone(model ? `${model.provider}/${model.id}` : "off");
 								this.showStatus(model ? `Vision caption model: ${model.provider}/${model.id}` : "Vision captioning disabled");
 							},
 							selectorDone,

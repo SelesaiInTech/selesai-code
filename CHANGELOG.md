@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.10.1] - 2026-08-28
+
+### Fixed
+- **Vision caption model picker in `/settings`.** Selecting a model (or `off`) in the "Vision caption model" submenu now updates the displayed value and closes the submenu correctly. Previously the selection was saved to `settings.json` but the settings row kept showing the old model, making the change appear to have no effect.
+
 ## [0.10.0] - 2026-08-27
 
 ### Added

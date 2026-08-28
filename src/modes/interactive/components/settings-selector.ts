@@ -70,7 +70,7 @@ export interface SettingsConfig {
 	imageCaptionModel: string | undefined;
 	imageCaptionContextTokens: number;
 	visionModels: string[];
-	visionModelSelector?: (currentValue: string, done: () => void) => ModelSelectorComponent;
+	visionModelSelector?: (currentValue: string, done: (selectedValue?: string) => void) => ModelSelectorComponent;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
 	transport: Transport;

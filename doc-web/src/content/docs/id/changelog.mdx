@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.10.1 — Perbaikan pemilih model caption vision
+
+- Memperbaiki pemilih "Vision caption model" di `/settings`: memilih model (atau `off`) kini memperbarui nilai yang ditampilkan dan menutup submenu dengan benar. Sebelumnya pilihan tersimpan ke `settings.json` tetapi baris pengaturan tetap menampilkan model lama, sehingga perubahan tampak tidak berpengaruh.
+
 ## 0.10.0 — Zentui TUI, pelacak TPS, dan default baru
 
 - Menambahkan ekstensi bawaan `pi-zentui`: statusline terinspirasi Starship, permukaan editor dan pesan user bergaya Opencode, pengambilalihan working line, dan opsi footer nol-baris tersembunyi. Editor, pesan user, working line, dan border selector memiliki field `enabled` independen; footer menggunakan satu `style` (`native`, `starship`, atau `hidden`). Konfigurasi langsung dengan `/zentui`, disimpan ke `~/.selesai/agent/zentui.json`.

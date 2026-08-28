@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.10.1 — Vision caption model picker fix
+
+- Fixed the "Vision caption model" picker in `/settings`: selecting a model (or `off`) now updates the displayed value and closes the submenu correctly. Previously the selection was saved to `settings.json` but the settings row kept showing the old model, so the change appeared to have no effect.
+
 ## 0.10.0 — Zentui TUI, TPS tracker, and new defaults
 
 - Added the bundled `pi-zentui` extension: a Starship-inspired statusline, Opencode-style editor and user-message surfaces, working-line takeover, and a hidden zero-row footer option. Editor, user messages, working line, and selector borders have independent `enabled` fields; the footer uses one `style` (`native`, `starship`, or `hidden`). Configure live with `/zentui`, persisted to `~/.selesai/agent/zentui.json`.
