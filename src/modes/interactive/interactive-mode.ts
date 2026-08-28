@@ -240,8 +240,23 @@ const SELESAI_LOGO = [
 	" \\/_\\__ \\\\ \\  _\\L\\ \\ \\  __\\ \\  _\\L\\/_\\__ \\\\ \\  __ \\ \\ \\ \\",
 	"   /\\ \\L\\ \\ \\ \\L\\ \\ \\ \\L\\ \\\\ \\ \\L\\ \\/\\ \\L\\ \\ \\ \\/\\ \\ \\_\\ \\__",
 	"   \\ `\\____\\ \\____/\\ \\____/ \\ \\____/\\ `\\____\\ \\_\\ \\_\\/\\_____\\",
-	"    \\/_____/\\/___/  \\/___/   \\/___/  \\/_____/\\/_/\\/_/\\/_____/",
-].join("\n");
+	"    \\/_____/\\/___/  \\/___/   \\/___/  \\/_____/\\/_\\/\\/_\\/\\/_____\\",
+];
+
+// Vertical gradient across logo lines: top #ff6b2c → bottom #fb923c.
+function gradientLogo(lines: string[], from: string, to: string): string {
+	const a = [0xff, 0x6b, 0x2c];
+	const b = [0xfb, 0x92, 0x3c];
+	return lines
+		.map((line, i) => {
+			const t = lines.length === 1 ? 0 : i / (lines.length - 1);
+			const r = Math.round(a[0] + (b[0] - a[0]) * t);
+			const g = Math.round(a[1] + (b[1] - a[1]) * t);
+			const bl = Math.round(a[2] + (b[2] - a[2]) * t);
+			return chalk.hex(`#${((r << 16) | (g << 8) | bl).toString(16).padStart(6, "0")}`).bold(line);
+		})
+		.join("\n");
+}
 
 function isAnthropicSubscriptionAuthKey(apiKey: string | undefined): boolean {
 	return typeof apiKey === "string" && apiKey.startsWith("sk-ant-oat");
@@ -934,7 +949,7 @@ export class InteractiveMode {
 		await this.themeController.applyFromSettings();
 
 		// Brand banner always appears; quiet startup only hides keybinding help.
-		const logo = `${theme.bold(theme.fg("accent", SELESAI_LOGO))}\n${theme.fg("dim", `  ${APP_NAME} v${this.version} · /help for commands`)}`;
+		const logo = `${gradientLogo(SELESAI_LOGO, "#ff6b2c", "#fb923c")}\n${theme.fg("dim", `  ${APP_NAME} v${this.version} · /help for commands`)}`;
 
 		// Build startup instructions using keybinding hint helpers
 		const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
