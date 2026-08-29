@@ -24,7 +24,10 @@
             "high": "high",
             "xhigh": null,
             "max": "max"
-          }
+          },
+          "compat": {
+            "requiresReasoningContentOnAssistantMessages": true
+            }
         },
         {
           "id": "celestial-max",
@@ -40,7 +43,10 @@
             "high": "high",
             "xhigh": null,
             "max": "max"
-          }
+          },
+          "compat": {
+            "requiresReasoningContentOnAssistantMessages": true
+            }
         },
         {
           "id": "celestial-ultra",
@@ -56,7 +62,10 @@
             "high": "high",
             "xhigh": null,
             "max": "max"
-          }
+          },
+          "compat": {
+            "requiresReasoningContentOnAssistantMessages": true
+            }
         },
         {
           "id": "deepseek-v4-flash",
@@ -72,7 +81,10 @@
             "high": "high",
             "xhigh": null,
             "max": "max"
-          }
+          },
+          "compat": {
+            "requiresReasoningContentOnAssistantMessages": true
+            }
         },
         {
           "id": "deepseek-v4-flash-vision-exp",
@@ -88,7 +100,10 @@
             "high": "high",
             "xhigh": null,
             "max": "max"
-          }
+          },
+          "compat": {
+            "requiresReasoningContentOnAssistantMessages": true
+            }
         },
         {
           "id": "deepseek-v4-pro",
@@ -104,7 +119,10 @@
             "high": "high",
             "xhigh": null,
             "max": "max"
-          }
+          },
+          "compat": {
+            "requiresReasoningContentOnAssistantMessages": true
+            }
         },
         {
           "id": "gpt-5.6-luna",
@@ -200,7 +218,10 @@
           "reasoning": false,
           "input": ["text", "image"],
           "contextWindow": 256000,
-          "maxTokens": 64000
+          "maxTokens": 64000,
+          "compat": {
+            "thinkingFormat": "qwen"
+          }
         },
         {
           "id": "gemini-3.7-flash",
@@ -219,7 +240,8 @@
           "maxTokens": 8192,
           "compat": {
             "supportsDeveloperRole": false,
-            "supportsReasoningEffort": false
+            "supportsReasoningEffort": false,
+            "thinkingFormat": "qwen"
           }
         },
         {
@@ -231,7 +253,8 @@
           "maxTokens": 8192,
           "compat": {
             "supportsDeveloperRole": false,
-            "supportsReasoningEffort": false
+            "supportsReasoningEffort": false,
+            "thinkingFormat": "qwen"
           }
         }
       ]

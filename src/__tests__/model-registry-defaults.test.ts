@@ -33,6 +33,16 @@ describe("model registry bundled defaults", () => {
 		expect(gemma?.input).toContain("image");
 	});
 
+	it("marks DeepSeek-backed bundled models with reasoning-content compat", async () => {
+		const registry = new ModelRegistry(
+			await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: join(dir, "models.json") }),
+		);
+		for (const id of ["celestial-pro", "celestial-max", "celestial-ultra", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"]) {
+			const model = registry.find("tokenin", id);
+			expect(model?.compat?.requiresReasoningContentOnAssistantMessages, id).toBe(true);
+		}
+	});
+
 	it("keeps bundled model list when user models.json only stores apiKey", async () => {
 		writeFileSync(join(dir, "models.json"), JSON.stringify({ providers: { tokenin: { apiKey: "sk-user" } } }));
 
