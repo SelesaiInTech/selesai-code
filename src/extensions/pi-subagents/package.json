@@ -1,6 +1,6 @@
 {
   "name": "pi-subagents",
-  "version": "0.56.0",
+  "version": "0.59.0",
   "description": "Selesai extension for single-agent delegation and scripted multi-agent workflows",
   "author": "Nico Bailon",
   "license": "MIT",
@@ -100,7 +100,9 @@
     "@earendil-works/pi-agent-core": "0.81.0",
     "@earendil-works/pi-ai": "0.81.0",
     "@earendil-works/pi-tui": "0.81.0",
+    "@oxlint/plugins": "1.80.0",
     "@types/node": "24.13.3",
+    "oxlint": "1.80.0",
     "typescript": "5.9.3",
     "@selesai/code": "file:./test/fixtures/pi-coding-agent-shim"
   }

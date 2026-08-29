@@ -256,7 +256,7 @@ test("enabled tabs use a worktree sequence and successful Pi sessions get cleanu
 	assert.doesNotMatch(viewer, /(?:&|;)\s*exit(?:\s|$)/);
 
 	const progressDir = path.join(TEMP_ROOT_DIR, "orca-progress");
-	const manifestDir = path.join(dir, ".selesai", "subagents", "views", "orca");
+	const manifestDir = path.join(dir, ".pi-subagents", "views", "orca");
 	const manifestName = fs.readdirSync(manifestDir).find((name) => name.startsWith(`${runId}-2-`) && name.endsWith(".json"));
 	assert.ok(manifestName);
 	const manifest = await readManifestWithState(path.join(manifestDir, manifestName), "open");
@@ -272,7 +272,7 @@ test("enabled tabs use a worktree sequence and successful Pi sessions get cleanu
 	assert.match(text, /done output/);
 	const quotedSessionFile = `'${fs.realpathSync(sessionFile).replace(/'/g, `'"'"'`)}'`;
 	assert.ok(text.includes(`completed. To remove the Pi session for this run, run rm -- ${quotedSessionFile}`));
-	assert.doesNotMatch(text, /find ~\/\.pi\/agent\/sessions/);
+	assert.doesNotMatch(text, /find ~\/\.selesai[\\/]agent\/sessions/);
 
 	const nestedCwd = path.join(dir, "packages", "app");
 	fs.mkdirSync(nestedCwd, { recursive: true });

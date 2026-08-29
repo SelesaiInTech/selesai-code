@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
-import { cleanupResultIndexes, removeResultIndex, resultCandidateFilesForSession, resultFilesForSession, resultFilesForToolCall, resultPayloadPathForIndexedRun, resultPayloadPathForSessionRun, writeAsyncResultFile, writePendingAsyncResultFile, writeResultIndexForData } from "../../src/runs/background/result-files.ts";
+import { cleanupResultIndexes, removeResultIndex, resultCandidateFilesForSession, resultFilesForSession, resultFilesForToolCall, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, writeAsyncResultFile, writePendingAsyncResultFile, writeResultIndexForData } from "../../src/runs/background/result-files.ts";
 
 const JSON_EXTENSION = ".json";
 const MAX_JSON_FILE_STEM_BYTES = MAX_INDEX_SEGMENT_BYTES - Buffer.byteLength(JSON_EXTENSION, "utf-8");
@@ -175,6 +175,22 @@ describe("result file indexes", () => {
 		}
 	});
 
+	it("treats a missing mission observer index directory as absent without logging", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-observer-enotdir-"));
+		const originalError = console.error;
+		const errors: unknown[][] = [];
+		try {
+			fs.writeFileSync(path.join(resultsDir, "result-index"), "not a directory", "utf-8");
+			console.error = (...args: unknown[]) => { errors.push(args); };
+
+			assert.equal(resultPayloadPathForMissionObserverRun(resultsDir, "mission-run"), undefined);
+			assert.deepEqual(errors, []);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("does not commit a result payload without a session id", () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-no-session-"));
 		try {
@@ -293,7 +309,7 @@ describe("result file indexes", () => {
 	it("round-trips results for Windows session file paths", () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-win-session-"));
 		try {
-			const sessionId = String.raw`C:\Users\theap\.pi\agent\sessions\leaf.jsonl`;
+			const sessionId = String.raw`C:\Users\theap\.selesai\agent\sessions\leaf.jsonl`;
 			const runId = "win-session-run";
 			const resultPath = path.join(resultsDir, `${runId}.json`);
 			writeAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
@@ -308,10 +324,92 @@ describe("result file indexes", () => {
 		}
 	});
 
+	it("treats an unaddressable legacy session alias as absent and keeps canonical fallback candidates", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-legacy-enametoolong-"));
+		const sessionId = String.raw`C:\Users\theap\.selesai\agent\sessions\leaf.jsonl`;
+		const runId = "legacy-alias-fallback";
+		const resultPath = path.join(resultsDir, `${runId}.json`);
+		const legacyDir = path.join(resultsDir, "result-index", "sessions", encodeURIComponent(sessionId));
+		const originalReadFileSync = fsDefault.readFileSync;
+		const originalReaddirSync = fsDefault.readdirSync;
+		const originalError = console.error;
+		const errors: unknown[][] = [];
+		try {
+			writeAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+			const canonicalDir = path.join(resultsDir, "result-index", "sessions", encodeIndexSegment(sessionId));
+			const [canonicalIndexFile] = fs.readdirSync(canonicalDir);
+			assert.ok(canonicalIndexFile);
+			const canonicalPendingPath = pendingPath(resultsDir, sessionId, runId);
+			fs.mkdirSync(path.dirname(canonicalPendingPath), { recursive: true });
+			fs.copyFileSync(resultPath, canonicalPendingPath);
+
+			const nameTooLong = new Error("legacy alias is too long") as NodeJS.ErrnoException;
+			nameTooLong.code = "ENAMETOOLONG";
+			fsDefault.readFileSync = ((filePath: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+				if (String(filePath).startsWith(legacyDir)) throw nameTooLong;
+				return (originalReadFileSync as (...input: unknown[]) => unknown)(filePath, ...args);
+			}) as typeof fsDefault.readFileSync;
+			fsDefault.readdirSync = ((dirPath: fs.PathLike, ...args: unknown[]) => {
+				if (String(dirPath) === legacyDir) throw nameTooLong;
+				return (originalReaddirSync as (...input: unknown[]) => unknown)(dirPath, ...args);
+			}) as typeof fsDefault.readdirSync;
+			console.error = (...args: unknown[]) => { errors.push(args); };
+			syncBuiltinESMExports();
+
+			assert.deepEqual(resultCandidateFilesForSession(resultsDir, sessionId), [`${runId}.json`]);
+			fs.copyFileSync(resultPath, canonicalPendingPath);
+			fs.rmSync(path.join(canonicalDir, canonicalIndexFile));
+			assert.equal(resultPayloadPathForSessionRun(resultsDir, sessionId, runId), canonicalPendingPath);
+			assert.deepEqual(errors, []);
+		} finally {
+			fsDefault.readFileSync = originalReadFileSync;
+			fsDefault.readdirSync = originalReaddirSync;
+			console.error = originalError;
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("leaves an unaddressable legacy index untouched during cleanup", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-cleanup-enametoolong-"));
+		const sessionId = String.raw`C:\Users\theap\.selesai\agent\sessions\leaf.jsonl`;
+		const runId = "legacy-cleanup";
+		const originalStatSync = fsDefault.statSync;
+		const originalError = console.error;
+		const errors: unknown[][] = [];
+		try {
+			writeAsyncResultFile(path.join(resultsDir, `${runId}.json`), { id: runId, runId, sessionId, success: true });
+			const canonicalDir = path.join(resultsDir, "result-index", "sessions", encodeIndexSegment(sessionId));
+			const legacyDir = path.join(resultsDir, "result-index", "sessions", encodeURIComponent(sessionId));
+			fs.renameSync(canonicalDir, legacyDir);
+			const [legacyIndexFile] = fs.readdirSync(legacyDir);
+			assert.ok(legacyIndexFile);
+			const legacyIndexPath = path.join(legacyDir, legacyIndexFile);
+			const nameTooLong = new Error("legacy alias is too long") as NodeJS.ErrnoException;
+			nameTooLong.code = "ENAMETOOLONG";
+			t.mock.method(fsDefault, "statSync", ((filePath: fs.PathLike) => {
+				if (String(filePath) === legacyIndexPath) throw nameTooLong;
+				return originalStatSync(filePath);
+			}) as typeof fsDefault.statSync);
+			console.error = (...args: unknown[]) => { errors.push(args); };
+			syncBuiltinESMExports();
+
+			assert.equal(cleanupResultIndexes(resultsDir, Date.now() + 86_400_001, 86_400_000), 0);
+			assert.equal(fs.existsSync(legacyIndexPath), true);
+			assert.deepEqual(errors, []);
+		} finally {
+			console.error = originalError;
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("reads a pre-hash URI-encoded session index after the encoding change", () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-legacy-session-"));
 		try {
-			const sessionId = String.raw`C:\Users\theap\.pi\agent\sessions\leaf.jsonl`;
+			const sessionId = String.raw`C:\Users\theap\.selesai\agent\sessions\leaf.jsonl`;
 			const runId = "legacy-session-run";
 			const resultPath = path.join(resultsDir, `${runId}.json`);
 			writeAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });

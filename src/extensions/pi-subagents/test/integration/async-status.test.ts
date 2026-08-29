@@ -37,7 +37,7 @@ describe("async status helpers", () => {
 				outputFile,
 				steps: [
 					{ agent: "scout", status: "complete", durationMs: 10, description: "Inspect auth only" },
-					{ agent: "worker", status: "running", durationMs: 20, description: "Patch billing only" },
+					{ agent: "worker", status: "running", durationMs: 20, description: "Patch billing only", contextLimit: 128_000, toolBudgetBlocked: true, watchdog: { phase: "stale", seq: 2, lastUpdate: 200, followUpPending: false } },
 				],
 			});
 			const descriptor = createRunFanoutBudget("run-a", 64);
@@ -62,12 +62,159 @@ describe("async status helpers", () => {
 			assert.equal(runs[0]?.steps[1]?.status, "running");
 			assert.equal(runs[0]?.steps[0]?.description, "Inspect auth only");
 			assert.equal(runs[0]?.steps[1]?.description, "Patch billing only");
+			assert.equal(runs[0]?.steps[1]?.contextLimit, 128_000);
+			assert.equal(runs[0]?.steps[1]?.toolBudgetBlocked, true);
+			assert.equal(runs[0]?.steps[1]?.watchdog?.phase, "stale");
 			const text = formatAsyncRunList(runs);
 			assert.match(text, /Run fan-out: 3\/64 used, 61 remaining/);
 			assert.match(text, /output: .*output-1\.log/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 			if (budgetDirectory) fs.rmSync(budgetDirectory, { recursive: true, force: true });
+		}
+	});
+	it("loads typed host monitor nodes from workflow status without child identity", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-host-step-"));
+		try {
+			createAsyncDir(root, "workflow-host", {
+				runId: "workflow-host",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{ agent: "reviewer", workflowKey: "review", runId: "child-review", status: "running" }],
+				workflowGraph: {
+					runId: "workflow-host",
+					mode: "workflow",
+					phases: [],
+					nodes: [{
+						id: "ci-check",
+						kind: "host-step",
+						label: "CI",
+						status: "completed",
+						hostStep: {
+							version: 1,
+							kind: "host-step",
+							monitorKind: "ci",
+							id: "ci-check",
+							label: "CI",
+							provider: "local-tests",
+							state: "running",
+							detail: "waiting for checks",
+							updatedAt: 150,
+						},
+					}],
+				},
+			});
+
+			const runs = listAsyncRuns(root, { states: ["running"], reconcile: false });
+			assert.equal(runs[0]?.hostSteps?.[0]?.kind, "host-step");
+			assert.equal(runs[0]?.steps[0]?.workflowKey, "review");
+			assert.match(formatAsyncRunList(runs), /host ci: CI \| running \| provider:local-tests \| waiting for checks/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("fails closed when a persisted host monitor node is malformed", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-host-step-invalid-"));
+		try {
+			createAsyncDir(root, "workflow-host-invalid", {
+				runId: "workflow-host-invalid",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				workflowGraph: {
+					runId: "workflow-host-invalid",
+					mode: "workflow",
+					phases: [],
+					nodes: [{ id: "bad", kind: "host-step", label: "bad", status: "running" }],
+				},
+			});
+			assert.throws(() => listAsyncRuns(root, { states: ["running"], reconcile: false }), /host step.*expected an object/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+	it("projects bounded lane and display-only worktree metadata from status", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-lane-"));
+		try {
+			createAsyncDir(root, "run-lane", {
+				runId: "run-lane",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{
+					agent: "worker",
+					workflowKey: "writer",
+					lane: { version: 1, key: "writer", mode: "mutation", sourceRef: "owner/repo#1621" },
+					worktreePath: "/tmp/worktrees/run-lane-0",
+					branch: "pi-subagent/run-lane-0",
+					status: "running",
+				}],
+			});
+			const run = listAsyncRuns(root, { states: ["running"] })[0]!;
+			assert.deepEqual(run.steps[0]?.lane, { version: 1, key: "writer", mode: "mutation", sourceRef: "owner/repo#1621" });
+			assert.equal(run.steps[0]?.worktreePath, "/tmp/worktrees/run-lane-0");
+			assert.equal(run.steps[0]?.branch, "pi-subagent/run-lane-0");
+			assert.match(formatAsyncRunList([run]), /lane writer/);
+			assert.match(formatAsyncRunList([run]), /worktree .*run-lane-0 .*branch pi-subagent\/run-lane-0/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects malformed or mismatched lane identity in status", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-lane-invalid-"));
+		try {
+			const runDir = createAsyncDir(root, "run-lane-invalid", {
+				runId: "run-lane-invalid",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", workflowKey: "writer", lane: { version: 1, key: "other" }, status: "running" }],
+			});
+			assert.throws(() => listAsyncRuns(root, { states: ["running"] }), /does not match workflow key/);
+			assert.equal(fs.existsSync(path.join(runDir, "status.json")), true);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("renders persisted preflight mismatch warnings in async status lists", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-preflight-"));
+		try {
+			createAsyncDir(root, "run-preflight", {
+				runId: "run-preflight",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				preflight: {
+					version: 1,
+					coverage: "complete",
+					lanes: [{ key: "writer", mode: "mutation" }],
+				},
+				workflow: {
+					trace: [],
+					emits: [],
+					console: [],
+					preflightWarnings: ["Preflight advisory: workflow key 'review' launched without a declared lane."],
+				},
+			});
+
+			const runs = listAsyncRuns(root, { states: ["running"] });
+			const text = formatAsyncRunList(runs);
+			assert.match(text, /Plan: 1 lane · writer/);
+			assert.match(text, /Plan note: 1 preflight mismatch · details available for debug\./);
+			assert.doesNotMatch(text, /key \| mode \| decision \| claims \| expected output \| independence/);
+			assert.doesNotMatch(text, /Preflight warnings:/);
+			assert.doesNotMatch(text, /workflow key 'review' launched without a declared lane/);
+			assert.deepEqual(runs[0]?.preflight, { version: 1, coverage: "complete", lanes: [{ key: "writer", mode: "mutation" }] });
+			assert.deepEqual(runs[0]?.workflow?.preflightWarnings, ["Preflight advisory: workflow key 'review' launched without a declared lane."]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 
@@ -139,7 +286,7 @@ describe("async status helpers", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				steps: [
-					{ agent: "scout", context: "fresh", status: "running" },
+					{ agent: "scout", sessionName: "  scout: Scan the auth flow  ", context: "fresh", status: "running" },
 					{ agent: "worker", context: "fork", status: "running" },
 				],
 			});
@@ -149,7 +296,7 @@ describe("async status helpers", () => {
 			assert.deepEqual(runs[0]?.steps.map((step) => step.context), ["fresh", "fork"]);
 			const text = formatAsyncRunList(runs);
 			assert.match(text, /run-context \| running .* \| parallel \[mixed\]/);
-			assert.match(text, /1\. scout \[fresh\] \| running/);
+			assert.match(text, /1\. scout: Scan the auth flow \[fresh\] \| running/);
 			assert.match(text, /2\. worker \[fork\] \| running/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

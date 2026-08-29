@@ -96,6 +96,23 @@ function formatOutputPathInstruction(outputPath: string, capabilities?: OutputIn
 	].join("\n");
 }
 
+export function requestedOutputPathFromTask(task: string): string | undefined {
+	for (const line of task.split(/\r?\n/).reverse()) {
+		const match = line.match(/^\s*(?:Write your findings to(?: exactly this path)?:|The runtime will persist it to exactly this path:)\s*(.+?)\s*$/i);
+		if (!match?.[1]) continue;
+		const requested = match[1].trim();
+		return requested.startsWith("`") && requested.endsWith("`") ? requested.slice(1, -1) : requested;
+	}
+	return undefined;
+}
+
+export function outputPathMappingFromTask(task: string, savedPath: string | undefined): { requestedPath: string; savedPath: string } | undefined {
+	const requestedPath = requestedOutputPathFromTask(task);
+	if (!requestedPath || !savedPath) return undefined;
+	if (path.isAbsolute(requestedPath) && path.normalize(requestedPath) === path.normalize(savedPath)) return undefined;
+	return { requestedPath, savedPath };
+}
+
 export function injectSingleOutputInstruction(task: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities): string {
 	if (!outputPath) return task;
 	return `${task}\n\n---\n**Output:**\n${formatOutputPathInstruction(outputPath, capabilities)}`;
@@ -144,6 +161,23 @@ export function validateFileOnlyOutputMode(outputMode: OutputMode | undefined, o
 	return undefined;
 }
 
+export function resolveSingleOutputClaimPath(outputPath: string): string {
+	let existing = path.resolve(outputPath);
+	const missingSegments: string[] = [];
+	while (!fs.existsSync(existing)) {
+		missingSegments.unshift(path.basename(existing));
+		const parent = path.dirname(existing);
+		if (parent === existing) break;
+		existing = parent;
+	}
+	return path.join(fs.realpathSync(existing), ...missingSegments);
+}
+
+function outputClaimError(outputPath: string, expectedClaimPath: string | undefined): string | undefined {
+	if (expectedClaimPath && resolveSingleOutputClaimPath(outputPath) !== expectedClaimPath) return "Output path changed after it was claimed.";
+	return undefined;
+}
+
 export function captureSingleOutputSnapshot(outputPath: string | undefined): SingleOutputSnapshot | undefined {
 	if (!outputPath) return undefined;
 	try {
@@ -158,9 +192,12 @@ export function captureSingleOutputSnapshot(outputPath: string | undefined): Sin
 function persistSingleOutput(
 	outputPath: string | undefined,
 	fullOutput: string,
-): { savedPath?: string; error?: string } {
+	expectedClaimPath?: string,
+): { savedPath?: string; error?: string; fatalError?: boolean } {
 	if (!outputPath) return {};
 	try {
+		const claimError = outputClaimError(outputPath, expectedClaimPath);
+		if (claimError) return { error: claimError, fatalError: true };
 		fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 		fs.writeFileSync(outputPath, fullOutput, "utf-8");
 		return { savedPath: outputPath };
@@ -173,8 +210,11 @@ export function resolveSingleOutput(
 	outputPath: string | undefined,
 	fallbackOutput: string,
 	beforeRun: SingleOutputSnapshot | undefined,
-): { fullOutput: string; savedPath?: string; saveError?: string } {
+	expectedClaimPath?: string,
+): { fullOutput: string; savedPath?: string; saveError?: string; fatalError?: boolean } {
 	if (!outputPath) return { fullOutput: fallbackOutput };
+	const claimError = outputClaimError(outputPath, expectedClaimPath);
+	if (claimError) return { fullOutput: fallbackOutput, saveError: claimError, fatalError: true };
 
 	let changedSinceStart = false;
 	try {
@@ -203,9 +243,9 @@ export function resolveSingleOutput(
 		}
 	}
 
-	const save = persistSingleOutput(outputPath, fallbackOutput);
+	const save = persistSingleOutput(outputPath, fallbackOutput, expectedClaimPath);
 	if (save.savedPath) return { fullOutput: fallbackOutput, savedPath: save.savedPath };
-	return { fullOutput: fallbackOutput, saveError: save.error };
+	return { fullOutput: fallbackOutput, saveError: save.error, ...(save.fatalError ? { fatalError: true } : {}) };
 }
 
 export function finalizeSingleOutput(params: {

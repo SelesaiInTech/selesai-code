@@ -106,18 +106,15 @@ describe("steering lifecycle ledger", () => {
 		assert.equal(result?.targets[0]?.lateDeliveredAt, 5);
 	});
 
-	it("preserves only remaining deadline, turn, and tool budgets", () => {
+	it("preserves only remaining deadline and tool budgets", () => {
 		assert.deepEqual(remainingSteeringRecoveryLimits({
 			absoluteDeadlineAt: 10_000,
-			initialTurnBudget: { maxTurns: 20, graceTurns: 3 },
 			initialToolBudget: { soft: 45, hard: 65, block: ["read"] },
 		}, {
-			turnBudget: { maxTurns: 20, graceTurns: 3, turnCount: 21, outcome: "wrap-up-requested" },
 			toolBudget: { soft: 45, hard: 65, block: ["read"], toolCount: 50, outcome: "soft-reached" },
 		}, 4_000), {
 			timeoutMs: 6_000,
 			absoluteDeadlineAt: 10_000,
-			turnBudget: { maxTurns: 1, graceTurns: 1 },
 			toolBudget: { hard: 15, block: ["read"] },
 		});
 	});
@@ -130,6 +127,7 @@ describe("steering lifecycle ledger", () => {
 			fallbackModels: ["current/fallback"],
 			thinking: "high",
 			tools: ["write"],
+			allowNestedSubagents: true,
 			extensions: ["current-extension"],
 			subagentOnlyExtensions: ["current-child-extension"],
 			mcpDirectTools: ["current_mcp"],
@@ -153,6 +151,7 @@ describe("steering lifecycle ledger", () => {
 			cwd: "/original",
 			model: "original/model",
 			tools: ["read"],
+			allowNestedSubagents: false,
 			systemPrompt: "original prompt",
 			systemPromptMode: "replace",
 			inheritProjectContext: false,
@@ -164,6 +163,7 @@ describe("steering lifecycle ledger", () => {
 		});
 		assert.equal(recovered.model, "original/model");
 		assert.deepEqual(recovered.tools, ["read"]);
+		assert.equal(recovered.allowNestedSubagents, false);
 		assert.equal(recovered.systemPrompt, "original prompt");
 		assert.equal(recovered.inheritProjectContext, false);
 		assert.deepEqual(recovered.toolBudget, { hard: 7, block: ["read"] });
@@ -204,9 +204,8 @@ describe("steering lifecycle ledger", () => {
 		assert.equal(recovered.maxThinking, "low");
 	});
 
-	it("rejects recovery when any configured hard budget is exhausted", () => {
+	it("rejects recovery when a configured deadline or tool budget is exhausted", () => {
 		assert.throws(() => remainingSteeringRecoveryLimits({ absoluteDeadlineAt: 5 }, {}, 5), /deadline budget/);
-		assert.throws(() => remainingSteeringRecoveryLimits({ initialTurnBudget: { maxTurns: 2, graceTurns: 1 } }, { turnCount: 3 }), /turn budget/);
 		assert.throws(() => remainingSteeringRecoveryLimits({ initialToolBudget: { hard: 2, block: "*" } }, { toolCount: 2 }), /tool budget/);
 	});
 });

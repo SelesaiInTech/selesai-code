@@ -11,6 +11,7 @@ import { DIRS, type AsyncStatus, type Details, type ForegroundResumeRun, type Ne
 import { inspectActiveAsyncCapacityOwner, type ActiveAsyncCapacityInspection } from "./active-async-capacity.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
+import { normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { readProcessTerminal, sanitizeProcessTerminal } from "./process-terminal.ts";
 import { formatWaitSubscriptions } from "./wait-subscriptions.ts";
@@ -21,6 +22,8 @@ import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-
 import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegistryForRoot, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 import { readMissionBinding } from "../../missions/lifecycle.ts";
 import { formatWorkflowJsonPreview } from "../../workflows/scripted-workflow.ts";
+import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
+import { formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary } from "../../workflows/workflow-preflight.ts";
 import { formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 
@@ -62,13 +65,14 @@ function formatCapacityOwner(inspect: ActiveAsyncCapacityInspection): string[] {
 }
 
 function formatWorkflowDebug(status: AsyncStatus): string[] {
-	if (status.mode !== "workflow" && !status.parentWorkflowRunId && !status.workflowKey) return [];
+	if (status.mode !== "workflow" && !status.parentWorkflowRunId && !status.workflowKey && !status.lane) return [];
 	const lines = [
 		status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}${status.workflowKey ? ` (${status.workflowKey})` : ""}` : undefined,
 		status.mode === "workflow" ? `Workflow children: ${(status.steps ?? []).length}` : undefined,
+		status.lane ? `Lane: ${status.lane.key}${status.lane.mode ? ` (${status.lane.mode})` : ""}` : undefined,
 	].filter((line): line is string => line !== undefined);
 	for (const [index, step] of (status.steps ?? []).entries()) {
-		lines.push(`  ${index + 1}. key ${step.workflowKey ?? "n/a"} · ${step.agent} · ${step.status} · async ${step.async === undefined ? "unknown" : step.async ? "yes" : "no"}${step.runId ? ` · run ${step.runId}` : ""}`);
+		lines.push(`  ${index + 1}. key ${step.workflowKey ?? "n/a"} · ${runStatusStepDisplayName(step)} · ${step.status} · async ${step.async === undefined ? "unknown" : step.async ? "yes" : "no"}${step.runId ? ` · run ${step.runId}` : ""}${step.lane ? ` · lane ${step.lane.key}` : ""}${step.worktreePath ? ` · worktree ${step.worktreePath} · branch ${step.branch ?? "unknown"}` : ""}`);
 	}
 	return lines;
 }
@@ -86,6 +90,7 @@ function formatRunLifecycleDebug(input: { status: AsyncStatus; asyncDir: string;
 		`Mode: ${status.mode}`,
 		status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}` : undefined,
 		status.workflowKey ? `Workflow key: ${status.workflowKey}` : undefined,
+		status.lane ? `Lane: ${status.lane.key}${status.lane.mode ? ` (${status.lane.mode})` : ""}` : undefined,
 		`Status process terminal: ${formatProcessTerminal(overlayProcessTerminal)}`,
 		`Sidecar process terminal: ${formatProcessTerminal(sidecarProcessTerminal)}`,
 		...formatCapacityOwner(capacity),
@@ -103,6 +108,7 @@ interface RunStatusDeps {
 	nested?: NestedRunResolutionScope;
 	sessionRoots?: string[];
 	activeCapacityRoot?: string;
+	abandonedSlotReleaseAfterMs?: number | false;
 }
 
 function hasExistingSessionFile(value: unknown): value is string {
@@ -149,7 +155,12 @@ function stepLineLabel(status: AsyncStatus, index: number): string {
 	return `Step ${index + 1}`;
 }
 
+function runStatusStepDisplayName(step: { agent: string; sessionName?: string; label?: string }): string {
+	return step.sessionName?.trim() || (step.label ? `${step.label} (${step.agent})` : step.agent);
+}
+
 function nestedRunDisplayName(run: NestedRunSummary): string {
+	if (run.sessionName?.trim()) return run.sessionName.trim();
 	if (run.agent) return run.agent;
 	if (run.agents?.length) return run.agents.join(", ");
 	return run.id;
@@ -194,7 +205,7 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
 	for (const child of run.children) {
 		const output = rememberedForegroundChildOutput(child).trim().split(/\r?\n/).find((line) => line.trim());
 		const parts = [
-			`${child.index + 1}. ${child.agent} ${child.status}`,
+			`${child.index + 1}. ${child.sessionName?.trim() || child.agent} ${child.status}`,
 			child.exitCode !== undefined ? `exit ${child.exitCode}` : undefined,
 			child.detachedReason ? `detached: ${child.detachedReason}` : undefined,
 			child.acceptance ? `acceptance: ${child.acceptance.status}` : undefined,
@@ -238,7 +249,7 @@ function formatRememberedForegroundTranscript(run: ForegroundResumeRun, options:
 	const lines = [
 		`Run: ${run.runId}`,
 		`State: ${child.status}`,
-		`Child: ${index} (${child.agent})`,
+		`Child: ${index} (${child.sessionName?.trim() || child.agent})`,
 		child.sessionFile ? `Session: ${child.sessionFile}` : undefined,
 		child.transcriptPath ? `Transcript: ${child.transcriptPath}` : undefined,
 		child.artifactPaths?.outputPath ? `Output: ${child.artifactPaths.outputPath}` : undefined,
@@ -274,7 +285,7 @@ function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): stri
 		for (const [index, step] of run.steps.entries()) {
 			const activity = step.status === "running" ? formatActivityLabel(step.lastActivityAt, step.activityState) : undefined;
 			const budget = step.turnBudget ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})` : "";
-			lines.push(`  ${index + 1}. ${step.agent} ${step.status}${activity ? `, ${activity}` : ""}${budget}${step.error ? `, error: ${step.error}` : ""}`);
+			lines.push(`  ${index + 1}. ${step.sessionName?.trim() || step.agent} ${step.status}${activity ? `, ${activity}` : ""}${budget}${step.error ? `, error: ${step.error}` : ""}`);
 			lines.push(...formatNestedRunStatusLines(step.children, { indent: "    ", commandHints: true }));
 		}
 	}
@@ -405,7 +416,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		if (!status && diskStatus?.displayDismissedAt !== undefined) {
 			if (params.action === "debug.run") {
 				const { sidecar, overlay } = debugProcessTerminal(asyncDir, diskStatus);
-				const capacity = inspectActiveAsyncCapacityOwner({ runId: diskStatus.runId, sessionId: diskStatus.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []) });
+				const capacity = inspectActiveAsyncCapacityOwner({ runId: diskStatus.runId, sessionId: diskStatus.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: deps.abandonedSlotReleaseAfterMs });
 				return {
 					content: [{ type: "text", text: formatRunLifecycleDebug({ status: diskStatus, asyncDir, sidecarProcessTerminal: sidecar, overlayProcessTerminal: overlay, capacity }) }],
 					details: { mode: "single", results: [], ...((sidecar ?? overlay) ? { lifecycleStatus: { processTerminal: sidecar ?? overlay } } : {}) },
@@ -432,7 +443,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		if (status) {
 			if (params.action === "debug.run") {
 				const { sidecar, overlay } = debugProcessTerminal(asyncDir, status);
-				const capacity = inspectActiveAsyncCapacityOwner({ runId: status.runId, sessionId: status.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []) });
+				const capacity = inspectActiveAsyncCapacityOwner({ runId: status.runId, sessionId: status.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: deps.abandonedSlotReleaseAfterMs });
 				return {
 					content: [{ type: "text", text: formatRunLifecycleDebug({ status, asyncDir, sidecarProcessTerminal: sidecar, overlayProcessTerminal: overlay, capacity }) }],
 					details: { mode: "single", results: [], ...((sidecar ?? overlay) ? { lifecycleStatus: { processTerminal: sidecar ?? overlay } } : {}) },
@@ -501,6 +512,8 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				statusActivityText ? `Activity: ${statusActivityText}` : undefined,
 				steeringText ? `Steering: ${steeringText}` : undefined,
 				`Mode: ${status.mode}`,
+				...(status.preflight ? [formatWorkflowPreflightPlanSummary(status.preflight)] : []),
+				...(status.workflow?.preflightWarnings?.length ? [formatWorkflowPreflightWarningSummary(status.workflow.preflightWarnings)] : []),
 				runFanoutBudget ? formatRunFanoutBudget(runFanoutBudget) : undefined,
 				status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}${status.workflowKey ? ` (${status.workflowKey})` : ""}` : undefined,
 				status.mode === "workflow" && workflowReturnPreview !== undefined ? `Return: ${workflowReturnPreview}` : undefined,
@@ -532,13 +545,33 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				const errorText = step.error ? `, error: ${step.error}` : "";
 				const acceptanceText = step.acceptance?.status ? `, acceptance: ${step.acceptance.status}` : "";
 				const budgetText = step.turnBudget ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})` : "";
-				const display = step.label ? `${step.label} (${step.agent})` : step.agent;
+				const display = runStatusStepDisplayName(step);
 				const phase = step.phase ? `[${step.phase}] ` : "";
 				lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`);
 				if (step.runner?.type === "external-cli") {
-					lines.push(`  Runner: external-cli (${step.runner.command}${step.runner.args.length ? ` ${step.runner.args.join(" ")}` : ""})`);
+					const runner = normalizeExternalCliRunnerStatus(step.runner);
+					if (runner) {
+						lines.push(`  Runner: external-cli (${runner.command}${runner.args.length ? ` ${runner.args.join(" ")}` : ""})`);
+						lines.push(`  Adapter: ${runner.adapter.id} v${runner.adapter.version} (${runner.adapter.executionMode})`);
+						if (runner.safety) {
+							if ("approvalPolicy" in runner.safety) lines.push(`  Safety: ${"access" in runner.safety ? `access=${runner.safety.access}, ` : ""}sandbox=${runner.safety.sandbox}, approval=${runner.safety.approvalPolicy}, ephemeral=${runner.safety.ephemeral}`);
+							else if ("mode" in runner.safety) lines.push(`  Safety: access=${runner.safety.access}, auth=${runner.safety.authentication}, mode=${runner.safety.mode}, sandbox=${runner.safety.sandbox}, workspaceTrust=${runner.safety.workspaceTrust}, sessionReuse=${runner.safety.sessionReuse}`);
+							else if ("authentication" in runner.safety) lines.push(`  Safety: access=${runner.safety.access}, auth=${runner.safety.authentication}, permission=${runner.safety.permissionMode}, tools=${runner.safety.tools}, mcp=${runner.safety.mcp}, settings=${runner.safety.settingSources}, settingsTrust=${runner.safety.userSettingsTrust}, persistence=${runner.safety.sessionPersistence}`);
+							else lines.push(`  Safety: access=read-only, permission=${runner.safety.permissionMode}, tools=${runner.safety.tools}, mcp=${runner.safety.mcp}, settings=${runner.safety.settingSources}, persistence=${runner.safety.sessionPersistence}`);
+						}
+						lines.push(`  Capabilities: stop=${runner.capabilities.stop}, steer=false, resume=false, structuredOutput=false, toolEvents=false, supervisor=unsupported, forkContext=false, extensionBindings=false`);
+						lines.push(`  Unsupported steer: ${runner.unsupportedReasons.steer}`);
+						lines.push(`  Unsupported resume: ${runner.nonResumableReason}`);
+						lines.push(`  Unsupported supervisor: ${runner.unsupportedReasons.supervisor}`);
+						lines.push(`  Context handoff: fresh only (${runner.unsupportedReasons.forkContext})`);
+					} else {
+						lines.push("  Runner: external-cli (invalid persisted runner metadata)");
+					}
 					if (step.externalProcess?.pid !== undefined) lines.push(`  Process: ${step.externalProcess.pid}`);
-					if (step.externalProcess) lines.push(`  Stdout: ${step.externalProcess.stdoutPath}`, `  Stderr: ${step.externalProcess.stderrPath}`);
+					if (step.externalProcess) {
+						lines.push(`  Stdout: ${step.externalProcess.stdoutPath}`, `  Stderr: ${step.externalProcess.stderrPath}`);
+						if (step.externalProcess.finalOutputPath) lines.push(`  Final output: ${step.externalProcess.finalOutputPath}`);
+					}
 				} else if (step.runner?.type === "external-job") {
 					lines.push(`  Runner: external-job (${step.runner.provider})`);
 					if (step.externalJob?.providerJobId) lines.push(`  Provider job: ${step.externalJob.providerJobId}`);
@@ -583,7 +616,9 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (fs.existsSync(logPath)) lines.push(`Log: ${logPath}`);
 			if (fs.existsSync(eventsPath)) lines.push(`Events: ${eventsPath}`);
 
-			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(runFanoutBudget ? { runFanoutBudget } : {}), ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
+			const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
+			if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error("workflowChildren.workflowRunId does not match async status runId.");
+			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(status.preflight ? { preflight: status.preflight } : {}), ...(status.workflow?.preflightWarnings?.length ? { preflightWarnings: status.workflow.preflightWarnings } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(runFanoutBudget ? { runFanoutBudget } : {}), ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
 		}
 	}
 
@@ -597,7 +632,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		}
 		try {
 			const raw = fs.readFileSync(resultPath, "utf-8");
-			const data = JSON.parse(raw) as { id?: string; runId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; runId?: string; workflowKey?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null }> };
+			const data = JSON.parse(raw) as { id?: string; runId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; sessionName?: string; runId?: string; workflowKey?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null }> };
 			if (params.view === "transcript") {
 				try {
 					return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }) }], details: { mode: "single", results: [] } };
@@ -627,7 +662,9 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			const children = Array.isArray(data.results) ? data.results : data.agent ? [{ agent: data.agent, sessionFile: data.sessionFile }] : [];
 			lines.push(formatResumeGuidance(runId, children, data.sessionFile, { stopped: status === "stopped" }));
 			if (data.summary) lines.push("", data.summary);
-			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [] } };
+			const workflowChildren = parseWorkflowChildSummary((data as unknown as Record<string, unknown>).workflowChildren);
+			if (workflowChildren && workflowChildren.workflowRunId !== runId) throw new Error("workflowChildren.workflowRunId does not match the result run id.");
+			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(workflowChildren ? { workflowChildren } : {}) } };
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return {

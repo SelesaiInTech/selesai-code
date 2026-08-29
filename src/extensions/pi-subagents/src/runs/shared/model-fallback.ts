@@ -1,7 +1,8 @@
 import { splitKnownThinkingSuffix, type ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
 import type { Usage } from "../../shared/types.ts";
-import { filterFallbackCandidates, parseModelKey, recordModelFailure } from "./model-exclusions.ts";
+import { filterFallbackCandidates, findModelExclusion, parseModelKey, recordModelFailure } from "./model-exclusions.ts";
 import { checkModelScope, type ModelScopeCheckRule, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
+import { redactSecretValues } from "./permissions.ts";
 
 export type { AvailableModelInfo };
 
@@ -23,7 +24,12 @@ export function formatSubagentModelVerificationError(expectedModel: string, obse
 	const observedBase = splitThinkingSuffix(observedModel).baseModel;
 	if (expectedBase === observedBase) return undefined;
 	const expectedEntry = availableModels.find((entry) => entry.fullId === expectedBase);
-	if (expectedEntry && expectedEntry.id === observedBase) return undefined;
+	if (expectedEntry) {
+		if (expectedEntry.id === observedBase) return undefined;
+		const expectedIdLeaf = expectedEntry.id.slice(expectedEntry.id.lastIndexOf("/") + 1);
+		const expectedFullIdLeaf = expectedEntry.fullId.slice(expectedEntry.fullId.lastIndexOf("/") + 1);
+		if (expectedIdLeaf === observedBase || expectedFullIdLeaf === observedBase) return undefined;
+	}
 	return `model_verification_failed: child reported a different model than the launch candidate. Expected '${expectedModel}' but observed '${observedModel}'.`;
 }
 
@@ -278,6 +284,14 @@ function enforceModelScopes(
 	for (const violation of violations) (onWarn ?? defaultScopeWarn)(violation);
 }
 
+function throwForExplicitModelExclusion(model: string): void {
+	const exclusion = findModelExclusion(model);
+	if (!exclusion) return;
+	const reason = redactSecretValues((exclusion.reason ?? "runtime-failure").replace(/[\u0000-\u001f\u007f]+/g, " ")).slice(0, 240);
+	const expiry = Number.isFinite(exclusion.expiresAt) ? `; expires: ${new Date(exclusion.expiresAt).toISOString()}` : "";
+	throw new Error(`Requested subagent model '${model}' is excluded and cannot be replaced by a fallback (reason: ${reason}${expiry}).`);
+}
+
 /**
  * Resolve the `--model` override passed to a spawned subagent.
  *
@@ -312,6 +326,9 @@ export function resolveSubagentModelOverride(
 	} else {
 		resolved = resolveRequiredSubagentModelCandidate(explicit, availableModels, preferredProvider);
 	}
+	if (resolved && explicit !== undefined && options?.source === "explicit") {
+		throwForExplicitModelExclusion(resolved);
+	}
 	if (resolved && options?.scope) {
 		const source: ModelSource = explicit === undefined ? "inherited" : (options.source ?? "inherited");
 		enforceModelScopes(resolved, options.scope, source, options.onWarn);
@@ -325,14 +342,15 @@ export function resolveEffectiveSubagentModel(
 	parentModel: ParentModel | undefined,
 	availableModels: AvailableModelInfo[] | undefined,
 	preferredProvider?: string,
-	options?: Omit<ResolveSubagentModelOverrideOptions, "source">,
+	options?: ResolveSubagentModelOverrideOptions,
 ): string | undefined {
+	const source = options?.source ?? (explicitModel !== undefined ? "explicit" : "inherited");
 	const resolved = resolveSubagentModelOverride(
 		explicitModel ?? agentModel,
 		parentModel,
 		availableModels,
 		preferredProvider,
-		{ ...options, source: explicitModel !== undefined ? "explicit" : "inherited" },
+		{ ...options, source },
 	);
 	if (resolved || explicitModel === undefined) return resolved;
 	return resolveSubagentModelOverride(
@@ -340,7 +358,7 @@ export function resolveEffectiveSubagentModel(
 		parentModel,
 		availableModels,
 		preferredProvider,
-		{ ...options, source: "inherited" },
+		{ ...options, source: options?.source ?? "inherited" },
 	);
 }
 
@@ -394,7 +412,12 @@ export function buildModelCandidates(
 		seen.add(normalized);
 		candidates.push(normalized);
 	}
-	return filterFallbackCandidates(candidates);
+	return filterFallbackCandidates(candidates, {
+		onExcluded(candidate, exclusion) {
+			const reason = redactSecretValues((exclusion.reason ?? "runtime-failure").replace(/[\u0000-\u001f\u007f]+/g, " ")).slice(0, 240);
+			console.warn(`[pi-subagents] Skipping model '${candidate}' due to a cached exclusion (reason: ${reason}; expires: ${new Date(exclusion.expiresAt).toISOString()}).`);
+		},
+	});
 }
 
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [
@@ -419,6 +442,7 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/overloaded/i,
 	/service unavailable/i,
 	/temporar(?:ily)? unavailable/i,
+	/connection\s+(?:error|reset|closed|aborted)/i,
 	/connection refused/i,
 	/fetch failed/i,
 	/network error/i,
@@ -427,9 +451,11 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/upstream/i,
 	/timed? out/i,
 	/timeout/i,
+	/\b500\b/,
 	/\b502\b/,
 	/\b503\b/,
 	/\b504\b/,
+	/internal server error/i,
 	/cold.?start/i,
 	/empty response/i,
 	/no output/i,
@@ -449,6 +475,21 @@ export function isRetryableModelFailure(error: string | undefined): boolean {
 	if (!error) return false;
 	if (TOOL_FAILURE_PREFIX.test(error.trim())) return false;
 	return RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
+}
+
+function messageError(message: unknown): string | undefined {
+	if (!message || typeof message !== "object") return undefined;
+	const value = (message as { errorMessage?: unknown }).errorMessage;
+	return typeof value === "string" ? value : undefined;
+}
+
+export function isRetryableModelFailureAttempt(input: { error: string | undefined; messages?: readonly unknown[]; toolCount?: number }): boolean {
+	if (!isRetryableModelFailure(input.error)) return false;
+	if ((input.toolCount ?? 0) > 0) return false;
+	if (input.error === "Subagent produced no output (possible model cold-start or empty response)." || /^Subagent produced no output after terminal assistant stopReason "[^"]+"\.$/.test(input.error ?? "")) return true;
+	if ((input.toolCount ?? 0) === 0 && (input.messages?.length ?? 0) === 0) return true;
+	const error = input.error?.trim();
+	return Boolean(error && input.messages?.some((message) => messageError(message)?.trim() === error));
 }
 
 export function recordRetryableModelFailure(model: string | undefined, error: string | undefined): void {

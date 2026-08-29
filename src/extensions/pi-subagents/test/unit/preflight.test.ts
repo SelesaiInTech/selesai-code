@@ -170,6 +170,51 @@ Project prompt.
 		if (!invalid.ok) assert.equal(invalid.code, "invalid_extension_bindings");
 	});
 
+	it("uses the parent provider for provider-scoped agent overrides", async () => {
+		const cwd = path.join(tempDir, "provider-overrides");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeJson(path.join(cwd, ".selesai", "settings.json"), {
+			subagents: {
+				agentOverridesByProvider: {
+					"github-copilot": { worker: { model: "github-copilot/gpt-5-mini" } },
+					openrouter: { worker: { model: "openrouter/openai/gpt-5-mini" } },
+				},
+			},
+		});
+		const availableModels = [
+			{ provider: "github-copilot", id: "gpt-5-mini", fullId: "github-copilot/gpt-5-mini" },
+			{ provider: "openrouter", id: "openai/gpt-5-mini", fullId: "openrouter/openai/gpt-5-mini" },
+		];
+
+		const copilot = await resolveSubagentLaunchContract({
+			agent: "worker", cwd, parentModel: { provider: "github-copilot", id: "parent" }, availableModels,
+		});
+		const openrouter = await resolveSubagentLaunchContract({
+			agent: "worker", cwd, preferredProvider: "openrouter", parentModel: { provider: "github-copilot", id: "parent" }, availableModels,
+		});
+		assert.equal(copilot.ok, true);
+		assert.equal(openrouter.ok, true);
+		if (copilot.ok) assert.equal(copilot.contract.model, "github-copilot/gpt-5-mini:high");
+		if (openrouter.ok) assert.equal(openrouter.contract.model, "openrouter/openai/gpt-5-mini:high");
+	});
+
+	it("warns when workspace package work has package-only authority", async () => {
+		const cwd = path.join(tempDir, "workspace-scope-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---\nname: worker\ndescription: Project worker\n---\nWorker.\n`);
+
+		const result = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			task: "Create a new workspace package, but only edit files under packages/widget and do not change root workspace metadata.",
+		});
+
+		assert.equal(result.ok, true);
+		if (result.ok) {
+			assert.equal(result.contract.diagnostics.some((diagnostic) => diagnostic.code === "workspace_scope_authority" && diagnostic.severity === "warning"), true);
+		}
+	});
+
 	it("binds fast mode runtime extension into public preflight provenance", async () => {
 		const cwd = path.join(tempDir, "fast-repo");
 		fs.mkdirSync(cwd, { recursive: true });
@@ -446,7 +491,13 @@ Project prompt.
 `);
 
 		const missingAgent = await resolveSubagentLaunchContract({ agent: "missing", cwd });
-		assert.deepEqual(missingAgent, { ok: false, code: "missing_agent", message: "Unknown agent: missing", diagnostics: [] });
+		assert.equal(missingAgent.ok, false);
+		assert.equal(missingAgent.code, "missing_agent");
+		assert.deepEqual(missingAgent.diagnostics, []);
+		assert.match(missingAgent.message, /^Unknown agent: missing\nEffective cwd: /);
+		assert.match(missingAgent.message, /Consulted agent-definition directories:/);
+		assert.match(missingAgent.message, /project: .*\.selesai[\\/]agents \(1 candidate\)/);
+		assert.match(missingAgent.message, /Discovered agents:\n[\s\S]*worker \(project\)/);
 		writeAgent(path.join(cwd, ".selesai", "agents", "broken.md"), `---
 name: broken
 description: Broken worker
@@ -779,5 +830,24 @@ Project prompt.
 		assert.equal(result.ok, false);
 		assert.equal(result.code, "denied_required_tool");
 		assert.match(result.message, /excludes required tool 'read'/);
+	});
+
+	it("reports unresolved runtime-style MCP selectors during preflight", async () => {
+		const cwd = path.join(tempDir, "repo-unresolved-runtime-mcp");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+tools:
+  - read
+  - mcp:rt__wiki/read_wiki_structure
+---
+Project prompt.
+`);
+
+		const result = await resolveSubagentLaunchContract({ agent: "worker", cwd, task: "Inspect" });
+		assert.equal(result.ok, false);
+		assert.equal(result.code, "denied_required_tool");
+		assert.match(result.message, /Unresolved MCP direct-tool selectors: rt__wiki\/read_wiki_structure\./);
 	});
 });

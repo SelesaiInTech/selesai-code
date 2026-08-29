@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import type { AgentConfig } from "../../agents/agents.ts";
+import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig } from "../../agents/agents.ts";
 import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
 import { alignForkedSessionCwd } from "../../shared/fork-context.ts";
 import {
@@ -46,6 +46,7 @@ import {
 	findLatestSessionFile,
 	detectSubagentError,
 	hasEmptyTerminalAssistantResponse,
+	formatEmptyTerminalAssistantResponseError,
 	extractToolArgsPreview,
 	extractTextFromContent,
 	boundStreamedRecentTools,
@@ -55,20 +56,24 @@ import {
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, resolveToolTimeoutMs, toolTimeoutCallKey, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
-import { evaluateCompletionMutationGuard, validateImplementationToolContract } from "../shared/completion-guard.ts";
+import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
+import { planCompletionEvidence } from "../shared/completion-evidence.ts";
+import { planAbortRecovery } from "../shared/abort-recovery.ts";
 import { arbitrateCompletionGuardRescue } from "../shared/llm-intent-arbiter.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
+import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { resolvePermissionRules } from "../shared/permissions.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
+import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
 import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
-import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
+import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
@@ -77,7 +82,7 @@ import {
 	formatSubagentModelVerificationError,
 	formatModelAttemptNote,
 	isContextOverflow,
-	isRetryableModelFailure,
+	isRetryableModelFailureAttempt,
 	recordRetryableModelFailure,
 } from "../shared/model-fallback.ts";
 import {
@@ -102,11 +107,11 @@ import {
 import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput } from "../shared/acceptance.ts";
 import { PROMPT_REDACTED } from "../../shared/utils.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
-import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
-import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { consumeWorkflowChildPermit } from "../../shared/workflow-child-permit.ts";
+import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
 	acceptChildWatchdogEvent,
 	childWatchdogIsActive,
@@ -292,6 +297,9 @@ function snapshotStreamResult(result: SingleResult, progress: AgentProgress): Si
 	return snapshot;
 }
 
+const AFTER_COMPACTION_SETTLEMENT = Symbol("afterCompactionSettlement");
+type AbortRecoverySingleResult = SingleResult & { [AFTER_COMPACTION_SETTLEMENT]?: true };
+
 async function runSingleAttempt(
 	runtimeCwd: string,
 	agent: AgentConfig,
@@ -321,6 +329,10 @@ async function runSingleAttempt(
 	assertThinkingWithinCeiling({ model: modelArg, configThinking: effectiveThinking, ceiling: options.thinkingCeiling, agent: agent.name, runId: options.runId });
 	const expectedModelForVerification = shared.verifyModel ? modelArg : undefined;
 	const resolvedThinking = resolveEffectiveThinking(modelArg, effectiveThinking);
+	// Display name for the child session: applied inside the child via
+	// PI_SUBAGENT_SESSION_NAME and echoed back on the result payload so hosts
+	// can label this run without reading the child's session file.
+	const childSessionName = deriveChildSessionName({ agent: agent.name, task: shared.originalTask ?? task });
 	const watchdogConfig = resolveWatchdogConfig(options.cwd ?? runtimeCwd);
 	const childWatchdog = watchdogConfig.ok
 		? resolveChildWatchdogConfig({
@@ -345,16 +357,19 @@ async function runSingleAttempt(
 		thinking: effectiveThinking,
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
+		inheritGlobalContext: agent.inheritGlobalContext,
 		inheritSkills: agent.inheritSkills,
 		requireReadTool: Boolean(shared.resolvedSkillNames?.length),
 		tools: agent.tools,
+		allowNestedSubagents: agent.allowNestedSubagents,
 		extensions: agent.extensions,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions,
-		systemPrompt: appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget),
+		systemPrompt: shared.systemPrompt,
 		mcpDirectTools: agent.mcpDirectTools,
 		cwd: options.cwd ?? runtimeCwd,
 		promptFileStem: agent.name,
 		intercomSessionName: options.intercomSessionName,
+		sessionName: childSessionName,
 		orchestratorIntercomTarget: options.orchestratorIntercomTarget,
 		runId: options.runId,
 		childAgentName: agent.name,
@@ -377,18 +392,21 @@ async function runSingleAttempt(
 		permissionAuditPath,
 		childWatchdog,
 		waitToolEnabled: options.waitToolEnabled,
+		waitToolDefaultTimeoutMs: options.waitToolDefaultTimeoutMs,
 		capabilityCeiling: options.capabilityCeiling,
 		thinkingCeiling: options.thinkingCeiling,
 		extensionBindings: options.extensionBindings,
+		runtimeSnapshotHost: options.runtimeSnapshotHost,
 	});
 	if (!shared.launchWarnings.emitted && warnings.length > 0) {
 		for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
 		shared.launchWarnings.emitted = true;
 	}
 
-	const effectiveSystemPrompt = appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget);
+	const effectiveSystemPrompt = shared.systemPrompt;
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agent.tools,
+		allowNestedSubagents: agent.allowNestedSubagents,
 		extensions: agent.extensions,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions,
 		mcpDirectTools: agent.mcpDirectTools,
@@ -402,6 +420,7 @@ async function runSingleAttempt(
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 		agentName: agent.name,
 		permissionRules,
+		runtimeSnapshotHost: options.runtimeSnapshotHost,
 	});
 	const contractTools = toolPlan.explicitToolAllowlist ? toolPlan.effectiveToolAllowlist : undefined;
 	const contractError = validateImplementationToolContract({
@@ -420,6 +439,7 @@ async function runSingleAttempt(
 			index: options.index ?? 0,
 			agent: agent.name,
 			task,
+			...(childSessionName ? { sessionName: childSessionName } : {}),
 			messages: [],
 			finalOutput: "",
 			exitCode: 1,
@@ -445,6 +465,7 @@ async function runSingleAttempt(
 		systemPrompt: effectiveSystemPrompt,
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
+		inheritGlobalContext: agent.inheritGlobalContext,
 		inheritSkills: agent.inheritSkills,
 		skills: shared.resolvedSkillNames ?? [],
 		tools: toolPlan.effectiveToolAllowlist,
@@ -459,6 +480,7 @@ async function runSingleAttempt(
 		index: options.index ?? 0,
 		agent: agent.name,
 		task: shared.originalTask ?? task,
+		...(childSessionName ? { sessionName: childSessionName } : {}),
 		...(options.agentContract ? { agentContract: options.agentContract } : {}),
 		launchContractDigest,
 		launchResolvedExtensions,
@@ -472,7 +494,6 @@ async function runSingleAttempt(
 		transcriptPath: shared.transcriptWriter ? shared.artifactPaths?.transcriptPath : undefined,
 		skills: shared.resolvedSkillNames,
 		skillsWarning: shared.skillsWarning,
-		...(options.turnBudget ? { turnBudget: initialTurnBudgetState(options.turnBudget) } : {}),
 		...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
 		...(options.capabilityCeiling ? { capabilityCeiling: options.capabilityCeiling } : {}),
 		...(capabilityAudit ? { capabilityAudit } : {}),
@@ -501,6 +522,7 @@ async function runSingleAttempt(
 	const progress: AgentProgress = {
 		index: options.index ?? 0,
 		agent: agent.name,
+		...(childSessionName ? { sessionName: childSessionName } : {}),
 		status: "running",
 		task,
 		skills: shared.resolvedSkillNames,
@@ -538,9 +560,30 @@ async function runSingleAttempt(
 	let structuredOutputToolInvoked = false;
 	let structuredOutputMessageStartIndex: number | undefined;
 	let toolAvailabilityError: string | undefined;
+	let abortedBySignal = options.signal?.aborted === true;
 
+	const spawnSpec = getPiSpawnCommand(args);
+	if (options.workflowChildPermitLaunch) {
+		const permitError = consumeWorkflowChildPermit(options.workflowChildPermitLaunch.permit, {
+			workflowRunId: options.workflowChildPermitLaunch.workflowRunId,
+			childKey: options.workflowChildPermitLaunch.childKey,
+			agent: agent.name,
+			launchContractDigest,
+			context: options.context ?? "fresh",
+			runner: "pi",
+		});
+		if (permitError) {
+			cleanupTempDir(tempDir);
+			result.exitCode = 1;
+			result.error = permitError;
+			result.finalOutput = permitError;
+			progress.status = "failed";
+			progress.error = permitError;
+			return result;
+		}
+	}
+	let afterCompactionSettlement = false;
 	const exitCode = await new Promise<number>((resolve) => {
-		const spawnSpec = getPiSpawnCommand(args);
 		const proc = spawn(spawnSpec.command, spawnSpec.args, {
 			cwd: options.cwd ?? runtimeCwd,
 			env: spawnEnv,
@@ -559,20 +602,7 @@ async function runSingleAttempt(
 		let timeoutTimer: NodeJS.Timeout | undefined;
 		let timeoutTerminationTimer: NodeJS.Timeout | undefined;
 		let timeoutHardKillTimer: NodeJS.Timeout | undefined;
-		let turnBudgetSoftReached = false;
-		let turnBudgetTerminationTimer: NodeJS.Timeout | undefined;
-		let turnBudgetHardKillTimer: NodeJS.Timeout | undefined;
 		let protocolHardKillTimer: NodeJS.Timeout | undefined;
-		const clearTurnBudgetTimers = () => {
-			if (turnBudgetTerminationTimer) {
-				clearTimeout(turnBudgetTerminationTimer);
-				turnBudgetTerminationTimer = undefined;
-			}
-			if (turnBudgetHardKillTimer) {
-				clearTimeout(turnBudgetHardKillTimer);
-				turnBudgetHardKillTimer = undefined;
-			}
-		};
 		const clearTimeoutTimers = () => {
 			if (timeoutTimer) {
 				clearTimeout(timeoutTimer);
@@ -635,6 +665,7 @@ async function runSingleAttempt(
 		let forcedTerminationSignal = false;
 		let cleanTerminalAssistantStopReceived = false;
 		let agentSettledReceived = false;
+		let compactionStartedReceived = false;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardKillTimer: NodeJS.Timeout | undefined;
 		let watchdogTailTimer: NodeJS.Timeout | undefined;
@@ -707,6 +738,7 @@ async function runSingleAttempt(
 			}
 			if (action === "start-drain") startFinalDrain();
 		};
+		const childLifecycleState: ChildLifecycleState = { compactionRetryActive: false };
 
 		const unsubscribeIntercomDetach = options.intercomEvents?.on?.(INTERCOM_DETACH_REQUEST_EVENT, (payload) => {
 			if (!options.allowIntercomDetach || processClosed) return;
@@ -732,7 +764,6 @@ async function runSingleAttempt(
 			clearStdioGuard();
 			clearTimeoutTimers();
 			clearAllToolTimeouts();
-			clearTurnBudgetTimers();
 			if (protocolHardKillTimer) {
 				clearTimeout(protocolHardKillTimer);
 				protocolHardKillTimer = undefined;
@@ -870,57 +901,6 @@ async function runSingleAttempt(
 			}));
 			return true;
 		};
-		const requestTurnBudgetAbort = (turnCount: number) => {
-			const budget = options.turnBudget;
-			if (!budget || result.timedOut || result.turnBudgetExceeded || interruptedByControl || processClosed || lifecycleFinished) return;
-			const message = turnBudgetExceededMessage(budget, turnCount);
-			result.turnBudgetExceeded = true;
-			result.wrapUpRequested = true;
-			result.turnBudget = turnBudgetState(budget, turnCount, true);
-			result.error = message;
-			result.finalOutput = message;
-			progress.status = "failed";
-			progress.error = message;
-			progress.durationMs = Date.now() - startTime;
-			fireUpdate();
-			trySignalChild(proc, "SIGINT");
-			turnBudgetTerminationTimer = setTimeout(() => {
-				if (processClosed || lifecycleFinished || result.timedOut) return;
-				trySignalChild(proc, "SIGTERM");
-			}, 1000);
-			turnBudgetTerminationTimer.unref?.();
-			turnBudgetHardKillTimer = setTimeout(() => {
-				if (processClosed || lifecycleFinished || result.timedOut) return;
-				trySignalChild(proc, "SIGKILL");
-			}, 4000);
-			turnBudgetHardKillTimer.unref?.();
-		};
-
-		const updateTurnBudget = (turnCount: number, terminalAssistantStop: boolean, toolWorkActiveOrStarting: boolean) => {
-			const budget = options.turnBudget;
-			if (!budget || result.timedOut || result.turnBudgetExceeded) return;
-			if (turnCount < budget.maxTurns) {
-				result.turnBudget = { ...budget, outcome: "within-budget", turnCount };
-				return;
-			}
-			if (!turnBudgetSoftReached) {
-				turnBudgetSoftReached = true;
-				result.wrapUpRequested = true;
-				appendRecentOutput(progress, [turnBudgetSoftNote(budget, turnCount)]);
-			}
-			const decision = turnBudgetDecision(budget, turnCount, terminalAssistantStop, toolWorkActiveOrStarting, options.enforceHardTurnLimit);
-			if (decision === "defer") {
-				result.turnBudget = turnBudgetDeferredState(
-					budget,
-					turnCount,
-					result.turnBudget?.terminationDeferredAtTurn,
-				);
-				return;
-			}
-			result.turnBudget = turnBudgetState(budget, turnCount, false);
-			if (decision === "abort") requestTurnBudgetAbort(turnCount);
-		};
-
 		const updateActivityState = (now: number): boolean => {
 			if (!controlConfig.enabled) return false;
 			const idleState = deriveActivityState({
@@ -974,7 +954,7 @@ async function runSingleAttempt(
 		const fireUpdate = () => {
 			if (!options.onUpdate || processClosed) return;
 			progress.durationMs = Date.now() - startTime;
-			const output = (result.timedOut || result.turnBudgetExceeded) && result.finalOutput ? result.finalOutput : getFinalOutput(result.messages ?? []);
+			const output = result.timedOut && result.finalOutput ? result.finalOutput : getFinalOutput(result.messages ?? []);
 			emitUpdateSnapshot(output || "(running...)");
 		};
 
@@ -994,8 +974,21 @@ async function runSingleAttempt(
 			}
 			shared.transcriptWriter?.writeChildEvent(evt);
 			shared.orcaProgressTab?.event(evt);
-			if (evt.type === "agent_settled") agentSettledReceived = true;
-			applyChildLifecycle(projectChildLifecycle(evt));
+			if (evt.type === "compaction_start") compactionStartedReceived = true;
+			if (evt.type === "compaction_end" && evt.willRetry === true) {
+				compactionStartedReceived = false;
+				afterCompactionSettlement = false;
+			}
+			if (evt.type === "agent_start" || evt.type === "auto_retry_start") {
+				compactionStartedReceived = false;
+				afterCompactionSettlement = false;
+			}
+			const lifecycleAction = projectChildLifecycle(evt, false, childLifecycleState);
+			if (evt.type === "agent_settled" && lifecycleAction === "start-drain") {
+				agentSettledReceived = true;
+				afterCompactionSettlement = compactionStartedReceived;
+			}
+			applyChildLifecycle(lifecycleAction);
 
 			if (isChildWatchdogStatusEvent(evt)) {
 				if (!childWatchdog) return;
@@ -1041,7 +1034,7 @@ async function runSingleAttempt(
 				if (options.toolBudget) {
 					result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount);
 				}
-				const mutates = isMutatingTool(evt.toolName, toolArgs);
+				const mutates = isMutatingTool(evt.toolName, toolArgs, agent.mutationTools);
 				observedMutationAttempt = observedMutationAttempt || mutates;
 				pendingToolResult = { tool: evt.toolName ?? "tool", path: activeTool?.path, mutates, startedAt: now };
 				fireUpdate();
@@ -1066,18 +1059,14 @@ async function runSingleAttempt(
 				if (evt.message.role === "assistant") {
 					result.usage.turns++;
 					progress.turnCount = result.usage.turns;
-					const stopReason = (evt.message as { stopReason?: string }).stopReason;
 					const toolCalls = Array.isArray(evt.message.content)
 						? evt.message.content.filter((part) => (part as { type?: string }).type === "toolCall")
 						: [];
 					const hasToolCall = toolCalls.length > 0;
-					const terminalAssistantStop = stopReason === "stop" && !hasToolCall;
-					const terminalStructuredOutputCall = Boolean(options.structuredOutput)
-						&& toolCalls.length === 1
-						&& (toolCalls[0] as { name?: string }).name === "structured_output";
-					updateTurnBudget(result.usage.turns, terminalAssistantStop || terminalStructuredOutputCall, hasToolCall || Boolean(progress.currentTool));
+					const terminalAssistantStop = (evt.message as { stopReason?: string }).stopReason === "stop" && !hasToolCall;
 					const u = evt.message.usage;
 					if (u) {
+						const window = (u.input || 0) + (u.cacheRead || 0);
 						result.usage.input += u.input || 0;
 						result.usage.output += u.output || 0;
 						result.usage.cacheRead += u.cacheRead || 0;
@@ -1086,6 +1075,8 @@ async function runSingleAttempt(
 						progress.tokens = result.usage.input + result.usage.output;
 						progress.inputTokens = result.usage.input;
 						progress.outputTokens = result.usage.output;
+						progress.window = window;
+						progress.windowPeak = Math.max(progress.windowPeak ?? 0, window);
 					}
 					if (evt.message.model) {
 						progress.model = evt.message.model;
@@ -1102,7 +1093,11 @@ async function runSingleAttempt(
 					if (terminalAssistantStop) {
 						if (!evt.message.errorMessage && assistantText.trim()) assistantError = undefined;
 						cleanTerminalAssistantStopReceived ||= !evt.message.errorMessage;
-						applyChildLifecycle(projectChildLifecycle(evt, true));
+						clearAllToolTimeouts();
+						activeToolCalls.clear();
+						activeToolKeysByName.clear();
+						refreshCurrentTool();
+						applyChildLifecycle(projectChildLifecycle(evt, true, childLifecycleState));
 					}
 				}
 				updateActivityState(now);
@@ -1328,14 +1323,17 @@ async function runSingleAttempt(
 			const rawStdout = rawStdoutTail.text();
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
 			const forcedDrainAfterFinalSuccess = Boolean(forcedTerminationSignal || signal) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
+			const forcedDrainAfterEmptyTerminal = forcedDrainAfterFinalSuccess && hasEmptyTerminalAssistantResponse(result.messages ?? []);
 			if (signal) result.processSignal = signal;
+			if (!closeError && forcedDrainAfterEmptyTerminal && stderr.trim()) {
+				closeError = stderr.trim();
+			}
 			if (!closeError && isUnexplainedProcessSignal({
 				processSignal: signal,
 				interrupted: result.interrupted,
 				timedOut: result.timedOut,
 				stopped: result.stopped,
-				turnBudgetExceeded: result.turnBudgetExceeded,
-				forcedDrainAfterFinalSuccess,
+				forcedDrainAfterFinalSuccess: forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal,
 			})) {
 				closeError = formatProcessSignalError(signal!);
 			}
@@ -1345,7 +1343,7 @@ async function runSingleAttempt(
 			if (code !== 0 && stderr.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
 				closeError = stderr.trim();
 			}
-			const finalCode = forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
+			const finalCode = forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
 			if (!result.error && closeError) result.error = closeError;
 			finish(finalCode);
 		});
@@ -1369,6 +1367,7 @@ async function runSingleAttempt(
 		if (options.signal) {
 			const kill = () => {
 				if (processClosed || lifecycleFinished) return;
+				abortedBySignal = true;
 				proc.kill("SIGTERM");
 				setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 3000);
 			};
@@ -1416,6 +1415,9 @@ async function runSingleAttempt(
 		}
 	});
 	result.exitCode = exitCode;
+	if (afterCompactionSettlement) {
+		(result as AbortRecoverySingleResult)[AFTER_COMPACTION_SETTLEMENT] = true;
+	}
 	if (interruptedByControl) {
 		result.exitCode = 0;
 		result.interrupted = true;
@@ -1430,6 +1432,21 @@ async function runSingleAttempt(
 			durationMs: progress.durationMs,
 		};
 		return result;
+	}
+	if (progress.currentTool
+		&& isOrdinaryToolForMidToolExit(progress.currentTool)
+		&& !abortedBySignal
+		&& !result.timedOut
+		&& !result.stopped
+		&& !result.protocolError
+		&& !toolAvailabilityError) {
+		const processExitCode = result.exitCode;
+		result.exitCode = 1;
+		result.error = formatMidToolExitError({
+			toolName: progress.currentTool,
+			exitCode: processExitCode,
+			processSignal: result.processSignal,
+		});
 	}
 	result.error = formatSubagentExtensionConflictError(result.error, {
 		agent: agent.name,
@@ -1473,9 +1490,12 @@ async function runSingleAttempt(
 			: messages;
 		const errInfo = detectSubagentError(errorMessages);
 		const missingOutput = !finalText?.trim() && !validatedStructuredOutput;
-		if (missingOutput && (!errInfo.hasError || hasEmptyTerminalAssistantResponse(messages))) {
+		const terminalEmptyAfterUsefulWork = !validatedStructuredOutput
+			&& hasEmptyTerminalAssistantResponse(messages)
+			&& (progress.toolCount > 0 || Boolean(finalText?.trim()));
+		if ((missingOutput || terminalEmptyAfterUsefulWork) && (!errInfo.hasError || hasEmptyTerminalAssistantResponse(messages))) {
 			result.exitCode = 1;
-			result.error = "Subagent produced no output (possible model cold-start or empty response).";
+			result.error = formatEmptyTerminalAssistantResponseError(messages);
 		} else if (errInfo.hasError) {
 			result.exitCode = errInfo.exitCode ?? 1;
 			result.error = errInfo.details
@@ -1494,6 +1514,7 @@ async function runSingleAttempt(
 	}
 
 	result.progressSummary = {
+		...(childSessionName ? { sessionName: childSessionName } : {}),
 		toolCount: progress.toolCount,
 		tokens: progress.tokens,
 		durationMs: progress.durationMs,
@@ -1519,14 +1540,6 @@ async function runSingleAttempt(
 		fullOutput = fullOutput.trim()
 			? `${timeoutMessage}\n\n${result.timeoutRecovery.message}\n\nPartial output before timeout:\n${fullOutput}`
 			: `${timeoutMessage}\n\n${result.timeoutRecovery.message}`;
-	} else if (result.turnBudgetExceeded && result.turnBudget) {
-		fullOutput = formatTurnBudgetOutput(turnBudgetExceededMessage(result.turnBudget, result.turnBudget.turnCount), fullOutput);
-	} else if (result.turnBudget?.outcome === "termination-deferred") {
-		const note = turnBudgetDeferredNote(result.turnBudget, result.turnBudget.terminationDeferredAtTurn ?? result.turnBudget.turnCount);
-		fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;
-	} else if (result.wrapUpRequested && result.turnBudget?.outcome === "wrap-up-requested") {
-		const note = turnBudgetSoftNote(result.turnBudget, result.turnBudget.wrapUpRequestedAtTurn ?? result.turnBudget.turnCount);
-		fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;
 	}
 	const completionGuardEnabled = isAgentContractV1(options.agentContract) ? agent.completionGuard === true : agent.completionGuard !== false;
 	const completionGuard = ((result.exitCode === 0 && !result.error) || toolAvailabilityError) && completionGuardEnabled
@@ -1536,13 +1549,13 @@ async function runSingleAttempt(
 			messages: result.messages ?? [],
 			tools: contractTools,
 			mcpDirectTools: toolPlan.effectiveMcpTools,
+			mutationTools: agent.mutationTools,
 			toolAvailabilityError,
 			mutationEvidence,
 		})
 		: undefined;
 	const mutationAttemptObserved = observedMutationAttempt || mutationEvidence.attemptedMutation;
 	let completionGuardTriggered = completionGuard?.triggered === true && !mutationAttemptObserved;
-	const completionGuardBlocked = completionGuard?.blocked === true;
 	// The classifier is deliberately narrow, so a read-only review task can
 	// still be misread as implementation. Arbitrate BEFORE any failure side
 	// effect is published (effects, exit code, progress, notifications,
@@ -1559,31 +1572,26 @@ async function runSingleAttempt(
 		completionGuardTriggered = arbitration.triggered;
 		arbiterRescued = arbitration.rescued;
 	}
-	if (completionGuard) {
+	const completionEvidence = planCompletionEvidence({
+		guard: completionGuard,
+		guardTriggered: completionGuardTriggered,
+		completionGuardEnabled,
+		mutationCapable: hasMutationToolCapability(contractTools, toolPlan.effectiveMcpTools),
+		implementationMutationExpected: expectsImplementationMutation(agent.name, shared.originalTask ?? task),
+		mutationAttemptObserved,
+		mutationEvidence,
+		arbiterRescued,
+		agentContractV1: isAgentContractV1(options.agentContract),
+	});
+	if (completionEvidence.fileMutation) {
 		result.effects = {
 			...(result.effects ?? {}),
-			fileMutation: {
-				status: completionGuardBlocked
-					? "blocked"
-					: completionGuard.expectedMutation
-					? completionGuardTriggered
-						? "missing"
-						: arbiterRescued
-							? "not-applicable"
-							: "observed"
-					: "not-applicable",
-				expected: completionGuard.expectedMutation,
-				attempted: completionGuardBlocked ? false : completionGuard.attemptedMutation || mutationAttemptObserved,
-				evidence: mutationEvidence,
-				...(completionGuardBlocked && completionGuard.message ? { message: completionGuard.message } : {}),
-				...(completionGuardTriggered ? { message: "Subagent completed without making edits for an implementation task." } : {}),
-				...(arbiterRescued ? { resolvedBy: "llm-intent-arbiter" } : {}),
-			},
+			fileMutation: completionEvidence.fileMutation,
 		};
 	}
-	if (completionGuardTriggered && !isAgentContractV1(options.agentContract)) {
+	if (completionEvidence.legacyFailureError) {
 		result.exitCode = 1;
-		result.error = "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
+		result.error = completionEvidence.legacyFailureError;
 		progress.status = "failed";
 		progress.error = result.error;
 		emitControlEvent(buildControlEvent({
@@ -1598,10 +1606,14 @@ async function runSingleAttempt(
 		}));
 	}
 		if (options.outputPath && result.exitCode === 0) {
-			const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot);
+			const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot, options.outputClaimPath);
 			fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
 			result.savedOutputPath = resolvedOutput.savedPath;
 			result.outputSaveError = resolvedOutput.saveError;
+			if (resolvedOutput.fatalError) {
+				result.exitCode = 1;
+				result.error = result.error ? `${result.error}\n${resolvedOutput.saveError}` : resolvedOutput.saveError;
+			}
 			if (resolvedOutput.savedPath) {
 				result.outputReference = formatSavedOutputReference(resolvedOutput.savedPath, fullOutput);
 				if (result.outputState === "absent") result.outputState = "unknown";
@@ -1641,12 +1653,9 @@ async function runSyncCompletionInner(
 	task: string,
 	options: RunSyncOptions,
 ): Promise<SingleResult> {
-	options = {
-		...options,
-		capabilityCeiling: intersectSubagentCapabilityCeilings(options.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(options.parentSessionId), decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV])),
-	};
-	const agent = agents.find((a) => a.name === agentName);
-	if (!agent) {
+	const effectiveCwd = options.cwd ?? runtimeCwd;
+	const cwdError = preflightLaunchCwd(options.requestedCwd ?? effectiveCwd, effectiveCwd);
+	if (cwdError) {
 		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
 			agent: agentName,
@@ -1654,7 +1663,26 @@ async function runSyncCompletionInner(
 			exitCode: 1,
 			messages: [],
 			usage: emptyUsage(),
-			error: `Unknown agent: ${agentName}`,
+			error: cwdError,
+		}, options.context));
+	}
+	options = {
+		...options,
+		capabilityCeiling: intersectSubagentCapabilityCeilings(options.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(options.parentSessionId), decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV])),
+	};
+	const childSessionName = deriveChildSessionName({ agent: agentName, task });
+	const agent = agents.find((a) => a.name === agentName);
+	if (!agent) {
+		const diagnosticContext = options.unknownAgentDiagnosticContext
+			?? unknownAgentDiagnosticContext(discoverAgents(path.resolve(options.cwd ?? runtimeCwd), "both"));
+		return redactResultPrompt(withRunContext({
+			index: options.index ?? 0,
+			agent: agentName,
+			task,
+			exitCode: 1,
+			messages: [],
+			usage: emptyUsage(),
+			error: formatUnknownAgentError(agentName, diagnosticContext),
 		}, options.context));
 	}
 	options = {
@@ -1781,6 +1809,18 @@ async function runSyncCompletionInner(
 		agent.modelProvider ?? options.preferredModelProvider,
 		{ scope: options.modelScope, primaryModelFromParent: options.modelOverrideFromParent },
 	);
+	if (options.workflowChildPermitLaunch && candidates.length > 1) {
+		const error = "Workflow child permit does not support model fallback.";
+		return redactResultPrompt(withRunContext({
+			index: options.index ?? 0,
+			agent: agent.name,
+			task,
+			exitCode: 1,
+			messages: [],
+			usage: emptyUsage(),
+			error,
+		}, options.context));
+	}
 	try {
 		for (const candidate of candidates) {
 			const model = applyThinkingSuffix(candidate, options.thinkingOverride ?? agent.thinking, options.thinkingOverride !== undefined);
@@ -1873,12 +1913,16 @@ async function runSyncCompletionInner(
 	// Escalated to "file" after an unexplained zero-activity startup failure so
 	// retries keep the task text out of argv (endpoint pre-exec scans may deny it).
 	let taskDeliveryOverride: SubagentTaskDelivery | undefined;
+	let abortRecoveryAttempted = false;
+	let nextAttemptTask = taskWithAcceptance;
 	modelAttemptsLoop: for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
 		const candidate = modelsToTry[modelIndex];
 		for (let startupAttemptIndex = 0; ; startupAttemptIndex++) {
+			const recoveringAbort = abortRecoveryAttempted;
+			const attemptTask = nextAttemptTask;
 			const verifyModel = Boolean(candidate) && !(options.modelOverrideFromParent && modelIndex === 0);
 			const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
-			const result = await runSingleAttempt(runtimeCwd, agent, taskWithAcceptance, candidate, attemptOptions, {
+			const result = await runSingleAttempt(runtimeCwd, agent, attemptTask, candidate, attemptOptions, {
 				sessionEnabled,
 				systemPrompt,
 				resolvedSkillNames: resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
@@ -1898,7 +1942,7 @@ async function runSyncCompletionInner(
 				verifyModel,
 			});
 			lastResult = result;
-			if (startupAttemptIndex === 0) {
+			if (!recoveringAbort && startupAttemptIndex === 0) {
 				if (result.model) attemptedModels.push(result.model);
 				else if (candidate) attemptedModels.push(candidate);
 			}
@@ -1914,10 +1958,42 @@ async function runSyncCompletionInner(
 				usage: { ...result.usage },
 			};
 			modelAttempts.push(attempt);
+			if (!attemptSucceeded) {
+				const afterCompactionSettlement = (result as AbortRecoverySingleResult)[AFTER_COMPACTION_SETTLEMENT];
+				const abortRecovery = planAbortRecovery({
+					messages: result.messages ?? [],
+					error: result.error,
+					processSignal: result.processSignal,
+					sessionAvailable: Boolean(options.sessionFile && existsSync(options.sessionFile)),
+					alreadyResumed: abortRecoveryAttempted,
+					stopped: result.stopped || result.detached || options.signal?.aborted,
+					interrupted: result.interrupted || intercomDetached || options.interruptSignal?.aborted,
+					timedOut: result.timedOut,
+					toolBudgetExhausted: result.toolBudgetBlocked,
+					usageBudgetExhausted: false,
+					structuredOutputFailed: result.structuredOutputFailed,
+					acceptanceFailed: false,
+					currentTool: result.progress?.currentTool,
+					afterCompactionSettlement,
+				});
+				if (abortRecovery.action === "resume") {
+					abortRecoveryAttempted = true;
+					nextAttemptTask = abortRecovery.prompt;
+					attemptNotes.push("[abort-recovery] provider/transport abort after useful progress; resuming the retained child session once.");
+					continue;
+				}
+				if (abortRecovery.diagnostic) {
+					result.error = result.error ? `${result.error}\n${abortRecovery.diagnostic}` : abortRecovery.diagnostic;
+					attempt.error = result.error;
+					break modelAttemptsLoop;
+				}
+			}
+			if (recoveringAbort && !attemptSucceeded) break modelAttemptsLoop;
+			if (options.workflowChildPermitLaunch && !attemptSucceeded) break modelAttemptsLoop;
 			// Preserve the legacy intercom handoff contract: once this logical run has
 			// been handed to a supervisor, terminating that attempt must not launch a
 			// startup retry or model fallback. Explicit user detach retains fallback.
-			if (intercomDetached || result.timedOut || result.turnBudgetExceeded) break modelAttemptsLoop;
+			if (intercomDetached || result.timedOut) break modelAttemptsLoop;
 			if (attemptSucceeded) break modelAttemptsLoop;
 
 			const startupFailure = isRetryableSubagentStartupFailure({
@@ -1934,7 +2010,6 @@ async function runSyncCompletionInner(
 				interrupted: result.interrupted,
 				timedOut: result.timedOut,
 				stopped: result.stopped,
-				turnBudgetExceeded: result.turnBudgetExceeded,
 			});
 			const retryDelayMs = SUBAGENT_STARTUP_RETRY_DELAYS_MS[startupAttemptIndex];
 			if (startupFailure && retryDelayMs !== undefined) {
@@ -1986,7 +2061,7 @@ async function runSyncCompletionInner(
 				attempt.error = startupError;
 				break modelAttemptsLoop;
 			}
-			const retryableModelFailure = isRetryableModelFailure(result.error);
+			const retryableModelFailure = isRetryableModelFailureAttempt({ error: result.error, messages: result.messages, toolCount: result.progressSummary?.toolCount });
 			if (retryableModelFailure) recordRetryableModelFailure(result.model ?? candidate, result.error);
 			if (isContextOverflow(result.error)) {
 				result.contextOverflow = true;
@@ -2008,11 +2083,13 @@ async function runSyncCompletionInner(
 		usage: emptyUsage(),
 		error: "Subagent did not produce a result.",
 	} satisfies SingleResult, options.context);
+	result.task = task;
 
 	result.usage = aggregateUsage;
 	result.attemptedModels = attemptedModels.length > 0 ? attemptedModels : undefined;
 	result.modelAttempts = modelAttempts.length > 0 ? modelAttempts : undefined;
 	result.progressSummary = {
+		...(childSessionName ? { sessionName: childSessionName } : {}),
 		toolCount: totalToolCount,
 		tokens: aggregateUsage.input + aggregateUsage.output,
 		durationMs: totalDurationMs,
@@ -2066,8 +2143,6 @@ async function runSyncCompletionInner(
 			result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "stopped", message: "Acceptance was not evaluated because the subagent was stopped." });
 		} else if (result.timedOut) {
 			result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "timeout", message: "Acceptance was not evaluated because the subagent timed out." });
-		} else if (result.turnBudgetExceeded) {
-			result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "turn-budget", message: "Acceptance was not evaluated because the subagent exceeded its turn budget." });
 		} else {
 			result.acceptance = await evaluateAcceptance({
 				acceptance: effectiveAcceptance,

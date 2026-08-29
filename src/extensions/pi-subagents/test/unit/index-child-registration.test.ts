@@ -20,6 +20,76 @@ function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 }
 
 describe("subagent extension child mode", () => {
+	it("defers persistence when startup config expires a cached exclusion", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-model-exclusion-startup-"));
+		const exclusionPath = path.join(agentDir, "model-exclusions.json");
+		try {
+			const configDir = path.join(agentDir, "extensions", "subagent");
+			fs.mkdirSync(configDir, { recursive: true });
+			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ modelExclusions: { defaultTtlMs: 300_000 } }), "utf-8");
+			const recordedAt = Date.now() - 600_000;
+			const originalExpiry = Date.now() + 3_600_000;
+			fs.writeFileSync(exclusionPath, JSON.stringify({
+				version: 1,
+				exclusions: [{ provider: "openai", modelId: "old-model", reason: "503", recordedAt, expiresAt: originalExpiry }],
+			}), "utf-8");
+			const script = String.raw`
+				import registerSubagentExtension from "./index.ts";
+				import { isExcluded } from "./src/runs/shared/model-exclusions.ts";
+				const events = { on() { return () => {}; }, emit() {} };
+				const fakePi = new Proxy({
+					events,
+					registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				registerSubagentExtension(fakePi);
+				if (isExcluded("old-model", "openai")) throw new Error("startup TTL clamp did not expire the cached exclusion in memory");
+			`;
+			const env = parentToolEnv(agentDir);
+			env.PI_MODEL_EXCLUSIONS_PATH = exclusionPath;
+			execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
+			const persisted = JSON.parse(fs.readFileSync(exclusionPath, "utf-8")).exclusions[0] as { expiresAt: number };
+			assert.equal(persisted.expiresAt, originalExpiry);
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("applies model exclusion TTL from extension config at registration", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-model-exclusion-config-"));
+		const exclusionPath = path.join(agentDir, "model-exclusions.json");
+		try {
+			const configDir = path.join(agentDir, "extensions", "subagent");
+			fs.mkdirSync(configDir, { recursive: true });
+			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ modelExclusions: { defaultTtlMs: 300_000 } }), "utf-8");
+			const recordedAt = Date.now();
+			fs.writeFileSync(exclusionPath, JSON.stringify({
+				version: 1,
+				exclusions: [{ provider: "openai", modelId: "old-model", reason: "503", recordedAt, expiresAt: recordedAt + 3_600_000 }],
+			}), "utf-8");
+			const script = String.raw`
+				import * as fs from "node:fs";
+				import registerSubagentExtension from "./index.ts";
+				import { recordModelFailure } from "./src/runs/shared/model-exclusions.ts";
+				const events = { on() { return () => {}; }, emit() {} };
+				const fakePi = new Proxy({
+					events,
+					registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				registerSubagentExtension(fakePi);
+				recordModelFailure({ modelId: "gpt-5", provider: "openai", reason: "test" });
+				const entries = JSON.parse(fs.readFileSync(process.env.PI_MODEL_EXCLUSIONS_PATH, "utf-8")).exclusions;
+				for (const entry of entries) {
+					if (entry.expiresAt - entry.recordedAt !== 300_000) throw new Error("configured model exclusion TTL was not applied: " + JSON.stringify(entry));
+				}
+			`;
+			const env = parentToolEnv(agentDir);
+			env.PI_MODEL_EXCLUSIONS_PATH = exclusionPath;
+			execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("collapses tool detail before direct subagent tool execution", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
@@ -565,9 +635,13 @@ describe("subagent extension child mode", () => {
 			const handlers = new Map();
 			const events = { on(channel, handler) { eventHandlers.set(channel, handler); return () => {}; }, emit() {} };
 			const widgets = [];
+			const herdrCommands = [];
+			process.env.HERDR_ENV = "1";
+			process.env.HERDR_PANE_ID = "w1:p1";
 			const fakePi = new Proxy({
 				events,
 				on(channel, handler) { handlers.set(channel, handler); },
+				exec(command, args) { herdrCommands.push({ command, args }); return Promise.resolve({ code: 0, stdout: "", stderr: "", killed: false }); },
 				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
 				sendMessage() {}, getSessionName() { return undefined; },
 			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
@@ -593,6 +667,10 @@ describe("subagent extension child mode", () => {
 			handlers.get("tool_result")({ toolName: "subagent" }, ctx);
 			const fleetWidgets = widgets.filter((entry) => entry.key === "subagent-fleet-status");
 			if (!fleetWidgets.some((entry) => typeof entry.value === "function")) throw new Error("management result did not restore active fleet status: " + JSON.stringify(fleetWidgets));
+			if (!herdrCommands.some(({ args }) => args.includes("summary=⏳ 1 subagent"))) throw new Error("management result did not restore Herdr status: " + JSON.stringify(herdrCommands));
+			const herdrCommandCount = herdrCommands.length;
+			handlers.get("tool_result")({ toolName: "subagent" }, ctx);
+			if (herdrCommands.length !== herdrCommandCount) throw new Error("unchanged active jobs redundantly refreshed Herdr status: " + JSON.stringify(herdrCommands));
 			handlers.get("session_shutdown")();
 			fs.rmSync(asyncDir, { recursive: true, force: true });
 		`;
@@ -925,6 +1003,106 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
+	it("ignores the current stale UI context during runtime reload cleanup", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-stale-ui-reload-"));
+		const configDir = path.join(agentDir, "extensions", "subagent");
+		fs.mkdirSync(configDir, { recursive: true });
+		fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ asyncWidget: false, fleetView: false }), "utf-8");
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			const handlers = new Map();
+			const events = { on() { return () => {}; }, emit() {} };
+			const fakePi = new Proxy({
+				events,
+				on(channel, handler) { handlers.set(channel, handler); },
+				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+				sendMessage() {}, getSessionName() { return undefined; },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			let stale = false;
+			const ctx = {
+				cwd: process.cwd(),
+				get hasUI() {
+					if (stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+					return true;
+				},
+				ui: {
+					setWidget() {}, requestRender() {}, setToolsExpanded() {}, getToolsExpanded() { return false; },
+					theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } },
+				},
+				sessionManager: { getSessionId() { return "stale-ui-session"; }, getSessionFile() { return null; }, getEntries() { return []; } },
+				modelRegistry: { getAvailable() { return []; } },
+			};
+			registerSubagentExtension(fakePi);
+			handlers.get("session_start")({ reason: "startup" }, ctx);
+			stale = true;
+			handlers.get("session_shutdown")({ reason: "reload" });
+		`;
+
+		try {
+			const env = parentToolEnv(agentDir);
+			env.SELESAI_CODING_AGENT_DIR = agentDir;
+			execFileSync(
+				process.execPath,
+				["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+				{ cwd: projectRoot, env, stdio: "pipe" },
+			);
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("claims the explicit predecessor session during session replacement", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-session-transition-"));
+		const configDir = path.join(agentDir, "extensions", "subagent");
+		fs.mkdirSync(configDir, { recursive: true });
+		fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ completionBatch: { enabled: false } }), "utf-8");
+		const script = String.raw`
+			import fs from "node:fs";
+			import path from "node:path";
+			import registerSubagentExtension from "./index.ts";
+			import { currentCompletionOwnerId } from "./src/shared/completion-owner.ts";
+			const handlers = new Map();
+			const listeners = new Map();
+			const events = {
+				on(channel, handler) { let set = listeners.get(channel); if (!set) listeners.set(channel, set = new Set()); set.add(handler); return () => set.delete(handler); },
+				emit(channel, payload) { for (const handler of [...(listeners.get(channel) ?? [])]) handler(payload); },
+			};
+			const sent = [];
+			const pi = new Proxy({
+				events,
+				on(channel, handler) { handlers.set(channel, handler); },
+				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+				sendMessage(message) { sent.push(message); }, getSessionName() { return undefined; },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			const sessions = path.join(process.env.SELESAI_CODING_AGENT_DIR, "sessions");
+			fs.mkdirSync(sessions, { recursive: true });
+			const oldSession = path.join(sessions, "old.jsonl");
+			const newSession = path.join(sessions, "new.jsonl");
+			fs.writeFileSync(oldSession, "");
+			fs.writeFileSync(newSession, "");
+			let currentSession = oldSession;
+			const sessionManager = { getSessionId() { return path.basename(currentSession); }, getSessionFile() { return currentSession; }, getEntries() { return []; } };
+			const ctx = { cwd: process.cwd(), hasUI: false, ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } }, sessionManager, modelRegistry: { getAvailable() { return []; } } };
+			registerSubagentExtension(pi);
+			handlers.get("session_start")({ reason: "startup" }, ctx);
+			currentSession = newSession;
+			handlers.get("session_start")({ reason: "new", previousSessionFile: oldSession }, ctx);
+			const owner = currentCompletionOwnerId();
+			events.emit("subagent:async-complete", { id: "old-owned", agent: "worker", success: true, summary: "old", timestamp: 1, sessionId: oldSession, completionOwnerId: owner });
+			events.emit("subagent:async-complete", { id: "foreign", agent: "worker", success: true, summary: "foreign", timestamp: 2, sessionId: path.join(sessions, "foreign.jsonl"), completionOwnerId: owner });
+			if (sent.length !== 1) throw new Error("expected only the claimed predecessor completion, got " + sent.length);
+			await handlers.get("session_shutdown")({ reason: "quit" });
+		`;
+
+		try {
+			const env = parentToolEnv();
+			env.SELESAI_CODING_AGENT_DIR = agentDir;
+			execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("registers the main watchdog command and renderer in parent mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
@@ -1075,32 +1253,6 @@ describe("subagent extension child mode", () => {
 			],
 			{ cwd: projectRoot, stdio: "pipe" },
 		);
-	});
-
-	it("omits legacy chain controls from the child-safe fanout tool", () => {
-		const readRegisteredTool = (): { description: string; properties: string[]; id: string; runId: string } => {
-			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fanout-schema-"));
-			fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
-			const script = String.raw`
-				import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
-				import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
-				process.env[SUBAGENT_CHILD_ENV] = "1";
-				process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
-				let tool;
-				registerFanoutChildSubagentExtension({ events: { on() { return () => {}; }, emit() {} }, registerTool(value) { tool = value; }, getSessionName() { return undefined; } });
-				process.stdout.write(JSON.stringify({ description: tool.description, properties: Object.keys(tool.parameters.properties), id: tool.parameters.properties.id.description, runId: tool.parameters.properties.runId.description }));
-			`;
-			const output = execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], {
-				cwd: projectRoot,
-				env: parentToolEnv(agentDir),
-				encoding: "utf-8",
-			});
-			return JSON.parse(output) as { description: string; properties: string[]; id: string; runId: string };
-		};
-
-		const tool = readRegisteredTool();
-		assert.equal(tool.properties.includes("step"), false);
-		assert.doesNotMatch(`${tool.description}\n${tool.id}\n${tool.runId}`, /append-step|approve-checkpoint|reject-checkpoint/);
 	});
 
 	it("lets fanout children call read-only list but blocks mutating management actions", () => {

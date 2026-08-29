@@ -16,12 +16,12 @@ import {
 	refreshProviderModelCatalog,
 	readProviderModelCatalog,
 } from "../../src/profiles/profiles.ts";
-import { SELESAI_SUBAGENT_PI_BINARY_ENV } from "../../src/runs/shared/pi-spawn.ts";
+import { SELESAI_SUBAGENT_SELESAI_BINARY_ENV } from "../../src/runs/shared/pi-spawn.ts";
 
 let homeDir = "";
 const previousHome = process.env.HOME;
 const previousUserProfile = process.env.USERPROFILE;
-const previousPiBinary = process.env[SELESAI_SUBAGENT_PI_BINARY_ENV];
+const previousPiBinary = process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV];
 
 function makeCtx(cwd: string, models: Array<Record<string, unknown>>) {
 	return {
@@ -44,8 +44,8 @@ describe("profiles helpers", () => {
 		else process.env.HOME = previousHome;
 		if (previousUserProfile === undefined) delete process.env.USERPROFILE;
 		else process.env.USERPROFILE = previousUserProfile;
-		if (previousPiBinary === undefined) delete process.env[SELESAI_SUBAGENT_PI_BINARY_ENV];
-		else process.env[SELESAI_SUBAGENT_PI_BINARY_ENV] = previousPiBinary;
+		if (previousPiBinary === undefined) delete process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV];
+		else process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV] = previousPiBinary;
 		fs.rmSync(homeDir, { recursive: true, force: true });
 	});
 
@@ -152,7 +152,7 @@ describe("profiles helpers", () => {
 
 	it("refreshes a provider model catalog using the resolved Pi executable and writes a cache file", async () => {
 		const piBinary = path.join(homeDir, "pi-wrapper.exe");
-		process.env[SELESAI_SUBAGENT_PI_BINARY_ENV] = piBinary;
+		process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV] = piBinary;
 		const execCalls: string[] = [];
 		const execCwds: unknown[] = [];
 		const pi = {
@@ -324,7 +324,7 @@ describe("profiles helpers", () => {
 		}, null, 2));
 		const pi = {
 			exec: async (_command: string, args: string[]) => {
-				const model = args[2];
+				const model = args.includes("--model") ? args[args.indexOf("--model") + 1] : args[2];
 				if (model === "openai-codex/gpt-5.9") {
 					return { stdout: "", stderr: "model unavailable", code: 1, killed: false };
 				}
@@ -358,7 +358,7 @@ describe("profiles helpers", () => {
 		const probedModels: unknown[] = [];
 		const pi = {
 			exec: async (_command: string, args: string[]) => {
-				probedModels.push(args[2]);
+				probedModels.push(args.includes("--model") ? args[args.indexOf("--model") + 1] : args[2]);
 				assert.equal(args.includes("--no-tools"), true);
 				assert.equal(args.includes("--tools"), false);
 				return { stdout: "OK\n", stderr: "", code: 0, killed: false };

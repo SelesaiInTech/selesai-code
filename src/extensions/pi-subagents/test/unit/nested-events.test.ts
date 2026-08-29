@@ -333,7 +333,7 @@ describe("nested event parsing and projection", () => {
 			ts: 100,
 			parentRunId: "root-run",
 			parentStepIndex: 1,
-			child: { ...child("nested-valid-tokens", "running", 100), totalTokens: { input: 10, output: 15, total: 25 } },
+			child: { ...child("nested-valid-tokens", "running", 100), totalTokens: { input: 10, output: 15, total: 25, window: 30, windowPeak: 40 } },
 		});
 		fs.writeFileSync(path.join(route.eventSink, "0000000000200-invalid-tokens.json"), `${JSON.stringify({
 			type: "subagent.nested.updated",
@@ -347,7 +347,7 @@ describe("nested event parsing and projection", () => {
 
 		const registry = projectNestedEvents(route);
 
-		assert.deepEqual(registry.children.find((item) => item.id === "nested-valid-tokens")?.totalTokens, { input: 10, output: 15, total: 25 });
+		assert.deepEqual(registry.children.find((item) => item.id === "nested-valid-tokens")?.totalTokens, { input: 10, output: 15, total: 25, window: 30, windowPeak: 40 });
 		assert.equal(registry.children.find((item) => item.id === "nested-invalid-tokens")?.totalTokens, undefined);
 	});
 
@@ -470,5 +470,23 @@ describe("nested event parsing and projection", () => {
 		const secondProjection = projectNestedEvents(route);
 		assert.deepEqual(secondProjection, firstProjection);
 		assert.equal(secondProjection.children[0]?.state, "complete");
+	});
+});
+
+describe("nested session-name projection", () => {
+	it("keeps bounded root and step session names from async status", () => {
+		const summary = nestedSummaryFromAsyncStatus({
+			runId: "child-run",
+			mode: "single",
+			state: "running",
+			startedAt: 1,
+			steps: [{
+				agent: "reviewer",
+				sessionName: "reviewer: Inspect the changed auth middleware",
+				status: "running",
+			}],
+		}, "/tmp/child-run", { id: "child-run", parentRunId: "root-run", depth: 1, ts: 1 });
+		assert.equal(summary.sessionName, "reviewer: Inspect the changed auth middleware");
+		assert.equal(summary.steps?.[0]?.sessionName, "reviewer: Inspect the changed auth middleware");
 	});
 });

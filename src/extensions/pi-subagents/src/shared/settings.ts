@@ -5,43 +5,21 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentConfig } from "../agents/agents.ts";
+import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig, type AgentScope, type UnknownAgentDiagnosticContext } from "../agents/agents.ts";
 import { normalizeSkillInput } from "../agents/skills.ts";
+import { normalizeOutputOverride, type OutputOverrideInput, type ResolvedStepBehavior } from "../runs/shared/child-launch-plan.ts";
 import { CHAIN_RUNS_DIR, type AcceptanceInput, type AgentContract, type ChainGateLayer, type JsonSchemaObject, type OutputMode, type ToolBudgetConfig } from "./types.ts";
 const CHAIN_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const INITIAL_PROGRESS_CONTENT = "# Progress\n\n## Status\nIn Progress\n\n## Tasks\n\n## Files Changed\n\n## Notes\n";
 
-// =============================================================================
-// Behavior Resolution Types
-// =============================================================================
-
-export interface ResolvedStepBehavior {
-	output: string | false;
-	outputMode: OutputMode;
-	reads: string[] | false;
-	progress: boolean;
-	skills: string[] | false;
-	model?: string;
-	fast?: boolean;
-}
-
-export type OutputOverrideInput = string | boolean;
-
-export interface StepOverrides {
-	output?: OutputOverrideInput;
-	outputMode?: OutputMode;
-	reads?: string[] | false;
-	progress?: boolean;
-	skills?: string[] | false;
-	model?: string;
-	fast?: boolean;
-}
-
-function normalizeOutputOverride(output: unknown): string | false | undefined {
-	if (output === false || output === "false") return false;
-	if (output === true || output === "true") return undefined;
-	return typeof output === "string" && output.length > 0 ? output : undefined;
-}
+export {
+	planChildLaunch,
+	resolveStepBehavior,
+	resolveTaskTextForFileUpdatePolicy,
+	suppressProgressForReadOnlyTask,
+	taskDisallowsFileUpdates,
+} from "../runs/shared/child-launch-plan.ts";
+export type { ChildLaunchPlan, ChildLaunchPlanInput, OutputOverrideInput, ResolvedStepBehavior, StepOverrides } from "../runs/shared/child-launch-plan.ts";
 
 // =============================================================================
 // Chain Step Types
@@ -240,78 +218,6 @@ export function resolveChainTemplates(
 }
 
 // =============================================================================
-// Behavior Resolution
-// =============================================================================
-
-/**
- * Resolve effective chain behavior per step.
- * Priority: step override > agent frontmatter > false (disabled)
- */
-export function resolveStepBehavior(
-	agentConfig: AgentConfig,
-	stepOverrides: StepOverrides,
-	chainSkills?: string[],
-): ResolvedStepBehavior {
-	// Output: step override > frontmatter > false (no output)
-	const stepOutput = normalizeOutputOverride(stepOverrides.output);
-	const output =
-		stepOutput !== undefined
-			? stepOutput
-			: normalizeOutputOverride(agentConfig.output) ?? false;
-
-	// Reads: step override > frontmatter defaultReads > false (no reads)
-	const reads =
-		stepOverrides.reads !== undefined
-			? stepOverrides.reads
-			: agentConfig.defaultReads ?? false;
-
-	// Progress: step override > frontmatter defaultProgress > false
-	const progress =
-		stepOverrides.progress !== undefined
-			? stepOverrides.progress
-			: agentConfig.defaultProgress ?? false;
-
-	let skills: string[] | false;
-	if (stepOverrides.skills === false) {
-		skills = false;
-	} else if (stepOverrides.skills !== undefined) {
-		skills = [...stepOverrides.skills];
-		if (chainSkills && chainSkills.length > 0) {
-			skills = [...new Set([...skills, ...chainSkills])];
-		}
-	} else {
-		skills = agentConfig.skills ? [...agentConfig.skills] : [];
-		if (chainSkills && chainSkills.length > 0) {
-			skills = [...new Set([...skills, ...chainSkills])];
-		}
-	}
-
-	const outputMode = stepOverrides.outputMode ?? agentConfig.outputMode ?? "inline";
-	const model = stepOverrides.model ?? agentConfig.model;
-	const fast = stepOverrides.fast ?? agentConfig.fast;
-	return { output, outputMode, reads, progress, skills, model, fast };
-}
-
-export function resolveTaskTextForFileUpdatePolicy(task: string | undefined, originalTask?: string): string | undefined {
-	if (!task) return originalTask;
-	return originalTask ? task.replaceAll("{task}", originalTask) : task;
-}
-
-export function taskDisallowsFileUpdates(task: string | undefined): boolean {
-	if (!task) return false;
-	return /\breview[- ]only\b/i.test(task)
-		|| /\bread[- ]only\s+(?:review|audit|inspection|pass)\b/i.test(task)
-		|| /\b(?:no|without)\s+(?:file\s+)?edits?\b/i.test(task)
-		|| /\b(?:do not|don't|must not)\s+(?:edit|modify|write|touch)\b/i.test(task)
-		|| /\bleave\s+files?\s+unchanged\b/i.test(task);
-}
-
-export function suppressProgressForReadOnlyTask(behavior: ResolvedStepBehavior, task: string | undefined, originalTask?: string): ResolvedStepBehavior {
-	const policyTask = resolveTaskTextForFileUpdatePolicy(task, originalTask);
-	return behavior.progress && taskDisallowsFileUpdates(policyTask) ? { ...behavior, progress: false } : behavior;
-}
-
-// =============================================================================
 // Chain Instruction Injection
 // =============================================================================
 
@@ -411,16 +317,24 @@ export function buildChainInstructions(
  * Resolve behaviors for all tasks in a parallel step.
  * Creates namespaced output paths to avoid collisions.
  */
+/** Exact discovery context, or explicit input for defensive fallback discovery. */
+export type ParallelBehaviorDiagnostics = UnknownAgentDiagnosticContext | { cwd: string; scope?: AgentScope };
+
 export function resolveParallelBehaviors(
 	tasks: ParallelTaskItem[],
 	agentConfigs: AgentConfig[],
 	stepIndex: number,
 	chainSkills?: string[],
+	diagnostics?: ParallelBehaviorDiagnostics,
 ): ResolvedStepBehavior[] {
 	return tasks.map((task, taskIndex) => {
 		const config = agentConfigs.find((a) => a.name === task.agent);
 		if (!config) {
-			throw new Error(`Unknown agent: ${task.agent}`);
+			if (!diagnostics) throw new Error("resolveParallelBehaviors requires unknown-agent diagnostic context or fallback discovery input.");
+			const context = "directories" in diagnostics
+				? diagnostics
+				: unknownAgentDiagnosticContext(discoverAgents(path.resolve(diagnostics.cwd), diagnostics.scope ?? "both"));
+			throw new Error(formatUnknownAgentError(task.agent, context));
 		}
 
 		// Build subdirectory path for this parallel task

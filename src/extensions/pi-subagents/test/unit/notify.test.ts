@@ -10,6 +10,7 @@ import registerSubagentNotify, {
 	type SubagentNotifyDetails,
 } from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
+import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
 
 const COMPLETION_OWNER_ID = "completion-owner-a";
 
@@ -157,6 +158,47 @@ describe("registerSubagentNotify", () => {
 		assert.equal(await notifier.deliver(completionResult({ id: "missing-owner", completionOwnerId: undefined })), false);
 		assert.equal(await notifier.deliver(completionResult({ id: "different-owner", completionOwnerId: "completion-owner-b" })), false);
 		assert.equal(sent.length, 0);
+	});
+
+	it("accepts only explicitly claimed predecessor-session completions", async () => {
+		const events = createEventBus();
+		const sent: unknown[] = [];
+		const pi = { events, sendMessage(message: unknown) { sent.push(message); } };
+		const state = { currentSessionId: "session-old" as string | null, completionOwnerId: COMPLETION_OWNER_ID };
+		const ownership = createResultDeliveryOwnership(state);
+		assert.equal(ownership.claimPredecessor("session-old", "session-old"), true);
+		state.currentSessionId = "session-new";
+		const notifier = registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false }, ownership });
+		try {
+			assert.equal(await notifier.deliver(completionResult({ id: "predecessor", sessionId: "session-old" })), true);
+			assert.equal(await notifier.deliver(completionResult({ id: "foreign", sessionId: "session-foreign" })), false);
+			assert.equal(await notifier.deliver(completionResult({ id: "wrong-owner", sessionId: "session-old", completionOwnerId: "other-owner" })), false);
+			assert.equal(sent.length, 1);
+		} finally {
+			notifier.dispose();
+		}
+	});
+
+	it("rechecks session ownership before emitting a delayed batch", async () => {
+		const clock = createFakeClock();
+		const events = createEventBus();
+		const sent: unknown[] = [];
+		const pi = { events, sendMessage(message: unknown) { sent.push(message); } };
+		const state = { currentSessionId: "session-a" as string | null, completionOwnerId: COMPLETION_OWNER_ID };
+		const notifier = registerSubagentNotify(pi as never, state, {
+			batchConfig: { enabled: true, debounceMs: 150, maxWaitMs: 1000, stragglerDebounceMs: 75, stragglerMaxWaitMs: 400, stragglerWindowMs: 2000 },
+			timers: clock.api,
+			now: clock.now,
+		});
+		try {
+			const pending = notifier.deliver(completionResult({ id: "delayed-unclaimed" }));
+			state.currentSessionId = "session-b";
+			clock.advance(150);
+			assert.equal(await pending, false);
+			assert.equal(sent.length, 0);
+		} finally {
+			notifier.dispose();
+		}
 	});
 
 	it("does not wake the session when background delivery explicitly disables triggerTurn", async () => {
@@ -320,7 +362,7 @@ describe("registerSubagentNotify", () => {
 		assert.deepEqual(sent[0], {
 			message: {
 				customType: "subagent-notify",
-				content: "Background task paused: **workflow**\n\nRun 'detaches' detached for intercom coordination.\n\nWorkflow run: workflow-1\nChild runs: detaches=child-1 (paused)",
+				content: "Background task paused: **workflow**\n\nRun 'detaches' detached for intercom coordination.\n\nChild outputs:\n- key=detaches run=child-1 status=paused\n  Saved output: unavailable\n  Preview: unavailable (no safe inline output)\n\nWorkflow run: workflow-1\nChild runs: detaches=child-1 (paused)",
 				display: true,
 			},
 			options: { triggerTurn: true },
@@ -549,6 +591,89 @@ describe("completion formatting helpers", () => {
 		assert.equal(parsed?.reconciledFromDetachedChild, "child-2");
 	});
 
+	it("shows bounded child output paths and previews before workflow correlation metadata", () => {
+		const details = buildCompletionDetails({
+			id: "workflow-stopped",
+			runId: "workflow-stopped",
+			mode: "workflow",
+			agent: "workflow",
+			success: false,
+			state: "stopped",
+			summary: "Workflow stopped after one child completed.",
+			results: [
+				{
+					workflowKey: "review",
+					runId: "child-review",
+					agent: "worker",
+					success: true,
+					outputState: "present",
+					outputReference: "/tmp/review.md",
+					artifactPaths: { outputPath: "/tmp/legacy-review-path" },
+					output: `\u001b[31mReview heading\u001b[0m\n${"x".repeat(5_000)}`,
+				},
+				{
+					workflowKey: "stopped",
+					agent: "worker",
+					stopped: true,
+					outputState: "absent",
+					artifactPaths: { outputPath: "/tmp/stopped.md" },
+				},
+			],
+		});
+
+		assert.equal(details.status, "stopped");
+		assert.deepEqual(details.childOutputs?.map(({ workflowKey, runId, status, savedOutputPath }) => ({ workflowKey, runId, status, savedOutputPath })), [
+			{ workflowKey: "review", runId: "child-review", status: "completed", savedOutputPath: "/tmp/review.md" },
+			{ workflowKey: "stopped", runId: undefined, status: "stopped", savedOutputPath: undefined },
+		]);
+		assert.ok(Buffer.byteLength(details.childOutputs?.[0]?.preview ?? "", "utf8") <= 4 * 1024);
+
+		const content = formatSingleCompletion(details);
+		assert.match(content, /Child outputs:/);
+		assert.match(content, /key=review run=child-review status=completed/);
+		assert.match(content, /Saved output: \/tmp\/review\.md/);
+		assert.match(content, /Review heading/);
+		assert.doesNotMatch(content, /legacy-review-path/);
+		assert.match(content, /preview truncated/);
+		assert.match(content, /key=stopped run=unavailable status=stopped/);
+		assert.match(content, /Saved output: unavailable/);
+		assert.match(content, /Preview: unavailable \(no safe inline output\)/);
+		assert.doesNotMatch(content, /\u001b/);
+		assert.match(content, /Workflow run: workflow-stopped/);
+		assert.match(content, /Child runs: review=child-review \(completed\), stopped=unavailable \(stopped\)/);
+
+		const parsed = parseSubagentNotifyContent(content);
+		assert.equal(parsed?.workflowRunId, "workflow-stopped");
+		assert.match(parsed?.resultPreview ?? "", /Child outputs:/);
+		assert.match(parsed?.resultPreview ?? "", /Review heading/);
+		assert.doesNotMatch(parsed?.resultPreview ?? "", /Workflow run:/);
+	});
+
+	it("does not label artifact-only paths as saved workflow output", () => {
+		const details = buildCompletionDetails({
+			id: "workflow-artifact-only",
+			runId: "workflow-artifact-only",
+			mode: "workflow",
+			agent: "workflow",
+			success: true,
+			results: [{
+				workflowKey: "artifact-only",
+				runId: "child-artifact-only",
+				agent: "worker",
+				success: true,
+				outputState: "present",
+				output: "inline artifact-only report",
+				artifactPaths: { outputPath: "/tmp/pi/async/child-artifact-only" },
+			}],
+		});
+
+		const content = formatSingleCompletion(details);
+		assert.match(content, /key=artifact-only run=child-artifact-only status=completed/);
+		assert.match(content, /Saved output: unavailable/);
+		assert.match(content, /inline artifact-only report/);
+		assert.doesNotMatch(content, /\/tmp\/pi\/async\/child-artifact-only/);
+	});
+
 	it("reports false when Pi rejects sendMessage synchronously", async () => {
 		const pi = { events: createEventBus(), sendMessage() { throw new Error("runtime inactive"); } };
 		const notifier = registerSubagentNotify(pi as never, { currentSessionId: "session-a" }, { batchConfig: { enabled: false } });
@@ -558,6 +683,9 @@ describe("completion formatting helpers", () => {
 
 	it("buildCompletionDetails derives paused and stopped statuses", () => {
 		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, state: "paused", summary: "Paused after interrupt.", timestamp: 1 }).status, "paused");
+		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, interrupted: true, summary: "interrupted", timestamp: 1 }).status, "paused");
+		const pausedWorkflow = buildCompletionDetails({ id: "workflow", agent: "workflow", mode: "workflow", state: "paused", results: [{ workflowKey: "failed", success: false }] });
+		assert.equal(pausedWorkflow.childOutputs?.[0]?.status, "failed");
 		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, summary: "boom", exitCode: 1, timestamp: 1 }).status, "failed");
 		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, summary: "terminated", exitCode: 1, processSignal: "SIGTERM", timestamp: 1 }).status, "stopped");
 		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, summary: "terminated", results: [{ success: false, exitCode: 1, processSignal: "SIGTERM" }], timestamp: 1 }).status, "stopped");

@@ -8,7 +8,9 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { registerAgent } from "../../src/api/agents.ts";
 import { clearRuntimeAgentsForPi } from "../../src/agents/runtime-agent-registry.ts";
 import { scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { ASYNC_DIR, DIRS } from "../../src/shared/types.ts";
 import type { WatchdogReviewFunction } from "../../src/watchdog/runtime.ts";
 
@@ -58,7 +60,7 @@ interface RegisterSlashCommandsModule {
 			resultFileCoalescer: { schedule(file: string, delayMs?: number): boolean; clear(): void };
 		},
 		options?: { foregroundDetachShortcut?: string },
-	) => void;
+	) => { dispose(): void };
 }
 
 interface SlashLiveStateModule {
@@ -497,6 +499,91 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		clearSlashSnapshots?.();
 	});
 
+	it("/subagent-cost recovers async workflow usage from receipts and metadata", async () => {
+		await withTempProject("pi-subagent-cost-async-", async (root) => {
+			const workflowRunId = `workflow-cost-${process.pid}-${Date.now()}`;
+			const earlierChildRunId = `child-cost-earlier-${process.pid}-${Date.now()}`;
+			const childRunId = `child-cost-${process.pid}-${Date.now()}`;
+			const asyncDir = path.join(DIRS.async, workflowRunId);
+			const sessionFile = path.join(root, "sessions", "parent.jsonl");
+			const artifactsDir = getArtifactsDir(sessionFile, root, "session");
+			const earlierMetadataPath = getArtifactPaths(artifactsDir, earlierChildRunId, "reviewer", 0).metadataPath;
+			const metadataPath = getArtifactPaths(artifactsDir, childRunId, "reviewer", 0).metadataPath;
+			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.mkdirSync(path.dirname(earlierMetadataPath), { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), JSON.stringify({
+				version: 1,
+				workflowRunId,
+				state: "complete",
+				createdAt: Date.now(),
+				entries: {
+					review: {
+						key: "review",
+						agent: "reviewer",
+						latestRunId: childRunId,
+						continuation: { runIds: [earlierChildRunId, childRunId] },
+						resumability: { state: "resumable" },
+					},
+				},
+				workflowChildren: {
+					version: 1,
+					parentToolCallId: "tool-1",
+					workflowRunId,
+					inventoryComplete: true,
+					workflowState: "completed",
+					children: [{ childId: "review", state: "completed", runId: childRunId, agent: "reviewer" }],
+				},
+			}, null, 2), "utf-8");
+			fs.writeFileSync(earlierMetadataPath, JSON.stringify({
+				runId: earlierChildRunId,
+				agent: "reviewer",
+				usage: { input: 8, output: 3, cacheRead: 5, cacheWrite: 0, cost: 0.25, turns: 1 },
+			}, null, 2), "utf-8");
+			fs.writeFileSync(metadataPath, JSON.stringify({
+				runId: childRunId,
+				agent: "reviewer",
+				usage: { input: 20, output: 4, cacheRead: 80, cacheWrite: 0, cost: 0.5, turns: 2 },
+			}, null, 2), "utf-8");
+
+			const sent: unknown[] = [];
+			const commands = new Map<string, RegisteredSlashCommand>();
+			const pi = {
+				events: createEventBus(),
+				registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+				registerShortcut() {},
+				sendMessage(message: unknown) { sent.push(message); },
+			};
+			const branch = [
+				{ type: "message", message: { role: "assistant", usage: { input: 10, output: 2, cacheRead: 30, cacheWrite: 0, cost: { total: 0.2 } } } },
+				{ type: "compaction", usage: { input: 5, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.05 } } },
+				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "workflow", runId: workflowRunId, results: [] } } },
+			];
+			try {
+				registerSlashCommands!(pi as never, createState(root));
+				await commands.get("subagent-cost")!.handler("", createCommandContext({
+					cwd: root,
+					sessionManager: {
+						getBranch: () => branch,
+						getSessionFile: () => sessionFile,
+						getSessionId: () => "session-parent",
+					},
+				}));
+				const report = String((sent[0] as { content?: unknown }).content ?? "");
+				assert.match(report, /Parent: ↑15 ↓3 \$0\.2500/);
+				assert.match(report, /Child 1 \(reviewer\): ↑8 ↓3 \$0\.2500 \(cache read 5, 1 turn\)/);
+				assert.match(report, /Child 2 \(reviewer\): ↑20 ↓4 \$0\.5000 \(cache read 80, 2 turns\)/);
+				assert.equal((report.match(/Child \d+ \(reviewer\):/g) ?? []).length, 2);
+				assert.match(report, /Children: ↑28 ↓7 \$0\.7500 \(cache read 85, 3 turns\)/);
+				assert.match(report, /Total: ↑43 ↓10 \$1\.0000 \(cache read 115, 4 turns\)/);
+				assert.doesNotMatch(report, /No subagent child usage/);
+			} finally {
+				fs.rmSync(asyncDir, { recursive: true, force: true });
+			}
+		});
+	});
+
 	it("registers a configured foreground detach shortcut", async () => {
 		const shortcuts = new Map<string, { handler(ctx: unknown): Promise<void> }>();
 		const sent: unknown[] = [];
@@ -597,6 +684,250 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		});
 	});
 
+	it("/subagents-stop forwards a child id for child-scoped stops", async () => {
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requestedParams: unknown;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const payload = data as { requestId: string; params?: unknown };
+			requestedParams = payload.params;
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId: payload.requestId });
+			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId: payload.requestId,
+				result: {
+					content: [{ type: "text", text: "Stop requested for child step-0-agent-0 in async workflow run-123." }],
+					details: { mode: "management", results: [] },
+				},
+				isError: false,
+			});
+		});
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage() {},
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-stop")!.handler("run-123 step-0-agent-0", createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.deepEqual(requestedParams, { action: "stop", id: "run-123", childId: "step-0-agent-0" });
+	});
+
+	it("/subagents-stop rejects extra arguments with usage text", async () => {
+		const sent: unknown[] = [];
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const pi = {
+			events: createEventBus(),
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-stop")!.handler("run-123 child-0 unexpected", createCommandContext());
+
+		assert.equal(sent.length, 1);
+		assert.match(String((sent[0] as { content?: unknown }).content ?? ""), /Usage: \/subagents-stop \[run-id\] \[child-id\]/);
+	});
+
+	it("/subagents-steer forwards a run-level steer with host-style recovery disabled", async () => {
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requestedParams: unknown;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const payload = data as { requestId: string; params?: unknown };
+			requestedParams = payload.params;
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId: payload.requestId });
+			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId: payload.requestId,
+				result: {
+					content: [{ type: "text", text: "Steer delivered to run-123." }],
+					details: { mode: "management", results: [] },
+				},
+				isError: false,
+			});
+		});
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage() {},
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-steer")!.handler("run-123 wrap up and report", createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.deepEqual(requestedParams, { action: "steer", id: "run-123", message: "wrap up and report", steeringRecovery: false });
+	});
+
+	it("/subagents-steer --child resolves workflow and nested children to direct runs", async () => {
+		const runId = "steer-itest-child-resolution";
+		const childRunId = `${runId}-child`;
+		const nestedChildRunId = `${runId}-nested`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+			runId,
+			sessionId: "session-test",
+			mode: "workflow",
+			state: "paused",
+			activityState: "needs_attention",
+			startedAt: 100,
+			lastUpdate: 200,
+			steps: [
+				{
+					agent: "worker",
+					status: "complete",
+					startedAt: 100,
+					children: [{
+						id: nestedChildRunId,
+						parentRunId: runId,
+						parentStepIndex: 0,
+						depth: 1,
+						path: [{ runId, stepIndex: 0 }],
+						state: "running",
+						asyncDir: path.join(ASYNC_DIR, nestedChildRunId),
+					}],
+				},
+				{ agent: "scout", workflowKey: "detaches", status: "paused", runId: childRunId, startedAt: 110, activityState: "needs_attention" },
+			],
+		}, null, 2), "utf-8");
+		updateActiveRunIndex(asyncDir, "paused");
+
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requestedParams: unknown;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const payload = data as { requestId: string; params?: unknown };
+			requestedParams = payload.params;
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId: payload.requestId });
+			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId: payload.requestId,
+				result: {
+					content: [{ type: "text", text: "Steer delivered." }],
+					details: { mode: "management", results: [] },
+				},
+				isError: false,
+			});
+		});
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage() {},
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-steer")!.handler(`${runId} --child detaches --verbose`, createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.deepEqual(requestedParams, { action: "steer", id: childRunId, message: "--verbose", steeringRecovery: false });
+		await commands.get("subagents-steer")!.handler(`${runId} --child ${nestedChildRunId} continue`, createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.deepEqual(requestedParams, { action: "steer", id: nestedChildRunId, message: "continue", steeringRecovery: false });
+	});
+
+	it("/subagents-steer --child fails closed for an unknown child id", async () => {
+		const runId = "steer-itest-child-resolution";
+		const sent: unknown[] = [];
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requested = false;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, () => {
+			requested = true;
+		});
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-steer")!.handler(`${runId} --child nope hurry up`, createCommandContext());
+
+		assert.equal(requested, false);
+		assert.equal(sent.length, 1);
+		assert.match(String((sent[0] as { content?: unknown }).content ?? ""), /was not found under async run/);
+	});
+
+	it("/subagents-steer requires a message", async () => {
+		const sent: unknown[] = [];
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requested = false;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, () => {
+			requested = true;
+		});
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-steer")!.handler("run-123", createCommandContext());
+
+		assert.equal(requested, false);
+		assert.equal(sent.length, 1);
+		assert.match(String((sent[0] as { content?: unknown }).content ?? ""), /Usage: \/subagents-steer <run-id>/);
+	});
+
+	it("/subagents-steer treats leading -- tokens as message text", async () => {
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requestedParams: unknown;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const payload = data as { requestId: string; params?: unknown };
+			requestedParams = payload.params;
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId: payload.requestId });
+			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId: payload.requestId,
+				result: {
+					content: [{ type: "text", text: "Steer delivered." }],
+					details: { mode: "management", results: [] },
+				},
+				isError: false,
+			});
+		});
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage() {},
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-steer")!.handler("run-123 --verbose", createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.deepEqual(requestedParams, { action: "steer", id: "run-123", message: "--verbose", steeringRecovery: false });
+
+		await commands.get("subagents-steer")!.handler("run-123 --child --verbose", createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.deepEqual(requestedParams, { action: "steer", id: "run-123", message: "--child --verbose", steeringRecovery: false });
+	});
+
 	it("/run accepts an agent without a task", async () => {
 		const sent: unknown[] = [];
 		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
@@ -651,6 +982,97 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		assert.match((sent[1] as { content?: string }).content ?? "", /Commit finished/);
 		assert.equal(sessionManager.rewrites, 2);
 		assert.equal(sessionManager.flushed, true);
+	});
+
+	it("/run abandons captured context when commands are disposed during reload", async () => {
+		const sent: unknown[] = [];
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let deliverResponse: (() => void) | undefined;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const requestId = (data as { requestId: string }).requestId;
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId });
+			deliverResponse = () => events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId,
+				result: {
+					content: [{ type: "text", text: "late result" }],
+					details: { mode: "single", results: [] },
+				},
+				isError: false,
+			});
+		});
+
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		};
+		const disposer = registerSlashCommands!(pi, createState(process.cwd()));
+		let stale = false;
+		const ctx = createCommandContext({ hasUI: true });
+		Object.defineProperty(ctx, "hasUI", {
+			get() {
+				if (stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+				return true;
+			},
+		});
+
+		await commands.get("run")!.handler("scout Inspect this", ctx);
+		assert.equal(sent.length, 1);
+		stale = true;
+		disposer.dispose();
+		deliverResponse?.();
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.equal(sent.length, 1, "disposed slash work must not use the stale context for a final message");
+	});
+
+	it("/run handles a start timeout without an uninitialized finish callback", async () => {
+		const sent: unknown[] = [];
+		const commands = new Map<string, RegisteredSlashCommand>();
+		const pi = {
+			events: createEventBus(),
+			registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		};
+		const disposer = registerSlashCommands!(pi, createState(process.cwd()));
+		const realSetTimeout = globalThis.setTimeout;
+		let timeoutCalls = 0;
+		const immediateTimeout = (...args: Parameters<typeof setTimeout>): ReturnType<typeof setTimeout> => {
+			const [handler, delay, ...rest] = args;
+			if (delay === 15_000) {
+				timeoutCalls += 1;
+				(handler as (...values: unknown[]) => void)(...rest);
+				return 0 as ReturnType<typeof setTimeout>;
+			}
+			return realSetTimeout(...args);
+		};
+		globalThis.setTimeout = immediateTimeout;
+		try {
+			await commands.get("run")!.handler("scout Inspect this", createCommandContext());
+			await new Promise<void>((resolve) => setImmediate(resolve));
+		} finally {
+			globalThis.setTimeout = realSetTimeout;
+			disposer.dispose();
+		}
+
+		assert.equal(timeoutCalls, 1);
+		assert.equal(sent.length, 2);
+		assert.match((sent[1] as { content?: string }).content ?? "", /did not start within 15s/);
+	});
+
+	it("/run reports discovery evidence for a missing agent", async () => {
+		await withTempProject("pi-slash-missing-agent-", async (root) => {
+			fs.writeFileSync(path.join(root, ".selesai", "agents", "worker.md"), "---\nname: worker\ndescription: Worker\n---\n", "utf-8");
+			const run = await captureSlashCommandParams("run", "missing", root);
+			assert.equal(run.params, undefined);
+			assert.match(run.notifications[0] ?? "", /^Unknown agent: missing\nEffective cwd: /);
+			assert.match(run.notifications[0] ?? "", /Consulted agent-definition directories:[\s\S]*worker \(project\)/);
+		});
 	});
 
 	it("/run reports malformed agent configuration", async () => {

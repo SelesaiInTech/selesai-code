@@ -203,7 +203,7 @@ describe("subagent extension RPC bridge", () => {
 			asyncJobs: new Map([["async-private-id", {
 				asyncId: "async-private-id", sessionId: "/sessions/parent.jsonl", status: "running", mode: "single",
 				description: ["Review", "\u001b]8;;hostile\u0007", "the diff"].join("\n"),
-				startedAt: 100, steps: [{ agent: "reviewer", label: "opaque label", status: "running", startedAt: 120, model: "anthropic/claude-opus-4-8:high", thinking: "high", tokens: { input: 12, output: 34, total: 46 } }],
+				startedAt: 100, steps: [{ agent: "reviewer", label: "opaque label", status: "running", startedAt: 120, model: "anthropic/claude-opus-4-8:high", thinking: "high", tokens: { input: 12, output: 34, total: 46, window: 40, windowPeak: 44 } }],
 			}]]),
 		} as any;
 		const bridge = registerSubagentRpcBridge({
@@ -217,7 +217,7 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal((fleet as { omitted?: number }).omitted, 0);
 		assert.deepEqual(fleet.entries[0], {
 			key: "fleet-1", agent: "reviewer", role: "opaque label", model: "anthropic/claude-opus-4-8:high", effort: "high",
-			startedAt: 120, tokens: { input: 12, output: 34, total: 46 },
+			startedAt: 120, tokens: { input: 12, output: 34, total: 46, window: 40, windowPeak: 44 },
 		});
 		assert.equal(JSON.stringify(fleet).includes("Review the diff"), false);
 		assert.equal(JSON.stringify(fleet).includes("async-private-id"), false);
@@ -779,7 +779,7 @@ describe("subagent extension RPC bridge", () => {
 				childId: "review",
 				status: "stopping",
 				ts: 150,
-				reason: "user",
+				reason: "rpc",
 				source: "rpc",
 				asyncDir,
 				stepIndex: 1,
@@ -835,6 +835,7 @@ describe("subagent extension RPC bridge", () => {
 			assert.equal(childStatus?.runId, "workflow-stop-child");
 			assert.equal(childStatus?.childId, "slow");
 			assert.equal(childStatus?.status, "stopping");
+			assert.equal(childStatus?.reason, "rpc");
 			assert.equal(childStatus?.source, "rpc");
 			assert.equal(childStatus?.workflowKey, "slow");
 
@@ -931,7 +932,7 @@ describe("subagent extension RPC bridge", () => {
 		}
 	});
 
-	it("rejects stop requests for reload-recovered workflows", async () => {
+	it("stops reload-recovered workflows through the durable control channel", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-stop-workflow-"));
 		try {
 			const events = new FakeEvents();
@@ -965,10 +966,11 @@ describe("subagent extension RPC bridge", () => {
 
 			const reply = await request(events, "stop-workflow", "stop", { id: "workflow-run" });
 
-			assert.equal(reply.success, false);
-			assert.equal((reply as { error: { code: string; message: string } }).error.code, "invalid_state");
-			assert.match((reply as { error: { message: string } }).error.message, /reload recovery cannot stop it safely/);
-			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
+			assert.equal(reply.success, true);
+			assert.equal((reply as { data: { runId?: string; state?: string; message?: string } }).data.runId, "workflow-run");
+			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
+			assert.match((reply as { data: { message?: string } }).data.message ?? "", /Stop requested for async run workflow-run/);
+			assert.equal(consumeStopRequestPayload(asyncDir)?.type, "stop");
 			assert.equal(killCalls, 0);
 
 			bridge.dispose();

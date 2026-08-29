@@ -1,18 +1,19 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DIRS, type AcceptanceInput, type AsyncStatus, type ResolvedTurnBudget, type SteeringRecoveryDescriptor, type SubagentRunMode } from "../../shared/types.ts";
+import { DIRS, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor, type SubagentRunMode } from "../../shared/types.ts";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
+import { normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { intersectSubagentCapabilityCeilings, parseSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { validateRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
-import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { resultFilePath, resultPayloadPathForIndexedRun } from "./result-files.ts";
 import { canScanAsyncRunPrefix, MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH } from "./run-id-query.ts";
 import { parallelHandoffPath, resolveRetainedWorktreeCwd } from "../shared/parallel-handoff.ts";
 import { intersectThinkingCeilings, parseThinkingLevel, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
+import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -40,6 +41,8 @@ export type AsyncResumeTarget = {
 	state: AsyncStatus["state"];
 	mode?: SubagentRunMode;
 	agent: string;
+	/** Human-readable display name for the child session, when derived at launch. */
+	sessionName?: string;
 	index: number;
 	cwd?: string;
 	sessionFile?: string;
@@ -63,11 +66,12 @@ interface AsyncResultFile {
 	cwd?: string;
 	sessionId?: string;
 	sessionFile?: string;
+	sessionName?: string;
 	model?: string;
 	thinking?: string;
 	launchContractDigest?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
-	results?: Array<{ agent?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling }>;
+	results?: Array<{ agent?: string; sessionName?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling }>;
 }
 
 export interface AsyncRunLocation {
@@ -104,6 +108,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 			const child = ensureObject(entry, `${resultPath} results[${index}]`);
 			const agent = validateOptionalString(child, "agent", resultPath, `results[${index}].agent`);
 			const sessionFile = validateOptionalString(child, "sessionFile", resultPath, `results[${index}].sessionFile`);
+			const sessionName = validateOptionalString(child, "sessionName", resultPath, `results[${index}].sessionName`);
 			const intercomTarget = validateOptionalString(child, "intercomTarget", resultPath, `results[${index}].intercomTarget`);
 			const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
 			const thinking = validateOptionalString(child, "thinking", resultPath, `results[${index}].thinking`);
@@ -111,7 +116,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 			const capabilityCeiling = child.capabilityCeiling === undefined ? undefined : parseSubagentCapabilityCeiling(child.capabilityCeiling, `async result file '${resultPath}' results[${index}].capabilityCeiling`);
 			const success = child.success;
 			if (success !== undefined && typeof success !== "boolean") throw new Error(`Invalid async result file '${resultPath}': results[${index}].success must be a boolean.`);
-			return { agent, sessionFile, intercomTarget, model, thinking, launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(typeof success === "boolean" ? { success } : {}) };
+			return { agent, sessionName, sessionFile, intercomTarget, model, thinking, launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(typeof success === "boolean" ? { success } : {}) };
 		});
 	}
 	const success = data.success;
@@ -248,7 +253,7 @@ export function resolveAsyncRunLocation(params: AsyncResumeParams, asyncDirRoot:
 }
 
 function resultState(result: AsyncResultFile): AsyncStatus["state"] {
-	if (result.state === "complete" || result.state === "failed" || result.state === "paused" || result.state === "stopped" || result.state === "running" || result.state === "queued") {
+	if (result.state === "complete" || result.state === "failed" || result.state === "partial" || result.state === "paused" || result.state === "stopped" || result.state === "running" || result.state === "queued") {
 		return result.state;
 	}
 	return result.success ? "complete" : "failed";
@@ -257,6 +262,7 @@ function resultState(result: AsyncResultFile): AsyncStatus["state"] {
 function validateStatusForResume(status: AsyncStatus | null, source: string): void {
 	if (!status) return;
 	if (typeof status.runId !== "string") throw new Error(`Invalid async status '${source}': runId must be a string.`);
+	assertWorkflowGraphHostSteps(status.workflowGraph, source, status.runId);
 	if (status.sessionId !== undefined && typeof status.sessionId !== "string") throw new Error(`Invalid async status '${source}': sessionId must be a string.`);
 	if (status.cwd !== undefined && typeof status.cwd !== "string") throw new Error(`Invalid async status '${source}': cwd must be a string.`);
 	if (status.sessionFile !== undefined && typeof status.sessionFile !== "string") throw new Error(`Invalid async status '${source}': sessionFile must be a string.`);
@@ -268,6 +274,7 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 			const stepRecord = step as Record<string, unknown>;
 			if (typeof stepRecord.agent !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].agent must be a string.`);
 			if (stepRecord.sessionFile !== undefined && typeof stepRecord.sessionFile !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].sessionFile must be a string.`);
+			if (stepRecord.sessionName !== undefined && typeof stepRecord.sessionName !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].sessionName must be a string.`);
 			if (stepRecord.model !== undefined && typeof stepRecord.model !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].model must be a string.`);
 			if (stepRecord.thinking !== undefined && typeof stepRecord.thinking !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].thinking must be a string.`);
 			if (stepRecord.thinkingCeiling !== undefined) stepRecord.thinkingCeiling = parseThinkingLevel(stepRecord.thinkingCeiling, `async status '${source}' steps[${index}].thinkingCeiling`);
@@ -281,23 +288,6 @@ function normalizeRecoveryAcceptance(value: unknown, descriptorPath: string): Ac
 	const errors = validateAcceptanceInput(value, "recoveryDescriptor.acceptance");
 	if (errors.length) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${errors.join(" ")}`);
 	return value as AcceptanceInput;
-}
-
-function normalizeRecoveryTurnBudget(value: unknown, descriptorPath: string): ResolvedTurnBudget {
-	if (value && typeof value === "object" && !Array.isArray(value)) {
-		const {
-			outcome: _outcome,
-			turnCount: _turnCount,
-			wrapUpRequestedAtTurn: _wrapUpRequestedAtTurn,
-			terminationDeferredAtTurn: _terminationDeferredAtTurn,
-			exceededAtTurn: _exceededAtTurn,
-			...publicTurnBudget
-		} = value as Record<string, unknown>;
-		value = publicTurnBudget;
-	}
-	const result = resolveTurnBudgetConfig(value, "recoveryDescriptor.initialTurnBudget");
-	if (result.error || !result.turnBudget) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${result.error ?? "recoveryDescriptor.initialTurnBudget is invalid."}`);
-	return result.turnBudget;
 }
 
 export function asyncReviveRequiresRecoveryDescriptor(target: Pick<AsyncResumeTarget, "recoveryDescriptor" | "mode" | "sessionFile">): boolean {
@@ -324,11 +314,11 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': expected an object.`);
 	const parsed = value as Record<string, unknown>;
 	const allowedFields = new Set([
-		"version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelProvider", "modelOverrideFromParent", "fallbackModels", "thinking", "thinkingCeiling", "tools", "extensions",
-		"subagentOnlyExtensions", "mcpDirectTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritSkills", "skills",
+		"version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelProvider", "modelOverrideFromParent", "fallbackModels", "thinking", "thinkingCeiling", "tools", "allowNestedSubagents", "extensions",
+		"subagentOnlyExtensions", "mcpDirectTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
-		"launchResolvedExtensions", "runFanoutBudget",
+		"launchResolvedExtensions", "runFanoutBudget", "lane",
 		"extensionBindings",
 	]);
 	for (const field of Object.keys(parsed)) {
@@ -347,6 +337,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	if (parsed.capabilityCeiling !== undefined) parsed.capabilityCeiling = parseSubagentCapabilityCeiling(parsed.capabilityCeiling, `async recovery descriptor '${descriptorPath}' capabilityCeiling`);
 	if (parsed.thinkingCeiling !== undefined) parsed.thinkingCeiling = parseThinkingLevel(parsed.thinkingCeiling, `async recovery descriptor '${descriptorPath}' thinkingCeiling`);
 	if (parsed.extensionBindings !== undefined) parsed.extensionBindings = normalizeExtensionBindings(parsed.extensionBindings)!.value;
+	if (parsed.lane !== undefined) parsed.lane = normalizeWorkflowLaneMetadata(parsed.lane, `Invalid async recovery descriptor '${descriptorPath}': lane`);
 	if (parsed.agentContract !== undefined) {
 		if (!parsed.agentContract || typeof parsed.agentContract !== "object" || Array.isArray(parsed.agentContract)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': agentContract must be an object.`);
 		const contract = parsed.agentContract as Record<string, unknown>;
@@ -359,8 +350,11 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	for (const field of ["inheritProjectContext", "inheritSkills", "share"] as const) {
 		if (typeof parsed[field] !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a boolean.`);
 	}
+	if (parsed.inheritGlobalContext === undefined) parsed.inheritGlobalContext = parsed.inheritProjectContext;
+	else if (typeof parsed.inheritGlobalContext !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': inheritGlobalContext must be a boolean.`);
+	if (parsed.allowNestedSubagents !== undefined && typeof parsed.allowNestedSubagents !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': allowNestedSubagents must be a boolean.`);
 	if (!Number.isInteger(parsed.maxSubagentDepth) || (parsed.maxSubagentDepth as number) < 0) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': maxSubagentDepth must be a non-negative integer.`);
-	for (const field of ["fallbackModels", "tools", "extensions", "subagentOnlyExtensions", "mcpDirectTools", "skills", "skillPath"] as const) {
+	for (const field of ["fallbackModels", "tools", "extensions", "subagentOnlyExtensions", "mcpDirectTools", "mutationTools", "skills", "skillPath"] as const) {
 		const item = parsed[field];
 		if (item !== undefined && (!Array.isArray(item) || item.some((entry) => typeof entry !== "string" || !entry.trim()))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must contain non-empty strings.`);
 	}
@@ -377,7 +371,9 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	}
 	if (parsed.absoluteDeadlineAt !== undefined && (!Number.isFinite(parsed.absoluteDeadlineAt) || (parsed.absoluteDeadlineAt as number) <= 0)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': absoluteDeadlineAt must be a positive timestamp.`);
 	if (parsed.initialTurnBudget !== undefined) {
-		parsed.initialTurnBudget = normalizeRecoveryTurnBudget(parsed.initialTurnBudget, descriptorPath);
+		// Older descriptors may contain the removed turn-budget setting. Accept it
+		// for recovery compatibility, but do not restore or enforce it.
+		delete parsed.initialTurnBudget;
 	}
 	if (parsed.initialToolBudget !== undefined) {
 		const result = validateToolBudgetConfig(parsed.initialToolBudget, "recoveryDescriptor.initialToolBudget");
@@ -490,6 +486,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 					state,
 					...(mode ? { mode } : {}),
 					agent: selectedStep.agent,
+					...(selectedStep.sessionName ?? result?.results?.[requestedIndex]?.sessionName ? { sessionName: selectedStep.sessionName ?? result?.results?.[requestedIndex]?.sessionName } : {}),
 					index: requestedIndex,
 					cwd: status?.cwd ?? result?.cwd,
 					sessionFile: selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
@@ -521,6 +518,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 				state,
 				...(mode ? { mode } : {}),
 				agent: selected.step.agent,
+				...(selected.step.sessionName ?? result?.results?.[selected.index]?.sessionName ? { sessionName: selected.step.sessionName ?? result?.results?.[selected.index]?.sessionName } : {}),
 				index: selected.index,
 				cwd: status?.cwd ?? result?.cwd,
 				sessionFile: selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
@@ -566,6 +564,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		state,
 		...(mode ? { mode } : {}),
 		agent,
+		...(statusSteps[index]?.sessionName ?? resultSteps[index]?.sessionName ? { sessionName: statusSteps[index]?.sessionName ?? resultSteps[index]?.sessionName } : {}),
 		index,
 		...(resumeCwd ? { cwd: resumeCwd } : {}),
 		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
@@ -589,12 +588,15 @@ export function applySteeringRecoveryAgentConfig(agentConfig: AgentConfig, descr
 		thinking: descriptor.thinking,
 		maxThinking: intersectThinkingCeilings(descriptor.thinkingCeiling, agentConfig.maxThinking),
 		tools: descriptor.tools ? [...descriptor.tools] : undefined,
+		allowNestedSubagents: descriptor.allowNestedSubagents,
 		extensions: descriptor.extensions ? [...descriptor.extensions] : undefined,
 		subagentOnlyExtensions: descriptor.subagentOnlyExtensions ? [...descriptor.subagentOnlyExtensions] : undefined,
 		mcpDirectTools: descriptor.mcpDirectTools ? [...descriptor.mcpDirectTools] : undefined,
+		mutationTools: descriptor.mutationTools ? [...descriptor.mutationTools] : undefined,
 		systemPrompt: descriptor.systemPrompt ?? agentConfig.systemPrompt,
 		systemPromptMode: descriptor.systemPromptMode,
 		inheritProjectContext: descriptor.inheritProjectContext,
+		inheritGlobalContext: descriptor.inheritGlobalContext,
 		inheritSkills: descriptor.inheritSkills,
 		skills: descriptor.skills ? [...descriptor.skills] : undefined,
 		skillPath: descriptor.skillPath ? [...descriptor.skillPath] : undefined,

@@ -1,6 +1,6 @@
-import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
+import { formatDuration, formatModelThinking, formatTokenUsage, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
-import type { ActivityState, NestedRunSummary, NestedStepSummary } from "../../shared/types.ts";
+import type { ActivityState, NestedRunSummary } from "../../shared/types.ts";
 
 export interface NestedRunCounts {
 	total: number;
@@ -8,13 +8,14 @@ export interface NestedRunCounts {
 	paused: number;
 	complete: number;
 	failed: number;
+	partial: number;
 	rejected: number;
 	stopped: number;
 	queued: number;
 }
 
 export function countNestedRuns(children: NestedRunSummary[] | undefined): NestedRunCounts {
-	const counts: NestedRunCounts = { total: 0, running: 0, paused: 0, complete: 0, failed: 0, rejected: 0, stopped: 0, queued: 0 };
+	const counts: NestedRunCounts = { total: 0, running: 0, paused: 0, complete: 0, failed: 0, partial: 0, rejected: 0, stopped: 0, queued: 0 };
 	for (const child of children ?? []) {
 		counts.total++;
 		counts[child.state]++;
@@ -24,6 +25,7 @@ export function countNestedRuns(children: NestedRunSummary[] | undefined): Neste
 		counts.paused += nested.paused;
 		counts.complete += nested.complete;
 		counts.failed += nested.failed;
+		counts.partial += nested.partial;
 		counts.rejected += nested.rejected;
 		counts.stopped += nested.stopped;
 		counts.queued += nested.queued;
@@ -38,6 +40,7 @@ export function formatNestedAggregate(children: NestedRunSummary[] | undefined):
 		counts.running > 0 ? `${counts.running} running` : "",
 		counts.paused > 0 ? `${counts.paused} paused` : "",
 		counts.failed > 0 ? `${counts.failed} failed` : "",
+		counts.partial > 0 ? `${counts.partial} partial` : "",
 		counts.rejected > 0 ? `${counts.rejected} rejected` : "",
 		counts.stopped > 0 ? `${counts.stopped} stopped` : "",
 		counts.complete > 0 ? `${counts.complete} complete` : "",
@@ -47,6 +50,7 @@ export function formatNestedAggregate(children: NestedRunSummary[] | undefined):
 }
 
 function nestedRunLabel(run: NestedRunSummary): string {
+	if (run.sessionName?.trim()) return run.sessionName.trim();
 	if (run.agent) return run.agent;
 	if (run.agents?.length) return run.agents.length === 1 ? run.agents[0]! : `${run.agents.slice(0, 2).join(", ")}${run.agents.length > 2 ? ` +${run.agents.length - 2}` : ""}`;
 	return run.id;
@@ -68,7 +72,7 @@ function formatNestedActivity(input: {
 	if (input.currentPath) facts.push(shortenPath(input.currentPath));
 	if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
 	if (input.toolCount !== undefined) facts.push(`${input.toolCount} tools`);
-	if (input.totalTokens) facts.push(`${formatTokens(input.totalTokens.total)} tok`);
+	if (input.totalTokens) facts.push(formatTokenUsage(input.totalTokens));
 	const activity = formatActivityLabel(input.lastActivityAt, input.activityState as ActivityState | undefined);
 	return activity || facts.length ? [activity, ...facts].filter(Boolean).join(" | ") : undefined;
 }
@@ -103,7 +107,7 @@ function formatNestedRunLines(children: NestedRunSummary[] | undefined, options:
 				if (lines.length >= options.maxLines) return;
 				const stepActivity = step.status === "running" ? formatNestedActivity(step) : undefined;
 				const stepModelThinking = formatModelThinking(step.model, step.thinking);
-				lines.push(`${indent}  ${stepIndex + 1}. ${step.agent} ${step.status}${stepModelThinking ? ` | ${stepModelThinking}` : ""}${stepActivity ? ` | ${stepActivity}` : ""}${step.error ? ` | error: ${step.error}` : ""}`);
+				lines.push(`${indent}  ${stepIndex + 1}. ${step.sessionName?.trim() || step.agent} ${step.status}${stepModelThinking ? ` | ${stepModelThinking}` : ""}${stepActivity ? ` | ${stepActivity}` : ""}${step.error ? ` | error: ${step.error}` : ""}`);
 				append(step.children, depth + 1, `${indent}    `);
 			}
 			append(child.children, depth + 1, `${indent}  `);

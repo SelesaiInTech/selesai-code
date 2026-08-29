@@ -4,14 +4,14 @@
 
 # pi-subagents
 
-`pi-subagents` lets Pi delegate work to focused child agents. Use it for code review, scouting, implementation, parallel audits, saved workflows, background jobs, and anything else that benefits from a second or third set of model eyes.
+`pi-subagents` lets Selesai delegate work to focused child agents. Use it for code review, scouting, implementation, parallel audits, saved workflows, background jobs, and anything else that benefits from a second or third set of model eyes.
 
 <https://github.com/user-attachments/assets/702554ec-faaf-4635-80aa-fb5d6e292fd1>
 
 ## Install
 
 ```bash
-pi install npm:pi-subagents
+selesai install npm:pi-subagents
 ```
 
 That is the only required step.
@@ -36,15 +36,15 @@ Use scout to understand this code based on our discussion, then ask me clarifica
 Run parallel reviewers: one for correctness, one for tests, and one for unnecessary complexity.
 ```
 
-That is enough to start. Pi decides whether to call the `subagent` tool, which agent to use, and how to compose the work.
+That is enough to start. Selesai decides whether to call the `subagent` tool, which agent to use, and how to compose the work.
 
 ## How it works
 
-Pi is the parent session. A subagent is a focused child Pi session with its own job.
+Selesai is the parent session. A subagent is a focused child Selesai session with its own job.
 
-When you ask for a subagent, Pi starts the child, gives it the task, and brings the result back. Foreground runs stream in the conversation. Background runs keep working and can be checked later.
+When you ask for a subagent, Selesai starts the child, gives it the task, and brings the result back. Foreground runs stream in the conversation. Background runs keep working and can be checked later.
 
-Installing the extension does not start an automatic reviewer in the background. It gives Pi a delegation tool. If you want every implementation reviewed, say so in your prompt or project instructions:
+Installing the extension does not start an automatic reviewer in the background. It gives Selesai a delegation tool. If you want every implementation reviewed, say so in your prompt or project instructions:
 
 ```text
 When you finish implementing, run a reviewer subagent before summarizing.
@@ -62,6 +62,12 @@ The extension ships with agents you can use immediately:
 | `reviewer` | Code review and small fixes against the task/plan, tests, edge cases, and simplicity. |
 | `oracle` | A second opinion before acting. Challenges assumptions without editing. |
 | `delegate` | A lightweight general delegate that behaves close to the parent session. |
+| `architect` | Read-only architecture and implementation planning. |
+| `builder` | Mutation-capable scoped implementation. |
+| `commentator` | Read-only evidence-based review. |
+| `explorer` | Read-only local codebase reconnaissance. |
+| `recapper` | Read-only handoff and context synthesis. |
+| `codex-exec`, `claude-code`, `cursor-agent` | External CLI runners with their own adapter contracts. |
 
 Rule of thumb: `scout` before you understand the code, `researcher` before you trust external facts, `worker` to implement, `reviewer` to check, and `oracle` when the decision itself feels risky.
 

@@ -1,7 +1,14 @@
 export interface PublicSubagentExecutionParams {
 	action?: unknown;
+	mode?: unknown;
+	repo?: unknown;
+	planId?: unknown;
 	agent?: unknown;
 	task?: unknown;
+	handoffPath?: unknown;
+	laneId?: unknown;
+	merge?: unknown;
+	supersession?: unknown;
 	step?: unknown;
 	tasks?: unknown;
 	chain?: unknown;
@@ -11,8 +18,11 @@ export interface PublicSubagentExecutionParams {
 	chainName?: unknown;
 	config?: unknown;
 	workflowScript?: unknown;
+	workflowScriptPath?: unknown;
+	preflight?: unknown;
 	isolation?: unknown;
 	worktree?: unknown;
+	lane?: unknown;
 	async?: unknown;
 	output?: unknown;
 	resume?: unknown;
@@ -21,6 +31,7 @@ export interface PublicSubagentExecutionParams {
 	workflowKey?: unknown;
 	workflowChildAsyncId?: unknown;
 	workflowAwaitAsync?: unknown;
+	workflowAwaitDetached?: unknown;
 	workflowParentDeadlineAt?: unknown;
 	suppressRoutineResultIntercom?: unknown;
 	runFanoutBudget?: unknown;
@@ -37,23 +48,32 @@ export type PublicSubagentExecutionNormalization<T> =
  * Enforce the public execution cutover before requests reach the executor.
  * Internal runs.run children and structured owned delegation bypass this boundary.
  */
-export function normalizePublicSubagentExecution<T extends PublicSubagentExecutionParams>(params: T, options: { asyncByDefault?: boolean } = {}): PublicSubagentExecutionNormalization<T> {
+export function normalizePublicSubagentExecution<T extends PublicSubagentExecutionParams>(params: T): PublicSubagentExecutionNormalization<T> {
+	if (params.workflowScript !== undefined && params.workflowScriptPath !== undefined) {
+		return { ok: false, error: "workflowScript and workflowScriptPath are mutually exclusive.", mode: "workflow" };
+	}
+	const hasWorkflowInput = params.workflowScript !== undefined || params.workflowScriptPath !== undefined;
+	if (params.preflight !== undefined && !hasWorkflowInput) {
+		return { ok: false, error: "preflight requires workflowScript or workflowScriptPath.", mode: params.action === undefined ? "workflow" : "management" };
+	}
+	const hasValidWorkflowInput = (typeof params.workflowScript === "string" && Boolean(params.workflowScript.trim()))
+		|| (typeof params.workflowScriptPath === "string" && Boolean(params.workflowScriptPath.trim()));
 	if (params.isolation !== undefined) {
 		if (params.isolation !== "none" && params.isolation !== "worktree") {
-			return { ok: false, error: "isolation must be 'none' or 'worktree'.", mode: params.workflowScript !== undefined ? "workflow" : "management" };
+			return { ok: false, error: "isolation must be 'none' or 'worktree'.", mode: hasWorkflowInput ? "workflow" : "management" };
 		}
 		const isolationWorktree = params.isolation === "worktree";
 		if (params.worktree !== undefined && params.worktree !== isolationWorktree) {
-			return { ok: false, error: `isolation '${params.isolation}' conflicts with worktree: ${String(params.worktree)}.`, mode: params.workflowScript !== undefined ? "workflow" : "management" };
+			return { ok: false, error: `isolation '${params.isolation}' conflicts with worktree: ${String(params.worktree)}.`, mode: hasWorkflowInput ? "workflow" : "management" };
 		}
 		const { isolation: _isolation, ...normalizedParams } = params;
 		params = { ...normalizedParams, worktree: isolationWorktree } as T;
 	}
 	if (params.runFanoutBudget !== undefined || params.runFanoutAdmitted !== undefined) {
-		return { ok: false, error: "Public execution does not accept internal run fan-out fields.", mode: params.workflowScript !== undefined ? "workflow" : "management" };
+		return { ok: false, error: "Public execution does not accept internal run fan-out fields.", mode: hasWorkflowInput ? "workflow" : "management" };
 	}
-	if (params.workflowParentRunId !== undefined || params.workflowKey !== undefined || params.workflowChildAsyncId !== undefined || params.workflowAwaitAsync !== undefined || params.workflowParentDeadlineAt !== undefined || params.suppressRoutineResultIntercom !== undefined) {
-		return { ok: false, error: "Public execution does not accept internal workflow child fields.", mode: params.workflowScript !== undefined ? "workflow" : "management" };
+	if (params.workflowParentRunId !== undefined || params.workflowKey !== undefined || params.workflowChildAsyncId !== undefined || params.workflowAwaitAsync !== undefined || params.workflowAwaitDetached !== undefined || params.workflowParentDeadlineAt !== undefined || params.suppressRoutineResultIntercom !== undefined) {
+		return { ok: false, error: "Public execution does not accept internal workflow child fields.", mode: hasWorkflowInput ? "workflow" : "management" };
 	}
 	const action = params.action;
 	if (action !== undefined && (typeof action !== "string" || !action.trim())) {
@@ -90,17 +110,26 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		if (legacyAction === "parallel" || legacyAction === "tasks" || legacyAction === "chain") {
 			return { ok: false, error: "Legacy top-level chain and parallel inputs were removed; use workflowScript.", mode: "workflow" };
 		}
-		if (normalizedAction === "schedule.create") {
+		if (normalizedAction === "validate") {
 			if (params.agent !== undefined || params.task !== undefined || params.step !== undefined) {
-				return { ok: false, error: "schedule.create requires workflowScript and does not accept direct agent, task, or step execution fields.", mode: "management" };
+				return { ok: false, error: "validate requires workflowScript or workflowScriptPath and does not accept direct agent, task, or step execution fields.", mode: "management" };
 			}
-			if (typeof params.workflowScript !== "string" || !params.workflowScript.trim()) {
-				return { ok: false, error: "schedule.create requires a non-empty workflowScript.", mode: "management" };
+			if (!hasValidWorkflowInput) {
+				return { ok: false, error: "validate requires a non-empty workflowScript or workflowScriptPath.", mode: "management" };
 			}
 			return { ok: true, params: { ...params, action: normalizedAction } };
 		}
-		if (params.workflowScript !== undefined) {
-			return { ok: false, error: "workflowScript execution must omit action; only schedule.create accepts action with workflowScript.", mode: "management" };
+		if (normalizedAction === "schedule.create") {
+			if (params.agent !== undefined || params.task !== undefined || params.step !== undefined) {
+				return { ok: false, error: "schedule.create requires workflowScript or workflowScriptPath and does not accept direct agent, task, or step execution fields.", mode: "management" };
+			}
+			if (!hasValidWorkflowInput) {
+				return { ok: false, error: "schedule.create requires a non-empty workflowScript or workflowScriptPath.", mode: "management" };
+			}
+			return { ok: true, params: { ...params, action: normalizedAction } };
+		}
+		if (hasWorkflowInput) {
+			return { ok: false, error: "Workflow execution must omit action; only validate and schedule.create accept action with workflowScript or workflowScriptPath.", mode: "management" };
 		}
 		if (params.task !== undefined) {
 			return { ok: false, error: "Structured single-child task cannot be combined with a management/control action.", mode: "management" };
@@ -110,8 +139,8 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	if (params.step !== undefined) {
 		return { ok: false, error: "step is not a public execution field; use workflowScript for orchestration.", mode: "workflow" };
 	}
-	if (params.workflowScript !== undefined && (params.agent !== undefined || params.task !== undefined)) {
-		return { ok: false, error: "Structured single-child execution cannot be combined with workflowScript.", mode: "workflow" };
+	if (hasWorkflowInput && (params.agent !== undefined || params.task !== undefined)) {
+		return { ok: false, error: "Structured single-child execution cannot be combined with workflowScript or workflowScriptPath.", mode: "workflow" };
 	}
 	if (params.agent !== undefined || params.task !== undefined) {
 		if (typeof params.agent !== "string" || !params.agent.trim()) {
@@ -129,8 +158,8 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 			} as T,
 		};
 	}
-	if (typeof params.workflowScript !== "string" || !params.workflowScript.trim()) {
-		return { ok: false, error: "Execution requires either { agent, task? } for one child or a non-empty workflowScript for orchestration.", mode: "workflow" };
+	if (!hasValidWorkflowInput) {
+		return { ok: false, error: "Execution requires either { agent, task? } for one child or a non-empty workflowScript or workflowScriptPath for orchestration.", mode: "workflow" };
 	}
 	return { ok: true, params };
 }

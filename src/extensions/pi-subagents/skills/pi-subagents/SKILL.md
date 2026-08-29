@@ -31,6 +31,8 @@ Read the matching reference file before acting. Paths are relative to this `SKIL
 
 For broad or uncertain requests, read more than one reference. For complex work, start with `references/prompting-and-roles.md` and `references/execution-controls.md`, then consult `references/constraints-and-recipes.md` before launching or reviewing child work.
 
+External CLI agents such as `codex-exec`, `codex-exec-writer`, `claude-code`, and `cursor-agent` use their own runner contract. Do not pass native Pi child options such as model override, structured output, acceptance/agent contract, tool budgets, fast mode, fork context, skills, or native Pi tools unless that runner explicitly implements them.
+
 ## Always-on constraints
 
 - Keep the parent as orchestrator and final decision-maker.
@@ -46,4 +48,4 @@ For broad or uncertain requests, read more than one reference. For complex work,
 - Preserve capability ceilings, including child tool restrictions and session-scoped allowed-agent restrictions.
 - Escalate unresolved product, architecture, authority, release, merge, or safety decisions upward instead of letting a child decide silently.
 - Treat receipts, CI, review bots, and external-run records as evidence, not authority to merge, close, comment, publish, or release.
-- As a conservative orchestration policy, do not pass `turnBudget`, a hard `toolBudget`, or a tight `usageBudget` to mutation-capable workers. The default tool budget blocks read/search tools rather than mutation tools, and reported usage has no reservation model. If a worker is interrupted after a tool call starts, checkpoint after the current tool returns with changed files, build/test state, and commit or PR state.
+- As a conservative orchestration policy, do not pass a hard `toolBudget` or tight `usageBudget` to mutation-capable workers. The default tool budget blocks read/search tools rather than mutation tools, and reported usage has no reservation model. If a worker is interrupted after a tool call starts, checkpoint after the current tool returns with changed files, build/test state, and commit or PR state.

@@ -11,8 +11,8 @@ describe("formatShellCommand on POSIX shells", () => {
 
 	it("keeps a shell-safe executable bare so Nushell parses it as a command", () => {
 		assert.equal(
-			formatShellCommand("/usr/bin/node", ["/home/u/.pi/inspector-runner.mjs", "--async-dir", "/tmp/run-1|fc_abc"], platform),
-			"/usr/bin/node '/home/u/.pi/inspector-runner.mjs' '--async-dir' '/tmp/run-1|fc_abc'",
+			formatShellCommand("/usr/bin/node", ["/home/u/.selesai/inspector-runner.mjs", "--async-dir", "/tmp/run-1|fc_abc"], platform),
+			"/usr/bin/node '/home/u/.selesai/inspector-runner.mjs' '--async-dir' '/tmp/run-1|fc_abc'",
 		);
 	});
 

@@ -136,7 +136,7 @@ describe("mission launch lifecycle", () => {
 				config: test.missionConfig,
 			});
 			assert.ok(binding);
-			const missionDir = path.join(worktreeRoot, ".selesai", "subagents", "missions");
+			const missionDir = path.join(worktreeRoot, ".pi-subagents", "missions");
 			assert.throws(() => prepareMissionLaunch({
 				params: { missionId: binding.missionId, task: "Prepare worktree work" },
 				projectRoot: worktreeRoot,

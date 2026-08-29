@@ -1,9 +1,9 @@
 import type { ExtensionAPI } from "@selesai/code";
-import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
+import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
-import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { BUILTIN_AGENT_NAMES } from "./builtin-names.ts";
 import type { AgentConfig, AgentDefaultContext, AgentDiscoveryDiagnostic } from "./agents.ts";
 
@@ -20,18 +20,19 @@ export interface RuntimeAgentDefinition {
 	systemPrompt: string;
 	aliases?: readonly string[];
 	tools?: readonly string[];
+	allowNestedSubagents?: boolean;
 	mcpDirectTools?: readonly string[];
 	model?: string;
 	fallbackModels?: readonly string[];
 	thinking?: string | false;
 	systemPromptMode?: "append" | "replace";
 	inheritProjectContext?: boolean;
+	inheritGlobalContext?: boolean;
 	inheritSkills?: boolean;
 	defaultContext?: AgentDefaultContext;
 	defaultAsync?: boolean;
 	defaultTimeoutMs?: number;
 	defaultToolTimeoutMs?: number;
-	defaultTurnBudget?: TurnBudgetConfig;
 	defaultAcceptance?: AcceptanceInput;
 	acceptanceRole?: AcceptanceRole;
 	runner?: AgentRunnerConfig;
@@ -39,6 +40,7 @@ export interface RuntimeAgentDefinition {
 	skillPath?: readonly string[];
 	extensions?: readonly string[];
 	subagentOnlyExtensions?: readonly string[];
+	mutationTools?: readonly string[];
 	output?: string;
 	outputMode?: OutputMode;
 	defaultReads?: readonly string[];
@@ -132,8 +134,8 @@ function validateStringList(value: unknown, field: string): string[] | undefined
 
 function validatePositiveInteger(value: unknown, field: string): number | undefined {
 	if (value === undefined) return undefined;
-	if (!Number.isInteger(value) || (value as number) <= 0) throw new Error(`${field} must be a positive integer when provided.`);
-	return value as number;
+	if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) throw new Error(`${field} must be a positive integer when provided.`);
+	return value;
 }
 
 function validateBoolean(value: unknown, field: string): boolean | undefined {
@@ -169,18 +171,15 @@ function validateRunner(value: unknown): AgentRunnerConfig | undefined {
 	if (runner.type !== "external-cli") throw new Error("Runtime agent definition runner.type must be 'pi', 'external-cli', or 'external-job'.");
 	if (typeof runner.command !== "string" || !runner.command.trim()) throw new Error("Runtime agent definition external-cli runner requires a non-empty command string.");
 	if (runner.args !== undefined && (!Array.isArray(runner.args) || runner.args.some((arg) => typeof arg !== "string"))) throw new Error("Runtime agent definition external-cli runner args must be an array of strings.");
+	if (runner.adapter !== undefined && !isCodeOwnedExternalCliAdapterId(runner.adapter)) throw new Error(`Runtime agent definition external-cli runner adapter must be ${CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL}.`);
+	if (runner.adapter !== undefined && Array.isArray(runner.args) && runner.args.length > 0) throw new Error(`Runtime agent definition ${runner.adapter} adapter owns its argv; runner args are not supported.`);
 	if (runner.promptDelivery !== undefined && runner.promptDelivery !== "stdin") throw new Error("Runtime agent definition external-cli runner promptDelivery must be 'stdin'.");
-	const supported = new Set(["type", "command", "args", "promptDelivery"]);
+	const capabilities = parseExternalCliCapabilityNarrowing(runner.capabilities, "Runtime agent definition external-cli runner capabilities");
+	const supported = new Set(["type", "adapter", "command", "args", "promptDelivery", "capabilities"]);
 	const unknown = Object.keys(runner).filter((key) => !supported.has(key));
 	if (unknown.length > 0) throw new Error(`Runtime agent definition external-cli runner has unsupported fields: ${unknown.join(", ")}.`);
 	const args = runner.args as string[] | undefined;
-	return { type: "external-cli", command: runner.command.trim(), ...(args?.length ? { args } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" as const } : {}) };
-}
-
-function validateTurnBudget(value: unknown): TurnBudgetConfig | undefined {
-	const result = resolveTurnBudgetConfig(value, "Runtime agent definition defaultTurnBudget");
-	if (result.error) throw new Error(result.error);
-	return result.turnBudget;
+	return { type: "external-cli", ...(isCodeOwnedExternalCliAdapterId(runner.adapter) ? { adapter: runner.adapter } : {}), command: runner.command.trim(), ...(args?.length ? { args } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" as const } : {}), ...(capabilities ? { capabilities } : {}) };
 }
 
 function validateAcceptance(value: unknown): AcceptanceInput | undefined {
@@ -199,10 +198,10 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Runtime agent definition must be an object.");
 	const definition = value as Record<string, unknown>;
 	const supported = new Set([
-		"description", "systemPrompt", "aliases", "tools", "mcpDirectTools", "model", "fallbackModels", "thinking",
-		"systemPromptMode", "inheritProjectContext", "inheritSkills", "defaultContext", "defaultAsync", "defaultTimeoutMs",
-		"defaultToolTimeoutMs", "defaultTurnBudget", "defaultAcceptance", "acceptanceRole", "runner", "skills", "skillPath",
-		"extensions", "subagentOnlyExtensions", "output", "outputMode", "defaultReads", "defaultProgress", "interactive",
+		"description", "systemPrompt", "aliases", "tools", "allowNestedSubagents", "mcpDirectTools", "model", "fallbackModels", "thinking",
+		"systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "defaultContext", "defaultAsync", "defaultTimeoutMs",
+		"defaultToolTimeoutMs", "defaultAcceptance", "acceptanceRole", "runner", "skills", "skillPath",
+		"extensions", "subagentOnlyExtensions", "mutationTools", "output", "outputMode", "defaultReads", "defaultProgress", "interactive",
 		"maxSubagentDepth", "completionGuard", "toolBudget", "permissions",
 	]);
 	const unknown = Object.keys(definition).filter((key) => !supported.has(key));
@@ -219,21 +218,23 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	if (outputMode !== undefined && outputMode !== "inline" && outputMode !== "file-only") throw new Error("Runtime agent definition outputMode must be 'inline' or 'file-only'.");
 	const aliases = validateStringList(definition.aliases, "Runtime agent definition aliases");
 	const tools = validateStringList(definition.tools, "Runtime agent definition tools");
+	const allowNestedSubagents = validateBoolean(definition.allowNestedSubagents, "Runtime agent definition allowNestedSubagents");
 	const mcpDirectTools = validateStringList(definition.mcpDirectTools, "Runtime agent definition mcpDirectTools");
 	const model = validateOptionalString(definition.model, "Runtime agent definition model");
 	const fallbackModels = validateStringList(definition.fallbackModels, "Runtime agent definition fallbackModels");
 	const inheritProjectContext = validateBoolean(definition.inheritProjectContext, "Runtime agent definition inheritProjectContext");
+	const inheritGlobalContext = validateBoolean(definition.inheritGlobalContext, "Runtime agent definition inheritGlobalContext");
 	const inheritSkills = validateBoolean(definition.inheritSkills, "Runtime agent definition inheritSkills");
 	const defaultAsync = validateBoolean(definition.defaultAsync, "Runtime agent definition defaultAsync");
 	const defaultTimeoutMs = validatePositiveInteger(definition.defaultTimeoutMs, "Runtime agent definition defaultTimeoutMs");
 	const defaultToolTimeoutMs = validatePositiveInteger(definition.defaultToolTimeoutMs, "Runtime agent definition defaultToolTimeoutMs");
-	const defaultTurnBudget = validateTurnBudget(definition.defaultTurnBudget);
 	const defaultAcceptance = validateAcceptance(definition.defaultAcceptance);
 	const runner = validateRunner(definition.runner);
 	const skills = validateStringList(definition.skills, "Runtime agent definition skills");
 	const skillPath = validateStringList(definition.skillPath, "Runtime agent definition skillPath");
 	const extensions = validateStringList(definition.extensions, "Runtime agent definition extensions");
 	const subagentOnlyExtensions = validateStringList(definition.subagentOnlyExtensions, "Runtime agent definition subagentOnlyExtensions");
+	const mutationTools = validateStringList(definition.mutationTools, "Runtime agent definition mutationTools");
 	const output = validateOptionalString(definition.output, "Runtime agent definition output");
 	const defaultReads = validateStringList(definition.defaultReads, "Runtime agent definition defaultReads");
 	const defaultProgress = validateBoolean(definition.defaultProgress, "Runtime agent definition defaultProgress");
@@ -247,18 +248,19 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 		systemPrompt: validateString(definition.systemPrompt, "Runtime agent definition systemPrompt", MAX_SYSTEM_PROMPT_LENGTH),
 		...(aliases ? { aliases } : {}),
 		...(tools ? { tools } : {}),
+		...(allowNestedSubagents !== undefined ? { allowNestedSubagents } : {}),
 		...(mcpDirectTools ? { mcpDirectTools } : {}),
 		...(model ? { model } : {}),
 		...(fallbackModels ? { fallbackModels } : {}),
 		...(thinking !== undefined ? { thinking: thinking as string | false } : {}),
 		...(systemPromptMode !== undefined ? { systemPromptMode: systemPromptMode as "append" | "replace" } : {}),
 		...(inheritProjectContext !== undefined ? { inheritProjectContext } : {}),
+		...(inheritGlobalContext !== undefined ? { inheritGlobalContext } : {}),
 		...(inheritSkills !== undefined ? { inheritSkills } : {}),
 		...(defaultContext !== undefined ? { defaultContext: defaultContext as AgentDefaultContext } : {}),
 		...(defaultAsync !== undefined ? { defaultAsync } : {}),
 		...(defaultTimeoutMs !== undefined ? { defaultTimeoutMs } : {}),
 		...(defaultToolTimeoutMs !== undefined ? { defaultToolTimeoutMs } : {}),
-		...(defaultTurnBudget !== undefined ? { defaultTurnBudget } : {}),
 		...(defaultAcceptance !== undefined ? { defaultAcceptance } : {}),
 		...(acceptanceRole !== undefined ? { acceptanceRole: acceptanceRole as AcceptanceRole } : {}),
 		...(runner !== undefined ? { runner } : {}),
@@ -266,6 +268,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 		...(skillPath ? { skillPath } : {}),
 		...(extensions ? { extensions } : {}),
 		...(subagentOnlyExtensions ? { subagentOnlyExtensions } : {}),
+		...(mutationTools ? { mutationTools } : {}),
 		...(output ? { output } : {}),
 		...(outputMode !== undefined ? { outputMode: outputMode as OutputMode } : {}),
 		...(defaultReads ? { defaultReads } : {}),
@@ -324,18 +327,19 @@ function toAgentConfig(name: string, definition: RuntimeAgentDefinition): AgentC
 		...(aliases ? { aliases } : {}),
 		...(definition.runner !== undefined ? { runner: definition.runner } : {}),
 		...(definition.tools !== undefined ? { tools: [...definition.tools] } : {}),
+		...(definition.allowNestedSubagents !== undefined ? { allowNestedSubagents: definition.allowNestedSubagents } : {}),
 		...(definition.mcpDirectTools !== undefined ? { mcpDirectTools: [...definition.mcpDirectTools] } : {}),
 		...(definition.model !== undefined ? { model: definition.model } : {}),
 		...(definition.fallbackModels !== undefined ? { fallbackModels: [...definition.fallbackModels] } : {}),
 		...(definition.thinking !== undefined ? { thinking: definition.thinking } : {}),
 		systemPromptMode: definition.systemPromptMode ?? defaultSystemPromptMode(name),
 		inheritProjectContext: definition.inheritProjectContext ?? defaultInheritProjectContext(name),
+		inheritGlobalContext: definition.inheritGlobalContext ?? false,
 		inheritSkills: definition.inheritSkills ?? defaultInheritSkills(),
 		...(definition.defaultContext !== undefined ? { defaultContext: definition.defaultContext } : {}),
 		...(definition.defaultAsync !== undefined ? { defaultAsync: definition.defaultAsync } : {}),
 		...(definition.defaultTimeoutMs !== undefined ? { defaultTimeoutMs: definition.defaultTimeoutMs } : {}),
 		...(definition.defaultToolTimeoutMs !== undefined ? { defaultToolTimeoutMs: definition.defaultToolTimeoutMs } : {}),
-		...(definition.defaultTurnBudget !== undefined ? { defaultTurnBudget: definition.defaultTurnBudget } : {}),
 		...(definition.defaultAcceptance !== undefined ? { defaultAcceptance: definition.defaultAcceptance } : {}),
 		...(definition.acceptanceRole !== undefined ? { acceptanceRole: definition.acceptanceRole } : {}),
 		systemPrompt: definition.systemPrompt,
@@ -345,6 +349,7 @@ function toAgentConfig(name: string, definition: RuntimeAgentDefinition): AgentC
 		...(definition.skillPath !== undefined ? { skillPath: [...definition.skillPath] } : {}),
 		...(definition.extensions !== undefined ? { extensions: [...definition.extensions] } : {}),
 		...(definition.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: [...definition.subagentOnlyExtensions] } : {}),
+		...(definition.mutationTools !== undefined ? { mutationTools: [...definition.mutationTools] } : {}),
 		...(definition.output !== undefined ? { output: definition.output } : {}),
 		...(definition.outputMode !== undefined ? { outputMode: definition.outputMode } : {}),
 		...(definition.defaultReads !== undefined ? { defaultReads: [...definition.defaultReads] } : {}),
@@ -364,6 +369,8 @@ export function registerRuntimeAgent(input: RegisterRuntimeAgentInput): RuntimeA
 	const name = validateString(input.name, "Runtime agent name", MAX_AGENT_NAME_LENGTH);
 	const definition = validateDefinition(input.definition);
 	const agent = toAgentConfig(name, definition);
+	const profileError = validateCodeOwnedProfileRunner(agent);
+	if (profileError) throw new Error(profileError);
 	assertNoBuiltinCollision(agent);
 	const current = registry();
 	const records = current.byPi.get(pi) ?? [];

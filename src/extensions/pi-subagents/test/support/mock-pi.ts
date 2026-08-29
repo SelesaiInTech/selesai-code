@@ -106,15 +106,15 @@ export function createMockPi(): MockPi {
 			if (installed) return;
 			installed = true;
 			originalPath = process.env.PATH;
-			originalPiBinary = process.env.SELESAI_SUBAGENT_PI_BINARY;
+			originalPiBinary = process.env.SELESAI_SUBAGENT_SELESAI_BINARY;
 			originalQueueEnv = process.env.MOCK_PI_QUEUE_DIR;
 			process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
 			if (process.platform === "win32") {
-				delete process.env.SELESAI_SUBAGENT_PI_BINARY;
+				delete process.env.SELESAI_SUBAGENT_SELESAI_BINARY;
 				originalArgv1 = process.argv[1];
 				process.argv[1] = cliScriptPath;
 			} else {
-				process.env.SELESAI_SUBAGENT_PI_BINARY = shellScriptPath;
+				process.env.SELESAI_SUBAGENT_SELESAI_BINARY = shellScriptPath;
 			}
 			process.env.MOCK_PI_QUEUE_DIR = queueDir;
 		},
@@ -123,8 +123,8 @@ export function createMockPi(): MockPi {
 			installed = false;
 			if (originalPath === undefined) delete process.env.PATH;
 			else process.env.PATH = originalPath;
-			if (originalPiBinary === undefined) delete process.env.SELESAI_SUBAGENT_PI_BINARY;
-			else process.env.SELESAI_SUBAGENT_PI_BINARY = originalPiBinary;
+			if (originalPiBinary === undefined) delete process.env.SELESAI_SUBAGENT_SELESAI_BINARY;
+			else process.env.SELESAI_SUBAGENT_SELESAI_BINARY = originalPiBinary;
 			if (process.platform === "win32") {
 				if (originalArgv1 === undefined) delete process.argv[1];
 				else process.argv[1] = originalArgv1;

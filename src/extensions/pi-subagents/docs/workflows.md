@@ -39,6 +39,49 @@ All model-facing subagent execution is expressed through `workflowScript` in the
 
 Child results cross into the script as plain JSON data. Non-JSON host metadata is omitted, so use returned fields such as `runId`, `ok`, `output`, and `structuredOutput` for workflow control.
 
+Validate a script without launching children:
+
+```js
+subagent({ action: "validate", workflowScript: `
+  const results = await runs.all([{ key: "scan", agent: "scout", task: "Scan" }]);
+  return results[0].output;
+` });
+```
+
+For a script stored in a file, use `workflowScriptPath` instead of `workflowScript`:
+
+```js
+subagent({ workflowScriptPath: "workflows/review.js", cwd: "/path/to/project" });
+subagent({ action: "validate", workflowScriptPath: "workflows/review.js" });
+```
+
+The fields are mutually exclusive. Relative paths resolve against the request `cwd`; absolute paths pass through. The host reads the file before validation, schedule creation, or workflow sandbox execution. The sandbox still has no filesystem access. Missing, unreadable, and empty files return file input errors instead of script syntax errors.
+
+### Opt-in bounded workflows
+
+Composite workflows have no default parent deadline. Add bounds only when the workflow contract calls for them:
+
+```js
+subagent({
+  workflowScript: `
+    const scan = await runs.run("scan", { agent: "scout", task: "Inspect the named files." });
+    return runs.run("review", { agent: "reviewer", task: "Review:\n" + scan.output });
+  `,
+  timeoutMs: 900000,
+  toolBudget: { soft: 40, hard: 60 },
+  usageBudget: { tokens: { soft: 100000, hard: 150000 } }
+});
+```
+
+- `timeoutMs` sets the workflow deadline and bounds child deadlines to the remaining time.
+- `toolBudget` becomes the default for each child unless that child supplies a narrower value.
+- `usageBudget` accounts for reported usage across completed workflow children. Once exhausted, it rejects later child launches but does not stop children that are already running.
+- Budget and timeout stops return a structured `terminalOutcome` with `state: "partial"` and reason `budget_exhausted` or `timeout`. Workflow receipts keep settled child evidence for recovery.
+
+These controls are opt-in. Avoid tight hard budgets for mutation-capable workers unless the workflow has an explicit checkpoint and handoff path.
+
+The result is `{ ok, errors }`. Invalid scripts return a tool error and include line and column data when available. Validation checks syntax, portable nested-async rules, literal `runs.run` and `runs.all` keys, duplicate literal keys in one `runs.all` group, direct keyed access to a known `runs.all` result, and statically clear non-JSON boundary values. Dynamic keys and other runtime-only values are accepted without a warning. Validation does not discover agents, launch children, or create run artifacts.
+
 ```js
 subagent({ workflowScript: `
   const scan = await runs.run("scan", { agent: "scout", task: "Scan the codebase" });
@@ -71,6 +114,71 @@ subagent({ workflowScript: `
   return patch.output;
 ` });
 ```
+
+### Parallel sequential lanes
+
+For a bounded set of independent chains, `runs.lanes(...)` removes the mechanical loop that would otherwise connect each lane's stages. It is a helper inside `workflowScript`, not a new top-level `subagent` execution mode:
+
+```js
+subagent({ workflowScript: `
+  const board = await runs.lanes([
+    {
+      key: "api",
+      stages: [
+        { key: "writer", agent: "worker", task: "Implement the API change" },
+        { key: "challenge", resume: "previous", task: "Challenge the API implementation" },
+        { key: "review", agent: "reviewer", task: "Review the API lane" }
+      ]
+    },
+    {
+      key: "ui",
+      stages: [
+        { key: "writer", agent: "worker", task: "Implement the UI change" },
+        { key: "review", agent: "reviewer", task: "Review the UI lane" }
+      ]
+    }
+  ]);
+  return board.map((lane) => ({
+    key: lane.key,
+    state: lane.state,
+    failedStage: lane.failedStage,
+    stages: lane.stages.map((stage) => ({
+      key: stage.key,
+      state: stage.state,
+      ok: stage.ok,
+      runId: stage.runId,
+      outputReference: stage.outputReference,
+      verdict: stage.verdict
+    }))
+  }));
+` });
+```
+
+The first stage from every lane is launched in one existing `runs.all(...)` batch. Later stages in each lane start only after the preceding stage settles. A later stage with `resume: "previous"` requires the preceding child to return a retained `runId`; the helper then uses the existing retained-resume launch checks and does not accept an arbitrary run id. Generated child keys use `<lane>.<stage>`, while the returned board uses the local lane and stage keys.
+
+The helper validates the complete plain-JSON lane inventory before launching anything. It bounds the inventory to 32 lanes, 16 stages per lane, 64 total stages, and 64 KiB of canonical JSON; task and path fields retain the existing 1 MiB and 32 KiB limits. Stage keys must be unique within a lane and generated keys must be unique and valid workflow keys. A child failure, stopped/detached result, or explicit `structuredOutput.verdict === "blocked"` blocks only that lane; later stages are marked `skipped` and sibling lanes continue. Reviewer prose is never parsed.
+
+The board is bounded and contains only lane/stage keys, state, success, retained run ids, explicit output references, bounded errors, and an optional structured verdict. It does not return child transcripts or create a lane registry or cleanup authority. Use raw `runs.run(...)`/`runs.all(...)` when a workflow needs conditional or rolling orchestration beyond this helper.
+
+### Host command steps
+
+Use `runs.host(...)` when the operator wants one non-interactive command to be part of the workflow evidence instead of a child-agent run:
+
+```js
+subagent({ workflowScript: `
+  const tests = await runs.host("unit-tests", {
+    kind: "command",
+    command: "npm run test:unit",
+    timeoutMs: 120000,
+    output: "reports/unit-tests.log",
+    role: "ci",
+    provider: "local"
+  });
+  return { state: tests.state, exitCode: tests.exitCode, outputPath: tests.outputPath };
+` });
+```
+
+The first version supports only `kind: "command"`. `command` and `timeoutMs` are required; `output` must be a relative path without traversal. `role` may be `ci` or `gate`, and `provider` is display metadata only. The command has no stdin, receives the workflow cwd, and must be awaited or returned. Stdout, stderr, and the saved log are bounded. A nonzero exit, timeout, abort, or output-write failure fails the workflow. Async status and terminal receipts store the bounded host-step state; renderers do not run commands or read command output.
 
 ### Steering a workflow child
 
@@ -261,6 +369,33 @@ Each child uses the existing worktree lifecycle: it branches from clean HEAD, jo
 A top-level `{ workflowScript, worktree: true }` makes isolation the default for every workflow child. An individual child can override that default with `worktree: false`. Keep one writer when parallel writes are not intentionally isolated.
 
 Configure the worktree base directory and setup hook in [configuration.md](configuration.md).
+
+### Lane metadata lifecycle
+
+Workflow children may declare a bounded `lane` object (`version`, `key`, optional
+`mode`, opaque `sourceRef`, advisory `claims`, and advisory `outputPaths`). The
+lane key must match the `runs.run`/`runs.all` workflow key. These fields are
+display and triage hints only: they do not grant tools, authorization, or
+cleanup permission, and `sourceRef` is never resolved over the network while
+rendering status. Worktree paths and branches copied into status are also
+display-only; the handoff manifest remains the deletion authority.
+
+| Durable file | Owner | Pending / running / finalized / cleanup states | Release predicate | Rollback predicate | Stale-head behavior | Fail-closed cases |
+| --- | --- | --- | --- | --- | --- | --- |
+| `status.json` | Async runner and workflow status projector | Child step starts `pending`, becomes `running`, then terminal `complete`/`failed`/`paused`/`stopped`; worktree path and branch are copied at launch | Status is terminal and the existing active-run/process proof can release the run marker; lane metadata alone never releases a worktree | Setup or persistence failure keeps the lane unknown; only the existing verified setup rollback may remove a newly created worktree | Recorded status is retained; a base/head mismatch is not repaired or inferred from render-time Git calls | Missing, malformed, or key-mismatched lane data; only one of `worktreePath`/`branch`; unverified process state |
+| `handoffs/<run-id>.json` | Existing parallel handoff writer and cleanup engine | Group is `partial` with preserved cleanup tasks while pending/running; finalized groups contain child identity, patch, and cleanup evidence; cleanup is `partial` or `complete` | Only the existing cleanup engine's fresh Git checks and recorded task evidence can release a worktree/branch; #1621 adds no deletion path | Missing diff, failed capture, or cleanup error preserves the task and records the reason | `baseCommit` is retained as evidence; stale or changed heads remain unknown/preserved until an explicit later reconciliation | Missing/invalid manifest, mismatched run/key/task identity, duplicate identity, dirty or uncaptured work |
+| `workflow-receipt.json` | Workflow terminal settlement | No receipt while `pending`/`running`; terminal receipt is finalized with one optional lane block per keyed child | Receipt publication is complete only after every included child entry is serialized; it does not authorize cleanup | Receipt write failure leaves status/handoff evidence authoritative and the workflow reports the missing receipt | Existing receipt is not backfilled or rewritten from a newer head | Invalid version/state, mismatched entry key or lane key, stale continuation lineage |
+| `.active-runs` marker | Existing active-run index | `pending`/`running` while the runner is live; terminal marker remains until observed process proof | Marker removal requires the existing exact-run process-terminal proof | Unknown proof keeps the marker and lane retained for inspection | Marker state is not inferred from Git head or timestamps alone | Missing/unknown process proof, active marker, or foreign run identity |
+
+Older runs without lane metadata remain readable and retain their existing
+handoff/cleanup behavior. Missing lane, receipt, or handoff metadata is
+unknown—not eligible for destructive cleanup.
+
+For managed worktree launches, the runner writes the pending handoff and the
+display-only status path/branch from the deterministic setup plan before the
+first `git worktree add`. If setup then fails or is interrupted, that pending
+ownership record remains preserved evidence; cleanup still rechecks the actual
+worktree state before any removal.
 
 ## Supervisor coordination (child asks parent)
 

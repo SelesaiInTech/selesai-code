@@ -19,6 +19,7 @@ import {
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { getAgentDir } from "../../src/shared/utils.ts";
 import { PERMISSION_POLICY_ENV } from "../../src/runs/shared/permissions.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, formatChildToolDiagnostic, MCP_DIRECT_CHILD_TOOLS_ENV, readChildToolDiagnostic, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
@@ -30,6 +31,7 @@ import registerSubagentPromptRuntime, {
 	registerPermissionGate,
 	registerSteeringInbox,
 	rewriteSubagentPrompt,
+	stripGlobalContext,
 	stripInheritedSkills,
 	stripParentOnlySubagentMessages,
 	stripProjectContext,
@@ -38,6 +40,7 @@ import registerSubagentPromptRuntime, {
 
 const envSnapshot = {
 	SELESAI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.SELESAI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
+	SELESAI_SUBAGENT_INHERIT_GLOBAL_CONTEXT: process.env.SELESAI_SUBAGENT_INHERIT_GLOBAL_CONTEXT,
 	SELESAI_SUBAGENT_INHERIT_SKILLS: process.env.SELESAI_SUBAGENT_INHERIT_SKILLS,
 	SELESAI_SUBAGENT_INTERCOM_SESSION_NAME: process.env.SELESAI_SUBAGENT_INTERCOM_SESSION_NAME,
 	SELESAI_SUBAGENT_FANOUT_CHILD: process.env.SELESAI_SUBAGENT_FANOUT_CHILD,
@@ -59,6 +62,7 @@ const envSnapshot = {
 	SELESAI_SUBAGENT_CHILD_AGENT: process.env.SELESAI_SUBAGENT_CHILD_AGENT,
 	SELESAI_SUBAGENT_CHILD_INDEX: process.env.SELESAI_SUBAGENT_CHILD_INDEX,
 	SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG: process.env.SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG,
+	PI_SUBAGENT_SESSION_NAME: process.env.PI_SUBAGENT_SESSION_NAME,
 };
 
 const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
@@ -83,6 +87,8 @@ const CONFIGURED_SKILLS_SECTION = "\n\nThe following configured skills are avail
 afterEach(() => {
 	if (envSnapshot.SELESAI_SUBAGENT_INHERIT_PROJECT_CONTEXT === undefined) delete process.env.SELESAI_SUBAGENT_INHERIT_PROJECT_CONTEXT;
 	else process.env.SELESAI_SUBAGENT_INHERIT_PROJECT_CONTEXT = envSnapshot.SELESAI_SUBAGENT_INHERIT_PROJECT_CONTEXT;
+	if (envSnapshot.SELESAI_SUBAGENT_INHERIT_GLOBAL_CONTEXT === undefined) delete process.env.SELESAI_SUBAGENT_INHERIT_GLOBAL_CONTEXT;
+	else process.env.SELESAI_SUBAGENT_INHERIT_GLOBAL_CONTEXT = envSnapshot.SELESAI_SUBAGENT_INHERIT_GLOBAL_CONTEXT;
 	if (envSnapshot.SELESAI_SUBAGENT_INHERIT_SKILLS === undefined) delete process.env.SELESAI_SUBAGENT_INHERIT_SKILLS;
 	else process.env.SELESAI_SUBAGENT_INHERIT_SKILLS = envSnapshot.SELESAI_SUBAGENT_INHERIT_SKILLS;
 	if (envSnapshot.SELESAI_SUBAGENT_INTERCOM_SESSION_NAME === undefined) delete process.env.SELESAI_SUBAGENT_INTERCOM_SESSION_NAME;
@@ -125,6 +131,8 @@ afterEach(() => {
 	else process.env[SUBAGENT_CHILD_INDEX_ENV] = envSnapshot.SELESAI_SUBAGENT_CHILD_INDEX;
 	if (envSnapshot.SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG === undefined) delete process.env[CHILD_WATCHDOG_CONFIG_ENV];
 	else process.env[CHILD_WATCHDOG_CONFIG_ENV] = envSnapshot.SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG;
+	if (envSnapshot.PI_SUBAGENT_SESSION_NAME === undefined) delete process.env.PI_SUBAGENT_SESSION_NAME;
+	else process.env.PI_SUBAGENT_SESSION_NAME = envSnapshot.PI_SUBAGENT_SESSION_NAME;
 });
 
 function setSupervisorEnv(): void {
@@ -785,6 +793,126 @@ describe("subagent prompt runtime", () => {
 		assert.ok(rewritten.includes("Current date: 2026-04-16"));
 	});
 
+	it("strips an XML <project_context> block as full project context removal", () => {
+		const globalDir = getAgentDir();
+		const prompt = [
+			"You are a subagent.",
+			"\n\n<project_context>\n\nProject-specific instructions and guidelines:\n\n",
+			`<project_instructions path="${globalDir}/AGENTS.md">\nGlobal rules\n</project_instructions>\n\n`,
+			"<project_instructions path=\"/repo/AGENTS.md\">\nRepo rules\n</project_instructions>\n\n",
+			"</project_context>\n\n",
+			"Current working directory: /repo",
+		].join("");
+		const rewritten = stripProjectContext(prompt);
+		assert.ok(!rewritten.includes("<project_context>"));
+		assert.ok(!rewritten.includes("<project_instructions"));
+		assert.ok(rewritten.includes("Current working directory: /repo"));
+	});
+
+	it("strips only global context files while preserving repository context", () => {
+		const globalDir = getAgentDir();
+		const prompt = [
+			"You are a subagent.",
+			"\n\n<project_context>\n\nProject-specific instructions and guidelines:\n\n",
+			`<project_instructions path="${globalDir}/AGENTS.md">\nGlobal rules\n</project_instructions>\n\n`,
+			"<project_instructions path=\"/repo/AGENTS.md\">\nRepo rules\n</project_instructions>\n\n",
+			"</project_context>\n\n",
+			"Current working directory: /repo",
+		].join("");
+		const rewritten = stripGlobalContext(prompt);
+		assert.ok(!rewritten.includes("Global rules"));
+		assert.ok(rewritten.includes("Repo rules"));
+		assert.ok(rewritten.includes("</project_context>"));
+	});
+
+	it("strips only global context files from legacy Markdown while preserving repository context", () => {
+		const globalDir = getAgentDir();
+		const prompt = [
+			"You are a subagent.",
+			"\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n",
+			`## ${globalDir}/AGENTS.md\n\nGlobal rules\n\n`,
+			"## /repo/AGENTS.md\n\nRepo rules\n\n",
+			SKILLS_SECTION,
+			"\nCurrent date: 2026-04-16",
+		].join("");
+		const rewritten = rewriteSubagentPrompt(prompt, {
+			inheritProjectContext: true,
+			inheritGlobalContext: false,
+			inheritSkills: true,
+		});
+		assert.ok(!rewritten.includes("Global rules"));
+		assert.ok(rewritten.includes("## /repo/AGENTS.md"));
+		assert.ok(rewritten.includes("Repo rules"));
+	});
+
+	it("recognizes Pi context filenames case-insensitively", () => {
+		const globalDir = getAgentDir();
+		const prompt = [
+			"You are a subagent.",
+			"\n\n<project_context>\n\nProject-specific instructions and guidelines:\n\n",
+			`<project_instructions path="${globalDir}/AGENTS.MD">\nGlobal rules\n</project_instructions>\n\n`,
+			"<project_instructions path=\"/repo/AGENTS.MD\">\nRepo rules\n</project_instructions>\n\n",
+			"</project_context>\n\n",
+			"Current working directory: /repo",
+		].join("");
+		const rewritten = stripGlobalContext(prompt);
+		assert.ok(!rewritten.includes("Global rules"));
+		assert.ok(rewritten.includes("Repo rules"));
+	});
+
+	for (const [label, prompt] of [
+		["CRLF context", `<project_context>\r\n<project_instructions path="${getAgentDir()}/AGENTS.md">\r\nGlobal rules\r\n</project_instructions>\r\n<project_instructions path="/repo/AGENTS.md">\r\nRepo rules\r\n</project_instructions>\r\n</project_context>`],
+		["content without a trailing newline", `<project_context><project_instructions path="${getAgentDir()}/AGENTS.md">Global rules</project_instructions><project_instructions path="/repo/AGENTS.md">Repo rules</project_instructions></project_context>`],
+		["same-line content", `<project_context><project_instructions path="${getAgentDir()}/CLAUDE.md">Global rules</project_instructions><project_instructions path="/repo/CLAUDE.md">Repo rules</project_instructions></project_context>`],
+	] as const) {
+		it(`strips global instructions from ${label}`, () => {
+			const rewritten = stripGlobalContext(prompt);
+			assert.ok(!rewritten.includes("Global rules"));
+			assert.ok(rewritten.includes("Repo rules"));
+		});
+	}
+
+	it("does not strip matching examples outside project context", () => {
+		const example = `<project_instructions path="${getAgentDir()}/AGENTS.md">Example only</project_instructions>`;
+		assert.equal(stripGlobalContext(example), example);
+	});
+
+	it("inherits global context when inheritGlobalContext is true", () => {
+		const globalDir = getAgentDir();
+		const prompt = [
+			"You are a subagent.",
+			"\n\n<project_context>\n\nProject-specific instructions and guidelines:\n\n",
+			`<project_instructions path="${globalDir}/AGENTS.md">\nGlobal rules\n</project_instructions>\n\n`,
+			"</project_context>\n\n",
+			"Current working directory: /repo",
+		].join("");
+		const rewritten = rewriteSubagentPrompt(prompt, {
+			inheritProjectContext: true,
+			inheritGlobalContext: true,
+			inheritSkills: true,
+		});
+		assert.ok(rewritten.includes("Global rules"));
+	});
+
+	it("removes global context files while keeping repository context via rewriteSubagentPrompt", () => {
+		const globalDir = getAgentDir();
+		const prompt = [
+			"You are a subagent.",
+			"\n\n<project_context>\n\nProject-specific instructions and guidelines:\n\n",
+			`<project_instructions path="${globalDir}/AGENTS.md">\nGlobal rules\n</project_instructions>\n\n`,
+			"<project_instructions path=\"/repo/AGENTS.md\">\nRepo rules\n</project_instructions>\n\n",
+			"</project_context>\n\n",
+			"Current working directory: /repo",
+		].join("");
+		const rewritten = rewriteSubagentPrompt(prompt, {
+			inheritProjectContext: true,
+			inheritGlobalContext: false,
+			inheritSkills: true,
+		});
+		assert.ok(!rewritten.includes("Global rules"));
+		assert.ok(rewritten.includes("Repo rules"));
+	});
+
 	it("strips only the inherited skills block", () => {
 		const rewritten = stripInheritedSkills(BASE_PROMPT);
 		assert.ok(rewritten.includes("# Project Context"));
@@ -795,6 +923,7 @@ describe("subagent prompt runtime", () => {
 	it("can strip both inherited sections together", () => {
 		const rewritten = rewriteSubagentPrompt(BASE_PROMPT, {
 			inheritProjectContext: false,
+			inheritGlobalContext: false,
 			inheritSkills: false,
 		});
 		assert.ok(!rewritten.includes("# Project Context"));
@@ -805,6 +934,7 @@ describe("subagent prompt runtime", () => {
 	it("injects a child-only boundary that forbids proposing or running subagents", () => {
 		const rewritten = rewriteSubagentPrompt(BASE_PROMPT, {
 			inheritProjectContext: true,
+			inheritGlobalContext: true,
 			inheritSkills: true,
 		});
 
@@ -813,14 +943,15 @@ describe("subagent prompt runtime", () => {
 		assert.ok(rewritten.includes("If you need to edit files, use the available editing tools."));
 		assert.ok(!rewritten.includes("call the actual edit/write tools"));
 		assert.ok(rewritten.includes("Do not print tool-call syntax, patches, or pseudo-tool calls as text."));
-		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritSkills: true }).indexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
-		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritSkills: true }).lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
+		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: true }).indexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
+		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: true }).lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
 	});
 
 	it("replaces inherited child boundaries with the fanout boundary when authorized", () => {
 		const strictPrompt = `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}\n\n${BASE_PROMPT}`;
 		const rewritten = rewriteSubagentPrompt(strictPrompt, {
 			inheritProjectContext: true,
+			inheritGlobalContext: true,
 			inheritSkills: true,
 			fanoutChild: true,
 		});
@@ -837,6 +968,7 @@ describe("subagent prompt runtime", () => {
 		const fanoutPrompt = `${CHILD_FANOUT_BOUNDARY_INSTRUCTIONS}\n\n${BASE_PROMPT}`;
 		const rewritten = rewriteSubagentPrompt(fanoutPrompt, {
 			inheritProjectContext: true,
+			inheritGlobalContext: true,
 			inheritSkills: true,
 		});
 
@@ -848,6 +980,7 @@ describe("subagent prompt runtime", () => {
 	it("keeps explicitly injected skill content when inherited skills are stripped", () => {
 		const rewritten = rewriteSubagentPrompt(PROMPT_WITH_EXPLICIT_SKILL, {
 			inheritProjectContext: false,
+			inheritGlobalContext: false,
 			inheritSkills: false,
 		});
 		assert.ok(rewritten.includes("<skill name=\"explicit\">"));
@@ -865,6 +998,7 @@ describe("subagent prompt runtime", () => {
 		].join("");
 		const rewritten = rewriteSubagentPrompt(prompt, {
 			inheritProjectContext: false,
+			inheritGlobalContext: false,
 			inheritSkills: false,
 		});
 
@@ -877,6 +1011,7 @@ describe("subagent prompt runtime", () => {
 	it("strips the subagent orchestration skill even when inherited skills remain", () => {
 		const rewritten = rewriteSubagentPrompt(BASE_PROMPT, {
 			inheritProjectContext: true,
+			inheritGlobalContext: true,
 			inheritSkills: true,
 		});
 
@@ -1334,6 +1469,26 @@ describe("subagent prompt runtime", () => {
 		];
 
 		assert.equal(contextHandler?.({ messages }, { model: { api: "openai-responses" } }), undefined);
+	});
+
+	it("preserves composite tool ids for cursor-native children", () => {
+		let contextHandler: ((event: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) | undefined;
+		registerSubagentPromptRuntime({
+			on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) {
+				if (event === "context") contextHandler = handler;
+			},
+		} as { on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined): void });
+
+		const toolCallId = "call_7XJjvAJfk07117JO8LgBCZjY\nfc_0e92b09b28010bac016a756e9e79cc8197b01825a5dc3d9eaa";
+		const messages = [
+			{ role: "user", content: "Task" },
+			{ role: "assistant", content: [{ type: "toolCall", id: toolCallId, name: "read", input: { path: "README.md" } }] },
+			{ role: "toolResult", toolName: "read", toolCallId, content: "file" },
+		];
+
+		assert.equal(contextHandler?.({ messages }, { model: { api: "cursor-native" } }), undefined);
+		assert.equal((messages[1] as { content: Array<{ id?: unknown }> }).content[0]?.id, toolCallId);
+		assert.equal((messages[2] as { toolCallId?: unknown }).toolCallId, toolCallId);
 	});
 
 	it("does not rewrite child context when no parent-only artifacts are present", () => {

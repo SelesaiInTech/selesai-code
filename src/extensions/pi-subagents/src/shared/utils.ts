@@ -1,18 +1,11 @@
-/**
- * General utility functions for the subagent extension
- */
-
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message, Usage as PiUsage } from "@earendil-works/pi-ai";
 import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "./display-text.ts";
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
-
-// ============================================================================
-// File System Utilities
-// ============================================================================
+import { validateAsyncStatusLaneMetadata } from "../runs/shared/lane-metadata.ts";
 
 const DEFAULT_CONFIG_DIR_NAME = ".selesai";
 const SELESAI_CODING_AGENT_PACKAGE_NAME = "@selesai/code";
@@ -96,9 +89,10 @@ export function getProjectConfigDir(projectRoot: string): string {
 
 export function getAgentDir(): string {
 	const configured = process.env.SELESAI_CODING_AGENT_DIR;
-	if (configured === "~") return os.homedir();
-	if (configured?.startsWith("~/")) return path.join(os.homedir(), configured.slice(2));
-	return configured || path.join(os.homedir(), getConfigDirName(), "agent");
+	const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+	if (configured === "~") return home;
+	if (configured?.startsWith("~/") || configured?.startsWith("~\\")) return path.join(home, configured.slice(2));
+	return configured || path.join(home, getConfigDirName(), "agent");
 }
 
 const statusCache = new Map<string, { mtime: number; ctime: number; size: number; ino: number; status: AsyncStatus }>();
@@ -190,6 +184,13 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 			cause: error instanceof Error ? error : undefined,
 		});
 	}
+	try {
+		validateAsyncStatusLaneMetadata(status, `Invalid async status '${statusPath}'`);
+	} catch (error) {
+		throw new Error(`Failed to validate async status file '${statusPath}': ${getErrorMessage(error)}`, {
+			cause: error instanceof Error ? error : undefined,
+		});
+	}
 
 	statusCache.set(statusPath, {
 		mtime: stat.mtimeMs,
@@ -206,57 +207,7 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 	return status;
 }
 
-const outputTailCache = new Map<string, { mtime: number; size: number; lines: string[] }>();
-
-/**
- * Get the last N lines from an output file (with mtime/size-based caching)
- */
-function getOutputTail(outputFile: string | undefined, maxLines: number = 3): string[] {
-	if (!outputFile) return [];
-	let fd: number | null = null;
-	try {
-		const stat = fs.statSync(outputFile);
-		if (stat.size === 0) return [];
-
-		const cached = outputTailCache.get(outputFile);
-		if (cached && cached.mtime === stat.mtimeMs && cached.size === stat.size) {
-			return cached.lines;
-		}
-
-		const tailBytes = 4096;
-		const start = Math.max(0, stat.size - tailBytes);
-		fd = fs.openSync(outputFile, "r");
-		const buffer = Buffer.alloc(Math.min(tailBytes, stat.size));
-		fs.readSync(fd, buffer, 0, buffer.length, start);
-		const content = buffer.toString("utf-8");
-		const allLines = content.split("\n").filter((l) => l.trim());
-		const lines = allLines.slice(-maxLines).map((l) => l.slice(0, 120) + (l.length > 120 ? "..." : ""));
-
-		outputTailCache.set(outputFile, { mtime: stat.mtimeMs, size: stat.size, lines });
-		if (outputTailCache.size > 20) {
-			const firstKey = outputTailCache.keys().next().value;
-			if (firstKey) outputTailCache.delete(firstKey);
-		}
-
-		return lines;
-	} catch {
-		// Output tails are UI-only hints; unreadable or missing files should render as no tail.
-		return [];
-	} finally {
-		if (fd !== null) {
-			try {
-				fs.closeSync(fd);
-			} catch {
-				// Closing the best-effort tail file handle should not surface over the main status view.
-			}
-		}
-	}
-}
-
-/**
- * Get human-readable last activity time for a file
- */
-	export function getLastActivity(outputFile: string | undefined): string {
+export function getLastActivity(outputFile: string | undefined): string {
 	if (!outputFile) return "";
 	try {
 		const stat = fs.statSync(outputFile);
@@ -265,14 +216,11 @@ function getOutputTail(outputFile: string | undefined, maxLines: number = 3): st
 		if (ago < 60000) return `active ${Math.floor(ago / 1000)}s ago`;
 		return `active ${Math.floor(ago / 60000)}m ago`;
 	} catch {
-		// Last-activity text is best effort; missing files should simply omit the hint.
+		// Last-activity text is best effort; missing files should omit the hint.
 		return "";
 	}
 }
 
-/**
- * Find the latest session file in a directory
- */
 export function findLatestSessionFile(sessionDir: string): string | null {
 	if (!fs.existsSync(sessionDir)) return null;
 	const files = fs.readdirSync(sessionDir)
@@ -289,23 +237,6 @@ export function findLatestSessionFile(sessionDir: string): string | null {
 	return latest ? latest.path : null;
 }
 
-/**
- * Write a prompt to a temporary file
- */
-function writePrompt(agent: string, prompt: string): { dir: string; path: string } {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
-	const p = path.join(dir, `${agent.replace(/[^\w.-]/g, "_")}.md`);
-	fs.writeFileSync(p, prompt, { mode: 0o600 });
-	return { dir, path: p };
-}
-
-// ============================================================================
-// Message Parsing Utilities
-// ============================================================================
-
-/**
- * Get the final text output from a list of messages
- */
 export function getFinalOutput(messages: Message[]): string {
 	const validTextParts: string[] = [];
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -361,6 +292,7 @@ function compactCompletedProgress(progress: AgentProgress): AgentProgress {
 	return {
 		index: progress.index,
 		agent: progress.agent,
+		...(progress.sessionName ? { sessionName: progress.sessionName } : {}),
 		status: progress.status,
 		activityState: progress.activityState,
 		task: "[prompt redacted]",
@@ -405,6 +337,17 @@ export function sumResultsUsage(results: SingleResult[]): Usage {
 		usage.turns += result.usage.turns;
 	}
 	return usage;
+}
+
+export function toAgentToolUsage(usage: Usage): PiUsage {
+	return {
+		input: usage.input,
+		output: usage.output,
+		cacheRead: usage.cacheRead,
+		cacheWrite: usage.cacheWrite,
+		totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: usage.cost },
+	};
 }
 
 function addNestedCost(total: NonNullable<Details["totalCost"]>, children: NestedRunSummary[] | undefined): void {
@@ -503,6 +446,20 @@ export function hasEmptyTerminalAssistantResponse(messages: Message[]): boolean 
 		&& Array.isArray(lastAssistant.content)
 		&& lastAssistant.content.length === 0
 		&& lastAssistant.usage.output === 0;
+}
+
+export function formatEmptyTerminalAssistantResponseError(messages: Message[]): string {
+	const lastAssistant = messages.findLast((message) => message.role === "assistant");
+	const errorMessage = lastAssistant && "errorMessage" in lastAssistant && typeof lastAssistant.errorMessage === "string" && lastAssistant.errorMessage.trim()
+		? lastAssistant.errorMessage.trim()
+		: undefined;
+	if (errorMessage) return errorMessage;
+	const stopReason = lastAssistant && "stopReason" in lastAssistant && typeof lastAssistant.stopReason === "string" && lastAssistant.stopReason.trim()
+		? lastAssistant.stopReason.trim()
+		: undefined;
+	return stopReason && stopReason !== "stop"
+		? `Subagent produced no output after terminal assistant stopReason "${stopReason}".`
+		: "Subagent produced no output (possible model cold-start or empty response).";
 }
 
 /**

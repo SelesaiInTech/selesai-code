@@ -13,6 +13,8 @@ import {
 	type AsyncJobStep,
 	type AsyncParallelGroupStatus,
 	type Details,
+	type HostStepState,
+	type HostStepVerdict,
 	type NestedRunSummary,
 	type NestedStepSummary,
 	type WorkflowNodeStatus,
@@ -21,15 +23,19 @@ import {
 	WIDGET_ANIMATION_INTERVAL_MS,
 	WIDGET_KEY,
 } from "../shared/types.ts";
-import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
-import { formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, shortenPath } from "../shared/formatters.ts";
-import { getDisplayItems, getSingleResultOutput } from "../shared/utils.ts";
+import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
+import { FLEET_OPEN_SHORTCUT, formatShortcutLabel } from "../shared/shortcuts.ts";
+import { formatContextUsage, formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, formatTokenUsage, shortenPath } from "../shared/formatters.ts";
+import { getDisplayItems, getSingleResultOutput, PROMPT_REDACTED } from "../shared/utils.ts";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
 import { buildWorkflowChatProgressRows, type WorkflowChatProgressRow } from "../workflows/chat-progress.ts";
+import { formatWorkflowPreflight, formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary, formatWorkflowPreflightWarnings } from "../workflows/workflow-preflight.ts";
 import { encodeAsyncStatusSnapshotWidget } from "../runs/background/async-status-snapshot.ts";
+import { projectAsyncWorkflowRows, type AsyncStatusWorkflowRow } from "../runs/shared/async-status-projection.ts";
+import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-step-status.ts";
 
 type Theme = ExtensionContext["ui"]["theme"];
 
@@ -69,23 +75,13 @@ function liveDetailKeyText(): string {
 	return keyText("app.tools.expand");
 }
 
-function liveDetailHintText(): string {
-	return `Press ${liveDetailKeyText()} for live detail`;
+export function liveDetailHintText(): string {
+	return `Press ${liveDetailKeyText()} for live detail · ${formatShortcutLabel(FLEET_OPEN_SHORTCUT)} Fleet`;
 }
 
 function foregroundSingleHintText(shortcut?: string): string {
 	if (!shortcut) return liveDetailHintText();
-	const label = shortcut
-		.split("+")
-		.map((part) => {
-			const normalized = part.trim().toLowerCase();
-			if (normalized === "ctrl") return "Ctrl";
-			if (normalized === "alt") return "Alt";
-			if (normalized === "shift") return "Shift";
-			if (normalized === "super") return "Super";
-			return normalized.length === 1 ? normalized.toUpperCase() : part.trim();
-		})
-		.join("+");
+	const label = formatShortcutLabel(shortcut);
 	return `${liveDetailHintText()} · ${label} to run in background`;
 }
 
@@ -273,6 +269,203 @@ function oneLine(text: string): string {
 	return text.replace(ansiEscapePattern, "").replace(/\s+/g, " ").trim();
 }
 
+const COMPACT_TASK_MAX_CHARS = 96;
+
+/** Display label for a child run: the derived session name (agent + task
+ *  excerpt) when the launcher provided one, else the bare agent name. */
+function childDisplayName(result: { agent?: string; sessionName?: string } | undefined, fallback = "subagent"): string {
+	return result?.sessionName?.trim() || result?.agent || fallback;
+}
+
+export function compactTaskText(task: string | undefined, label?: string): string | undefined {
+	const taskText = task?.trim();
+	const labelText = label?.trim();
+	const normalizedTask = taskText && taskText !== PROMPT_REDACTED ? oneLine(taskText) : "";
+	const normalizedLabel = labelText && labelText !== PROMPT_REDACTED ? oneLine(labelText) : "";
+	const normalized = normalizedLabel && normalizedTask && normalizedLabel !== normalizedTask
+		? `${normalizedLabel} — ${normalizedTask}`
+		: normalizedLabel || normalizedTask;
+	if (!normalized) return undefined;
+	return previewDisplayText(normalized, COMPACT_TASK_MAX_CHARS);
+}
+
+export interface AsyncLaneProjection {
+	label?: string;
+	role: string;
+	phase?: string;
+	state: AsyncJobState["status"] | AsyncJobStep["status"];
+	gate?: string;
+	next?: string;
+	output?: string;
+	workspace?: string;
+	ref: string;
+	chips: string[];
+}
+
+const LANE_VALUE_MAX_CHARS = 48;
+
+function boundedLaneValue(value: string | undefined, maxChars = LANE_VALUE_MAX_CHARS): string | undefined {
+	if (!value?.trim() || value.trim() === PROMPT_REDACTED) return undefined;
+	return previewDisplayText(oneLine(value), maxChars);
+}
+
+function laneStepForJob(job: AsyncJobState): AsyncJobStep | undefined {
+	const steps = job.steps ?? [];
+	if (steps.length === 0) return undefined;
+	if (job.currentStep !== undefined) {
+		const current = steps[job.currentStep];
+		if (current && (current.index === undefined || current.index === job.currentStep)) return current;
+		// Active parallel groups retain flat indices while exposing only the group slice.
+		const indexedCurrent = steps.find((step) => step.index === job.currentStep);
+		if (indexedCurrent) return indexedCurrent;
+		return steps[0];
+	}
+	return steps.find((step) => step.status === "running")
+		?? steps.find((step) => step.status === "pending")
+		?? steps.at(-1);
+}
+
+function laneTraceForJob(job: AsyncJobState): NonNullable<AsyncJobState["workflow"]>["trace"][number] | undefined {
+	return Array.isArray(job.workflow?.trace) ? job.workflow.trace.at(-1) : undefined;
+}
+
+function laneGate(step: AsyncJobStep | undefined): string | undefined {
+	const review = step?.review?.status ?? step?.acceptance?.reviewResult?.status;
+	if (review === "blockers") return "review blockers";
+	if (review === "review-required") return "review required";
+	if (review === "reviewed") return "reviewed";
+	const acceptance = step?.acceptance?.status;
+	if (acceptance === "review-required") return "acceptance review";
+	if (acceptance === "checked" || acceptance === "verified" || acceptance === "accepted") return "acceptance";
+	return undefined;
+}
+
+function laneNextAction(state: AsyncLaneProjection["state"], step: AsyncJobStep | undefined, output: string | undefined, gate: string | undefined): string | undefined {
+	if (step?.watchdog?.phase === "stale") return "inspect stale state";
+	if (step?.toolBudgetBlocked === true || step?.turnBudgetExceeded === true) return "inspect blocked state";
+	if (gate === "review blockers") return "resolve review blockers";
+	if (gate === "review required" || gate === "acceptance review") return "review output";
+	if (step?.activityState === "needs_attention") return "inspect attention";
+	if (state === "queued" || state === "pending") return "await launch";
+	if (state === "failed" || state === "rejected") return "inspect failure";
+	if (state === "partial") return "inspect partial state";
+	if (state === "paused") return "inspect paused state";
+	if (state === "stopped") return "inspect stopped state";
+	if ((state === "complete" || state === "completed") && gate === "reviewed") return "ready";
+	if ((state === "complete" || state === "completed") && output) return "inspect output";
+	return undefined;
+}
+
+function isTerminalLaneState(state: AsyncJobState["status"]): boolean {
+	return state !== "queued" && state !== "running";
+}
+
+/** Project already-loaded async status facts into one bounded, render-only lane row. */
+export function projectAsyncLane(job: AsyncJobState, selectedStep = laneStepForJob(job)): AsyncLaneProjection | undefined {
+	const trace = laneTraceForJob(job);
+	const workspace = job.cwd ? boundedLaneValue(shortenPath(job.cwd)) : undefined;
+	const label = compactTaskText(selectedStep?.description, selectedStep?.label)
+		?? boundedLaneValue(trace?.label)
+		?? (workspace ? undefined : boundedLaneValue(selectedStep?.workflowKey ?? job.workflowKey));
+	const role = boundedLaneValue(selectedStep?.agent ?? trace?.agent ?? job.agents?.[0] ?? widgetJobName(job), 32) ?? "subagent";
+	const phase = boundedLaneValue(selectedStep?.phase ?? trace?.phase);
+	const gate = laneGate(selectedStep);
+	const output = boundedLaneValue(selectedStep?.outputName);
+	const ref = boundedLaneValue(selectedStep?.workflowKey ?? job.workflowKey ?? job.asyncId.slice(0, 8), 24) ?? job.asyncId.slice(0, 8);
+	const chips = [
+		selectedStep?.context,
+		selectedStep?.structured ? "structured" : undefined,
+		selectedStep?.activityState === "active_long_running" ? "long-running" : undefined,
+		selectedStep?.activityState === "needs_attention" ? "attention" : undefined,
+		selectedStep?.watchdog?.phase === "stale" ? "stale" : undefined,
+		selectedStep?.toolBudgetBlocked === true || selectedStep?.turnBudgetExceeded === true ? "blocked" : undefined,
+	].filter((chip): chip is string => Boolean(chip));
+	const state = isTerminalLaneState(job.status) ? job.status : selectedStep?.status ?? job.status;
+	const next = laneNextAction(state, selectedStep, output, gate);
+	if (!label && !phase && !gate && !output && !selectedStep?.workflowKey && !job.workflowKey && !trace?.label && !trace?.phase) return undefined;
+	return { ...(label ? { label } : {}), role, ...(phase ? { phase } : {}), state, ...(gate ? { gate } : {}), ...(next ? { next } : {}), ...(output ? { output } : {}), ...(workspace ? { workspace } : {}), ref, chips };
+}
+
+function laneStateLabel(state: AsyncLaneProjection["state"], theme: Theme): string {
+	if (state === "running") return theme.fg("accent", "running");
+	if (state === "queued" || state === "pending") return theme.fg("muted", state);
+	if (state === "complete" || state === "completed") return theme.fg("success", "complete");
+	if (state === "failed" || state === "rejected") return theme.fg("error", state === "rejected" ? "rejected" : "failed");
+	return theme.fg("warning", state);
+}
+
+function formatLaneProjection(lane: AsyncLaneProjection, theme: Theme): string {
+	const label = boundedLaneValue(lane.label, 56);
+	const identity = [label, lane.role ? `role:${lane.role}` : undefined].filter(Boolean).join(" · ");
+	return `${identity ? theme.bold(identity) : theme.bold(lane.role)} · ${laneStateLabel(lane.state, theme)}`;
+}
+
+function formatLaneChip(chip: string, theme: Theme): string {
+	const text = `[${chip}]`;
+	if (chip === "blocked") return theme.fg("error", text);
+	if (chip === "stale") return theme.fg("warning", text);
+	return text;
+}
+
+function formatLaneProjectionDetails(lane: AsyncLaneProjection, theme: Theme): string | undefined {
+	const details = [
+		lane.phase ? `phase:${lane.phase}` : undefined,
+		lane.gate ? `gate:${lane.gate}` : undefined,
+		lane.next ? `next:${lane.next}` : undefined,
+		lane.output ? `out:${lane.output}` : undefined,
+		lane.workspace ? `workspace:${lane.workspace}` : lane.ref ? `ref:${lane.ref}` : undefined,
+	].filter(Boolean);
+	const chips = lane.chips.map((chip) => formatLaneChip(chip, theme));
+	return [...(details.length ? [theme.fg("dim", details.join(" · "))] : []), ...chips].join(" · ") || undefined;
+}
+
+function formatLaneProjectionLines(lane: AsyncLaneProjection, theme: Theme, indent: string): string[] {
+	const details = formatLaneProjectionDetails(lane, theme);
+	return [
+		`${indent}${formatLaneProjection(lane, theme)}`,
+		...(details ? [`${indent}  ${details}`] : []),
+	];
+}
+
+function laneRenderKey(job: AsyncJobState): unknown {
+	const lane = projectAsyncLane(job);
+	return lane ? [lane.label, lane.role, lane.phase, lane.state, lane.gate, lane.next, lane.output, lane.workspace, lane.ref, lane.chips] : undefined;
+}
+
+function widgetLaneDetailLines(job: AsyncJobState, theme: Theme): string[] {
+	if (job.steps?.length && (job.mode === "parallel" || job.mode === "chain")) return [];
+	const lane = projectAsyncLane(job);
+	return lane ? formatLaneProjectionLines(lane, theme, "  ") : [];
+}
+
+function workflowPreflightLines(job: AsyncJobState, expanded = false): string[] {
+	if (job.mode !== "workflow" || !job.preflight) return [];
+	if (!expanded) {
+		const warning = formatWorkflowPreflightWarningSummary(job.workflow?.preflightWarnings, { indent: "  ", hint: "expand for debug" });
+		return [
+			formatWorkflowPreflightPlanSummary(job.preflight, { indent: "  " }),
+			...(warning ? [warning] : []),
+		];
+	}
+	return [
+		...formatWorkflowPreflight(job.preflight, { indent: "  " }).split("\n"),
+		...(job.workflow?.preflightWarnings ? formatWorkflowPreflightWarnings(job.workflow.preflightWarnings, { indent: "  " }).split("\n") : []),
+	];
+}
+
+function workflowLabelForResult(details: Details, resultIndex: number): string | undefined {
+	const flatIndex = details.results[resultIndex]?.progress?.index ?? resultIndex;
+	const visit = (nodes: NonNullable<Details["workflowGraph"]>["nodes"]): string | undefined => {
+		for (const node of nodes) {
+			if (node.flatIndex === flatIndex && node.label.trim()) return node.label;
+			const nested = node.children ? visit(node.children) : undefined;
+			if (nested) return nested;
+		}
+		return undefined;
+	};
+	return details.workflowGraph ? visit(details.workflowGraph.nodes) : undefined;
+}
+
 function hasLiveOutputSignal(line: string): boolean {
 	const clean = oneLine(line);
 	return liveOutputWordSignalPattern.test(clean) || liveOutputCodeSignalPattern.test(clean);
@@ -456,7 +649,7 @@ function resultStatusLine(result: Details["results"][number], output: string): s
 
 type ResultPresentation = {
 	glyph: string;
-	label: "running" | "detached" | "stopped" | "paused" | "failed" | "completed";
+	label: "running" | "detached" | "stopped" | "paused" | "failed" | "partial" | "completed";
 	tone: "accent" | "warning" | "error" | "success";
 };
 
@@ -466,6 +659,7 @@ function semanticResultPresentation(input: {
 	stopped?: boolean;
 	interrupted?: boolean;
 	failed?: boolean;
+	partial?: boolean;
 	completedWithoutOutput?: boolean;
 	seed?: number;
 	frame?: number;
@@ -478,6 +672,7 @@ function semanticResultPresentation(input: {
 	if (input.stopped) return { glyph: "■", label: "stopped", tone: "warning" };
 	if (input.interrupted) return { glyph: "■", label: "paused", tone: "warning" };
 	if (input.failed) return { glyph: "✗", label: "failed", tone: "error" };
+	if (input.partial) return { glyph: "■", label: "partial", tone: "warning" };
 	return { glyph: "✓", label: "completed", tone: input.completedWithoutOutput ? "warning" : "success" };
 }
 
@@ -556,6 +751,7 @@ function widgetStepRenderKey(step: AsyncJobStep, index: number, expanded = false
 	return [
 		step.index ?? index,
 		step.agent,
+		step.sessionName,
 		step.workflowKey,
 		step.phase,
 		step.label,
@@ -575,6 +771,15 @@ function widgetStepRenderKey(step: AsyncJobStep, index: number, expanded = false
 		step.model,
 		step.thinking,
 		step.context,
+		step.description,
+		step.outputName,
+		step.structured,
+		step.acceptance?.status,
+		step.acceptance?.reviewResult?.status,
+		step.review?.status,
+		step.toolBudgetBlocked,
+		step.turnBudgetExceeded,
+		step.watchdog?.phase,
 		step.error,
 		expanded ? expandedStepActivityRenderKey(step) : undefined,
 		nestedRenderKey(step.children, expanded),
@@ -586,6 +791,7 @@ function nestedRenderKey(children: NestedRunSummary[] | undefined, expanded = fa
 		child.id,
 		child.state,
 		child.agent,
+		child.sessionName,
 		child.model,
 		child.thinking,
 		child.activityState,
@@ -605,6 +811,22 @@ function nestedRenderKey(children: NestedRunSummary[] | undefined, expanded = fa
 	]);
 }
 
+function hostStepRenderKey(row: AsyncStatusWorkflowRow): unknown[] {
+	return [
+		row.kind,
+		row.name,
+		row.state,
+		row.provider,
+		row.role,
+		row.verdict,
+		row.reasonCode,
+		row.detail,
+		row.target,
+		row.freshness,
+		row.reportPath,
+	];
+}
+
 export function widgetRenderKey(job: AsyncJobState, expanded = false): string {
 	return JSON.stringify({
 		asyncDir: job.asyncDir,
@@ -621,8 +843,12 @@ export function widgetRenderKey(job: AsyncJobState, expanded = false): string {
 		currentStep: job.currentStep,
 		chainStepCount: job.chainStepCount,
 		parallelGroups: job.parallelGroups,
+		workflowHostSteps: projectAsyncWorkflowRows([], job.hostSteps).map(hostStepRenderKey),
+		preflight: expanded ? job.preflight : job.preflight ? formatWorkflowPreflightPlanSummary(job.preflight) : undefined,
+		preflightWarnings: expanded ? job.workflow?.preflightWarnings : job.workflow?.preflightWarnings?.length || undefined,
 		steps: job.steps?.map((step, index) => widgetStepRenderKey(step, index, expanded)),
 		nestedChildren: nestedRenderKey(job.nestedChildren, expanded),
+		lane: laneRenderKey(job),
 		stepsTotal: job.stepsTotal,
 		runningSteps: job.runningSteps,
 		completedSteps: job.completedSteps,
@@ -663,6 +889,7 @@ function widgetActivity(job: AsyncJobState): string {
 	if (job.status === "queued") return "queued…";
 	if (job.status === "paused") return "Paused";
 	if (job.status === "stopped") return "Stopped";
+	if (job.status === "partial") return "Partial";
 	if (job.status === "failed") return "Failed";
 	return "Done";
 }
@@ -740,7 +967,7 @@ function widgetStepActivity(step: NonNullable<AsyncJobState["steps"]>[number], s
 	if (step.currentPath) facts.push(shortenPath(step.currentPath));
 	if (step.turnCount !== undefined) facts.push(`${step.turnCount} turns`);
 	if (step.toolCount !== undefined) facts.push(`${step.toolCount} tools`);
-	if (step.tokens?.total) facts.push(formatTokenStat(step.tokens.total));
+	if (step.tokens?.total) facts.push(formatTokenUsage(step.tokens, "token"));
 	const activity = buildLiveStatusLine(step, snapshotNow);
 	if (activity && facts.length) return `${activity} · ${facts.join(" · ")}`;
 	if (activity) return activity;
@@ -780,7 +1007,11 @@ function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded =
 		const activity = widgetStepActivity(step, job.updatedAt);
 		const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${step.agent} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
+		const label = compactTaskText(step.description, step.label);
+		const display = step.sessionName?.trim() || (label ? `${label} (${step.agent})` : step.agent);
+		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${display} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
+		const lane = projectAsyncLane(job, step);
+		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "    "));
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 6)) lines.push(`    ${nestedLine}`);
 	}
 	return lines;
@@ -906,12 +1137,13 @@ function buildChainRenderEntries(details: Details, label: MultiProgressLabel): C
 			continue;
 		}
 		for (let index = span.start; index < span.start + span.count; index++) {
+			const result = details.results[index];
 			entries.push({
 				kind: "result",
 				resultIndex: index,
 				rowNumber: index + 1,
 				rowLabel: span.isParallel ? `Agent ${index - span.start + 1}/${span.count}` : `Step ${span.stepIndex + 1}`,
-				agentName: details.results[index]?.agent ?? details.chainAgents?.[span.stepIndex] ?? `step-${span.stepIndex + 1}`,
+				agentName: result?.sessionName?.trim() || result?.agent || details.chainAgents?.[span.stepIndex] || `step-${span.stepIndex + 1}`,
 			});
 		}
 	}
@@ -1058,7 +1290,7 @@ function widgetStats(job: AsyncJobState, theme: Theme): string {
 		parts.push(`steps ${stepsTotal}`);
 	}
 	if (job.toolCount !== undefined) parts.push(formatToolUseStat(job.toolCount));
-	if (job.totalTokens?.total) parts.push(formatTokenStat(job.totalTokens.total));
+	if (job.totalTokens?.total) parts.push(formatTokenUsage(job.totalTokens, "token"));
 	if (job.startedAt !== undefined && job.updatedAt !== undefined) parts.push(formatDuration(Math.max(0, job.updatedAt - job.startedAt)));
 	return statJoin(theme, parts);
 }
@@ -1067,7 +1299,11 @@ function widgetStepStats(theme: Theme, step: NonNullable<AsyncJobState["steps"]>
 	return statJoin(theme, [
 		step.turnCount !== undefined ? `${step.turnCount} turns` : "",
 		step.toolCount !== undefined ? formatToolUseStat(step.toolCount) : "",
-		step.tokens?.total ? formatTokenStat(step.tokens.total) : "",
+		step.tokens
+			? step.contextLimit !== undefined
+				? formatContextUsage(step.tokens, step.contextLimit) ?? formatTokenUsage(step.tokens, "token")
+				: step.tokens.total ? formatTokenUsage(step.tokens, "token") : ""
+			: "",
 		step.durationMs !== undefined ? formatDuration(step.durationMs) : "",
 	]);
 }
@@ -1092,6 +1328,7 @@ function widgetOutputPath(job: AsyncJobState, step: NonNullable<AsyncJobState["s
 }
 
 function nestedRunName(run: NestedRunSummary): string {
+	if (run.sessionName?.trim()) return run.sessionName.trim();
 	if (run.agent) return run.agent;
 	if (run.agents?.length) return formatWidgetAgents(run.agents);
 	return run.id;
@@ -1101,6 +1338,7 @@ function nestedStatusGlyph(state: NestedRunSummary["state"] | NestedStepSummary[
 	if (state === "running") return theme.fg("accent", runningGlyph(seed));
 	if (state === "complete" || state === "completed") return theme.fg("success", "✓");
 	if (state === "failed") return theme.fg("error", "✗");
+	if (state === "partial") return theme.fg("warning", "■");
 	if (state === "paused") return theme.fg("warning", "■");
 	if (state === "stopped") return theme.fg("warning", "■");
 	return theme.fg("muted", "◦");
@@ -1148,6 +1386,7 @@ function nestedActivity(input: Pick<NestedRunSummary | NestedStepSummary, "activ
 	if (state === "queued" || state === "pending") return "queued…";
 	if (state === "paused") return "Paused";
 	if (state === "stopped") return "Stopped";
+	if (state === "partial") return "Partial";
 	if (state === "failed") return "Failed";
 	return "Done";
 }
@@ -1172,7 +1411,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			const activity = nestedActivity(step, state, snapshotNow ?? fallback);
 			const timestamp = "status" in step ? nestedStepTimestamp(step, fallback) : formatClockTime(nestedRunEventTime(step));
 			const error = step.error ? ` · ${step.error}` : "";
-			const name = "status" in step ? step.agent : nestedRunName(step);
+			const name = "status" in step ? childDisplayName(step) : nestedRunName(step);
 			rows.push({
 				prefix,
 				text: `${nestedTimestampPrefix(timestamp)}${nestedStatusGlyph(state, theme)} ${name} · ${state}${modelThinking ? ` · ${modelThinking}` : ""}${activity ? ` · ${activity}` : ""}${error}`,
@@ -1234,7 +1473,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			for (const step of child.steps ?? []) {
 				if (lines.length >= lineBudget) return;
 				const modelThinking = formatModelThinking(step.model, step.thinking);
-				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedTimestampPrefix(nestedStepTimestamp(step, child.lastUpdate))}${nestedStatusGlyph(step.status, theme)} ${step.agent} · ${step.status}${modelThinking ? ` · ${modelThinking}` : ""} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}`));
+				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedTimestampPrefix(nestedStepTimestamp(step, child.lastUpdate))}${nestedStatusGlyph(step.status, theme)} ${childDisplayName(step)} · ${step.status}${modelThinking ? ` · ${modelThinking}` : ""} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}`));
 				append(step.children, depth + 1, `${prefix}    `);
 			}
 			append(child.children, depth + 1, `${prefix}  `);
@@ -1258,7 +1497,11 @@ function foregroundStyleWidgetStepLines(
 	const status = widgetStepStatus(step.status, theme);
 	const stats = widgetStepStats(theme, step);
 	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-	const lines = [`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame)} ${itemTitle} ${index}/${total}: ${themeBold(theme, step.agent)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
+	const lines = [`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame)} ${itemTitle} ${index}/${total}: ${themeBold(theme, childDisplayName(step))}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
+	const lane = projectAsyncLane(job, step);
+	if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "    "));
+	const task = compactTaskText(step.description, step.label);
+	if (task) lines.push(`    ${theme.fg("dim", `task: ${task}`)}`);
 	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
 	if (activity) lines.push(`    ${theme.fg("dim", `⎿  ${activity}`)}`);
 	for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 12 : 6)) {
@@ -1284,18 +1527,50 @@ function foregroundStyleWidgetStepLines(
 	return lines;
 }
 
+function hostStepWidgetLines(job: AsyncJobState, theme: Theme, indent: string): string[] {
+	const rows = projectAsyncWorkflowRows([], job.hostSteps).filter((row) => row.kind);
+	const visible = rows.slice(0, 8);
+	const lines = visible.map((row) => {
+		const state = hostStepVerdictLabel(row.state as HostStepState, row.verdict as HostStepVerdict | undefined);
+		const glyph = state === "running" ? theme.fg("accent", "●")
+			: state === "pending" ? theme.fg("muted", "◦")
+			: state === "pass" ? theme.fg("success", "✓")
+			: state === "fail" || state === "error" ? theme.fg("error", "✗")
+			: theme.fg("warning", "■");
+		const details = [
+			row.provider ? `provider:${row.provider}` : undefined,
+			row.role ? `role:${row.role}` : undefined,
+			row.target,
+			row.detail,
+			row.reasonCode ? `reason:${row.reasonCode}` : undefined,
+			row.freshness?.stale ? "stale" : row.freshness?.observedRef ? `ref:${row.freshness.observedRef}` : undefined,
+			row.reportPath ? `out:${hostStepReportName(row.reportPath)}` : undefined,
+		].filter(Boolean).join(" · ");
+		return `${indent}${glyph} ${row.kind}: ${row.name} · ${state}${details ? ` · ${details}` : ""}`;
+	});
+	if (rows.length > visible.length) lines.push(`${indent}${theme.fg("dim", `… +${rows.length - visible.length} host steps hidden`)}`);
+	return lines;
+}
+
 function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded: boolean, width: number, frame?: number): string[] {
-	if (!job.steps?.length) return [
-		`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
-		...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 6).map((line) => `  ${line}`),
-	];
+	if (!job.steps?.length) {
+		const lane = projectAsyncLane(job);
+		return [
+			...workflowPreflightLines(job, expanded),
+			...(lane ? formatLaneProjectionLines(lane, theme, "  ") : []),
+			...hostStepWidgetLines(job, theme, "  "),
+			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
+			...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 6).map((line) => `  ${line}`),
+		];
+	}
 	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width, frame);
 	const total = job.stepsTotal ?? job.steps.length;
 	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
-	const lines: string[] = [];
+	const lines: string[] = workflowPreflightLines(job, expanded);
 	for (const [index, step] of job.steps.entries()) {
 		lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width, frame));
 	}
+	lines.push(...hostStepWidgetLines(job, theme, "  "));
 	const attached = new Set(job.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
 	const unattached = job.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
 	for (const nestedLine of formatNestedWidgetLines(unattached, theme, width, expanded, job.updatedAt, expanded ? 12 : 6)) {
@@ -1329,9 +1604,14 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const stepStats = widgetStepStats(theme, step);
 		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-		lines.push(`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
+		const task = compactTaskText(step.description, step.label);
+		const taskSuffix = task ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", `task: ${task}`)}` : "";
+		lines.push(`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, childDisplayName(step))}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${taskSuffix}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
+		const lane = projectAsyncLane(job, step);
+		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "  "));
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt, 6)) lines.push(`    ${nestedLine}`);
 	}
+	lines.push(...hostStepWidgetLines(job, theme, "  "));
 	if (job.steps.some((step) => step.status === "running")) lines.push(theme.fg("accent", `  ${liveDetailHintText()}`));
 	return lines.map((line) => truncLine(line, width));
 }
@@ -1468,9 +1748,18 @@ function progressiveJobLine(job: AsyncJobState, theme: Theme, width: number, fra
 	const stats = widgetStats(job, theme);
 	const activity = widgetActivity(job);
 	const status = job.status === "complete" ? "done" : job.status;
+	const lane = projectAsyncLane(job);
+	const laneSummary = lane
+		? [lane.label ?? lane.role, lane.phase ? `phase:${lane.phase}` : undefined, lane.output ? `out:${lane.output}` : undefined, lane.workspace ? `workspace:${lane.workspace}` : `ref:${lane.ref}`].filter(Boolean).join(" · ")
+		: "";
+	const laneSignals = lane
+		? [lane.next ? `next:${lane.next}` : undefined, ...lane.chips.map((chip) => formatLaneChip(chip, theme))].filter(Boolean).join(" · ")
+		: "";
 	const parts = [
 		`${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}`,
 		theme.fg("dim", status),
+		laneSignals ? laneSignals : "",
+		laneSummary ? theme.fg("dim", laneSummary) : "",
 		stats,
 		activity && activity.toLowerCase() !== status ? theme.fg("dim", activity) : "",
 	].filter(Boolean);
@@ -1616,6 +1905,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 		items.push([
 			`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
 			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
+			...widgetLaneDetailLines(job, theme),
 			...widgetParallelAgentDetails(job, theme, expanded, width, frame),
 		]);
 		slots--;
@@ -1633,6 +1923,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 		items.push([
 			`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
 			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
+			...widgetLaneDetailLines(job, theme),
 			...widgetParallelAgentDetails(job, theme, expanded, width, frame),
 		]);
 		slots--;
@@ -1700,9 +1991,11 @@ function renderSingleCompact(
 	const detailIndent = mainWindowIndent(layout, 1);
 	const continuationIndent = mainWindowIndent(layout, 2) + (layout.horizontalSpacing > 0 ? " " : "");
 	const modelDisplay = modelThinkingBadge(theme, r.model ?? r.progress?.model, r.thinking ?? r.progress?.thinking);
-	c.addChild(new Text(truncLine(`${resultGlyph(r, output, theme, isRunning, undefined, frame)} ${theme.fg("toolTitle", theme.bold(r.agent))}${modelDisplay}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
+	c.addChild(new Text(truncLine(`${resultGlyph(r, output, theme, isRunning, undefined, frame)} ${theme.fg("toolTitle", theme.bold(childDisplayName(r)))}${modelDisplay}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
 
 	if (isRunning && r.progress) {
+		const task = compactTaskText(r.task);
+		if (task) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}task: ${task}`), width), 0, 0));
 		const progressSnapshotNow = snapshotNowForProgress(r.progress);
 		const activity = compactCurrentActivity(r.progress);
 		c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}⎿  ${activity}`), width), 0, 0));
@@ -1731,6 +2024,7 @@ function renderSingleCompact(
 }
 
 function workflowRowGlyph(row: WorkflowChatProgressRow, theme: Theme, frame?: number): string {
+	if (row.state === "planned") return theme.fg("muted", "◦");
 	if (row.state === "running") return theme.fg("accent", runningGlyph(frame));
 	if (row.state === "complete") return theme.fg("success", "✓");
 	if (row.state === "detached" || row.state === "stopped") return theme.fg("warning", "■");
@@ -1739,6 +2033,7 @@ function workflowRowGlyph(row: WorkflowChatProgressRow, theme: Theme, frame?: nu
 
 function workflowRowStateLabel(row: WorkflowChatProgressRow, theme: Theme): string {
 	const label = (row.state === "complete" ? "complete" : row.state).padEnd(8);
+	if (row.state === "planned") return theme.fg("dim", label);
 	if (row.state === "running") return theme.fg("accent", label);
 	if (row.state === "complete") return theme.fg("success", label);
 	if (row.state === "detached" || row.state === "stopped") return theme.fg("warning", label);
@@ -1753,9 +2048,9 @@ function workflowOverallState(rows: WorkflowChatProgressRow[], hasTerminalValue:
 	return "running";
 }
 
-function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>, theme: Theme, layout: MainWindowRenderLayout, frame?: number): Component {
+function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>, theme: Theme, layout: MainWindowRenderLayout, frame?: number, expanded = false): Component {
 	const workflow = d.workflow;
-	const rows = workflow ? buildWorkflowChatProgressRows(workflow.trace) : [];
+	const rows = workflow ? buildWorkflowChatProgressRows(workflow.trace, d.preflight) : d.preflight ? buildWorkflowChatProgressRows([], d.preflight) : [];
 	const state = workflowOverallState(rows, workflow?.value !== undefined, result.isError);
 	const glyph = state === "running" ? theme.fg("accent", runningGlyph(frame)) : state === "complete" ? theme.fg("success", "✓") : state === "paused" ? theme.fg("warning", "■") : theme.fg("error", "✗");
 	const width = getTermWidth() - 4;
@@ -1766,6 +2061,7 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 	const rowIndent = mainWindowIndent(layout, 1);
 	c.addChild(new Text(truncLine(`${glyph} ${theme.fg("toolTitle", theme.bold("workflow"))} ${runId} ${theme.fg("dim", "·")} ${d.chatProgress?.repoRelation === "same" ? "same repo" : "other repo"} ${theme.fg("dim", "·")} ${state}`, width), 0, 0));
 	c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Repo   ${repoLabel}`), width), 0, 0));
+	if (d.preflight) c.addChild(new Text(truncLine(theme.fg("dim", formatWorkflowPreflightPlanSummary(d.preflight, { indent: rowIndent })), width), 0, 0));
 	if (phase) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Phase  ${phase}`), width), 0, 0));
 	if (rows.length === 0) {
 		c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}◦ waiting for workflow child launches`), width), 0, 0));
@@ -1779,7 +2075,20 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 		const duration = row.durationMs !== undefined ? ` ${theme.fg("dim", `· ${formatDuration(row.durationMs)}`)}` : "";
 		const run = row.runId ? ` ${theme.fg("dim", `[${row.runId.slice(0, 8)}]`)}` : "";
 		const error = row.error ? ` ${theme.fg(row.state === "detached" ? "warning" : "error", `· ${compactWorkflowError(row.error)}`)}` : "";
-		c.addChild(new Text(truncLine(`${rowIndent}${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}`, width), 0, 0));
+		const hints = expanded && row.preflight ? [
+			row.preflight.mode ? `mode:${row.preflight.mode}` : undefined,
+			row.preflight.decision ? `decision:${row.preflight.decision}` : undefined,
+			row.preflight.claims?.length ? `claims:${row.preflight.claims.join(",")}` : undefined,
+			row.preflight.expectedOutput ? `expected:${row.preflight.expectedOutput}` : undefined,
+			row.preflight.independence ? `independence:${row.preflight.independence}` : undefined,
+		].filter((value): value is string => Boolean(value)).join(" · ") : "";
+		c.addChild(new Text(truncLine(`${rowIndent}${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}${hints ? ` ${theme.fg("dim", `· ${hints}`)}` : ""}`, width), 0, 0));
+	}
+	if (workflow?.preflightWarnings?.length) {
+		const warningLines = expanded
+			? formatWorkflowPreflightWarnings(workflow.preflightWarnings, { indent: rowIndent }).split("\n")
+			: [formatWorkflowPreflightWarningSummary(workflow.preflightWarnings, { indent: rowIndent, hint: "expand for debug" })];
+		for (const warningLine of warningLines) c.addChild(new Text(truncLine(theme.fg("warning", warningLine), width), 0, 0));
 	}
 	if (workflow?.emits.length) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Emits  ${workflow.emits.length}`), width), 0, 0));
 	return c;
@@ -1795,6 +2104,7 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 		|| workflowGraphHasStatus(d, ["failed"]);
 	const paused = d.results.some((r) => r.interrupted)
 		|| workflowGraphHasStatus(d, ["paused"]);
+	const partial = workflowGraphHasStatus(d, ["partial"]);
 	let totalSummary = d.progressSummary;
 	if (!totalSummary) {
 		let sawProgress = false;
@@ -1818,6 +2128,7 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 		stopped,
 		interrupted: paused,
 		failed,
+		partial,
 		seed: runningSeed(progressRunningSeed(totalSummary), d.currentStepIndex),
 		frame,
 	});
@@ -1827,7 +2138,6 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 	const width = getTermWidth() - 4;
 	const rowIndent = mainWindowIndent(layout, 1);
 	const detailIndent = mainWindowIndent(layout, 2);
-	const continuationIndent = mainWindowIndent(layout, 3) + (layout.horizontalSpacing > 0 ? " " : "");
 	c.addChild(new Text(truncLine(`${glyph} ${theme.fg("toolTitle", theme.bold(d.mode))}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
 
 	const useResultsDirectly = multiLabel.hasParallelInChain || !d.chainAgents?.length;
@@ -1839,7 +2149,8 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 		const r = d.results[i];
 		const fallbackLabel = itemTitle.toLowerCase();
 		const rowNumber = multiLabel.showActiveGroupOnly ? (i - multiLabel.groupStartIndex + 1) : (i + 1);
-		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? (r?.agent || `${fallbackLabel}-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `${fallbackLabel}-${rowNumber}`) };
+		const fallbackAgent = useResultsDirectly ? (r?.agent || `${fallbackLabel}-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `${fallbackLabel}-${rowNumber}`);
+		return { kind: "result", resultIndex: i, rowNumber, agentName: r?.sessionName?.trim() || fallbackAgent };
 	});
 	for (const entry of renderEntries) {
 		if (entry.kind === "placeholder") {
@@ -1872,6 +2183,10 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 		const rowModelDisplay = modelThinkingBadge(theme, r.model ?? rowProgressModel?.model, r.thinking ?? rowProgressModel?.thinking);
 		const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${contextModeBadge(theme, r.context)}${rowModelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}${pendingLabel}`;
 		c.addChild(new Text(truncLine(`${rowIndent}${line}`, width), 0, 0));
+		if (rRunning || rPending) {
+			const task = compactTaskText(r.task, workflowLabelForResult(d, i));
+			if (task) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}task: ${task}`), width), 0, 0));
+		}
 		if (rRunning && rProg && "status" in rProg) {
 			const liveProgress = rProg as AgentProgress;
 			const activity = compactCurrentActivity(liveProgress);
@@ -1917,7 +2232,8 @@ export function renderSubagentSummary(
 	const failed = result.isError === true
 		|| results.some((entry) => !hasTerminalResultFlag(entry) && entry.exitCode !== 0 && !isResultRunning(entry))
 		|| Boolean(details && workflowGraphHasStatus(details, ["failed"]));
-	const state = running ? "running" : failed ? "failed" : stopped ? "stopped" : paused ? "paused" : "completed";
+	const partial = Boolean(details && workflowGraphHasStatus(details, ["partial"]));
+	const state = running ? "running" : failed ? "failed" : stopped ? "stopped" : paused ? "paused" : partial ? "partial" : "completed";
 	const glyph = state === "running"
 		? theme.fg("accent", STATIC_RUNNING_GLYPH)
 		: state === "completed"
@@ -1926,7 +2242,7 @@ export function renderSubagentSummary(
 				? theme.fg("error", "✗")
 				: theme.fg("warning", "■");
 	const label = details?.mode === "single" && results.length === 1
-		? results[0]?.agent || "subagent"
+		? childDisplayName(results[0])
 		: details?.mode || "subagent";
 	return new Text(
 		truncLine(`${glyph} ${theme.fg("toolTitle", theme.bold(label))} ${theme.fg("dim", "·")} ${theme.fg(state === "failed" ? "error" : state === "completed" ? "success" : state === "running" ? "accent" : "warning", state)}`, getTermWidth() - 4),
@@ -1950,7 +2266,7 @@ export function renderSubagentResult(
 	const compact = (component: Component): Component => capCompactMainWindowResult(component, layout, theme, !options.expanded);
 	const d = result.details;
 	if (d?.mode === "workflow" && d.chatProgress?.mode === "live-card" && d.workflow?.value === undefined && (!result.isError || (d.workflow?.trace.length ?? 0) > 0)) {
-		return compact(renderWorkflowChatProgress(d, result, theme, options.expanded ? resolveMainWindowRenderLayout() : layout, frame));
+		return compact(renderWorkflowChatProgress(d, result, theme, options.expanded ? resolveMainWindowRenderLayout() : layout, frame, options.expanded));
 	}
 	if (!d || !d.results.length) {
 		const t = result.content[0];
@@ -1961,9 +2277,12 @@ export function renderSubagentResult(
 		if (d && !options.expanded && !result.isError) {
 			const lines = text.split(/\r?\n/);
 			const firstNonEmptyLine = lines.find((line) => line.trim())?.trim() || "(no output)";
+			const compactLine = d.mode === "workflow" && d.preflight
+				? formatWorkflowPreflightPlanSummary(d.preflight)
+				: firstNonEmptyLine;
 			const c = new Container();
 			const detailIndent = mainWindowIndent(layout, 1);
-			c.addChild(new Text(truncLine(`${contextPrefix}${firstNonEmptyLine} · ${lines.length} lines`, width), 0, 0));
+			c.addChild(new Text(truncLine(`${contextPrefix}${compactLine} · ${lines.length} lines`, width), 0, 0));
 			c.addChild(new Text(truncLine(theme.fg("accent", `${detailIndent}Press ${liveDetailKeyText()} for full output`), width), 0, 0));
 			return compact(c);
 		}
@@ -1996,7 +2315,7 @@ export function renderSubagentResult(
 		const fit = (text: string) => expanded ? text : truncLine(text, w);
 		const toolCallLines = getToolCallLines(r, expanded);
 		const c = new Container();
-		c.addChild(new Text(fit(`${presentation.glyph} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${progressInfo} ${theme.fg("dim", "·")} ${presentation.label}`), 0, 0));
+		c.addChild(new Text(fit(`${presentation.glyph} ${theme.fg("toolTitle", theme.bold(childDisplayName(r)))}${contextBadge}${progressInfo} ${theme.fg("dim", "·")} ${presentation.label}`), 0, 0));
 		c.addChild(new Spacer(1));
 		const taskMaxLen = Math.max(20, w - 8);
 		const taskPreview = expanded || r.task.length <= taskMaxLen
@@ -2084,6 +2403,7 @@ export function renderSubagentResult(
 		|| workflowGraphHasStatus(d, ["failed"]);
 	const paused = d.results.some((r) => r.interrupted)
 		|| workflowGraphHasStatus(d, ["paused"]);
+	const partial = workflowGraphHasStatus(d, ["partial"]);
 	const completedWithoutOutput = d.results.some((r) =>
 		!hasTerminalResultFlag(r)
 		&& r.exitCode === 0
@@ -2096,6 +2416,7 @@ export function renderSubagentResult(
 		stopped,
 		interrupted: paused,
 		failed,
+		partial,
 		completedWithoutOutput,
 		frame,
 	}), theme);
@@ -2135,6 +2456,7 @@ export function renderSubagentResult(
 		? d.chainAgents
 				.map((agent, i) => {
 					const result = d.results[i];
+					const displayName = result?.sessionName?.trim() || agent;
 					const isCurrent = i === (d.currentStepIndex ?? d.results.length);
 					const stepPresentation = result
 						? styledResultPresentation(resultPresentation(result, getSingleResultOutput(result), isCurrent && hasRunning && !hasTerminalResultFlag(result)), theme)
@@ -2142,7 +2464,7 @@ export function renderSubagentResult(
 					const stepStatus = stepPresentation
 						? `${stepPresentation.glyph} ${stepPresentation.label}`
 						: theme.fg("dim", "◦ pending");
-					return `${stepStatus} ${agent}${contextModeBadge(theme, result?.context)}`;
+					return `${stepStatus} ${displayName}${contextModeBadge(theme, result?.context)}`;
 				})
 				.join(theme.fg("dim", " → "))
 		: null;
@@ -2169,7 +2491,8 @@ export function renderSubagentResult(
 		const i = displayStart + offset;
 		const r = d.results[i];
 		const rowNumber = multiLabel.showActiveGroupOnly ? (i - multiLabel.groupStartIndex + 1) : (i + 1);
-		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? (r?.agent || `step-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `step-${rowNumber}`) };
+		const fallbackAgent = useResultsDirectly ? (r?.agent || `step-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `step-${rowNumber}`);
+		return { kind: "result", resultIndex: i, rowNumber, agentName: r?.sessionName?.trim() || fallbackAgent };
 	});
 
 	c.addChild(new Spacer(1));
@@ -2209,8 +2532,8 @@ export function renderSubagentResult(
 		const stepLabel = entry.rowLabel ?? resultRowLabel(multiLabel, i, stepNumber);
 		const contextBadge = contextModeBadge(theme, r.context);
 		const stepHeader = rRunning
-			? `${rowPresentation.glyph} ${stepLabel}: ${theme.bold(theme.fg("warning", r.agent))}${contextBadge}${modelDisplay}${stats} ${theme.fg("dim", "·")} ${rowPresentation.label}`
-			: `${rowPresentation.glyph} ${stepLabel}: ${theme.bold(r.agent)}${contextBadge}${modelDisplay}${stats} ${theme.fg("dim", "·")} ${rowPresentation.label}`;
+			? `${rowPresentation.glyph} ${stepLabel}: ${theme.bold(theme.fg("warning", childDisplayName(r)))}${contextBadge}${modelDisplay}${stats} ${theme.fg("dim", "·")} ${rowPresentation.label}`
+			: `${rowPresentation.glyph} ${stepLabel}: ${theme.bold(childDisplayName(r))}${contextBadge}${modelDisplay}${stats} ${theme.fg("dim", "·")} ${rowPresentation.label}`;
 		const toolCallLines = getToolCallLines(r, expanded);
 		c.addChild(new Text(fit(stepHeader), 0, 0));
 

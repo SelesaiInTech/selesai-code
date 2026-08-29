@@ -103,7 +103,7 @@ describe("Orca progress-tab observer", () => {
 				...process.env,
 				SELESAI_CODING_AGENT_DIR: agentDir,
 				SELESAI_SUBAGENT_ORCA_BINARY: fakeOrca,
-				SELESAI_SUBAGENT_PI_BINARY: fakePi,
+				SELESAI_SUBAGENT_SELESAI_BINARY: fakePi,
 				ORCA_TEST_CAPTURE: capture,
 			},
 		);
@@ -162,7 +162,7 @@ describe("Orca progress-tab observer", () => {
 				...process.env,
 				SELESAI_CODING_AGENT_DIR: agentDir,
 				SELESAI_SUBAGENT_ORCA_BINARY: fakeOrca,
-				SELESAI_SUBAGENT_PI_BINARY: fakePi,
+				SELESAI_SUBAGENT_SELESAI_BINARY: fakePi,
 				ORCA_TEST_CAPTURE_DIR: captures,
 			},
 		);

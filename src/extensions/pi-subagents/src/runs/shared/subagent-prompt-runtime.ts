@@ -6,7 +6,7 @@ import { registerNativeSupervisorClient } from "../../intercom/native-supervisor
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { decodePermissionRules, permissionDecision, PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV } from "./permissions.ts";
 import { consumeSteerRequestsFromDir, MAX_STEER_QUEUE_SIZE, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerDeliveryStatus, type SteerRequest } from "../background/control-channel.ts";
-import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
+import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeAcknowledgedExtensionId, writeRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
 import { createStructuredOutputToolParameters, STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
 import {
@@ -20,7 +20,7 @@ import {
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
 import type { JsonSchemaObject, ResolvedToolBudget, SubagentState } from "../../shared/types.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
-import { resolveWatchPath } from "../../shared/utils.ts";
+import { getAgentDir, resolveWatchPath } from "../../shared/utils.ts";
 import { registerChildWatchdog } from "../../watchdog/register-child.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV, decodeChildWatchdogConfig } from "../../watchdog/child-status.ts";
 import { requestWatchdogPermission, type WatchdogPermissionRequest, type WatchdogPermissionResult } from "../../watchdog/permission-arbiter.ts";
@@ -32,6 +32,9 @@ import { drainOutstandingWork } from "../background/auto-drain.ts";
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "SELESAI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "SELESAI_SUBAGENT_INHERIT_SKILLS";
 export const SUBAGENT_INTERCOM_SESSION_NAME_ENV = "SELESAI_SUBAGENT_INTERCOM_SESSION_NAME";
+/** Human-readable child display name (agent + task excerpt) set by the parent
+ *  at launch; applied via pi.setSessionName when no intercom target exists. */
+export const SUBAGENT_SESSION_NAME_ENV = "PI_SUBAGENT_SESSION_NAME";
 const STEERING_LEGACY_SETTLE_FALLBACK_MS = 1000;
 const STEERING_SAFETY_POLL_INTERVAL_MS = 5000;
 
@@ -68,7 +71,8 @@ const PARENT_ONLY_CUSTOM_MESSAGE_TYPES = new Set([
 	"subagent-control-notice",
 ]);
 const SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN = /<name>\s*pi-subagents\s*<\/name>/;
-const PROJECT_CONTEXT_HEADER = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
+const PROJECT_CONTEXT_XML_HEADER = "\n\n<project_context>\n\n";
+const PROJECT_CONTEXT_LEGACY_HEADER = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
 const SKILLS_HEADER = "\n\nThe following skills provide specialized instructions for specific tasks.";
 const DATE_HEADER = "\nCurrent date:";
 
@@ -148,10 +152,80 @@ function findSectionEnd(prompt: string, startIndex: number, nextHeaders: string[
 }
 
 export function stripProjectContext(prompt: string): string {
-	const startIndex = prompt.indexOf(PROJECT_CONTEXT_HEADER);
-	if (startIndex === -1) return prompt;
-	const endIndex = findSectionEnd(prompt, startIndex + PROJECT_CONTEXT_HEADER.length, [SKILLS_HEADER, DATE_HEADER]);
-	return `${prompt.slice(0, startIndex)}${prompt.slice(endIndex)}`;
+	const xmlStartIndex = prompt.indexOf(PROJECT_CONTEXT_XML_HEADER);
+	if (xmlStartIndex !== -1) {
+		const closingTag = "</project_context>";
+		const closingIndex = prompt.indexOf(closingTag, xmlStartIndex + PROJECT_CONTEXT_XML_HEADER.length);
+		if (closingIndex !== -1) {
+			return `${prompt.slice(0, xmlStartIndex)}${prompt.slice(closingIndex + closingTag.length)}`;
+		}
+	}
+	const legacyStartIndex = prompt.indexOf(PROJECT_CONTEXT_LEGACY_HEADER);
+	if (legacyStartIndex === -1) return prompt;
+	const endIndex = findSectionEnd(prompt, legacyStartIndex + PROJECT_CONTEXT_LEGACY_HEADER.length, [SKILLS_HEADER, DATE_HEADER]);
+	return `${prompt.slice(0, legacyStartIndex)}${prompt.slice(endIndex)}`;
+}
+
+const GLOBAL_CONTEXT_FILE_NAMES = new Set(["agents.md", "agents.override.md", "claude.md"]);
+
+function canonicalDirectory(dir: string): string {
+	try {
+		return fs.realpathSync(dir);
+	} catch {
+		return path.resolve(dir);
+	}
+}
+
+function expandContextPath(filePath: string): string {
+	const home = process.env.HOME ?? process.env.USERPROFILE;
+	return filePath === "~"
+		? home ?? filePath
+		: /^~[\\/]/.test(filePath)
+			? path.join(home ?? "~", filePath.slice(2))
+			: filePath;
+}
+
+function isContextFilePath(filePath: string): boolean {
+	return GLOBAL_CONTEXT_FILE_NAMES.has(path.basename(expandContextPath(filePath)).toLowerCase());
+}
+
+function isGlobalContextFile(filePath: string): boolean {
+	const expanded = expandContextPath(filePath);
+	if (!isContextFilePath(filePath)) return false;
+	return canonicalDirectory(path.dirname(expanded)) === canonicalDirectory(getAgentDir());
+}
+
+function stripGlobalInstructionsFromXmlContext(context: string): string {
+	const block = /<project_instructions\s+path=(["'])(.*?)\1\s*>[\s\S]*?<\/project_instructions>\s*/gi;
+	return context.replace(block, (match, _quote: string, filePath: string) => isGlobalContextFile(filePath) ? "" : match);
+}
+
+function stripGlobalInstructionsFromLegacyContext(context: string): string {
+	const sections = [...context.matchAll(/^## ([^\r\n]+)(?:\r?\n|$)/gm)]
+		.filter((match) => isContextFilePath(match[1]!.trim()));
+	let rewritten = "";
+	let cursor = 0;
+	for (let index = 0; index < sections.length; index++) {
+		const section = sections[index]!;
+		const start = section.index!;
+		const end = sections[index + 1]?.index ?? context.length;
+		rewritten += context.slice(cursor, start);
+		if (!isGlobalContextFile(section[1]!.trim())) rewritten += context.slice(start, end);
+		cursor = end;
+	}
+	return `${rewritten}${context.slice(cursor)}`;
+}
+
+export function stripGlobalContext(prompt: string): string {
+	const rewrittenXml = prompt.replace(/<project_context>[\s\S]*?<\/project_context>/gi, (context) => {
+		const rewritten = stripGlobalInstructionsFromXmlContext(context);
+		return /<project_instructions\b/i.test(rewritten) ? rewritten : "";
+	});
+	const legacyStartIndex = rewrittenXml.indexOf(PROJECT_CONTEXT_LEGACY_HEADER);
+	if (legacyStartIndex === -1) return rewrittenXml;
+	const legacyEndIndex = findSectionEnd(rewrittenXml, legacyStartIndex + PROJECT_CONTEXT_LEGACY_HEADER.length, [SKILLS_HEADER, DATE_HEADER]);
+	const legacyContext = rewrittenXml.slice(legacyStartIndex, legacyEndIndex);
+	return `${rewrittenXml.slice(0, legacyStartIndex)}${stripGlobalInstructionsFromLegacyContext(legacyContext)}${rewrittenXml.slice(legacyEndIndex)}`;
 }
 
 export function stripInheritedSkills(prompt: string): string {
@@ -177,11 +251,14 @@ function stripChildBoundaryInstructions(prompt: string): string {
 
 export function rewriteSubagentPrompt(
 	prompt: string,
-	options: { inheritProjectContext: boolean; inheritSkills: boolean; fanoutChild?: boolean },
+	options: { inheritProjectContext: boolean; inheritGlobalContext: boolean; inheritSkills: boolean; fanoutChild?: boolean },
 ): string {
 	let rewritten = prompt;
 	if (!options.inheritProjectContext) {
 		rewritten = stripProjectContext(rewritten);
+	}
+	if (!options.inheritGlobalContext) {
+		rewritten = stripGlobalContext(rewritten);
 	}
 	if (!options.inheritSkills) {
 		rewritten = stripInheritedSkills(rewritten);
@@ -214,6 +291,7 @@ const PORTABLE_TOOL_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_PORTABLE_TOOL_ID_LENGTH = 64;
 const COMPOSITE_TOOL_ID_APIS = new Set([
 	"azure-openai-responses",
+	"cursor-native",
 	"openai-completions",
 	"openai-responses",
 ]);
@@ -597,7 +675,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	registerPermissionGate(pi);
 	registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV], { allowZero: process.env[TOOL_BUDGET_ZERO_AUTH_ENV] === "1" }));
 	registerChildWatchdog(pi);
-	const waitToolEnabled = resolveWaitToolConfig().enabled;
+	const waitToolConfig = resolveWaitToolConfig();
 	const waitState = {
 		baseCwd: "",
 		currentSessionId: null,
@@ -612,7 +690,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		watcherRestartTimer: null,
 		resultFileCoalescer: { schedule: () => false, clear: () => {} },
 	} as unknown as SubagentState;
-	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, waitToolEnabled);
+	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, waitToolConfig.enabled, undefined, waitToolConfig.defaultTimeoutMs);
 	let nativeSupervisorClientRegistered = false;
 	const registerNativeSupervisorClientOnce = (): void => {
 		if (nativeSupervisorClientRegistered) return;
@@ -682,18 +760,25 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	onRuntimeEvent("before_agent_start", async (event: unknown) => {
 		if (!event || typeof event !== "object" || !("systemPrompt" in event) || typeof event.systemPrompt !== "string") return undefined;
 		registerNativeSupervisorClientOnce();
+		// The intercom target is a routing address and always wins; the display
+		// name (agent + task excerpt, computed by the parent at launch) only
+		// applies when the bridge is not addressing this child.
 		const intercomSessionName = process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV]?.trim();
-		if (intercomSessionName && typeof pi.setSessionName === "function") {
-			pi.setSessionName(intercomSessionName);
+		const displaySessionName = process.env[SUBAGENT_SESSION_NAME_ENV]?.trim();
+		const childSessionName = intercomSessionName || displaySessionName;
+		if (childSessionName && typeof pi.setSessionName === "function") {
+			pi.setSessionName(childSessionName);
 		}
 
 		const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
+		const inheritGlobalContext = readBooleanEnv(SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV);
 		const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
 		const fanoutChild = readBooleanEnv(SUBAGENT_FANOUT_CHILD_ENV);
 		let rewritten = event.systemPrompt;
-		if (inheritProjectContext !== undefined || inheritSkills !== undefined || fanoutChild !== undefined) {
+		if (inheritProjectContext !== undefined || inheritGlobalContext !== undefined || inheritSkills !== undefined || fanoutChild !== undefined) {
 			rewritten = rewriteSubagentPrompt(event.systemPrompt, {
 				inheritProjectContext: inheritProjectContext ?? true,
+				inheritGlobalContext: inheritGlobalContext ?? true,
 				inheritSkills: inheritSkills ?? true,
 				fanoutChild: fanoutChild === true,
 			});

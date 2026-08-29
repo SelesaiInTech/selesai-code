@@ -28,7 +28,7 @@ The RPC methods are `ping`, `status`, `manage`, `spawn`, `steer`, `interrupt`, `
 Method notes:
 
 - `manage` exposes a narrow schedule-only allowlist: `schedule.list`, `schedule.show`, `schedule.history`, `schedule.pause`, `schedule.resume`, `schedule.run`, and `schedule.delete`. All actions except `schedule.list` require `id`. Mission, agent, config, worktree, and arbitrary management actions are rejected before executor dispatch. `ping.capabilities.managementActions` advertises the exact allowlist.
-- `spawn` accepts structured single-child execution (`agent`, `task?`) or `workflowScript` and is async-only: omit `async` or set `async: true`, omit `clarify`, and do not pass management `action` values. It goes through the same executor as the `subagent` tool, so agent discovery, validation, session attribution, configured spawn caps, child-safety depth, artifacts, and async status all behave the same.
+- `spawn` accepts structured single-child execution (`agent`, `task?`), inline `workflowScript`, or `workflowScriptPath` and is async-only: omit `async` or set `async: true`, omit `clarify`, and do not pass management `action` values. Relative script paths resolve against the request `cwd`. It goes through the same executor as the `subagent` tool, so agent discovery, validation, session attribution, configured spawn caps, child-safety depth, artifacts, and async status all behave the same.
 - `steer` requires an async run `id` (plus optional child `index`) and a non-empty `message`; its reply preserves the normal acknowledged-delivery result. Optional `mode` values are `steer` (default), `follow_up`, and `auto`, and receipts include `deliveryStatus: "delivered" | "queued"`. RPC steering disables the direct tool's pause-and-revive recovery in every mode so an extension keeps authority over the exact child it spawned; `ping.capabilities.nonRecoveringSteer` advertises this guarantee.
 - `resume` requires a run target and non-empty `message`. It delegates to the existing revival path, which validates current-session ownership, persisted session/recovery metadata, stopped/live state, capability ceilings, and the exclusive session lease before returning the new async run details. Callers may request a `file-only` output path for the revived result without overriding its model, tools, or budgets. `ping.capabilities.resume` advertises this seam.
 - `stop` targets current-session top-level async runs through the stop control channel and records a `stopped` lifecycle instead of reporting a timeout.
@@ -57,6 +57,45 @@ The DTO intentionally never exposes run, async, or tool IDs. Clients must ignore
 ### Scope
 
 `pi.events` is in-process only. It does not reach separate Pi processes or child subagents; use the file lifecycle artifacts or `pi-intercom` for cross-process coordination.
+
+## Runtime agent registration from independent extensions
+
+An independently installed Pi extension can register an agent with the installed `pi-subagents` owner through the process-local `pi-subagents:runtime-agent-register:v1` event. Emit after extension setup, such as during `session_start`. Event delivery is synchronous, so the owner writes the result onto the request before `emit()` returns.
+
+```typescript
+const request: {
+  version: 1;
+  name: string;
+  definition: {
+    description: string;
+    systemPrompt: string;
+    tools?: readonly string[];
+  };
+  result?:
+    | { ok: true; registration: { dispose(): void } }
+    | { ok: false; error: Error };
+} = {
+  version: 1,
+  name: "runtime-probe-agent",
+  definition: {
+    description: "Agent registered by an independent extension",
+    systemPrompt: "Return the words runtime probe.",
+    tools: [],
+  },
+};
+
+pi.events.emit("pi-subagents:runtime-agent-register:v1", request);
+if (!request.result) throw new Error("pi-subagents is not installed or not ready");
+if (!request.result.ok) throw request.result.error;
+const registration = request.result.registration;
+// Call registration.dispose() during your extension cleanup.
+```
+
+If `pi-subagents` is a resolvable dependency of the consumer package, `pi-subagents/agents` exports `RUNTIME_AGENT_REGISTER_EVENT`, the request/result types, and `registerAgentViaEvents()` for the same contract. A separately installed Pi package is not automatically a Node dependency of another package. In that case, use the event contract directly instead of a runtime import. A type-only development dependency is optional.
+
+The installed owner applies the existing runtime-agent validation, collision checks, limits, runtime source metadata, and cleanup. If more than one owner listens, the first handler that writes `request.result` wins. Unsupported versions, malformed requests, and registration failures return `{ ok: false, error }`. No result means no compatible owner handled the event.
+
+This contract is process-local. It does not register agents in child processes or other Pi processes, and it does not change package discovery or package resolution.
 
 ## External jobs in FleetView
 
@@ -126,7 +165,7 @@ Preflight covers ordinary single-agent launch resolution:
 - Fresh/fork context, effective model and thinking, skill and tool resolution, direct MCP selections, runtime/configured extensions.
 - Artifact/session paths, async lifecycle/status/result/event/process-terminal paths, package/lifecycle versions, capability-ceiling audit data, and stable digests.
 
-`launchContractDigest` is the canonical digest of the caller task, effective system prompt (including the resolved `turnBudget` prompt augmentation when supplied), model candidates, effective tools/extensions/MCP (including inherited capability ceilings), output binding, and structured-output schema that ordinary foreground and async execution report in results/status/events and metadata.
+`launchContractDigest` is the canonical digest of the caller task, effective system prompt, model candidates, effective tools/extensions/MCP (including inherited capability ceilings), output binding, and structured-output schema that ordinary foreground and async execution report in results/status/events and metadata.
 
 Boundaries:
 
@@ -295,7 +334,7 @@ When Pi runs inside [Herdr](https://herdr.dev), pi-subagents automatically repor
 - The bridge is enabled only when Herdr supplies `HERDR_ENV=1` and `HERDR_PANE_ID`; outside Herdr it registers no listeners or timers.
 - It restores current-session active runs after `/reload` or `/resume`, refreshes metadata while work is active, and clears it on completion or shutdown.
 - The bridge uses Herdr's existing `herdr:blocked` sibling event when an async child needs attention, and emits `herdr:busy` while async work remains. Herdr versions that support the sibling event keep the pane's semantic state `working`; older versions ignore it safely and still display the metadata label while the Pi integration remains the lifecycle authority.
-- The owning Pi session is the only publisher for its own pane metadata. While active subagents exist, it reports a compact `title-suffix` token: one active run uses that agent name, two or more use the active-run count, and attention adds `⚠`. The suffix is cleared when active work reaches zero.
+- The owning Pi session is the only publisher for its own pane metadata. When an active workflow has an explicit bounded `label`, the newest active label appears in the summary and compact `title-suffix`; overlapping completion restores the previous active label. Raw task and goal prompts never enter Herdr metadata. Without a label, one active run uses its agent name and two or more use the active-run count. Attention adds `⚠`, and the suffix is cleared when active work reaches zero.
 
 To show the reported label in the expanded Agent sidebar, include `state_text` or `$summary` in its row layout:
 

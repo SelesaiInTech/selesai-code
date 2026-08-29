@@ -6,9 +6,9 @@ Where running subagents show up, how to inspect them, and the files and events t
 
 Foreground runs stream progress in the conversation while they run. They default to a generous 30-minute wall-clock timeout when neither the call nor the selected agent provides a timeout; a global [`timeoutMs`](configuration.md#timeoutms) config replaces that default, and explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win.
 
-Live progress shows compact detail for single, chain, and parallel modes: current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and chain graph metadata when available.
+Live progress shows compact detail for single, chain, and parallel modes: a bounded one-line task, current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and chain graph metadata when available. Workflow `label` metadata wins over raw task text in compact multi-child cards.
 
-Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step.
+Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step. Running-card hints also advertise `Ctrl+Alt+F` for the Fleet inspector.
 
 Sequential chains show a flow line like `done scout → running worker`. Chains with parallel steps show per-step cards instead. Chain status uses `label` and `phase` metadata when present, while falling back to agent names for older chains.
 
@@ -29,8 +29,9 @@ The under-editor async widget gives a short view while work runs. Its expand key
 async subagent worker · background
 ● worker
   ● Step 1/1: worker · running
+    task: Review authentication boundaries
     ⎿  read: src/auth.ts | 2.0s
-    Press configured-expand-key for live detail
+    Press configured-expand-key for live detail · Ctrl+Alt+F Fleet
 ```
 
 To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
@@ -40,7 +41,7 @@ To inspect one background child in text, use `subagent({ action: "status", id: "
 In the TUI, a persistent FleetView below the editor keeps active work visible as a compact summary. Set `fleetViewPlacement` to `"aboveEditor"` to move it above the editor.
 
 ```text
-2 active agents · 1 pane · ↓ 4.2k tokens · ↓/← to inspect
+2 active agents · 1 pane · ↓ 3.1k window · 4.2k spent · ↓/← to inspect
 ```
 
 After you expand it:
@@ -49,13 +50,13 @@ After you expand it:
 ↑↓/jk select · enter inspect · esc back
 
 > main
-    scout · running                  1m 12s · ↓ 2.8k tokens
-    reviewer · running                 38s · ↓ 1.4k tokens
+    scout · running         1m 12s · ↓ 2.0k window · 2.8k spent
+    reviewer · running        38s · ↓ 1.1k window · 1.4k spent
 ```
 
-When the focused editor is empty, press `↓` or `←` to expand the summary into `main` plus active children with agent name, state, elapsed time, and token totals. The compact line counts active current-session work and Herdr project panes. Then use `↑`/`↓` or `j`/`k` to select a child and `Enter` to inspect it. Printable navigation keys are never intercepted before activation.
+When the focused editor is empty, press `↓` or `←` to expand the summary into `main` plus active children with agent name, state, elapsed time, and token usage. When providers report usage, `window` is the latest assistant turn's input plus cache-read tokens, while `spent` keeps the cumulative input-plus-output total. Old run artifacts without window data keep the existing token-total label. The compact line counts active current-session work and Herdr project panes. Then use `↑`/`↓` or `j`/`k` to select a child and `Enter` to inspect it. Printable navigation keys are never intercepted before activation.
 
-FleetView replaces the legacy above-editor async widget by default. Successful background completions stay quiet so inactive Pi tabs are not marked unread, while failed or paused completions still notify the originating session. Parallel runs show every active child independently. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
+FleetView replaces the legacy above-editor async widget by default. Successful background completions stay quiet so inactive Pi tabs are not marked unread, while failed or paused completions still notify the originating session. Parallel runs show every active child independently. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent` or `allowNestedSubagents: true`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
 
 ## The fleet inspector
 
@@ -213,7 +214,7 @@ Foreground and async runners share bounded child-protocol handling:
 
 ## Workflow and debug artifacts
 
-Each scripted workflow stores runtime artifacts under a workflow artifact directory. The on-disk directory is still named `chain-runs` for compatibility. With the default `artifactDir: "session"` or with `"temp"`, it is user-scoped temp storage. With `artifactDir: "project"`, the root is `<cwd>/.pi-subagents/chain-runs/`:
+Each scripted workflow stores runtime artifacts under a workflow artifact directory. The on-disk directory is still named `chain-runs` for compatibility. With the default `artifactDir: "project"`, the root is `<cwd>/.pi-subagents/chain-runs/`. With `"session"` or `"temp"`, it is user-scoped temp storage:
 
 ```text
 <tmpdir>/pi-subagents-<scope>/chain-runs/{runId}/

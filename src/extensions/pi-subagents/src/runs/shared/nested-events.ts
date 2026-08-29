@@ -199,8 +199,10 @@ function sanitizeTokenUsage(value: unknown): NestedRunSummary["totalTokens"] | u
 	const input = clampNumber(raw.input);
 	const output = clampNumber(raw.output);
 	const total = clampNumber(raw.total);
+	const window = clampNumber(raw.window);
+	const windowPeak = clampNumber(raw.windowPeak);
 	return input !== undefined && output !== undefined && total !== undefined
-		? { input, output, total }
+		? { input, output, total, ...(window !== undefined ? { window } : {}), ...(windowPeak !== undefined ? { windowPeak } : {}) }
 		: undefined;
 }
 
@@ -284,7 +286,7 @@ function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
 }
 
 function sanitizeState(value: unknown, fallback: NestedRunState): NestedRunState {
-	return value === "queued" || value === "running" || value === "complete" || value === "failed" || value === "paused" || value === "stopped"
+	return value === "queued" || value === "running" || value === "complete" || value === "failed" || value === "partial" || value === "paused" || value === "stopped"
 		? value
 		: fallback;
 }
@@ -304,6 +306,7 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		status,
 		...(model ? { model } : {}),
 		...(thinking ? { thinking } : {}),
+		...(stringValue(raw.sessionName, 256) ? { sessionName: stringValue(raw.sessionName, 256) } : {}),
 		...(stringValue(raw.sessionFile, 2048) ? { sessionFile: stringValue(raw.sessionFile, 2048) } : {}),
 		...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention" ? { activityState: raw.activityState } : {}),
 		...(clampNumber(raw.lastActivityAt) !== undefined ? { lastActivityAt: clampNumber(raw.lastActivityAt) } : {}),
@@ -344,6 +347,7 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		depth: Math.min(Math.max(0, clampNumber(raw.depth) ?? 0), MAX_DEPTH),
 		path: pathParts,
 		state: sanitizeState(raw.state, "running"),
+		...(stringValue(raw.sessionName, 256) ? { sessionName: stringValue(raw.sessionName, 256) } : {}),
 		...(stringValue(raw.model) ? { model: stringValue(raw.model) } : {}),
 		...(THINKING_LEVELS.find((level) => level === raw.thinking) ? { thinking: THINKING_LEVELS.find((level) => level === raw.thinking) } : {}),
 		...(stringValue(raw.asyncDir, 2048) ? { asyncDir: stringValue(raw.asyncDir, 2048) } : {}),
@@ -434,7 +438,7 @@ export function parseNestedEventRecords(content: string, route: NestedRoute): Ne
 }
 
 function terminal(state: NestedRunState): boolean {
-	return state === "complete" || state === "failed" || state === "paused" || state === "stopped";
+	return state === "complete" || state === "failed" || state === "partial" || state === "paused" || state === "stopped";
 }
 
 function mergeBoundedChildren(existing: NestedRunSummary[] | undefined, incoming: NestedRunSummary[] | undefined): NestedRunSummary[] | undefined {
@@ -1003,6 +1007,7 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		mode: status.mode ?? fallback.mode,
 		...(status.steps?.length === 1 && status.steps[0]?.model ? { model: status.steps[0].model } : {}),
 		...(status.steps?.length === 1 && status.steps[0]?.thinking ? { thinking: status.steps[0].thinking } : {}),
+		...(status.steps?.length === 1 && status.steps[0]?.sessionName ? { sessionName: status.steps[0].sessionName } : {}),
 		...(status.processTerminal ? { processTerminal: sanitizeProcessTerminal(status.processTerminal, { runId: status.runId || fallback.id, runnerProcessInstanceId: status.processTerminal.runnerProcessInstanceId }, `${asyncDir}/status.json`) } : {}),
 		...(status.launchResolvedExtensions ? { launchResolvedExtensions: status.launchResolvedExtensions } : {}),
 		...runtimeAcknowledgedEntry(status.runtimeAcknowledgedExtensions),
@@ -1033,6 +1038,7 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
 		...(status.steps?.length ? { steps: status.steps.map((step, index) => ({
 			agent: step.agent,
+			...(step.sessionName ? { sessionName: step.sessionName } : {}),
 			status: step.status,
 			...(step.model ? { model: step.model } : {}),
 			...(step.thinking ? { thinking: step.thinking } : {}),

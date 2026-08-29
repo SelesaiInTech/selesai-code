@@ -60,6 +60,55 @@ describe("agent management config parsing", () => {
 		assert.doesNotMatch(readText(result), /- scout \(builtin/);
 	});
 
+	it("rejects management attempts to widen the reserved read-only Claude profile", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const writerRunner = { type: "external-cli", adapter: "claude-code-writer", command: "claude" };
+		const unsafeCreate = handleCreate({ config: { name: "claude-code", description: "Unsafe shadow", scope: "project", runner: writerRunner } }, ctx);
+		assert.equal(unsafeCreate.isError, true);
+		assert.match(readText(unsafeCreate), /reserved for the read-only 'claude-code' adapter/);
+		const unsafeLocalName = handleCreate({ config: { name: "claude-code", package: "custom", description: "Unsafe local name", scope: "project", runner: writerRunner } }, ctx);
+		assert.equal(unsafeLocalName.isError, true);
+		assert.match(readText(unsafeLocalName), /Selection name 'claude-code' is reserved/);
+		const unsafeAlias = handleCreate({ config: { name: "aliased-writer", aliases: ["claude-code"], description: "Unsafe alias", scope: "project", runner: writerRunner } }, ctx);
+		assert.equal(unsafeAlias.isError, true);
+		assert.match(readText(unsafeAlias), /Selection name 'claude-code' is reserved/);
+
+		const readOnlyCreate = handleCreate({ config: { name: "claude-code", description: "Narrow shadow", scope: "project", runner: { type: "external-cli", adapter: "claude-code", command: "claude" } } }, ctx);
+		assert.equal(readOnlyCreate.isError, false);
+		const unsafeUpdate = handleUpdate({ agent: "claude-code", agentScope: "project", config: { runner: writerRunner } }, ctx);
+		assert.equal(unsafeUpdate.isError, true);
+		assert.match(readText(unsafeUpdate), /reserved for the read-only 'claude-code' adapter/);
+		assert.match(fs.readFileSync(path.join(tempDir, ".selesai", "agents", "claude-code.md"), "utf-8"), /adapter: claude-code\n/);
+
+		const writerCreate = handleCreate({ config: { name: "custom-writer", description: "Writer", scope: "project", runner: writerRunner } }, ctx);
+		assert.equal(writerCreate.isError, false);
+		const unsafeAliasUpdate = handleUpdate({ agent: "custom-writer", agentScope: "project", config: { aliases: ["claude-code"] } }, ctx);
+		assert.equal(unsafeAliasUpdate.isError, true);
+		assert.match(readText(unsafeAliasUpdate), /Selection name 'claude-code' is reserved/);
+		const unsafeRename = handleUpdate({ agent: "custom-writer", agentScope: "project", config: { name: "claude-code" } }, ctx);
+		assert.equal(unsafeRename.isError, true);
+		assert.match(readText(unsafeRename), /reserved for the read-only 'claude-code' adapter/);
+	});
+
+	it("rejects create, update, alias, and rename widening for Codex and Cursor", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		for (const [readOnly, writer, command] of [["codex-exec", "codex-exec-writer", "codex"], ["cursor-agent", "cursor-agent-writer", "cursor-agent"]] as const) {
+			const writerRunner = { type: "external-cli", adapter: writer, command };
+			assert.equal(handleCreate({ config: { name: readOnly, description: "Unsafe shadow", scope: "project", runner: writerRunner } }, ctx).isError, true);
+			assert.equal(handleCreate({ config: { name: readOnly, package: `custom-${readOnly}`, description: "Unsafe local name", scope: "project", runner: writerRunner } }, ctx).isError, true);
+			assert.equal(handleCreate({ config: { name: `${readOnly}-alias`, aliases: [readOnly], description: "Unsafe alias", scope: "project", runner: writerRunner } }, ctx).isError, true);
+
+			const readOnlyCreate = handleCreate({ config: { name: readOnly, description: "Narrow shadow", scope: "project", runner: { type: "external-cli", adapter: readOnly, command } } }, ctx);
+			assert.equal(readOnlyCreate.isError, false);
+			assert.equal(handleUpdate({ agent: readOnly, agentScope: "project", config: { runner: writerRunner } }, ctx).isError, true);
+
+			const customName = `custom-${writer}`;
+			assert.equal(handleCreate({ config: { name: customName, description: "Writer", scope: "project", runner: writerRunner } }, ctx).isError, false);
+			assert.equal(handleUpdate({ agent: customName, agentScope: "project", config: { aliases: [readOnly] } }, ctx).isError, true);
+			assert.equal(handleUpdate({ agent: customName, agentScope: "project", config: { name: readOnly } }, ctx).isError, true);
+		}
+	});
+
 	it("lists valid agents and diagnoses malformed agent definitions", () => {
 		const agentsDir = path.join(tempDir, ".selesai", "agents");
 		fs.mkdirSync(agentsDir, { recursive: true });
@@ -499,7 +548,6 @@ Advise only.
 					scope: "project",
 					async: false,
 					timeoutMs: 120_000,
-					turnBudget: { maxTurns: 8, graceTurns: 2 },
 					acceptance: { level: "none", reason: "lightweight reviewer" },
 					outputMode: "file-only",
 				},
@@ -512,7 +560,6 @@ Advise only.
 		let content = fs.readFileSync(filePath, "utf-8");
 		assert.match(content, /^async: false$/m);
 		assert.match(content, /^timeoutMs: 120000$/m);
-		assert.match(content, /^turnBudget: \{"maxTurns":8,"graceTurns":2\}$/m);
 		assert.match(content, /^acceptance: \{"level":"none","reason":"lightweight reviewer"\}$/m);
 		assert.match(content, /^outputMode: file-only$/m);
 
@@ -520,19 +567,17 @@ Advise only.
 		assert.equal(got.isError, false);
 		assert.match(readText(got), /Async: false/);
 		assert.match(readText(got), /Timeout: 120000ms/);
-		assert.match(readText(got), /Turn budget: \{"maxTurns":8,"graceTurns":2\}/);
 		assert.match(readText(got), /Acceptance: \{"level":"none","reason":"lightweight reviewer"\}/);
 		assert.match(readText(got), /Output mode: file-only/);
 
 		const updated = handleUpdate(
-			{ agent: "background-reviewer", config: { async: true, timeoutMs: false, turnBudget: false, acceptance: "", outputMode: "inline" } },
+			{ agent: "background-reviewer", config: { async: true, timeoutMs: false, acceptance: "", outputMode: "inline" } },
 			ctx,
 		);
 		assert.equal(updated.isError, false);
 		content = fs.readFileSync(filePath, "utf-8");
 		assert.match(content, /^async: true$/m);
 		assert.doesNotMatch(content, /^timeoutMs:/m);
-		assert.doesNotMatch(content, /^turnBudget:/m);
 		assert.doesNotMatch(content, /^acceptance:/m);
 		assert.match(content, /^outputMode: inline$/m);
 
@@ -958,9 +1003,24 @@ Drive the failing test first.
 		assert.match(text, /^Builtin subagent models/m);
 		assert.match(text, /Current session model:\n  openai\/gpt-5-mini/);
 		assert.match(text, /(?:^|\n)scout\n  model:\n    openai\/gpt-5-mini\n  source: inherits current session model(?:\n|$)/);
+		assert.match(text, /(?:^|\n)advisor\n  model:\n    openai\/gpt-5-mini\n  source: inherits current session model(?:\n|$)/);
+		assert.doesNotMatch(text, /advisor\n  model:\n    \(builtin definition not found\)/);
 		assert.match(text, /Available models in this session's registry/);
 		assert.match(text, /  anthropic\/claude-sonnet-4\n  openai\/gpt-5-mini/);
 		assert.match(text, /Use an exact provider\/id from this list when you pass model/);
+	});
+
+	it("resolves the advisor builtin alias in a filtered model mapping", () => {
+		const result = handleManagementAction("models", { agent: "advisor" }, {
+			cwd: tempDir,
+			modelRegistry: { getAvailable: () => [{ provider: "openai", id: "gpt-5-mini" }] },
+			model: { provider: "openai", id: "gpt-5-mini" },
+		});
+		const text = readText(result);
+		assert.equal(result.isError, false);
+		assert.match(text, /Agent: advisor/);
+		assert.match(text, /Effective model:\n  openai\/gpt-5-mini/);
+		assert.doesNotMatch(text, /Builtin agent 'advisor' not found|source: missing/);
 	});
 
 	it("reports override source and disabled builtin state in runtime model mappings", () => {
@@ -994,7 +1054,7 @@ Drive the failing test first.
 		assert.match(text, /Source: project override/);
 		assert.match(text, /Requested model setting:\n  claude-sonnet-4/);
 		assert.match(text, /Disabled: true/);
-		assert.match(text.replaceAll("\\", "/"), /Override file:\n  .*\.pi\/settings\.json/);
+		assert.match(text.replaceAll("\\", "/"), /Override file:\n  .*\.selesai[\\/]settings\.json/);
 	});
 
 	it("rejects unknown builtin filters for runtime model mappings", () => {

@@ -104,7 +104,7 @@ function installChildPiShim(childText: string, reportChildTools = false): () => 
 	const piPackageDir = path.join(rootDir, "pi-package");
 	const childCliPath = path.join(piPackageDir, "dist", "cli.mjs");
 	const previousPath = process.env.PATH;
-	const previousPiBinary = process.env.SELESAI_SUBAGENT_PI_BINARY;
+	const previousPiBinary = process.env.SELESAI_SUBAGENT_SELESAI_BINARY;
 	const previousChildText = process.env.SELESAI_SUBAGENTS_E2E_CHILD_TEXT;
 	const previousReportTools = process.env.SELESAI_SUBAGENTS_E2E_REPORT_CHILD_TOOLS;
 	const previousArgv1 = process.argv[1];
@@ -129,10 +129,10 @@ function installChildPiShim(childText: string, reportChildTools = false): () => 
 
 	process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
 	if (process.platform === "win32") {
-		delete process.env.SELESAI_SUBAGENT_PI_BINARY;
+		delete process.env.SELESAI_SUBAGENT_SELESAI_BINARY;
 		process.argv[1] = childCliPath;
 	} else {
-		process.env.SELESAI_SUBAGENT_PI_BINARY = path.join(binDir, "pi");
+		process.env.SELESAI_SUBAGENT_SELESAI_BINARY = path.join(binDir, "pi");
 	}
 	process.env.SELESAI_SUBAGENTS_E2E_CHILD_TEXT = childText;
 	if (reportChildTools) process.env.SELESAI_SUBAGENTS_E2E_REPORT_CHILD_TOOLS = "1";
@@ -141,8 +141,8 @@ function installChildPiShim(childText: string, reportChildTools = false): () => 
 	return () => {
 		if (previousPath === undefined) delete process.env.PATH;
 		else process.env.PATH = previousPath;
-		if (previousPiBinary === undefined) delete process.env.SELESAI_SUBAGENT_PI_BINARY;
-		else process.env.SELESAI_SUBAGENT_PI_BINARY = previousPiBinary;
+		if (previousPiBinary === undefined) delete process.env.SELESAI_SUBAGENT_SELESAI_BINARY;
+		else process.env.SELESAI_SUBAGENT_SELESAI_BINARY = previousPiBinary;
 		if (process.platform === "win32") {
 			if (previousArgv1 === undefined) delete process.argv[1];
 			else process.argv[1] = previousArgv1;
@@ -179,7 +179,7 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 		["SELESAI_SUBAGENT_DEPTH", process.env.SELESAI_SUBAGENT_DEPTH],
 		["SELESAI_SUBAGENT_MAX_DEPTH", process.env.SELESAI_SUBAGENT_MAX_DEPTH],
 		["SELESAI_SUBAGENT_PARENT_SESSION", process.env.SELESAI_SUBAGENT_PARENT_SESSION],
-		["SELESAI_SUBAGENT_PI_BINARY", process.env.SELESAI_SUBAGENT_PI_BINARY],
+		["SELESAI_SUBAGENT_SELESAI_BINARY", process.env.SELESAI_SUBAGENT_SELESAI_BINARY],
 		["SELESAI_SUBAGENTS_CODING_AGENT_PACKAGE_ROOT", process.env.SELESAI_SUBAGENTS_CODING_AGENT_PACKAGE_ROOT],
 	]);
 	const uninstallChildPi = installChildPiShim(options.childText, options.reportChildTools);

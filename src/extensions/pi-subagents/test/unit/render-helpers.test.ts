@@ -111,6 +111,16 @@ test("widget render keys keep compact payloads quiet and expanded payloads fresh
 	const nestedVisibleChange = structuredClone(job);
 	nestedVisibleChange.nestedChildren = [{ id: "nested-1", parentRunId: "workflow-1", depth: 1, path: [{ runId: "workflow-1" }], state: "failed", agent: "nested", error: "failed" }];
 	assert.notEqual(widgetRenderKey(nestedVisibleChange), widgetRenderKey(job));
+
+	const preflightJob: AsyncJobState = {
+		...job,
+		preflight: { version: 1, coverage: "complete", lanes: [{ key: "writer", decision: "Implement change" }] },
+		workflow: { trace: [], emits: [], console: [], preflightWarnings: ["first mismatch"] },
+	};
+	const warningDetailChange = structuredClone(preflightJob);
+	warningDetailChange.workflow!.preflightWarnings = ["different mismatch"];
+	assert.equal(widgetRenderKey(warningDetailChange), widgetRenderKey(preflightJob));
+	assert.notEqual(widgetRenderKey(warningDetailChange, true), widgetRenderKey(preflightJob, true));
 });
 
 test("multiline rendering omits two-column graphemes at one-column width", () => {
@@ -146,6 +156,8 @@ test("running single-subagent cards show the configured detach shortcut", () => 
 		undefined,
 		"ctrl+b",
 	));
+	assert.match(configured, /task: reviewer task/);
+	assert.match(configured, /Ctrl\+Alt\+F Fleet/);
 	assert.match(configured, /Ctrl\+B to run in background/);
 
 	const unconfigured = componentText(renderSubagentResult(toolResult as never, { expanded: false }, theme as any));
@@ -170,6 +182,33 @@ test("running single-subagent cards show the configured detach shortcut", () => 
 		"ctrl+b",
 	));
 	assert.doesNotMatch(pendingBackground, /run in background/);
+});
+
+test("compact multi-result cards prefer bounded workflow labels over raw tasks", () => {
+	const longLabel = `Review auth flow\n${"x".repeat(140)}`;
+	const running = {
+		...result("reviewer", ""),
+		task: "raw task that should not win",
+		progress: { status: "running", index: 0, agent: "reviewer", toolCount: 0, tokens: 0, durationMs: 0 },
+	};
+	const text = componentText(renderSubagentResult({
+		content: [{ type: "text", text: "running" }],
+		details: {
+			mode: "parallel",
+			results: [running],
+			workflowGraph: {
+				runId: "workflow-task-label",
+				mode: "parallel",
+				phases: [],
+				nodes: [{ id: "review", kind: "agent", agent: "reviewer", label: longLabel, status: "running", flatIndex: 0 }],
+			},
+		},
+	}, { expanded: false }, theme as any));
+
+	assert.match(text, /task: Review auth flow x+/);
+	assert.doesNotMatch(text, /raw task that should not win/);
+	assert.match(text, /\.\.\.$/m);
+	assert.match(text, /Ctrl\+Alt\+F Fleet/);
 });
 
 test("compact chain rendering uses workflow graph spans for dynamic fanout results", () => {
@@ -329,6 +368,20 @@ test("static sequential and static parallel chain rendering keep existing labels
 	assert.match(parallel, /Agent 1\/2: reviewer/);
 	assert.match(parallel, /Agent 2\/2: auditor/);
 	assert.match(parallel, /Step 3: writer/);
+});
+
+test("expanded simple chain summaries prefer result session names", () => {
+	const expanded = componentText(renderSubagentResult({
+		content: [{ type: "text", text: "done" }],
+		details: {
+			mode: "chain",
+			chainAgents: ["chain-label"],
+			totalSteps: 1,
+			results: [{ ...result("worker", "done"), sessionName: "  worker: named task  " }],
+		},
+	}, { expanded: true }, theme as any));
+	assert.match(expanded, /Step 1: worker: named task/);
+	assert.doesNotMatch(expanded, /Step 1: chain-label/);
 });
 
 test("main-window renderer config removes compact result indentation without changing status glyphs", () => {

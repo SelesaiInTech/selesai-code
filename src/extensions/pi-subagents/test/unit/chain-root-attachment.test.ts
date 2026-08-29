@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { waitForImportedAsyncRoot } from "../../src/runs/background/chain-root-attachment.ts";
 
 let tempDir: string;
@@ -44,7 +45,7 @@ describe("async chain root attachment", () => {
 		writeJson(importedRoot.resultPath, {
 			state: "complete",
 			success: true,
-			results: [{ agent: "worker", output: "root output", success: true, sessionFile }],
+		results: [{ agent: "worker", output: "root output", success: true, sessionFile, usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 } }],
 		});
 
 		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1 });
@@ -54,12 +55,39 @@ describe("async chain root attachment", () => {
 			output: result.output,
 			exitCode: result.exitCode,
 			sessionFile: result.sessionFile,
+			usage: result.usage,
 		}, {
 			agent: "worker",
 			output: "root output",
 			exitCode: 0,
 			sessionFile,
+			usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 },
 		});
+	});
+
+	it("imports a session-indexed pending result before terminal status fallback", async () => {
+		const importedRoot = { ...root(), resultPath: path.join(tempDir, "root-run", "workflow-result.json") };
+		writeJson(path.join(importedRoot.asyncDir, "status.json"), {
+			runId: importedRoot.runId,
+			mode: "single",
+			state: "complete",
+			sessionId: "session-a",
+			startedAt: 1,
+			steps: [{ agent: "worker", status: "complete" }],
+		});
+		writePendingAsyncResultFile(importedRoot.resultPath, {
+			id: importedRoot.runId,
+			runId: importedRoot.runId,
+			sessionId: "session-a",
+			state: "complete",
+			success: true,
+			results: [{ agent: "worker", output: "pending root output", success: true }],
+		});
+
+		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1, terminalResultGraceMs: 0 });
+
+		assert.equal(result.output, "pending root output");
+		assert.equal(result.exitCode, 0);
 	});
 
 	it("waits for a running async child to write its terminal result", async () => {
@@ -109,6 +137,55 @@ describe("async chain root attachment", () => {
 		assert.equal(result.exitCode, 1);
 		assert.equal(result.error, "root failed");
 		assert.equal(result.output, "root failed");
+	});
+
+	it("imports a partial root without collapsing it to failed", async () => {
+		const importedRoot = root();
+		writeJson(path.join(importedRoot.asyncDir, "status.json"), {
+			runId: importedRoot.runId,
+			mode: "single",
+			state: "partial",
+			activityState: "needs_attention",
+			startedAt: 1,
+			error: "Required file-only output was not produced: report.md",
+			steps: [{ agent: "worker", status: "failed", activityState: "needs_attention", error: "Required file-only output was not produced: report.md" }],
+		});
+		writeJson(importedRoot.resultPath, {
+			state: "partial",
+			success: false,
+			summary: "Required file-only output was not produced: report.md",
+			results: [{ agent: "worker", output: "Required file-only output was not produced: report.md", error: "Required file-only output was not produced: report.md", success: false, effects: { fileMutation: { status: "observed", expected: true, attempted: true, evidence: { source: "tracked-files", trackedOnly: true, cwd: tempDir, changedFiles: ["input.md"], attemptedMutation: true } } } }],
+		});
+
+		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1 });
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.error, "Required file-only output was not produced: report.md");
+		assert.equal(result.execution?.status, "partial");
+		assert.deepEqual(result.effects?.fileMutation?.evidence?.changedFiles, ["input.md"]);
+	});
+
+	it("fails a partial root that never produced a result file", async () => {
+		const importedRoot = root();
+		const effects = { fileMutation: { status: "observed", expected: true, attempted: true, evidence: { source: "tracked-files", trackedOnly: true, cwd: tempDir, changedFiles: ["input.md"], attemptedMutation: true } } };
+		writeJson(path.join(importedRoot.asyncDir, "status.json"), {
+			runId: importedRoot.runId,
+			mode: "single",
+			state: "partial",
+			startedAt: 1,
+			error: "Required file-only output was not produced: report.md",
+			steps: [{ agent: "worker", status: "failed", activityState: "needs_attention", error: "Required file-only output was not produced: report.md", effects }],
+		});
+
+		const result = await waitForImportedAsyncRoot(importedRoot, {
+			pollIntervalMs: 1,
+			terminalResultGraceMs: 0,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.error, "Required file-only output was not produced: report.md");
+		assert.equal(result.execution?.status, "partial");
+		assert.deepEqual(result.effects?.fileMutation?.evidence?.changedFiles, ["input.md"]);
 	});
 
 	it("fails a terminal root that never produced a result file", async () => {

@@ -277,7 +277,7 @@ describe("async resume lookup", () => {
 			});
 			const descriptor = {
 				version: 1, runFanoutBudget: createRunFanoutBudget("run-descriptor", 64), sourceRunId: "run-descriptor", agent: "worker", cwd: root, systemPromptMode: "replace",
-				inheritProjectContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
+				inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
 			};
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, token: "must-not-be-accepted" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /unknown field 'token'/);
@@ -291,14 +291,19 @@ describe("async resume lookup", () => {
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				...descriptor,
 				launchContractDigest: "launch-contract-digest",
+				allowNestedSubagents: true,
 				intercomBridge: { mode: "off" },
 				extensionBindings: { "shepherd.dispatch/1": { role: "coder" } },
 			});
 			const valid = resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir });
 			assert.equal(valid.launchContractDigest, "launch-contract-digest");
 			assert.equal(valid.recoveryDescriptor?.launchContractDigest, "launch-contract-digest");
+			assert.equal(valid.recoveryDescriptor?.allowNestedSubagents, true);
 			assert.deepEqual(valid.recoveryDescriptor?.intercomBridge, { mode: "off" });
 			assert.deepEqual(valid.recoveryDescriptor?.extensionBindings, { "shepherd.dispatch/1": { role: "coder" } });
+
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, allowNestedSubagents: "true" });
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /allowNestedSubagents/);
 
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, extensionBindings: { invalid: true } });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /namespace/);
@@ -313,7 +318,7 @@ describe("async resume lookup", () => {
 		}
 	});
 
-	it("normalizes persisted turn-budget state without weakening public input validation", () => {
+	it("ignores removed turn budgets in persisted recovery descriptors", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-turn-budget-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -332,6 +337,7 @@ describe("async resume lookup", () => {
 				agent: "worker",
 				cwd: root,
 				systemPromptMode: "replace",
+				inheritGlobalContext: false,
 				inheritProjectContext: false,
 				inheritSkills: false,
 				outputMode: "inline",
@@ -353,16 +359,14 @@ describe("async resume lookup", () => {
 
 			const target = resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir });
 
-			assert.deepEqual(target.recoveryDescriptor?.initialTurnBudget, { maxTurns: 8, graceTurns: 2 });
+			assert.equal("initialTurnBudget" in (target.recoveryDescriptor ?? {}), false);
 
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				...descriptor,
 				initialTurnBudget: { maxTurns: 8, graceTurns: 2, unrelated: true },
 			});
-			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir }),
-				/recoveryDescriptor\.initialTurnBudget\.unrelated is not supported/,
-			);
+			const malformedLegacy = resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal("initialTurnBudget" in (malformedLegacy.recoveryDescriptor ?? {}), false);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -387,6 +391,7 @@ describe("async resume lookup", () => {
 				agent: "worker",
 				cwd: root,
 				systemPromptMode: "replace",
+				inheritGlobalContext: false,
 				inheritProjectContext: false,
 				inheritSkills: false,
 				outputMode: "inline",
@@ -435,6 +440,7 @@ describe("async resume lookup", () => {
 				agent: "worker",
 				cwd: root,
 				systemPromptMode: "replace",
+				inheritGlobalContext: false,
 				inheritProjectContext: false,
 				inheritSkills: false,
 				outputMode: "inline",
@@ -478,6 +484,7 @@ describe("async resume lookup", () => {
 				agent: "worker",
 				cwd: root,
 				systemPromptMode: "replace",
+				inheritGlobalContext: false,
 				inheritProjectContext: false,
 				inheritSkills: false,
 				outputMode: "inline",

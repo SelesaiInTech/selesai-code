@@ -32,7 +32,7 @@ describe("project-local artifact paths", () => {
 		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "unsafe" })) ?? "", /\.npmignore/);
 		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "gitignored" }, { name: ".gitignore", content: ".pi-subagents/\n" })), undefined);
 		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "globignored" }, { name: ".npmignore", content: "**/.pi-subagents/**\n" })), undefined);
-		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "classignored" }, { name: ".npmignore", content: "[.]pi/subagents/**\n" })), undefined);
+		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "classignored" }, { name: ".npmignore", content: "[.]pi-subagents/**\n" })), undefined);
 		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "explicit-files-over-ignore", files: [".pi-subagents/**"] }, { name: ".npmignore", content: ".pi-subagents/\n" })) ?? "", /artifactDir/);
 		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "restricted", files: ["src/**"] })), undefined);
 		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "malformed-pattern", files: ["[z-a]"] })), undefined);

@@ -78,7 +78,7 @@ describe("subagent startup retry", () => {
 		});
 
 		assert.match(formatted ?? "", /loaded conflicting ambient Pi extensions/);
-		assert.match(formatted ?? "", /\.pi\/settings\.json/);
+		assert.match(formatted ?? "", /\.selesai[\\/]settings\.json/);
 		assert.match(formatted ?? "", /\{"subagents":\{"agentOverrides":\{"reviewer":\{"extensions":\[\]\}\}\}\}/);
 		assert.equal(formatSubagentExtensionConflictError(conflict, { agent: "reviewer", ambientExtensionsEnabled: false }), conflict);
 		assert.equal(formatSubagentExtensionConflictError("authentication failed", { agent: "reviewer", ambientExtensionsEnabled: true }), "authentication failed");

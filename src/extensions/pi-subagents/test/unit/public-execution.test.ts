@@ -5,6 +5,8 @@ import { normalizePublicSubagentExecution } from "../../src/extension/public-exe
 describe("public subagent execution normalization", () => {
 	it("accepts structured single-child, workflow, management, and schedules", () => {
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1" }), { ok: true, params: { workflowScript: "return 1" } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", preflight: { version: 1, lanes: [] } }), { ok: true, params: { workflowScript: "return 1", preflight: { version: 1, lanes: [] } } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflows/review.js" }), { ok: true, params: { workflowScriptPath: "workflows/review.js" } });
 		const task = "Use `quotes`\nand newlines";
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: " worker ", task, context: "fresh", async: false }), {
 			ok: true,
@@ -23,14 +25,7 @@ describe("public subagent execution normalization", () => {
 				output: true,
 			},
 		});
-		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker" }, { asyncByDefault: false }), {
-			ok: true,
-			params: {
-				agent: "worker",
-				output: true,
-			},
-		});
-		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", async: true }, { asyncByDefault: false }), {
+		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", async: true }), {
 			ok: true,
 			params: {
 				agent: "worker",
@@ -55,9 +50,33 @@ describe("public subagent execution normalization", () => {
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ action: " list " }), { ok: true, params: { action: "list" } });
 		assert.deepEqual(
+			normalizePublicSubagentExecution({ action: " validate ", workflowScript: "return 1" }),
+			{ ok: true, params: { action: "validate", workflowScript: "return 1" } },
+		);
+		assert.deepEqual(
+			normalizePublicSubagentExecution({ action: " validate ", workflowScriptPath: "workflow.js" }),
+			{ ok: true, params: { action: "validate", workflowScriptPath: "workflow.js" } },
+		);
+		assert.deepEqual(
 			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflowScript: "return 1" }),
 			{ ok: true, params: { action: "schedule.create", every: "1h", workflowScript: "return 1" } },
 		);
+		assert.deepEqual(
+			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflowScriptPath: "/tmp/workflow.js" }),
+			{ ok: true, params: { action: "schedule.create", every: "1h", workflowScriptPath: "/tmp/workflow.js" } },
+		);
+	});
+
+	it("rejects workflowScript with workflowScriptPath", () => {
+		const result = normalizePublicSubagentExecution({ workflowScript: "return 1", workflowScriptPath: "workflow.js" });
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.match(result.error, /mutually exclusive/);
+	});
+
+	it("rejects preflight without a workflow input", () => {
+		const result = normalizePublicSubagentExecution({ agent: "worker", preflight: { version: 1, lanes: [] } });
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.match(result.error, /preflight requires workflowScript or workflowScriptPath/);
 	});
 
 	it("rejects private run fan-out fields at the public boundary", () => {
@@ -77,6 +96,7 @@ describe("public subagent execution normalization", () => {
 			{ agent: "worker", workflowKey: "child" },
 			{ agent: "worker", workflowChildAsyncId: "child" },
 			{ agent: "worker", workflowAwaitAsync: true },
+			{ agent: "worker", workflowAwaitDetached: true },
 			{ agent: "worker", workflowParentDeadlineAt: Date.now() + 1_000 },
 			{ agent: "worker", suppressRoutineResultIntercom: true },
 		] as const) {
@@ -111,6 +131,7 @@ describe("public subagent execution normalization", () => {
 			{ resume: "retained-run", workflowScript: "return 1" },
 			{},
 			{ workflowScript: " " },
+			{ workflowScriptPath: " " },
 			{ action: "status", workflowScript: "return 1" },
 			{ action: "schedule.create", every: "1h", agent: "worker", workflowScript: "return 1" },
 			{ workflowScript: "return 1", isolation: "invalid" },

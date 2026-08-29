@@ -40,7 +40,7 @@ export function formatSubagentExtensionConflictError(
 	const settings = JSON.stringify({
 		subagents: { agentOverrides: { [input.agent]: { extensions: [] } } },
 	});
-	return `${error}\n\nSubagent startup loaded conflicting ambient Pi extensions. Retry this run after disabling ambient extension discovery for agent ${JSON.stringify(input.agent)} in project .pi/settings.json: ${settings}. Replace the empty array with only the required extension entry paths when this agent needs extension tools.`;
+	return `${error}\n\nSubagent startup loaded conflicting ambient Pi extensions. Retry this run after disabling ambient extension discovery for agent ${JSON.stringify(input.agent)} in project .selesai/settings.json: ${settings}. Replace the empty array with only the required extension entry paths when this agent needs extension tools.`;
 }
 
 function hasUsage(usage: Usage): boolean {

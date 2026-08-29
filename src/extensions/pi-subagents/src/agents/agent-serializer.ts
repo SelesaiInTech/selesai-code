@@ -9,18 +9,19 @@ export const KNOWN_FIELDS = new Set([
 	"alias",
 	"aliases",
 	"tools",
+	"allowNestedSubagents",
 	"model",
 	"fallbackModels",
 	"fast",
 	"thinking",
 	"systemPromptMode",
 	"inheritProjectContext",
+	"inheritGlobalContext",
 	"inheritSkills",
 	"defaultContext",
 	"async",
 	"timeoutMs",
 	"toolTimeoutMs",
-	"turnBudget",
 	"acceptance",
 	"acceptanceRole",
 	"skill",
@@ -28,6 +29,7 @@ export const KNOWN_FIELDS = new Set([
 	"skillPath",
 	"extensions",
 	"subagentOnlyExtensions",
+	"mutationTools",
 	"output",
 	"outputMode",
 	"defaultReads",
@@ -68,6 +70,9 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	];
 	const toolsValue = joinComma(tools);
 	if (toolsValue || preserve("tools")) lines.push(`tools: ${toolsValue ?? ""}`);
+	if (config.allowNestedSubagents === true || preserve("allowNestedSubagents")) {
+		lines.push(`allowNestedSubagents: ${config.allowNestedSubagents === undefined ? "" : config.allowNestedSubagents ? "true" : "false"}`);
+	}
 
 	if (config.model || preserve("model")) lines.push(`model: ${config.model ?? ""}`);
 	const fallbackModelsValue = joinComma(config.fallbackModels);
@@ -78,6 +83,7 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	}
 	if (!preservingExistingFrontmatter || preserve("systemPromptMode")) lines.push(`systemPromptMode: ${config.systemPromptMode}`);
 	if (!preservingExistingFrontmatter || preserve("inheritProjectContext")) lines.push(`inheritProjectContext: ${config.inheritProjectContext ? "true" : "false"}`);
+	if (config.inheritGlobalContext || preserve("inheritGlobalContext")) lines.push(`inheritGlobalContext: ${config.inheritGlobalContext ? "true" : "false"}`);
 	if (!preservingExistingFrontmatter || preserve("inheritSkills")) lines.push(`inheritSkills: ${config.inheritSkills ? "true" : "false"}`);
 	if (config.defaultContext || preserve("defaultContext")) lines.push(`defaultContext: ${config.defaultContext ?? ""}`);
 	if (config.runner || preserve("runner")) {
@@ -91,7 +97,6 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	if (config.defaultAsync !== undefined || preserve("async")) lines.push(`async: ${config.defaultAsync === undefined ? "" : config.defaultAsync ? "true" : "false"}`);
 	if (config.defaultTimeoutMs !== undefined || preserve("timeoutMs")) lines.push(`timeoutMs: ${config.defaultTimeoutMs ?? ""}`);
 	if (config.defaultToolTimeoutMs !== undefined || preserve("toolTimeoutMs")) lines.push(`toolTimeoutMs: ${config.defaultToolTimeoutMs ?? ""}`);
-	if (config.defaultTurnBudget || preserve("turnBudget")) lines.push(`turnBudget: ${config.defaultTurnBudget ? JSON.stringify(config.defaultTurnBudget) : ""}`);
 	if (config.defaultAcceptance !== undefined || preserve("acceptance")) {
 		lines.push(`acceptance: ${config.defaultAcceptance === undefined
 			? ""
@@ -114,6 +119,8 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 		const subagentOnlyExtensionsValue = joinComma(config.subagentOnlyExtensions);
 		lines.push(`subagentOnlyExtensions: ${subagentOnlyExtensionsValue ?? ""}`);
 	}
+	const mutationToolsValue = joinComma(config.mutationTools);
+	if (mutationToolsValue || preserve("mutationTools")) lines.push(`mutationTools: ${mutationToolsValue ?? ""}`);
 
 	if (config.output || preserve("output")) lines.push(`output: ${config.output ?? ""}`);
 	if (config.outputMode || preserve("outputMode")) lines.push(`outputMode: ${config.outputMode ?? ""}`);

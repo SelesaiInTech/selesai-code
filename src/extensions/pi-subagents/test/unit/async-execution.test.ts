@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
+import type { ExtensionAPI } from "@selesai/code";
+import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, emitProcessTerminalEvent, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
+import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../src/shared/types.ts";
 
 const agent = (name: string, toolBudget?: AgentConfig["toolBudget"]): AgentConfig => ({
 	name,
@@ -25,6 +27,41 @@ const ctx = {
 };
 
 describe("async runner execution", () => {
+	it("uses supplied discovery context for missing async agents", () => {
+		const result = buildAsyncRunnerSteps("missing-agent", {
+			chain: [{ agent: "missing", task: "Do not launch" }],
+			agents: [agent("arbitrary")],
+			unknownAgentDiagnosticContext: {
+				cwd: path.resolve(ctx.cwd),
+				scope: "both",
+				directories: [{ source: "project", path: path.join(ctx.cwd, ".selesai", "agents"), state: "empty" }],
+				agents: [agent("discovered")],
+			},
+			ctx,
+			maxSubagentDepth: 1,
+			asyncDir: path.join(process.cwd(), ".tmp-missing-agent"),
+		});
+		assert.ok("error" in result);
+		assert.match(result.error, /^Unknown agent: missing\nEffective cwd: /);
+		assert.match(result.error, /discovered \(project\)/);
+		assert.doesNotMatch(result.error, /arbitrary \(project\)/);
+	});
+
+	it("uses the resolved cwd override for no-context missing-agent fallback discovery", () => {
+		const override = path.join("diagnostic-cwd-override", "nested");
+		const result = buildAsyncRunnerSteps("missing-agent-cwd", {
+			chain: [{ agent: "missing", task: "Do not launch" }],
+			agents: [agent("arbitrary")],
+			ctx,
+			cwd: override,
+			maxSubagentDepth: 1,
+			asyncDir: path.join(process.cwd(), ".tmp-missing-agent-cwd"),
+		});
+		assert.ok("error" in result);
+		assert.ok(result.error.startsWith(`Unknown agent: missing\nEffective cwd: ${path.resolve(ctx.cwd, override)}`));
+		assert.doesNotMatch(result.error, /arbitrary \(project\)/);
+	});
+
 	it("formats interactive yield and headless auto-drain guidance separately", () => {
 		const interactive = formatAsyncStartedMessage("Async: worker [interactive]", true);
 		assert.match(interactive, /interactive session[\s\S]*return control/i);
@@ -70,6 +107,31 @@ describe("async runner execution", () => {
 		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 3, block: ["find"] });
 		assert.equal(result.steps[0]?.waitToolEnabled, false);
 		assert.deepEqual(result.steps[1]?.toolBudget, { hard: 2, block: ["grep"] });
+	});
+	it("carries the resolved model context window into async runner steps", () => {
+		const result = buildAsyncRunnerSteps("context-limit-run", {
+			chain: [{ agent: "worker", task: "inspect context" }],
+			agents: [{ ...agent("worker"), model: "mock/context" }],
+			availableModels: [{ provider: "mock", id: "context", fullId: "mock/context", contextWindow: 128_000 }],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-async-context-limit-test"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.ok("steps" in result, "expected successful step build");
+		assert.equal(result.steps[0]?.contextLimit, 128_000);
+	});
+
+	it("carries explicit nested fanout authorization into async runner steps", () => {
+		const nestedAgent = { ...agent("delegator"), allowNestedSubagents: true };
+		const result = buildAsyncRunnerSteps("nested-fanout-run", {
+			chain: [{ agent: "delegator", task: "delegate" }],
+			agents: [nestedAgent],
+			ctx,
+		});
+
+		assert.equal(result.error, undefined);
+		assert.equal(result.steps[0]?.allowNestedSubagents, true);
 	});
 
 	it("assigns default and agent-level deadlines to async serial and parallel children", () => {
@@ -146,5 +208,43 @@ describe("async runner execution", () => {
 
 		assert.ok("steps" in result, "expected successful step build");
 		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 5, block: ["ls"] });
+	});
+});
+
+describe("async runner process terminal events", () => {
+	const proof = { version: 1, runId: "run-terminal", runnerProcessInstanceId: "runner-1", state: "unknown", reason: "writer-close-unverified" };
+	const staleMessage = "This extension ctx is stale after session replacement or reload.";
+
+	const makeCtx = (emit: (name: string, payload?: unknown) => unknown) => ({
+		...ctx,
+		pi: { events: { emit } } as unknown as ExtensionAPI,
+	});
+
+	it("emits the process terminal proof on a live event bus", () => {
+		const emitted: Array<[string, unknown]> = [];
+		emitProcessTerminalEvent(makeCtx((name, payload) => { emitted.push([name, payload]); }), proof);
+
+		assert.deepEqual(emitted, [[SUBAGENT_PROCESS_TERMINAL_EVENT, proof]]);
+	});
+
+	it("drops stale extension ctx failures without throwing", () => {
+		assert.doesNotThrow(() => emitProcessTerminalEvent(makeCtx(() => {
+			throw new Error(staleMessage);
+		}), proof));
+	});
+
+	it("logs non-stale event bus failures without throwing", () => {
+		const originalError = console.error;
+		let logged: unknown[] | undefined;
+		console.error = (...args: unknown[]) => { logged = args; };
+		try {
+			assert.doesNotThrow(() => emitProcessTerminalEvent(makeCtx(() => {
+				throw new Error("event bus unavailable");
+			}), proof));
+		} finally {
+			console.error = originalError;
+		}
+
+		assert.ok(logged?.some((arg) => arg instanceof Error && arg.message === "event bus unavailable"));
 	});
 });

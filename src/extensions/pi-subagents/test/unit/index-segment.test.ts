@@ -21,11 +21,12 @@ describe("bounded index segments", () => {
 		assert.equal(first, encodeIndexSegment(longId));
 		assert.match(first, /^~sha256-[a-f0-9]{64}$/);
 		assert.ok(Buffer.byteLength(first, "utf-8") <= MAX_INDEX_SEGMENT_BYTES);
+		assert.deepEqual(indexSegmentAliases(longId), [first]);
 		assert.notEqual(first, encodeIndexSegment(`${longId}other`));
 	});
 
 	it("hashes Windows session file paths that stay under the byte limit", () => {
-		const sessionId = String.raw`C:\Users\theap\.pi\agent\sessions\--C--Users-theap--\2026-08-17T07-29-51-353Z_01a00ea0-72f9-754f-82ca-2b74ded94746.jsonl`;
+		const sessionId = String.raw`C:\Users\theap\.selesai\agent\sessions\--C--Users-theap--\2026-08-17T07-29-51-353Z_01a00ea0-72f9-754f-82ca-2b74ded94746.jsonl`;
 		assert.ok(Buffer.byteLength(encodeURIComponent(sessionId), "utf-8") <= MAX_INDEX_SEGMENT_BYTES);
 		assert.match(encodeIndexSegment(sessionId), /^~sha256-[a-f0-9]{64}$/);
 		assert.equal(encodeIndexSegment(sessionId), encodeIndexSegment(sessionId));

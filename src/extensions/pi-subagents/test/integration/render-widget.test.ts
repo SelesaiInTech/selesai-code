@@ -3,10 +3,13 @@ import { describe, it } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { extractToolArgsPreview } from "../../src/shared/utils.ts";
 
-const { buildWidgetLines, clearLegacyResultAnimationTimer, renderWidget } = await import("../../src/tui/render.ts") as {
+const { buildWidgetLines, clearLegacyResultAnimationTimer, compactTaskText, projectAsyncLane, renderWidget, widgetRenderKey } = await import("../../src/tui/render.ts") as {
 	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string }, width?: number, expanded?: boolean, frame?: number) => string[];
 	clearLegacyResultAnimationTimer: (context: { state: { subagentResultAnimationTimer?: ReturnType<typeof setInterval> } }) => void;
+	compactTaskText: (task: string | undefined, label?: string) => string | undefined;
+	projectAsyncLane: (job: Record<string, unknown>) => { label?: string; role: string; phase?: string; state: string; gate?: string; next?: string; output?: string; workspace?: string; ref: string; chips: string[] } | undefined;
 	renderWidget: (ctx: Record<string, unknown>, jobs: Array<Record<string, unknown>>) => void;
+	widgetRenderKey: (job: Record<string, unknown>, expanded?: boolean) => string;
 };
 
 const theme = {
@@ -88,6 +91,350 @@ function resetWidgetLayout(): void {
 }
 
 describe("subagent async widget rendering", () => {
+	it("renders compact workflow plan status by default and keeps details expanded", () => {
+		const job = {
+			asyncId: "workflow-preflight",
+			asyncDir: "/tmp/workflow-preflight",
+			status: "running",
+			mode: "workflow",
+			preflight: {
+				version: 1,
+				coverage: "partial",
+				lanes: [{ key: "review", mode: "review", claims: ["src/tui"], expectedOutput: "review.md" }],
+			},
+			workflow: {
+				trace: [],
+				emits: [],
+				console: [],
+				preflightWarnings: ["Preflight advisory: workflow key 'review.extra' launched without a declared lane."],
+			},
+		};
+		const compact = buildWidgetLines([job], theme, 180).join("\n");
+		assert.match(compact, /Plan: 1 lane · review/);
+		assert.match(compact, /Plan note: 1 preflight mismatch · expand for debug\./);
+		assert.doesNotMatch(compact, /key \| mode \| decision \| claims \| expected output \| independence/);
+		assert.doesNotMatch(compact, /review \| review \|/);
+		assert.doesNotMatch(compact, /Preflight advisory/);
+
+		const expanded = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.match(expanded, /Preflight: v1 · partial · 1 lane/);
+		assert.match(expanded, /review \| review \|/);
+		assert.match(expanded, /expected output \| independence/);
+		assert.match(expanded, /Preflight warnings:/);
+		assert.match(expanded, /review\.extra.*without a declared lane/);
+	});
+
+	it("projects known workflow metadata into a compact lane row", () => {
+		const job = {
+			asyncId: "lane-run-123456",
+			asyncDir: "/tmp/lane-run",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer", "writer"],
+			steps: [
+				{
+					index: 0,
+					agent: "reviewer",
+					status: "running",
+					phase: "fresh-review",
+					label: "Review #1610",
+					workflowKey: "review",
+					description: "Inspect the current status surface",
+					outputName: "review.md",
+					context: "fresh",
+					review: { status: "review-required" },
+				},
+				{ index: 1, agent: "writer", status: "pending", phase: "implementation", label: "Fix candidate", workflowKey: "writer", outputName: "fix.md" },
+			],
+		};
+
+		assert.deepEqual(projectAsyncLane(job), {
+			label: "Review #1610 — Inspect the current status surface",
+			role: "reviewer",
+			phase: "fresh-review",
+			state: "running",
+			gate: "review required",
+			next: "review output",
+			output: "review.md",
+			ref: "review",
+			chips: ["fresh"],
+		});
+		const text = buildWidgetLines([job], theme, 180).join("\n");
+		assert.match(text, /Review #1610 — Inspect the current status surface · role:reviewer · running/);
+		assert.match(text, /phase:fresh-review · gate:review required · next:review output · out:review\.md · ref:review · \[fresh\]/);
+		assert.match(text, /Fix candidate/);
+		assert.match(text, /Fix candidate · role:writer · pending/);
+		assert.match(text, /phase:implementation · next:await launch · out:fix\.md/);
+		assert.doesNotMatch(text, /lane:/);
+	});
+
+	it("prefers bounded loaded workspace context over repeated internal lane refs", () => {
+		const workspacePath = `/tmp/workspaces/${"project-".repeat(16)}`;
+		const job = {
+			asyncId: "workspace-run",
+			asyncDir: "/tmp/workspace-run",
+			cwd: workspacePath,
+			status: "running",
+			mode: "single",
+			agents: ["reviewer"],
+			workflowKey: "internal-workflow-key",
+			steps: [{ index: 0, agent: "reviewer", status: "running", workflowKey: "internal-workflow-key" }],
+		};
+
+		const lane = projectAsyncLane(job);
+		assert.equal(lane?.ref, "internal-workflow-key");
+		assert.ok(lane?.workspace);
+		assert.ok((lane.workspace?.length ?? 0) <= 48, "workspace display should stay bounded");
+		assert.match(lane?.workspace ?? "", /^\/tmp\/workspaces\/project-/);
+		assert.match(lane?.workspace ?? "", /\.\.\.$/);
+
+		const text = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.match(text, /workspace:\/tmp\/workspaces\/project-/);
+		assert.doesNotMatch(text, /ref:internal-workflow-key/);
+	});
+
+	it("shows workspace context in expanded single and parallel/chain rows", () => {
+		for (const mode of ["single", "parallel", "chain"] as const) {
+			const workflowKey = `${mode}-workflow-key`;
+			const workspace = `/tmp/${mode}-workspace`;
+			const job = {
+				asyncId: `${mode}-workspace-run`,
+				asyncDir: `/tmp/${mode}-workspace-run`,
+				cwd: workspace,
+				status: "running",
+				mode,
+				agents: ["worker"],
+				steps: [{ index: 0, agent: "worker", status: "running", workflowKey }],
+			};
+
+			const text = buildWidgetLines([job], theme, 180, true).join("\n");
+			assert.match(text, new RegExp(`workspace:${escapeRegExp(workspace)}`));
+			assert.doesNotMatch(text, new RegExp(`ref:${escapeRegExp(workflowKey)}`));
+		}
+	});
+
+	it("keeps the bounded workflow-key fallback when no workspace is loaded", () => {
+		const workflowKey = `internal-${"workflow-key-".repeat(8)}`;
+		const job = {
+			asyncId: "fallback-ref-run",
+			asyncDir: "/tmp/fallback-ref-run",
+			status: "running",
+			mode: "single",
+			agents: ["worker"],
+			workflowKey,
+		};
+
+		const lane = projectAsyncLane(job);
+		assert.equal(lane?.workspace, undefined);
+		assert.ok(lane?.ref);
+		assert.ok((lane.ref.length) <= 24, "workflow-key fallback should stay bounded");
+		const text = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.match(text, new RegExp(`ref:${escapeRegExp(lane?.ref ?? "")}`));
+	});
+
+	it("uses workspace context in compact progressive lane headers", () => {
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			const workspace = "/tmp/compact-workspace";
+			const job = {
+				asyncId: "compact-workspace-run",
+				asyncDir: "/tmp/compact-workspace-run",
+				cwd: workspace,
+				status: "running",
+				mode: "single",
+				agents: ["worker"],
+				workflowKey: "compact-workflow-key",
+				currentTool: "read",
+			};
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [job]);
+			const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
+			assert.match(text, new RegExp(`workspace:${escapeRegExp(workspace)}`));
+			assert.doesNotMatch(text, /ref:compact-workflow-key/);
+		});
+		resetWidgetLayout();
+	});
+
+	it("refreshes widget render keys when loaded workspace changes", () => {
+		const base = {
+			asyncId: "render-key-workspace-run",
+			asyncDir: "/tmp/render-key-workspace-run",
+			status: "running",
+			mode: "single",
+			agents: ["worker"],
+			workflowKey: "render-key-workflow",
+		};
+		assert.notEqual(
+			widgetRenderKey({ ...base, cwd: "/tmp/workspace-one" }),
+			widgetRenderKey({ ...base, cwd: "/tmp/workspace-two" }),
+		);
+	});
+
+	it("renders loaded host CI and gate nodes without creating child lanes", () => {
+		const job = {
+			asyncId: "host-run",
+			asyncDir: "/tmp/host-run",
+			status: "running",
+			mode: "workflow",
+			agents: [],
+			hostSteps: [
+				{
+					version: 1,
+					kind: "host-step",
+					monitorKind: "ci",
+					id: "ci-1",
+					label: "CI checks",
+					provider: "local-tests",
+					state: "running",
+					target: "PR #1614",
+					updatedAt: 10,
+				},
+				{
+					version: 1,
+					kind: "host-step",
+					monitorKind: "gate",
+					id: "gate-1",
+					label: "Review gate",
+					provider: "opaque-provider",
+					state: "done",
+					verdict: "inconclusive",
+					reasonCode: "stale-head",
+					freshness: { expectedRef: "old", observedRef: "new", stale: true },
+					reportPath: "/tmp/reports/gate.json",
+					updatedAt: 20,
+				},
+			],
+		};
+
+		const text = buildWidgetLines([job], theme, 180).join("\n");
+		assert.match(text, /ci: CI checks · running · provider:local-tests · PR #1614/);
+		assert.match(text, /gate: Review gate · inconclusive · provider:opaque-provider · reason:stale-head · stale · out:gate.json/);
+		assert.doesNotMatch(text, /async subagent .*CI checks/);
+	});
+
+	it("keeps simple one-off async rows on the existing fallback projection", () => {
+		const job = {
+			asyncId: "simple-run",
+			asyncDir: "/tmp/simple-run",
+			cwd: "/repo/simple",
+			status: "running",
+			mode: "single",
+			agents: ["scout"],
+			description: "Explore the repository",
+			outputFile: "/tmp/simple-run/output-0.log",
+			currentTool: "read",
+		};
+
+		assert.equal(projectAsyncLane(job), undefined);
+		const text = buildWidgetLines([job], theme, 180).join("\n");
+		assert.match(text, /async subagent scout · background/);
+		assert.match(text, /⎿  read/);
+		assert.doesNotMatch(text, /lane:/);
+	});
+
+	it("keeps lane state and next-action signals distinct for terminal and attention states", () => {
+		const states = [
+			{ status: "complete", expectedState: "complete", expectedNext: "inspect output" },
+			{ status: "failed", expectedState: "failed", expectedNext: "inspect failure" },
+			{ status: "paused", expectedState: "paused", expectedNext: "inspect paused state" },
+			{ status: "stopped", expectedState: "stopped", expectedNext: "inspect stopped state" },
+		] as const;
+		for (const [index, candidate] of states.entries()) {
+			const lane = projectAsyncLane({
+				asyncId: `state-${index}`,
+				asyncDir: `/tmp/state-${index}`,
+				status: candidate.status,
+				mode: "single",
+				agents: ["worker"],
+				workflowKey: "stateful",
+				description: "stateful work item",
+				steps: [{ agent: "worker", status: candidate.status, outputName: "result.md" }],
+			});
+			assert.equal(lane?.state, candidate.expectedState);
+			assert.equal(lane?.next, candidate.expectedNext);
+		}
+		const attention = projectAsyncLane({
+			asyncId: "attention",
+			asyncDir: "/tmp/attention",
+			status: "running",
+			mode: "single",
+			agents: ["reviewer"],
+			steps: [{ agent: "reviewer", status: "running", label: "Review", activityState: "needs_attention" }],
+		});
+		assert.equal(attention?.next, "inspect attention");
+		assert.deepEqual(attention?.chips, ["attention"]);
+	});
+
+	it("surfaces stale and tool/turn budget blocked states", () => {
+		const staleJob = {
+			asyncId: "stale-run",
+			asyncDir: "/tmp/stale-run",
+			status: "running",
+			mode: "single",
+			agents: ["worker"],
+			steps: [{ agent: "worker", status: "running", label: "Stale work", watchdog: { phase: "stale" } }],
+		};
+		const stale = projectAsyncLane(staleJob);
+		assert.equal(stale?.next, "inspect stale state");
+		assert.deepEqual(stale?.chips, ["stale"]);
+
+		const blockedJobs: Array<Record<string, unknown>> = [];
+		for (const [index, field] of (["toolBudgetBlocked", "turnBudgetExceeded"] as const).entries()) {
+			const blockedJob = {
+				asyncId: `blocked-run-${index}`,
+				asyncDir: `/tmp/blocked-run-${index}`,
+				status: "running",
+				mode: "single",
+				agents: ["worker"],
+				steps: [{ agent: "worker", status: "running", label: "Blocked work", [field]: true }],
+			};
+			blockedJobs.push(blockedJob);
+			const blocked = projectAsyncLane(blockedJob);
+			assert.equal(blocked?.next, "inspect blocked state");
+			assert.deepEqual(blocked?.chips, ["blocked"]);
+		}
+
+		const text = buildWidgetLines([staleJob, ...blockedJobs], theme, 180).join("\n");
+		assert.match(text, /next:inspect stale state/);
+		assert.match(text, /\[stale\]/);
+		assert.match(text, /next:inspect blocked state/);
+		assert.match(text, /\[blocked\]/);
+	});
+
+	it("keeps stale and blocked lane signals in crowded progressive rows", () => {
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			const jobs = [
+				{
+					asyncId: "progressive-stale",
+					asyncDir: "/tmp/progressive-stale",
+					status: "running",
+					mode: "single",
+					agents: ["watcher"],
+					steps: [{ agent: "watcher", status: "running", label: "Stale lane", watchdog: { phase: "stale" } }],
+				},
+				{
+					asyncId: "progressive-blocked",
+					asyncDir: "/tmp/progressive-blocked",
+					status: "running",
+					mode: "single",
+					agents: ["budgeter"],
+					steps: [{ agent: "budgeter", status: "running", label: "Blocked lane", toolBudgetBlocked: true }],
+				},
+			];
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, jobs);
+			const lines = renderWidgetLines(ui.widgets.at(-1));
+			assert.equal(lines.length, 3, "22 terminal rows should select the collapsed progressive tier");
+			const text = lines.join("\n");
+			assert.match(text, /next:inspect stale state/);
+			assert.match(text, /\[stale\]/);
+			assert.match(text, /next:inspect blocked state/);
+			assert.match(text, /\[blocked\]/);
+		});
+		resetWidgetLayout();
+	});
+
 	it("orders running jobs before queued summaries and completions", () => {
 		const lines = buildWidgetLines([
 			{ asyncId: "done-1", asyncDir: "/tmp/done", status: "complete", agents: ["reviewer"], startedAt: 0, updatedAt: 1000 },
@@ -174,6 +521,66 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /parallel · 3 agents running/);
 		assert.doesNotMatch(text, /parallel · reviewer ×3/);
 		assert.doesNotMatch(text, /reviewer → reviewer → reviewer/);
+	});
+
+	it("distinguishes same-agent parallel rows with explicit labels", () => {
+		const lines = buildWidgetLines([{
+			asyncId: "run-labels",
+			asyncDir: "/tmp/labels",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer", "reviewer"],
+			activeParallelGroup: true,
+			runningSteps: 2,
+			completedSteps: 0,
+			stepsTotal: 2,
+			steps: [
+				{ index: 0, agent: "reviewer", label: "Review auth", description: "private auth task", status: "running" },
+				{ index: 1, agent: "reviewer", label: "Review billing", description: "private billing task", status: "running" },
+			],
+		}, {
+			asyncId: "done",
+			asyncDir: "/tmp/done",
+			status: "complete",
+			mode: "single",
+			agents: ["worker"],
+			startedAt: 0,
+			updatedAt: 1,
+		}], theme, 120);
+
+		const text = lines.join("\n");
+		assert.match(text, /Agent 1\/2: Review auth — private auth task \(reviewer\) · running/);
+		assert.match(text, /Agent 2\/2: Review billing — private billing task \(reviewer\) · running/);
+		assert.equal(compactTaskText("  [prompt redacted]  ", "Review auth"), "Review auth");
+	});
+
+	it("shows peak context usage and falls back to token usage without a limit", () => {
+		const step = {
+			index: 0,
+			agent: "reviewer",
+			status: "running" as const,
+			tokens: { input: 31_000, output: 10_000, total: 44_000, window: 31_000, windowPeak: 32_000 },
+		};
+		const withLimit = buildWidgetLines([{
+			asyncId: "run-context",
+			asyncDir: "/tmp/context",
+			status: "running" as const,
+			mode: "single" as const,
+			agents: ["reviewer"],
+			steps: [{ ...step, contextLimit: 128_000 }],
+		}], theme, 180).join("\n");
+		assert.match(withLimit, /ctx 32k\/128k \(25%\)/);
+
+		const withoutLimit = buildWidgetLines([{
+			asyncId: "run-context-fallback",
+			asyncDir: "/tmp/context-fallback",
+			status: "running" as const,
+			mode: "single" as const,
+			agents: ["reviewer"],
+			steps: [step],
+		}], theme, 180).join("\n");
+		assert.match(withoutLimit, /31k window · 44k spent/);
+		assert.doesNotMatch(withoutLimit, /ctx 32k\/128k/);
 	});
 
 	it("renders a compact component widget for three active parallel agents without core truncation", () => {
@@ -341,6 +748,48 @@ describe("subagent async widget rendering", () => {
 		resetWidgetLayout();
 	});
 
+	it("selects the current flat-indexed member from a collapsed parallel group", () => {
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			const parallelGroupJob = {
+				asyncId: "run-parallel-slice",
+				asyncDir: "/tmp/run-parallel-slice",
+				status: "running",
+				mode: "chain",
+				agents: ["producer", "reviewer", "worker"],
+				activeParallelGroup: true,
+				currentStep: 3,
+				chainStepCount: 2,
+				parallelGroups: [{ start: 2, count: 2, stepIndex: 1 }],
+				steps: [
+					{ index: 2, agent: "reviewer", status: "complete", label: "First parallel member", description: "First member task", phase: "first-phase", workflowKey: "first-ref", outputName: "first.md" },
+					{ index: 3, agent: "worker", status: "running", label: "Current parallel member", description: "Current member task", phase: "current-phase", workflowKey: "current-ref", outputName: "current.md" },
+				],
+			};
+			const direct = projectAsyncLane(parallelGroupJob);
+			assert.equal(direct?.label, "Current parallel member — Current member task");
+			assert.equal(direct?.role, "worker");
+			assert.equal(direct?.phase, "current-phase");
+			assert.equal(direct?.output, "current.md");
+			assert.equal(direct?.ref, "current-ref");
+
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [parallelGroupJob, {
+				asyncId: "run-parallel-sibling",
+				asyncDir: "/tmp/run-parallel-sibling",
+				status: "running",
+				mode: "single",
+				agents: ["sibling"],
+				currentTool: "read",
+			}]);
+			const lines = renderWidgetLines(ui.widgets.at(-1));
+			const text = lines.join("\n");
+			assert.match(text, /Current parallel member — Current member task/);
+			assert.doesNotMatch(text, /First parallel member — First member task/);
+		});
+		resetWidgetLayout();
+	});
+
 	it("keeps constrained progressive slots focused on active jobs", () => {
 		resetWidgetLayout();
 		withStdoutSize(22, 120, () => {
@@ -428,7 +877,7 @@ describe("subagent async widget rendering", () => {
 				stepsTotal: 3,
 				updatedAt: now,
 				steps: [
-					{ agent: "reviewer", status: "running", lastActivityAt: now, toolCount: 2 },
+					{ agent: "reviewer", sessionName: "  reviewer: Inspect the first row  ", status: "running", lastActivityAt: now, toolCount: 2 },
 					{ agent: "reviewer", status: "running", currentTool: "read", currentToolStartedAt: now - 2000 },
 					{ agent: "reviewer", status: "complete", tokens: { input: 1000, output: 500, cache: 0, total: 1500 } },
 				],
@@ -438,11 +887,39 @@ describe("subagent async widget rendering", () => {
 		const text = lines.join("\n");
 		assert.match(text, /async subagent parallel \(3\) · background/);
 		assert.match(text, /parallel · 2 agents running · 1\/3 done/);
-		assert.match(text, /Agent 1\/3: reviewer · running · 2 tool uses/);
+		assert.match(text, /Agent 1\/3: reviewer: Inspect the first row · running · 2 tool uses/);
 		assert.match(text, /⎿  active now/);
 		assert.match(text, /Agent 2\/3: reviewer · running\n\s+⎿  read \| 2\.0s/);
 		assert.match(text, /Press configured-expand-key for live detail/);
 		assert.match(text, /Agent 3\/3: reviewer · complete · 1\.5k token/);
+	});
+
+	it("prefers session names in multi-job widget step rows", () => {
+		const text = buildWidgetLines([
+			{
+				asyncId: "run-multi-a",
+				asyncDir: "/tmp/multi-a",
+				status: "running",
+				mode: "parallel",
+				agents: ["reviewer"],
+				stepsTotal: 1,
+				runningSteps: 1,
+				completedSteps: 0,
+				steps: [{ index: 0, agent: "reviewer", sessionName: "  reviewer: Inspect the multi-job row  ", status: "running" }],
+			},
+			{
+				asyncId: "run-multi-b",
+				asyncDir: "/tmp/multi-b",
+				status: "complete",
+				mode: "single",
+				agents: ["worker"],
+				stepsTotal: 1,
+				steps: [{ index: 0, agent: "worker", status: "complete" }],
+			},
+		], theme, 180).join("\n");
+
+		assert.match(text, /Agent 1\/1: reviewer: Inspect the multi-job row · running/);
+		assert.doesNotMatch(text, /Agent 1\/1: reviewer · running/);
 	});
 
 	it("shows async job and step context badges", () => {
@@ -733,6 +1210,7 @@ describe("subagent async widget rendering", () => {
 				{
 					index: 0,
 					agent: "worker",
+					sessionName: "  worker: Read the widget  ",
 					status: "running",
 					currentTool: "read",
 					currentToolArgs: "src/tui/render.ts",
@@ -744,7 +1222,7 @@ describe("subagent async widget rendering", () => {
 
 		const collapsedText = buildWidgetLines([job], theme, 180).join("\n");
 		assert.match(collapsedText, /async subagent worker · background/);
-		assert.match(collapsedText, /Step 1\/1: worker · running/);
+		assert.match(collapsedText, /Step 1\/1: worker: Read the widget · running/);
 		assert.match(collapsedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
 		assert.match(collapsedText, /Press configured-expand-key for live detail/);
 		assert.match(collapsedText, outputPathPattern("/tmp/single-run/output-0.log"));

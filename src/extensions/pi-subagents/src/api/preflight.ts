@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, resolveAgentName, type AgentConfig, type AgentScope, type AgentSource } from "../agents/agents.ts";
+import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentScope, type AgentSource } from "../agents/agents.ts";
 import { resolveExecutionAgentScope } from "../agents/agent-scope.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../agents/agent-memory.ts";
@@ -14,9 +14,7 @@ import { resolveEffectiveThinking } from "../shared/model-info.ts";
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV, type ThinkingLevel } from "../shared/thinking-ceiling.ts";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, type ArtifactDirPreference, type ArtifactPaths, type JsonSchemaObject, type OutputMode } from "../shared/types.ts";
 import { capabilityCeilingAgentRestrictionMessage, intersectSubagentCapabilityCeilings, type ResolvedSubagentCapabilityCeiling, type SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
-import { appendTurnBudgetSystemPrompt } from "../runs/shared/turn-budget.ts";
 import { resolvePermissionRules } from "../runs/shared/permissions.ts";
-import type { ResolvedTurnBudget } from "../shared/types.ts";
 import type { ResolvedMcpDirectToolSelection } from "../runs/shared/mcp-direct-tool-allowlist.ts";
 import { resolveStepBehavior } from "../shared/settings.ts";
 import { canPreferForkFromSnapshot, resolveSubagentLaunchContext } from "../shared/fork-context.ts";
@@ -42,8 +40,10 @@ export type SubagentLaunchContractReasonCode =
 	| "thinking_ceiling"
 	| "invalid_extension_bindings";
 
+export type SubagentLaunchContractDiagnosticCode = SubagentLaunchContractReasonCode | "host_required" | "snapshot_warning" | "workspace_scope_authority";
+
 export interface SubagentLaunchContractDiagnostic {
-	code: SubagentLaunchContractReasonCode | "host_required" | "snapshot_warning";
+	code: SubagentLaunchContractDiagnosticCode;
 	severity: "error" | "warning" | "host-required";
 	message: string;
 }
@@ -67,7 +67,6 @@ export interface SubagentLaunchContractInput {
 	outputMode?: OutputMode;
 	outputSchema?: JsonSchemaObject;
 	extensionBindings?: ExtensionBindings;
-	turnBudget?: ResolvedTurnBudget;
 	artifacts?: boolean;
 	artifactDir?: ArtifactDirPreference;
 	parentSessionFile?: string | null;
@@ -157,6 +156,7 @@ export interface SubagentLaunchContract {
 	thinkingCeiling?: ThinkingLevel;
 	systemPromptMode: AgentConfig["systemPromptMode"];
 	inheritProjectContext: boolean;
+	inheritGlobalContext: boolean;
 	inheritSkills: boolean;
 	skills: SubagentLaunchContractSkills;
 	tools: SubagentLaunchContractTools;
@@ -204,8 +204,26 @@ function resolveLaunchContractContext(input: SubagentLaunchContractInput, agent:
 	});
 }
 
-function candidateList(inputAgent: string, selected: AgentConfig | undefined, cwd: string): SubagentLaunchContractAgentCandidate[] {
-	const all = discoverAgentsAll(cwd);
+function taskWorkspaceScopeAuthorityDiagnostic(task: string | undefined): SubagentLaunchContractDiagnostic | undefined {
+	if (!task) return undefined;
+	const text = task.replace(/\s+/g, " ").trim();
+	if (!text) return undefined;
+	const createsWorkspacePackage = /\b(?:add|create|introduce|make|set up)\b.{0,80}\b(?:new\s+)?(?:workspace\s+)?package\b/i.test(text)
+		|| /\b(?:new\s+)?package\b.{0,80}\b(?:workspace|monorepo)\b/i.test(text);
+	if (!createsWorkspacePackage) return undefined;
+	const packageOnlyAuthority = /\b(?:only|solely)\b.{0,40}\b(?:edit|change|modify|touch|write(?:\s+to)?)\b.{0,80}\b(?:package(?:\s+directory)?|packages\/[\w.-]+)\b/i.test(text)
+		|| /\b(?:do not|don't|must not)\b.{0,40}\b(?:edit|change|modify|touch|write(?:\s+to)?)\b.{0,80}\b(?:root|workspace|lockfile|metadata)\b/i.test(text)
+		|| /\bwithout\b.{0,40}\b(?:root|workspace|lockfile|metadata)\b.{0,40}\b(?:edit|change|modification|write)s?\b/i.test(text);
+	if (!packageOnlyAuthority) return undefined;
+	return {
+		code: "workspace_scope_authority",
+		severity: "warning",
+		message: "Task asks for a workspace package change while limiting authority to package-scope edits. New workspace packages often need root workspace metadata or lockfile changes, so confirm that authority before launch.",
+	};
+}
+
+function candidateList(inputAgent: string, selected: AgentConfig | undefined, cwd: string, provider?: string): SubagentLaunchContractAgentCandidate[] {
+	const all = discoverAgentsAll(cwd, provider);
 	return [...all.builtin, ...all.package, ...all.user, ...all.project]
 		.filter((agent) => Boolean(resolveAgentName(inputAgent, [agent]).agent))
 		.map((agent) => ({
@@ -221,6 +239,8 @@ function candidateList(inputAgent: string, selected: AgentConfig | undefined, cw
 
 export async function resolveSubagentLaunchContract(input: SubagentLaunchContractInput): Promise<SubagentLaunchContractResult> {
 	const diagnostics: SubagentLaunchContractDiagnostic[] = [];
+	const authorityDiagnostic = taskWorkspaceScopeAuthorityDiagnostic(input.task);
+	if (authorityDiagnostic) diagnostics.push(authorityDiagnostic);
 	const effectiveCwd = path.resolve(input.cwd);
 	try {
 		if (!fs.statSync(effectiveCwd).isDirectory()) {
@@ -237,7 +257,8 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		return { ok: false, code: "invalid_artifact_dir", message: `Unsupported artifactDir '${String(input.artifactDir)}'; expected 'project', 'session', or 'temp'.`, diagnostics };
 	}
 	const scope = resolveExecutionAgentScope(input.agentScope);
-	const discovered = discoverAgents(effectiveCwd, scope);
+	const parentProvider = input.preferredProvider ?? input.parentModel?.provider;
+	const discovered = discoverAgents(effectiveCwd, scope, parentProvider);
 	const resolvedAgent = resolveAgentName(input.agent, discovered.agents);
 	const ambiguousCandidates = resolvedAgent.error
 		? discovered.agents.filter((agent) => resolveAgentName(input.agent, [agent]).agent)
@@ -251,7 +272,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		return { ok: false, code: "ambiguous_agent", message: resolvedAgent.error, diagnostics };
 	}
 	if (!resolvedAgent.agent) {
-		return { ok: false, code: "missing_agent", message: `Unknown agent: ${input.agent}`, diagnostics };
+		return { ok: false, code: "missing_agent", message: formatUnknownAgentError(input.agent, unknownAgentDiagnosticContext(discovered)), diagnostics };
 	}
 	const agent = resolvedAgent.agent;
 	let extensionBindings: ExtensionBindings | undefined;
@@ -330,6 +351,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	try {
 		toolPlan = resolvePiLaunchToolPlan({
 			tools: agent.tools,
+			allowNestedSubagents: agent.allowNestedSubagents,
 			extensions: agent.extensions,
 			subagentOnlyExtensions: agent.subagentOnlyExtensions,
 			mcpDirectTools: agent.mcpDirectTools,
@@ -375,9 +397,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const memoryInjection = buildAgentMemoryInjection(agent, effectiveCwd);
 	if (memoryInjection) effectiveSystemPrompt = effectiveSystemPrompt ? `${effectiveSystemPrompt}\n\n${memoryInjection}` : memoryInjection;
 	effectiveSystemPrompt = injectOutputPathSystemPrompt(effectiveSystemPrompt, outputPath, agent);
-	const turnBudget = input.turnBudget ?? agent.defaultTurnBudget;
-	effectiveSystemPrompt = appendTurnBudgetSystemPrompt(effectiveSystemPrompt, turnBudget);
-	const candidates = candidateList(input.agent, agent, effectiveCwd);
+	const candidates = candidateList(input.agent, agent, effectiveCwd, parentProvider);
 	const shadowedCandidates = candidates.filter((candidate) => !candidate.selected);
 	const definitionDigest = agentDefinitionDigest(agent);
 	const contractBase: Omit<SubagentLaunchContract, "digest"> = {
@@ -400,6 +420,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		...(thinkingCeiling ? { thinkingCeiling } : {}),
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
+		inheritGlobalContext: agent.inheritGlobalContext,
 		inheritSkills: agent.inheritSkills,
 		skills: {
 			requested: requestedSkills,
@@ -455,6 +476,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			systemPrompt: effectiveSystemPrompt,
 			systemPromptMode: agent.systemPromptMode,
 			inheritProjectContext: agent.inheritProjectContext,
+			inheritGlobalContext: agent.inheritGlobalContext,
 			inheritSkills: agent.inheritSkills,
 			skills: requestedSkills,
 			tools: toolPlan.effectiveToolAllowlist,

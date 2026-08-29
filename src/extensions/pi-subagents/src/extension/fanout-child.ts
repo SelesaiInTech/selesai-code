@@ -158,13 +158,15 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 	registeredApis.add(pi);
 
 	const config = loadConfig();
+	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	const state = createChildSafeState();
 	const executor = createSubagentExecutor({
 		pi,
 		state,
 		config,
 		asyncByDefault: resolveAsyncByDefault(config),
-		waitToolEnabled: resolveWaitToolConfig(config.waitTool).enabled,
+		waitToolEnabled: waitToolConfig.enabled,
+		waitToolDefaultTimeoutMs: waitToolConfig.defaultTimeoutMs,
 		tempArtifactsDir: getArtifactsDir(null),
 		getSubagentSessionRoot,
 		expandTilde,
@@ -178,8 +180,8 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		label: "Subagent",
 		description: [
 			"Delegate to subagents from child-safe fanout mode.",
-			"Allowed management/control actions: list, get, status, interrupt, resume, steer, doctor.",
-			"Mutating management actions (create, update, delete, eject, disable, enable, reset, grant-spawn-budget) are blocked in this mode.",
+			"Allowed management/control actions: list, get, status, lane.status, interrupt, resume, steer, doctor.",
+			"Mutating management actions (create, update, delete, eject, disable, enable, reset, grant-spawn-budget, lane.recordMerge, lane.recordSupersession) are blocked in this mode.",
 		].join("\n"),
 		parameters: params,
 		async execute(id, params, signal, onUpdate, ctx) {

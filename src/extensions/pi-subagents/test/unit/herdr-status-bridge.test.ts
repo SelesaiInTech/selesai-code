@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
 	registerHerdrStatusBridge,
 	type HerdrStatusBridgeEvents,
+	type HerdrStatusRun,
 } from "../../src/integrations/herdr-status.ts";
 import { projectActiveHerdrRuns } from "../../src/extension/index.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
@@ -82,6 +83,7 @@ describe("Herdr status bridge", () => {
 			status: "running",
 			mode: "workflow",
 			agents: ["workflow"],
+			steps: [{ agent: "reviewer", status: "running", label: "Review auth" }],
 		});
 		state.foregroundControls.set("child-1", {
 			runId: "child-1",
@@ -102,8 +104,30 @@ describe("Herdr status bridge", () => {
 		assert.deepEqual(projectActiveHerdrRuns(state), [{
 			id: "workflow-1",
 			agents: ["reviewer"],
+			taskLabel: "Review auth",
 			needsAttention: true,
 		}]);
+	});
+
+	it("synchronizes runs discovered outside lifecycle events", async () => {
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			getRuns: () => [{ id: "restored-run", agent: "worker" }],
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 0,
+		});
+		bridge.sessionStarted({ hasUI: true, runs: [] });
+
+		bridge.syncRuns();
+		await bridge.flush();
+
+		assert.equal(commands.length, 1);
+		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker)"));
+
+		bridge.dispose();
 	});
 
 	it("reports an async run as visible and semantically busy", async () => {
@@ -428,6 +452,100 @@ describe("Herdr status bridge", () => {
 		bridge.dispose();
 	});
 
+	it("publishes bounded workflow labels without leaking raw prompts and restores the previous overlapping task", async () => {
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 0,
+		});
+		bridge.sessionStarted({ hasUI: true, runs: [] });
+
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
+			id: "run-1",
+			agent: "worker",
+			goal: "raw secret prompt",
+			workflowGraph: {
+				currentNodeId: "build",
+				nodes: [{ id: "build", status: "running", label: "Build auth\nflow\u001b[31m" }],
+			},
+		});
+		await bridge.flush();
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
+			id: "run-2",
+			agent: "reviewer",
+			task: "another raw prompt",
+			workflowGraph: {
+				nodes: [{ id: "review", status: "pending", label: `Review ${"x".repeat(120)}` }],
+			},
+		});
+		await bridge.flush();
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-2" });
+		await bridge.flush();
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-1" });
+		await bridge.flush();
+
+		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker) · Build auth flow"));
+		assert.ok(commands[0]?.includes("title-suffix=⏳Build auth flow"));
+		assert.ok(commands[1]?.some((argument) => argument.startsWith("summary=⏳ 2 subagents") && argument.length < 180));
+		assert.ok(commands[1]?.some((argument) => argument.startsWith("title-suffix=⏳Review ") && argument.length < 70));
+		assert.ok(commands[2]?.includes("title-suffix=⏳Build auth flow"));
+		assert.ok(commands[3]?.includes("--clear-state-labels"));
+		assert.doesNotMatch(commands.flat().join("\n"), /raw secret prompt|another raw prompt/);
+
+		bridge.dispose();
+	});
+
+	it("omits refreshed task labels when sanitization removes all content", async () => {
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 0,
+		});
+
+		bridge.sessionStarted({ hasUI: true, runs: [{ id: "run-1", agent: "worker", taskLabel: "\u001b[31m" }] });
+		await bridge.flush();
+
+		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker)"));
+		assert.ok(commands[0]?.includes("title-suffix=⏳worker"));
+		assert.doesNotMatch(commands.flat().join("\n"), /\u001b\[31m/);
+
+		bridge.dispose();
+	});
+
+	it("clears a completed step label when the authoritative active step is unlabeled", async () => {
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		const intervals = new FakeIntervals();
+		let authoritativeRuns: HerdrStatusRun[] = [{ id: "run-1", agent: "worker", taskLabel: "Build auth" }];
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			getRuns: () => authoritativeRuns,
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 45_000,
+			timers: intervals.timers,
+		});
+		bridge.sessionStarted({ hasUI: true, runs: authoritativeRuns });
+		await bridge.flush();
+
+		authoritativeRuns = [{ id: "run-1", agent: "worker" }];
+		intervals.fireAll();
+		await bridge.flush();
+
+		assert.ok(commands[0]?.includes("title-suffix=⏳Build auth"));
+		assert.ok(commands[1]?.includes("summary=⏳ 1 subagent (worker)"));
+		assert.ok(commands[1]?.includes("title-suffix=⏳worker"));
+		assert.doesNotMatch(commands[1]?.join("\n") ?? "", /Build auth/);
+
+		bridge.dispose();
+	});
+
 	it("refreshes metadata only while runs are active", async () => {
 		const events = new FakeEvents();
 		const commands: string[][] = [];
@@ -533,10 +651,15 @@ describe("Herdr status bridge", () => {
 		const events = new FakeEvents();
 		const commands: string[][] = [];
 		const busyEvents: unknown[] = [];
+		let getRunsCalls = 0;
 		events.on("herdr:busy", (payload) => busyEvents.push(payload));
 		const bridge = registerHerdrStatusBridge({
 			events,
 			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			getRuns: () => {
+				getRunsCalls += 1;
+				return [{ id: "run-authoritative", agent: "worker" }];
+			},
 			runHerdr: (args) => commands.push([...args]),
 			refreshMs: 0,
 		});
@@ -549,10 +672,12 @@ describe("Herdr status bridge", () => {
 
 		// A headless parent (print/json mode, or a test harness) must never publish.
 		bridge.sessionStarted({ hasUI: false, runs: [{ id: "run-headless", agent: "worker" }] });
+		bridge.syncRuns();
 		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
 		await bridge.flush();
 		assert.deepEqual(commands, []);
 		assert.deepEqual(busyEvents, []);
+		assert.equal(getRunsCalls, 0);
 
 		// Only the root interactive session owns the pane.
 		bridge.sessionStarted({ hasUI: true, runs: [] });
@@ -568,19 +693,26 @@ describe("Herdr status bridge", () => {
 	it("stays inert outside a Herdr pane", async () => {
 		const events = new FakeEvents();
 		const commands: string[][] = [];
+		let getRunsCalls = 0;
 		const bridge = registerHerdrStatusBridge({
 			events,
 			env: {},
+			getRuns: () => {
+				getRunsCalls += 1;
+				return [{ id: "run-2", agent: "reviewer" }];
+			},
 			runHerdr: (args) => commands.push([...args]),
 			refreshMs: 0,
 		});
 
 		bridge.sessionStarted({ hasUI: true, runs: [{ id: "run-2", agent: "reviewer" }] });
+		bridge.syncRuns();
 		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
 		bridge.agentStarted();
 		bridge.dispose();
 		await bridge.flush();
 
 		assert.deepEqual(commands, []);
+		assert.equal(getRunsCalls, 0);
 	});
 });
