@@ -16,7 +16,7 @@ deltas in the overlapping files:
 - `src/core/settings-manager.ts`: `TerminalSettings.hyperlinks/images/trueColor`, `getTerminalCapabilityOverrides()`, `fullscreenCopyOnSelect` getter/setter.
 - `src/modes/interactive/interactive-mode.ts`: `setCapabilityOverrides`, `copyOnSelect`, `handleCopyCommand(preferSelection)`, `updateThinkingBlockVisibility`, working-indicator restructure, theme order.
 - `src/modes/interactive/components/settings-selector.ts`: `fullscreen-copy-on-select` item + callback.
-The vision caption relay itself (`_captionImagesForCurrentModel`, `image_captioning_*` events, 15s timeout) is
+The vision caption relay itself (`_captionImagesForCurrentModel`, `image_captioning_*` events, 60s per-attempt timeout with backoff) is
 unchanged by the 0.84.4 port.
 
 ## 1. Copy/keep the two new files (should survive merge, but verify)
@@ -153,7 +153,7 @@ Without this, captioning (a blocking `await` before the agent starts) leaves a b
 - In `_captionImagesForCurrentModel`, wrap the caption loop with
   `this._emit({ type: "image_captioning_start" })` before and
   `this._emit({ type: "image_captioning_end", ok })` after (in both the success and failure paths),
-  and use a **15s** per-image `AbortController` timeout.
+  and use a **60s** per-attempt `AbortController` timeout with 4 attempts and backoff.
 
 `src/modes/interactive/components/status-indicator.ts`:
 - Add `"imageCaptioning"` to `StatusIndicatorKind`.
