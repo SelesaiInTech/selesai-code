@@ -34,6 +34,7 @@ import {
 	matchesKey,
 	ProcessTerminal,
 	Spacer,
+	setCapabilityOverrides,
 	setKeybindings,
 	Text,
 	TruncatedText,
@@ -375,6 +376,7 @@ interface InteractiveTuiOptions {
 	logDirectory: string;
 	terminal?: Terminal;
 	onRightClickPaste?: () => void;
+	fullscreenCopyOnSelect?: boolean;
 }
 
 /** Composition root for selecting the interactive terminal renderer. */
@@ -387,6 +389,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 				searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
 				openUrl: openBrowser,
 				onRightClickPaste: options.onRightClickPaste,
+				copyOnSelect: options.fullscreenCopyOnSelect,
 				copySelection: async (text) => {
 					try {
 						await copyToClipboard(text);
@@ -574,6 +577,7 @@ export class InteractiveMode {
 
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
+		setCapabilityOverrides(this.settingsManager.getTerminalCapabilityOverrides());
 		const tuiMode = options.tuiMode ?? this.settingsManager.getTuiMode();
 		this.options = { ...options, tuiMode };
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
@@ -589,6 +593,7 @@ export class InteractiveMode {
 			showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 			logDirectory: getAgentDir(),
 			onRightClickPaste: this.onRightClickPaste,
+			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
@@ -858,6 +863,7 @@ export class InteractiveMode {
 			logDirectory: getAgentDir(),
 			terminal,
 			onRightClickPaste: this.onRightClickPaste,
+			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
@@ -1841,7 +1847,11 @@ export class InteractiveMode {
 	}
 
 	private applyRuntimeSettings(): void {
+		setCapabilityOverrides(this.settingsManager.getTerminalCapabilityOverrides());
 		configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
+		if (this.renderer instanceof TuiAltScreen) {
+			this.renderer.setCopyOnSelect(this.settingsManager.getFullscreenCopyOnSelect());
+		}
 		this.footer.setSession(this.session);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
@@ -2003,6 +2013,16 @@ export class InteractiveMode {
 		}
 	}
 
+	private showWorkingStatusIndicator(): void {
+		this.showStatusIndicator(
+			new WorkingStatusIndicator(
+				this.ui,
+				this.workingMessage ?? this.defaultWorkingMessage,
+				this.workingIndicatorOptions,
+			),
+		);
+	}
+
 	private setWorkingVisible(visible: boolean): void {
 		this.workingVisible = visible;
 		if (!visible) {
@@ -2011,13 +2031,7 @@ export class InteractiveMode {
 			return;
 		}
 		if (this.session.isStreaming && this.activeStatusIndicator?.kind !== "working") {
-			this.showStatusIndicator(
-				new WorkingStatusIndicator(
-					this.ui,
-					this.workingMessage ?? this.defaultWorkingMessage,
-					this.workingIndicatorOptions,
-				),
-			);
+			this.showWorkingStatusIndicator();
 		}
 		this.ui.requestRender();
 	}
@@ -2738,7 +2752,10 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
 		this.defaultEditor.onAction("app.editor.external", () => void this.handleOpenExternalEditor());
-		this.defaultEditor.onAction("app.message.copy", () => void this.handleCopyCommand());
+		this.defaultEditor.onAction(
+			"app.message.copy",
+			() => void this.handleCopyCommand({ flashConfirmation: true, preferSelection: true }),
+		);
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
 		this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
 		this.defaultEditor.onAction("app.session.new", () => this.handleClearCommand());
@@ -3072,23 +3089,22 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.pendingTools.clear();
-				if (this.settingsManager.getShowTerminalProgress()) {
-					this.ui.terminal.setProgress(true);
-				}
 				// Restore main escape handler if retry handler is still active
 				// (retry success event fires later, but we need main handler now)
 				if (this.retryEscapeHandler) {
 					this.defaultEditor.onEscape = this.retryEscapeHandler;
 					this.retryEscapeHandler = undefined;
 				}
+				break;
+
+			case "turn_start":
+				if (this.settingsManager.getShowTerminalProgress()) {
+					this.ui.terminal.setProgress(true);
+				}
 				if (this.workingVisible) {
-					this.showStatusIndicator(
-						new WorkingStatusIndicator(
-							this.ui,
-							this.workingMessage ?? this.defaultWorkingMessage,
-							this.workingIndicatorOptions,
-						),
-					);
+					if (this.activeStatusIndicator?.kind !== "working") {
+						this.showWorkingStatusIndicator();
+					}
 				} else {
 					this.clearStatusIndicator();
 				}
@@ -4076,21 +4092,20 @@ export class InteractiveMode {
 		this.showStatus(`Tool output: ${expanded ? "expanded" : "collapsed"}`);
 	}
 
+	/** Update rendered assistant messages without rebuilding live tool components. */
+	private updateThinkingBlockVisibility(): void {
+		for (const child of this.chatContainer.children) {
+			if (child instanceof AssistantMessageComponent) {
+				child.setHideThinkingBlock(this.hideThinkingBlock);
+			}
+		}
+		this.ui.requestRender();
+	}
+
 	private toggleThinkingBlockVisibility(): void {
 		this.hideThinkingBlock = !this.hideThinkingBlock;
 		this.settingsManager.setHideThinkingBlock(this.hideThinkingBlock);
-
-		// Rebuild chat from session messages
-		this.chatContainer.clear();
-		this.rebuildChatFromMessages();
-
-		// If streaming, re-add the streaming component with updated visibility and re-render
-		if (this.streamingComponent && this.streamingMessage) {
-			this.streamingComponent.setHideThinkingBlock(this.hideThinkingBlock);
-			this.streamingComponent.updateContent(this.streamingMessage);
-			this.chatContainer.addChild(this.streamingComponent);
-		}
-
+		this.updateThinkingBlockVisibility();
 		this.showStatus(`Thinking blocks: ${this.hideThinkingBlock ? "hidden" : "visible"}`);
 	}
 
@@ -4436,6 +4451,7 @@ export class InteractiveMode {
 					tuiMode: this.settingsManager.getTuiMode(),
 					fullscreenExitOutput: this.settingsManager.getFullscreenExitOutput(),
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
+					fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 					warnings: this.settingsManager.getWarnings(),
 					skills: this.buildSkillToggleItems(),
 				},
@@ -4508,13 +4524,7 @@ export class InteractiveMode {
 					onHideThinkingBlockChange: (hidden) => {
 						this.hideThinkingBlock = hidden;
 						this.settingsManager.setHideThinkingBlock(hidden);
-						for (const child of this.chatContainer.children) {
-							if (child instanceof AssistantMessageComponent) {
-								child.setHideThinkingBlock(hidden);
-							}
-						}
-						this.chatContainer.clear();
-						this.rebuildChatFromMessages();
+						this.updateThinkingBlockVisibility();
 					},
 					onShowCacheMissNoticesChange: (shown) => {
 						this.settingsManager.setShowCacheMissNotices(shown);
@@ -4604,6 +4614,10 @@ export class InteractiveMode {
 						this.settingsManager.setFullscreenScrollbar(mode);
 						this.transcriptScrollView?.setScrollbar(mode);
 						this.ui.requestRender();
+					},
+					onFullscreenCopyOnSelectChange: (enabled) => {
+						this.settingsManager.setFullscreenCopyOnSelect(enabled);
+						if (this.renderer instanceof TuiAltScreen) this.renderer.setCopyOnSelect(enabled);
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
@@ -5814,21 +5828,8 @@ export class InteractiveMode {
 				activeHeader.setExpanded(this.toolOutputExpanded);
 			}
 			setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
+			this.applyRuntimeSettings();
 			await this.themeController.applyFromSettings();
-			const editorPaddingX = this.settingsManager.getEditorPaddingX();
-			const autocompleteMaxVisible = this.settingsManager.getAutocompleteMaxVisible();
-			this.defaultEditor.setPaddingX(editorPaddingX);
-			this.defaultEditor.setAutocompleteMaxVisible(autocompleteMaxVisible);
-			if (this.editor !== this.defaultEditor) {
-				this.editor.setPaddingX?.(editorPaddingX);
-				this.editor.setAutocompleteMaxVisible?.(autocompleteMaxVisible);
-			}
-			this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
-			const clearOnShrink = this.settingsManager.getClearOnShrink();
-			this.ui.setClearOnShrink(clearOnShrink);
-			if (!clearOnShrink && !this.activeStatusIndicator) {
-				this.statusContainer.clear();
-			}
 			this.setupAutocompleteProvider();
 			const runner = this.session.extensionRunner;
 			this.setupExtensionShortcuts(runner);
@@ -6041,7 +6042,19 @@ export class InteractiveMode {
 		}
 	}
 
-	private async handleCopyCommand(): Promise<void> {
+	private async handleCopyCommand(
+		options: { flashConfirmation?: boolean; preferSelection?: boolean } = {},
+	): Promise<void> {
+		if (
+			options.preferSelection &&
+			this.ui instanceof TuiAltScreen &&
+			!this.ui.getCopyOnSelect() &&
+			this.ui.hasActiveSelection()
+		) {
+			await this.ui.copyActiveSelectionToClipboard();
+			return;
+		}
+
 		const text = this.session.getLastAssistantText();
 		if (!text) {
 			this.showError("No agent messages to copy yet.");
@@ -6050,7 +6063,11 @@ export class InteractiveMode {
 
 		try {
 			await copyToClipboard(text);
-			this.showStatus("Copied last agent message to clipboard");
+			if (options.flashConfirmation && this.ui instanceof TuiAltScreen) {
+				this.ui.flash("Copied!");
+			} else {
+				this.showStatus("Copied last agent message to clipboard");
+			}
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
