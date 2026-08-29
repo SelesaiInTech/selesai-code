@@ -1,5 +1,6 @@
 import { homedir, hostname, userInfo } from "node:os";
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { formatCost } from "../../../../core/usage-totals.ts";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type {
 	ColorSource,
@@ -360,7 +361,7 @@ export function buildTokenLabel(totals: UsageTotals, cacheHitIcon = "󰆼"): str
 }
 
 export function buildCostLabel(totals: UsageTotals): string {
-	return `$${totals.cost.toFixed(3)}`;
+	return formatCost(totals.cost);
 }
 
 export function buildSessionDurationLabel(startEpoch: number): string {

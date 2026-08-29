@@ -27,6 +27,7 @@ Ekstensi `cost-reconcile` mencatat biaya tagihan nyata yang dilaporkan provider 
 - Memasang `fetch` pembungkus tee sekali per proses yang memindai respons API LLM untuk biaya yang dilaporkan provider dan id respons.
 - Pada `message_end`, menulis entri sesi kustom `cost-reconcile` per id respons (dibatasi per sesi).
 - Footer zentui mengutamakan entri hasil rekonsiliasi daripada total rate card saat keduanya ada untuk id respons yang sama, dan menyegarkan sekali setelah settle agar rekonsiliasi yang terlambat ikut terbaca.
+- Label biaya diformat secara adaptif agar biaya per panggilan di bawah satu sen tetap terlihat: 3 desimal di $1+, 4 desimal di $0.01+, dan 6 desimal di bawahnya (mis. `$0.000336`, bukan `$0.000`).
 
 ## Yang dapat dikonfigurasi
 

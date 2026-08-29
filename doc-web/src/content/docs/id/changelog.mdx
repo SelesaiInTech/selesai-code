@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.0 — Tampilan biaya di bawah satu sen
+
+- Memperbaiki label biaya yang membulatkan biaya per panggilan kecil menjadi `$0.000`: footer, footer zentui, dan popup usage kini memformat biaya secara adaptif (3 desimal di $1+, 4 desimal di $0.01+, 6 desimal di bawahnya), sehingga biaya hasil rekonsiliasi gateway seperti `$0.000336` terlihat.
+
 ## 0.12.0 — Penggunaan Token-In, override kapabilitas terminal, dan port pi 0.84.4
 
 - Menambahkan **`/tokenin usage`**: ekstensi `tokenin-onboarding` kini mengkueri endpoint LiteLLM `/key/info` dengan token Token-In aktif dan menampilkan pengeluaran/anggaran/sisa/reset dalam kotak dengan progress bar.

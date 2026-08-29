@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.0 — Sub-cent cost display
+
+- Fixed cost labels rounding small per-call costs to `$0.000`: the footer, zentui footer, and usage popup now format costs adaptively (3 decimals at $1+, 4 decimals at $0.01+, 6 decimals below), so gateway-reconciled costs like `$0.000336` are visible.
+
 ## 0.12.0 — Token-In usage, terminal capability overrides, and pi 0.84.4 ports
 
 - Added **`/tokenin usage`**: the `tokenin-onboarding` extension now queries the LiteLLM `/key/info` endpoint with the active Token-In token and shows a boxed spend/budget/remaining/reset display with a progress bar.

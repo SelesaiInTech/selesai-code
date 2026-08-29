@@ -101,7 +101,7 @@ import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
-import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
+import { formatCost, getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
@@ -6140,10 +6140,10 @@ export class InteractiveMode {
 
 		if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
 			info += `\n${theme.bold("Cost")}\n`;
-			info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}`;
+			info += `${theme.fg("dim", "Total:")} ${formatCost(stats.cost)}`;
 			if (usageBreakdown.length > 1) {
 				for (const entry of usageBreakdown) {
-					info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
+					info += `\n  ${theme.fg("dim", `${entry.key}:`)} ${formatCost(entry.cost)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
 				}
 			}
 			if (cacheWaste.missedTokens > 0) {
@@ -6151,7 +6151,7 @@ export class InteractiveMode {
 				const detail = `${cacheWaste.missedTokens.toLocaleString()} tokens, ${missLabel}`;
 				info +=
 					cacheWaste.missedCost >= 0.0001
-						? `\n${theme.fg("dim", "Cache Re-billed:")} $${cacheWaste.missedCost.toFixed(3)} ${theme.fg("dim", `(${detail})`)}`
+						? `\n${theme.fg("dim", "Cache Re-billed:")} ${formatCost(cacheWaste.missedCost)} ${theme.fg("dim", `(${detail})`)}`
 						: `\n${theme.fg("dim", "Cache Re-billed:")} ${detail}`;
 			}
 		}

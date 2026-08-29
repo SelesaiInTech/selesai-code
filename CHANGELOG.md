@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.0] - 2026-08-29
+
+### Fixed
+- **Sub-cent cost display.** Cost labels no longer round small per-call costs to `$0.000`. The footer, zentui footer, and usage popup now format costs adaptively: 3 decimals at $1+, 4 decimals at $0.01+, and 6 decimals below, so gateway-reconciled costs like `$0.000336` are visible.
+
 ## [0.12.0] - 2026-08-29
 
 ### Added
