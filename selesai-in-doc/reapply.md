@@ -8,6 +8,17 @@ code compiles at each step.
 - After a merge, run `npm install` and confirm the app builds (`npm run build`).
 - Confirm `tsx` is available (it's used by `npm run dev`).
 
+## 0a. Current upstream base
+This port is synced to upstream `v0.84.4` (commit `b79e4cc834970cca69daebffab7df1da7d1e52c4`, 2026-08-28).
+When re-applying the vision feature after a future upstream release, preserve these already-applied 0.84.4
+deltas in the overlapping files:
+- `src/core/agent-session.ts`: custom-message ordering (`_pendingCustomMessages`), `_compactBeforeNextAssistantResponse` + `_installAgentNextTurnRefresh`, `_addPersistedDefaultToNonEmptyScope`.
+- `src/core/settings-manager.ts`: `TerminalSettings.hyperlinks/images/trueColor`, `getTerminalCapabilityOverrides()`, `fullscreenCopyOnSelect` getter/setter.
+- `src/modes/interactive/interactive-mode.ts`: `setCapabilityOverrides`, `copyOnSelect`, `handleCopyCommand(preferSelection)`, `updateThinkingBlockVisibility`, working-indicator restructure, theme order.
+- `src/modes/interactive/components/settings-selector.ts`: `fullscreen-copy-on-select` item + callback.
+The vision caption relay itself (`_captionImagesForCurrentModel`, `image_captioning_*` events, 15s timeout) is
+unchanged by the 0.84.4 port.
+
 ## 1. Copy/keep the two new files (should survive merge, but verify)
 - `src/core/vision-caption.ts`
 - `src/core/tools/read-vision.test.ts`
