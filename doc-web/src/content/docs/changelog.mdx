@@ -3,6 +3,21 @@ draft: false
 title: Changelog
 ---
 
+## 0.12.0 — Token-In usage, terminal capability overrides, and pi 0.84.4 ports
+
+- Added **`/tokenin usage`**: the `tokenin-onboarding` extension now queries the LiteLLM `/key/info` endpoint with the active Token-In token and shows a boxed spend/budget/remaining/reset display with a progress bar.
+- Added **terminal capability overrides**: new `terminal.images` (`"kitty"`, `"iterm2"`, `"auto"`, or `false`), `terminal.trueColor`, and `terminal.hyperlinks` settings pin terminal capabilities instead of relying on auto-detection.
+- Added **`fullscreenCopyOnSelect`** (default `true`) with a `/settings` toggle: automatically copy selected text in fullscreen mode; disable to copy selections with Ctrl+X.
+- Added **`ui_prompt_start` / `ui_prompt_end` extension events** so extensions can observe when the agent starts and stops waiting on a blocking UI prompt (`select`, `confirm`, `input`, `editor`, `custom`).
+- Added **llama.cpp router autoload** support: unloaded preset models are selectable when the router has `models_autoload` enabled, loading on first use.
+- Added the RPC **`clear_queue`** command for dropping pending steering/follow-up messages.
+- Changed custom-message ordering during streaming: context-only custom messages are flushed at turn end (after tool results) instead of landing between a tool call and its result.
+- Changed auto-compaction to run before the next assistant response when the context threshold is hit, keeping long conversations inside the model window.
+- Changed scoped model lists (`--models`) to include the persisted default model and register it in `enabledModels`.
+- Fixed the footer's available-provider count not refreshing immediately after switching models in the model selector.
+- Fixed summarization responses that hit the token cap being persisted as session checkpoints (partial summaries are now treated as failures).
+- Ported pi 0.84.4 runtime changes: agent-session ordering/compaction/model-scope, terminal capability and fullscreen copy settings, extension UI-prompt events, llama router autoload, RPC `clear_queue`, and Windows `taskkill` via the trusted System32 path.
+
 ## 0.11.0 — Auto session naming, cost reconciliation, and bundled tool display
 
 - Added **auto session naming**: the session is named on every user message using the currently selected model. Only user-message history is sent (no tool results, assistant replies, or thinking), output is capped at 10 tokens with a 5-word name limit, and the call runs in the background so it never delays your message. Thinking is explicitly disabled for gateways that ignore the standard `thinking: {type:"disabled"}` field.

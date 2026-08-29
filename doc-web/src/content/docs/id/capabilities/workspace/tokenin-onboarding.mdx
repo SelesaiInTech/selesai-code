@@ -41,6 +41,7 @@ Extension `tokenin-onboarding` memandu user pertama kali menambahkan akun Token-
 - Menambahkan akun lain nanti dengan `/tokenin add`.
 - Mengalihkan akun aktif dengan `/tokenin switch`.
 - Menghapus akun yang tersimpan dengan `/tokenin remove` (tidak dapat menghapus akun aktif; alihkan dulu).
+- Memeriksa kuota Token-In dengan `/tokenin usage`: mengkueri endpoint LiteLLM `/key/info` dengan token aktif dan menampilkan pengeluaran, anggaran, sisa, dan waktu reset dalam kotak.
 
 ## Perintah, tool, dan shortcut
 
@@ -49,6 +50,7 @@ Extension `tokenin-onboarding` memandu user pertama kali menambahkan akun Token-
 | `/tokenin add` | Buka dashboard Token-In, tempel token, dan tambahkan ke `tokenin-auth.json`. Jika ini akun pertama, ia menjadi aktif. |
 | `/tokenin switch` | Pilih akun tersimpan dan jadikan kredensial aktif. |
 | `/tokenin remove` | Pilih akun tersimpan yang tidak aktif dan hapus. |
+| `/tokenin usage` | Tampilkan kuota Token-In: pengeluaran, anggaran, sisa, dan waktu reset dari endpoint LiteLLM `/key/info`. |
 
 Command memvalidasi bahwa token yang ditempel diawali `sk-`. Token tidak valid ditolak dan prompt mencoba lagi pada peluncuran berikutnya.
 

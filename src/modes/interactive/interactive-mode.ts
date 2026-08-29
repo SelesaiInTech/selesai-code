@@ -4855,6 +4855,7 @@ export class InteractiveMode {
 					if (!model) return;
 					try {
 						await this.session.setModel(model);
+						this.updateAvailableProviderCount();
 						this.footer.invalidate();
 						this.updateEditorBorderColor();
 						done();
