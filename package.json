@@ -61,9 +61,9 @@
 	"dependencies": {
 		"acorn": "8.18.0",
 		"@ast-grep/cli": "0.45.0",
-		"@earendil-works/pi-agent-core": "0.84.3",
-		"@earendil-works/pi-ai": "0.84.3",
-		"@earendil-works/pi-tui": "0.84.3",
+		"@earendil-works/pi-agent-core": "0.84.4",
+		"@earendil-works/pi-ai": "0.84.4",
+		"@earendil-works/pi-tui": "0.84.4",
 		"@mozilla/readability": "^0.6.0",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "5.6.2",
