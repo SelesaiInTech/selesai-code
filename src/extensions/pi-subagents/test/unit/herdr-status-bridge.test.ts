@@ -159,17 +159,15 @@ describe("Herdr status bridge", () => {
 			label: "⏳ 1 subagent (worker)",
 		}]);
 		assert.equal(commands.length, 1);
-		assert.deepEqual(commands[0]?.slice(0, 8), [
+		assert.deepEqual(commands[0]?.slice(0, 4), [
 			"pane",
 			"report-metadata",
 			"w1:p1",
 			"--source",
-			"pi-subagents:herdr",
-			"--agent",
-			"pi",
-			"--applies-to-source",
 		]);
-		assert.ok(commands[0]?.includes("herdr:pi"));
+		assert.ok(commands[0]?.includes("pi-subagents:herdr"));
+		assert.ok(!commands[0]?.includes("--agent"));
+		assert.ok(!commands[0]?.includes("--applies-to-source"));
 		assert.ok(commands[0]?.includes("--state-label"));
 		assert.ok(commands[0]?.includes("working=⏳ 1 subagent (worker)"));
 		assert.ok(commands[0]?.includes("idle=⏳ 1 subagent (worker)"));

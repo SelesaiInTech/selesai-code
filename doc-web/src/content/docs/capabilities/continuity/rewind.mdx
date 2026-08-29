@@ -48,6 +48,7 @@ The `pi-rewind-hook` extension records exact file-state checkpoints and restores
 
 - Only works inside a git repository.
 - Restores the exact file state for tracked files and untracked, non-ignored files. It deletes paths present in the current snapshot but absent from the target snapshot, then restores the target snapshot into the worktree without staging the real git index.
+- Submodules are supported only when their paths stay unchanged, their worktrees are clean and initialized, and each target commit is already available locally. Rewind checks out those target commits without fetching. Exact restore is refused with a clear error for dirty or unavailable submodule state, added or removed submodule paths, and nested submodules; uncommitted files inside submodules are not part of snapshots.
 - Ignored files, empty directories, exact checkpoints for `toolResult` nodes, and exact checkpoints for `bashExecution` nodes are outside the snapshot model.
 - Retention only affects git object reachability. Session JSONL metadata is append-only and is never compacted by Rewind.
 - Snapshot commits may be pruned if retention is enabled and they are not pinned; Rewind validates commit existence before offering restore.

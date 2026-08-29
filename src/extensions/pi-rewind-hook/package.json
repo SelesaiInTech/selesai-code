@@ -1,6 +1,6 @@
 {
   "name": "pi-rewind-hook",
-  "version": "1.8.4",
+  "version": "1.8.6",
   "description": "Rewind extension for Pi agent - automatic git checkpoints with file/conversation restore",
   "repository": {
     "type": "git",
@@ -18,12 +18,14 @@
   "author": "nicobailon",
   "license": "MIT",
   "pi": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "scripts": {
     "test": "npx --yes tsx --tsconfig tsconfig.test.json --test index.test.ts"
   },
-  "devDependencies": {
+  "peerDependencies": {
     "@selesai/code": "*"
   }
 }

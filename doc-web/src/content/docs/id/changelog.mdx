@@ -3,6 +3,13 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.2 — Dukungan submodule Rewind, pembersihan Herdr status bridge
+
+- Menambahkan **dukungan submodule ke `pi-rewind-hook`**: exact rewind kini memotret commit gitlink dan checkout commit submodule target, dengan pemeriksaan keamanan — path submodule harus tetap sama, worktree harus bersih dan terinisialisasi, dan commit target harus tersedia secara lokal. State submodule yang tidak didukung (kotor, belum diinisialisasi, path ditambah/dihapus, submodule bersarang) ditolak dengan error yang jelas alih-alih dilaporkan sebagai exact restore.
+- Memperbaiki **race pada retention sweep**: ref store rewind kini diperbarui dengan compare-and-swap dan retry, sehingga sesi konkuren yang menambah snapshot di tengah sweep tetap dipertahankan; startup sweep digunakan kembali saat penggantian sesi alih-alih menjalankan sweep kedua.
+- Mengubah **Herdr status bridge** di `pi-subagents` agar tidak lagi mengirim `--agent pi` / `--applies-to-source herdr:pi`; state label dilaporkan langsung di bawah source `pi-subagents:herdr`.
+- Mengubah **kemasan `pi-rewind-hook`** agar mendeklarasikan `@selesai/code` sebagai peer dependency (sebelumnya devDependency) dan menaikkannya ke 1.8.6.
+
 ## 0.13.1 — Penguatan config-dir, artefak subagent scoped-sesi, penulisan ulang skill workflow
 
 - Memperbaiki **resolusi config-dir pi-hermes-memory**: ekstensi memori bawaan tidak lagi menghormati env var upstream `PI_CODING_AGENT_DIR` yang dapat mengarahkan memori ke `~/.pi/agent` secara diam-diam sementara host membaca `~/.selesai/agent`. Memori kini selalu melalui resolver agent-dir host.

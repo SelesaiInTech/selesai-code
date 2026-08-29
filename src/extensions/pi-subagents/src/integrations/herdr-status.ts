@@ -205,8 +205,6 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 			enqueue([
 				"pane", "report-metadata", paneId,
 				"--source", DEFAULT_SOURCE,
-				"--agent", "pi",
-				"--applies-to-source", "herdr:pi",
 				"--clear-state-labels",
 				"--clear-token", "summary",
 				"--clear-token", "title-suffix",
@@ -220,8 +218,6 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 		enqueue([
 			"pane", "report-metadata", paneId,
 			"--source", DEFAULT_SOURCE,
-			"--agent", "pi",
-			"--applies-to-source", "herdr:pi",
 			"--state-label", `idle=${text}`,
 			"--state-label", `done=${text}`,
 			"--state-label", `working=${text}`,

@@ -2,6 +2,16 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.2] - 2026-08-30
+
+### Added
+- **Rewind submodule support.** `pi-rewind-hook` now snapshots gitlink commits and restores submodule worktrees to their target commits during exact rewind, with safety checks: submodule paths must stay unchanged, worktrees must be clean and initialized, and target commits must be available locally. Unsupported submodule states (dirty, uninitialized, added/removed paths, nested submodules) are refused with a clear error instead of being reported as exact restores.
+- **Rewind retention sweep concurrency safety.** The retention sweep now uses a compare-and-swap on the store ref with retries, so concurrent sessions adding snapshots mid-sweep are preserved instead of being clobbered; the startup sweep is reused across session replacement instead of racing a second sweep.
+
+### Changed
+- **Herdr status bridge drops agent scoping.** `pi-subagents` no longer passes `--agent pi` / `--applies-to-source herdr:pi` to Herdr `report-metadata` calls; state labels are reported under the `pi-subagents:herdr` source directly.
+- **Rewind extension packaging.** `pi-rewind-hook` declares `@selesai/code` as a peer dependency (was devDependency) and bumps to 1.8.6.
+
 ## [0.13.1] - 2026-08-30
 
 ### Fixed

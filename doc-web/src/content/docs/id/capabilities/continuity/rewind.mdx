@@ -48,6 +48,7 @@ Extension `pi-rewind-hook` merekam checkpoint state file yang tepat dan memulihk
 
 - Hanya berfungsi di dalam repository git.
 - Memulihkan state file tepat untuk file yang di-track dan file untracked yang tidak di-ignore. Ia menghapus path yang ada di snapshot saat ini tetapi tidak ada di snapshot target, lalu memulihkan snapshot target ke worktree tanpa staging git index yang sebenarnya.
+- Submodule didukung hanya jika path-nya tetap sama, worktree-nya bersih dan terinisialisasi, dan setiap commit target sudah tersedia secara lokal. Rewind melakukan checkout commit target tersebut tanpa fetching. Exact restore ditolak dengan error yang jelas untuk state submodule yang kotor atau tidak tersedia, path submodule yang ditambah/dihapus, dan submodule bersarang; file yang belum di-commit di dalam submodule bukan bagian dari snapshot.
 - File yang di-ignore, direktori kosong, checkpoint tepat untuk node `toolResult`, dan checkpoint tepat untuk node `bashExecution` berada di luar model snapshot.
 - Retention hanya memengaruhi reachability objek git. Metadata JSONL sesi adalah append-only dan tidak pernah dikompakkan oleh Rewind.
 - Snapshot commit dapat diprune jika retention diaktifkan dan tidak dipin; Rewind memvalidasi keberadaan commit sebelum menawarkan restore.

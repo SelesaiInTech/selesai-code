@@ -3,6 +3,13 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.2 — Rewind submodule support, Herdr status bridge cleanup
+
+- Added **submodule support to `pi-rewind-hook`**: exact rewind now snapshots gitlink commits and checks out target submodule commits, with safety checks — submodule paths must stay unchanged, worktrees must be clean and initialized, and target commits must be available locally. Unsupported submodule states (dirty, uninitialized, added/removed paths, nested submodules) are refused with a clear error instead of being reported as exact restores.
+- Fixed **retention sweep races**: the rewind store ref is now updated with a compare-and-swap and retries, so concurrent sessions adding snapshots mid-sweep are preserved; the startup sweep is reused across session replacement instead of racing a second sweep.
+- Changed the **Herdr status bridge** in `pi-subagents` to stop passing `--agent pi` / `--applies-to-source herdr:pi`; state labels are reported under the `pi-subagents:herdr` source directly.
+- Changed **`pi-rewind-hook` packaging** to declare `@selesai/code` as a peer dependency (was devDependency) and bumped it to 1.8.6.
+
 ## 0.13.1 — Config-dir hardening, session-scoped subagent artifacts, workflow skill rewrite
 
 - Fixed **pi-hermes-memory config-dir resolution**: the bundled memory extension no longer honors the upstream `PI_CODING_AGENT_DIR` env var, which could silently point memory at `~/.pi/agent` while the host reads `~/.selesai/agent`. Memory now always routes through the host agent-dir resolver.
