@@ -269,6 +269,7 @@ export function registerMemoryTool(
   projectStore: ProjectStoreRef,
   dbManager: DatabaseManager | null = null,
   projectName: ProjectNameRef = null,
+  bindProjectFromCwd?: (cwd?: string) => void | Promise<void>,
 ): (candidate: MemoryStore | null) => void {
   const reconciledStores = new WeakSet<MemoryStore>();
   const attachMutationObserver = (candidate: MemoryStore | null, isProjectStore = false): void => {
@@ -409,7 +410,10 @@ This action-specific tool accepts only the parameters listed in its schema.`;
       ],
       renderResult: createSharedToolResultRenderer(memoryResultView),
       parameters,
-      async execute(_toolCallId, params, signal) {
+      async execute(_toolCallId, params, signal, _onUpdate, ctx?: { cwd?: string }) {
+        if (bindProjectFromCwd && ctx?.cwd) {
+          await bindProjectFromCwd(ctx.cwd);
+        }
         return executeAction(action, params as MemoryToolParams, signal);
       },
     });

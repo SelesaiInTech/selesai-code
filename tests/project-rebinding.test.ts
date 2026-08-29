@@ -6,13 +6,14 @@ import { describe, it } from "node:test";
 
 interface MockPi {
   handlers: Record<string, Array<(event: any, ctx: any) => unknown>>;
+  tools: Record<string, { execute: (...args: any[]) => Promise<any> }>;
   on(event: string, handler: (event: any, ctx: any) => unknown): void;
-  registerTool(): void;
+  registerTool(def: { name: string; execute: (...args: any[]) => Promise<any> }): void;
   registerCommand(): void;
 }
 
 describe("session project memory rebinding", () => {
-  it("loads project memory from the active session cwd after a switch", async () => {
+  it("writes project memory using session cwd when factory cwd differs", async () => {
     const agentRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-project-rebind-agent-"));
     const launchDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-project-rebind-launch-"));
     const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-project-rebind-target-"));
@@ -31,14 +32,16 @@ describe("session project memory rebinding", () => {
           standingInstructionsEnabled: false,
         }),
       );
-      await fs.mkdir(path.join(agentRoot, "projects-memory", path.basename(launchDir)), { recursive: true });
-      await fs.mkdir(path.join(agentRoot, "projects-memory", path.basename(targetDir)), { recursive: true });
+      const launchMemoryDir = path.join(agentRoot, "projects-memory", path.basename(launchDir));
+      const sessionMemoryDir = path.join(agentRoot, "projects-memory", path.basename(targetDir));
+      await fs.mkdir(launchMemoryDir, { recursive: true });
+      await fs.mkdir(sessionMemoryDir, { recursive: true });
       await fs.writeFile(
-        path.join(agentRoot, "projects-memory", path.basename(launchDir), "MEMORY.md"),
+        path.join(launchMemoryDir, "MEMORY.md"),
         "launch-directory memory",
       );
       await fs.writeFile(
-        path.join(agentRoot, "projects-memory", path.basename(targetDir), "MEMORY.md"),
+        path.join(sessionMemoryDir, "MEMORY.md"),
         "active-session memory",
       );
 
@@ -48,30 +51,52 @@ describe("session project memory rebinding", () => {
       const { default: registerExtension } = await import("../src/index.js");
       const mockPi: MockPi = {
         handlers: {},
+        tools: {},
         on(event, handler) {
           (this.handlers[event] ??= []).push(handler);
         },
-        registerTool() {},
+        registerTool(def) {
+          this.tools[def.name] = def;
+        },
         registerCommand() {},
       };
       registerExtension(mockPi as any);
 
       const sessionStart = mockPi.handlers.session_start?.[0];
+      const resourcesDiscover = mockPi.handlers.resources_discover?.[0];
       const beforeAgentStart = mockPi.handlers.before_agent_start?.[0];
       assert.ok(sessionStart);
+      assert.ok(resourcesDiscover);
       assert.ok(beforeAgentStart);
+      assert.ok(mockPi.tools.memory_add);
 
-      await sessionStart(
-        {},
-        {
-          cwd: targetDir,
-          sessionManager: { getBranch: () => [] },
-          ui: { notify() {} },
-        },
-      );
-      const result = await beforeAgentStart({ systemPrompt: "base" }, {}) as { systemPrompt: string };
+      const sessionCtx = {
+        cwd: targetDir,
+        sessionManager: { getBranch: () => [] },
+        ui: { notify() {} },
+      };
+
+      // Pi lifecycle: session_start, then resources_discover, then tool execute.
+      await sessionStart({}, sessionCtx);
+      await resourcesDiscover({ cwd: targetDir, reason: "startup" }, sessionCtx);
+
+      const result = await beforeAgentStart({ systemPrompt: "base" }, sessionCtx) as { systemPrompt: string };
       assert.match(result.systemPrompt, /active-session memory/);
       assert.doesNotMatch(result.systemPrompt, /launch-directory memory/);
+
+      const writeResult = await mockPi.tools.memory_add.execute(
+        "tc-session-cwd",
+        { target: "project", content: "session-cwd write" },
+        undefined,
+        undefined,
+        { cwd: targetDir },
+      );
+      assert.equal(writeResult.details.success, true);
+
+      const sessionMemory = await fs.readFile(path.join(sessionMemoryDir, "MEMORY.md"), "utf-8");
+      const launchMemory = await fs.readFile(path.join(launchMemoryDir, "MEMORY.md"), "utf-8");
+      assert.match(sessionMemory, /session-cwd write/);
+      assert.doesNotMatch(launchMemory, /session-cwd write/);
     } finally {
       process.chdir(previousCwd);
       if (previousAgentRoot === undefined) delete process.env.PI_CODING_AGENT_DIR;

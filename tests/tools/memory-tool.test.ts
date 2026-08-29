@@ -664,4 +664,46 @@ describe("registerMemoryTool", () => {
     assert.deepStrictEqual(replaceArgs, ["memory", "old", "new"], "should pass target, old_text, content to store.replace");
   });
 
+  it("binds project identity from execute ctx.cwd instead of a factory snapshot", async () => {
+    let capturedResult: any;
+    const boundCwds: string[] = [];
+    const mockPi = {
+      registerTool: (def: any) => {
+        if (!capturedResult || def.name === "memory_add") capturedResult = def;
+      },
+    } as unknown as ExtensionAPI;
+
+    const mockProjectStore = {
+      add: () => ({
+        success: true,
+        target: "memory",
+        entries: ["from session cwd"],
+        usage: "2% — 20/5000 chars",
+        entry_count: 1,
+        message: "Entry added.",
+      }),
+    } as unknown as MemoryStore;
+
+    registerMemoryTool(
+      mockPi,
+      {} as MemoryStore,
+      mockProjectStore,
+      dbManager,
+      "factory-project",
+      (cwd) => {
+        if (cwd) boundCwds.push(cwd);
+      },
+    );
+
+    await capturedResult.execute(
+      "tc-1",
+      { target: "project", content: "from session cwd" },
+      undefined,
+      undefined,
+      { cwd: "/tmp/opened-session-project" },
+    );
+
+    assert.deepStrictEqual(boundCwds, ["/tmp/opened-session-project"]);
+  });
+
 });

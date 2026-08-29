@@ -108,13 +108,15 @@ export default function (pi: ExtensionAPI) {
   let persistenceInitialized = false;
 
   const store = new MemoryStore({ ...config, memoryDir: globalDir });
-  let project = detectProject(config.projectsMemoryDir);
-  let projectName = project.name ?? "";
+  // Factory may run with no session (Pi public contract). Do not snapshot
+  // project identity from process.cwd() here — bind from session_start ctx.cwd
+  // and from tool execute ctx.cwd.
+  let projectName = "";
   const skillStore = new SkillStore({
     globalSkillsDir: path.join(globalDir, "skills"),
     piGlobalSkillsDir: path.join(agentRoot, "skills"),
-    projectSkillsDir: project.memoryDir ? path.join(project.memoryDir, "skills") : null,
-    projectName: project.name,
+    projectSkillsDir: null,
+    projectName: null,
     legacySkillsDir: path.join(legacyGlobalDir, "skills"),
     migrationSentinelPath: path.join(globalDir, ".skills-migrated-to-extension-storage"),
   });
@@ -143,8 +145,8 @@ export default function (pi: ExtensionAPI) {
   // ~/.pi/agent/<project>/ layout. This is non-destructive: legacy folders
   // remain in place while entries are copied/merged into projects-memory/.
   migrateLegacyProjectMemoryDirs(agentRoot, config.projectsMemoryDir);
-  // Detect project from cwd using shared helper
   // Project-scoped store: ~/.pi/agent/<projectsMemoryDir>/<project_name>/
+  // Bound from session/tool ctx.cwd, never from factory process.cwd().
   const createProjectStore = (projectInfo: ReturnType<typeof detectProject>): MemoryStore | null => {
     if (!projectInfo.memoryDir) return null;
     return new MemoryStore({
@@ -153,12 +155,25 @@ export default function (pi: ExtensionAPI) {
       memoryDir: projectInfo.memoryDir,
     });
   };
-  let projectMemoryDir = project.memoryDir ?? null;
-  let projectStore = createProjectStore(project);
+  let projectMemoryDir: string | null = null;
+  let projectStore: MemoryStore | null = null;
   const projectStoreRef = () => projectStore;
   const projectNameRef = () => projectName;
   let configureProjectStore: (candidate: MemoryStore | null) => void = () => {};
   let configureMemoryToolProjectStore: (candidate: MemoryStore | null) => void = () => {};
+  const bindProjectFromCwd = async (cwd?: string): Promise<void> => {
+    if (!cwd) return;
+    const nextProject = detectProject(config.projectsMemoryDir, cwd);
+    const nextProjectMemoryDir = nextProject.memoryDir ?? null;
+    if (nextProjectMemoryDir !== projectMemoryDir) {
+      projectMemoryDir = nextProjectMemoryDir;
+      projectStore = createProjectStore(nextProject);
+      configureProjectStore(projectStore);
+      configureMemoryToolProjectStore(projectStore);
+      if (projectStore) await projectStore.loadFromDisk();
+    }
+    projectName = nextProject.name ?? "";
+  };
   // Never written by review, consolidation or the correction detector — see
   // store/standing-instructions.ts for why provenance has to be structural.
   const standingStore = config.standingInstructionsEnabled !== false
@@ -191,16 +206,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     await measureLifecycle("session-start.load", async () => {
-      const nextProject = detectProject(config.projectsMemoryDir, ctx.cwd);
-      const nextProjectMemoryDir = nextProject.memoryDir ?? null;
-      if (nextProjectMemoryDir !== projectMemoryDir) {
-        projectMemoryDir = nextProjectMemoryDir;
-        projectStore = createProjectStore(nextProject);
-        configureProjectStore(projectStore);
-        configureMemoryToolProjectStore(projectStore);
-      }
-      project = nextProject;
-      projectName = nextProject.name ?? "";
+      await bindProjectFromCwd(ctx.cwd);
       refreshSkillProjectContext(ctx.cwd);
       await skillStore.migrateLegacySkills();
       await skillStore.ensureDiscoveredRoots();
@@ -249,7 +255,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   // ── 3. Register action-specific memory write tools with SQLite sync ──
-  configureMemoryToolProjectStore = registerMemoryTool(pi, store, projectStoreRef, dbManager, projectNameRef);
+  configureMemoryToolProjectStore = registerMemoryTool(pi, store, projectStoreRef, dbManager, projectNameRef, bindProjectFromCwd);
 
   // ── 4. Register the skill tool ──
   registerSkillTool(pi, skillStore);
