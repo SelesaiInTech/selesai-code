@@ -21,7 +21,7 @@ import { AGENT_ROOT, normalizeConfiguredMemoryDir, normalizeProjectsMemoryDir } 
 const MEMORY_OVERFLOW_STRATEGIES: readonly MemoryOverflowStrategy[] = ["auto-consolidate", "reject", "fifo-evict"];
 const SESSION_SEARCH_VARIANTS: readonly SessionSearchVariant[] = ["legacy", "anchors"];
 const REVIEW_TRANSPORTS: readonly ReviewTransport[] = ["direct", "subprocess"];
-const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 function isReviewTransport(value: unknown): value is ReviewTransport {
   return typeof value === "string" && REVIEW_TRANSPORTS.includes(value as ReviewTransport);
@@ -36,7 +36,7 @@ function isSessionSearchVariant(value: unknown): value is SessionSearchVariant {
 }
 
 function isThinkingLevel(value: unknown): value is ThinkingLevel {
-  return typeof value === "string" && THINKING_LEVELS.includes(value as ThinkingLevel);
+  return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value);
 }
 
 const DEFAULT_CONFIG: MemoryConfig = {
