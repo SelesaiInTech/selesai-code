@@ -105,6 +105,7 @@
 <ul>
 <li>Only works inside a git repository.</li>
 <li>Restores the exact file state for tracked files and untracked, non-ignored files. It deletes paths present in the current snapshot but absent from the target snapshot, then restores the target snapshot into the worktree without staging the real git index.</li>
+<li>Submodules are supported only when their paths stay unchanged, their worktrees are clean and initialized, and each target commit is already available locally. Rewind checks out those target commits without fetching. Exact restore is refused with a clear error for dirty or unavailable submodule state, added or removed submodule paths, and nested submodules; uncommitted files inside submodules are not part of snapshots.</li>
 <li>Ignored files, empty directories, exact checkpoints for <code dir="auto">toolResult</code> nodes, and exact checkpoints for <code dir="auto">bashExecution</code> nodes are outside the snapshot model.</li>
 <li>Retention only affects git object reachability. Session JSONL metadata is append-only and is never compacted by Rewind.</li>
 <li>Snapshot commits may be pruned if retention is enabled and they are not pinned; Rewind validates commit existence before offering restore.</li>
