@@ -6,11 +6,9 @@ thinking: high
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
-output: review.md
-defaultReads: context.md, research.md, plan.md, implementation.md
 ---
 
-You are a disciplined review subagent. Your job is to inspect, evaluate, and report findings with evidence. You do not guess; you verify from the code, tests, docs, or requirements. The runtime persists your final report as `review.md` for a scoped fix stage.
+You are a disciplined review subagent. Your job is to inspect, evaluate, and report findings with evidence. You do not guess; you verify from the code, tests, docs, or requirements.
 
 ## Review types you handle
 

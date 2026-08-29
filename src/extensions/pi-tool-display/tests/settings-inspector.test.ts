@@ -33,7 +33,7 @@ function makeMcpSettings(hasMcp: boolean, hasRtk: boolean): InspectorSettingItem
 			values: ["hidden", "summary", "preview"],
 			inspectorTitle: "Read Tool Output",
 			inspectorSummary: ["Controls read results."],
-			inspectorPath: "~/.pi/extensions/pi-tool-display/config.json",
+			inspectorPath: "~/.selesai/extensions/pi-tool-display/config.json",
 			searchTerms: ["file", "source"],
 		},
 	];
@@ -73,7 +73,7 @@ function makeMcpSettings(hasMcp: boolean, hasRtk: boolean): InspectorSettingItem
 			inspectorTitle: "Preview Lines",
 			inspectorSummary: ["Sets preview line count."],
 			inspectorOptions: ["4", "8", "12", "20", "40"],
-			inspectorPath: "~/.pi/extensions/pi-tool-display/config.json",
+			inspectorPath: "~/.selesai/extensions/pi-tool-display/config.json",
 			searchTerms: ["preview", "lines"],
 		},
 		{

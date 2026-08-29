@@ -131,7 +131,7 @@ describe('memory sqlite sync + markdown backfill', () => {
     );
   });
 
-  it('backfills legacy project memory directories from the old ~/.pi/agent/<project> layout', async () => {
+  it('backfills legacy project memory directories from the old ~/.selesai/agent/<project> layout', async () => {
     const legacyProjectDir = path.join(agentRoot, 'legacy-project');
     fs.mkdirSync(legacyProjectDir, { recursive: true });
     fs.writeFileSync(
@@ -343,7 +343,7 @@ describe('memory sqlite sync + markdown backfill', () => {
     assert.deepStrictEqual(getMemories(dbManager, { project: 'linked-file-project', target: 'memory' }), []);
   });
 
-  it('still scans project markdown under ~/.pi/agent when memoryDir is customized elsewhere', async () => {
+  it('still scans project markdown under ~/.selesai/agent when memoryDir is customized elsewhere', async () => {
     const customGlobalDir = path.join(tmpDir, 'external-memory-root');
     fs.mkdirSync(customGlobalDir, { recursive: true });
 

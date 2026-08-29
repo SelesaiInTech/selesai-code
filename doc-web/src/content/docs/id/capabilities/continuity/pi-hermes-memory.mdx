@@ -1,0 +1,74 @@
+---
+draft: false
+title: Memori persisten
+---
+
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+Extension `pi-hermes-memory` memberikan Selesai memori tahan lama: fakta, preferensi, koreksi, dan prosedur yang dapat digunakan kembali bertahan lintas sesi, dan setiap percakapan masa lalu dapat dicari.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./pi-hermes-memory"
+  runtimeSurface="mixed"
+  locale="id"
+/>
+
+## Penyiapan dan prasyarat
+
+- Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
+- Memori disimpan di direktori agent Selesai (`~/.selesai/agent/pi-hermes-memory/`), melalui resolver agent-dir host. Env var upstream `PI_CODING_AGENT_DIR` sengaja diabaikan agar memori tidak pernah diam-diam mengarah ke `~/.pi/agent`.
+- Pencarian sesi memakai SQLite; dependensi runtime `better-sqlite3` yang dibundel terinstal bersama package.
+
+## Yang disiapkan
+
+- **Tool tulis memori** (`memory_add`, `memory_replace`, `memory_remove`) yang dipanggil agent secara proaktif saat Anda mengoreksinya, berbagi preferensi, atau mengungkap fakta lingkungan/proyek yang tahan lama.
+- **`memory_search`** atas store diperluas berkapasitas tak terbatas, dengan filter target opsional (`memory`, `user`, `project`, `failure`) dan kategori.
+- **`session_search`** lintas percakapan masa lalu, diindeks otomatis selama sesi dan saat shutdown, dengan backfill inkremental terbatas saat startup.
+- **`skill_manage`** untuk menyimpan prosedur yang dapat digunakan kembali sebagai skill Pi-native (scope global atau proyek).
+- **Pembelajaran latar belakang**: nudge review setiap 10 turn atau 15 tool call, deteksi koreksi yang langsung tersimpan, session flush saat compact/shutdown, dan auto-konsolidasi saat memori mencapai batas karakternya.
+- **Pemindaian rahasia**: API key dan token diblokir agar tidak tersimpan.
+
+## Yang dapat dikonfigurasi
+
+<ExtensionCustomization slug="pi-hermes-memory" locale="id" />
+
+
+## Yang dapat dilakukan
+
+- Bertanya dalam bahasa alami: `Apa yang kita bahas tentang auth?` — `session_search` menemukannya seketika.
+- Mengoreksi agent dan koreksi tersimpan sebagai pelajaran tahan lama.
+- Memeriksa semua yang tersimpan: `/memory-insights`.
+- Mengelola skill secara interaktif: `/memory-skills`.
+- Mengisi profil user: `/memory-interview`.
+- Mengimpor sesi lama dan backfill memori Markdown: `/memory-index-sessions`, `/memory-sync-markdown`.
+- Pratinjau konteks memori yang disuntikkan ke system prompt: `/memory-preview-context`.
+
+## Perintah, tool, dan shortcut
+
+| Perintah / tool | Deskripsi |
+| --- | --- |
+| `memory_add` / `memory_replace` / `memory_remove` | Tool agent untuk tulis memori tahan lama. |
+| `memory_search` | Cari store memori yang diperluas. |
+| `session_search` | Cari percakapan masa lalu. |
+| `skill_manage` | Buat, lihat, patch, update, dan hapus skill prosedural. |
+| `/memory-insights` | Tampilkan semua yang tersimpan di memori dan profil user. |
+| `/memory-skills` | Pengelola skill interaktif (cari, multi-pilih, pindah, hapus). |
+| `/memory-consolidate` | Picu konsolidasi memori secara manual untuk mengosongkan ruang. |
+| `/memory-interview` | Jawab beberapa pertanyaan untuk mengisi profil user. |
+| `/memory-switch-project` | Daftar memori proyek dan jumlah entrinya. |
+| `/memory-index-sessions` | Impor sesi Pi masa lalu ke database pencarian. |
+| `/memory-sync-markdown` | Backfill memori Markdown ke store pencarian SQLite. |
+| `/memory-preview-context` | Pratinjau blok kebijakan memori yang ditambahkan ke system prompt. |
+| `/learn-memory-tool` | Skill yang mengajarkan cara memakai sistem memori. |
+
+## Batasan dan keamanan
+
+- Memori Markdown inti dibatasi ukurannya; saat penuh dan konsolidasi tidak dapat membebaskan ruang, tulis gagal alih-alih tumpah diam-diam ke penyimpanan SQLite saja.
+- Rahasia diblokir agar tidak tersimpan oleh pemindaian konten.
+- Pencarian sesi dibatasi per startup untuk backfill inkremental; impor massal tersedia secara manual.
+- Memori dan skill berada di direktori agent Selesai; memori proyek disimpan per proyek di bawah `~/.selesai/agent/projects-memory/<project>/`.
+
+<SourceEvidence slug="pi-hermes-memory" />

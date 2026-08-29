@@ -38,21 +38,24 @@ The parent remains responsible for scope, acceptance, and deciding when to stop.
 
 ## How it works
 
-The parent inspects the task first and chooses the smallest safe flow:
+The skill is delegation-first: when it is active, the parent decomposes the request into narrow subtasks and delegates them to subagents instead of implementing directly. The parent owns classification, scope, decisions, synthesis, and final acceptance.
 
-| Situation | Flow |
+Common subtask-to-agent mapping:
+
+| Subtask | Agent |
 | --- | --- |
-| Small, localized change | Implement locally and run a focused check. |
-| Bounded implementation | Optional codebase reconnaissance → one writer → focused validation. |
-| Uncertain code or external dependency | Reconnaissance and/or research → parent decision or plan → one writer → relevant review. |
-| Material architecture or product decision | Resolve the decision first; use an oracle or multiple perspectives only when warranted. |
-| Broad or risky work | Serial milestones: decide/plan → one writer → review/validation → scoped fix → re-review if the fix is material. |
+| Codebase recon / find seams | `scout` or `explorer` |
+| External/uncertain research | `researcher` |
+| Implementation planning | `architect` |
+| Scoped implementation | `worker` or `builder` |
+| Independent review | `reviewer` or `commentator` |
+| Parent-synthesized fixes | `worker` |
 
-The parent remains the decision-maker and final acceptor. Keep one writer per checkout; only independent read-only discovery, research, review, and validation should run in parallel.
+Keep one writer per checkout; only independent read-only discovery, research, review, and validation run in parallel. For material architecture or product tradeoffs, resolve them first with an `oracle` or Council Mode before implementation.
 
 ## Using delegated stages
 
-The skill uses the `pi-subagents` `workflowScript` API when coordination is needed. Built-in roles can persist concise artifacts such as `context.md`, `research.md`, `plan.md`, implementation reports, and reviews. Pass only the artifacts a later role needs through `reads`; reviewers should inspect the actual current diff.
+The skill uses the `pi-subagents` `workflowScript` API for coordination: `runs.run` for ordered stages, `runs.all` for independent fanout, and ordinary JavaScript for branching and aggregation. Built-in roles can persist concise artifacts such as `context.md`, `research.md`, `plan.md`, implementation reports, and reviews; pass only the artifacts a later role needs through `reads`. Reviewers should inspect the actual current diff.
 
 A handoff is optional. Use one for cross-session continuity, a milestone boundary, or a durable user-facing record—not as a mandatory pipeline stage.
 

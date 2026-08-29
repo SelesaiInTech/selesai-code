@@ -3,15 +3,10 @@ import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PROJECTS_MEMORY_DIR } from "./constants.js";
 
-const PI_AGENT_DIR_ENV_VAR = "PI_CODING_AGENT_DIR";
-const SELESAI_AGENT_DIR_ENV_VAR = "SELESAI_CODING_AGENT_DIR";
-
-export function resolveAgentRoot(env: Record<string, string | undefined> = process.env): string {
-  const configured = env[PI_AGENT_DIR_ENV_VAR]?.trim() ?? env[SELESAI_AGENT_DIR_ENV_VAR]?.trim();
-  return configured ? path.resolve(expandHome(configured)) : getAgentDir();
-}
-
-export const AGENT_ROOT = resolveAgentRoot();
+// Route through the host resolver only. The upstream `PI_CODING_AGENT_DIR`
+// env var is deliberately NOT honored here: on the Selesai fork it would
+// silently point memory at ~/.pi/agent while the host reads ~/.selesai/agent.
+export const AGENT_ROOT = getAgentDir();
 
 export function expandHome(input: string): string {
   if (input === "~") return os.homedir();

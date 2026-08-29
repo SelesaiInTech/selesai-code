@@ -325,7 +325,7 @@ describe("buildChildPiPromptArgs", () => {
           childExtensionPaths: [
             configured,
             configured,
-            "~/.pi/agent/extensions/provider.ts",
+            "~/.selesai/agent/extensions/provider.ts",
             "./relative-provider.ts",
             "git:github.com/example/provider-extension@v1",
             "npm:@example/provider-extension@1.0.0",
@@ -336,7 +336,7 @@ describe("buildChildPiPromptArgs", () => {
           "-p", "--no-session", "--no-extensions",
           "-e", OWN_EXTENSION_PATH,
           "-e", configured,
-          "-e", "~/.pi/agent/extensions/provider.ts",
+          "-e", "~/.selesai/agent/extensions/provider.ts",
           "-e", "./relative-provider.ts",
           "-e", "git:github.com/example/provider-extension@v1",
           "-e", "npm:@example/provider-extension@1.0.0",

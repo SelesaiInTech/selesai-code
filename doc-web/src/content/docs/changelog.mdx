@@ -3,6 +3,15 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.1 — Config-dir hardening, session-scoped subagent artifacts, workflow skill rewrite
+
+- Fixed **pi-hermes-memory config-dir resolution**: the bundled memory extension no longer honors the upstream `PI_CODING_AGENT_DIR` env var, which could silently point memory at `~/.pi/agent` while the host reads `~/.selesai/agent`. Memory now always routes through the host agent-dir resolver.
+- Changed **subagent artifact storage** to default to the session directory instead of the project checkout (`.pi-subagents/`), so delegated runs no longer pollute the working tree.
+- Changed the builtin **`reviewer` agent** to return its report normally instead of forcing a `review.md` artifact.
+- Added **launch-directory preflight** to foreground subagent runs, matching background runs: unsafe `cwd` values are rejected before children start.
+- Rewrote the bundled **`workflow` skill** as delegation-first orchestration: subtask→agent mapping, `workflowScript` examples for single/uncertain/parallel work, and the parent as coordinator/reviewer.
+- Fixed startup **logo alignment** in the interactive TUI so the gradient renders evenly.
+
 ## 0.13.0 — Sub-cent cost display
 
 - Fixed cost labels rounding small per-call costs to `$0.000`: the footer, zentui footer, and usage popup now format costs adaptively (3 decimals at $1+, 4 decimals at $0.01+, 6 decimals below), so gateway-reconciled costs like `$0.000336` are visible.

@@ -38,21 +38,24 @@ Parent tetap bertanggung jawab atas cakupan, penerimaan, dan keputusan kapan ber
 
 ## Cara kerja
 
-Agen parent memeriksa tugas terlebih dahulu lalu memilih alur aman yang paling kecil:
+Skill ini bersifat delegation-first: saat aktif, parent menguraikan permintaan menjadi subtask yang sempit dan mendelegasikannya ke subagent, bukan mengimplementasikan langsung. Parent memiliki klasifikasi, cakupan, keputusan, sintesis, dan penerimaan akhir.
 
-| Situasi | Alur |
+Pemetaan subtask→agen yang umum:
+
+| Subtask | Agen |
 | --- | --- |
-| Perubahan kecil dan lokal | Implementasikan secara lokal lalu jalankan pemeriksaan terfokus. |
-| Implementasi terbatas | Rekonesans codebase opsional → satu writer → validasi terfokus. |
-| Kode atau dependensi eksternal tidak pasti | Rekonesans dan/atau research → keputusan atau rencana parent → satu writer → review yang relevan. |
-| Keputusan arsitektur atau produk yang material | Selesaikan keputusan terlebih dahulu; gunakan oracle atau beberapa perspektif hanya jika perlu. |
-| Pekerjaan luas atau berisiko | Milestone serial: putuskan/rencanakan → satu writer → review/validasi → fix terarah → review ulang jika fix material. |
+| Rekonesans codebase / mencari seam | `scout` atau `explorer` |
+| Riset eksternal/tidak pasti | `researcher` |
+| Perencanaan implementasi | `architect` |
+| Implementasi terbatas | `worker` atau `builder` |
+| Review independen | `reviewer` atau `commentator` |
+| Perbaikan hasil sintesis parent | `worker` |
 
-Agen parent tetap menjadi pengambil keputusan dan penerima akhir. Pertahankan satu writer per checkout; hanya discovery, research, review, dan validasi read-only yang independen yang boleh berjalan paralel.
+Pertahankan satu writer per checkout; hanya discovery, research, review, dan validasi read-only yang independen yang berjalan paralel. Untuk keputusan arsitektur atau produk yang material, selesaikan terlebih dahulu dengan `oracle` atau Council Mode sebelum implementasi.
 
 ## Menggunakan tahap delegasi
 
-Skill ini memakai API `workflowScript` dari `pi-subagents` saat koordinasi dibutuhkan. Peran bawaan dapat menyimpan artefak ringkas seperti `context.md`, `research.md`, `plan.md`, laporan implementasi, dan review. Teruskan hanya artefak yang dibutuhkan peran berikutnya melalui `reads`; reviewer harus memeriksa diff aktual saat ini.
+Skill ini memakai API `workflowScript` dari `pi-subagents` untuk koordinasi: `runs.run` untuk tahap berurutan, `runs.all` untuk fanout independen, dan JavaScript biasa untuk percabangan dan agregasi. Peran bawaan dapat menyimpan artefak ringkas seperti `context.md`, `research.md`, `plan.md`, laporan implementasi, dan review; teruskan hanya artefak yang dibutuhkan peran berikutnya melalui `reads`. Reviewer harus memeriksa diff aktual saat ini.
 
 Handoff bersifat opsional. Gunakan untuk kelanjutan lintas-sesi, batas milestone, atau catatan permanen yang ditujukan untuk user—bukan sebagai tahap pipeline wajib.
 

@@ -1,0 +1,74 @@
+---
+draft: false
+title: Persistent memory
+---
+
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+The `pi-hermes-memory` extension gives Selesai durable memory: facts, preferences, corrections, and reusable procedures survive across sessions, and every past conversation is searchable.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./pi-hermes-memory"
+  runtimeSurface="mixed"
+  locale="en"
+/>
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- Memory is stored under the Selesai agent directory (`~/.selesai/agent/pi-hermes-memory/`), routed through the host agent-dir resolver. The upstream `PI_CODING_AGENT_DIR` env var is deliberately ignored so memory never silently points at `~/.pi/agent`.
+- Session search uses SQLite; the bundled `better-sqlite3` runtime dependency is installed with the package.
+
+## What it sets up
+
+- **Memory write tools** (`memory_add`, `memory_replace`, `memory_remove`) that the agent calls proactively when you correct it, share a preference, or reveal durable environment or project facts.
+- **`memory_search`** over an unlimited-capacity extended store, with optional target (`memory`, `user`, `project`, `failure`) and category filters.
+- **`session_search`** across past conversations, indexed automatically during the session and on shutdown, with a bounded startup backfill.
+- **`skill_manage`** for saving reusable procedures as Pi-native skills (global or project scope).
+- **Background learning**: a review nudge every 10 turns or 15 tool calls, correction detection that saves immediately, session flush on compact/shutdown, and auto-consolidation when memory hits its character limit.
+- **Secret scanning**: API keys and tokens are blocked from being saved.
+
+## What you can configure
+
+<ExtensionCustomization slug="pi-hermes-memory" locale="en" />
+
+
+## What you can do
+
+- Ask in plain language: `What did we discuss about auth?` — `session_search` finds it instantly.
+- Correct the agent and have the correction saved as a durable lesson.
+- Inspect everything stored: `/memory-insights`.
+- Manage skills interactively: `/memory-skills`.
+- Pre-fill your user profile: `/memory-interview`.
+- Import past sessions and backfill Markdown memories: `/memory-index-sessions`, `/memory-sync-markdown`.
+- Preview what memory context is injected into the system prompt: `/memory-preview-context`.
+
+## Commands, tools, and shortcuts
+
+| Command / tool | Description |
+| --- | --- |
+| `memory_add` / `memory_replace` / `memory_remove` | Agent tools for durable memory writes. |
+| `memory_search` | Search the extended memory store. |
+| `session_search` | Search past conversations. |
+| `skill_manage` | Create, view, patch, update, and delete procedural skills. |
+| `/memory-insights` | Show everything stored in memory and the user profile. |
+| `/memory-skills` | Interactive skills manager (search, multi-select, move, delete). |
+| `/memory-consolidate` | Manually trigger memory consolidation to free space. |
+| `/memory-interview` | Answer a few questions to pre-fill the user profile. |
+| `/memory-switch-project` | List project memories and their entry counts. |
+| `/memory-index-sessions` | Import past Pi sessions into the search database. |
+| `/memory-sync-markdown` | Backfill Markdown memories into the SQLite search store. |
+| `/memory-preview-context` | Preview the memory policy blocks appended to the system prompt. |
+| `/learn-memory-tool` | Skill that teaches how to use the memory system. |
+
+## Limits and safety
+
+- Core Markdown memory is size-limited; when full and consolidation cannot free space, the write fails rather than silently spilling into SQLite-only storage.
+- Secrets are blocked from being saved by content scanning.
+- Session search is bounded per startup for the incremental backfill; bulk imports are available manually.
+- Memory and skills live under the Selesai agent directory; project memories are stored per project under `~/.selesai/agent/projects-memory/<project>/`.
+
+<SourceEvidence slug="pi-hermes-memory" />

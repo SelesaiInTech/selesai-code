@@ -28,7 +28,7 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 - Mendaftarkan tool `subagent` untuk run single, paralel, dan berantai.
 - Mendaftarkan keluarga slash command: `/run`, `/chain`, `/parallel`, `/run-chain`, `/subagents`, `/subagent-cost`, `/subagents-doctor`, `/subagents-stop`, `/subagents-models`, `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile`, plus shortcut prompt-workflow seperti `/parallel-review`.
 - Mendaftarkan invokasi agen inline: `#nama-agent` di mana pun dalam pesan (awal, tengah, atau akhir) menjalankan agen tersebut secara langsung, dan mengetik `#` di editor melengkapi agen yang terinstal secara otomatis.
-- Membuat artifact lifecycle untuk run async di bawah direktori hasil subagent Selesai.
+- Membuat artifact lifecycle untuk run async di bawah direktori hasil subagent Selesai; artifact run default-nya di direktori sesi, bukan di checkout proyek (`.pi-subagents/`).
 - Menyetel `SELESAI_SUBAGENT_PARENT_SESSION` di proses child untuk forwarding permission-system.
 
 ## Yang dapat dikonfigurasi

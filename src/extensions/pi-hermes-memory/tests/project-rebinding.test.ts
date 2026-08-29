@@ -17,7 +17,8 @@ describe("session project memory rebinding", () => {
     const agentRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-project-rebind-agent-"));
     const launchDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-project-rebind-launch-"));
     const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-project-rebind-target-"));
-    const previousAgentRoot = process.env.PI_CODING_AGENT_DIR;
+    const previousAgentRoot = process.env.SELESAI_CODING_AGENT_DIR;
+    const previousPiAgentRoot = process.env.PI_CODING_AGENT_DIR;
     const previousCwd = process.cwd();
     try {
       await fs.writeFile(
@@ -45,9 +46,12 @@ describe("session project memory rebinding", () => {
         "active-session memory",
       );
 
+      process.env.SELESAI_CODING_AGENT_DIR = agentRoot;
+      // Tests run outside the extension loader (no jiti alias), so the
+      // upstream pi-coding-agent getAgentDir() still reads PI_CODING_AGENT_DIR.
       process.env.PI_CODING_AGENT_DIR = agentRoot;
       process.chdir(launchDir);
-      // Import after setting PI_CODING_AGENT_DIR so AGENT_ROOT is test-local.
+      // Import after setting the agent dir so AGENT_ROOT is test-local.
       const { default: registerExtension } = await import("../src/index.js");
       const mockPi: MockPi = {
         handlers: {},
@@ -99,8 +103,10 @@ describe("session project memory rebinding", () => {
       assert.doesNotMatch(launchMemory, /session-cwd write/);
     } finally {
       process.chdir(previousCwd);
-      if (previousAgentRoot === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentRoot;
+      if (previousAgentRoot === undefined) delete process.env.SELESAI_CODING_AGENT_DIR;
+      else process.env.SELESAI_CODING_AGENT_DIR = previousAgentRoot;
+      if (previousPiAgentRoot === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousPiAgentRoot;
       await fs.rm(agentRoot, { recursive: true, force: true });
       await fs.rm(launchDir, { recursive: true, force: true });
       await fs.rm(targetDir, { recursive: true, force: true });

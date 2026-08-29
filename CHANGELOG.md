@@ -2,6 +2,18 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.1] - 2026-08-30
+
+### Fixed
+- **pi-hermes-memory config-dir hardening.** The bundled memory extension no longer honors the upstream `PI_CODING_AGENT_DIR` env var, which could silently point memory at `~/.pi/agent` while the host reads `~/.selesai/agent`. Memory now always routes through the host agent-dir resolver.
+- **Startup logo alignment.** The interactive-mode ASCII logo lines are padded so the gradient renders evenly.
+
+### Changed
+- **Subagent artifacts default to the session directory.** `pi-subagents` default artifact storage moved from the project checkout (`.pi-subagents/`) to the Pi session directory, so delegated runs no longer pollute the working tree or published package contents.
+- **Reviewer agent returns reports normally.** The builtin `reviewer` no longer forces an `output: review.md` artifact or default reads; review findings are returned in the result like other agents.
+- **Foreground launch cwd preflight.** Foreground subagent launches now run the same `preflightLaunchCwd` check as background runs, rejecting unsafe launch directories before starting children.
+- **Workflow skill rewritten.** The bundled `workflow` skill is now delegation-first: it maps subtasks to agents, shows `workflowScript` shapes for single/uncertain/parallel work, and keeps the parent as coordinator/reviewer rather than primary implementer.
+
 ## [0.13.0] - 2026-08-29
 
 ### Fixed

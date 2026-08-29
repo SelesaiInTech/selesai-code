@@ -3,6 +3,15 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.1 — Penguatan config-dir, artefak subagent scoped-sesi, penulisan ulang skill workflow
+
+- Memperbaiki **resolusi config-dir pi-hermes-memory**: ekstensi memori bawaan tidak lagi menghormati env var upstream `PI_CODING_AGENT_DIR` yang dapat mengarahkan memori ke `~/.pi/agent` secara diam-diam sementara host membaca `~/.selesai/agent`. Memori kini selalu melalui resolver agent-dir host.
+- Mengubah **penyimpanan artefak subagent** agar default-nya di direktori sesi, bukan di checkout proyek (`.pi-subagents/`), sehingga run yang didelegasikan tidak lagi mengotori working tree.
+- Mengubah agen bawaan **`reviewer`** agar mengembalikan laporannya secara normal, bukan memaksa artefak `review.md`.
+- Menambahkan **preflight direktori peluncuran** pada run subagent foreground, sejalan dengan run background: nilai `cwd` yang tidak aman ditolak sebelum child dimulai.
+- Menulis ulang skill bawaan **`workflow`** sebagai orkestrasi delegation-first: pemetaan subtask→agen, contoh `workflowScript` untuk pekerjaan tunggal/tidak pasti/paralel, dan parent sebagai koordinator/reviewer.
+- Memperbaiki **perataan logo** startup di TUI interaktif agar gradien tampil merata.
+
 ## 0.13.0 — Tampilan biaya di bawah satu sen
 
 - Memperbaiki label biaya yang membulatkan biaya per panggilan kecil menjadi `$0.000`: footer, footer zentui, dan popup usage kini memformat biaya secara adaptif (3 desimal di $1+, 4 desimal di $0.01+, 6 desimal di bawahnya), sehingga biaya hasil rekonsiliasi gateway seperti `$0.000336` terlihat.

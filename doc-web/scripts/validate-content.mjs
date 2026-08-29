@@ -45,8 +45,8 @@ const BUNDLED_EXTENSION_GUIDES = {
   "./undo.ts": "continuity/undo",
   "./pi-subagents": "delegation/pi-subagents",
   "./pi-web-agent": "research/web-agent",
+  "./pi-hermes-memory": "continuity/pi-hermes-memory",
   "./web-agent-onboarding.ts": "workspace/web-agent-onboarding",
-  "./model-prompt-injector": "workspace/model-prompt-injector",
   "./tps.ts": "workspace/tps",
   "./pi-zentui/extensions/zentui/index.ts": "workspace/zentui",
 };

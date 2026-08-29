@@ -139,7 +139,7 @@ test("isMcpToolCandidate recognises pi-mcp-adapter direct tools through sourceIn
 			parameters: {},
 			sourceInfo: {
 				source: "local",
-				path: "C:/Users/Administrator/.pi/agent/extensions/pi-mcp-adapter/index.ts",
+				path: "C:/Users/Administrator/.selesai/agent/extensions/pi-mcp-adapter/index.ts",
 			},
 		}),
 		true,

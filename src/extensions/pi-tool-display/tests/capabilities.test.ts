@@ -27,7 +27,7 @@ test("detectToolDisplayCapabilities recognises MCP tools from v0.62.0 tool info 
 				"Search the web with Exa. Direct MCP wrapper for 'exa:web_search_exa'. Common args: query*.",
 			parameters: {},
 			sourceInfo: {
-				path: "C:/Users/Administrator/.pi/agent/extensions/pi-mcp-adapter/index.ts",
+				path: "C:/Users/Administrator/.selesai/agent/extensions/pi-mcp-adapter/index.ts",
 				source: "local",
 				scope: "user",
 				origin: "top-level",

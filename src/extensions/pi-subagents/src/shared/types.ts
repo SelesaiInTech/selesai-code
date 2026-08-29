@@ -2513,7 +2513,7 @@ export const DEFAULT_MAX_OUTPUT: Required<MaxOutputConfig> = {
 
 export const DEFAULT_ARTIFACT_CONFIG: ArtifactConfig = {
 	enabled: true,
-	dir: "project",
+	dir: "session",
 	includeInput: true,
 	includeOutput: true,
 	includeJsonl: false,

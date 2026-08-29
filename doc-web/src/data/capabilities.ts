@@ -135,6 +135,22 @@ export const capabilities: Capability[] = [
     runtimeSurface: "mixed",
   },
   {
+    slug: "pi-hermes-memory",
+    category: "continuity-and-recovery",
+    en: { displayName: "Persistent memory", benefit: "Facts, preferences, corrections, and reusable procedures survive across sessions, with search over every past conversation." },
+    id: { displayName: "Memori persisten", benefit: "Fakta, preferensi, koreksi, dan prosedur yang dapat digunakan kembali bertahan lintas sesi, dengan pencarian atas setiap percakapan masa lalu." },
+    sourcePaths: ["src/extensions/pi-hermes-memory/", "README.md"],
+    sourceLinks: [
+      links("Extension source", "src/extensions/pi-hermes-memory/"),
+      links("README mention", "README.md"),
+    ],
+    guideRoute: "capabilities/continuity/pi-hermes-memory",
+    piComparison: "core-differentiator",
+    distribution: "bundled",
+    manifestEntry: "./pi-hermes-memory",
+    runtimeSurface: "mixed",
+  },
+  {
     slug: "undo",
     category: "continuity-and-recovery",
     en: { displayName: "Turn-level undo", benefit: "Undo tracked edits, writes, and detected mutating shell commands one turn at a time." },

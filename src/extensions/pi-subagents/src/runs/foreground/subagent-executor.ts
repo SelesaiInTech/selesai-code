@@ -19,6 +19,7 @@ import {
 import { getLivePromptAudit, rewritePromptWithGuidance, updateLiveEffectivePrompt } from "./prompt-audit.ts";
 import { persistForegroundRunHistory, MAX_REMEMBERED_FOREGROUND_RUNS } from "./foreground-history.ts";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
+import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
 import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
@@ -5356,7 +5357,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 		}
 		const directParams = requestParams;
-		const requestedCwd = directParams.cwd;
+		const requestedCwd = params.cwd;
 		const requestCwd = resolveRequestedCwd(ctx.cwd, directParams.cwd);
 		const paramsWithResolvedCwd = directParams.cwd === undefined ? directParams : { ...directParams, cwd: requestCwd };
 		const action = paramsWithResolvedCwd.action;
@@ -6043,6 +6044,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 		const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
 		const effectiveCwd = effectiveParams.cwd ?? ctx.cwd;
+		const cwdError = preflightLaunchCwd(requestedCwd ?? effectiveCwd, effectiveCwd);
+		if (cwdError) return buildRequestedModeError(effectiveParams, cwdError);
 		const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
 		const discovered = deps.discoverAgents(effectiveCwd, scope, requestParentModel?.provider);
 		const discoveredAgents = discovered.agents;

@@ -1707,22 +1707,107 @@
         "src/extensions/pi-zentui/extensions/zentui/config.ts"
       ],
       "scopes": [
-        { "label": { "en": "Zentui config", "id": "Konfigurasi zentui" }, "path": "~/.selesai/agent/zentui.json", "precedence": { "en": "Single file written by /zentui; no project layer.", "id": "Satu file yang ditulis /zentui; tidak ada lapisan proyek." } }
+        {
+          "label": {
+            "en": "Zentui config",
+            "id": "Konfigurasi zentui"
+          },
+          "path": "~/.selesai/agent/zentui.json",
+          "precedence": {
+            "en": "Single file written by /zentui; no project layer.",
+            "id": "Satu file yang ditulis /zentui; tidak ada lapisan proyek."
+          }
+        }
       ],
       "settings": [
-        { "key": "components.editor.style", "type": "string", "default": "opencode", "description": { "en": "Editor surface: opencode, opencode-copy-friendly, accent-rail, or minimalist.", "id": "Permukaan editor: opencode, opencode-copy-friendly, accent-rail, atau minimalist." }, "persistence": "zentui.json" },
-        { "key": "components.footer.style", "type": "string", "default": "native", "description": { "en": "Footer style: native, starship, or hidden.", "id": "Gaya footer: native, starship, atau hidden." }, "persistence": "zentui.json" },
-        { "key": "components.userMessages.style", "type": "string", "default": "framed", "description": { "en": "User-message style: framed, framed-copy-friendly, compact, or labeled.", "id": "Gaya pesan user: framed, framed-copy-friendly, compact, atau labeled." }, "persistence": "zentui.json" },
-        { "key": "components.workingLine.enabled", "type": "boolean", "default": "true", "description": { "en": "Take over Pi's complete working-line row and settled turn summary.", "id": "Ambil alih baris working line lengkap Pi dan ringkasan turn yang selesai." }, "persistence": "zentui.json" },
-        { "key": "components.footer.styles.starship.pathDisplay.mode", "type": "string", "default": "basename", "description": { "en": "Starship footer path display: basename, full, or repository.", "id": "Tampilan path footer starship: basename, full, atau repository." }, "persistence": "zentui.json" }
+        {
+          "key": "components.editor.style",
+          "type": "string",
+          "default": "opencode",
+          "description": {
+            "en": "Editor surface: opencode, opencode-copy-friendly, accent-rail, or minimalist.",
+            "id": "Permukaan editor: opencode, opencode-copy-friendly, accent-rail, atau minimalist."
+          },
+          "persistence": "zentui.json"
+        },
+        {
+          "key": "components.footer.style",
+          "type": "string",
+          "default": "native",
+          "description": {
+            "en": "Footer style: native, starship, or hidden.",
+            "id": "Gaya footer: native, starship, atau hidden."
+          },
+          "persistence": "zentui.json"
+        },
+        {
+          "key": "components.userMessages.style",
+          "type": "string",
+          "default": "framed",
+          "description": {
+            "en": "User-message style: framed, framed-copy-friendly, compact, or labeled.",
+            "id": "Gaya pesan user: framed, framed-copy-friendly, compact, atau labeled."
+          },
+          "persistence": "zentui.json"
+        },
+        {
+          "key": "components.workingLine.enabled",
+          "type": "boolean",
+          "default": "true",
+          "description": {
+            "en": "Take over Pi's complete working-line row and settled turn summary.",
+            "id": "Ambil alih baris working line lengkap Pi dan ringkasan turn yang selesai."
+          },
+          "persistence": "zentui.json"
+        },
+        {
+          "key": "components.footer.styles.starship.pathDisplay.mode",
+          "type": "string",
+          "default": "basename",
+          "description": {
+            "en": "Starship footer path display: basename, full, or repository.",
+            "id": "Tampilan path footer starship: basename, full, atau repository."
+          },
+          "persistence": "zentui.json"
+        }
       ],
       "envVars": [],
       "controls": [
-        { "name": "/zentui", "description": { "en": "Open the live configuration picker; changes save to zentui.json.", "id": "Buka picker konfigurasi langsung; perubahan disimpan ke zentui.json." } },
-        { "name": "/zentui editor toggle", "description": { "en": "Toggle the editor surface without opening the picker.", "id": "Toggle permukaan editor tanpa membuka picker." } },
-        { "name": "/zentui messages toggle", "description": { "en": "Toggle user-message framing without opening the picker.", "id": "Toggle framing pesan user tanpa membuka picker." } },
-        { "name": "/zentui working-line", "description": { "en": "Configure working-line takeover and turn summary.", "id": "Konfigurasikan pengambilalihan working line dan ringkasan turn." } },
-        { "name": "/zentui format <template>", "description": { "en": "Set the compact footer format template.", "id": "Atur template format footer compact." } }
+        {
+          "name": "/zentui",
+          "description": {
+            "en": "Open the live configuration picker; changes save to zentui.json.",
+            "id": "Buka picker konfigurasi langsung; perubahan disimpan ke zentui.json."
+          }
+        },
+        {
+          "name": "/zentui editor toggle",
+          "description": {
+            "en": "Toggle the editor surface without opening the picker.",
+            "id": "Toggle permukaan editor tanpa membuka picker."
+          }
+        },
+        {
+          "name": "/zentui messages toggle",
+          "description": {
+            "en": "Toggle user-message framing without opening the picker.",
+            "id": "Toggle framing pesan user tanpa membuka picker."
+          }
+        },
+        {
+          "name": "/zentui working-line",
+          "description": {
+            "en": "Configure working-line takeover and turn summary.",
+            "id": "Konfigurasikan pengambilalihan working line dan ringkasan turn."
+          }
+        },
+        {
+          "name": "/zentui format <template>",
+          "description": {
+            "en": "Set the compact footer format template.",
+            "id": "Atur template format footer compact."
+          }
+        }
       ],
       "noConfig": false
     },
@@ -1738,7 +1823,16 @@
       ],
       "scopes": [],
       "settings": [
-        { "key": "tps status", "type": "status line", "default": "live tok/s", "description": { "en": "Live tokens-per-second for the main model and subagent runs; fixed reliability gates, not user-configurable.", "id": "Token-per-detik langsung untuk model utama dan run subagent; gate keandalan tetap, tidak dapat dikonfigurasi user." }, "persistence": "source-defined" }
+        {
+          "key": "tps status",
+          "type": "status line",
+          "default": "live tok/s",
+          "description": {
+            "en": "Live tokens-per-second for the main model and subagent runs; fixed reliability gates, not user-configurable.",
+            "id": "Token-per-detik langsung untuk model utama dan run subagent; gate keandalan tetap, tidak dapat dikonfigurasi user."
+          },
+          "persistence": "source-defined"
+        }
       ],
       "envVars": [],
       "controls": [],
@@ -1788,21 +1882,238 @@
         "src/extensions/pi-tool-display/config/config.example.json"
       ],
       "scopes": [
-        { "label": { "en": "Tool display config", "id": "Konfigurasi tool display" }, "path": "~/.selesai/agent/extensions/pi-tool-display/config.json", "precedence": { "en": "Single user-level file written by /tool-display; no project layer.", "id": "Satu file tingkat user yang ditulis /tool-display; tidak ada lapisan proyek." } }
+        {
+          "label": {
+            "en": "Tool display config",
+            "id": "Konfigurasi tool display"
+          },
+          "path": "~/.selesai/agent/extensions/pi-tool-display/config.json",
+          "precedence": {
+            "en": "Single user-level file written by /tool-display; no project layer.",
+            "id": "Satu file tingkat user yang ditulis /tool-display; tidak ada lapisan proyek."
+          }
+        }
       ],
       "settings": [
-        { "key": "readOutputMode", "type": "string", "default": "hidden", "description": { "en": "Read tool output mode: hidden, summary, or preview.", "id": "Mode output tool read: hidden, summary, atau preview." }, "persistence": "config.json" },
-        { "key": "searchOutputMode", "type": "string", "default": "hidden", "description": { "en": "Search tool output mode: hidden, count, or preview.", "id": "Mode output tool search: hidden, count, atau preview." }, "persistence": "config.json" },
-        { "key": "bashOutputMode", "type": "string", "default": "opencode", "description": { "en": "Bash output mode: opencode, summary, or preview.", "id": "Mode output bash: opencode, summary, atau preview." }, "persistence": "config.json" },
-        { "key": "previewLines", "type": "number", "default": "8", "description": { "en": "Lines shown in preview mode.", "id": "Baris yang ditampilkan dalam mode preview." }, "persistence": "config.json" },
-        { "key": "boxedToolCalls", "type": "boolean", "default": "true", "description": { "en": "Draw an ASCII border around each tool call and its output.", "id": "Gambar border ASCII di sekitar setiap panggilan tool dan outputnya." }, "persistence": "config.json" },
-        { "key": "enableNativeUserMessageBox", "type": "boolean", "default": "true", "description": { "en": "Use the native user message box.", "id": "Gunakan kotak pesan user native." }, "persistence": "config.json" }
+        {
+          "key": "readOutputMode",
+          "type": "string",
+          "default": "hidden",
+          "description": {
+            "en": "Read tool output mode: hidden, summary, or preview.",
+            "id": "Mode output tool read: hidden, summary, atau preview."
+          },
+          "persistence": "config.json"
+        },
+        {
+          "key": "searchOutputMode",
+          "type": "string",
+          "default": "hidden",
+          "description": {
+            "en": "Search tool output mode: hidden, count, or preview.",
+            "id": "Mode output tool search: hidden, count, atau preview."
+          },
+          "persistence": "config.json"
+        },
+        {
+          "key": "bashOutputMode",
+          "type": "string",
+          "default": "opencode",
+          "description": {
+            "en": "Bash output mode: opencode, summary, or preview.",
+            "id": "Mode output bash: opencode, summary, atau preview."
+          },
+          "persistence": "config.json"
+        },
+        {
+          "key": "previewLines",
+          "type": "number",
+          "default": "8",
+          "description": {
+            "en": "Lines shown in preview mode.",
+            "id": "Baris yang ditampilkan dalam mode preview."
+          },
+          "persistence": "config.json"
+        },
+        {
+          "key": "boxedToolCalls",
+          "type": "boolean",
+          "default": "true",
+          "description": {
+            "en": "Draw an ASCII border around each tool call and its output.",
+            "id": "Gambar border ASCII di sekitar setiap panggilan tool dan outputnya."
+          },
+          "persistence": "config.json"
+        },
+        {
+          "key": "enableNativeUserMessageBox",
+          "type": "boolean",
+          "default": "true",
+          "description": {
+            "en": "Use the native user message box.",
+            "id": "Gunakan kotak pesan user native."
+          },
+          "persistence": "config.json"
+        }
       ],
       "envVars": [],
       "controls": [
-        { "name": "/tool-display show", "description": { "en": "Show the effective config summary.", "id": "Tampilkan ringkasan konfigurasi efektif." } },
-        { "name": "/tool-display preset <opencode|balanced|verbose|boxed>", "description": { "en": "Apply a rendering preset.", "id": "Terapkan preset rendering." } },
-        { "name": "/tool-display reset", "description": { "en": "Reset to the default boxed preset.", "id": "Reset ke preset boxed bawaan." } }
+        {
+          "name": "/tool-display show",
+          "description": {
+            "en": "Show the effective config summary.",
+            "id": "Tampilkan ringkasan konfigurasi efektif."
+          }
+        },
+        {
+          "name": "/tool-display preset <opencode|balanced|verbose|boxed>",
+          "description": {
+            "en": "Apply a rendering preset.",
+            "id": "Terapkan preset rendering."
+          }
+        },
+        {
+          "name": "/tool-display reset",
+          "description": {
+            "en": "Reset to the default boxed preset.",
+            "id": "Reset ke preset boxed bawaan."
+          }
+        }
+      ],
+      "noConfig": false
+    },
+    {
+      "slug": "pi-hermes-memory",
+      "distribution": "bundled",
+      "overview": {
+        "en": "Persistent memory stores facts, preferences, corrections, and skills across sessions, with session search and configurable review/flush behavior.",
+        "id": "Memori persisten menyimpan fakta, preferensi, koreksi, dan skill lintas sesi, dengan pencarian sesi serta perilaku review/flush yang dapat dikonfigurasi."
+      },
+      "sourcePaths": [
+        "src/extensions/pi-hermes-memory/src/config.ts",
+        "src/extensions/pi-hermes-memory/src/tools/memory-tool.ts",
+        "src/extensions/pi-hermes-memory/src/tools/session-search-tool.ts"
+      ],
+      "scopes": [
+        {
+          "label": {
+            "en": "Memory storage",
+            "id": "Penyimpanan memori"
+          },
+          "path": "~/.selesai/agent/pi-hermes-memory/ (agent dir)",
+          "precedence": {
+            "en": "Memory, skills, and the SQLite search store live under the Selesai agent directory; project memories are per project under projects-memory/.",
+            "id": "Memori, skill, dan store pencarian SQLite berada di direktori agent Selesai; memori proyek per proyek di bawah projects-memory/."
+          }
+        }
+      ],
+      "settings": [
+        {
+          "key": "memoryMode",
+          "type": "string",
+          "default": "policy-only",
+          "description": {
+            "en": "How the memory policy is injected into the system prompt.",
+            "id": "Cara kebijakan memori disuntikkan ke system prompt."
+          },
+          "persistence": "config file"
+        },
+        {
+          "key": "reviewEnabled",
+          "type": "boolean",
+          "default": "true",
+          "description": {
+            "en": "Enables background review nudges and session flush.",
+            "id": "Mengaktifkan nudge review latar belakang dan session flush."
+          },
+          "persistence": "config file"
+        },
+        {
+          "key": "reviewTransport",
+          "type": "string",
+          "default": "direct",
+          "description": {
+            "en": "direct (in-process completeSimple) or subprocess (pi -p) for LLM-driven memory operations.",
+            "id": "direct (completeSimple in-process) atau subprocess (pi -p) untuk operasi memori berbasis LLM."
+          },
+          "persistence": "config file"
+        },
+        {
+          "key": "sessionSearch.variant",
+          "type": "string",
+          "default": "legacy",
+          "description": {
+            "en": "legacy snippet search or anchors mode reading session JSONL directly.",
+            "id": "Pencarian snippet legacy atau mode anchors yang membaca session JSONL langsung."
+          },
+          "persistence": "config file"
+        }
+      ],
+      "envVars": [],
+      "controls": [
+        {
+          "name": "/memory-insights",
+          "description": {
+            "en": "Show everything stored in memory and the user profile.",
+            "id": "Tampilkan semua yang tersimpan di memori dan profil user."
+          }
+        },
+        {
+          "name": "/memory-skills",
+          "description": {
+            "en": "Open the interactive skills manager.",
+            "id": "Buka pengelola skill interaktif."
+          }
+        },
+        {
+          "name": "/memory-consolidate",
+          "description": {
+            "en": "Manually trigger memory consolidation.",
+            "id": "Picu konsolidasi memori secara manual."
+          }
+        },
+        {
+          "name": "/memory-interview",
+          "description": {
+            "en": "Pre-fill the user profile with a few questions.",
+            "id": "Isi profil user dengan beberapa pertanyaan."
+          }
+        },
+        {
+          "name": "/memory-switch-project",
+          "description": {
+            "en": "List project memories and entry counts.",
+            "id": "Daftar memori proyek dan jumlah entri."
+          }
+        },
+        {
+          "name": "/memory-index-sessions",
+          "description": {
+            "en": "Import past Pi sessions into the search database.",
+            "id": "Impor sesi Pi masa lalu ke database pencarian."
+          }
+        },
+        {
+          "name": "/memory-sync-markdown",
+          "description": {
+            "en": "Backfill Markdown memories into the SQLite search store.",
+            "id": "Backfill memori Markdown ke store pencarian SQLite."
+          }
+        },
+        {
+          "name": "/memory-preview-context",
+          "description": {
+            "en": "Preview the memory policy blocks appended to the system prompt.",
+            "id": "Pratinjau blok kebijakan memori yang ditambahkan ke system prompt."
+          }
+        },
+        {
+          "name": "/learn-memory-tool",
+          "description": {
+            "en": "Skill that teaches how to use the memory system.",
+            "id": "Skill yang mengajarkan cara memakai sistem memori."
+          }
+        }
       ],
       "noConfig": false
     }
