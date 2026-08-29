@@ -64,6 +64,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `showHardwareCursor` | boolean | `false` | Show the terminal cursor while TUI positions it for IME support |
 | `tuiMode` | string | `"fullscreen"` | TUI layout: `"fullscreen"` (default) or `"regular"`. `fullscreen` uses Pi's native alternate-screen viewport with a fixed dock for the input editor, status, and widgets; set `"regular"` to opt out |
 | `fullscreenScrollbar` | string | `"auto"` | Fullscreen transcript scrollbar: `"auto"`, `"always"`, or `"hidden"`; configurable in `/settings`. No effect in regular TUI mode |
+| `fullscreenCopyOnSelect` | boolean | `true` | Automatically copy selected text in fullscreen mode; disable to copy selections with Ctrl+X. Configurable in `/settings`. No effect in regular TUI mode |
 
 ### Telemetry and update checks
 
@@ -169,6 +170,9 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 | `terminal.showImages` | boolean | `true` | Show images in terminal (if supported) |
 | `terminal.imageWidthCells` | number | `60` | Preferred inline image width in terminal cells |
 | `terminal.clearOnShrink` | boolean | `false` | Clear empty rows when content shrinks (can cause flicker) |
+| `terminal.images` | string | `"auto"` | Terminal image protocol: `"kitty"`, `"iterm2"`, `"auto"`, or `false` to disable inline images |
+| `terminal.trueColor` | boolean/string | `"auto"` | Pin true-color support (`true`/`false`) or keep `"auto"` detection |
+| `terminal.hyperlinks` | boolean/string | `"auto"` | Pin hyperlink support (`true`/`false`) or keep `"auto"` detection |
 | `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
 | `images.imageCaptionModel` | string | unset | Vision model (`provider/model`) to describe images when the active model cannot accept images; the caption text is used in place of the image (e.g. `tokenin/gemma-4`, `tokenin/kimi-k3`) |

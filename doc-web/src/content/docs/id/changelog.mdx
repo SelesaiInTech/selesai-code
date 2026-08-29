@@ -3,6 +3,25 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.0 — Tampilan biaya di bawah satu sen
+
+- Memperbaiki label biaya yang membulatkan biaya per panggilan kecil menjadi `$0.000`: footer, footer zentui, dan popup usage kini memformat biaya secara adaptif (3 desimal di $1+, 4 desimal di $0.01+, 6 desimal di bawahnya), sehingga biaya hasil rekonsiliasi gateway seperti `$0.000336` terlihat.
+
+## 0.12.0 — Penggunaan Token-In, override kapabilitas terminal, dan port pi 0.84.4
+
+- Menambahkan **`/tokenin usage`**: ekstensi `tokenin-onboarding` kini mengkueri endpoint LiteLLM `/key/info` dengan token Token-In aktif dan menampilkan pengeluaran/anggaran/sisa/reset dalam kotak dengan progress bar.
+- Menambahkan **override kapabilitas terminal**: pengaturan baru `terminal.images` (`"kitty"`, `"iterm2"`, `"auto"`, atau `false`), `terminal.trueColor`, dan `terminal.hyperlinks` untuk mengunci kapabilitas terminal alih-alih mengandalkan deteksi otomatis.
+- Menambahkan **`fullscreenCopyOnSelect`** (default `true`) dengan toggle di `/settings`: menyalin teks terpilih secara otomatis di mode fullscreen; nonaktifkan untuk menyalin seleksi dengan Ctrl+X.
+- Menambahkan **event ekstensi `ui_prompt_start` / `ui_prompt_end`** agar ekstensi dapat mengamati saat agent mulai dan berhenti menunggu prompt UI yang memblokir (`select`, `confirm`, `input`, `editor`, `custom`).
+- Menambahkan dukungan **router autoload llama.cpp**: model preset yang belum dimuat dapat dipilih saat router mengaktifkan `models_autoload`, dimuat saat pertama digunakan.
+- Menambahkan perintah RPC **`clear_queue`** untuk membuang pesan steering/follow-up yang tertunda.
+- Mengubah urutan custom message saat streaming: custom message konteks-only dibuang di akhir turn (setelah hasil tool) alih-alih berada di antara tool call dan hasilnya.
+- Mengubah auto-compaction agar berjalan sebelum respons assistant berikutnya saat ambang konteks tercapai, menjaga percakapan panjang tetap dalam window model.
+- Mengubah daftar model scoped (`--models`) agar menyertakan model default yang tersimpan dan mendaftarkannya di `enabledModels`.
+- Memperbaiki jumlah provider di footer yang tidak segar segera setelah mengganti model di pemilih model.
+- Memperbaiki respons summarization yang mencapai batas token tersimpan sebagai checkpoint sesi (ringkasan parsial kini dianggap gagal).
+- Menerapkan port pi 0.84.4: urutan/kompaksi/model-scope agent-session, pengaturan kapabilitas terminal dan salin fullscreen, event UI-prompt ekstensi, router autoload llama, RPC `clear_queue`, dan `taskkill` Windows via path System32 tepercaya.
+
 ## 0.11.0 — Penamaan sesi otomatis, rekonsiliasi biaya, dan tool display bawaan
 
 - Menambahkan **penamaan sesi otomatis**: sesi diberi nama pada setiap pesan user menggunakan model yang sedang dipilih. Hanya riwayat pesan user yang dikirim (tanpa hasil tool, balasan assistant, atau thinking), output dibatasi 10 token dengan batas nama 5 kata, dan panggilan berjalan di latar belakang sehingga tidak pernah menunda pesan Anda. Thinking dinonaktifkan secara eksplisit untuk gateway yang mengabaikan field standar `thinking: {type:"disabled"}`.

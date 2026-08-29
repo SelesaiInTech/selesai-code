@@ -1282,10 +1282,10 @@
       ],
       "controls": [
         {
-          "name": "/tokenin add|switch|remove",
+          "name": "/tokenin add|switch|remove|usage",
           "description": {
-            "en": "Manage stored TokenIN accounts.",
-            "id": "Kelola akun TokenIN yang tersimpan."
+            "en": "Manage stored TokenIN accounts and show quota usage.",
+            "id": "Kelola akun TokenIN yang tersimpan dan tampilkan penggunaan kuota."
           }
         }
       ],

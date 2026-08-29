@@ -31,6 +31,7 @@ Halaman ini mencakup pengaturan yang paling sering disentuh orang. Referensi len
 | `quietStartup` | boolean | `false` | Sembunyikan bantuan keybinding dan daftar resource yang dimuat agar peluncuran lebih tenang. Banner brand selalu tampil dan menghilang pada pesan pertama Anda. |
 | `tuiMode` | string | `"fullscreen"` | `"fullscreen"` (tata letak dock default) atau `"regular"` (tata letak Pi klasik). |
 | `fullscreenExitOutput` | string | `"transcript"` | Yang terjadi saat keluar dari fullscreen: mencetak transkrip (`"transcript"`) atau hanya petunjuk resume sesi (`"resume-hint"`). |
+| `fullscreenCopyOnSelect` | boolean | `true` | Menyalin teks terpilih secara otomatis di mode fullscreen; nonaktifkan untuk menyalin seleksi dengan Ctrl+X. |
 
 ## Konteks
 
@@ -78,6 +79,7 @@ Untuk mengembalikan pengaturan global ke default pabrik bawaan, jalankan `/setti
   "quietStartup": false,
   "tuiMode": "fullscreen",
   "fullscreenExitOutput": "transcript",
+  "fullscreenCopyOnSelect": true,
   "defaultTools": ["read", "bash", "edit", "write"],
   "compaction": {
     "enabled": true,

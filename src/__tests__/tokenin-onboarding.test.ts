@@ -12,11 +12,14 @@ vi.mock("@selesai/code", () => ({
 import { homedir } from "node:os";
 import {
 	applyTokenInAccountToAuth,
+	fetchTokenInUsage,
+	formatTokenInUsage,
 	getActiveTokenInAccountId,
 	getStoredTokenInApiKey,
 	getTokenInApiKey,
 	getTokenInAuthPath,
 	isPlaceholderToken,
+	parseTokenInUsage,
 	PLACEHOLDER_API_KEY,
 	readModelsJson,
 	readTokenInAuth,
@@ -210,6 +213,100 @@ describe("tokenin-auth.json helpers", () => {
 		expect(getActiveTokenInAccountId(authStorage, authPath)).toBeNull();
 
 		rmSync(dir, { recursive: true, force: true });
+	});
+	describe("parseTokenInUsage", () => {
+		it("parses spend/max_budget/budget_reset_at from info", () => {
+			expect(
+				parseTokenInUsage({
+					key: "sk-x",
+					info: { spend: 1.25, max_budget: 10, budget_reset_at: "2026-08-19T12:00:00+00:00" },
+				}),
+			).toEqual({ spend: 1.25, maxBudget: 10, budgetResetAt: "2026-08-19T12:00:00+00:00" });
+		});
+
+		it("falls back to top-level fields when info is absent", () => {
+			expect(parseTokenInUsage({ spend: 0.5 })).toEqual({ spend: 0.5 });
+		});
+
+		it("omits maxBudget when unset or non-positive", () => {
+			expect(parseTokenInUsage({ info: { spend: 1 } })).toEqual({ spend: 1 });
+			expect(parseTokenInUsage({ info: { spend: 1, max_budget: 0 } })).toEqual({ spend: 1 });
+		});
+
+		it("returns undefined for invalid payloads", () => {
+			expect(parseTokenInUsage(undefined)).toBeUndefined();
+			expect(parseTokenInUsage("junk")).toBeUndefined();
+			expect(parseTokenInUsage({ info: { spend: "nope" } })).toBeUndefined();
+			expect(parseTokenInUsage({ info: { spend: -1 } })).toBeUndefined();
+		});
+	});
+
+	describe("formatTokenInUsage", () => {
+		it("formats spend with budget and remaining", () => {
+			const text = formatTokenInUsage({ spend: 2.5, maxBudget: 10 });
+			expect(text).toContain("Spent $2.50 of $10.00 budget (25.0%)");
+			expect(text).toContain("$7.50 remaining");
+			expect(text).toContain("╭─ Token-In usage");
+			expect(text).toContain("╰");
+		});
+
+		it("formats spend without a budget limit", () => {
+			expect(formatTokenInUsage({ spend: 0 })).toContain("Spent $0.00 (no budget limit set)");
+		});
+
+		it("draws a full bar at 100% and empty bar at 0%", () => {
+			const full = formatTokenInUsage({ spend: 10, maxBudget: 10 });
+			expect(full).toContain("█".repeat(40));
+			const empty = formatTokenInUsage({ spend: 0, maxBudget: 10 });
+			expect(empty).toContain("░".repeat(40));
+		});
+
+		it("appends days/hours until reset when parseable", () => {
+			const future = new Date(Date.now() + 3 * 86_400_000 + 5 * 3_600_000).toISOString();
+			const text = formatTokenInUsage({ spend: 1, maxBudget: 5, budgetResetAt: future });
+			expect(text).toContain("resets in 3d 5h");
+		});
+
+		it("shows hours only when reset is under a day away", () => {
+			const future = new Date(Date.now() + 2 * 3_600_000).toISOString();
+			const text = formatTokenInUsage({ spend: 1, maxBudget: 5, budgetResetAt: future });
+			expect(text).toContain("resets in 2h");
+		});
+
+		it("omits reset when it is in the past or unparseable", () => {
+			const past = new Date(Date.now() - 3_600_000).toISOString();
+			expect(formatTokenInUsage({ spend: 1, budgetResetAt: past })).not.toContain("resets");
+			expect(formatTokenInUsage({ spend: 1, budgetResetAt: "not-a-date" })).not.toContain("resets");
+		});
+	});
+
+	describe("fetchTokenInUsage", () => {
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		it("queries /key/info at the proxy root and parses the payload", async () => {
+			const fetchMock = vi.fn(async () => ({
+				ok: true,
+				json: async () => ({ info: { spend: 3, max_budget: 20 } }),
+			}));
+			vi.stubGlobal("fetch", fetchMock);
+			const usage = await fetchTokenInUsage("sk-test", "https://lite.andlet.me/v1");
+			expect(usage).toEqual({ spend: 3, maxBudget: 20 });
+			const [url, init] = fetchMock.mock.calls[0];
+			expect(url).toBe("https://lite.andlet.me/key/info");
+			expect(init.headers.Authorization).toBe("Bearer sk-test");
+		});
+
+		it("throws on non-OK responses", async () => {
+			vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 401 })));
+			await expect(fetchTokenInUsage("sk-test", "https://lite.andlet.me/v1")).rejects.toThrow("HTTP 401");
+		});
+
+		it("throws on unexpected payloads", async () => {
+			vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({}) })));
+			await expect(fetchTokenInUsage("sk-test", "https://lite.andlet.me/v1")).rejects.toThrow("unexpected payload");
+		});
 	});
 });
 
@@ -667,10 +764,12 @@ describe("/tokenin command", () => {
 		const cmd = commands.get("tokenin") as any;
 		expect(cmd.getArgumentCompletions).toBeDefined();
 		const all = cmd.getArgumentCompletions("");
-		expect(all).toHaveLength(3);
-		expect(all.map((i: any) => i.value).sort()).toEqual(["add", "remove", "switch"]);
+		expect(all).toHaveLength(4);
+		expect(all.map((i: any) => i.value).sort()).toEqual(["add", "remove", "switch", "usage"]);
 		expect(cmd.getArgumentCompletions("sw")).toHaveLength(1);
 		expect(cmd.getArgumentCompletions("sw")[0].value).toBe("switch");
+		expect(cmd.getArgumentCompletions("us")).toHaveLength(1);
+		expect(cmd.getArgumentCompletions("us")[0].value).toBe("usage");
 		expect(cmd.getArgumentCompletions("xyz")).toBeNull();
 	});
 
@@ -707,6 +806,58 @@ describe("/tokenin command", () => {
 		expect(auth.accounts).toHaveLength(2);
 		expect(auth.activeId).toBe("sk-first");
 		expect(notifications.some((n) => n.message.includes("Account added"))).toBe(true);
+	});
+
+	it("/tokenin usage notifies quota from /key/info", async () => {
+		fakeCtx.modelRegistry.authStorage.set("tokenin", { type: "api_key", key: "sk-active" });
+		saveTokenInAccount("sk-active", { setActive: true });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => ({
+				ok: true,
+				json: async () => ({
+					info: { spend: 2.5, max_budget: 10, budget_reset_at: new Date(Date.now() + 86_400_000).toISOString() },
+				}),
+			})),
+		);
+		try {
+			await runCommand("usage");
+			expect(notifications.some((n) => n.message.includes("Spent $2.50 of $10.00 budget"))).toBe(true);
+			expect(notifications.some((n) => n.message.includes("resets in"))).toBe(true);
+			expect(notifications.some((n) => n.message.includes("╭─ Token-In usage"))).toBe(true);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("/tokenin usage notifies when no active token", async () => {
+		await runCommand("usage");
+		expect(notifications.some((n) => n.message.includes("No active Token-In token"))).toBe(true);
+	});
+
+	it("/tokenin usage notifies when the endpoint fails", async () => {
+		fakeCtx.modelRegistry.authStorage.set("tokenin", { type: "api_key", key: "sk-active" });
+		saveTokenInAccount("sk-active", { setActive: true });
+		vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 401 })));
+		try {
+			await runCommand("usage");
+			expect(notifications.some((n) => n.message.includes("Could not fetch Token-In usage: Token-In usage endpoint returned HTTP 401"))).toBe(true);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("/tokenin usage uses the account baseUrl when saved", async () => {
+		fakeCtx.modelRegistry.authStorage.set("tokenin", { type: "api_key", key: "sk-active" });
+		saveTokenInAccount("sk-active", { baseUrl: "https://custom.example/v1", setActive: true });
+		const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ info: { spend: 1 } }) }));
+		vi.stubGlobal("fetch", fetchMock);
+		try {
+			await runCommand("usage");
+			expect(fetchMock.mock.calls[0][0]).toBe("https://custom.example/key/info");
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it("/tokenin switch updates auth storage and activeId", async () => {

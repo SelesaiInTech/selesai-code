@@ -16,6 +16,7 @@ import type { AuthStorage, ExtensionAPI, ExtensionCommandContext, ExtensionConte
 
 export const TOKEN_IN_PROVIDER = "tokenin";
 export const TOKEN_IN_DASHBOARD_URL = "https://token.selesai.in/dashboard/tokens";
+export const TOKEN_IN_DEFAULT_BASE_URL = "https://lite.andlet.me/v1";
 export const ONBOARDING_MARKER_NAME = ".tokenInOnboardingComplete";
 export const PLACEHOLDER_API_KEY = "sk-xxx";
 
@@ -240,6 +241,93 @@ async function promptForToken(ctx: ExtensionContext): Promise<string | undefined
 }
 
 // ---------------------------------------------------------------------------
+// /tokenin usage — LiteLLM /key/info quota lookup
+// ---------------------------------------------------------------------------
+
+export interface TokenInUsage {
+	spend: number;
+	maxBudget?: number;
+	budgetResetAt?: string;
+}
+
+/** Parse a LiteLLM /key/info payload into spend/budget/reset. Exported for tests. */
+export function parseTokenInUsage(payload: unknown): TokenInUsage | undefined {
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
+	const obj = payload as Record<string, unknown>;
+	const info =
+		obj.info && typeof obj.info === "object" && !Array.isArray(obj.info)
+			? (obj.info as Record<string, unknown>)
+			: obj;
+	const spend = Number(info.spend);
+	if (!Number.isFinite(spend) || spend < 0) return undefined;
+	const usage: TokenInUsage = { spend };
+	const maxBudget = Number(info.max_budget);
+	if (Number.isFinite(maxBudget) && maxBudget > 0) usage.maxBudget = maxBudget;
+	if (typeof info.budget_reset_at === "string") usage.budgetResetAt = info.budget_reset_at;
+	return usage;
+}
+
+/** Format usage as a boxed multi-line display with a progress bar. Exported for tests. */
+export function formatTokenInUsage(usage: TokenInUsage): string {
+	const money = (v: number) => `$${v.toFixed(2)}`;
+	const pct = usage.maxBudget !== undefined ? (usage.spend / usage.maxBudget) * 100 : 0;
+	const barWidth = 40;
+	const filled = usage.maxBudget !== undefined ? Math.min(barWidth, Math.round((pct / 100) * barWidth)) : 0;
+	const bar = "█".repeat(filled) + "░".repeat(barWidth - filled);
+	const pctText = usage.maxBudget !== undefined ? `${pct.toFixed(1)}%` : "—";
+
+	let summary = `Spent ${money(usage.spend)}`;
+	if (usage.maxBudget !== undefined) {
+		summary += ` of ${money(usage.maxBudget)} budget (${pct.toFixed(1)}%)`;
+	} else {
+		summary += " (no budget limit set)";
+	}
+
+	let footer = usage.maxBudget !== undefined ? `${money(Math.max(0, usage.maxBudget - usage.spend))} remaining` : "";
+	if (usage.budgetResetAt) {
+		const d = new Date(usage.budgetResetAt);
+		if (!Number.isNaN(d.getTime())) {
+			const ms = d.getTime() - Date.now();
+			if (ms > 0) {
+				const days = Math.floor(ms / 86_400_000);
+				const hours = Math.floor((ms % 86_400_000) / 3_600_000);
+				const reset = days > 0 ? `${days}d ${hours}h` : `${Math.max(1, Math.ceil(ms / 3_600_000))}h`;
+				footer += footer ? ` · resets in ${reset}` : `resets in ${reset}`;
+			}
+		}
+	}
+
+	const W = 50; // total box width
+	const inner = W - 4; // content width between │ padding
+	const pad = (s: string) => s + " ".repeat(Math.max(0, inner - s.length));
+	const top = `╭─ Token-In usage ${"─".repeat(W - 19)}╮`;
+	const bottom = `╰${"─".repeat(W - 2)}╯`;
+	return [
+		top,
+		`│ ${pad(summary)} │`,
+		`│ ${bar} ${pctText.padStart(5)} │`,
+		`│ ${pad(footer)} │`,
+		bottom,
+	].join("\n");
+}
+
+/** Query LiteLLM /key/info at the proxy root with the account key. Exported for tests. */
+export async function fetchTokenInUsage(apiKey: string, baseUrl: string): Promise<TokenInUsage> {
+	const root = baseUrl.replace(/\/v1\/?$/, "");
+	const response = await fetch(`${root}/key/info`, {
+		headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+		signal: AbortSignal.timeout(5_000),
+	});
+	if (!response.ok) {
+		throw new Error(`Token-In usage endpoint returned HTTP ${response.status}`);
+	}
+	const payload: unknown = await response.json();
+	const usage = parseTokenInUsage(payload);
+	if (!usage) throw new Error("Token-In usage endpoint returned an unexpected payload");
+	return usage;
+}
+
+// ---------------------------------------------------------------------------
 // /tokenin subcommand handlers
 // ---------------------------------------------------------------------------
 
@@ -325,6 +413,25 @@ async function handleTokenInSwitch(ctx: ExtensionCommandContext): Promise<void> 
 		// best-effort
 	}
 	ctx.ui.notify(`Switched to account ${account.label}.`, "info");
+}
+
+async function handleTokenInUsage(ctx: ExtensionCommandContext): Promise<void> {
+	const apiKey = getStoredTokenInApiKey(ctx.modelRegistry.authStorage);
+	if (!apiKey) {
+		ctx.ui.notify("No active Token-In token. Use /tokenin add first.", "warning");
+		return;
+	}
+	const auth = readTokenInAuth();
+	const activeId = getActiveTokenInAccountId(ctx.modelRegistry.authStorage);
+	const account = auth.accounts.find((a) => a.id === activeId);
+	const baseUrl = account?.baseUrl ?? getTokenInBaseUrl(readModelsJson()) ?? TOKEN_IN_DEFAULT_BASE_URL;
+	try {
+		const usage = await fetchTokenInUsage(apiKey, baseUrl);
+		ctx.ui.notify(formatTokenInUsage(usage), "info");
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		ctx.ui.notify(`Could not fetch Token-In usage: ${message}`, "warning");
+	}
 }
 
 async function handleTokenInRemove(ctx: ExtensionCommandContext): Promise<void> {
@@ -441,12 +548,13 @@ export default function tokenInOnboardingExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("tokenin", {
-		description: "Manage TokenIN accounts: /tokenin add|switch|remove",
+		description: "Manage TokenIN accounts: /tokenin add|switch|remove|usage",
 		getArgumentCompletions: (prefix: string) => {
 			const subcommands = [
 				{ name: "add", description: "Add a TokenIN account" },
 				{ name: "switch", description: "Switch active account" },
 				{ name: "remove", description: "Remove a saved account" },
+				{ name: "usage", description: "Show Token-IN quota usage" },
 			];
 			const lowerPrefix = prefix.toLowerCase();
 			const items = subcommands.filter((s) => s.name.toLowerCase().startsWith(lowerPrefix));
@@ -463,8 +571,10 @@ export default function tokenInOnboardingExtension(pi: ExtensionAPI): void {
 				await handleTokenInSwitch(ctx);
 			} else if (sub === "remove") {
 				await handleTokenInRemove(ctx);
+			} else if (sub === "usage") {
+				await handleTokenInUsage(ctx);
 			} else {
-				ctx.ui.notify("Usage: /tokenin add|switch|remove", "info");
+				ctx.ui.notify("Usage: /tokenin add|switch|remove|usage", "info");
 			}
 		},
 	});

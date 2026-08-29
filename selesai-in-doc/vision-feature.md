@@ -71,8 +71,8 @@ Unit tests for `captionImage` and `captionImageWithModel` (mocks `@earendil-work
   (`expandedText += "\n\n" + caption`). Covers the paste path for both streaming
   (steer/follow-up queue) and direct prompts.
 - New private `_captionImagesForCurrentModel(images)`: resolves caption model via setting +
-  `_modelRuntime.getModel()`, resolves auth via `getAuth()`, captures each image with a 15s
-  per-image `AbortController` timeout, joins captions as labelled text blocks. Returns `null`
+  `_modelRuntime.getModel()`, resolves auth via `getAuth()`, captures each image with a 60s
+  per-attempt `AbortController` timeout (4 attempts with backoff), joins captions as labelled text blocks. Returns `null`
   when no captioning applies (vision main model / no setting / all captions failed).
 - Emits `image_captioning_start` / `image_captioning_end` around the caption loop (see
   "UI during captioning" below).
@@ -136,8 +136,8 @@ feel, the session emits two events the interactive UI renders as a status spinne
 - `image_captioning_end { ok }` → clears the spinner; if `ok === false`, shows a brief status
   "Image captioning failed; image omitted".
 
-Each image also has a **15s** per-image `AbortController` timeout (down from an earlier 60s), so a
-hanging network call can never block the turn for long and always fails open back to the
+Each image also has a **60s** per-attempt `AbortController` timeout with up to 4 attempts and
+prime-number backoff (3s, 5s, 7s, ...), so a hanging network call fails open back to the
 non-vision drop behavior.
 
 #### Diagnostics
@@ -145,4 +145,4 @@ On failure the session logs the real reason to the console (look for `[image-cap
 - `[image-caption] request failed: <msg>` — the underlying error from the vision `complete()` call
   (e.g. proxy error, empty response, network).
 - `[image-caption] captioning failed: <msg>` — when all captions failed; `<msg>` is the last
-  request error or `timed out after 15s`.
+  request error or `timed out after 60s`.

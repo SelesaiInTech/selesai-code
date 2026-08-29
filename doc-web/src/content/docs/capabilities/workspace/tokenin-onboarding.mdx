@@ -41,6 +41,7 @@ The `tokenin-onboarding` extension guides first-time users through adding a Toke
 - Add another account later with `/tokenin add`.
 - Switch the active account with `/tokenin switch`.
 - Remove a saved account with `/tokenin remove` (cannot remove the active account; switch first).
+- Check your Token-In quota with `/tokenin usage`: it queries the LiteLLM `/key/info` endpoint with the active token and shows spend, budget, remaining, and reset time in a boxed display.
 
 ## Commands, tools, and shortcuts
 
@@ -49,6 +50,7 @@ The `tokenin-onboarding` extension guides first-time users through adding a Toke
 | `/tokenin add` | Open the Token-In dashboard, paste a token, and add it to `tokenin-auth.json`. If it is the first account, it becomes active. |
 | `/tokenin switch` | Pick a saved account and make it the active credential. |
 | `/tokenin remove` | Pick a non-active saved account and remove it. |
+| `/tokenin usage` | Show Token-In quota: spend, budget, remaining, and reset time from the LiteLLM `/key/info` endpoint. |
 
 The command validates that the pasted token starts with `sk-`. Invalid tokens are rejected and the prompt retries on the next launch.
 

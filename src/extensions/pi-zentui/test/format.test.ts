@@ -134,7 +134,7 @@ describe("usage formatting", () => {
 		const totals = getUsageTotals(ctx as never);
 
 		expect(totals.cost).toBe(0.0123);
-		expect(buildCostLabel(totals)).toBe("$0.012");
+		expect(buildCostLabel(totals)).toBe("$0.0123");
 	});
 
 	it("keeps the rate-card estimate when no reconcile entry exists", () => {
@@ -160,6 +160,20 @@ describe("usage formatting", () => {
 		const totals = getUsageTotals(ctx as never);
 
 		expect(totals.cost).toBe(0.0123);
+	});
+
+	it("shows sub-cent reconciled costs without rounding to zero", () => {
+		const assistant = makeMessageUsageEntry("assistant", makeUsage(1_000, 500, 0), {
+			provider: "tokenin",
+			responseId: "chatcmpl-873",
+		});
+		const reconcile = makeReconcileEntry("tokenin", "chatcmpl-873", 0.00033601652);
+		const ctx = makeSessionContext([assistant, reconcile]);
+
+		const totals = getUsageTotals(ctx as never);
+
+		expect(totals.cost).toBe(0.00033601652);
+		expect(buildCostLabel(totals)).toBe("$0.000336");
 	});
 
 	it("formats cache atoms independently and omits zero totals", () => {

@@ -2,6 +2,32 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.0] - 2026-08-29
+
+### Fixed
+- **Sub-cent cost display.** Cost labels no longer round small per-call costs to `$0.000`. The footer, zentui footer, and usage popup now format costs adaptively: 3 decimals at $1+, 4 decimals at $0.01+, and 6 decimals below, so gateway-reconciled costs like `$0.000336` are visible.
+
+## [0.12.0] - 2026-08-29
+
+### Added
+- **`/tokenin usage` subcommand.** The `tokenin-onboarding` extension now queries the LiteLLM `/key/info` endpoint with the active Token-In token and shows a boxed spend/budget/remaining/reset display with a progress bar. Run `/tokenin usage` to check quota without leaving the session.
+- **Terminal capability overrides.** New `terminal.images` (`"kitty"`, `"iterm2"`, `"auto"`, or `false`), `terminal.trueColor`, and `terminal.hyperlinks` settings let you pin terminal capabilities instead of relying on auto-detection.
+- **`fullscreenCopyOnSelect` setting.** New setting (default `true`) and `/settings` toggle: automatically copy selected text in fullscreen mode; disable to copy selections with Ctrl+X.
+- **`ui_prompt_start` / `ui_prompt_end` extension events.** Extensions can now observe when the agent starts and stops waiting on a blocking user-facing UI prompt (`select`, `confirm`, `input`, `editor`, `custom`).
+- **llama.cpp router autoload.** Unloaded preset models are now selectable when the llama.cpp router has `models_autoload` enabled, so they load on first use instead of being hidden.
+- **RPC `clear_queue` command.** RPC clients can clear the pending steering/follow-up queue and get back the dropped items.
+
+### Changed
+- **Custom message ordering during streaming.** Context-only custom messages queued while the agent is streaming are now flushed at turn end (after tool results are in) instead of being appended between a tool call and its result, which some providers reject on replay.
+- **Auto-compaction before the next assistant response.** The session now checks the context threshold before preparing the next turn and compacts when needed, so long conversations stay within the model window.
+- **Persisted default model joins scoped model lists.** When a scoped model list (`--models`) is active, the persisted default model is added to the scope and to `enabledModels` so it stays reachable.
+- **Model catalog updates.** Celestial, DeepSeek, and GPT models now declare `compat.requiresReasoningContentOnAssistantMessages` where required.
+- **Windows process cleanup.** `taskkill` is invoked via the trusted System32 path instead of relying on `PATH`, and failed spawns no longer crash Node.
+
+### Fixed
+- **Footer provider count after model switch.** The interactive footer's available-provider count now refreshes immediately after switching models in the model selector.
+- **Summarization length-stop guard.** A summarization response that hits the token cap (partial text) is now treated as a failure and never persisted as a session checkpoint.
+
 ## [0.11.0] - 2026-08-29
 
 ### Added

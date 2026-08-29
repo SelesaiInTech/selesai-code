@@ -1,6 +1,14 @@
 import type { Usage } from "@earendil-works/pi-ai/compat";
 import type { SessionEntry } from "./session-manager.ts";
 
+/** Format a USD cost with enough precision that sub-cent per-call costs don't round to $0.000. */
+export function formatCost(cost: number): string {
+	if (cost === 0) return "$0.000";
+	if (cost >= 1) return `$${cost.toFixed(3)}`;
+	if (cost >= 0.01) return `$${cost.toFixed(4)}`;
+	return `$${cost.toFixed(6)}`;
+}
+
 export interface UsageTotals {
 	input: number;
 	output: number;

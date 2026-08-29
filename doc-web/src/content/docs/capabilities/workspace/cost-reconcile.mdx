@@ -27,6 +27,7 @@ The `cost-reconcile` extension records the real billed cost that providers repor
 - Installs a tee-wrapping `fetch` once per process that scans LLM API responses for provider-reported cost and response ids.
 - On `message_end`, writes a `cost-reconcile` custom session entry per response id (bounded per session).
 - The zentui footer prefers reconciled entries over the rate-card total when both exist for the same response id, and refreshes once after settle so late reconciliation is picked up.
+- Cost labels format adaptively so sub-cent per-call costs stay visible: 3 decimals at $1+, 4 decimals at $0.01+, and 6 decimals below (e.g. `$0.000336` instead of `$0.000`).
 
 ## What you can configure
 
