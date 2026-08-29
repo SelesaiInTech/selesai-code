@@ -1,0 +1,905 @@
+import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import {
+  buildChildPiPromptArgs,
+  detectAuthAdapterExtensionPaths,
+  execChildPrompt,
+  inheritedExtensionArgs,
+  resolveChildPiInvocation,
+  resolveWatchedChildPiInvocation,
+} from "../../src/handlers/pi-child-process.js";
+
+function logicalChildArgs(call: { cmd: string; args: string[] }): string[] {
+  const underlying = { command: call.args[3], args: call.args.slice(4) };
+  const expected = resolveWatchedChildPiInvocation(underlying, 30000, call.args[2]);
+  assert.deepStrictEqual(call, { cmd: expected.command, args: expected.args });
+  return underlying.command === "selesai" ? underlying.args : underlying.args.slice(1);
+}
+
+// Compute the expected OWN_EXTENSION_PATH same logic as pi-child-process.ts
+const OWN_EXTENSION_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../src/index.ts",
+);
+
+// Adapter detection scans the real sibling/agent node_modules trees, so a
+// contributor with a provider auth adapter installed gets extra -e args in
+// every child invocation. Derive them instead of assuming a bare environment.
+const DETECTED_ADAPTER_ARGS = detectAuthAdapterExtensionPaths().flatMap((p) => ["-e", p]);
+
+const EXT_ARGS = ["--no-extensions", "-e", OWN_EXTENSION_PATH, ...DETECTED_ADAPTER_ARGS];
+
+describe("inheritedExtensionArgs", () => {
+  it("captures explicit -e and --extension parent args", () => {
+    assert.deepStrictEqual(
+      inheritedExtensionArgs(["-e", "src/index.ts", "--extension", "/tmp/other.ts"]),
+      ["-e", "src/index.ts", "--extension", "/tmp/other.ts"],
+    );
+  });
+
+  it("captures --extension=... parent args", () => {
+    assert.deepStrictEqual(
+      inheritedExtensionArgs(["--extension=src/index.ts"]),
+      ["--extension=src/index.ts"],
+    );
+  });
+});
+
+describe("detectAuthAdapterExtensionPaths", () => {
+  it("returns empty when no sibling packages exist under the root", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-empty-"));
+    try {
+      assert.deepStrictEqual(detectAuthAdapterExtensionPaths([root]), []);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("detects a convention-named adapter via its package.json manifest (xai-oauth-adapter)", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-xai-"));
+    const adapterDir = path.join(root, "xai-oauth-adapter");
+    const adapterPath = path.join(adapterDir, "extensions", "index.ts");
+    await fs.mkdir(path.dirname(adapterPath), { recursive: true });
+    await fs.writeFile(adapterPath, "export default () => {};");
+    await fs.writeFile(
+      path.join(adapterDir, "package.json"),
+      JSON.stringify({ name: "xai-oauth-adapter", pi: { extensions: ["extensions/index.ts"] } }),
+    );
+    try {
+      assert.deepStrictEqual(detectAuthAdapterExtensionPaths([root]), [adapterPath]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("detects a scoped convention-named adapter one level under @scope", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-scoped-"));
+    const adapterDir = path.join(root, "@xai", "pi-oauth-adapter");
+    const adapterPath = path.join(adapterDir, "entry.ts");
+    await fs.mkdir(path.dirname(adapterPath), { recursive: true });
+    await fs.writeFile(adapterPath, "export default () => {};");
+    await fs.writeFile(
+      path.join(adapterDir, "package.json"),
+      JSON.stringify({ name: "@xai/pi-oauth-adapter", pi: { extensions: ["entry.ts"] } }),
+    );
+    try {
+      assert.deepStrictEqual(detectAuthAdapterExtensionPaths([root]), [adapterPath]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores packages that do not match the auth-adapter naming convention", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-nonmatch-"));
+    const pkgDir = path.join(root, "some-other-package");
+    const extPath = path.join(pkgDir, "extensions", "index.ts");
+    await fs.mkdir(path.dirname(extPath), { recursive: true });
+    await fs.writeFile(extPath, "export default () => {};");
+    await fs.writeFile(
+      path.join(pkgDir, "package.json"),
+      JSON.stringify({ name: "some-other-package", pi: { extensions: ["extensions/index.ts"] } }),
+    );
+    try {
+      assert.deepStrictEqual(detectAuthAdapterExtensionPaths([root]), []);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns empty for a matching package name without package.json", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-nopkg-"));
+    await fs.mkdir(path.join(root, "my-oauth-adapter"), { recursive: true });
+    try {
+      assert.deepStrictEqual(detectAuthAdapterExtensionPaths([root]), []);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns empty when package.json lacks pi.extensions", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-nopi-"));
+    const adapterDir = path.join(root, "my-auth-adapter");
+    await fs.mkdir(adapterDir, { recursive: true });
+    await fs.writeFile(path.join(adapterDir, "package.json"), JSON.stringify({ name: "my-auth-adapter" }));
+    try {
+      assert.deepStrictEqual(detectAuthAdapterExtensionPaths([root]), []);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("filters out manifest entries whose files do not exist on disk", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-missing-"));
+    const adapterDir = path.join(root, "pi-oauth-adapter");
+    const presentPath = path.join(adapterDir, "extensions", "present.ts");
+    await fs.mkdir(path.dirname(presentPath), { recursive: true });
+    await fs.writeFile(presentPath, "export default () => {};");
+    await fs.writeFile(
+      path.join(adapterDir, "package.json"),
+      JSON.stringify({
+        name: "pi-oauth-adapter",
+        pi: { extensions: ["extensions/missing.ts", "extensions/present.ts"] },
+      }),
+    );
+    try {
+      assert.deepStrictEqual(detectAuthAdapterExtensionPaths([root]), [presentPath]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("collects extension entries from every matching package under one root", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-multi-"));
+    const firstDir = path.join(root, "alpha-oauth-adapter");
+    const firstPath = path.join(firstDir, "a.ts");
+    const secondDir = path.join(root, "beta-auth-adapter");
+    const secondPath = path.join(secondDir, "b.ts");
+    await fs.mkdir(path.dirname(firstPath), { recursive: true });
+    await fs.writeFile(firstPath, "export default () => {};");
+    await fs.writeFile(
+      path.join(firstDir, "package.json"),
+      JSON.stringify({ name: "alpha-oauth-adapter", pi: { extensions: ["a.ts"] } }),
+    );
+    await fs.mkdir(path.dirname(secondPath), { recursive: true });
+    await fs.writeFile(secondPath, "export default () => {};");
+    await fs.writeFile(
+      path.join(secondDir, "package.json"),
+      JSON.stringify({ name: "beta-auth-adapter", pi: { extensions: ["b.ts"] } }),
+    );
+    try {
+      const detected = detectAuthAdapterExtensionPaths([root]);
+      assert.equal(detected.length, 2);
+      assert.ok(detected.includes(firstPath));
+      assert.ok(detected.includes(secondPath));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("merges matches from multiple roots passed in the roots array", async () => {
+    const rootA = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-roota-"));
+    const rootB = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-rootb-"));
+    const pathA = path.join(rootA, "one-oauth-adapter", "one.ts");
+    const pathB = path.join(rootB, "two-oauth-adapter", "two.ts");
+    await fs.mkdir(path.dirname(pathA), { recursive: true });
+    await fs.writeFile(pathA, "export default () => {};");
+    await fs.writeFile(
+      path.join(rootA, "one-oauth-adapter", "package.json"),
+      JSON.stringify({ name: "one-oauth-adapter", pi: { extensions: ["one.ts"] } }),
+    );
+    await fs.mkdir(path.dirname(pathB), { recursive: true });
+    await fs.writeFile(pathB, "export default () => {};");
+    await fs.writeFile(
+      path.join(rootB, "two-oauth-adapter", "package.json"),
+      JSON.stringify({ name: "two-oauth-adapter", pi: { extensions: ["two.ts"] } }),
+    );
+    try {
+      const detected = detectAuthAdapterExtensionPaths([rootA, rootB]);
+      assert.equal(detected.length, 2);
+      assert.ok(detected.includes(pathA));
+      assert.ok(detected.includes(pathB));
+    } finally {
+      await fs.rm(rootA, { recursive: true, force: true });
+      await fs.rm(rootB, { recursive: true, force: true });
+    }
+  });
+
+  it("detects the allowlisted pi-claude-auth package", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-claude-"));
+    const adapterDir = path.join(root, "pi-claude-auth");
+    const adapterPath = path.join(adapterDir, "src", "index.ts");
+    await fs.mkdir(path.dirname(adapterPath), { recursive: true });
+    await fs.writeFile(adapterPath, "export default () => {};");
+    await fs.writeFile(
+      path.join(adapterDir, "package.json"),
+      JSON.stringify({ name: "pi-claude-auth", pi: { extensions: ["src/index.ts"] } }),
+    );
+    try {
+      assert.deepStrictEqual(detectAuthAdapterExtensionPaths([root]), [adapterPath]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("detects the allowlisted scoped @gotgenes/pi-anthropic-auth package", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-anthropic-"));
+    const adapterDir = path.join(root, "@gotgenes", "pi-anthropic-auth");
+    const adapterPath = path.join(adapterDir, "src", "index.ts");
+    await fs.mkdir(path.dirname(adapterPath), { recursive: true });
+    await fs.writeFile(adapterPath, "export default () => {};");
+    await fs.writeFile(
+      path.join(adapterDir, "package.json"),
+      JSON.stringify({
+        name: "@gotgenes/pi-anthropic-auth",
+        pi: { extensions: ["src/index.ts"] },
+      }),
+    );
+    try {
+      assert.deepStrictEqual(detectAuthAdapterExtensionPaths([root]), [adapterPath]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores a suffixless auth package that is not allowlisted", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-auth-detect-untrusted-"));
+    const pkgDir = path.join(root, "pi-vault-auth");
+    const extPath = path.join(pkgDir, "index.ts");
+    await fs.mkdir(pkgDir, { recursive: true });
+    await fs.writeFile(extPath, "export default () => {};");
+    await fs.writeFile(
+      path.join(pkgDir, "package.json"),
+      JSON.stringify({ name: "pi-vault-auth", pi: { extensions: ["index.ts"] } }),
+    );
+    try {
+      assert.deepStrictEqual(detectAuthAdapterExtensionPaths([root]), []);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+
+describe("buildChildPiPromptArgs", () => {
+  it("uses --no-extensions and only passes hermes-memory extension", () => {
+    assert.deepStrictEqual(
+      buildChildPiPromptArgs("hello", {}, []),
+      ["-p", "--no-session", ...EXT_ARGS, "hello"],
+    );
+  });
+
+  it("adds a model override and defaults thinking to off", () => {
+    assert.deepStrictEqual(
+      buildChildPiPromptArgs("hello", { llmModelOverride: "openrouter/deepseek/deepseek-v4-flash" }, []),
+      ["-p", "--no-session", "--model", "openrouter/deepseek/deepseek-v4-flash", "--thinking", "off", ...EXT_ARGS, "hello"],
+    );
+  });
+  it("inherits the active provider/model when no override is configured", () => {
+    assert.deepStrictEqual(
+      buildChildPiPromptArgs("hello", {}, [], { provider: "local-llama", id: "local-9b" }),
+      ["-p", "--no-session", "--model", "local-llama/local-9b", ...EXT_ARGS, "hello"],
+    );
+  });
+
+  it("prefers the configured model override over the active session model", () => {
+    assert.deepStrictEqual(
+      buildChildPiPromptArgs(
+        "hello",
+        { llmModelOverride: "openrouter/deepseek/deepseek-v4-flash" },
+        [],
+        { provider: "local-llama", id: "local-9b" },
+      ),
+      ["-p", "--no-session", "--model", "openrouter/deepseek/deepseek-v4-flash", "--thinking", "off", ...EXT_ARGS, "hello"],
+    );
+  });
+
+
+  it("allows thinking overrides without a model override", () => {
+    assert.deepStrictEqual(
+      buildChildPiPromptArgs("hello", { llmThinkingOverride: "low" }, []),
+      ["-p", "--no-session", "--thinking", "low", ...EXT_ARGS, "hello"],
+    );
+  });
+
+  it("ignores missing inherited extension paths", () => {
+    assert.deepStrictEqual(
+      buildChildPiPromptArgs("hello", {}, ["-e", "src/index.ts"]),
+      ["-p", "--no-session", ...EXT_ARGS, "hello"],
+    );
+  });
+
+  it("passes configured extension sources through Pi's -e resolver and excludes inherited extensions", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-child-extensions-"));
+    const configured = path.join(dir, "configured.ts");
+    const inherited = path.join(dir, "inherited.ts");
+    await fs.writeFile(configured, "export default () => {};");
+    await fs.writeFile(inherited, "export default () => {};");
+    try {
+      assert.deepStrictEqual(
+        buildChildPiPromptArgs("hello", {
+          childExtensionPaths: [
+            configured,
+            configured,
+            "~/.pi/agent/extensions/provider.ts",
+            "./relative-provider.ts",
+            "git:github.com/example/provider-extension@v1",
+            "npm:@example/provider-extension@1.0.0",
+            OWN_EXTENSION_PATH,
+          ],
+        }, ["-e", inherited, `--extension=${configured}`]),
+        [
+          "-p", "--no-session", "--no-extensions",
+          "-e", OWN_EXTENSION_PATH,
+          "-e", configured,
+          "-e", "~/.pi/agent/extensions/provider.ts",
+          "-e", "./relative-provider.ts",
+          "-e", "git:github.com/example/provider-extension@v1",
+          "-e", "npm:@example/provider-extension@1.0.0",
+          ...DETECTED_ADAPTER_ARGS,
+          "hello",
+        ],
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects a sibling pi-claude-oauth-adapter extension via its package.json manifest", async () => {
+    const nodeModules = await fs.mkdtemp(path.join(os.tmpdir(), "pi-node-modules-"));
+    const adapterDir = path.join(nodeModules, "pi-claude-oauth-adapter");
+    const adapterPath = path.join(adapterDir, "extensions", "index.ts");
+    await fs.mkdir(path.dirname(adapterPath), { recursive: true });
+    await fs.writeFile(adapterPath, "export default () => {};");
+    await fs.writeFile(
+      path.join(adapterDir, "package.json"),
+      JSON.stringify({ name: "pi-claude-oauth-adapter", pi: { extensions: ["extensions/index.ts"] } }),
+    );
+    try {
+      assert.deepStrictEqual(detectAuthAdapterExtensionPaths([nodeModules]), [adapterPath]);
+    } finally {
+      await fs.rm(nodeModules, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveChildPiInvocation", () => {
+  it("keeps non-Windows child pi invocations unchanged", () => {
+    const args = ["-p", "--no-session", "hello"];
+
+    assert.deepStrictEqual(
+      resolveChildPiInvocation(args, { platform: "linux" }),
+      { command: "selesai", args },
+    );
+  });
+
+  it("runs node.exe with cli.js first on Windows when a Pi CLI path is available", () => {
+    assert.deepStrictEqual(
+      resolveChildPiInvocation(["-p", "--no-session", "hello"], {
+        platform: "win32",
+        execPath: "C:\\Program Files\\nodejs\\node.exe",
+        piCliPath: "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@selesai\\code\\dist\\cli.js",
+      }),
+      {
+        command: "C:\\Program Files\\nodejs\\node.exe",
+        args: [
+          "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@selesai\\code\\dist\\cli.js",
+          "-p",
+          "--no-session",
+          "hello",
+        ],
+      },
+    );
+  });
+
+  it("resolves a standard Windows command shim to its adjacent cli.js", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pi-windows-shim-"));
+    const binDirectory = path.join(directory, "bin");
+    const cliPath = path.join(
+      binDirectory,
+      "node_modules",
+      "@selesai",
+      "code",
+      "dist",
+      "cli.js",
+    );
+    const args = ["-p", "--no-session", "hello"];
+    const originalPath = process.env.PATH;
+
+    await fs.mkdir(path.dirname(cliPath), { recursive: true });
+    await fs.writeFile(path.join(binDirectory, "selesai.cmd"), "@echo off\r\n");
+    await fs.writeFile(cliPath, "");
+    process.env.PATH = `${binDirectory};C:\\Windows\\System32`;
+    try {
+      assert.deepStrictEqual(
+        resolveChildPiInvocation(args, {
+          platform: "win32",
+          execPath: "C:\\Program Files\\nodejs\\node.exe",
+          piCliPath: null,
+        }),
+        {
+          command: "C:\\Program Files\\nodejs\\node.exe",
+          args: [cliPath, ...args],
+        },
+      );
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("execChildPrompt", () => {
+  it("runs child Pi behind a hard process-tree watchdog", async () => {
+    const calls: Array<{ cmd: string; args: string[]; timeout?: number }> = [];
+    await execChildPrompt({
+      exec: async (cmd: string, args: string[], options: { timeout?: number }) => {
+        calls.push({ cmd, args, timeout: options.timeout });
+        return { code: 0, stdout: "ok", stderr: "", killed: false };
+      },
+    } as any, "bounded child", {}, { timeoutMs: 30000 });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].cmd, process.execPath);
+    assert.match(calls[0].args[0].replaceAll("\\", "/"), /child-process-watchdog\.mjs$/);
+    assert.equal(calls[0].args[1], "30000");
+    assert.match(calls[0].args[2], /cancel$/);
+    assert.equal(calls[0].args[3], "selesai");
+    assert.equal(calls[0].timeout, 35000);
+  });
+
+  it("uses the watchdog marker for cancellation without aborting its process", async () => {
+    const abortController = new AbortController();
+    let cancelPath = "";
+    const result = await execChildPrompt({
+      exec: async (_cmd: string, args: string[], options: { signal?: AbortSignal }) => {
+        cancelPath = args[2];
+        assert.equal(options.signal, undefined);
+        abortController.abort();
+        const deadline = Date.now() + 1000;
+        while (Date.now() < deadline) {
+          try {
+            await fs.access(cancelPath);
+            return { code: 143, stderr: "child cancelled" };
+          } catch {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+        }
+        assert.fail("abort did not notify the watchdog");
+      },
+    } as any, "cancel child", {}, {
+      signal: abortController.signal,
+      timeoutMs: 30000,
+    });
+
+    assert.equal(result.code, 143);
+    await assert.rejects(fs.access(cancelPath), { code: "ENOENT" });
+  });
+
+  it("writes cancellation before launching an already-aborted child", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+    let cancelPath = "";
+    await execChildPrompt({
+      exec: async (_cmd: string, args: string[], options: { signal?: AbortSignal }) => {
+        cancelPath = args[2];
+        assert.equal(options.signal, undefined);
+        await fs.access(cancelPath);
+        return { code: 143, stderr: "child cancelled" };
+      },
+    } as any, "cancel before launch", {}, {
+      signal: abortController.signal,
+      timeoutMs: 30000,
+    });
+
+    await assert.rejects(fs.access(cancelPath), { code: "ENOENT" });
+  });
+
+  it("forwards explicit cwd and timeout while cancellation stays with the watchdog", async () => {
+    const signal = new AbortController().signal;
+    let received: { cwd?: string; signal?: AbortSignal; timeout?: number } | undefined;
+    await execChildPrompt({
+      exec: async (_cmd: string, _args: string[], options: typeof received) => {
+        received = options;
+        return { code: 0, stdout: "ok", stderr: "" };
+      },
+    } as any, "bounded child", {}, {
+      cwd: "/tmp/session",
+      signal,
+      timeoutMs: 30000,
+    });
+
+    assert.deepStrictEqual(received, { cwd: "/tmp/session", timeout: 35000 });
+  });
+
+
+  it("hard-kills a child that ignores graceful timeout termination", async () => {
+    const watchdogPath = fileURLToPath(
+      new URL("../../src/handlers/child-process-watchdog.mjs", import.meta.url),
+    );
+    const startedAt = Date.now();
+    const result = await new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      const child = spawn(process.execPath, [
+        watchdogPath,
+        "100",
+        "-",
+        process.execPath,
+        "-e",
+        "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)",
+      ], { stdio: ["ignore", "ignore", "pipe"] });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+      child.on("close", (code) => resolve({ code, stderr }));
+    });
+
+    assert.equal(result.code, 124);
+    assert.match(result.stderr, /timed out after 100ms/i);
+    assert.ok(Date.now() - startedAt < 3000, "watchdog must enforce a bounded hard stop");
+  });
+
+  it("terminates the child tree when its cancellation marker appears", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pi-watchdog-cancel-"));
+    const cancelPath = path.join(directory, "cancel");
+    const watchdogPath = fileURLToPath(
+      new URL("../../src/handlers/child-process-watchdog.mjs", import.meta.url),
+    );
+    const startedAt = Date.now();
+    try {
+      const result = await new Promise<{ code: number | null; stderr: string }>((resolve) => {
+        const child = spawn(process.execPath, [
+          watchdogPath,
+          "10000",
+          cancelPath,
+          process.execPath,
+          "-e",
+          "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)",
+        ], { stdio: ["ignore", "ignore", "pipe"] });
+        let stderr = "";
+        child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+        child.on("close", (code) => resolve({ code, stderr }));
+        setTimeout(() => void fs.writeFile(cancelPath, ""), 100);
+      });
+
+      assert.equal(result.code, 143);
+      assert.match(result.stderr, /child cancellation requested/i);
+      assert.ok(Date.now() - startedAt < 3000, "watchdog cancellation must be bounded");
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("hard-kills descendants in the timed-out child process group", {
+    skip: process.platform === "win32" ? "uses taskkill /T on Windows" : false,
+  }, async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pi-watchdog-tree-"));
+    const pidPath = path.join(directory, "descendant.pid");
+    const watchdogPath = fileURLToPath(
+      new URL("../../src/handlers/child-process-watchdog.mjs", import.meta.url),
+    );
+    const descendant = "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)";
+    const parent = [
+      "const {spawn}=require('node:child_process');",
+      "const fs=require('node:fs');",
+      `const child=spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore'});`,
+      `fs.writeFileSync(${JSON.stringify(pidPath)},String(child.pid));`,
+      "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);",
+    ].join("");
+
+    try {
+      const code = await new Promise<number | null>((resolve) => {
+        const child = spawn(process.execPath, [
+          watchdogPath,
+          "100",
+          "-",
+          process.execPath,
+          "-e",
+          parent,
+        ], { stdio: "ignore" });
+        child.on("close", resolve);
+      });
+      assert.equal(code, 124);
+      const descendantPid = Number(await fs.readFile(pidPath, "utf-8"));
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(descendantPid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+          throw error;
+        }
+      }
+      assert.fail("watchdog left a descendant process alive");
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a sensitive prompt out of argv and removes its mode-0600 temporary file", async () => {
+    const secret = "PRIVATE-MEMORY-CONTENT";
+    let promptPath = "";
+    const pi = {
+      exec: async (_cmd: string, args: string[]) => {
+        assert.ok(args.every((arg) => !arg.includes(secret)), "child argv must not contain prompt content");
+        const promptArg = args.at(-1)!;
+        assert.match(promptArg, /^@/);
+        promptPath = promptArg.slice(1);
+        assert.equal(await fs.readFile(promptPath, "utf-8"), secret);
+        assert.equal((await fs.stat(promptPath)).mode & 0o777, 0o600);
+        return { code: 0, stdout: "ok", stderr: "" };
+      },
+    };
+
+    const result = await execChildPrompt(pi as any, secret, {}, { timeoutMs: 30000 });
+
+    assert.equal(result.code, 0);
+    await assert.rejects(fs.access(promptPath), { code: "ENOENT" });
+    await assert.rejects(fs.access(path.dirname(promptPath)), { code: "ENOENT" });
+  });
+
+  it("removes the temporary prompt file when child execution throws", async () => {
+    let promptPath = "";
+    const pi = {
+      exec: async (_cmd: string, args: string[]) => {
+        promptPath = args.at(-1)!.slice(1);
+        assert.equal(await fs.readFile(promptPath, "utf-8"), "secret failure prompt");
+        throw new Error("child failed");
+      },
+    };
+
+    await assert.rejects(
+      execChildPrompt(pi as any, "secret failure prompt", {}, { timeoutMs: 30000 }),
+      /child failed/,
+    );
+
+    assert.ok(promptPath.startsWith(os.tmpdir()));
+    await assert.rejects(fs.access(promptPath), { code: "ENOENT" });
+  });
+
+  it("returns a successful child result when temporary cleanup fails", async () => {
+    let cleanupCalls = 0;
+    let promptDirectory = "";
+    const pi = {
+      exec: async (_cmd: string, args: string[]) => {
+        promptDirectory = path.dirname(args.at(-1)!.slice(1));
+        return { code: 0, stdout: "completed", stderr: "" };
+      },
+    };
+
+    try {
+      const result = await execChildPrompt(
+        pi as any,
+        "cleanup failure prompt",
+        {},
+        { timeoutMs: 30000 },
+        {
+          removeTemporaryDirectory: async () => {
+            cleanupCalls++;
+            throw new Error("cleanup denied");
+          },
+        },
+      );
+
+      assert.equal(result.code, 0);
+      assert.equal(result.stdout, "completed");
+      assert.equal(cleanupCalls, 1);
+    } finally {
+      if (promptDirectory) await fs.rm(promptDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("passes configured auth adapters to both override attempts", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-child-auth-"));
+    const adapterPath = path.join(dir, "adapter.ts");
+    await fs.writeFile(adapterPath, "export default () => {};");
+    const calls: string[][] = [];
+    const pi = {
+      exec: async (_cmd: string, args: string[]) => {
+        calls.push(args);
+        return calls.length === 1
+          ? { code: 1, stdout: "", stderr: "model not found" }
+          : { code: 0, stdout: "ok", stderr: "" };
+      },
+    };
+    try {
+      await execChildPrompt(pi as any, "hello", {
+        llmModelOverride: "missing/model",
+        childExtensionPaths: [adapterPath],
+      }, { timeoutMs: 30000, retryWithoutOverrides: true });
+
+      assert.equal(calls.length, 2);
+      for (const args of calls) {
+        const index = args.indexOf(adapterPath);
+        assert.ok(index > 0);
+        assert.equal(args[index - 1], "-e");
+      }
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes unrelated inherited extensions from primary and retry attempts", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-child-untrusted-"));
+    const inherited = path.join(dir, "unrelated-extension.ts");
+    await fs.writeFile(inherited, "export default () => {};");
+    const originalArgv = process.argv;
+    const calls: string[][] = [];
+    process.argv = [originalArgv[0], originalArgv[1], "-e", inherited];
+    try {
+      await execChildPrompt({
+        exec: async (_cmd: string, args: string[]) => {
+          calls.push(args);
+          return calls.length === 1
+            ? { code: 1, stderr: "model not found" }
+            : { code: 0, stdout: "ok" };
+        },
+      } as any, "private review", {
+        llmModelOverride: "missing/model",
+      }, { timeoutMs: 30000, retryWithoutOverrides: true });
+
+      assert.equal(calls.length, 2);
+      for (const args of calls) {
+        assert.equal(args.includes(inherited), false);
+        assert.ok(args.includes("--no-extensions"));
+      }
+    } finally {
+      process.argv = originalArgv;
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("retries once without overrides when requested and the override subprocess fails for model resolution reasons", async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const pi = {
+      exec: async (cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        if (calls.length === 1) {
+          return { code: 1, stdout: "", stderr: "model not found" };
+        }
+        return { code: 0, stdout: "ok", stderr: "" };
+      },
+    };
+
+    const result = await execChildPrompt(pi as any, "hello", {
+      llmModelOverride: "openrouter/deepseek/deepseek-v4-flash",
+    }, {
+      timeoutMs: 30000,
+      retryWithoutOverrides: true,
+      model: { provider: "local-llama", id: "local-9b" },
+    });
+
+    assert.strictEqual(result.code, 0);
+    const logicalCalls = calls.map(logicalChildArgs);
+    const promptReference = logicalCalls[0].at(-1)!;
+    assert.match(promptReference, /^@/);
+    assert.deepStrictEqual(logicalCalls, [
+      ["-p", "--no-session", "--model", "openrouter/deepseek/deepseek-v4-flash", "--thinking", "off", ...EXT_ARGS, promptReference],
+      // Retry drops configured overrides but preserves the active session model.
+      ["-p", "--no-session", "--model", "local-llama/local-9b", ...EXT_ARGS, promptReference],
+    ]);
+  });
+
+  it("uses the resolved Windows node.exe invocation for both override retry attempts", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pi-windows-retry-"));
+    const binDirectory = path.join(directory, "bin");
+    const cliPath = path.join(
+      binDirectory,
+      "node_modules",
+      "@selesai",
+      "code",
+      "dist",
+      "cli.js",
+    );
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    const originalPath = process.env.PATH;
+    await fs.mkdir(path.dirname(cliPath), { recursive: true });
+    await fs.writeFile(path.join(binDirectory, "selesai.cmd"), "@echo off\r\n");
+    await fs.writeFile(cliPath, "");
+    process.env.PATH = `${binDirectory};C:\\Windows\\System32`;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      const calls: Array<{ cmd: string; args: string[] }> = [];
+      const pi = {
+        exec: async (cmd: string, args: string[]) => {
+          calls.push({ cmd, args });
+          if (calls.length === 1) {
+            return { code: 1, stdout: "", stderr: "model not found" };
+          }
+          return { code: 0, stdout: "ok", stderr: "" };
+        },
+      };
+
+      const result = await execChildPrompt(pi as any, "hello", {
+        llmModelOverride: "openrouter/deepseek/deepseek-v4-flash",
+      }, {
+        timeoutMs: 30000,
+        retryWithoutOverrides: true,
+      });
+
+      assert.strictEqual(result.code, 0);
+      assert.strictEqual(calls.length, 2);
+      assert.strictEqual(calls[0].cmd, process.execPath);
+      assert.strictEqual(calls[1].cmd, process.execPath);
+      assert.match(calls[0].args[4].replace(/\\/g, "/"), /\/cli\.js$/);
+      assert.match(calls[1].args[4].replace(/\\/g, "/"), /\/cli\.js$/);
+      const promptReference = calls[0].args.at(-1)!;
+      assert.match(promptReference, /^@/);
+      assert.deepStrictEqual(calls.map(logicalChildArgs), [
+        ["-p", "--no-session", "--model", "openrouter/deepseek/deepseek-v4-flash", "--thinking", "off", ...EXT_ARGS, promptReference],
+        ["-p", "--no-session", ...EXT_ARGS, promptReference],
+      ]);
+    } finally {
+      if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not retry generic non-zero child failures that are unrelated to override resolution", async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const pi = {
+      exec: async (cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        return { code: 1, stdout: "", stderr: "memory tool returned no changes" };
+      },
+    };
+
+    const result = await execChildPrompt(pi as any, "hello", {
+      llmModelOverride: "openrouter/deepseek/deepseek-v4-flash",
+    }, {
+      timeoutMs: 30000,
+      retryWithoutOverrides: true,
+    });
+
+    assert.strictEqual(result.code, 1);
+    assert.strictEqual(calls.length, 1);
+  });
+
+  it("does not retry generic thrown errors that are unrelated to override resolution", async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const pi = {
+      exec: async (cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        throw new Error("timed out waiting for child process");
+      },
+    };
+
+    await assert.rejects(
+      () => execChildPrompt(pi as any, "hello", {
+        llmModelOverride: "openrouter/deepseek/deepseek-v4-flash",
+      }, {
+        timeoutMs: 30000,
+        retryWithoutOverrides: true,
+      }),
+      /timed out waiting for child process/,
+    );
+
+    assert.strictEqual(calls.length, 1);
+  });
+
+  it("does not retry when retryWithoutOverrides is false", async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const pi = {
+      exec: async (cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        return { code: 1, stdout: "", stderr: "model not found" };
+      },
+    };
+
+    const result = await execChildPrompt(pi as any, "hello", {
+      llmModelOverride: "openrouter/deepseek/deepseek-v4-flash",
+    }, {
+      timeoutMs: 30000,
+      retryWithoutOverrides: false,
+    });
+
+    assert.strictEqual(result.code, 1);
+    assert.strictEqual(calls.length, 1);
+  });
+});

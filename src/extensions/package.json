@@ -10,7 +10,6 @@
 			"./copy-turn.ts",
 			"./context-compaction-reminder.ts",
 			"./cost-reconcile.ts",
-			"./enable-readonly-tools.ts",
 			"./pi-intercom/index.ts",
 			"./ponytail/index.js",
 			"./question",
@@ -24,6 +23,7 @@
 			"./pi-subagents",
 			"./pi-tool-display",
 			"./pi-web-agent",
+			"./pi-hermes-memory",
 			"./web-agent-onboarding.ts",
 			"./tps.ts",
 			"./pi-zentui/extensions/zentui/index.ts"
