@@ -79,12 +79,12 @@
 <ul>
 <li>Bundled with Selesai and loaded automatically; no separate install is required.</li>
 <li>Works with gateways that report a cost in the response: LiteLLM (<code dir="auto">x-litellm-response-cost</code> header), OpenRouter (<code dir="auto">usage.cost</code> / <code dir="auto">total_cost</code>), and object-shaped <code dir="auto">cost.total</code>.</li>
-<li>Providers whose payloads carry no cost (first-party OpenAI/Anthropic) record nothing; their rate-card estimate matches the bill when catalog prices are configured.</li>
+<li>Providers whose payloads carry no cost (first-party OpenAI/Anthropic) retain their rate-card estimate, which matches the bill when catalog prices are configured.</li>
 </ul>
 <h2 id="what-it-sets-up">What it sets up</h2>
 <ul>
-<li>Installs a tee-wrapping <code dir="auto">fetch</code> once per process that scans LLM API responses for provider-reported cost and response ids.</li>
-<li>On <code dir="auto">message_end</code>, writes a <code dir="auto">cost-reconcile</code> custom session entry per response id (bounded per session).</li>
+<li>Installs a stream-wrapping <code dir="auto">fetch</code> once per process that scans LLM API responses for provider-reported cost and response ids. The wrapper finishes capture before the provider SDK finalizes its assistant message.</li>
+<li>On <code dir="auto">message_end</code>, replaces the finalized assistant <code dir="auto">usage.cost.total</code> with the provider-reported billed amount before the message is persisted, and writes a <code dir="auto">cost-reconcile</code> custom session entry per response id (bounded per session) for zentui and existing-session compatibility.</li>
 <li>The zentui footer prefers reconciled entries over the rate-card total when both exist for the same response id, and refreshes once after settle so late reconciliation is picked up.</li>
 <li>Cost labels format adaptively so sub-cent per-call costs stay visible: 3 decimals at $1+, 4 decimals at $0.01+, and 6 decimals below (e.g. <code dir="auto">$0.000336</code> instead of <code dir="auto">$0.000</code>).</li>
 </ul>
@@ -102,7 +102,7 @@
 </ul>
 <h2 id="limits-and-safety">Limits and safety</h2>
 <ul>
-<li>Capture is best-effort: the response body is tee’d and scanned in the background; the main response stream is never altered.</li>
+<li>Capture is best-effort: the response body is scanned in the background while the response stream passes through unchanged; the main response is never altered.</li>
 <li>Bodies are scanned up to a size cap; the last cost match in a stream wins (usage lands in the final chunk).</li>
 <li>The extension never reads or stores message content — only response ids, provider/model names, and reported cost numbers.</li>
 </ul>

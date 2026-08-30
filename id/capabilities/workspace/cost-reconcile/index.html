@@ -79,12 +79,12 @@
 <ul>
 <li>Dibundel bersama Selesai dan dimuat otomatis; tidak perlu diinstal terpisah.</li>
 <li>Bekerja dengan gateway yang melaporkan biaya dalam respons: LiteLLM (header <code dir="auto">x-litellm-response-cost</code>), OpenRouter (<code dir="auto">usage.cost</code> / <code dir="auto">total_cost</code>), dan <code dir="auto">cost.total</code> berbentuk objek.</li>
-<li>Provider yang payload-nya tidak memuat biaya (OpenAI/Anthropic first-party) tidak mencatat apa pun; estimasi rate card mereka cocok dengan tagihan saat harga katalog dikonfigurasi.</li>
+<li>Provider yang payload-nya tidak memuat biaya (OpenAI/Anthropic first-party) tetap mempertahankan estimasi rate card, yang cocok dengan tagihan saat harga katalog dikonfigurasi.</li>
 </ul>
 <h2 id="yang-disiapkan">Yang disiapkan</h2>
 <ul>
-<li>Memasang <code dir="auto">fetch</code> pembungkus tee sekali per proses yang memindai respons API LLM untuk biaya yang dilaporkan provider dan id respons.</li>
-<li>Pada <code dir="auto">message_end</code>, menulis entri sesi kustom <code dir="auto">cost-reconcile</code> per id respons (dibatasi per sesi).</li>
+<li>Memasang <code dir="auto">fetch</code> pembungkus stream sekali per proses yang memindai respons API LLM untuk biaya yang dilaporkan provider dan id respons. Pembungkus menyelesaikan capture sebelum SDK provider men-finalisasi pesan asisten.</li>
+<li>Pada <code dir="auto">message_end</code>, menggantikan <code dir="auto">usage.cost.total</code> pesan asisten final dengan jumlah tagihan yang dilaporkan provider sebelum pesan dipersistenkan, dan menulis entri sesi kustom <code dir="auto">cost-reconcile</code> per id respons (dibatasi per sesi) untuk kompatibilitas zentui dan sesi yang ada.</li>
 <li>Footer zentui mengutamakan entri hasil rekonsiliasi daripada total rate card saat keduanya ada untuk id respons yang sama, dan menyegarkan sekali setelah settle agar rekonsiliasi yang terlambat ikut terbaca.</li>
 <li>Label biaya diformat secara adaptif agar biaya per panggilan di bawah satu sen tetap terlihat: 3 desimal di $1+, 4 desimal di $0.01+, dan 6 desimal di bawahnya (mis. <code dir="auto">$0.000336</code>, bukan <code dir="auto">$0.000</code>).</li>
 </ul>
@@ -102,7 +102,7 @@
 </ul>
 <h2 id="batasan-dan-keamanan">Batasan dan keamanan</h2>
 <ul>
-<li>Penangkapan bersifat best-effort: body respons di-tee dan dipindai di latar belakang; aliran respons utama tidak pernah diubah.</li>
+<li>Penangkapan bersifat best-effort: body respons dipindai di latar belakang sementara aliran respons melewati tanpa berubah; respons utama tidak pernah diubah.</li>
 <li>Body dipindai hingga batas ukuran; kecocokan biaya terakhir dalam stream yang menang (usage tiba di chunk akhir).</li>
 <li>Ekstensi tidak pernah membaca atau menyimpan isi pesan — hanya id respons, nama provider/model, dan angka biaya yang dilaporkan.</li>
 </ul>
