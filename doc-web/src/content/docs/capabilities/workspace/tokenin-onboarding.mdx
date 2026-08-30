@@ -42,6 +42,7 @@ The `tokenin-onboarding` extension guides first-time users through adding a Toke
 - Switch the active account with `/tokenin switch`.
 - Remove a saved account with `/tokenin remove` (cannot remove the active account; switch first).
 - Check your Token-In quota with `/tokenin usage`: it queries the LiteLLM `/key/info` endpoint with the active token and shows spend, budget, remaining, and reset time in a boxed display.
+- Save multiple tokens and rely on automatic failover. If the active key fails with a 401, 429, or budget/quota error, the extension rotates to another saved account and puts the failed key on a 5-minute cooldown before trying it again.
 
 ## Commands, tools, and shortcuts
 
@@ -59,6 +60,7 @@ The command validates that the pasted token starts with `sk-`. Invalid tokens ar
 - Tokens are stored in `~/.selesai/agent/tokenin-auth.json` with mode `0o600`. The active key is also written to Selesai's `auth.json`.
 - Do not commit `tokenin-auth.json`, `auth.json`, or any file containing a token.
 - The onboarding prompt does not appear again after the marker file exists, even if the first attempt failed. Use `/tokenin add` to retry or add another token.
+- After a failover, the newly active credential is written to both `tokenin-auth.json` and `auth.json`, so the rotation survives new sessions.
 - The `/tokenin-onboard` command does **not** exist; use `/tokenin add` or wait for first-run onboarding.
 
 <SourceEvidence slug="tokenin-onboarding" />

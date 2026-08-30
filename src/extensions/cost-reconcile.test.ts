@@ -1,5 +1,63 @@
-import { describe, expect, it } from "vitest";
-import { extractCosts, parseCostHeader } from "./cost-reconcile.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import costReconcileExtension, { extractCosts, parseCostHeader } from "./cost-reconcile.ts";
+
+type Handler = (event: any, ctx: any) => any;
+
+const FETCH_PATCHED = Symbol.for("selesai.cost-reconcile.fetch-patched");
+let originalFetch: typeof globalThis.fetch;
+
+function createHarness() {
+	const handlers = new Map<string, Handler>();
+	const appendEntry = vi.fn();
+	const pi = {
+		on: vi.fn((event: string, handler: Handler) => handlers.set(event, handler)),
+		appendEntry,
+	};
+	costReconcileExtension(pi as any);
+	return { appendEntry, handlers };
+}
+
+async function startSession(handlers: Map<string, Handler>): Promise<void> {
+	await handlers.get("session_start")!({}, { sessionManager: { getEntries: () => [] } });
+}
+
+function assistantMessage(responseId: string, total = 0.75) {
+	return {
+		role: "assistant",
+		provider: "openrouter",
+		model: "openai/gpt-4.1-mini",
+		responseModel: "openai/gpt-4.1-mini",
+		responseId,
+		stopReason: "stop",
+		content: [],
+		usage: {
+			input: 10,
+			output: 5,
+			cacheRead: 2,
+			cacheWrite: 1,
+			cost: { input: 0.2, output: 0.4, cacheRead: 0.1, cacheWrite: 0.05, total },
+		},
+	};
+}
+
+function installFetch(body: string, headers: Record<string, string> = {}) {
+	const upstreamFetch = vi.fn(async () =>
+		new Response(body, { headers: { "content-type": "text/event-stream", ...headers } }),
+	);
+	globalThis.fetch = upstreamFetch as typeof globalThis.fetch;
+	return upstreamFetch;
+}
+
+beforeEach(() => {
+	originalFetch = globalThis.fetch;
+	delete (globalThis as typeof globalThis & { [FETCH_PATCHED]?: boolean })[FETCH_PATCHED];
+});
+
+afterEach(() => {
+	globalThis.fetch = originalFetch;
+	delete (globalThis as typeof globalThis & { [FETCH_PATCHED]?: boolean })[FETCH_PATCHED];
+	vi.restoreAllMocks();
+});
 
 describe("parseCostHeader", () => {
 	it("parses LiteLLM scientific-notation cost", () => {
@@ -10,10 +68,16 @@ describe("parseCostHeader", () => {
 		expect(parseCostHeader("0.00123")).toBe(0.00123);
 	});
 
-	it("rejects null, garbage, and negatives", () => {
+	it("rejects null, blank, garbage, and negative values", () => {
 		expect(parseCostHeader(null)).toBeUndefined();
+		expect(parseCostHeader("")).toBeUndefined();
+		expect(parseCostHeader(" \t ")).toBeUndefined();
 		expect(parseCostHeader("abc")).toBeUndefined();
 		expect(parseCostHeader("-1")).toBeUndefined();
+	});
+
+	it("trims valid zero-valued headers", () => {
+		expect(parseCostHeader(" 0 ")).toBe(0);
 	});
 });
 
@@ -72,5 +136,118 @@ describe("extractCosts", () => {
 		const body = Array.from({ length: 100 }, (_, i) => `{"id":"id-${i}"}`).join("\n");
 		const { ids } = extractCosts(body);
 		expect(ids.length).toBe(50);
+	});
+});
+
+describe("live assistant usage reconciliation", () => {
+	it("replaces finalized assistant usage only after the streamed body completes and keeps the custom entry", async () => {
+		const responseId = "live-reconcile-1";
+		const body = `data: {"id":"${responseId}","usage":{"cost":0.0123}}\n\ndata: [DONE]\n\n`;
+		installFetch(body);
+		const { appendEntry, handlers } = createHarness();
+		await startSession(handlers);
+
+		const response = await globalThis.fetch("https://openrouter.ai/api/v1/chat/completions");
+		const messageEnd = handlers.get("message_end")!;
+		expect(await messageEnd({ message: assistantMessage(responseId) }, {})).toBeUndefined();
+
+		expect(await response.text()).toBe(body);
+		const result = await messageEnd({ message: assistantMessage(responseId) }, {});
+		expect(result.message.usage.cost).toEqual({
+			input: 0.2,
+			output: 0.4,
+			cacheRead: 0.1,
+			cacheWrite: 0.05,
+			total: 0.0123,
+		});
+		expect(appendEntry).toHaveBeenCalledWith(
+			"cost-reconcile",
+			expect.objectContaining({ provider: "openrouter", responseId, cost: 0.0123, source: "payload" }),
+		);
+	});
+
+	it("uses a valid zero-valued billed header over the payload cost", async () => {
+		const responseId = "live-header-zero-2";
+		installFetch(`data: {"id":"${responseId}","usage":{"cost":0.0123}}\n\n`, {
+			"x-litellm-response-cost": "0",
+		});
+		const { handlers } = createHarness();
+		await startSession(handlers);
+
+		const response = await globalThis.fetch("https://gateway.example/v1/chat/completions");
+		await response.text();
+		const result = await handlers.get("message_end")!({ message: assistantMessage(responseId) }, {});
+		expect(result.message.usage.cost.total).toBe(0);
+	});
+
+	it("falls back when a captured body has multiple candidate response ids", async () => {
+		const responseId = "live-ambiguous-response-3";
+		installFetch(
+			`data: {"id":"${responseId}","usage":{"cost":0.0123},"tool_calls":[{"id":"tool-ambiguous-3"}]}\n\n`,
+		);
+		const { appendEntry, handlers } = createHarness();
+		await startSession(handlers);
+
+		const response = await globalThis.fetch("https://gateway.example/v1/chat/completions");
+		await response.text();
+		const message = assistantMessage(responseId);
+		expect(await handlers.get("message_end")!({ message }, {})).toBeUndefined();
+		expect(message.usage.cost.total).toBe(0.75);
+		expect(appendEntry).not.toHaveBeenCalled();
+	});
+
+	it("falls back when the process cache sees a duplicate response id", async () => {
+		const responseId = "live-duplicate-response-4";
+		installFetch(`data: {"id":"${responseId}","usage":{"cost":0.0123}}\n\n`);
+		const { appendEntry, handlers } = createHarness();
+		await startSession(handlers);
+
+		const first = await globalThis.fetch("https://gateway.example/v1/chat/completions");
+		const second = await globalThis.fetch("https://gateway.example/v1/chat/completions");
+		await Promise.all([first.text(), second.text()]);
+		const message = assistantMessage(responseId);
+		expect(await handlers.get("message_end")!({ message }, {})).toBeUndefined();
+		expect(message.usage.cost.total).toBe(0.75);
+		expect(appendEntry).not.toHaveBeenCalled();
+	});
+
+	it("preserves the original message when no valid billed cost was captured", async () => {
+		const responseId = "live-no-cost-3";
+		installFetch(`data: {"id":"${responseId}","usage":{"cost":-1}}\n\n`);
+		const { appendEntry, handlers } = createHarness();
+		await startSession(handlers);
+
+		const response = await globalThis.fetch("https://gateway.example/v1/chat/completions");
+		await response.text();
+		const message = assistantMessage(responseId);
+		expect(await handlers.get("message_end")!({ message }, {})).toBeUndefined();
+		expect(message.usage.cost.total).toBe(0.75);
+		expect(appendEntry).not.toHaveBeenCalled();
+	});
+
+	it("preserves terminal error messages even when a billed cost was captured", async () => {
+		const responseId = "live-terminal-4";
+		installFetch(`data: {"id":"${responseId}","usage":{"cost":0.0123}}\n\n`);
+		const { appendEntry, handlers } = createHarness();
+		await startSession(handlers);
+
+		const response = await globalThis.fetch("https://gateway.example/v1/chat/completions");
+		await response.text();
+		const message = { ...assistantMessage(responseId), stopReason: "error" };
+		expect(await handlers.get("message_end")!({ message }, {})).toBeUndefined();
+		expect(message.usage.cost.total).toBe(0.75);
+		expect(appendEntry).not.toHaveBeenCalled();
+	});
+
+	it("does not capture unrelated fetches", async () => {
+		const responseId = "unrelated-fetch-5";
+		const body = `data: {"id":"${responseId}","usage":{"cost":0.0123}}\n\n`;
+		installFetch(body);
+		const { handlers } = createHarness();
+		await startSession(handlers);
+
+		const response = await globalThis.fetch("https://example.com/data.json");
+		expect(await response.text()).toBe(body);
+		expect(await handlers.get("message_end")!({ message: assistantMessage(responseId) }, {})).toBeUndefined();
 	});
 });

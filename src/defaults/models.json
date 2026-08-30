@@ -19,7 +19,7 @@
           "maxTokens": 64000,
           "thinkingLevelMap": {
             "minimal": null,
-            "low": null,
+            "low": "low",
             "medium": null,
             "high": "high",
             "xhigh": null,
@@ -38,7 +38,7 @@
           "maxTokens": 64000,
           "thinkingLevelMap": {
             "minimal": null,
-            "low": null,
+            "low": "low",
             "medium": null,
             "high": "high",
             "xhigh": null,
@@ -57,7 +57,7 @@
           "maxTokens": 64000,
           "thinkingLevelMap": {
             "minimal": null,
-            "low": null,
+            "low": "low",
             "medium": null,
             "high": "high",
             "xhigh": null,
@@ -114,7 +114,7 @@
           "maxTokens": 64000,
           "thinkingLevelMap": {
             "minimal": null,
-            "low": null,
+            "low": "low",
             "medium": null,
             "high": "high",
             "xhigh": null,
@@ -130,7 +130,15 @@
           "reasoning": true,
           "input": ["text", "image"],
           "contextWindow": 512000,
-          "maxTokens": 128000
+          "maxTokens": 128000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+          }
         },
         {
           "id": "gpt-5.6-terra",
@@ -138,7 +146,15 @@
           "reasoning": true,
           "input": ["text", "image"],
           "contextWindow": 512000,
-          "maxTokens": 128000
+          "maxTokens": 128000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          }
         },
         {
           "id": "gpt-5.6-sol",
@@ -146,7 +162,15 @@
           "reasoning": true,
           "input": ["text", "image"],
           "contextWindow": 512000,
-          "maxTokens": 128000
+          "maxTokens": 128000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          }
         },
         {
           "id": "kimi-k3",
@@ -209,16 +233,24 @@
             "medium": null,
             "high": "high",
             "xhigh": null,
-            "max": null
+            "max": "max"
           }
         },
         {
           "id": "qwen3.8-27b",
           "name": "Qwen3.8 27B",
-          "reasoning": false,
+          "reasoning": true,
           "input": ["text", "image"],
           "contextWindow": 256000,
           "maxTokens": 64000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+          },
           "compat": {
             "thinkingFormat": "qwen"
           }
@@ -226,10 +258,18 @@
         {
           "id": "gemini-3.7-flash",
           "name": "Gemini 3.7 Flash",
-          "reasoning": false,
-          "input": ["text", "image" ],
+          "reasoning": true,
+          "input": ["text", "image"],
           "contextWindow": 512000,
-          "maxTokens": 64000
+          "maxTokens": 64000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          }
         },
         {
           "id": "Qwen3-VL",
@@ -238,6 +278,14 @@
           "input": ["text", "image"],
           "contextWindow": 256000,
           "maxTokens": 8192,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          },
           "compat": {
             "supportsDeveloperRole": false,
             "supportsReasoningEffort": false,
@@ -251,6 +299,14 @@
           "input": ["text", "image"],
           "contextWindow": 256000,
           "maxTokens": 8192,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          },
           "compat": {
             "supportsDeveloperRole": false,
             "supportsReasoningEffort": false,

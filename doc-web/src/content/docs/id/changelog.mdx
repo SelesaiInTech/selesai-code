@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.3 — Rotasi kunci Token-In dan rekonsiliasi biaya live
+
+- Menambahkan **auto-failover multi-kunci ke Token-In**: ekstensi `tokenin-onboarding` kini mendaftarkan provider `tokenin` yang `streamSimple`-nya otomatis beralih ke akun cadangan tersimpan saat kunci aktif terkena error 401, 429, atau anggaran/kuota. Kunci yang gagal masuk cooldown 5 menit sebelum dicoba lagi, dan kredensial aktif baru dipersistenkan ke `tokenin-auth.json` dan `auth.json`.
+- Mengubah **rekonsiliasi biaya** agar menggantikan `usage.cost.total` pesan asisten final dengan biaya tagihan yang dilaporkan provider sebelum pesan dipersistenkan. Pembungkus fetch kini menyelesaikan capture sebelum SDK provider men-finalisasi pesan, sehingga `message_end` menerapkan total hasil rekonsiliasi langsung alih-alih hanya mencatat entri sesi kustom; provider yang payload-nya tidak memuat biaya tetap mempertahankan estimasi rate card.
+- Memperbarui **pemetaan reasoning katalog model default**: menambahkan entri `thinkingLevelMap` di seluruh default bawaan dan mengaktifkan reasoning pada Qwen3.8 27B serta Gemini 3.7 Flash agar anggaran thinking terpetakan dengan benar.
+
 ## 0.13.2 — Dukungan submodule Rewind, pembersihan Herdr status bridge
 
 - Menambahkan **dukungan submodule ke `pi-rewind-hook`**: exact rewind kini memotret commit gitlink dan checkout commit submodule target, dengan pemeriksaan keamanan — path submodule harus tetap sama, worktree harus bersih dan terinisialisasi, dan commit target harus tersedia secara lokal. State submodule yang tidak didukung (kotor, belum diinisialisasi, path ditambah/dihapus, submodule bersarang) ditolak dengan error yang jelas alih-alih dilaporkan sebagai exact restore.

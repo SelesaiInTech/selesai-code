@@ -20,12 +20,12 @@ The `cost-reconcile` extension records the real billed cost that providers repor
 
 - Bundled with Selesai and loaded automatically; no separate install is required.
 - Works with gateways that report a cost in the response: LiteLLM (`x-litellm-response-cost` header), OpenRouter (`usage.cost` / `total_cost`), and object-shaped `cost.total`.
-- Providers whose payloads carry no cost (first-party OpenAI/Anthropic) record nothing; their rate-card estimate matches the bill when catalog prices are configured.
+- Providers whose payloads carry no cost (first-party OpenAI/Anthropic) retain their rate-card estimate, which matches the bill when catalog prices are configured.
 
 ## What it sets up
 
-- Installs a tee-wrapping `fetch` once per process that scans LLM API responses for provider-reported cost and response ids.
-- On `message_end`, writes a `cost-reconcile` custom session entry per response id (bounded per session).
+- Installs a stream-wrapping `fetch` once per process that scans LLM API responses for provider-reported cost and response ids. The wrapper finishes capture before the provider SDK finalizes its assistant message.
+- On `message_end`, replaces the finalized assistant `usage.cost.total` with the provider-reported billed amount before the message is persisted, and writes a `cost-reconcile` custom session entry per response id (bounded per session) for zentui and existing-session compatibility.
 - The zentui footer prefers reconciled entries over the rate-card total when both exist for the same response id, and refreshes once after settle so late reconciliation is picked up.
 - Cost labels format adaptively so sub-cent per-call costs stay visible: 3 decimals at $1+, 4 decimals at $0.01+, and 6 decimals below (e.g. `$0.000336` instead of `$0.000`).
 
@@ -46,7 +46,7 @@ There are no user-facing settings. Capture limits are constants in the extension
 
 ## Limits and safety
 
-- Capture is best-effort: the response body is tee'd and scanned in the background; the main response stream is never altered.
+- Capture is best-effort: the response body is scanned in the background while the response stream passes through unchanged; the main response is never altered.
 - Bodies are scanned up to a size cap; the last cost match in a stream wins (usage lands in the final chunk).
 - The extension never reads or stores message content — only response ids, provider/model names, and reported cost numbers.
 

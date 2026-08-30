@@ -20,12 +20,12 @@ Ekstensi `cost-reconcile` mencatat biaya tagihan nyata yang dilaporkan provider 
 
 - Dibundel bersama Selesai dan dimuat otomatis; tidak perlu diinstal terpisah.
 - Bekerja dengan gateway yang melaporkan biaya dalam respons: LiteLLM (header `x-litellm-response-cost`), OpenRouter (`usage.cost` / `total_cost`), dan `cost.total` berbentuk objek.
-- Provider yang payload-nya tidak memuat biaya (OpenAI/Anthropic first-party) tidak mencatat apa pun; estimasi rate card mereka cocok dengan tagihan saat harga katalog dikonfigurasi.
+- Provider yang payload-nya tidak memuat biaya (OpenAI/Anthropic first-party) tetap mempertahankan estimasi rate card, yang cocok dengan tagihan saat harga katalog dikonfigurasi.
 
 ## Yang disiapkan
 
-- Memasang `fetch` pembungkus tee sekali per proses yang memindai respons API LLM untuk biaya yang dilaporkan provider dan id respons.
-- Pada `message_end`, menulis entri sesi kustom `cost-reconcile` per id respons (dibatasi per sesi).
+- Memasang `fetch` pembungkus stream sekali per proses yang memindai respons API LLM untuk biaya yang dilaporkan provider dan id respons. Pembungkus menyelesaikan capture sebelum SDK provider men-finalisasi pesan asisten.
+- Pada `message_end`, menggantikan `usage.cost.total` pesan asisten final dengan jumlah tagihan yang dilaporkan provider sebelum pesan dipersistenkan, dan menulis entri sesi kustom `cost-reconcile` per id respons (dibatasi per sesi) untuk kompatibilitas zentui dan sesi yang ada.
 - Footer zentui mengutamakan entri hasil rekonsiliasi daripada total rate card saat keduanya ada untuk id respons yang sama, dan menyegarkan sekali setelah settle agar rekonsiliasi yang terlambat ikut terbaca.
 - Label biaya diformat secara adaptif agar biaya per panggilan di bawah satu sen tetap terlihat: 3 desimal di $1+, 4 desimal di $0.01+, dan 6 desimal di bawahnya (mis. `$0.000336`, bukan `$0.000`).
 
@@ -46,7 +46,7 @@ Tidak ada pengaturan user. Batas penangkapan adalah konstanta di sumber ekstensi
 
 ## Batasan dan keamanan
 
-- Penangkapan bersifat best-effort: body respons di-tee dan dipindai di latar belakang; aliran respons utama tidak pernah diubah.
+- Penangkapan bersifat best-effort: body respons dipindai di latar belakang sementara aliran respons melewati tanpa berubah; respons utama tidak pernah diubah.
 - Body dipindai hingga batas ukuran; kecocokan biaya terakhir dalam stream yang menang (usage tiba di chunk akhir).
 - Ekstensi tidak pernah membaca atau menyimpan isi pesan — hanya id respons, nama provider/model, dan angka biaya yang dilaporkan.
 

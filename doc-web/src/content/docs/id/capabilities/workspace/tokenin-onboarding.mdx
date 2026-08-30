@@ -42,6 +42,7 @@ Extension `tokenin-onboarding` memandu user pertama kali menambahkan akun Token-
 - Mengalihkan akun aktif dengan `/tokenin switch`.
 - Menghapus akun yang tersimpan dengan `/tokenin remove` (tidak dapat menghapus akun aktif; alihkan dulu).
 - Memeriksa kuota Token-In dengan `/tokenin usage`: mengkueri endpoint LiteLLM `/key/info` dengan token aktif dan menampilkan pengeluaran, anggaran, sisa, dan waktu reset dalam kotak.
+- Menyimpan beberapa token dan mengandalkan failover otomatis. Jika kunci aktif gagal dengan error 401, 429, atau anggaran/kuota, ekstensi beralih ke akun tersimpan lain dan menempatkan kunci yang gagal dalam cooldown 5 menit sebelum mencoba lagi.
 
 ## Perintah, tool, dan shortcut
 
@@ -59,6 +60,7 @@ Command memvalidasi bahwa token yang ditempel diawali `sk-`. Token tidak valid d
 - Token disimpan di `~/.selesai/agent/tokenin-auth.json` dengan mode `0o600`. Key aktif juga ditulis ke `auth.json` Selesai.
 - Jangan commit `tokenin-auth.json`, `auth.json`, atau file apa pun yang berisi token.
 - Prompt onboarding tidak muncul lagi setelah file marker ada, meskipun percobaan pertama gagal. Gunakan `/tokenin add` untuk mencoba lagi atau menambahkan token lain.
+- Setelah failover, kredensial aktif baru ditulis ke `tokenin-auth.json` dan `auth.json`, sehingga rotasi bertahan di sesi berikutnya.
 - Perintah `/tokenin-onboard` **tidak** ada; gunakan `/tokenin add` atau tunggu onboarding pertama kali.
 
 <SourceEvidence slug="tokenin-onboarding" />

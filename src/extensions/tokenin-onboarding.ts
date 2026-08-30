@@ -13,6 +13,16 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname, join } from "node:path";
 import { getAgentDir, getModelsPath } from "@selesai/code";
 import type { AuthStorage, ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionStartEvent } from "@selesai/code";
+import {
+	createAssistantMessageEventStream,
+	lazyStream,
+	type AssistantMessageEvent,
+	type AssistantMessageEventStream,
+	type Context,
+	type Model,
+	type SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
+import { getApiProvider } from "@earendil-works/pi-ai/compat";
 
 export const TOKEN_IN_PROVIDER = "tokenin";
 export const TOKEN_IN_DASHBOARD_URL = "https://token.selesai.in/dashboard/tokens";
@@ -214,6 +224,291 @@ function markOnboardingComplete(agentDir: string = getAgentDir()): void {
 
 function isOnboardingComplete(agentDir: string = getAgentDir()): boolean {
 	return existsSync(getOnboardingMarkerPath(agentDir));
+}
+
+// ---------------------------------------------------------------------------
+// Multi-key load balancing / auto-failover
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_TOKENIN_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+/** In-memory cooldown tracker mapping token/accountId -> cooldown expires timestamp (ms). */
+const tokenCooldowns = new Map<string, number>();
+
+/** Clear all in-memory cooldowns. Exported for tests. */
+export function clearTokenInCooldowns(): void {
+	tokenCooldowns.clear();
+}
+
+/** Check if a token/account is currently on cooldown. */
+export function isTokenInOnCooldown(tokenId: string, now: number = Date.now()): boolean {
+	const expires = tokenCooldowns.get(tokenId);
+	if (expires === undefined) return false;
+	if (now >= expires) {
+		tokenCooldowns.delete(tokenId);
+		return false;
+	}
+	return true;
+}
+
+/** Put a token/account on cooldown for a given duration. */
+export function setTokenInCooldown(tokenId: string, durationMs: number = DEFAULT_TOKENIN_COOLDOWN_MS, now: number = Date.now()): void {
+	tokenCooldowns.set(tokenId, now + durationMs);
+}
+
+/** Detect if an error message or AssistantMessage stop indicates an auth/quota failure eligible for failover. */
+export function isRotateableTokenInError(error: unknown): boolean {
+	if (!error) return false;
+	let text = "";
+	if (typeof error === "string") {
+		text = error;
+	} else if (error instanceof Error) {
+		text = `${error.name}: ${error.message}`;
+	} else if (typeof error === "object" && error !== null) {
+		const obj = error as Record<string, unknown>;
+		if (typeof obj.errorMessage === "string") {
+			text = obj.errorMessage;
+		} else if (typeof obj.message === "string") {
+			text = obj.message;
+		} else if (Array.isArray(obj.content)) {
+			// AssistantMessage with content blocks containing error text or errorMessage
+			for (const block of obj.content) {
+				if (typeof block === "object" && block !== null) {
+					const b = block as Record<string, unknown>;
+					if (typeof b.errorMessage === "string") text += ` ${b.errorMessage}`;
+					if (typeof b.text === "string") text += ` ${b.text}`;
+				}
+			}
+		}
+		if (!text) text = JSON.stringify(error);
+	} else {
+		text = JSON.stringify(error);
+	}
+
+	const lower = text.toLowerCase();
+	// HTTP 401 / Invalid Key
+	if (lower.includes("401") || lower.includes("unauthorized") || lower.includes("invalid_api_key") || lower.includes("invalid api key") || lower.includes("authentication_error")) {
+		return true;
+	}
+	// HTTP 429 / Rate limit
+	if (lower.includes("429") || lower.includes("rate_limit") || lower.includes("rate limit") || lower.includes("too many requests")) {
+		return true;
+	}
+	// Budget / Quota / Credits
+	if (
+		lower.includes("budget has been exceeded") ||
+		lower.includes("budget_exceeded") ||
+		lower.includes("max_budget") ||
+		lower.includes("insufficient_quota") ||
+		lower.includes("quota exceeded") ||
+		lower.includes("exceeds max_budget") ||
+		lower.includes("credit limit") ||
+		lower.includes("out of credits")
+	) {
+		return true;
+	}
+	return false;
+}
+
+/** Helper to persist active credential to auth.json and tokenin-auth.json without needing AuthStorage instance. */
+function persistActiveTokenInAccount(account: TokenInAccount, authPath: string = getTokenInAuthPath()): void {
+	try {
+		// Update tokenin-auth.json
+		const auth = readTokenInAuth(authPath);
+		auth.activeId = account.id;
+		writeTokenInAuth(auth, authPath);
+
+		// Update auth.json
+		const agentDir = dirname(authPath);
+		const globalAuthPath = join(agentDir, "auth.json");
+		const current = existsSync(globalAuthPath) ? JSON.parse(readFileSync(globalAuthPath, "utf-8")) as Record<string, unknown> : {};
+		current[TOKEN_IN_PROVIDER] = { type: "api_key", key: account.apiKey };
+		mkdirSync(dirname(globalAuthPath), { recursive: true, mode: 0o700 });
+		writeFileSync(globalAuthPath, `${JSON.stringify(current, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
+		try {
+			chmodSync(globalAuthPath, 0o600);
+		} catch {
+			// best-effort
+		}
+	} catch {
+		// best-effort sync
+	}
+}
+
+/**
+ * Custom streamSimple implementation for tokenin provider that wraps OpenAI completions
+ * and automatically rotates to alternative saved keys on 401/429/budget exceeded errors.
+ */
+export function createTokenInStreamSimple(options?: {
+	authPath?: string;
+	getAuthStorage?: () => AuthStorage | undefined;
+	onRotate?: (failedAccount: TokenInAccount, nextAccount: TokenInAccount, reason: string) => void;
+	streamSimple?: (model: Model<any>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
+}) {
+	const authPath = options?.authPath ?? getTokenInAuthPath();
+	const baseApi = options?.streamSimple ? undefined : getApiProvider("openai-completions");
+	const streamSimple = options?.streamSimple ?? baseApi!.streamSimple.bind(baseApi!);
+
+	const activate = (account: TokenInAccount): void => {
+		const authStorage = options?.getAuthStorage?.();
+		if (authStorage) {
+			applyTokenInAccountToAuth(account, authStorage, authPath);
+		} else {
+			persistActiveTokenInAccount(account, authPath);
+		}
+	};
+
+	const withAccountAuthorization = (streamOptions: SimpleStreamOptions | undefined, account: TokenInAccount): SimpleStreamOptions => {
+		const headers = Object.fromEntries(
+			Object.entries(streamOptions?.headers ?? {}).filter(([name]) => name.toLowerCase() !== "authorization"),
+		);
+		return {
+			...streamOptions,
+			apiKey: account.apiKey,
+			headers: { ...headers, Authorization: `Bearer ${account.apiKey}` },
+		};
+	};
+
+	return function tokenInStreamSimple(
+		model: Model<any>,
+		context: Context,
+		streamOptions?: SimpleStreamOptions,
+	): AssistantMessageEventStream {
+		return lazyStream(model, async () => {
+			const auth = readTokenInAuth(authPath);
+			const accounts = auth.accounts;
+
+			// If no accounts saved, fall back directly to base implementation
+			if (accounts.length === 0) {
+				return streamSimple(model, context, streamOptions);
+			}
+
+			// Order accounts: active account first, followed by remaining accounts
+			const activeIndex = accounts.findIndex((a) => a.id === auth.activeId || a.apiKey === streamOptions?.apiKey);
+			const orderedAccounts: TokenInAccount[] = [];
+			if (activeIndex >= 0) {
+				orderedAccounts.push(accounts[activeIndex]!);
+				for (let i = 0; i < accounts.length; i++) {
+					if (i !== activeIndex) orderedAccounts.push(accounts[i]!);
+				}
+			} else {
+				orderedAccounts.push(...accounts);
+			}
+
+			// Filter/order candidates: prioritize those not currently on cooldown
+			const availableAccounts = orderedAccounts.filter((a) => !isTokenInOnCooldown(a.id));
+			const candidateAccounts = (availableAccounts.length > 0 ? availableAccounts : orderedAccounts).map((account) => ({ ...account }));
+
+			let lastErrorEvent: AssistantMessageEvent | undefined;
+			let lastThrownError: unknown;
+
+			for (let i = 0; i < candidateAccounts.length; i++) {
+				const currentAccount = candidateAccounts[i]!;
+
+				const requestOptions = withAccountAuthorization(streamOptions, currentAccount);
+
+				let underlyingStream: AssistantMessageEventStream;
+				try {
+					underlyingStream = streamSimple(model, context, requestOptions);
+				} catch (err) {
+					lastThrownError = err;
+					if (isRotateableTokenInError(err) && i + 1 < candidateAccounts.length) {
+						setTokenInCooldown(currentAccount.id);
+						const nextAccount = candidateAccounts[i + 1]!;
+						activate(nextAccount);
+						options?.onRotate?.(currentAccount, nextAccount, String(err));
+						continue;
+					}
+					throw err;
+				}
+
+				// Hold a leading start event until the request proves it produced output. This
+				// permits an immediate upstream error to be retried without exposing two starts.
+				const iterator = underlyingStream[Symbol.asyncIterator]();
+				let firstResult: IteratorResult<AssistantMessageEvent>;
+				try {
+					firstResult = await iterator.next();
+				} catch (err) {
+					lastThrownError = err;
+					if (isRotateableTokenInError(err) && i + 1 < candidateAccounts.length) {
+						setTokenInCooldown(currentAccount.id);
+						const nextAccount = candidateAccounts[i + 1]!;
+						activate(nextAccount);
+						options?.onRotate?.(currentAccount, nextAccount, String(err));
+						continue;
+					}
+					throw err;
+				}
+
+				if (firstResult.done) {
+					const passthrough = createAssistantMessageEventStream();
+					passthrough.end();
+					return passthrough;
+				}
+
+				const bufferedEvents = [firstResult.value];
+				if (bufferedEvents[0].type === "start") {
+					try {
+						const next = await iterator.next();
+						if (!next.done) bufferedEvents.push(next.value);
+					} catch (err) {
+						lastThrownError = err;
+						if (isRotateableTokenInError(err) && i + 1 < candidateAccounts.length) {
+							setTokenInCooldown(currentAccount.id);
+							const nextAccount = candidateAccounts[i + 1]!;
+							activate(nextAccount);
+							options?.onRotate?.(currentAccount, nextAccount, String(err));
+							continue;
+						}
+						throw err;
+					}
+				}
+
+				const immediateError = bufferedEvents.find((event) => event.type === "error");
+				if (immediateError?.type === "error" && isRotateableTokenInError(immediateError.error)) {
+					lastErrorEvent = immediateError;
+					setTokenInCooldown(currentAccount.id);
+					if (i + 1 < candidateAccounts.length) {
+						const nextAccount = candidateAccounts[i + 1]!;
+						activate(nextAccount);
+						options?.onRotate?.(currentAccount, nextAccount, immediateError.error.errorMessage ?? "Error");
+						continue;
+					}
+				}
+
+				const outputStream = createAssistantMessageEventStream();
+				(async () => {
+					try {
+						for (const event of bufferedEvents) outputStream.push(event);
+						while (true) {
+							const next = await iterator.next();
+							if (next.done) break;
+							outputStream.push(next.value);
+						}
+						outputStream.end();
+					} catch {
+						outputStream.end();
+					}
+				})();
+
+				return outputStream;
+			}
+
+			// If loop exhausted with a rotateable error event, return a stream with that error
+			if (lastErrorEvent) {
+				const errorStream = createAssistantMessageEventStream();
+				errorStream.push(lastErrorEvent);
+				errorStream.end();
+				return errorStream;
+			}
+
+			if (lastThrownError) {
+				throw lastThrownError;
+			}
+
+			return streamSimple(model, context, streamOptions);
+		});
+	};
 }
 
 async function openDashboard(pi: ExtensionAPI): Promise<void> {
@@ -537,7 +832,14 @@ async function runOnboarding(pi: ExtensionAPI, ctx: ExtensionContext): Promise<v
 }
 
 export default function tokenInOnboardingExtension(pi: ExtensionAPI): void {
+	let authStorage: AuthStorage | undefined;
+	pi.registerProvider("tokenin", {
+		api: "openai-completions",
+		streamSimple: createTokenInStreamSimple({ getAuthStorage: () => authStorage }),
+	});
+
 	pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
+		authStorage = ctx.modelRegistry.authStorage;
 		if (event.reason !== "startup") return;
 		if (isOnboardingComplete()) return;
 

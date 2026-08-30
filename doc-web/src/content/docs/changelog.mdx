@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.3 — Token-In key rotation and live cost reconciliation
+
+- Added **multi-key auto-failover to Token-In**: the `tokenin-onboarding` extension now registers a `tokenin` provider whose `streamSimple` automatically rotates to an alternative saved account when the active key hits a 401, 429, or budget/quota error. Failed keys go on a 5-minute cooldown before being retried, and the newly active credential is persisted to both `tokenin-auth.json` and `auth.json`.
+- Changed **cost reconciliation** to replace the finalized assistant `usage.cost.total` with the provider-reported billed cost before the message is persisted. The fetch wrapper now finishes capture before the provider SDK finalizes the message, so `message_end` applies the reconciled total directly instead of only recording a custom session entry; providers whose payloads carry no cost keep their rate-card estimate.
+- Updated **default model catalog reasoning maps**: added `thinkingLevelMap` entries across bundled defaults and enabled reasoning on Qwen3.8 27B and Gemini 3.7 Flash so thinking budgets map correctly.
+
 ## 0.13.2 — Rewind submodule support, Herdr status bridge cleanup
 
 - Added **submodule support to `pi-rewind-hook`**: exact rewind now snapshots gitlink commits and checks out target submodule commits, with safety checks — submodule paths must stay unchanged, worktrees must be clean and initialized, and target commits must be available locally. Unsupported submodule states (dirty, uninitialized, added/removed paths, nested submodules) are refused with a clear error instead of being reported as exact restores.

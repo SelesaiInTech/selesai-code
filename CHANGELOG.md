@@ -2,6 +2,15 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.3] - 2026-08-31
+
+### Added
+- **Token-In multi-key auto-failover.** The `tokenin-onboarding` extension now registers a `tokenin` provider whose `streamSimple` automatically rotates to an alternative saved account when the active key fails with a 401, 429, or budget/quota error. Failed keys go on a 5-minute in-memory cooldown before being retried, and the newly active credential is persisted to both `tokenin-auth.json` and `auth.json`.
+
+### Changed
+- **Cost reconciliation replaces the finalized assistant cost.** The `cost-reconcile` fetch wrapper now finishes capturing the provider-reported cost before the provider SDK finalizes its assistant message, so `message_end` replaces `usage.cost.total` with the billed amount before the message is persisted. Providers whose payloads carry no cost keep their rate-card estimate.
+- **Default model catalog reasoning maps.** Added `thinkingLevelMap` entries (and `low`=low / `max` mappings) across bundled model defaults and enabled reasoning on Qwen3.8 27B and Gemini 3.7 Flash so thinking budgets map correctly.
+
 ## [0.13.2] - 2026-08-30
 
 ### Added

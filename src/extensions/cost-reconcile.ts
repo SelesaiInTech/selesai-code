@@ -9,19 +9,16 @@
  *
  * Extensions cannot hook the response body through the event API
  * (`after_provider_response` exposes only status/headers), but provider SDKs
- * fall back to `globalThis.fetch`. This extension installs a tee-wrapping
- * fetch once per process: LLM API responses are scanned for a
- * provider-reported cost (LiteLLM `x-litellm-response-cost` header,
- * OpenRouter `usage.cost`, `total_cost`, plus object-shaped `cost.total`)
- * and its response id, then recorded as a custom session entry on
- * `message_end`.
+ * fall back to `globalThis.fetch`. This extension installs a stream-wrapping
+ * fetch once per process: LLM API responses are scanned for a provider-reported
+ * cost (LiteLLM `x-litellm-response-cost` header, OpenRouter `usage.cost`,
+ * `total_cost`, plus object-shaped `cost.total`) and response id. The wrapper
+ * finishes capture before the provider SDK finalizes its assistant message, so
+ * `message_end` can replace `usage.cost.total` before session persistence.
  *
- * Providers whose payloads carry no cost (first-party OpenAI/Anthropic due to
- * their usage APIs) simply record nothing — their rate-card estimate matches
- * their bill anyway when catalog prices are configured.
- *
- * The zentui footer prefers reconciled entries over the rate-card total when
- * both exist for the same response id.
+ * Providers whose payloads carry no cost retain their rate-card estimate.
+ * Reconciled entries remain persisted for zentui and existing-session
+ * compatibility.
  */
 
 import type { ExtensionAPI } from "@selesai/code";
@@ -31,11 +28,10 @@ const ENTRY_VERSION = 1 as const;
 
 // Guard against pathological bodies; real usage chunks arrive well under 1MB.
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
-// Only LLM API paths are tee'd and scanned; unrelated fetches (web fetch tool,
-// model catalog refreshes) pass through untouched.
+// Only LLM API paths are scanned; unrelated fetches (web fetch tool, model
+// catalog refreshes) pass through untouched.
 const LLM_PATH_RE = /(\/chat\/completions|\/responses|\/messages\b|:streamGenerateContent)/;
 const MAX_CAPTURED_IDS = 50;
-const MAX_PENDING_LOOKUPS = 200;
 const MAX_SESSION_ENTRIES = 2_000;
 
 type ReconcileEntry = {
@@ -49,46 +45,34 @@ type ReconcileEntry = {
 	source: "payload";
 };
 
-/**
- * Scan a captured SSE/JSON body for provider-reported cost and response ids.
- * Exported for tests.
- *
- * In streams, usage lands in the final chunk, so the LAST cost match wins.
- */
 type MessageInfo = {
 	provider: string;
 	model: string;
 	responseId: string;
 };
 
-// Process-wide capture state. The fetch patch is installed once per process
-// and must not capture session-bound `pi`; per-session message_end handlers
-// read these maps and write entries through their own session's appendEntry.
-const processCaptured = new Map<string, number>();
-const processWaiting = new Map<
-	string,
-	{ info: MessageInfo; write: (info: MessageInfo, cost: number) => void }
->();
+// Process-wide capture state. The fetch patch is installed once per process;
+// per-session message_end handlers consume the matching response id. A duplicate
+// capture for the same id is marked ambiguous rather than assigning either bill.
+const processCaptured = new Map<string, number | null>();
 
-/**
- * Scan a captured SSE/JSON body for provider-reported cost and response ids.
- * Pure function; exported for tests.
- *
- * In streams, usage lands in the final chunk, so the LAST cost match wins.
- */
 /**
  * Parse a LiteLLM `x-litellm-response-cost` header value (a USD float,
  * possibly in scientific notation). Exported for tests.
  */
 export function parseCostHeader(value: string | null): number | undefined {
-	if (value === null) return undefined;
-	const cost = Number(value);
+	const trimmed = value?.trim();
+	if (!trimmed) return undefined;
+	const cost = Number(trimmed);
 	return Number.isFinite(cost) && cost >= 0 ? cost : undefined;
 }
 
-export function extractCosts(
-	text: string,
-): { ids: string[]; cost?: number } {
+/**
+ * Scan a captured SSE/JSON body for provider-reported cost and response ids.
+ * Exported for tests. In streams, usage lands in the final chunk, so the LAST
+ * valid cost match wins.
+ */
+export function extractCosts(text: string): { ids: string[]; cost?: number } {
 	const ids = new Set<string>();
 	for (const match of text.matchAll(/"id"\s*:\s*"([^"]{1,200})"/g)) {
 		ids.add(match[1]);
@@ -151,26 +135,22 @@ export default function costReconcileExtension(pi: ExtensionAPI): void {
 		try {
 			pi.appendEntry(ENTRY_TYPE, entry);
 		} catch {
-			// transcript persistence failure must not break the session
+			// Transcript persistence failure must not break the session.
 		}
 	};
 
 	const finishCapture = (rawBody: string, headerCost?: number): void => {
-		// ponytail: one naive regex pass over the whole body; a streaming
-		// parser only matters if bodies grow past the 4MB cap.
+		// Ponytail: one naive regex pass over the whole body; a streaming parser
+		// only matters if bodies grow past the 4MB cap.
 		const { ids, cost } = extractCosts(rawBody);
-		// LiteLLM's header is the amount the gateway billed; prefer it over
-		// any cost the upstream payload reports.
+		// LiteLLM's header is the amount the gateway billed; prefer it over any
+		// cost the upstream payload reports.
 		const effectiveCost = headerCost ?? cost;
-		if (effectiveCost === undefined) return;
-		for (const responseId of ids) {
-			processCaptured.set(responseId, effectiveCost);
-			const waiting = processWaiting.get(responseId);
-			if (waiting) {
-				processWaiting.delete(responseId);
-				waiting.write(waiting.info, effectiveCost);
-			}
-		}
+		// A cost must identify exactly one response. Applying it to every `id` in
+		// a body can mistake nested tool/message ids for the assistant response.
+		if (effectiveCost === undefined || ids.length !== 1) return;
+		const responseId = ids[0]!;
+		processCaptured.set(responseId, processCaptured.has(responseId) ? null : effectiveCost);
 		if (processCaptured.size > 500) {
 			for (const key of [...processCaptured.keys()].slice(0, processCaptured.size - 500))
 				processCaptured.delete(key);
@@ -191,7 +171,7 @@ export default function costReconcileExtension(pi: ExtensionAPI): void {
 				if (typeof responseId === "string") seen.add(responseId);
 			}
 		} catch {
-			// best effort only
+			// Best effort only.
 		}
 
 		const globalFetch = globalThis as typeof globalThis & { [FETCH_PATCHED]?: boolean };
@@ -205,26 +185,36 @@ export default function costReconcileExtension(pi: ExtensionAPI): void {
 				const contentType = response.headers.get("content-type") ?? "";
 				if (!contentType.includes("json") && !contentType.includes("event-stream")) return response;
 				if (!response.body) return response;
+
 				const headerCost = parseCostHeader(response.headers.get("x-litellm-response-cost"));
-				const [main, tee] = response.body.tee();
-				void (async () => {
-					let raw = "";
-					try {
-						const reader = tee.getReader();
-						const decoder = new TextDecoder();
-						for (;;) {
-							const { done, value } = await reader.read();
-							if (done) break;
-							raw += decoder.decode(value, { stream: true });
-							if (raw.length > MAX_CAPTURE_BYTES) break;
+				let raw = "";
+				let captureFailed = false;
+				const decoder = new TextDecoder();
+				const capture = new TransformStream<Uint8Array, Uint8Array>({
+					transform(chunk, controller) {
+						controller.enqueue(chunk);
+						if (captureFailed) return;
+						try {
+							raw += decoder.decode(chunk, { stream: true });
+							if (raw.length > MAX_CAPTURE_BYTES) captureFailed = true;
+						} catch {
+							captureFailed = true;
 						}
-					} catch {
-						// capture is best-effort; the main branch is unaffected
-					}
-					finishCapture(raw, headerCost);
-				})();
-				// Preserve response identity as seen by the SDK: body swapped, rest identical.
-				return new Response(main, {
+					},
+					flush() {
+						if (captureFailed) return;
+						try {
+							raw += decoder.decode();
+							finishCapture(raw, headerCost);
+						} catch {
+							// Capture is best-effort; the response stream is unaffected.
+						}
+					},
+				});
+				// flush() runs before the SDK observes EOF, so message_end can safely
+				// replace the finalized message usage without waiting on another fetch.
+				const body = response.body.pipeThrough(capture);
+				return new Response(body, {
 					status: response.status,
 					statusText: response.statusText,
 					headers: response.headers,
@@ -236,43 +226,32 @@ export default function costReconcileExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("message_end", (event) => {
-		const message = event.message as
-			| {
-					role?: string;
-					provider?: string;
-					model?: string;
-					responseId?: string;
-					stopReason?: string;
-				}
-			| undefined;
-		if (!message || message.role !== "assistant") return;
+		const message = event.message;
+		if (message.role !== "assistant") return;
 		if (message.stopReason === "error" || message.stopReason === "aborted") return;
 		const responseId = message.responseId;
 		if (typeof responseId !== "string" || responseId.length === 0) return;
 
-		const info: MessageInfo = {
-			provider: message.provider ?? "",
-			model: message.responseModel ?? message.model ?? "",
-			responseId,
-		};
 		const cost = processCaptured.get(responseId);
-		if (cost !== undefined) {
-			writeEntry(info, cost);
+		if (cost === undefined || cost === null || !message.usage?.cost) {
+			processCaptured.delete(responseId);
 			return;
 		}
-		// The tee branch may finish after message_end; remember the message so
-		// the capture can match it on completion and write via this session.
-		if (!seen.has(responseId) && !processWaiting.has(responseId)) {
-			waitingLimitGuard();
-			processWaiting.set(responseId, { info, write: writeEntry });
-		}
-	});
-}
+		processCaptured.delete(responseId);
 
-// Trim oldest waiting entries so unclaimed captures cannot grow unbounded.
-function waitingLimitGuard(): void {
-	if (processWaiting.size >= MAX_PENDING_LOOKUPS) {
-		for (const key of [...processWaiting.keys()].slice(0, processWaiting.size - MAX_PENDING_LOOKUPS + 1))
-			processWaiting.delete(key);
-	}
+		writeEntry(
+			{
+				provider: message.provider ?? "",
+				model: message.responseModel ?? message.model ?? "",
+				responseId,
+			},
+			cost,
+		);
+		return {
+			message: {
+				...message,
+				usage: { ...message.usage, cost: { ...message.usage.cost, total: cost } },
+			},
+		};
+	});
 }

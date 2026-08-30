@@ -12,6 +12,9 @@ vi.mock("@selesai/code", () => ({
 import { homedir } from "node:os";
 import {
 	applyTokenInAccountToAuth,
+	clearTokenInCooldowns,
+	createTokenInStreamSimple,
+	DEFAULT_TOKENIN_COOLDOWN_MS,
 	fetchTokenInUsage,
 	formatTokenInUsage,
 	getActiveTokenInAccountId,
@@ -19,18 +22,28 @@ import {
 	getTokenInApiKey,
 	getTokenInAuthPath,
 	isPlaceholderToken,
+	isRotateableTokenInError,
+	isTokenInOnCooldown,
 	parseTokenInUsage,
 	PLACEHOLDER_API_KEY,
 	readModelsJson,
 	readTokenInAuth,
 	removeTokenInApiKey,
 	saveTokenInAccount,
+	setTokenInCooldown,
 	TOKEN_IN_DASHBOARD_URL,
 	validateTokenInToken,
 	writeTokenInAuth,
 } from "../extensions/tokenin-onboarding.ts";
 
 // Import the handler factory for session_start behavior tests.
+import {
+	createAssistantMessageEventStream,
+	fauxAssistantMessage,
+	type AssistantMessageEvent,
+	type Context,
+	type Model,
+} from "@earendil-works/pi-ai";
 import tokenInOnboardingExtension from "../extensions/tokenin-onboarding.ts";
 import { AuthStorage } from "../core/auth-storage.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionStartEvent } from "../core/extensions/types.ts";
@@ -373,6 +386,7 @@ describe("tokenin-onboarding extension", () => {
 			registerCommand: vi.fn((name: string, options: { description?: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => {
 				commands.set(name, options);
 			}),
+			registerProvider: vi.fn(),
 		} as unknown as ExtensionAPI;
 		return { pi, handlers, commands };
 	}
@@ -740,6 +754,7 @@ describe("/tokenin command", () => {
 			registerCommand: vi.fn((name: string, options: { description?: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => {
 				commands.set(name, options);
 			}),
+			registerProvider: vi.fn(),
 		} as unknown as ExtensionAPI;
 		return { pi, commands };
 	}
@@ -1038,5 +1053,254 @@ describe("/tokenin command", () => {
 		const second = readTokenInAuth(authPath).accounts[0];
 		expect(second.label).toBe(first.label);
 		rmSync(dir, { recursive: true, force: true });
+	});
+});
+
+describe("Token-In auto-failover and key rotation", () => {
+	const model: Model<any> = {
+		id: "celestial-pro",
+		name: "Celestial Pro",
+		api: "openai-completions",
+		provider: "tokenin",
+		baseUrl: "https://lite.andlet.me/v1",
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 100_000,
+		maxTokens: 4000,
+	};
+	const context: Context = { messages: [{ role: "user", content: "hello" }] };
+
+	beforeEach(() => {
+		clearTokenInCooldowns();
+	});
+
+	afterEach(() => {
+		clearTokenInCooldowns();
+	});
+
+	it("isRotateableTokenInError detects 401, 429, and budget/quota failures", () => {
+		expect(isRotateableTokenInError("401 Unauthorized")).toBe(true);
+		expect(isRotateableTokenInError("Invalid API Key: AuthenticationError")).toBe(true);
+		expect(isRotateableTokenInError("429 Too Many Requests (rate limit exceeded)")).toBe(true);
+		expect(isRotateableTokenInError("LiteLLM: Budget has been exceeded for key")).toBe(true);
+		expect(isRotateableTokenInError("Key spend (10.5) exceeds max_budget (10.0)")).toBe(true);
+		expect(isRotateableTokenInError("insufficient_quota error from upstream")).toBe(true);
+		expect(isRotateableTokenInError("Out of credits")).toBe(true);
+		expect(isRotateableTokenInError(new Error("HTTP 401: Unauthorized access"))).toBe(true);
+		expect(isRotateableTokenInError({ errorMessage: "429: rate_limit_exceeded" })).toBe(true);
+
+		expect(isRotateableTokenInError(null)).toBe(false);
+		expect(isRotateableTokenInError(undefined)).toBe(false);
+		expect(isRotateableTokenInError("Context window exceeded")).toBe(false);
+		expect(isRotateableTokenInError(new Error("Network timeout connection refused"))).toBe(false);
+	});
+
+	it("cooldown tracking sets and checks expiration properly", () => {
+		expect(isTokenInOnCooldown("sk-1")).toBe(false);
+		setTokenInCooldown("sk-1", 1000, 100);
+		expect(isTokenInOnCooldown("sk-1", 500)).toBe(true);
+		expect(isTokenInOnCooldown("sk-1", 1100)).toBe(false);
+		expect(isTokenInOnCooldown("sk-1", 1200)).toBe(false);
+	});
+
+	it("createTokenInStreamSimple rotates from failing account to healthy account on 429 event", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-rot-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		writeTokenInAuth({ accounts: [], activeId: null }, authPath);
+		saveTokenInAccount("sk-failing", { setActive: true }, authPath);
+		saveTokenInAccount("sk-working", {}, authPath);
+
+		const calls: string[] = [];
+		const requestHeaders: Array<Record<string, string | null> | undefined> = [];
+		const requestStream = vi.fn((m, c, options) => {
+			calls.push(options?.apiKey!);
+			requestHeaders.push(options?.headers);
+			const stream = createAssistantMessageEventStream();
+			if (options?.apiKey === "sk-failing") {
+				setTimeout(() => {
+					stream.push({ type: "start", partial: fauxAssistantMessage({ stopReason: "pending" }) });
+					stream.push({
+						type: "error",
+						reason: "error",
+						error: fauxAssistantMessage({ stopReason: "error", errorMessage: "429 Rate limit exceeded" }),
+					});
+					stream.end();
+				}, 5);
+			} else {
+				setTimeout(() => {
+					stream.push({ type: "text_delta", contentIndex: 0, delta: "success from backup" });
+					stream.push({
+						type: "done",
+						message: fauxAssistantMessage({ content: [{ type: "text", text: "success from backup" }] }),
+					});
+					stream.end();
+				}, 5);
+			}
+			return stream;
+		});
+
+		try {
+			const rotations: Array<{ from: string; to: string; reason: string }> = [];
+			const authStorage = AuthStorage.inMemory();
+			const streamSimple = createTokenInStreamSimple({
+				authPath,
+				getAuthStorage: () => authStorage,
+				streamSimple: requestStream,
+				onRotate: (from, to, reason) => rotations.push({ from: from.id, to: to.id, reason }),
+			});
+
+			expect(readTokenInAuth(authPath).accounts.map((account) => account.apiKey)).toEqual(["sk-failing", "sk-working"]);
+			const stream = streamSimple(model, context, {
+				headers: { authorization: "Bearer stale-key", "X-Test": "preserved" },
+			});
+			const events: AssistantMessageEvent[] = [];
+			for await (const ev of stream) {
+				events.push(ev);
+			}
+
+			expect(calls).toEqual(["sk-failing", "sk-working"]);
+			expect(requestHeaders).toEqual([
+				{ Authorization: "Bearer sk-failing", "X-Test": "preserved" },
+				{ Authorization: "Bearer sk-working", "X-Test": "preserved" },
+			]);
+			expect(rotations.length).toBe(1);
+			expect(rotations[0].from).toBe("sk-failing");
+			expect(rotations[0].to).toBe("sk-working");
+			expect(isTokenInOnCooldown("sk-failing")).toBe(true);
+			expect(events.some((e) => e.type === "text_delta" && (e as any).delta === "success from backup")).toBe(true);
+
+			// Active account in tokenin-auth.json should be updated to sk-working
+			const updatedAuth = readTokenInAuth(authPath);
+			expect(updatedAuth.activeId).toBe("sk-working");
+			expect(getStoredTokenInApiKey(authStorage)).toBe("sk-working");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("createTokenInStreamSimple rotates when stream creation throws a rotateable error", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-rot-throw-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		writeTokenInAuth({ accounts: [], activeId: null }, authPath);
+		saveTokenInAccount("sk-bad", { setActive: true }, authPath);
+		saveTokenInAccount("sk-good", {}, authPath);
+
+		const calls: string[] = [];
+		const requestStream = vi.fn((m, c, options) => {
+			calls.push(options?.apiKey!);
+			if (options?.apiKey === "sk-bad") {
+				throw new Error("401 Unauthorized: Invalid API Key");
+			}
+			const stream = createAssistantMessageEventStream();
+			setTimeout(() => {
+				stream.push({ type: "text_delta", contentIndex: 0, delta: "recovered" });
+				stream.push({ type: "done", message: fauxAssistantMessage({ content: [{ type: "text", text: "recovered" }] }) });
+				stream.end();
+			}, 5);
+			return stream;
+		});
+
+		try {
+			const streamSimple = createTokenInStreamSimple({ authPath, streamSimple: requestStream });
+			const stream = streamSimple(model, context, {});
+			const events: AssistantMessageEvent[] = [];
+			for await (const ev of stream) {
+				events.push(ev);
+			}
+
+			expect(calls).toEqual(["sk-bad", "sk-good"]);
+			expect(isTokenInOnCooldown("sk-bad")).toBe(true);
+			expect(events.some((e) => e.type === "text_delta" && (e as any).delta === "recovered")).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("createTokenInStreamSimple returns original error when all accounts are exhausted", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-rot-exhaust-"));
+		const authPath = join(dir, "tokenin-auth.json");
+		writeTokenInAuth({ accounts: [], activeId: null }, authPath);
+		saveTokenInAccount("sk-1", { setActive: true }, authPath);
+		saveTokenInAccount("sk-2", {}, authPath);
+
+		const requestStream = vi.fn((m, c, options) => {
+			const stream = createAssistantMessageEventStream();
+			setTimeout(() => {
+				stream.push({
+					type: "error",
+					reason: "error",
+					error: fauxAssistantMessage({ stopReason: "error", errorMessage: `429 exhausted for ${options?.apiKey}` }),
+				});
+				stream.end();
+			}, 5);
+			return stream;
+		});
+
+		try {
+			const streamSimple = createTokenInStreamSimple({ authPath, streamSimple: requestStream });
+			const stream = streamSimple(model, context, {});
+			const events: AssistantMessageEvent[] = [];
+			for await (const ev of stream) {
+				events.push(ev);
+			}
+
+			expect(events.length).toBe(1);
+			expect(events[0].type).toBe("error");
+			const errObj = (events[0] as any).error;
+			const errMsg = errObj.errorMessage ?? errObj.content?.[0]?.errorMessage;
+			expect(errMsg).toContain("429 exhausted for sk-2");
+			expect(isTokenInOnCooldown("sk-1")).toBe(true);
+			expect(isTokenInOnCooldown("sk-2")).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("createTokenInStreamSimple falls back to base implementation when no accounts are configured", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "tokenin-rot-empty-"));
+		const authPath = join(dir, "tokenin-auth.json");
+
+		const requestStream = vi.fn((m, c, options) => {
+			const stream = createAssistantMessageEventStream();
+			setTimeout(() => {
+				stream.push({ type: "text_delta", contentIndex: 0, delta: "passthrough" });
+				stream.push({ type: "done", message: fauxAssistantMessage({ content: [{ type: "text", text: "passthrough" }] }) });
+				stream.end();
+			}, 5);
+			return stream;
+		});
+
+		try {
+			const streamSimple = createTokenInStreamSimple({ authPath, streamSimple: requestStream });
+			const stream = streamSimple(model, context, { apiKey: "sk-env" });
+			const events: AssistantMessageEvent[] = [];
+			for await (const ev of stream) {
+				events.push(ev);
+			}
+
+			expect(events.some((e) => e.type === "text_delta" && (e as any).delta === "passthrough")).toBe(true);
+			expect(requestStream).toHaveBeenCalled();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("tokenInOnboardingExtension registers tokenin provider with streamSimple", () => {
+		const registeredProviders = new Map<string, any>();
+		const pi = {
+			on: vi.fn(),
+			exec: vi.fn(),
+			registerCommand: vi.fn(),
+			registerProvider: vi.fn((name: string, config: any) => {
+				registeredProviders.set(name, config);
+			}),
+		} as unknown as ExtensionAPI;
+
+		tokenInOnboardingExtension(pi);
+		expect(registeredProviders.has("tokenin")).toBe(true);
+		const cfg = registeredProviders.get("tokenin");
+		expect(cfg.api).toBe("openai-completions");
+		expect(typeof cfg.streamSimple).toBe("function");
 	});
 });
