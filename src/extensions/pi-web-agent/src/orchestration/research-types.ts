@@ -1,4 +1,7 @@
+import type { SearchProviderName } from '../types.js';
+
 export type ResearchSourceKind =
+  | 'primary-content'
   | 'official-docs'
   | 'official-api'
   | 'official-discussion'
@@ -7,7 +10,7 @@ export type ResearchSourceKind =
   | 'package-page'
   | 'other';
 
-export type ResearchMethod = 'search' | 'http' | 'headless' | 'firecrawl';
+export type ResearchMethod = 'search' | 'http' | 'headless' | 'firecrawl' | 'github' | 'pdf' | 'youtube';
 
 export type ResearchEvidence = {
   title: string;
@@ -36,6 +39,8 @@ export type ResearchWorkerResult = {
   lowValueOutcomes: ResearchLowValueOutcome[];
   suggestedHeadlessUrl?: string;
   exhaustedBudget: boolean;
+  fanoutProviders?: SearchProviderName[];
+  fanoutSkipped?: SearchProviderName[];
 };
 
 export type ResearchRunMetadata = {
@@ -43,6 +48,8 @@ export type ResearchRunMetadata = {
   fetchedPages: number;
   headlessAttempts: number;
   exhaustedBudget: boolean;
+  fanoutProviders?: SearchProviderName[];
+  fanoutSkipped?: SearchProviderName[];
 };
 
 export type ResearchOrchestratorDecision =

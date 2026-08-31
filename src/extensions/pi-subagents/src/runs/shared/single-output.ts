@@ -8,6 +8,17 @@ export interface SingleOutputSnapshot {
 	exists: boolean;
 	mtimeMs?: number;
 	size?: number;
+	error?: string;
+}
+
+function missingFileStatError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	return code === "ENOENT" || code === "ENOTDIR";
+}
+
+function snapshotFromStatError(error: unknown): SingleOutputSnapshot {
+	if (missingFileStatError(error)) return { exists: false };
+	return { exists: false, error: error instanceof Error ? error.message : String(error) };
 }
 
 /**
@@ -183,10 +194,34 @@ export function captureSingleOutputSnapshot(outputPath: string | undefined): Sin
 	try {
 		const stat = fs.statSync(outputPath);
 		return { exists: true, mtimeMs: stat.mtimeMs, size: stat.size };
-	} catch {
-		// The snapshot is advisory; resolveSingleOutput reports concrete read/write failures.
-		return { exists: false };
+	} catch (error) {
+		return snapshotFromStatError(error);
 	}
+}
+
+function inspectSingleOutputChange(
+	outputPath: string,
+	beforeRun: SingleOutputSnapshot | undefined,
+): { changed: boolean; error?: string } {
+	if (beforeRun?.error) return { changed: false, error: beforeRun.error };
+	try {
+		const stat = fs.statSync(outputPath);
+		return {
+			changed: !beforeRun?.exists || stat.mtimeMs !== beforeRun.mtimeMs || stat.size !== beforeRun.size,
+		};
+	} catch (error) {
+		if (missingFileStatError(error)) return { changed: false };
+		return { changed: false, error: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+export function hasSingleOutputChangedSinceSnapshot(
+	outputPath: string | undefined,
+	beforeRun: SingleOutputSnapshot | undefined,
+): boolean | undefined {
+	if (!outputPath) return undefined;
+	const inspected = inspectSingleOutputChange(outputPath, beforeRun);
+	return inspected.error ? undefined : inspected.changed;
 }
 
 function persistSingleOutput(
@@ -216,23 +251,15 @@ export function resolveSingleOutput(
 	const claimError = outputClaimError(outputPath, expectedClaimPath);
 	if (claimError) return { fullOutput: fallbackOutput, saveError: claimError, fatalError: true };
 
-	let changedSinceStart = false;
-	try {
-		const stat = fs.statSync(outputPath);
-		changedSinceStart = !beforeRun?.exists
-			|| stat.mtimeMs !== beforeRun.mtimeMs
-			|| stat.size !== beforeRun.size;
-	} catch (error) {
-		const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
-		if (code !== "ENOENT" && code !== "ENOTDIR") {
-			return {
-				fullOutput: fallbackOutput,
-				saveError: `Failed to inspect output file: ${error instanceof Error ? error.message : String(error)}`,
-			};
-		}
+	const changedSinceStart = inspectSingleOutputChange(outputPath, beforeRun);
+	if (changedSinceStart.error) {
+		return {
+			fullOutput: fallbackOutput,
+			saveError: `Failed to inspect output file: ${changedSinceStart.error}`,
+		};
 	}
 
-	if (changedSinceStart) {
+	if (changedSinceStart.changed) {
 		try {
 			return { fullOutput: fs.readFileSync(outputPath, "utf-8"), savedPath: outputPath };
 		} catch (error) {

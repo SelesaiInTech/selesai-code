@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-08-31
+
+### Highlights
+- Ask for the runtime delegation catalog as clean rows: `subagent({ action: "list", capabilities: true })` returns compact, prompt-free capability rows and machine metadata.
+- Timeout recovery is explainable: async status and `subagent_wait` completions report the missing/written report and changed tracked files for timed-out children with dirty worktrees.
+- Forked children reuse prompt caches: fork-context launches stamp an OpenAI-compatible `prompt_cache_key` on provider requests.
+- `runs.lanes` plans show up as workflow-graph stages in status and TUI views.
+- Watchdog and single-output evidence are cheaper and kinder: home-root/entry-less repos skip untracked scans, and stat errors propagate instead of being swallowed.
+
+### Added
+- Add `capabilities` option to management `list`: returns executable/restricted status, restriction sources, aliases, runner (pi / external-cli / external-job with capabilities), tools (ambient, mcp-direct, mutation), model (value/fallbacks/thinking), execution (defaultAsync, timeoutMs), output, and extensions snapshot per agent, plus total restricted count and capability-ceiling sources, as versioned `details.agentCapabilities` (`details.catalog`).
+- Emit `lanePlan` metadata from `runs.lanes` (stages, phase, label, agent, output name, structured flag) and render workflow-graph stage nodes in async status and TUI views.
+- Stamp `prompt_cache_key` (`pi-fork:<sha256>`) on supported provider requests for fork-context children via `before_provider_request`.
+- Project timeout-recovery evidence (termination, changed files, report status, dirty-worktree reason) into async status steps and `subagent_wait` completion output.
+
+### Changed
+- `runs.host` rejects per-step `cwd` with an actionable hint (use outer request cwd or a trusted `cd` in the command).
+- Watchdog repo-change signatures skip `--untracked-files=all` for home-repo roots and repositories with no tracked entries, keeping status probes cheap and bounded.
+- Single-output snapshots propagate non-ENOENT stat errors instead of treating every failure as "file missing".
+- Background spawns use `windowsHide` consistently and `detached` only on non-Windows.
+- `workflowScript` guidance documents the portability rules (no nested async helpers) and `runs.host` cwd semantics.
+
+### Fixed
+- "Running" spinners in the TUI advance on wall-clock time instead of only on model activity.
+- Noisy repeated single-step status rows are suppressed in workflow status rendering.
+- Timeout recovery summaries no longer claim a written report when the required output is missing.
+
 ## [0.59.0] - 2026-08-28
 
 ### Highlights

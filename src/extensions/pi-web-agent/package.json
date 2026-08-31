@@ -1,6 +1,6 @@
 {
 	"name": "@selesai/bundled-pi-web-agent",
-	"version": "1.5.1",
+	"version": "1.10.0",
 	"private": true,
 	"description": "Bundled pi-web-agent extension for reliable web access with explicit search, fetch, and headless boundaries. Vendored source-first from @demigodmode/pi-web-agent.",
 	"type": "module",
@@ -22,7 +22,9 @@
 		"cheerio": "^1.1.0",
 		"jsdom": "^26.0.0",
 		"playwright": "^1.60.0",
-		"typebox": "^1.1.37"
+		"typebox": "^1.1.37",
+		"unpdf": "^1.8.1",
+		"youtube-caption-extractor": "^1.10.2"
 	},
 	"peerDependencies": {
 		"@selesai/code": "*",

@@ -1,4 +1,4 @@
-import type { WebFetchHeadlessResponse, WebFetchResponse } from '../types.js';
+import type { SearchProviderName, WebFetchHeadlessResponse, WebFetchResponse } from '../types.js';
 import { rankEvidence } from './evidence-ranker.js';
 import { planSearchQueries } from './query-planner.js';
 import { classifySourceProfile } from './source-profile.js';
@@ -25,6 +25,10 @@ function summarizeText(text: string, maxLength = 180): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
+function isReaderMethod(method: string): boolean {
+  return method === 'github' || method === 'pdf' || method === 'youtube';
+}
+
 function isBotCheckContent({ title = '', text }: { title?: string; text: string }) {
   return /performing security verification|security service|verify you are not a bot|just a moment|checking your browser/i.test(
     `${title}\n${text}`
@@ -34,6 +38,17 @@ function isBotCheckContent({ title = '', text }: { title?: string; text: string 
 function evidenceFromFetch(result: WebFetchResponse): ResearchEvidence | null {
   if (result.status !== 'ok' || !result.content?.text.trim()) return null;
   if (isBotCheckContent({ title: result.content.title, text: result.content.text })) return null;
+
+  if (isReaderMethod(result.metadata.method)) {
+    return {
+      title: result.content.title ?? result.url,
+      url: result.url,
+      sourceKind: 'primary-content',
+      method: result.metadata.method,
+      summary: result.content.text,
+      supports: [result.content.text]
+    };
+  }
 
   return {
     title: result.content.title ?? result.url,
@@ -101,7 +116,9 @@ function buildMetadata({
   allLowValueOutcomes,
   headlessAttempts,
   exhaustedBudget,
-  caveatReasons = []
+  caveatReasons = [],
+  fanoutProviders,
+  fanoutSkipped
 }: {
   previousQueries: string[];
   allEvidence: ResearchEvidence[];
@@ -110,13 +127,17 @@ function buildMetadata({
   headlessAttempts: number;
   exhaustedBudget: boolean;
   caveatReasons?: EvidenceCaveatReason[];
+  fanoutProviders?: SearchProviderName[];
+  fanoutSkipped?: SearchProviderName[];
 }) {
   return {
     searchPasses: previousQueries.length,
     fetchedPages: allEvidence.length + allGaps.length + allLowValueOutcomes.length,
     headlessAttempts,
     exhaustedBudget,
-    caveatReasons
+    caveatReasons,
+    fanoutProviders,
+    fanoutSkipped
   };
 }
 
@@ -170,6 +191,14 @@ export function createResearchOrchestrator({
       const suggestedHeadlessUrls: string[] = [];
       let headlessAttempts = 0;
       let lastPass: ResearchWorkerResult | undefined;
+      const fanoutProvidersSeen = new Set<SearchProviderName>();
+      const fanoutSkippedSeen = new Set<SearchProviderName>();
+
+      function fanoutSnapshot() {
+        const providers = fanoutProvidersSeen.size ? [...fanoutProvidersSeen] : undefined;
+        const skipped = [...fanoutSkippedSeen].filter((p) => !fanoutProvidersSeen.has(p));
+        return { fanoutProviders: providers, fanoutSkipped: skipped.length ? skipped : undefined };
+      }
 
       if (fetchDirect) {
         for (const url of extractDirectUrls(query).slice(0, 3)) {
@@ -204,6 +233,36 @@ export function createResearchOrchestrator({
         }
       }
 
+      if (allEvidence.some((item) => item.sourceKind === 'primary-content')) {
+        const ranked = rankEvidence(allEvidence.filter((item) => item.sourceKind !== 'package-page'));
+        const quality = analyzeEvidenceQuality({
+          evidence: ranked,
+          gaps: allGaps,
+          lowValueOutcomes: allLowValueOutcomes
+        });
+        return {
+          decision: decisionForAnswer({ action: 'answer', query, ranked, exhaustedBudget: false }),
+          evidence: ranked,
+          workerPass: combinedWorkerPass({
+            lastPass,
+            previousQueries,
+            allGaps,
+            allLowValueOutcomes,
+            exhaustedBudget: false
+          }),
+          metadata: buildMetadata({
+            previousQueries,
+            allEvidence,
+            allGaps,
+            allLowValueOutcomes,
+            headlessAttempts,
+            exhaustedBudget: false,
+            caveatReasons: quality.caveatReasons,
+            ...fanoutSnapshot()
+          })
+        };
+      }
+
       for (let passIndex = 0; passIndex < DEFAULT_MAX_PASSES; passIndex++) {
         const queries = planSearchQueries({
           originalQuery: query,
@@ -221,6 +280,8 @@ export function createResearchOrchestrator({
           });
 
           lastPass = pass;
+          pass.fanoutProviders?.forEach((p) => fanoutProvidersSeen.add(p));
+          pass.fanoutSkipped?.forEach((p) => fanoutSkippedSeen.add(p));
           allEvidence.push(...pass.evidence);
           allGaps.push(...pass.gaps);
           allLowValueOutcomes.push(...pass.lowValueOutcomes);
@@ -287,7 +348,8 @@ export function createResearchOrchestrator({
                   allLowValueOutcomes,
                   headlessAttempts,
                   exhaustedBudget,
-                  caveatReasons: updatedQuality.caveatReasons
+                  caveatReasons: updatedQuality.caveatReasons,
+                  ...fanoutSnapshot()
                 })
               };
             }
@@ -314,7 +376,8 @@ export function createResearchOrchestrator({
                 allLowValueOutcomes,
                 headlessAttempts,
                 exhaustedBudget: false,
-                caveatReasons: quality.caveatReasons
+                caveatReasons: quality.caveatReasons,
+                ...fanoutSnapshot()
               })
             };
           }
@@ -338,7 +401,8 @@ export function createResearchOrchestrator({
                 allLowValueOutcomes,
                 headlessAttempts,
                 exhaustedBudget,
-                caveatReasons: quality.caveatReasons
+                caveatReasons: quality.caveatReasons,
+                ...fanoutSnapshot()
               })
             };
           }
@@ -368,7 +432,8 @@ export function createResearchOrchestrator({
           allLowValueOutcomes,
           headlessAttempts,
           exhaustedBudget: true,
-          caveatReasons: quality.caveatReasons
+          caveatReasons: quality.caveatReasons,
+          ...fanoutSnapshot()
         })
       };
     }

@@ -18,6 +18,18 @@ function braveDoctorUrl() {
   return url.toString();
 }
 
+function youcomDoctorBody() {
+  return JSON.stringify({ query: 'pi-web-agent-doctor', max_results: 1 });
+}
+
+function exaDoctorBody() {
+  return JSON.stringify({ query: 'pi-web-agent-doctor', numResults: 1 });
+}
+
+function tavilyDoctorBody() {
+  return JSON.stringify({ query: 'pi-web-agent-doctor', max_results: 1 });
+}
+
 function searxngDoctorUrl(baseUrl: string, options: SearxngOptions = {}) {
   const url = new URL('/search', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
   url.searchParams.set('q', 'pi-web-agent-doctor');
@@ -78,6 +90,99 @@ export async function checkBackendHealth(
         timeout.done();
       }
     }
+  } else if (config.search.provider === 'youcom') {
+    const apiKey = process.env.YDC_API_KEY;
+    if (!apiKey?.trim()) {
+      lines.push('search backend: youcom warning (missing YDC_API_KEY)');
+    } else {
+      const timeout = withTimeout(timeoutMs);
+      try {
+        const response = await fetchImpl('https://api.you.com/v1/agents/search', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'X-API-Key': apiKey
+          },
+          body: youcomDoctorBody(),
+          signal: timeout.signal
+        });
+        if (!response.ok) {
+          lines.push(`search backend: youcom warning (HTTP ${response.status})`);
+        } else {
+          const json = (await response.json()) as { results?: unknown };
+          lines.push(Array.isArray(json.results)
+            ? 'search backend: youcom ok'
+            : 'search backend: youcom warning (unexpected response)');
+        }
+      } catch (error) {
+        lines.push(`search backend: youcom warning (${message(error)})`);
+      } finally {
+        timeout.done();
+      }
+    }
+  } else if (config.search.provider === 'exa') {
+    const apiKey = process.env.EXA_API_KEY;
+    if (!apiKey?.trim()) {
+      lines.push('search backend: exa warning (missing EXA_API_KEY)');
+    } else {
+      const timeout = withTimeout(timeoutMs);
+      try {
+        const response = await fetchImpl('https://api.exa.ai/search', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey
+          },
+          body: exaDoctorBody(),
+          signal: timeout.signal
+        });
+        if (!response.ok) {
+          lines.push(`search backend: exa warning (HTTP ${response.status})`);
+        } else {
+          const json = (await response.json()) as { results?: unknown };
+          lines.push(Array.isArray(json.results)
+            ? 'search backend: exa ok'
+            : 'search backend: exa warning (unexpected response)');
+        }
+      } catch (error) {
+        lines.push(`search backend: exa warning (${message(error)})`);
+      } finally {
+        timeout.done();
+      }
+    }
+  } else if (config.search.provider === 'tavily') {
+    const apiKey = process.env.TAVILY_API_KEY;
+    if (!apiKey?.trim()) {
+      lines.push('search backend: tavily warning (missing TAVILY_API_KEY)');
+    } else {
+      const timeout = withTimeout(timeoutMs);
+      try {
+        const response = await fetchImpl('https://api.tavily.com/search', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`
+          },
+          body: tavilyDoctorBody(),
+          signal: timeout.signal
+        });
+        if (!response.ok) {
+          lines.push(`search backend: tavily warning (HTTP ${response.status})`);
+        } else {
+          const json = (await response.json()) as { results?: unknown };
+          lines.push(Array.isArray(json.results)
+            ? 'search backend: tavily ok'
+            : 'search backend: tavily warning (unexpected response)');
+        }
+      } catch (error) {
+        lines.push(`search backend: tavily warning (${message(error)})`);
+      } finally {
+        timeout.done();
+      }
+    }
   } else if (!config.search.baseUrl) {
     lines.push('search backend: searxng warning (missing baseUrl)');
   } else {
@@ -97,6 +202,37 @@ export async function checkBackendHealth(
 
   if (config.search.fallback) {
     lines.push(`search fallback: ${config.search.fallback}`);
+  }
+
+  if (config.search.fanout && config.search.fanout.mode !== 'off') {
+    const providers = config.search.fanout.providers || ['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily'];
+    lines.push(`search fanout: ${config.search.fanout.mode} (${providers.join(', ')})`);
+
+    for (const provider of providers) {
+      if (provider === 'searxng' && !config.search.baseUrl) {
+        lines.push('search fanout provider searxng warning (missing baseUrl)');
+      } else if (provider === 'brave') {
+        const apiKey = process.env.PI_WEB_AGENT_BRAVE_API_KEY ?? readBraveKeyFromSettings();
+        if (!apiKey?.trim()) {
+          lines.push('search fanout provider brave warning (missing Brave API key — set webAgent.braveApiKey in settings.json or PI_WEB_AGENT_BRAVE_API_KEY env var)');
+        }
+      } else if (provider === 'youcom') {
+        const apiKey = process.env.YDC_API_KEY;
+        if (!apiKey?.trim()) {
+          lines.push('search fanout provider youcom warning (missing YDC_API_KEY)');
+        }
+      } else if (provider === 'exa') {
+        const apiKey = process.env.EXA_API_KEY;
+        if (!apiKey?.trim()) {
+          lines.push('search fanout provider exa warning (missing EXA_API_KEY)');
+        }
+      } else if (provider === 'tavily') {
+        const apiKey = process.env.TAVILY_API_KEY;
+        if (!apiKey?.trim()) {
+          lines.push('search fanout provider tavily warning (missing TAVILY_API_KEY)');
+        }
+      }
+    }
   }
 
   if (config.fetch.provider === 'http') {

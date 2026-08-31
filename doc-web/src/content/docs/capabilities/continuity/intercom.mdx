@@ -42,7 +42,7 @@ The `pi-intercom` extension adds direct 1:1 messaging between Selesai sessions o
 
 - Send a fire-and-forget message with `intercom({ action: "send", to: "worker", message: "..." })`.
 - Ask a blocking question with `intercom({ action: "ask", to: "planner", message: "..." })`; the reply comes back as the tool result with a 10-minute timeout.
-- Reply to the most recent inbound ask with `intercom({ action: "reply", message: "..." })`.
+- Reply to the most recent inbound ask with `intercom({ action: "reply", message: "..." })`. During a turn triggered by an inbound ask, a non-reply `send` to a different target is refused, so a guessed parent/root CWD cannot receive an accidental reply.
 - List pending asks with `intercom({ action: "pending" })` or check broker and session status with `intercom({ action: "status" })`.
 
 ## Commands, tools, and shortcuts

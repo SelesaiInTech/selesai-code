@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { safeTerminalText } from "../../shared/display-text.ts";
-import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns } from "./async-status.ts";
+import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, formatWorkflowStageLine, listAsyncRuns } from "./async-status.ts";
 import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunTranscript, inspectSubagentFleet } from "./fleet-view.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
@@ -25,7 +25,9 @@ import { formatWorkflowJsonPreview } from "../../workflows/scripted-workflow.ts"
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary } from "../../workflows/workflow-preflight.ts";
 import { formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
+import { workflowGraphStageNodes } from "../shared/workflow-graph.ts";
 import { getExternalJobProvider } from "../../api/external-job-provider.ts";
+import { formatTimeoutRecoveryLines } from "../shared/mutation-evidence.ts";
 
 interface RunStatusParams {
 	action?: string;
@@ -481,6 +483,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				currentStep: status.currentStep,
 				chainStepCount: status.chainStepCount,
 				parallelGroups: status.parallelGroups,
+				workflowGraph: status.workflowGraph,
 				steps: (status.steps ?? []).map((step, index) => ({ index, agent: step.agent, status: step.status })),
 			});
 			const started = new Date(status.startedAt).toISOString();
@@ -548,6 +551,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				const display = runStatusStepDisplayName(step);
 				const phase = step.phase ? `[${step.phase}] ` : "";
 				lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`);
+				lines.push(...formatTimeoutRecoveryLines(step.timeoutRecovery, "  "));
 				if (step.runner?.type === "external-cli") {
 					const runner = normalizeExternalCliRunnerStatus(step.runner);
 					if (runner) {
@@ -593,6 +597,11 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 					lines.push("  Steer: unavailable; external runners do not accept live messages.");
 				}
 			}
+			const loadedWorkflowKeys = new Set((status.steps ?? []).flatMap((step) => step.workflowKey ? [step.workflowKey] : []));
+			const graphStages = status.mode === "workflow" ? workflowGraphStageNodes(status.workflowGraph) : [];
+			for (const [index, node] of graphStages.entries()) {
+				if (!loadedWorkflowKeys.has(node.id)) lines.push(`  ${formatWorkflowStageLine(node, index, graphStages.length)}`);
+			}
 			const attached = new Set((status.steps ?? []).flatMap((step) => step.children?.map((child) => child.id) ?? []));
 			const unattached = nestedChildren.filter((child) => !attached.has(child.id));
 			lines.push(...formatNestedRunStatusLines(unattached, { indent: "", commandHints: true, maxLines: 20 }));
@@ -632,7 +641,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		}
 		try {
 			const raw = fs.readFileSync(resultPath, "utf-8");
-			const data = JSON.parse(raw) as { id?: string; runId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; sessionName?: string; runId?: string; workflowKey?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null }> };
+			const data = JSON.parse(raw) as { id?: string; runId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; timeoutRecovery?: unknown; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; sessionName?: string; runId?: string; workflowKey?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null; timeoutRecovery?: unknown }> };
 			if (params.view === "transcript") {
 				try {
 					return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }) }], details: { mode: "single", results: [] } };
@@ -660,6 +669,8 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			const lines = [`Run: ${runId}`, data.toolCallId ? `Tool call: ${data.toolCallId}` : undefined, `State: ${status}`, `Result: ${resultPath}`].filter((line): line is string => Boolean(line));
 			if (data.parallelHandoff?.path) lines.push(`Parallel handoff: ${data.parallelHandoff.path}`);
 			const children = Array.isArray(data.results) ? data.results : data.agent ? [{ agent: data.agent, sessionFile: data.sessionFile }] : [];
+			lines.push(...formatTimeoutRecoveryLines(data.timeoutRecovery, "  "));
+			for (const child of children) lines.push(...formatTimeoutRecoveryLines(child.timeoutRecovery, "  "));
 			lines.push(formatResumeGuidance(runId, children, data.sessionFile, { stopped: status === "stopped" }));
 			if (data.summary) lines.push("", data.summary);
 			const workflowChildren = parseWorkflowChildSummary((data as unknown as Record<string, unknown>).workflowChildren);

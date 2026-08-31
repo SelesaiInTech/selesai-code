@@ -2,6 +2,17 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.4] - 2026-08-31
+
+### Added
+- **Bundled `pi-subagents` 0.60.0.** `subagent({ action: "list", capabilities: true })` returns a compact prompt-free capability catalog (`details.catalog`: agent name, description, source, runner, tools/model/execution/output/extensions snapshot, executable and restriction status), and `list` results stay human text. Forked children now stamp an OpenAI-compatible `prompt_cache_key` (`pi-fork:<sha256>`) on provider requests for prompt-cache reuse; timeout recovery evidence (report status, changed tracked files, dirty-worktree classification) is projected into async status and `subagent_wait` completions; `runs.lanes` lane plans (stages, phase, label, structured output) are emitted and rendered as workflow-graph stages; `runs.host` rejects per-step `cwd` with a hint; watchdog repo signatures skip untracked scans for home-root and entry-less repos; single-output snapshots propagate non-ENOENT stat errors; background processes use `windowsHide` and detached-only-on-unix.
+- **Bundled `pi-web-agent` 1.10.0.** Search backends: You.com (`YDC_API_KEY`), Exa (`EXA_API_KEY`), Tavily (`TAVILY_API_KEY`) in addition to DuckDuckGo, SearXNG and Brave; search fanout across configured providers with dedupe/agreement ranking (`backends.search.fanout` with `off`/`on`/`auto` modes and provider selection); keyless Tavily fallback when DuckDuckGo is bot-blocked (disable with `PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK=1`); DuckDuckGo hardened against bot-walls (browser headers + one retry); GitHub/PDF/YouTube direct readers wired into the fetch path; canonical URL normalization (tracking-param stripping); the model tool result now carries the full synthesized findings/sources/caveats regardless of terminal presentation.
+- **GLM-5.3 models in the default catalog.** Added `glm-5.3` (GLM-5.3) to the bundled `tokenin` provider and upgraded `glm-5.3-flash` to text+image input with a full `thinkingLevelMap`.
+
+### Changed
+- **Cost reconciliation keys every streamed response id.** Streamed bodies repeat the response id across chunks and carry tool-call ids (`call_*`), so the fetch wrapper now keys the billed cost by every id found and `message_end` consumes only the one matching the finalized message's `responseId`; a duplicate capture (retry) is marked ambiguous instead of assigning either bill.
+- **Bundled `pi-intercom` 0.12.1.** During a turn triggered by an inbound ask, a non-`reply` `send` to a different target is refused so guessed parent/root CWD cannot receive an accidental reply; the `toolVisibility` setting and `after-first-use` reveal path were removed (the generic `intercom` tool stays in the active tool set for prompt-cache stability; obsolete `toolVisibility` config keys are ignored).
+
 ## [0.13.3] - 2026-08-31
 
 ### Added

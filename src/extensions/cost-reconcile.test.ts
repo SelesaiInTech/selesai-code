@@ -180,17 +180,36 @@ describe("live assistant usage reconciliation", () => {
 		expect(result.message.usage.cost.total).toBe(0);
 	});
 
-	it("falls back when a captured body has multiple candidate response ids", async () => {
-		const responseId = "live-ambiguous-response-3";
-		installFetch(
-			`data: {"id":"${responseId}","usage":{"cost":0.0123},"tool_calls":[{"id":"tool-ambiguous-3"}]}\n\n`,
-		);
+	it("reconciles a tool-call stream: keys cost by every id, message_end consumes the matching one", async () => {
+		const responseId = "live-toolcall-3";
+		const body =
+			`data: {"id":"${responseId}","choices":[{"delta":{"tool_calls":[{"id":"call_abc123","function":{"name":"bash","arguments":""}}]}}]}\n\n` +
+			`data: {"id":"${responseId}","usage":{"cost":0.0123}}\n\n` +
+			"data: [DONE]\n\n";
+		installFetch(body);
 		const { appendEntry, handlers } = createHarness();
 		await startSession(handlers);
 
 		const response = await globalThis.fetch("https://gateway.example/v1/chat/completions");
 		await response.text();
 		const message = assistantMessage(responseId);
+		const result = await handlers.get("message_end")!({ message }, {});
+		expect(result.message.usage.cost.total).toBe(0.0123);
+		expect(appendEntry).toHaveBeenCalledWith(
+			"cost-reconcile",
+			expect.objectContaining({ provider: "openrouter", responseId, cost: 0.0123, source: "payload" }),
+		);
+	});
+
+	it("does not apply a captured cost to a message whose id was not in the body", async () => {
+		const body = `data: {"id":"other-response","usage":{"cost":0.0123}}\n\ndata: [DONE]\n\n`;
+		installFetch(body);
+		const { appendEntry, handlers } = createHarness();
+		await startSession(handlers);
+
+		const response = await globalThis.fetch("https://gateway.example/v1/chat/completions");
+		await response.text();
+		const message = assistantMessage("unrelated-message");
 		expect(await handlers.get("message_end")!({ message }, {})).toBeUndefined();
 		expect(message.usage.cost.total).toBe(0.75);
 		expect(appendEntry).not.toHaveBeenCalled();

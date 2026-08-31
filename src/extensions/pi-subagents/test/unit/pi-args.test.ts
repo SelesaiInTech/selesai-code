@@ -145,6 +145,47 @@ function writeMcpFixture(
 	});
 }
 
+type RuntimeMcpDefinition = { command: string; args: string[] };
+
+function buildLegacyAliasLaunch(params: {
+	definitions: Record<string, RuntimeMcpDefinition>;
+	mcpDirectTools: string[];
+	allowedTools: string[];
+}) {
+	const fixture = createMcpFixture();
+	writeJson(path.join(fixture.agentDir, "mcp.json"), { mcpServers: {} });
+	writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+		version: 1,
+		servers: Object.fromEntries(Object.entries(params.definitions).map(([name, definition]) => [
+			name,
+			{ configHash: computeMcpServerHash(definition), cachedAt: Date.now(), tools: [{ name: "search" }] },
+		])),
+	});
+	const runtimeSnapshotHost: McpRuntimeSnapshotHost = {
+		events: {
+			emit(_event, request) {
+				const definition = params.definitions[request.name];
+				if (!definition) {
+					request.result = { ok: false, error: new Error(`unknown runtime server ${request.name}`) };
+					return;
+				}
+				request.result = { ok: true, snapshot: { name: request.name, definition, runtime: true, persisted: false } };
+			},
+		},
+	};
+	return buildPiArgs({
+		baseArgs: ["-p"],
+		task: "hello",
+		sessionEnabled: false,
+		inheritProjectContext: false,
+		inheritSkills: false,
+		tools: ["read"],
+		mcpDirectTools: params.mcpDirectTools,
+		capabilityCeiling: { version: 1, allowedTools: params.allowedTools, denyExtensions: false, sources: ["test"] },
+		runtimeSnapshotHost,
+	});
+}
+
 afterEach(() => {
 	process.chdir(originalCwd);
 	for (const [key, value] of Object.entries(originalEnv)) {
@@ -1125,7 +1166,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 		assert.equal(
 			args[args.indexOf("--tools") + 1],
-			"read,bash,chrome_devtools_take_screenshot,chrome_devtools_click",
+			"read,bash,chrome-devtools_take_screenshot,chrome-devtools_click",
 		);
 		assert.equal(env.MCP_DIRECT_TOOLS, "chrome-devtools");
 		assert.equal(
@@ -1133,15 +1174,15 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			JSON.stringify([
 				"read",
 				"bash",
-				"chrome_devtools_take_screenshot",
-				"chrome_devtools_click",
+				"chrome-devtools_take_screenshot",
+				"chrome-devtools_click",
 			]),
 		);
 		assert.equal(
 			env[MCP_DIRECT_CHILD_TOOLS_ENV],
 			JSON.stringify([
-				"chrome_devtools_take_screenshot",
-				"chrome_devtools_click",
+				"chrome-devtools_take_screenshot",
+				"chrome-devtools_click",
 			]),
 		);
 	});
@@ -1224,8 +1265,8 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			runtimeSnapshotHost,
 		});
 		assert.deepEqual(requestedNames, [serverName, serverName]);
-		assert.equal(serverLaunch.args[serverLaunch.args.indexOf("--tools") + 1], "read,runtime_github_search_repositories,runtime_github_create_issue");
-		assert.equal(toolLaunch.args[toolLaunch.args.indexOf("--tools") + 1], "read,runtime_github_search_repositories");
+		assert.equal(serverLaunch.args[serverLaunch.args.indexOf("--tools") + 1], "read,runtime-github_search_repositories,runtime-github_create_issue");
+		assert.equal(toolLaunch.args[toolLaunch.args.indexOf("--tools") + 1], "read,runtime-github_search_repositories");
 		assert.ok(serverLaunch.args.indexOf("--mcp-config") < serverLaunch.args.indexOf("Task: hello"));
 		for (const launch of [serverLaunch, toolLaunch]) {
 			const configPath = launch.args[launch.args.indexOf("--mcp-config") + 1];
@@ -1240,11 +1281,11 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			[serverName, `${serverName}/search_repositories`],
 		);
 		assert.deepEqual(JSON.parse(serverLaunch.env[MCP_DIRECT_CHILD_TOOLS_ENV]!), [
-			"runtime_github_search_repositories",
-			"runtime_github_create_issue",
+			"runtime-github_search_repositories",
+			"runtime-github_create_issue",
 		]);
 		assert.deepEqual(JSON.parse(toolLaunch.env[MCP_DIRECT_CHILD_TOOLS_ENV]!), [
-			"runtime_github_search_repositories",
+			"runtime-github_search_repositories",
 		]);
 	});
 
@@ -1354,13 +1395,48 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			capabilityCeiling: { version: 1, allowedTools: ["read", "runtime_a_search"], denyExtensions: false, sources: ["test"] },
 			runtimeSnapshotHost,
 		});
-		assert.equal(launch.args[launch.args.indexOf("--tools") + 1], "read,runtime_a_search");
+		assert.equal(launch.args[launch.args.indexOf("--tools") + 1], "read,runtime-a_search");
 		const configPath = launch.args[launch.args.indexOf("--mcp-config") + 1];
 		assert.ok(configPath);
 		assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf-8")), {
 			mcpServers: { "runtime-a": definitions["runtime-a"] },
 		});
+		assert.deepEqual(JSON.parse(launch.env[MCP_DIRECT_CHILD_TOOLS_ENV]!), ["runtime-a_search"]);
+	});
+
+	it("does not let legacy MCP ceiling aliases cross server boundaries", () => {
+		const definitions = {
+			"runtime-a": { command: "runtime-a", args: ["--stdio"] },
+			runtime_a: { command: "runtime_a", args: ["--stdio"] },
+		};
+		const launch = buildLegacyAliasLaunch({
+			definitions,
+			mcpDirectTools: ["runtime-a", "runtime_a"],
+			allowedTools: ["read", "runtime_a_search"],
+		});
+
+		assert.equal(launch.args[launch.args.indexOf("--tools") + 1], "read,runtime_a_search");
+		const configPath = launch.args[launch.args.indexOf("--mcp-config") + 1];
+		assert.ok(configPath);
+		assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf-8")), {
+			mcpServers: { runtime_a: definitions.runtime_a },
+		});
 		assert.deepEqual(JSON.parse(launch.env[MCP_DIRECT_CHILD_TOOLS_ENV]!), ["runtime_a_search"]);
+	});
+
+	it("does not allow ambiguous legacy MCP ceiling aliases", () => {
+		const launch = buildLegacyAliasLaunch({
+			definitions: {
+			"runtime-a-b": { command: "runtime-a-b", args: ["--stdio"] },
+			"runtime_a-b": { command: "runtime_a-b", args: ["--stdio"] },
+			},
+			mcpDirectTools: ["runtime-a-b", "runtime_a-b"],
+			allowedTools: ["read", "runtime_a_b_search"],
+		});
+
+		assert.equal(launch.args[launch.args.indexOf("--tools") + 1], "read");
+		assert.equal(launch.args.includes("--mcp-config"), false);
+		assert.equal(launch.env[MCP_DIRECT_CHILD_TOOLS_ENV], undefined);
 	});
 
 	it("emits --no-tools for explicit empty tool allowlists", () => {
@@ -1398,7 +1474,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 			assert.equal(
 				args[args.indexOf("--tools") + 1],
-				"chrome_devtools_take_screenshot,chrome_devtools_click",
+				"chrome-devtools_take_screenshot,chrome-devtools_click",
 			);
 			assert.equal(env.MCP_DIRECT_TOOLS, "chrome-devtools");
 		}
@@ -1451,7 +1527,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 	it("matches adapter prefix modes for direct MCP names", () => {
 		for (const [prefix, expected] of [
-			["server", "read,linear_mcp_list_issues"],
+			["server", "read,linear-mcp_list_issues"],
 			["short", "read,linear_list_issues"],
 			["none", "read,list_issues"],
 		] as const) {
@@ -1497,7 +1573,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 		assert.equal(
 			args[args.indexOf("--tools") + 1],
-			"read,browser_mcp_navigate,browser_mcp_get_console_logs",
+			"read,browser-mcp_navigate,browser-mcp_get_console_logs",
 		);
 	});
 
@@ -1614,7 +1690,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			cwd: fixture.projectDir,
 		});
 
-		assert.equal(args[args.indexOf("--tools") + 1], "read,project_mcp_inspect");
+		assert.equal(args[args.indexOf("--tools") + 1], "read,project-mcp_inspect");
 	});
 
 	it("resolves direct MCP tools from Pi package manifests", () => {
@@ -1680,7 +1756,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		}), /Unresolved MCP direct-tool selectors: acme_tools__wiki\./);
 	});
 
-	it("resolves direct MCP tools from the git-root package when child cwd has an incidental .pi directory", () => {
+	it("resolves direct MCP tools from the git-root package when child cwd has an incidental .selesai directory", () => {
 		const fixture = createMcpFixture();
 		const nestedCwd = path.join(fixture.projectDir, "packages", "app");
 		const packageRoot = path.join(fixture.projectDir, ".selesai", "npm", "node_modules", "@acme", "tools");
@@ -1861,7 +1937,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		);
 		assert.equal(
 			args[args.indexOf("--tools") + 1],
-			"read,chrome_devtools_take_screenshot",
+			"read,chrome-devtools_take_screenshot",
 		);
 		assert.ok(
 			extensionArgs.some((arg) =>

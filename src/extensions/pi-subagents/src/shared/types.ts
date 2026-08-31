@@ -559,6 +559,10 @@ export interface TimeoutRecoverySummary {
 	termination: "timed-out" | "stopped";
 	changedFiles: string[];
 	truncated?: boolean;
+	/** True only when a timed-out child left tracked changes without its requested report. */
+	recoveryNeeded?: boolean;
+	reason?: "timed-out-with-dirty-worktree";
+	reportStatus?: "missing" | "written" | "not-requested" | "unknown";
 	currentTool?: string;
 	currentToolArgs?: string;
 	currentPath?: string;
@@ -568,6 +572,9 @@ export interface TimeoutRecoverySummary {
 	warning: string;
 	message: string;
 }
+
+/** Safe parent-facing subset of a timeout recovery summary. */
+export type TimeoutRecoveryProjection = Pick<TimeoutRecoverySummary, "termination" | "changedFiles" | "truncated" | "recoveryNeeded" | "reason" | "reportStatus">;
 
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 3;
 export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
@@ -1272,6 +1279,7 @@ export interface WaitCompletionChild {
 	model?: string;
 	contextOverflow?: boolean;
 	artifactPaths?: Partial<ArtifactPaths>;
+	timeoutRecovery?: TimeoutRecoveryProjection;
 }
 
 /**
@@ -1288,6 +1296,27 @@ export interface WaitCompletion {
 	archivePath?: string;
 	results?: WaitCompletionChild[];
 	workflowChildren?: WorkflowChildSummaryV1;
+}
+
+export interface AgentCapabilitiesSnapshot {
+	agents: AgentCapabilityRow[];
+	restrictedCount: number;
+	capabilityCeilingSources?: string[];
+}
+
+export interface AgentCapabilityRow {
+	name: string;
+	description: string;
+	source: "builtin" | "package" | "user" | "project" | "runtime";
+	executable: boolean;
+	restrictionSources?: string[];
+	aliases?: string[];
+	runner: { type: "pi" } | { type: "external-cli"; adapter?: string; capabilities: ExternalCliCapabilities } | { type: "external-job"; provider: string; available?: boolean; capabilities: ExternalJobRunnerStatus["capabilities"] };
+	tools: { ambient: boolean; names: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
+	model?: { value?: string; fallbackModels?: string[]; thinking?: string | false };
+	execution?: { defaultAsync?: boolean; timeoutMs?: number };
+	output?: { path?: string; mode?: OutputMode };
+	extensions?: { names?: string[]; subagentOnly?: string[]; skills?: string[] };
 }
 
 export interface Details {
@@ -1354,6 +1383,7 @@ export interface Details {
 	activeAsyncCapacity?: ActiveAsyncCapacitySnapshot;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
+	agentCapabilities?: AgentCapabilitiesSnapshot;
 	parallelHandoff?: ParallelHandoffReference;
 	lifecycleStatus?: {
 		processTerminal?: ProcessTerminalV1;
@@ -1852,9 +1882,10 @@ export interface AsyncStatus {
 	parallelHandoff?: ParallelHandoffReference;
 }
 
-export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
+export type AsyncJobStep = Omit<NonNullable<AsyncStatus["steps"]>[number], "timeoutRecovery"> & {
 	index?: number;
 	description?: string;
+	timeoutRecovery?: TimeoutRecoveryProjection;
 };
 
 export interface AsyncJobState {
@@ -1889,6 +1920,8 @@ export interface AsyncJobState {
 	parallelGroups?: AsyncParallelGroupStatus[];
 	/** Bounded host-owned CI/gate nodes loaded from the workflow status graph. */
 	hostSteps?: HostStepNodeV1[];
+	/** Full bounded workflow plan, including not-yet-materialized stages. */
+	workflowGraph?: WorkflowGraphSnapshot;
 	steps?: AsyncJobStep[];
 	preflight?: WorkflowPreflightV1;
 	stepsTotal?: number;

@@ -32,6 +32,10 @@ function parseUrl(rawUrl: string): URL | undefined {
   }
 }
 
+export function hostOf(rawUrl: string): string | undefined {
+  return parseUrl(rawUrl)?.hostname.toLowerCase().replace(/^www\./, '');
+}
+
 function isOfficialApi(host: string, path: string) {
   return (
     (host === 'playwright.dev' && path.startsWith('/docs/api/')) ||

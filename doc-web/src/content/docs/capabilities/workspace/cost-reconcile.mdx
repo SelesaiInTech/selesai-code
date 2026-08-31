@@ -24,8 +24,8 @@ The `cost-reconcile` extension records the real billed cost that providers repor
 
 ## What it sets up
 
-- Installs a stream-wrapping `fetch` once per process that scans LLM API responses for provider-reported cost and response ids. The wrapper finishes capture before the provider SDK finalizes its assistant message.
-- On `message_end`, replaces the finalized assistant `usage.cost.total` with the provider-reported billed amount before the message is persisted, and writes a `cost-reconcile` custom session entry per response id (bounded per session) for zentui and existing-session compatibility.
+- Installs a stream-wrapping `fetch` once per process that scans LLM API responses for provider-reported cost and response ids. Streamed bodies repeat the response id across chunks and carry tool-call ids (`call_*`), so the wrapper keys the billed cost by every id found. Capture finishes before the provider SDK finalizes its assistant message.
+- On `message_end`, replaces the finalized assistant `usage.cost.total` with the provider-reported billed amount before the message is persisted, consuming only the captured entry matching the finalized message's `responseId`, and writes a `cost-reconcile` custom session entry per response id (bounded per session) for zentui and existing-session compatibility. A duplicate capture of the same id (retry) is marked ambiguous rather than assigning either bill.
 - The zentui footer prefers reconciled entries over the rate-card total when both exist for the same response id, and refreshes once after settle so late reconciliation is picked up.
 - Cost labels format adaptively so sub-cent per-call costs stay visible: 3 decimals at $1+, 4 decimals at $0.01+, and 6 decimals below (e.g. `$0.000336` instead of `$0.000`).
 

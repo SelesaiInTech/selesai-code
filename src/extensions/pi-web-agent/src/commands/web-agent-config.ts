@@ -2,16 +2,27 @@ import {
   DEFAULT_BACKEND_CONFIG,
   mergeBackendConfigLayers,
   validateBackendConfig,
+  usableSearchProviders,
   type BackendConfig,
   type BackendConfigOverride
 } from '../backends/config.js';
 import { checkBackendHealth } from '../backends/doctor.js';
+import type { SearchProviderName } from '../types.js';
 import {
   DynamicBorder,
   getSettingsListTheme,
   type ExtensionAPI
 } from '@selesai/code';
-import { Container, SelectList, SettingsList, Text, type SelectItem, type SettingItem } from '@earendil-works/pi-tui';
+import {
+  Container,
+  Input,
+  SelectList,
+  SettingsList,
+  Text,
+  type Component,
+  type SelectItem,
+  type SettingItem
+} from '@earendil-works/pi-tui';
 import {
   DEFAULT_PRESENTATION_CONFIG,
   mergePresentationConfigLayers,
@@ -78,7 +89,10 @@ function cloneBackendConfig(config: BackendConfig): BackendConfig {
   return {
     search: {
       ...config.search,
-      options: config.search.options ? { ...config.search.options } : undefined
+      options: config.search.options ? { ...config.search.options } : undefined,
+      fanout: config.search.fanout
+        ? { mode: config.search.fanout.mode, providers: config.search.fanout.providers ? [...config.search.fanout.providers] : undefined }
+        : undefined
     },
     fetch: {
       ...config.fetch,
@@ -115,12 +129,17 @@ async function defaultCheckTypebox(): Promise<boolean> {
 }
 
 function formatSearchOptions(config: BackendConfig['search']) {
-  return [
+  const parts = [
     config.fallback ? `fallback ${config.fallback}` : undefined,
     config.options?.categories?.length ? `categories ${config.options.categories.join(',')}` : undefined,
     config.options?.language ? `language ${config.options.language}` : undefined,
-    config.options?.safesearch !== undefined ? `safesearch ${config.options.safesearch}` : undefined
-  ].filter(Boolean).join(' ');
+    config.options?.safesearch !== undefined ? `safesearch ${config.options.safesearch}` : undefined,
+    config.fanout && config.fanout.mode !== 'off'
+      ? `fanout ${config.fanout.mode} (${(config.fanout.providers || usableSearchProviders(config)).join(', ')})`
+      : undefined
+  ].filter(Boolean);
+
+  return parts.join(' ');
 }
 
 function formatFetchOptions(config: BackendConfig['fetch']) {
@@ -181,7 +200,73 @@ function buildPresentationSettingsItems(scope: PresentationScope, config: Presen
   ];
 }
 
-function buildBackendSettingsItems(scope: PresentationScope, backends: BackendConfig): SettingItem[] {
+export function createBackendUrlEditor(
+  theme: any,
+  label: string,
+  placeholderUrl: string,
+  onOpenChange?: (open: boolean) => void
+) {
+  return (currentValue: string, done: (selectedValue?: string) => void): Component => {
+    onOpenChange?.(true);
+
+    const initialValue = currentValue && currentValue !== 'not set' ? currentValue : placeholderUrl;
+    const container = new Container();
+    const hint = new Text(theme.fg('muted', `${label} · enter to save · empty clears · esc cancels`), 1, 0);
+    const input = new Input();
+    input.setValue(initialValue);
+    input.handleInput('\x1b[F'); // move cursor to end; setValue leaves it at 0
+    input.focused = true;
+    const errorText = new Text('', 1, 0);
+
+    const finish = (selectedValue?: string) => {
+      onOpenChange?.(false);
+      done(selectedValue);
+    };
+
+    const showError = (message: string) => {
+      errorText.setText(theme.fg('warning', message));
+      container.invalidate();
+    };
+
+    input.onSubmit = (value: string) => {
+      if (!value.trim()) {
+        finish('');
+        return;
+      }
+
+      const validated = validateBackendUrl(value);
+      if (!validated.ok) {
+        showError(validated.message);
+        return;
+      }
+
+      finish(validated.value);
+    };
+
+    input.onEscape = () => finish(undefined);
+
+    container.addChild(hint);
+    container.addChild(input);
+    container.addChild(errorText);
+
+    return {
+      render: (width: number) => container.render(width),
+      invalidate: () => container.invalidate(),
+      handleInput: (data: string) => input.handleInput(data)
+    };
+  };
+}
+
+function buildBackendSettingsItems(
+  scope: PresentationScope,
+  backends: BackendConfig,
+  theme: any,
+  onUrlEditorOpenChange?: (open: boolean) => void
+): SettingItem[] {
+  const usable = usableSearchProviders(backends.search);
+  const fanoutMode = backends.search.fanout?.mode ?? 'off';
+  const fanoutProviders = backends.search.fanout?.providers ?? usable;
+
   return [
     {
       id: 'scope',
@@ -193,23 +278,53 @@ function buildBackendSettingsItems(scope: PresentationScope, backends: BackendCo
       id: 'backend:search:provider',
       label: 'Search backend',
       currentValue: backends.search.provider,
-      values: ['duckduckgo', 'searxng', 'brave']
+      values: ['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily']
     },
     {
       id: 'backend:search:baseUrl',
       label: 'SearXNG URL',
       currentValue: backends.search.baseUrl ?? 'not set',
-      values: ['edit']
+      submenu: createBackendUrlEditor(theme, 'SearXNG base URL', 'http://localhost:8080', onUrlEditorOpenChange)
     },
     {
       id: 'backend:search:fallback',
       label: 'Search fallback',
-      currentValue: backends.search.provider === 'searxng' || backends.search.provider === 'brave' ? backends.search.fallback ?? 'off' : 'off',
-      values: backends.search.provider === 'searxng' || backends.search.provider === 'brave' ? ['off', 'duckduckgo'] : ['off']
+      currentValue: backends.search.provider === 'searxng' || backends.search.provider === 'brave' || backends.search.provider === 'youcom' || backends.search.provider === 'exa' || backends.search.provider === 'tavily' ? backends.search.fallback ?? 'off' : 'off',
+      values: backends.search.provider === 'searxng' || backends.search.provider === 'brave' || backends.search.provider === 'youcom' || backends.search.provider === 'exa' || backends.search.provider === 'tavily' ? ['off', 'duckduckgo'] : ['off']
     },
+    {
+      id: 'backend:search:fanout:mode',
+      label: 'Search fanout',
+      currentValue: fanoutMode,
+      values: ['off', 'on', 'auto']
+    },
+    ...(fanoutMode !== 'off' ? usable.map((provider) => ({
+      id: `backend:search:fanout:provider:${provider}`,
+      label: `  ${provider}`,
+      currentValue: fanoutProviders.includes(provider) ? 'included' : 'excluded',
+      values: ['included', 'excluded']
+    })) : []),
     {
       id: 'backend:secret:brave',
       label: 'Brave API key',
+      currentValue: 'env var',
+      values: ['env var']
+    },
+    {
+      id: 'backend:secret:youcom',
+      label: 'You.com API key',
+      currentValue: 'env var',
+      values: ['env var']
+    },
+    {
+      id: 'backend:secret:exa',
+      label: 'Exa API key',
+      currentValue: 'env var',
+      values: ['env var']
+    },
+    {
+      id: 'backend:secret:tavily',
+      label: 'Tavily API key',
       currentValue: 'env var',
       values: ['env var']
     },
@@ -223,7 +338,7 @@ function buildBackendSettingsItems(scope: PresentationScope, backends: BackendCo
       id: 'backend:fetch:baseUrl',
       label: 'Firecrawl URL',
       currentValue: backends.fetch.baseUrl ?? 'not set',
-      values: ['edit']
+      submenu: createBackendUrlEditor(theme, 'Firecrawl base URL', 'http://localhost:3002', onUrlEditorOpenChange)
     },
     {
       id: 'backend:fetch:fallback',
@@ -373,7 +488,7 @@ export function applySettingsValue(
     currentDraft.tools = nextTools;
   }
 
-  if (id === 'backend:search:provider' && (newValue === 'duckduckgo' || newValue === 'searxng' || newValue === 'brave')) {
+  if (id === 'backend:search:provider' && (newValue === 'duckduckgo' || newValue === 'searxng' || newValue === 'brave' || newValue === 'youcom' || newValue === 'exa' || newValue === 'tavily')) {
     currentBackends.search.provider = newValue;
     if (newValue !== 'searxng') {
       delete currentBackends.search.baseUrl;
@@ -385,15 +500,53 @@ export function applySettingsValue(
   }
 
   if (id === 'backend:search:fallback') {
-    if (newValue === 'duckduckgo' && (currentBackends.search.provider === 'searxng' || currentBackends.search.provider === 'brave')) {
+    if (newValue === 'duckduckgo' && (currentBackends.search.provider === 'searxng' || currentBackends.search.provider === 'brave' || currentBackends.search.provider === 'youcom' || currentBackends.search.provider === 'exa' || currentBackends.search.provider === 'tavily')) {
       currentBackends.search.fallback = 'duckduckgo';
     } else {
       delete currentBackends.search.fallback;
     }
   }
 
+  if (id === 'backend:search:fanout:mode') {
+    if (newValue === 'off') {
+      currentBackends.search.fanout = { mode: 'off' };
+    } else if (newValue === 'on' || newValue === 'auto') {
+      currentBackends.search.fanout = {
+        mode: newValue,
+        providers: undefined
+      };
+    }
+  }
+
+  if (id.startsWith('backend:search:fanout:provider:')) {
+    const providerName = id.slice('backend:search:fanout:provider:'.length) as SearchProviderName;
+    const usableProviders = usableSearchProviders(currentBackends.search);
+
+    // Ensure fanout exists
+    if (!currentBackends.search.fanout) {
+      currentBackends.search.fanout = { mode: 'on', providers: undefined };
+    }
+
+    // Materialize the provider list if it's currently undefined; use usable providers instead of all
+    const currentProviders = currentBackends.search.fanout.providers ?? usableProviders;
+
+    if (newValue === 'excluded') {
+      // Remove the provider from the list
+      const filtered: SearchProviderName[] = currentProviders.filter((p) => p !== providerName);
+      // never allow an empty set: keep at least one provider (empty would be read as "all")
+      if (filtered.length > 0) {
+        currentBackends.search.fanout.providers = filtered;
+      }
+    } else if (newValue === 'included') {
+      // Add the provider back, maintaining canonical order using usable providers
+      const result: SearchProviderName[] = usableProviders.filter((p) => currentProviders.includes(p) || p === providerName);
+      currentBackends.search.fanout.providers = result;
+    }
+  }
+
   if (id === 'backend:search:baseUrl') {
-    if (currentBackends.search.provider === 'searxng' && newValue.trim()) {
+    if (newValue.trim()) {
+      currentBackends.search.provider = 'searxng';
       currentBackends.search.baseUrl = newValue.trim();
     } else {
       delete currentBackends.search.baseUrl;
@@ -417,6 +570,7 @@ export function applySettingsValue(
 
   if (id === 'backend:fetch:baseUrl') {
     if (newValue.trim()) {
+      currentBackends.fetch.provider = 'firecrawl';
       currentBackends.fetch.baseUrl = newValue.trim();
     } else {
       delete currentBackends.fetch.baseUrl;
@@ -474,7 +628,8 @@ export function collapseBackendConfigToOverride(
       : {
           ...(config.search.baseUrl !== inheritedConfig.search.baseUrl ? { baseUrl: config.search.baseUrl } : {}),
           ...(config.search.fallback !== inheritedConfig.search.fallback ? { fallback: config.search.fallback } : {}),
-          ...(!sameJson(config.search.options, inheritedConfig.search.options) ? { options: config.search.options } : {})
+          ...(!sameJson(config.search.options, inheritedConfig.search.options) ? { options: config.search.options } : {}),
+          ...(!sameJson(config.search.fanout, inheritedConfig.search.fanout) ? { fanout: config.search.fanout } : {})
         };
 
     if (config.search.provider !== inheritedConfig.search.provider) {
@@ -675,9 +830,10 @@ async function openBackendSettingsUi(
   loaded: Awaited<LoadedPresentationConfig>,
   initialScope: PresentationScope
 ): Promise<SettingsUiResult | undefined> {
-  return ctx.ui.custom((tui: any, theme: any, _kb: unknown, done: (value: SettingsUiResult) => void) => {
+  return ctx.ui.custom((_tui: unknown, theme: any, _kb: unknown, done: (value: SettingsUiResult) => void) => {
     let state = createSettingsDraftState(loaded, initialScope);
     let settingsList: SettingsList;
+    let urlEditorOpen = false;
 
     const container = new Container();
     container.addChild(new Text(theme.fg('accent', theme.bold('pi-web-agent · backends')), 1, 1));
@@ -689,46 +845,18 @@ async function openBackendSettingsUi(
       )
     );
 
-    const editUrl = async (id: string) => {
-      const isSearchUrl = id === 'backend:search:baseUrl';
-      const label = isSearchUrl ? 'SearXNG base URL' : 'Firecrawl base URL';
-      const currentValue = isSearchUrl ? state.backends.search.baseUrl : state.backends.fetch.baseUrl;
-      const entered = await ctx.ui.input(label, currentValue ?? (isSearchUrl ? 'http://localhost:8080' : 'http://localhost:3002'));
-      if (entered === undefined) return;
-
-      if (!entered.trim()) {
-        state = applySettingsValue(state, id, '');
-        rebuildSettingsList();
-        tui.requestRender?.();
-        return;
-      }
-
-      const validated = validateBackendUrl(entered);
-      if (!validated.ok) {
-        ctx.ui.notify(validated.message, 'warning');
-        return;
-      }
-
-      state = applySettingsValue(state, id, validated.value);
-      rebuildSettingsList();
-      tui.requestRender?.();
-    };
-
     const rebuildSettingsList = () => {
       if (settingsList) {
         container.removeChild(settingsList);
       }
 
       settingsList = new SettingsList(
-        buildBackendSettingsItems(state.scope, state.backends),
+        buildBackendSettingsItems(state.scope, state.backends, theme, (open) => {
+          urlEditorOpen = open;
+        }),
         12,
         getSettingsListTheme(),
         (id, newValue) => {
-          if (id === 'backend:search:baseUrl' || id === 'backend:fetch:baseUrl') {
-            void editUrl(id);
-            return;
-          }
-
           state = applySettingsValue(state, id, newValue);
           rebuildSettingsList();
           container.invalidate();
@@ -746,6 +874,14 @@ async function openBackendSettingsUi(
       render: (width: number) => container.render(width),
       invalidate: () => container.invalidate(),
       handleInput: (data: string) => {
+        // While the inline URL editor is open, let it (and its own Escape/Enter
+        // handling) consume input first — otherwise these shortcuts close the
+        // whole settings UI out from under an in-progress edit.
+        if (urlEditorOpen) {
+          settingsList.handleInput?.(data);
+          return;
+        }
+
         const shortcut = handleSettingsShortcut(JSON.stringify(data).slice(1, -1));
 
         if (shortcut?.action === 'cancel') {

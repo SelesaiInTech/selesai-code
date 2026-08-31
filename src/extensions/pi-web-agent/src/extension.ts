@@ -6,18 +6,35 @@ import { DEFAULT_PRESENTATION_CONFIG, resolvePresentationMode } from './presenta
 import { createResearchWorkflow } from './orchestration/index.js';
 import { loadPresentationConfigLayers } from './presentation/config-store.js';
 import { selectPresentationView } from './presentation/select-view.js';
-import type {
-  PresentationConfig,
-  PresentationEnvelope,
-  PresentationToolName
-} from './presentation/types.js';
+import type { PresentationConfig } from './presentation/types.js';
 import { createWebExploreTool } from './tools/web-explore.js';
 import type { WebExploreResponse } from './types.js';
 import { getUpdateChangelogNotice } from './changelog-notice.js';
+import { Text } from '@earendil-works/pi-tui';
 
-type ToolResultWithPresentation = {
-  presentation?: PresentationEnvelope;
-};
+/**
+ * What the model receives as the tool result: the actual synthesized findings (which for a
+ * direct GitHub/PDF/YouTube read is the full extracted content), plus source citations and any
+ * caveat. This is separate from the terminal display (see renderResult), so the model always
+ * gets the substance regardless of the user's compact/preview/verbose presentation setting.
+ */
+function serializeForModel(result: WebExploreResponse): string {
+  if (result.status === 'error') {
+    return `Research failed: ${result.error?.message ?? 'Unknown research failure.'}`;
+  }
+  if (result.findings.length === 0 && result.sources.length === 0) {
+    return 'No usable evidence found.';
+  }
+  return [
+    result.findings.join('\n\n'),
+    result.sources.length
+      ? `Sources:\n${result.sources.map((source) => `- ${source.title}: ${source.url}`).join('\n')}`
+      : undefined,
+    result.caveat
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
 
 async function loadWebAgentConfig(pi: ExtensionAPI) {
   const store = (
@@ -47,16 +64,6 @@ async function getEffectiveBackendConfig(pi: ExtensionAPI): Promise<BackendConfi
   } catch {
     return DEFAULT_BACKEND_CONFIG;
   }
-}
-
-async function renderToolText(
-  pi: ExtensionAPI,
-  toolName: PresentationToolName,
-  details: ToolResultWithPresentation
-): Promise<string> {
-  const config = await getEffectivePresentationConfig(pi);
-  const mode = resolvePresentationMode(toolName, config);
-  return selectPresentationView(details.presentation, mode) ?? JSON.stringify(details, null, 2);
 }
 
 export default function extension(pi: ExtensionAPI) {
@@ -111,16 +118,46 @@ export default function extension(pi: ExtensionAPI) {
     async execute(_toolCallId, params) {
       const webExplore = await getConfiguredWebExplore();
       const result: WebExploreResponse = await webExplore({ query: params.query });
+
+      // Terminal display honors the user's presentation mode; the model gets the full findings.
+      // The fallback must stay terse: never fall back to serializeForModel here, or a missing
+      // presentation would dump the full findings into the terminal.
+      const mode = resolvePresentationMode('web_explore', await getEffectivePresentationConfig(pi));
+      const terseFallback = 'web_explore result';
+      const terminalText = selectPresentationView(result.presentation, mode) ?? terseFallback;
+      const terminalTextExpanded = selectPresentationView(result.presentation, 'verbose') ?? terminalText;
+
       return {
-        content: [
-          {
-            type: 'text',
-            text: await renderToolText(pi, 'web_explore', result)
-          }
-        ],
-        details: result,
+        content: [{ type: 'text', text: serializeForModel(result) }],
+        details: { ...result, terminalText, terminalTextExpanded },
         isError: result.status === 'error'
       };
+    },
+    renderResult(toolResult, options) {
+      const details = toolResult.details as
+        | {
+            terminalText?: string;
+            terminalTextExpanded?: string;
+            presentation?: { views?: { compact?: string; verbose?: string } };
+          }
+        | undefined;
+      try {
+        // Legacy fallback: results persisted before this change carry `presentation` but no
+        // `terminalText`, so old sessions stay readable instead of rendering blank.
+        const legacy = options.expanded
+          ? details?.presentation?.views?.verbose ?? details?.presentation?.views?.compact
+          : details?.presentation?.views?.compact;
+        const text =
+          (options.expanded ? details?.terminalTextExpanded : details?.terminalText) ??
+          details?.terminalText ??
+          legacy ??
+          'web_explore result';
+        return new Text(text, 0, 0);
+      } catch {
+        // Never throw: a thrown renderer makes Pi fall back to raw content, which would dump
+        // the full model-facing findings into the terminal.
+        return new Text('web_explore result', 0, 0);
+      }
     }
   });
 }

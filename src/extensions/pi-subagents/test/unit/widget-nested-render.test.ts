@@ -8,6 +8,20 @@ const theme = {
 	bold(text: string): string { return text; },
 };
 
+function withMockedDateNow<T>(now: number, fn: () => T): T {
+	const original = Date.now;
+	Date.now = () => now;
+	try {
+		return fn();
+	} finally {
+		Date.now = original;
+	}
+}
+
+function withoutRunningGlyphs(lines: string[]): string[] {
+	return lines.map((line) => line.replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "•"));
+}
+
 function nested(id: string, parentRunId: string, state: NestedRunSummary["state"] = "running", extra: Partial<NestedRunSummary> = {}): NestedRunSummary {
 	return {
 		id,
@@ -109,7 +123,8 @@ describe("nested widget rendering", () => {
 		state.status = "complete";
 		state.steps![0]!.status = "complete";
 		const expanded = buildWidgetLines([state], theme as any, 120, true).join("\n");
-		assert.match(expanded, /✓ Step 1\/1: owner · complete/);
+		assert.match(expanded, /✓ owner · complete/);
+		assert.doesNotMatch(expanded, /Step 1\/1: owner/);
 		assert.match(expanded, /↳ \[\d{2}:\d{2}:\d{2}\] . still-running · running/);
 	});
 
@@ -136,12 +151,12 @@ describe("nested widget rendering", () => {
 		assert.match(expanded, /\[\d{2}:\d{2}:\d{2}\] . completed-step: Finalize report · completed/);
 	});
 
-	it("keeps event-time timestamps stable instead of advancing with wall time", async () => {
+	it("keeps event-time timestamps stable while running glyphs use wall time", () => {
 		const state = job(nested("nested-reviewer", "root-run", "running", { currentTool: "read", currentToolStartedAt: 0 }));
-		const first = buildWidgetLines([state], theme as any, 120, true);
-		await new Promise((resolve) => setTimeout(resolve, 20));
-		const second = buildWidgetLines([state], theme as any, 120, true);
-		assert.deepEqual(second, first);
+		const first = withMockedDateNow(0, () => buildWidgetLines([state], theme as any, 120, true));
+		const second = withMockedDateNow(1_125, () => buildWidgetLines([state], theme as any, 120, true));
+		assert.notDeepEqual(second, first);
+		assert.deepEqual(withoutRunningGlyphs(second), withoutRunningGlyphs(first));
 	});
 
 	it("rerenders when only nested state changes", () => {

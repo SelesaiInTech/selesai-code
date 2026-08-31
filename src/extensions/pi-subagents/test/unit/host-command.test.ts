@@ -33,6 +33,7 @@ describe("workflow host commands", () => {
 		assert.throws(() => normalizeWorkflowHostCommandParams({ kind: "command", command: "true", timeoutMs: 86_400_001 }), /integer from 1/);
 		assert.throws(() => normalizeWorkflowHostCommandParams({ kind: "command", command: "true", timeoutMs: 1000, output: path.resolve("outside.log") }), /relative path/);
 		assert.throws(() => normalizeWorkflowHostCommandParams({ kind: "command", command: "true", timeoutMs: 1000, provider: "bad\nprovider" }), /single-line/);
+		assert.throws(() => normalizeWorkflowHostCommandParams({ kind: "command", command: "true", timeoutMs: 1000, cwd: "/tmp" }), /does not accept per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/);
 	});
 
 	it("runs without stdin and saves bounded command evidence", async () => {

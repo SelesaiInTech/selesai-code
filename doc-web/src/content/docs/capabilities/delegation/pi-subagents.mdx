@@ -49,6 +49,7 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 - Stop a run: `/subagents-stop <run-id>` or `subagent({ action: "stop", id: "..." })`.
 - Restrict launches with session-scoped `allowedAgents`, add chain approval checkpoints, or cap aggregate usage with `usageBudget`.
 - Discover the runtime delegation catalog: `subagent({ action: "list" })` shows executable and capability-restricted agents with source, aliases, role, context, tools, and description, and returns the same catalog as versioned machine metadata in `details.catalog`.
+- Get compact capability rows: `subagent({ action: "list", capabilities: true })` returns concise prompt-free rows (executable/restricted status, restriction sources, runner, tools/model/execution/output/extensions snapshot) as human text plus versioned `details.catalog` machine metadata.
 - Get task-aware routing advice: `subagent({ action: "list", task: "..." })` appends a recommendation for one canonical agent (implementation or read-only) for that task, or explains why none is safe. It is advisory only and never launches work — execute the recommended agent explicitly.
 - Ask a child to contact the supervisor: `contact_supervisor({ reason: "need_decision", message: "..." })`.
 
@@ -60,6 +61,7 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 | `subagent({ tasks: [...] })` | Run agents in parallel. |
 | `subagent({ chain: [...] })` | Run agents in sequence with `{previous}` output. |
 | `subagent({ action: "list" })` | Show the runtime delegation catalog: executable/restricted agents (source, aliases, role, context, tools, description), chains, and versioned machine metadata. |
+| `subagent({ action: "list", capabilities: true })` | Same catalog as compact capability rows: executable/restricted status, runner, tools/model/execution/output/extensions snapshot, restriction sources. |
 | `subagent({ action: "list", task? })` | Same catalog, plus optional task-aware routing advice; only recommends and never launches. |
 | `subagent({ action: "status" })` | Show async run status. |
 | `subagent({ action: "steer", id, message, index? })` | Send guidance to a live top-level async child. |

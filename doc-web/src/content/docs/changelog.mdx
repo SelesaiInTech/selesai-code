@@ -3,6 +3,14 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.4 — Web-agent search expansion, subagents 0.60, cost reconciliation fix
+
+- Upgraded the bundled **pi-web-agent** to 1.10.0: added You.com, Exa, and Tavily search backends, optional search fanout across configured providers with dedupe and cross-provider agreement ranking, a keyless Tavily fallback when DuckDuckGo is bot-blocked, DuckDuckGo hardening (browser headers and one retry), direct GitHub/PDF/YouTube readers, URL canonicalization, and a model tool result that always carries the full findings/sources/caveats regardless of terminal presentation.
+- Upgraded the bundled **pi-subagents** to 0.60.0: `subagent({ action: "list", capabilities: true })` returns a compact capability catalog, fork-context children reuse prompt caches, timeout-recovery evidence is surfaced in async status and `subagent_wait` completions, `runs.lanes` plans render as workflow-graph stages, and `runs.host` rejects per-step `cwd` with a hint.
+- Fixed **cost reconciliation** keying: streamed responses repeat the response id across chunks and carry tool-call ids, so the wrapper now captures every id and `message_end` consumes only the one matching the finalized message's `responseId`.
+- Released **pi-intercom** 0.12.1: during an inbound-ask turn a non-reply `send` to a different target is refused, and the `toolVisibility` setting was removed (obsolete keys are ignored).
+- Added **GLM-5.3** to the default model catalog and upgraded `glm-5.3-flash` to text+image input with a full thinking map.
+
 ## 0.13.3 — Token-In key rotation and live cost reconciliation
 
 - Added **multi-key auto-failover to Token-In**: the `tokenin-onboarding` extension now registers a `tokenin` provider whose `streamSimple` automatically rotates to an alternative saved account when the active key hits a 401, 429, or budget/quota error. Failed keys go on a 5-minute cooldown before being retried, and the newly active credential is persisted to both `tokenin-auth.json` and `auth.json`.

@@ -54,6 +54,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /receipts are queued, delivered, missed, or failed/i);
 		assert.match(description, /repository mutation lanes.*worktree:true.*runs\.run\/runs\.all.*managed isolation/i);
 		assert.match(description, /ordinary JavaScript statement body.*explicit return/i);
+		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.match(description, /Sequential example/i);
 		assert.match(description, /Parallel example/i);
 		assert.match(description, /defaultSubagentContext wins over agent defaultContext/i);
@@ -90,6 +91,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /runs\.steer\(key,message,options\?\).*prior keyed child/i);
 		assert.match(description, /never accepts a raw run id/i);
 		assert.match(description, /repository mutation lanes.*worktree:true.*runs\.run\/runs\.all.*managed isolation/i);
+		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.doesNotMatch(description, /tasks\[\]|chain\[\]/i);
 		assert.match(description, /subagent_wait/i);
 		assert.match(description, /continue independent work only until its next dependency barrier; consume the result before work that depends on it/i);

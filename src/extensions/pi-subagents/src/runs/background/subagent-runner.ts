@@ -75,7 +75,7 @@ import {
 	DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
 	Semaphore,
 } from "../shared/parallel-utils.ts";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, deriveForkPromptCacheKey, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
@@ -1641,6 +1641,7 @@ async function runSingleStepInner(
 	let writerAttemptCount = 0;
 	const attemptNotes: string[] = [];
 	const eventsPath = path.join(path.dirname(ctx.outputFile), "events.jsonl");
+	let finalRequiredOutputMissing: boolean | undefined;
 	let finalResult: RunPiStreamingResult | undefined;
 	let finalOutputSnapshot: SingleOutputSnapshot | undefined;
 	let structuredAcceptanceReport: unknown;
@@ -1698,6 +1699,7 @@ async function runSingleStepInner(
 			: undefined;
 		const { args, env, tempDir, toolDiagnosticPath, runtimeAcknowledgedExtensionsPath, capabilityAudit: attemptCapabilityAudit, warnings } = buildPiArgs(omitUndefinedProperties({
 			parentSessionId: step.parentSessionId,
+			forkCacheKey: step.context === "fork" ? deriveForkPromptCacheKey(step.parentSessionId) : undefined,
 			baseArgs: ["--mode", "json", "-p"],
 			task: attemptTask,
 			taskDelivery: taskDeliveryOverride,
@@ -1930,6 +1932,7 @@ async function runSingleStepInner(
 				? { kind: "structured" as const, path: effectiveStructuredOutput.outputPath, missing: !fs.existsSync(effectiveStructuredOutput.outputPath) }
 			: undefined;
 		const missingRequiredOutputError = formatRequiredOutputError(requiredOutput);
+		finalRequiredOutputMissing = requiredOutput?.missing;
 		const missingRequiredOutputAfterMutation = Boolean(missingRequiredOutputError) && (mutationAttemptObserved || Boolean(mutationEvidence.changedFiles.length));
 		const effectiveExitCode = toolAvailabilityError || completionEvidence.legacyFailureError || midToolExitError || structuredError || emptyOutputError || missingRequiredOutputError
 			? 1
@@ -2117,6 +2120,7 @@ async function runSingleStepInner(
 		? buildTimeoutRecoverySummary({
 			termination: "timed-out",
 			evidence: finalMutationEvidence,
+			requiredOutputMissing: finalRequiredOutputMissing,
 			currentTool: finalResult?.currentTool,
 			currentToolArgs: finalResult?.currentToolArgs,
 			currentPath: finalResult?.currentPath,

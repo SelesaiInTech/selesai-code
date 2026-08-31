@@ -20,6 +20,7 @@ import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveE
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
+import { backgroundProcessOptions } from "../shared/background-process-options.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
@@ -562,9 +563,8 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 		}
 		const proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
 			cwd,
-			detached: true,
+			...backgroundProcessOptions(),
 			stdio: ["ignore", stdoutFd ?? "ignore", stderrFd ?? "ignore"],
-			windowsHide: true,
 			env: {
 				...omitExtensionBindingsEnv(process.env),
 				...(piPackageRoot ? { [SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV]: piPackageRoot } : {}),

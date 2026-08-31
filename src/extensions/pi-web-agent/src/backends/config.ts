@@ -1,7 +1,14 @@
+import type { FanoutMode, SearchProviderName } from '../types.js';
+
 export type SearxngOptions = {
   categories?: string[];
   language?: string;
   safesearch?: 0 | 1 | 2;
+};
+
+export type FanoutConfig = {
+  mode: FanoutMode;
+  providers?: SearchProviderName[];
 };
 
 export type FirecrawlOptions = {
@@ -10,10 +17,11 @@ export type FirecrawlOptions = {
 };
 
 export type SearchBackendConfig = {
-  provider: 'duckduckgo' | 'searxng' | 'brave';
+  provider: 'duckduckgo' | 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily';
   baseUrl?: string;
   fallback?: 'duckduckgo';
   options?: SearxngOptions;
+  fanout?: FanoutConfig;
 };
 
 export type FetchBackendConfig = {
@@ -39,7 +47,7 @@ export type BackendConfigOverride = {
 
 export type BackendConfigFile = {
   backends?: {
-    search?: { provider?: unknown; baseUrl?: unknown; fallback?: unknown; options?: unknown };
+    search?: { provider?: unknown; baseUrl?: unknown; fallback?: unknown; options?: unknown; fanout?: unknown };
     fetch?: { provider?: unknown; baseUrl?: unknown; apiKey?: unknown; fallback?: unknown; options?: unknown };
     headless?: { provider?: unknown };
   };
@@ -78,6 +86,37 @@ function extractFirecrawlOptions(value: unknown): FirecrawlOptions | undefined {
   return Object.keys(options).length > 0 ? options : undefined;
 }
 
+const PROVIDER_NAMES: SearchProviderName[] = ['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily'];
+
+export function usableSearchProviders(
+  search: SearchBackendConfig,
+  env: NodeJS.ProcessEnv = process.env
+): SearchProviderName[] {
+  // Match the provider implementations, which treat a blank/whitespace key as unconfigured.
+  const usable: SearchProviderName[] = ['duckduckgo']; // keyless, always usable
+  if (search.baseUrl?.trim()) usable.push('searxng');
+  if (env.PI_WEB_AGENT_BRAVE_API_KEY?.trim()) usable.push('brave');
+  if (env.YDC_API_KEY?.trim()) usable.push('youcom');
+  if (env.EXA_API_KEY?.trim()) usable.push('exa');
+  if (env.TAVILY_API_KEY?.trim()) usable.push('tavily');
+  return usable;
+}
+
+function extractFanoutConfig(value: unknown): FanoutConfig | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as { mode?: unknown; providers?: unknown };
+  if (raw.mode !== 'off' && raw.mode !== 'on' && raw.mode !== 'auto') return undefined;
+  const config: FanoutConfig = { mode: raw.mode };
+  if (Array.isArray(raw.providers)) {
+    const providers = raw.providers.filter(
+      (p): p is SearchProviderName => typeof p === 'string' && (PROVIDER_NAMES as string[]).includes(p)
+    );
+    if (providers.length !== raw.providers.length) return undefined; // fail loud on any invalid entry
+    if (providers.length > 0) config.providers = providers;
+  }
+  return config;
+}
+
 export function extractBackendConfigOverride(
   file: BackendConfigFile | null | undefined
 ): BackendConfigOverride {
@@ -87,7 +126,10 @@ export function extractBackendConfigOverride(
   if (
     backends?.search?.provider === 'duckduckgo' ||
     backends?.search?.provider === 'searxng' ||
-    backends?.search?.provider === 'brave'
+    backends?.search?.provider === 'brave' ||
+    backends?.search?.provider === 'youcom' ||
+    backends?.search?.provider === 'exa' ||
+    backends?.search?.provider === 'tavily'
   ) {
     override.search = { provider: backends.search.provider };
     if (backends.search.provider === 'searxng' && typeof backends.search.baseUrl === 'string') {
@@ -102,6 +144,11 @@ export function extractBackendConfigOverride(
         override.search.options = options;
       }
     }
+  }
+
+  const fanout = extractFanoutConfig(backends?.search?.fanout);
+  if (fanout) {
+    override.search = { ...(override.search ?? {}), fanout };
   }
 
   if (backends?.fetch?.provider === 'http' || backends?.fetch?.provider === 'firecrawl') {
@@ -139,8 +186,8 @@ export function validateBackendConfig(config: BackendConfig): string[] {
     issues.push('fetch provider firecrawl requires backends.fetch.baseUrl');
   }
 
-  if (config.search.fallback === 'duckduckgo' && config.search.provider !== 'searxng' && config.search.provider !== 'brave') {
-    issues.push('search fallback duckduckgo is only supported when search provider is searxng or brave');
+  if (config.search.fallback === 'duckduckgo' && config.search.provider !== 'searxng' && config.search.provider !== 'brave' && config.search.provider !== 'youcom' && config.search.provider !== 'exa' && config.search.provider !== 'tavily') {
+    issues.push('search fallback duckduckgo is only supported when search provider is searxng, brave, youcom, exa, or tavily');
   }
 
   if (config.fetch.fallback === 'http' && config.fetch.provider !== 'firecrawl') {
@@ -164,6 +211,16 @@ export function validateBackendConfig(config: BackendConfig): string[] {
 
   if (config.fetch.options?.formats && config.fetch.options.formats.length === 0) {
     issues.push('fetch options.formats must contain at least one format when provided');
+  }
+
+  const fanout = config.search.fanout;
+  if (fanout) {
+    if (fanout.mode !== 'off' && fanout.mode !== 'on' && fanout.mode !== 'auto') {
+      issues.push('search fanout.mode must be off, on, or auto');
+    }
+    if (fanout.providers?.includes('searxng') && !config.search.baseUrl) {
+      issues.push('search fanout with searxng requires backends.search.baseUrl');
+    }
   }
 
   return issues;

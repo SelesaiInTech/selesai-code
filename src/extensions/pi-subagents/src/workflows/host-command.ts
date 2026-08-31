@@ -53,7 +53,12 @@ export function normalizeWorkflowHostCommandParams(value: unknown, label = "runs
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
 	const params = value as Record<string, unknown>;
 	const unknownFields = Object.keys(params).filter((field) => !["kind", "command", "timeoutMs", "output", "role", "provider"].includes(field));
-	if (unknownFields.length) throw new Error(`${label} has unsupported fields: ${unknownFields.join(", ")}.`);
+	if (unknownFields.length) {
+		const cwdHint = unknownFields.includes("cwd")
+			? " The host step does not accept per-step cwd; commands and relative output paths use the workflow cwd. Set cwd on the outer subagent request, or put a trusted directory change in command (for example, 'cd /path/to/worktree && npm test')."
+			: "";
+		throw new Error(`${label} has unsupported fields: ${unknownFields.join(", ")}.${cwdHint}`);
+	}
 	if (params.kind !== "command") throw new Error(`${label}.kind must be 'command'.`);
 	if (typeof params.command !== "string" || !params.command.trim()) throw new Error(`${label}.command must be a non-empty string.`);
 	const command = params.command.trim();

@@ -9,7 +9,9 @@ const EXTERNAL_CLI_RUNNER_GUIDANCE = "External CLI agents (codex-exec, codex-exe
 const WORKFLOW_RESUME_KEY_GUIDANCE = "Each workflow key identifies one result lane: use a new stable workflow key for every distinct retained resume pass; same-key calls are reused only when launch parameters are identical, and incompatible parameters are rejected.";
 const WORKFLOW_OUTPUT_BINDING_GUIDANCE = "For durable workflow child files, set output on runs.run/runs.all; task filename prose is not an output declaration, and return the child's outputReference, outputPathMapping, or artifactPaths instead of inventing a literal path.";
 const WORKFLOW_LANES_GUIDANCE = "For bounded parallel sequential chains, use runs.lanes([{key,stages:[{key,agent,task},{key,resume:'previous',task},...]}]); first stages run together, later stages sequence per lane, and the bounded board reports lane-local failures. Only an explicit structuredOutput.verdict === 'blocked' blocks a successful stage; reviewer prose is not parsed.";
-const WORKFLOW_HOST_GUIDANCE = "For one non-interactive operator-owned command, await runs.host(key,{kind:'command',command,timeoutMs,output?,role?,provider?}). v1 supports only command steps; output is bounded and command failure fails the workflow.";
+const WORKFLOW_SCRIPT_PORTABILITY_GUIDANCE = "workflowScript rejects nested async function, arrow, and method helpers; use top-level await, plain helper functions that return runs.run(...), or explicit Promise chains instead.";
+const WORKFLOW_HOST_GUIDANCE = "For one non-interactive operator-owned command, await runs.host(key,{kind:'command',command,timeoutMs,output?,role?,provider?}). runs.host has no per-step cwd: commands and relative output paths use the workflow cwd; set cwd on the outer subagent request instead (for example, {cwd:'/path/to/worktree',workflowScript:'...'}), or put a trusted directory change in the command (for example, 'cd /path/to/worktree && npm test'). v1 supports only command steps; output is bounded and command failure fails the workflow.";
+const AGENT_CAPABILITY_GUIDANCE = "For capability selection, use { action: \"list\", capabilities: true } for compact prompt-free rows.";
 
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and only run executable/non-disabled agents.
@@ -66,6 +68,7 @@ ASYNC / SAFETY:
 • Omitted async follows asyncByDefault config; set async:true explicitly when async behavior matters. Continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll merely to wait; use subagent_wait only when this turn must receive results.
 • ${WORKFLOW_RESUME_KEY_GUIDANCE}
 • ${WORKFLOW_OUTPUT_BINDING_GUIDANCE}
+• ${WORKFLOW_HOST_GUIDANCE}
 • Ordinary children are not orchestrators. Keep one writer per cwd/worktree and use fresh read-only reviewers for independent checks.
 • Oracle/advisor consultations use available supervisor dialogue for material unknowns; request one-shot when desired.
 • Status and artifacts live under asyncId/asyncDir with status.json, events.jsonl, output logs, and {action:"status",id:"..."}.`;

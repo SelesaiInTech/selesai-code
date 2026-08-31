@@ -19,9 +19,11 @@ Extension `pi-web-agent` menambahkan satu tool riset, `web_explore`, yang mencar
 ## Penyiapan dan prasyarat
 
 - Extension ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu diinstal terpisah.
-- Pencarian default menggunakan DuckDuckGo; tidak diperlukan kredensial untuk jalur default.
-- Setup Brave Search opsional: extension pendamping `web-agent-onboarding` dapat menyimpan Brave API key.
+- Pencarian default menggunakan DuckDuckGo; tidak diperlukan kredensial untuk jalur default. Saat DuckDuckGo memblokir pencarian (umum di IP VPS dan datacenter), pencarian otomatis fallback ke endpoint keyless Tavily — set `PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK=1` untuk mematikannya.
+- Backend berbasis kunci: SearXNG (URL self-hosted), Brave (`webAgent.braveApiKey` atau `PI_WEB_AGENT_BRAVE_API_KEY`), You.com (`YDC_API_KEY`), Exa (`EXA_API_KEY`), dan Tavily (`TAVILY_API_KEY`).
+- Search fanout (opsional): query beberapa backend terkonfigurasi sekaligus dan urutkan halaman yang disepakati lebih dari satu provider di atas, lewat `backends.search.fanout` dengan mode `off` / `on` / `auto` (`auto` hanya fanout saat provider pertama menghasilkan hasil tipis).
 - Eskalasi headless menggunakan provider `local-browser` yang dibundel. Pastikan browser berbasis Chromium (Chrome, Chromium, Edge, atau Brave) tersedia di sistem jika Anda ingin rendering halaman headless.
+- Reader langsung: menempelkan URL file/issue/PR GitHub, PDF, atau YouTube membaca konten asli (source mentah, teks PDF terekstrak, atau transkrip) tanpa kunci.
 
 ## Yang disiapkan
 
@@ -59,8 +61,8 @@ Extension `pi-web-agent` menambahkan satu tool riset, `web_explore`, yang mencar
 
 - Output dihasilkan dari sumber pihak ketiga; selalu verifikasi fakta kritis terhadap halaman asli.
 - Eskalasi headless dapat gagal jika tidak ada browser yang didukung yang terpasang.
-- SearXNG memerlukan `backends.search.baseUrl` di config; Brave memerlukan API key yang valid dari `webAgent.braveApiKey` (preferensi) atau `PI_WEB_AGENT_BRAVE_API_KEY`; Firecrawl memerlukan `backends.fetch.baseUrl` dan menerima `backends.fetch.apiKey` atau `PI_WEB_AGENT_FIRECRAWL_API_KEY`.
+- SearXNG memerlukan `backends.search.baseUrl` di config; Brave memerlukan API key yang valid dari `webAgent.braveApiKey` (preferensi) atau `PI_WEB_AGENT_BRAVE_API_KEY`; You.com, Exa, dan Tavily memerlukan `YDC_API_KEY`, `EXA_API_KEY`, dan `TAVILY_API_KEY`; Firecrawl memerlukan `backends.fetch.baseUrl` dan menerima `backends.fetch.apiKey` atau `PI_WEB_AGENT_FIRECRAWL_API_KEY`.
 - Extension menginstruksikan agen untuk tidak menggunakan command shell seperti `curl` atau URL HTTP langsung untuk riset web; ia harus menggunakan `web_explore`.
-- File config presentation hanya menyimpan nilai non-secret. Kunci Brave dapat disimpan per-user di `~/.selesai/agent/settings.json`; gunakan environment variables untuk CI atau key sekali pakai.
+- File config presentation hanya menyimpan nilai non-secret. Kunci Brave dapat disimpan per-user di `~/.selesai/agent/settings.json`; gunakan environment variables untuk CI atau key sekali pakai. Fallback keyless Tavily tidak mengirim kunci tetapi rate-limited; prefer kunci provider asli untuk penggunaan berat.
 
 <SourceEvidence slug="pi-web-agent" />

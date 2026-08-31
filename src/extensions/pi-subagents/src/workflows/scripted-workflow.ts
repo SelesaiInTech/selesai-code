@@ -500,8 +500,26 @@ function runLane(lane, firstResult, observe) {
   return visit(0, firstResult);
 }
 
+function workflowPlanStringMetadata(params) {
+  return {
+    ...(typeof params.phase === "string" && params.phase.trim() ? { phase: params.phase.trim() } : {}),
+    ...(typeof params.label === "string" && params.label.trim() ? { label: params.label.trim() } : {}),
+    ...(typeof params.agent === "string" && params.agent.trim() ? { agent: params.agent.trim() } : {}),
+  };
+}
+
 function runLanes(laneSpecs) {
   const lanes = validateLaneSpecs(laneSpecs);
+  parentPort.postMessage({ type: "lanePlan", lanes: lanes.map((lane) => ({
+    key: lane.key,
+    stages: lane.stages.map((stage) => ({
+      key: stage.key,
+      generatedKey: stage.generatedKey,
+      ...workflowPlanStringMetadata(stage.params),
+      ...(typeof stage.params.as === "string" && stage.params.as.trim() ? { outputName: stage.params.as.trim() } : {}),
+      ...(stage.params.outputSchema !== undefined ? { structured: true } : {}),
+    })),
+  })) });
   const firstItems = lanes.map((lane) => {
     const first = lane.stages[0];
     return { key: first.generatedKey, ...first.params };
@@ -624,7 +642,12 @@ function validateHostCommand(key, params) {
   if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error("runs.host('" + key + "') params must be an object.");
   const allowed = new Set(["kind", "command", "timeoutMs", "output", "role", "provider"]);
   const unknown = Object.keys(params).filter((field) => !allowed.has(field));
-  if (unknown.length) throw new Error("runs.host('" + key + "') params have unsupported fields: " + unknown.join(", ") + ".");
+  if (unknown.length) {
+    const cwdHint = unknown.includes("cwd")
+      ? " The host step does not accept per-step cwd; commands and relative output paths use the workflow cwd. Set cwd on the outer subagent request, or put a trusted directory change in command (for example, 'cd /path/to/worktree && npm test')."
+      : "";
+    throw new Error("runs.host('" + key + "') params have unsupported fields: " + unknown.join(", ") + "." + cwdHint);
+  }
   if (params.kind !== "command") throw new Error("runs.host('" + key + "') kind must be 'command'.");
   if (typeof params.command !== "string" || !params.command.trim() || params.command.includes("\u0000") || new TextEncoder().encode(params.command.trim()).byteLength > 16384) throw new Error("runs.host('" + key + "') command must be a non-empty string of at most 16384 bytes without NUL.");
   if (!Number.isInteger(params.timeoutMs) || params.timeoutMs < 1 || params.timeoutMs > 86400000) throw new Error("runs.host('" + key + "') timeoutMs must be an integer from 1 to 86400000.");
@@ -977,6 +1000,22 @@ export interface WorkflowScriptTraceEntry {
 	warning?: string;
 }
 
+/** Bounded plan metadata emitted when a workflow materializes a runs.lanes graph. */
+export interface WorkflowLanePlanStage {
+	key: string;
+	generatedKey: string;
+	agent?: string;
+	phase?: string;
+	label?: string;
+	outputName?: string;
+	structured?: boolean;
+}
+
+export interface WorkflowLanePlan {
+	key: string;
+	stages: WorkflowLanePlanStage[];
+}
+
 export interface WorkflowSteerOptions {
 	mode?: "steer" | "follow_up" | "auto";
 	index?: number;
@@ -1044,6 +1083,7 @@ export interface RunWorkflowScriptOptions {
 	};
 	registerStopChild?: (stop: ((key: string, message?: string) => boolean) | undefined) => void;
 	onTrace?: (trace: WorkflowScriptTraceEntry[]) => void;
+	onLanePlan?: (lanes: WorkflowLanePlan[]) => void;
 	onEmit?: (emits: unknown[]) => void;
 }
 
@@ -1227,7 +1267,7 @@ function validateStaticHostCall(call: AstNode): WorkflowScriptValidationError[] 
 	for (const property of params.properties) {
 		if (!astNode(property)) continue;
 		const name = staticPropertyKey(property);
-		if (name !== undefined && !allowed.has(name)) errors.push({ message: `runs.host params contain unsupported field '${name}'.`, ...nodeLocation(property) });
+		if (name !== undefined && !allowed.has(name)) errors.push({ message: name === "cwd" ? "runs.host params contain unsupported field 'cwd'. The host step does not accept per-step cwd; commands and relative output paths use the workflow cwd. Set cwd on the outer subagent request, or put a trusted directory change in command (for example, 'cd /path/to/worktree && npm test')." : `runs.host params contain unsupported field '${name}'.`, ...nodeLocation(property) });
 	}
 	const kindNode = directObjectPropertyValue(params, "kind");
 	const commandNode = directObjectPropertyValue(params, "command");
@@ -1524,6 +1564,13 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			console.error("Workflow onTrace callback failed:", error);
 		}
 	};
+	const lanePlanChanged = (lanes: WorkflowLanePlan[]) => {
+		try {
+			options.onLanePlan?.(lanes);
+		} catch (error) {
+			console.error("Workflow onLanePlan callback failed:", error);
+		}
+	};
 	const hostStepChanged = (hostStep: HostStepNodeV1) => {
 		try {
 			options.onHostStep?.(hostStep);
@@ -1626,6 +1673,10 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		});
 		worker.on("message", (message: Record<string, unknown>) => {
 			if (settled) return;
+			if (message.type === "lanePlan" && Array.isArray(message.lanes)) {
+				lanePlanChanged(message.lanes as WorkflowLanePlan[]);
+				return;
+			}
 			if (message.type === "emit") {
 				try {
 					assertWorkflowJsonValue(message.value, "emit");

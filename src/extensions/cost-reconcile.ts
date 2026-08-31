@@ -16,8 +16,11 @@
  * finishes capture before the provider SDK finalizes its assistant message, so
  * `message_end` can replace `usage.cost.total` before session persistence.
  *
- * Providers whose payloads carry no cost retain their rate-card estimate.
- * Reconciled entries remain persisted for zentui and existing-session
+ * Streamed bodies repeat the response id across chunks and also carry
+ * tool-call ids (`call_*`), so the billed cost is keyed by every id found and
+ * `message_end` consumes only the one matching the finalized message's
+ * `responseId`. Providers whose payloads carry no cost retain their rate-card
+ * estimate. Reconciled entries remain persisted for zentui and existing-session
  * compatibility.
  */
 
@@ -146,11 +149,15 @@ export default function costReconcileExtension(pi: ExtensionAPI): void {
 		// LiteLLM's header is the amount the gateway billed; prefer it over any
 		// cost the upstream payload reports.
 		const effectiveCost = headerCost ?? cost;
-		// A cost must identify exactly one response. Applying it to every `id` in
-		// a body can mistake nested tool/message ids for the assistant response.
-		if (effectiveCost === undefined || ids.length !== 1) return;
-		const responseId = ids[0]!;
-		processCaptured.set(responseId, processCaptured.has(responseId) ? null : effectiveCost);
+		if (effectiveCost === undefined || ids.length === 0) return;
+		// A streamed response repeats its own id across chunks while tool-call
+		// ids (`call_*`) appear once, so a body legitimately carries several ids.
+		// Key the billed cost by every id; message_end consumes only the one
+		// matching the finalized message's responseId. A duplicate capture of the
+		// same id (retry) is marked ambiguous rather than assigning either bill.
+		for (const responseId of ids) {
+			processCaptured.set(responseId, processCaptured.has(responseId) ? null : effectiveCost);
+		}
 		if (processCaptured.size > 500) {
 			for (const key of [...processCaptured.keys()].slice(0, processCaptured.size - 500))
 				processCaptured.delete(key);

@@ -4,6 +4,19 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-08-29
+
+### Highlights
+- Replies to inbound asks are now harder to send to the wrong local session by mistake.
+- The `intercom` tool now stays in the active tool set, which avoids a late-session prompt-cache reset when intercom first becomes useful.
+- Existing configs that still mention `toolVisibility` keep loading; the old setting is simply ignored.
+
+### Fixed
+- Refuse non-reply `send` calls to a different target during a turn triggered by an inbound ask, preventing CWD hierarchy or roster guesses from misdirecting replies. Thanks to [@yceachan](https://github.com/yceachan) for issue #117.
+
+### Removed
+- Removed `toolVisibility` and the `after-first-use` reveal path. The generic `intercom` schema and prompt snippet now stay stable for provider prompt caches, and existing `toolVisibility` config keys are ignored. Thanks to [@XWIlluDelu](https://github.com/XWIlluDelu) for issue #118.
+
 ## [0.12.0] - 2026-08-22
 
 ### Highlights

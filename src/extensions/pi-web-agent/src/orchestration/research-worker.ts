@@ -17,6 +17,10 @@ function summarizeText(text: string, maxLength = 180): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
+function isReaderMethod(method: string): boolean {
+  return method === 'github' || method === 'pdf' || method === 'youtube';
+}
+
 function isBotCheckContent({ title = '', text }: { title?: string; text: string }) {
   return /performing security verification|security service|verify you are not a bot|just a moment|checking your browser/i.test(
     `${title}\n${text}`
@@ -27,6 +31,19 @@ function evidenceFromFetch(fetched: WebFetchResponse, fallbackTitle: string) {
   const content = fetched.content;
   if (fetched.status !== 'ok' || !content) return null;
   if (isBotCheckContent({ title: content.title, text: content.text })) return null;
+
+  // A successful reader read with usable text is primary content, exempt from the
+  // package-page filter below.
+  if (isReaderMethod(fetched.metadata.method) && content.text.trim()) {
+    return {
+      title: content.title ?? fallbackTitle,
+      url: fetched.url,
+      sourceKind: 'primary-content',
+      method: fetched.metadata.method,
+      summary: content.text,
+      supports: [content.text]
+    } satisfies ResearchEvidence;
+  }
 
   const sourceKind = classifySource(fetched.url);
   if (sourceKind === 'package-page') {
@@ -98,6 +115,8 @@ export function createResearchWorker({
       }
 
       const searchResult = await search({ query });
+      const fanoutProviders = searchResult.metadata.fanout?.providers;
+      const fanoutSkipped = searchResult.metadata.fanout?.skipped;
       if (searchResult.status !== 'ok') {
         return {
           searchQueries,
@@ -110,7 +129,9 @@ export function createResearchWorker({
           ],
           lowValueOutcomes,
           suggestedHeadlessUrl,
-          exhaustedBudget: false
+          exhaustedBudget: false,
+          fanoutProviders,
+          fanoutSkipped
         };
       }
 
@@ -126,7 +147,9 @@ export function createResearchWorker({
             }
           ],
           suggestedHeadlessUrl,
-          exhaustedBudget: false
+          exhaustedBudget: false,
+          fanoutProviders,
+          fanoutSkipped
         };
       }
 
@@ -174,7 +197,9 @@ export function createResearchWorker({
         gaps,
         lowValueOutcomes,
         suggestedHeadlessUrl,
-        exhaustedBudget: false
+        exhaustedBudget: false,
+        fanoutProviders,
+        fanoutSkipped
       };
     }
   };

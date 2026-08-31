@@ -82,6 +82,7 @@ intercom({
 - Hanya sesi yang berhasil mendaftar ke broker yang muncul di daftar.
 - `ask` memblokir agent pemanggil hingga 10 menit. Jika tidak ada balasan, tool error.
 - `reply` tanpa `to` hanya menyelesaikan satu ask tertunda. Jika ada beberapa ask tertunda, tentukan `to` atau periksa terlebih dahulu.
+- Saat giliran dipicu inbound ask, `send` non-reply ke target berbeda ditolak agar CWD parent/root yang diterka tidak dapat menerima balasan yang tidak disengaja.
 - Pesan masuk disimpan dalam riwayat sesi; tidak ada kotak masuk atau transkrip terpisah.
 - Lampiran disertakan dalam body teks yang terlihat agent; overlay compose TUI belum menyediakan UI lampiran.
 - Balasan supervisor melalui `contact_supervisor` dilingkupi ke parent session id yang tepat; sesi Selesai lain tidak menerimanya.

@@ -113,7 +113,7 @@ import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
-import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
+import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowLanePlan, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowScriptTraceEntry, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
 import { executeWorkflowHostCommand, resolveWorkflowHostOutputClaimPath, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "../../workflows/host-command.ts";
 import { buildWorkflowReceipt, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
 import { upsertHostStep, validHostStepNodes } from "../shared/host-step-status.ts";
@@ -161,6 +161,9 @@ import {
 	type ToolBudgetConfig,
 	type Usage,
 	type UsageBudgetConfig,
+	type WorkflowGraphNode,
+	type WorkflowGraphSnapshot,
+	type WorkflowNodeStatus,
 	type WorkflowTerminalOutcome,
 	type SubagentRunMode,
 	type SubagentState,
@@ -296,6 +299,7 @@ export interface SubagentParamsLike {
 	type?: string;
 	agent?: string;
 	task?: string;
+	capabilities?: boolean;
 	extensionBindings?: ExtensionBindings;
 	/** Retained async child run id. Valid only on workflow runs.run items. */
 	resume?: string;
@@ -4412,6 +4416,90 @@ function formatWorkflowValue(value: unknown): string {
 	}
 }
 
+function buildWorkflowLaneGraph(runId: string, lanes: WorkflowLanePlan[], existing?: WorkflowGraphSnapshot): WorkflowGraphSnapshot {
+	const plannedIds = new Set(lanes.flatMap((lane) => lane.stages.map((stage) => stage.generatedKey)));
+	const previousById = new Map((existing?.nodes ?? []).map((node) => [node.id, node]));
+	const nodes: WorkflowGraphNode[] = [];
+	const phases: WorkflowGraphSnapshot["phases"] = [];
+	let flatIndex = 0;
+	for (const lane of lanes) {
+		const nodeIds: string[] = [];
+		for (const [stageIndex, stage] of lane.stages.entries()) {
+			const previous = previousById.get(stage.generatedKey);
+			const outputName = stage.outputName || previous?.outputName;
+			const structured = stage.structured ?? previous?.structured;
+			const node: WorkflowGraphNode = {
+				id: stage.generatedKey,
+				kind: "step",
+				agent: stage.agent ?? previous?.agent,
+				phase: stage.phase ?? previous?.phase,
+				label: stage.label ?? stage.key,
+				status: previous?.status ?? (stageIndex === 0 ? "running" : "pending"),
+				flatIndex,
+				stepIndex: flatIndex,
+				...(outputName ? { outputName } : {}),
+				...(structured !== undefined ? { structured } : {}),
+				...(previous?.acceptanceStatus ? { acceptanceStatus: previous.acceptanceStatus } : {}),
+				...(previous?.error ? { error: previous.error } : {}),
+			};
+			nodes.push(node);
+			nodeIds.push(node.id);
+			flatIndex++;
+		}
+		if (nodeIds.length > 0) phases.push({ title: lane.key, nodeIds });
+	}
+	for (const node of existing?.nodes ?? []) {
+		if (!plannedIds.has(node.id)) nodes.push(node);
+	}
+	for (const phase of existing?.phases ?? []) {
+		const retainedNodeIds = phase.nodeIds.filter((nodeId) => !plannedIds.has(nodeId));
+		if (retainedNodeIds.length === 0) continue;
+		const currentPhase = phases.find((candidate) => candidate.title === phase.title);
+		if (currentPhase) currentPhase.nodeIds.push(...retainedNodeIds);
+		else phases.push({ title: phase.title, nodeIds: retainedNodeIds });
+	}
+	const currentNodeId = nodes.find((node) => node.status === "running")?.id ?? existing?.currentNodeId;
+	return { runId, mode: "workflow", phases, nodes, ...(currentNodeId ? { currentNodeId } : {}) };
+}
+
+function workflowLaneTraceStatus(state: WorkflowScriptTraceEntry["state"]): WorkflowNodeStatus | undefined {
+	switch (state) {
+		case "started":
+			return "running";
+		case "reused":
+			return undefined;
+		case "completed":
+			return "completed";
+		case "failed":
+			return "failed";
+		case "detached":
+			return "detached";
+		case "stopped":
+			return "stopped";
+		default:
+			return undefined;
+	}
+}
+
+function applyWorkflowLaneTrace(graph: WorkflowGraphSnapshot, trace: WorkflowScriptTraceEntry[]): void {
+	const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+	for (const entry of trace) {
+		if (entry.operation !== "run") continue;
+		const node = nodesById.get(entry.key);
+		if (!node) continue;
+		const status = workflowLaneTraceStatus(entry.state);
+		if (status) node.status = status;
+		if (entry.agent) node.agent = entry.agent;
+		if (entry.phase && (entry.phase !== "auto-resume" || node.phase === undefined)) node.phase = entry.phase;
+		if (entry.label) node.label = entry.label;
+		if (entry.error) node.error = entry.error;
+		else if (status === "completed" || status === "running") delete node.error;
+	}
+	const currentNodeId = graph.nodes.find((node) => node.status === "running")?.id;
+	if (currentNodeId) graph.currentNodeId = currentNodeId;
+	else delete graph.currentNodeId;
+}
+
 function workflowChatProgressUpdate(
 	runId: string,
 	chatProgress: WorkflowChatProgressProjection,
@@ -4801,6 +4889,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						liveJob.toolCount = status.toolCount;
 						liveJob.currentStep = status.currentStep;
 						liveJob.preflight = status.preflight;
+						liveJob.workflowGraph = status.workflowGraph;
 						if (status.steps) {
 							liveJob.steps = status.steps.map((step, index) => ({ ...step, index }));
 							liveJob.agents = status.steps.map((step) => step.agent);
@@ -4884,6 +4973,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							trace: projectedTrace,
 							...(preflightWarnings.length ? { preflightWarnings } : {}),
 						};
+						if (status.workflowGraph) applyWorkflowLaneTrace(status.workflowGraph, trace);
 						const rebuild = trace.length < projectedTraceLength
 							|| (projectedTraceLength > 0 && trace[projectedTraceLength - 1] !== projectedTraceTail);
 						if (rebuild) {
@@ -4987,6 +5077,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							},
 							...(workflowState ? { state: workflowState } : {}),
 							onTrace: updateTrace,
+							onLanePlan: (lanes) => {
+								status.workflowGraph = buildWorkflowLaneGraph(workflowRunId, lanes, status.workflowGraph);
+								applyWorkflowLaneTrace(status.workflowGraph, status.workflow?.trace ?? []);
+								persist({ tolerateStatusWriteFailure: true });
+							},
 							host: runHostCommand,
 							onHostStep: (hostStep) => {
 								status = upsertHostStep({ status, hostStep, persist: (nextStatus) => {
@@ -5122,6 +5217,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, workflowChildren, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(status.steps?.find((step) => step.workflowKey === child.key)?.sessionName ? { sessionName: status.steps?.find((step) => step.workflowKey === child.key)?.sessionName } : {}), ...workflowChildAccountingFields(child), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						persist();
+						deps.refreshResultDelivery?.();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(status.error ? { error: status.error } : {}) });
 					} catch (error) {
@@ -5167,6 +5263,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, workflowChildren, ...(terminalOutcome ? { terminalOutcome } : {}), results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(status.steps?.find((step) => step.workflowKey === child.key)?.sessionName ? { sessionName: status.steps?.find((step) => step.workflowKey === child.key)?.sessionName } : {}), ...workflowChildAccountingFields(child), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(child.terminalOutcome ? { terminalOutcome: child.terminalOutcome } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						persist();
+						deps.refreshResultDelivery?.();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(terminalOutcome ? { terminalOutcome } : {}), ...(status.error ? { error: status.error } : {}), ...(status.activityState ? { activityState: status.activityState } : {}) });
 					} finally {

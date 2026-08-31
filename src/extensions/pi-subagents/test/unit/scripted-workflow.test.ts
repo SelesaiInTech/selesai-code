@@ -106,6 +106,27 @@ describe("scripted workflow runtime", () => {
 			`return runs.host("tests", { kind: "command", command: "npm test" });`,
 			`return runs.host("tests", { kind: "command", command: "npm test", timeoutMs: 1000, output: "../tests.log" });`,
 		]) assert.equal(validateWorkflowScript(script).ok, false);
+		const cwd = validateWorkflowScript(`return runs.host("tests", { kind: "command", command: "npm test", timeoutMs: 1000, cwd: "/tmp" });`);
+		assert.equal(cwd.ok, false);
+		assert.ok(cwd.errors.some((error) => /unsupported field 'cwd'.*does not accept per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/.test(error.message)));
+	});
+
+	it("explains the workflow cwd workaround for dynamic runs.host params", async () => {
+		let called = false;
+		await assert.rejects(
+			runWorkflowScript({
+				script: `const params = { kind: "command", command: "npm test", timeoutMs: 1000, cwd: "/tmp" }; return await runs.host("tests", params);`,
+				async host() {
+					called = true;
+					return { key: "tests", kind: "command", ok: true, state: "passed", exitCode: 0, stdout: "", stderr: "", outputPath: "tests.log", durationMs: 1 };
+				},
+				async launch(key) { return { key, ok: true, output: "unused", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "unused", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& /does not accept per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/.test(error.message),
+		);
+		assert.equal(called, false);
 	});
 
 	it("runs an awaited host command through the host boundary", async () => {

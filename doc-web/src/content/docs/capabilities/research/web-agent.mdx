@@ -19,9 +19,11 @@ The `pi-web-agent` extension adds a single research tool, `web_explore`, that se
 ## Setup and prerequisites
 
 - This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
-- Default search uses DuckDuckGo; no credentials are required for the default path.
-- Optional Brave Search setup: the companion `web-agent-onboarding` extension can save a Brave API key.
+- Default search uses DuckDuckGo; no credentials are required for the default path. When DuckDuckGo blocks a search (common on VPS and datacenter IPs), search falls back to Tavily's keyless endpoint automatically — set `PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK=1` to turn that off.
+- Key-based backends: SearXNG (self-hosted URL), Brave (`webAgent.braveApiKey` or `PI_WEB_AGENT_BRAVE_API_KEY`), You.com (`YDC_API_KEY`), Exa (`EXA_API_KEY`), and Tavily (`TAVILY_API_KEY`).
+- Search fanout (optional): query several configured backends at once and rank pages that more than one provider agreed on to the top, via `backends.search.fanout` with `off` / `on` / `auto` modes (`auto` fans out only when the first provider returns thin results).
 - Headless escalation uses the bundled `local-browser` provider. Make sure a Chromium-based browser (Chrome, Chromium, Edge, or Brave) is available on the system if you want headless page rendering.
+- Direct readers: pasting a GitHub file/issue/PR, PDF, or YouTube URL reads the real content (raw source, extracted PDF text, or the transcript) keyless.
 
 ## What it sets up
 
@@ -59,8 +61,8 @@ The `pi-web-agent` extension adds a single research tool, `web_explore`, that se
 
 - Output is generated from third-party sources; always verify critical facts against the original page.
 - Headless escalation may fail if no supported browser is installed.
-- SearXNG requires `backends.search.baseUrl` in config; Brave requires a valid API key from `webAgent.braveApiKey` (preferred) or `PI_WEB_AGENT_BRAVE_API_KEY`; Firecrawl requires `backends.fetch.baseUrl` and accepts `backends.fetch.apiKey` or `PI_WEB_AGENT_FIRECRAWL_API_KEY`.
+- SearXNG requires `backends.search.baseUrl` in config; Brave requires a valid API key from `webAgent.braveApiKey` (preferred) or `PI_WEB_AGENT_BRAVE_API_KEY`; You.com, Exa, and Tavily require `YDC_API_KEY`, `EXA_API_KEY`, and `TAVILY_API_KEY` respectively; Firecrawl requires `backends.fetch.baseUrl` and accepts `backends.fetch.apiKey` or `PI_WEB_AGENT_FIRECRAWL_API_KEY`.
 - The extension instructs the agent not to use shell commands such as `curl` or direct HTTP URLs for web research; it must use `web_explore`.
-- Presentation config files store only non-secret values. The Brave key can be stored per-user in `~/.selesai/agent/settings.json`; use environment variables for CI or throwaway keys.
+- Presentation config files store only non-secret values. The Brave key can be stored per-user in `~/.selesai/agent/settings.json`; use environment variables for CI or throwaway keys. The keyless Tavily fallback sends no key but is rate-limited; prefer a real provider key for heavy use.
 
 <SourceEvidence slug="pi-web-agent" />

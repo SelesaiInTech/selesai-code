@@ -16,20 +16,33 @@ export type SearchResult = {
   snippet: string;
 };
 
+export type SearchProviderName = 'duckduckgo' | 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily';
+
+export type FanoutMode = 'off' | 'on' | 'auto';
+
+export type FanoutMetadata = {
+  mode: Exclude<FanoutMode, 'off'>;
+  providers: SearchProviderName[]; // providers that actually contributed results
+  skipped?: SearchProviderName[];  // providers queried but errored or returned nothing
+};
+
 export type ToolError = {
   code: string;
   message: string;
 };
 
 export type SearchMetadata = {
-  backend: 'duckduckgo' | 'searxng' | 'brave';
+  backend: 'duckduckgo' | 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily';
   cacheHit: boolean;
-  fallbackFrom?: 'searxng' | 'brave';
+  fallbackFrom?: 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily' | 'duckduckgo';
   fallbackReason?: string;
+  fanout?: FanoutMetadata;
 };
 
+export type FetchMethod = 'http' | 'headless' | 'firecrawl' | 'github' | 'pdf' | 'youtube';
+
 export type FetchMetadata = {
-  method: 'http' | 'headless' | 'firecrawl';
+  method: FetchMethod;
   cacheHit: boolean;
   fallbackFrom?: 'firecrawl';
   fallbackReason?: string;
@@ -74,7 +87,7 @@ export type WebFetchHeadlessResponse = {
 export type WebExploreResponse = {
   status: 'ok' | 'error';
   findings: string[];
-  sources: Array<{ title: string; url: string; method?: 'http' | 'headless' | 'firecrawl' }>;
+  sources: Array<{ title: string; url: string; method?: FetchMethod }>;
   caveat?: string;
   metadata?: {
     searchPasses: number;
@@ -82,6 +95,8 @@ export type WebExploreResponse = {
     headlessAttempts: number;
     exhaustedBudget: boolean;
     caveatReasons?: string[];
+    fanoutProviders?: SearchProviderName[];
+    fanoutSkipped?: SearchProviderName[];
   };
   presentation?: PresentationEnvelope;
   error?: ToolError;

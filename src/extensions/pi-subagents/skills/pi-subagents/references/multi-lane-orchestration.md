@@ -2,6 +2,8 @@
 
 Use this reference when several independent tasks need coordinated workers, worktrees, or repositories. It defines lane ownership; use the other pi-subagents references for run controls, prompts, and mission details. The parent remains the final decision-maker.
 
+Create lanes only when delegation materially improves evidence, independent review, or isolated execution. Do not manufacture parallelism: keep dependent work serial, and only split work when each lane has a distinct decision and useful output.
+
 ## Lane board and authority
 
 Before multiple mutation-capable lanes start, record this board in the parent context:
@@ -20,15 +22,25 @@ For Pi extension repositories, keep lane worktrees outside auto-discovered exten
 
 Partition fanout by repository, source seam, decision, or review angle. Each run needs a stable key, lane-specific task, and a managed output path when a file is needed. Do not launch prompts that differ only by item name or broad file glob.
 
+### Cold-start packets and bounded orchestration audits
+
+Every child packet must stand alone: include the goal, exact repository/cwd/ref, authority and edit boundary, relevant context/evidence, success criteria, validation, expected output, and stop/escalation rules. Do not rely on parent history, an issue number, or a broad glob alone. An orchestration audit by a top-reasoning critic model is read-only and returns at most three cited omissions; use high thinking only as an explicit parent/user escalation, never as an autonomous root or a parallel placeholder.
+
 Use one async `workflowScript` for a coordinated wave. Use `runs.all` for independent lanes and `runs.run` for dependent lane stages. Give cross-repository runs explicit `cwd` values and lane-qualified outputs. Use `outputMode: "file-only"` when a report must survive the run or feed a later stage. Keep scratch outputs relative so they live under subagent artifacts; use absolute paths only for durable memory, approved docs paths, or final handoff files.
 
 ## Keep independent work moving
 
 While one lane waits, run safe independent preparation, validation, or fresh read-only review lanes. Do not block the parent just because a run is active. If no safe lane remains, record the blocker and the event that will reopen work.
 
+In an ordinary interactive session, completion wakes the parent; after useful
+async lanes are launched or triaged, yield rather than use
+`subagent_wait({ all: true })` as a barrier. “Continue/orchestrate/work until
+done” means keep the board moving while safe immediate work remains. If only
+async lanes are running, record the revisit trigger and yield.
+
 An ordinary coordinated workflow has one mission. Use its durable state, artifacts, run records, and receipts for recovery. Treat a receipt as evidence, not as authority or acceptance.
 
-After a writer produces a candidate, run the required fresh-context, read-only reviewer. The reviewer inspects the exact worktree and returns evidence-backed findings. The parent decides which findings are in scope and whether the lane is ready. Send accepted fixes to that lane's sole writer, then rerun only the affected gate.
+After a writer produces a candidate, run the required fresh-context, read-only reviewer. The reviewer inspects the exact worktree and returns evidence-backed findings. The parent decides which findings are in scope and whether the lane is ready. Use `review-and-validation.md` for finding disposition, validation, and gate-failure triage. Send accepted fixes to that lane's sole writer, then rerun only the affected gate.
 
 ## Handoff, cleanup, and recovery
 

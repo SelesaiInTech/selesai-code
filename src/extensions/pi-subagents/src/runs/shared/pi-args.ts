@@ -117,6 +117,7 @@ const FAST_MODE_ALLOWED_MODELS = new Set([
 	"openai-codex/gpt-5.6-luna",
 	"openai-codex/gpt-5.6-sol",
 ]);
+const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64;
 export const SUBAGENT_CHILD_ENV = "SELESAI_SUBAGENT_CHILD";
 export const SUBAGENT_ORCHESTRATOR_TARGET_ENV =
 	"SELESAI_SUBAGENT_ORCHESTRATOR_TARGET";
@@ -139,6 +140,7 @@ export const SUBAGENT_PARENT_PATH_ENV = "SELESAI_SUBAGENT_PARENT_PATH";
 export const SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV =
 	"SELESAI_SUBAGENT_PARENT_CAPABILITY_TOKEN";
 export const SUBAGENT_PARENT_SESSION_ENV = "SELESAI_SUBAGENT_PARENT_SESSION";
+export const SUBAGENT_FORK_CACHE_KEY_ENV = "SELESAI_SUBAGENT_FORK_CACHE_KEY";
 export const SUBAGENT_STEER_INBOX_ENV = "SELESAI_SUBAGENT_STEER_INBOX";
 export const SUBAGENT_STEER_CAPABILITY_ENV = "SELESAI_SUBAGENT_STEER_CAPABILITY";
 export const SUBAGENT_STEER_ACK_DIR_ENV = "SELESAI_SUBAGENT_STEER_ACK_DIR";
@@ -146,8 +148,16 @@ export const PI_INTERCOM_STABLE_ID_ENV = "PI_INTERCOM_STABLE_ID";
 export const PI_INTERCOM_SESSION_ID_ENV = "PI_INTERCOM_SESSION_ID";
 export const SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV = "SELESAI_SUBAGENT_INHERIT_GLOBAL_CONTEXT";
 
+export function deriveForkPromptCacheKey(parentSessionId: string | undefined): string | undefined {
+	const parent = parentSessionId?.trim();
+	if (!parent) return undefined;
+	const digest = createHash("sha256").update(parent).digest("hex").slice(0, OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH - "pi-fork:".length);
+	return `pi-fork:${digest}`;
+}
+
 export interface BuildPiArgsInput {
 	parentSessionId?: string;
+	forkCacheKey?: string;
 	baseArgs: string[];
 	task: string;
 	sessionEnabled: boolean;
@@ -507,8 +517,13 @@ export function resolvePiLaunchToolPlan(
 		throw new Error(formatUnresolvedMcpDirectToolSelectors(mcpResolution.unresolvedSelectors));
 	}
 	const resolvedMcpSelections = mcpResolution.selections;
+	const resolvedMcpNames = new Set(resolvedMcpSelections.map((selection) => selection.name));
+	const legacyMcpNameCounts = countLegacyUnderscoreMcpToolNames(resolvedMcpSelections);
 	const effectiveMcpSelections = resolvedMcpSelections.filter(
-		(selection) => !allowedToolSet || allowedToolSet.has(selection.name),
+		(selection) =>
+			!allowedToolSet ||
+			allowedToolSet.has(selection.name) ||
+			isLegacyUnderscoreMcpToolAllowed(selection, allowedToolSet, resolvedMcpNames, legacyMcpNameCounts),
 	);
 	const effectiveMcpTools = effectiveMcpSelections.map(
 		(selection) => selection.name,
@@ -661,6 +676,36 @@ export function resolvePiLaunchToolPlan(
 			: {}),
 		...(capabilityAudit ? { capabilityAudit } : {}),
 	};
+}
+
+// Capability ceilings persisted before #1685 may still name hyphenated MCP server prefixes with underscores.
+function countLegacyUnderscoreMcpToolNames(selections: readonly ResolvedMcpDirectToolSelection[]): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const selection of selections) {
+		const legacyName = legacyUnderscoreMcpToolName(selection);
+		if (legacyName !== selection.name) counts.set(legacyName, (counts.get(legacyName) ?? 0) + 1);
+	}
+	return counts;
+}
+
+function isLegacyUnderscoreMcpToolAllowed(
+	selection: ResolvedMcpDirectToolSelection,
+	allowedToolSet: ReadonlySet<string>,
+	resolvedMcpNames: ReadonlySet<string>,
+	legacyMcpNameCounts: ReadonlyMap<string, number>,
+): boolean {
+	const legacyName = legacyUnderscoreMcpToolName(selection);
+	return legacyMcpNameCounts.get(legacyName) === 1 && !resolvedMcpNames.has(legacyName) && allowedToolSet.has(legacyName);
+}
+
+function legacyUnderscoreMcpToolName(selection: ResolvedMcpDirectToolSelection): string {
+	const slash = selection.selector.indexOf("/");
+	if (slash < 1) return selection.name;
+	const toolName = selection.selector.slice(slash + 1);
+	const suffix = `_${toolName}`;
+	if (!selection.name.endsWith(suffix)) return selection.name;
+	const prefix = selection.name.slice(0, -suffix.length);
+	return `${prefix.replace(/-/g, "_")}${suffix}`;
 }
 
 /** Escape XML-significant characters in a string for safe attribute interpolation. */
@@ -974,6 +1019,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 
 	env[SUBAGENT_PARENT_SESSION_ENV] =
 		input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
+	env[SUBAGENT_FORK_CACHE_KEY_ENV] = input.forkCacheKey?.trim() || undefined;
 
 	return {
 		args,

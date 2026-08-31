@@ -6,8 +6,8 @@ This file is a detailed reference loaded from `skills/pi-subagents/SKILL.md`.
 
 Agent files can live in:
 - `~/.selesai/agent/agents/**/*.md` — user scope
-- `.selesai/agents/**/*.md` — canonical project scope
-- legacy `.agents/**/*.md` — still read for compatibility, but `.selesai/agents/` wins on conflicts
+- `.pi/agents/**/*.md` — canonical project scope
+- legacy `.agents/**/*.md` — still read for compatibility, but `.pi/agents/` wins on conflicts
 
 Saved chain files may still be discovered for management and existing durable run state, but they are not a public execution surface. Author new orchestration with `workflowScript`.
 
@@ -28,7 +28,7 @@ External CLI profiles are async-only and one-shot. They support lifecycle artifa
 
 ### External job profiles
 
-An agent may set `runner.type: external-job` with a non-empty `provider` and optional JSON `options`. When `surf-cli` is installed and loaded, Surf can optionally expose a `gpt-pro` package agent through provider `surf-oracle`. Surf maps `model: pro` to ChatGPT GPT-5.6 Sol Pro web mode. pi-subagents does not own that package agent or model mapping. Remove any old `agentOverrides.gpt-pro.disabled` workaround before using Surf's package agent. The provider must be registered in the host Pi process through `pi-subagents/external-job-provider`; the async runner talks to that parent-owned registry through a local operation bridge.
+An agent may set `runner.type: external-job` with a non-empty `provider` and optional JSON `options`. When `surf-cli` is installed and loaded, Surf can optionally expose a `gpt-pro` package agent through provider `surf-oracle`. Surf maps `model: pro` to its configured pro web mode. pi-subagents does not own that package agent or model mapping. Remove any old `agentOverrides.gpt-pro.disabled` workaround before using Surf's package agent. The provider must be registered in the host Pi process through `pi-subagents/external-job-provider`; the async runner talks to that parent-owned registry through a local operation bridge.
 
 External job profiles are async-only. The provider owns the remote job and Pi owns the async run record. Status persists provider name, provider job id, prompt digest, provider options, handle/conversation URLs when supplied, result artifact path, last known state, and provider failure code/message. Recovery uses existing provider job metadata to call `reattach` and `result`; it refuses to redispatch a prompt when the persisted provider job does not match the prompt digest.
 
@@ -38,9 +38,16 @@ External job profiles do not support foreground/clarify, steer/resume, Pi models
 
 ```typescript
 subagent({
-  workflowScript: `return runs.run("oracle-check", { agent: "oracle", task: "Review my current direction and challenge assumptions." })`
+  agent: "oracle",
+  task: "Review my current direction and challenge assumptions."
 })
 ```
+
+Use direct single-agent execution for one bounded task when no stable key,
+branching, retained-child lookup, or aggregate workflow result is needed. Use a
+`workflowScript` when the parent needs JavaScript control flow or data-dependent
+branching, or when the run is part of a larger coordinated wave or a later step
+must resume it by key.
 
 ### Forked context
 
@@ -61,7 +68,17 @@ its resolved launch context as `[fresh]` or `[fork]`. Aggregate headers show
 
 ### Scripted workflows
 
-`workflowScript` is the sole public execution surface. Use `runs.run(key, { agent, task, ... })` for one child, `runs.all([...])` for parallel children, and ordinary JavaScript for sequence, branching, filtering, retries, and aggregation. Scripts are ordinary JavaScript statement bodies, so use an explicit return such as `workflowScript: "return runs.run('main', { agent: 'worker', task: '...' })"` for a useful one-child result. Use top-level `await`, plain helper functions, or explicit Promise chains; nested `async function` helpers, async arrows, and async methods are rejected. Prefer a single scripted workflow whenever the parent is starting a coordinated wave, such as multiple reviews, review plus gate monitor, worker then monitor setup, cross-repo prep lanes, or a fanout that the parent will consume together.
+`workflowScript` is the public composition surface when the parent needs
+JavaScript control flow or data-dependent branching. Use
+`runs.run(key, { agent, task, ... })` for keyed children, `runs.all([...])` for
+parallel children, and ordinary JavaScript for sequence, filtering, retries,
+and aggregation. Scripts are ordinary JavaScript statement bodies, so use an
+explicit return such as `return runs.run("main", { agent: "worker", task: "..." })` for a useful one-child result. Use top-level `await`,
+plain helper functions, or explicit Promise chains; nested `async function`
+helpers, async arrows, and async methods are rejected. Prefer a single scripted
+workflow whenever the parent is starting a coordinated wave, such as multiple
+reviews, review plus gate monitor, worker then monitor setup, cross-repo prep
+lanes, or a fanout that the parent will consume together.
 
 ```js
 subagent({
@@ -82,6 +99,8 @@ If `runs.all` is missing in a running session, reload or update `pi-subagents` b
 
 For one host-run verification command, pass `gate: "npm test"` on a `runs.run`/`runs.all` item (or at the top level as a workflow default). It is shorthand for verified acceptance with that single command: the runtime executes it on the host, records the result as evidence, and memoizes it per tracked workspace state and effective environment. `gate` cannot be combined with `acceptance`; use explicit `acceptance.verify` for multiple commands or custom criteria.
 
+If omitted, acceptance is inferred from role, mode, and risk. Use `level: "checked"` for ordinary writer evidence and `level: "verified"` when the runtime should run explicit validation commands. Independent review is orthogonal: use `review: { required: true, agent: "reviewer" }`; reviewer/read-only calls omit `acceptance`. `review-required` means evidence passed but review is pending; `reviewed` means an independent review found no blockers. Never request `level: "reviewed"`; it is recognized only so preflight can return an actionable correction. Disable gates with `{ level: "none", reason: "..." }`; bare `"none"` is rejected and `false` is only a deprecated shorthand. Child-reported command success is evidence, not runtime verification.
+
 Completed workflow children from this parent session stay addressable as retained children. `subagent({ action: "children.list" })` lists up to the last 10 with run ids and reports each row as `resumable` or `not resumable` with a reason. Resume only rows reported `resumable`. For a retained-child challenge, use `resume` instead of `steer` when the child is complete. If no retained child is resumable, launch a same-role fallback challenge and label it as fallback. A later workflow continues a resumable child with `runs.run(key, { resume: "<run-id>", task: "follow-up" })`. Inside `workflowScript`, awaiting that call waits for the revived child to finish and returns its completed output and new `runId`; top-level `{ action: "resume" }` remains detached. Pass explicit follow-up task text. Assign each returned child result back to the loop variable because every resume can return a new retained `runId`; always resume the latest returned id. `resume` and `agent` are mutually exclusive, the revived child keeps its stored agent/model/tool contract, and `gate` is rejected on retained resume items.
 
 Each workflow key identifies one result lane: use a new stable workflow key for every distinct retained resume pass; same-key calls are reused only when launch parameters are identical, and incompatible parameters are rejected.
@@ -97,9 +116,22 @@ return runs.run("cross-oracle", {
 
 Keyed resume reads that one exact receipt and revalidates the retained run at launch. It fails when the workflow or key is missing, the receipt is stale, `latest` is not `true`, or the recorded child is no longer resumable. The receipt is terminal-only: if `status.json` or `events.jsonl` exists without it, the workflow may still be active or terminal receipt writing may have failed. Use direct child run IDs from status/events for direct resume after the normal retained-child checks; do not reconstruct keyed entries from those files. Foreground workflow results expose the same receipt in `details.workflow.receipt`, but cross-workflow keyed lookup requires the durable receipt from an async workflow.
 
+### Parallel sequential lanes
+
+For a broad plan with a known set of narrow, visible stages per lane, use
+`runs.lanes(...)` inside a `workflowScript`; it is a nested helper, not a
+top-level `subagent` mode. Give each lane and stage a stable key. The first
+stage from every lane is launched together, then later stages sequence per lane.
+`resume: "previous"` requires the retained predecessor, and a failed or blocked
+stage blocks only that lane. The returned board exposes lane/stage results for
+the parent. See the [canonical staged-lane example](../../../docs/workflows.md#parallel-sequential-lanes).
+
+Use raw `runs.run(...)`/`runs.all(...)` instead when branching or rolling fanout
+depends on runtime data rather than a predeclared stage plan.
+
 ### Async/background
 
-Prefer async mode for every subagent launch. Set `async: true` no matter the task unless the parent must block until completion. This applies to scouts, researchers, workers, reviewers, validators, oracle checks, one-off delegates, final review gates, backlog gates, and scripted workflows. Keep the write path single-threaded even when the run is async.
+Prefer async mode for every subagent launch. Set `async: true` no matter the task unless the parent must block until completion. This applies to scouts, researchers, workers, reviewers, validators, oracle checks, one-off delegates, final review gates, publication gates, and scripted workflows. Keep the write path single-threaded even when the run is async.
 
 Use `async:false` only when the parent must block until completion. Async mode still shows progress. Do not use `async:false` because a task is short, because it is the last gate, because no other work is ready, because the user asked to finish the overall job, or because blocking is convenient.
 
@@ -107,9 +139,18 @@ Async does not mean parallel writes. Do not edit the same active worktree while 
 
 Do not end your turn immediately after launching an async child if you promised to keep working. Continue the local inspection, synthesis, or validation prep, then check the async run when its result is needed. If no safe independent work remains, return control and let Pi wake the session; do not convert the child to foreground.
 
-In an interactive chat, normally return control when ready to yield and let Pi wake the session on completion; do not call `subagent_wait()` merely to wait. A run-to-completion user request is not by itself a reason to use foreground children. Override the normal yield-and-wake flow only when this exact turn cannot safely end without the result, such as a headless provider flow or a skill contract that must produce a same-turn artifact. Use `subagent_wait()`, not `async:false`, for that current-turn dependency. Never substitute sleep or status-polling loops.
+In an ordinary interactive chat, normally return control after launching or
+triaging useful async work and let Pi wake the session on completion; do not
+call `subagent_wait()` merely to wait. A run-to-completion user request is not
+by itself a reason to use foreground children. Override the normal yield-and-
+wake flow only when this exact turn cannot safely end without the result, such
+as a headless provider flow or a skill contract that must produce a same-turn
+artifact. Use `subagent_wait()`, not `async:false`, for that current-turn
+dependency. Never substitute sleep or status-polling loops.
 
-`subagent_wait()` returns when the next initially active async run or registered provider item finishes or a subagent needs attention. Use `subagent_wait({ all: true })` for all work active at call time, `subagent_wait({ id: "..." })` for one async or remembered detached foreground run, and `subagent_wait({ timeoutMs })` to cap the block. In a long-lived interactive parent session, use `subagent_wait({ id: "...", nonBlocking: true })` to resolve the prefix to one exact run, persist an armed subscription, return immediately, and wake later on completion, failure, attention, reconciliation failure, or timeout. Ordinary status lists armed subscriptions separately from active children. This differs from disabling `waitTool`, which returns immediately without arming a future wake. If a foreground child detaches for supervisor coordination, reply first, then wait on its id; do not resume or launch a replacement while it remains detached. Headless sessions also auto-drain exact current-session work at `agent_end` as a final safeguard.
+`subagent_wait()` returns when the next initially active async run or registered provider item finishes or a subagent needs attention. Use `subagent_wait({ all: true })` for all work active at call time, `subagent_wait({ id: "..." })` for one async or remembered detached foreground run, and `subagent_wait({ timeoutMs })` to cap the block; active work keeps running if it elapses. `subagent_wait({ stopOnAttention: false })` keeps a blocking wait through idle or long-thinking attention, but supervisor/contact requests still stop it. In a long-lived interactive parent session, use `subagent_wait({ id: "...", nonBlocking: true })` to resolve the prefix to one exact run, persist an armed subscription, return immediately, and wake later on completion, failure, attention, reconciliation failure, or timeout. Ordinary status lists armed subscriptions separately from active children. This differs from disabling `waitTool`, which returns immediately without arming a future wake. If a foreground child detaches for supervisor coordination, reply first, then wait on its id; do not resume or launch a replacement while it remains detached. Headless sessions also auto-drain exact current-session work at `agent_end` as a final safeguard.
+
+Providers are discovered through the `pi-subagents/background-work` registry and must expose a stable item id and owning session id. Load a provider through the child’s `extensions` or `subagentOnlyExtensions` and allow `subagent_wait` in its tools. For non-interactive fleets, launch N workers, wait for the next completion, react, and replace as needed; use `all: true` only when intentionally draining the fleet. If `SELESAI_SUBAGENT_WAIT_TOOL_ENABLED` disables blocking, direct waits return immediately, but headless `agent_end` auto-drain still surfaces provider, reconciliation, or timeout failures.
 
 ```typescript
 subagent({

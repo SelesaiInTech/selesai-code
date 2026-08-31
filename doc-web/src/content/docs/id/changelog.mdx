@@ -3,6 +3,14 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.4 — Ekspansi pencarian web-agent, subagents 0.60, perbaikan rekonsiliasi biaya
+
+- Menaikkan bundled **pi-web-agent** ke 1.10.0: menambahkan backend pencarian You.com, Exa, dan Tavily, search fanout opsional di seluruh provider terkonfigurasi dengan dedupe dan peringkat kesepakatan antar-provider, fallback keyless Tavily saat DuckDuckGo diblokir anti-bot, penguatan DuckDuckGo (header browser dan satu retry), reader langsung GitHub/PDF/YouTube, kanonikalisasi URL, dan hasil tool untuk model yang selalu membawa temuan/sumber/caveat lengkap terlepas dari presentasi terminal.
+- Menaikkan bundled **pi-subagents** ke 0.60.0: `subagent({ action: "list", capabilities: true })` mengembalikan katalog kapabilitas ringkas, anak fork reuse prompt cache, bukti pemulihan timeout dimunculkan di status async dan completions `subagent_wait`, rencana `runs.lanes` dirender sebagai stage grafik workflow, dan `runs.host` menolak `cwd` per-step dengan petunjuk.
+- Memperbaiki **key rekonsiliasi biaya**: respons streaming mengulang id respons lintas chunk dan membawa id tool-call, sehingga wrapper kini menangkap setiap id dan `message_end` hanya memakai id yang cocok dengan `responseId` pesan final.
+- Merilis **pi-intercom** 0.12.1: saat giliran inbound ask, `send` non-reply ke target berbeda ditolak, dan pengaturan `toolVisibility` dihapus (kunci basi diabaikan).
+- Menambahkan **GLM-5.3** ke katalog model default dan meningkatkan `glm-5.3-flash` ke input teks+gambar dengan peta thinking lengkap.
+
 ## 0.13.3 — Rotasi kunci Token-In dan rekonsiliasi biaya live
 
 - Menambahkan **auto-failover multi-kunci ke Token-In**: ekstensi `tokenin-onboarding` kini mendaftarkan provider `tokenin` yang `streamSimple`-nya otomatis beralih ke akun cadangan tersimpan saat kunci aktif terkena error 401, 429, atau anggaran/kuota. Kunci yang gagal masuk cooldown 5 menit sebelum dicoba lagi, dan kredensial aktif baru dipersistenkan ke `tokenin-auth.json` dan `auth.json`.
