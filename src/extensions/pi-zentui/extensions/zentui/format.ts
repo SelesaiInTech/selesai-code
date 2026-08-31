@@ -1,6 +1,5 @@
 import { homedir, hostname, userInfo } from "node:os";
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { formatCost } from "../../../../core/usage-totals.ts";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type {
 	ColorSource,
@@ -126,6 +125,13 @@ type UsageCacheEntry = {
 };
 
 const MAX_USAGE_TOTAL = Number.MAX_VALUE;
+
+function formatCost(cost: number): string {
+	if (cost === 0) return "$0.000";
+	if (cost >= 1) return `$${cost.toFixed(3)}`;
+	if (cost >= 0.01) return `$${cost.toFixed(4)}`;
+	return `$${cost.toFixed(6)}`;
+}
 
 let usageTotalsCache: UsageCacheEntry | undefined;
 let usageTotalsAggregationPassCount = 0;

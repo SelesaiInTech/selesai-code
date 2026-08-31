@@ -3,6 +3,11 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.5 — Packaging fixes for web-agent PDF loading and zentui startup
+
+- Fixed the bundled **pi-web-agent** package wiring: the published `@selesai/code` package now includes the root `unpdf` runtime dependency, so the PDF reader loads correctly in source checkouts and global npm installs instead of failing startup with `Cannot find module 'unpdf'`.
+- Fixed the bundled **pi-zentui** packaging path: Zentui no longer imports `core/usage-totals.ts` through a relative path that breaks from `dist/extensions`, so installed CLIs no longer fail startup with `Cannot find module '../../../../core/usage-totals.ts'`.
+
 ## 0.13.4 — Web-agent search expansion, subagents 0.60, cost reconciliation fix
 
 - Upgraded the bundled **pi-web-agent** to 1.10.0: added You.com, Exa, and Tavily search backends, optional search fanout across configured providers with dedupe and cross-provider agreement ranking, a keyless Tavily fallback when DuckDuckGo is bot-blocked, DuckDuckGo hardening (browser headers and one retry), direct GitHub/PDF/YouTube readers, URL canonicalization, and a model tool result that always carries the full findings/sources/caveats regardless of terminal presentation.

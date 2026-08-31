@@ -3,6 +3,11 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.5 — Perbaikan packaging untuk pemuatan PDF web-agent dan startup zentui
+
+- Memperbaiki wiring package bundled **pi-web-agent**: package `@selesai/code` yang dipublikasikan kini menyertakan dependency runtime root `unpdf`, sehingga PDF reader termuat dengan benar di source checkout dan instalasi npm global alih-alih gagal saat startup dengan `Cannot find module 'unpdf'`.
+- Memperbaiki path packaging bundled **pi-zentui**: Zentui tidak lagi mengimpor `core/usage-totals.ts` lewat path relatif yang rusak dari `dist/extensions`, sehingga CLI terpasang tidak lagi gagal saat startup dengan `Cannot find module '../../../../core/usage-totals.ts'`.
+
 ## 0.13.4 — Ekspansi pencarian web-agent, subagents 0.60, perbaikan rekonsiliasi biaya
 
 - Menaikkan bundled **pi-web-agent** ke 1.10.0: menambahkan backend pencarian You.com, Exa, dan Tavily, search fanout opsional di seluruh provider terkonfigurasi dengan dedupe dan peringkat kesepakatan antar-provider, fallback keyless Tavily saat DuckDuckGo diblokir anti-bot, penguatan DuckDuckGo (header browser dan satu retry), reader langsung GitHub/PDF/YouTube, kanonikalisasi URL, dan hasil tool untuk model yang selalu membawa temuan/sumber/caveat lengkap terlepas dari presentasi terminal.

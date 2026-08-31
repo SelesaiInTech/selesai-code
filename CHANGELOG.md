@@ -2,6 +2,12 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.5] - 2026-08-31
+
+### Fixed
+- **Bundled `pi-web-agent` install dependency.** The published `@selesai/code` package now declares `unpdf` at the root, so the bundled PDF reader can load in source checkouts and global npm installs instead of failing startup with `Cannot find module 'unpdf'`.
+- **Bundled `pi-zentui` packaged import path.** Zentui no longer imports `core/usage-totals.ts` through a relative path that breaks from `dist/extensions`, so installed CLIs no longer fail startup with `Cannot find module '../../../../core/usage-totals.ts'`.
+
 ## [0.13.4] - 2026-08-31
 
 ### Added
