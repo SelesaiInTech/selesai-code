@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.6 — Perbaikan packaging untuk YouTube reader web-agent
+
+- Memperbaiki dependency YouTube reader bundled **pi-web-agent**: package `@selesai/code` yang dipublikasikan kini menyertakan dependency runtime root `youtube-caption-extractor`, sehingga menempelkan URL YouTube memuat transkrip dengan benar di source checkout dan instalasi npm global alih-alih gagal dengan `Cannot find module 'youtube-caption-extractor'`.
+
 ## 0.13.5 — Perbaikan packaging untuk pemuatan PDF web-agent dan startup zentui
 
 - Memperbaiki wiring package bundled **pi-web-agent**: package `@selesai/code` yang dipublikasikan kini menyertakan dependency runtime root `unpdf`, sehingga PDF reader termuat dengan benar di source checkout dan instalasi npm global alih-alih gagal saat startup dengan `Cannot find module 'unpdf'`.

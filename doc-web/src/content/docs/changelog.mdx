@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.6 — Packaging fix for the web-agent YouTube reader
+
+- Fixed the bundled **pi-web-agent** YouTube reader dependency: the published `@selesai/code` package now includes the root `youtube-caption-extractor` runtime dependency, so pasting a YouTube URL loads the transcript in source checkouts and global npm installs instead of failing with `Cannot find module 'youtube-caption-extractor'`.
+
 ## 0.13.5 — Packaging fixes for web-agent PDF loading and zentui startup
 
 - Fixed the bundled **pi-web-agent** package wiring: the published `@selesai/code` package now includes the root `unpdf` runtime dependency, so the PDF reader loads correctly in source checkouts and global npm installs instead of failing startup with `Cannot find module 'unpdf'`.

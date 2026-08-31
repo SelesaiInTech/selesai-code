@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.6] - 2026-08-31
+
+### Fixed
+- **Bundled `pi-web-agent` YouTube reader dependency.** The published `@selesai/code` package now declares `youtube-caption-extractor` at the root, so the bundled YouTube transcript reader can load in source checkouts and global npm installs instead of failing with `Cannot find module 'youtube-caption-extractor'`.
+
 ## [0.13.5] - 2026-08-31
 
 ### Fixed
