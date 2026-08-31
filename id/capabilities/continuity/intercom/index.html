@@ -162,6 +162,7 @@
 <li>Hanya sesi yang berhasil mendaftar ke broker yang muncul di daftar.</li>
 <li><code dir="auto">ask</code> memblokir agent pemanggil hingga 10 menit. Jika tidak ada balasan, tool error.</li>
 <li><code dir="auto">reply</code> tanpa <code dir="auto">to</code> hanya menyelesaikan satu ask tertunda. Jika ada beberapa ask tertunda, tentukan <code dir="auto">to</code> atau periksa terlebih dahulu.</li>
+<li>Saat giliran dipicu inbound ask, <code dir="auto">send</code> non-reply ke target berbeda ditolak agar CWD parent/root yang diterka tidak dapat menerima balasan yang tidak disengaja.</li>
 <li>Pesan masuk disimpan dalam riwayat sesi; tidak ada kotak masuk atau transkrip terpisah.</li>
 <li>Lampiran disertakan dalam body teks yang terlihat agent; overlay compose TUI belum menyediakan UI lampiran.</li>
 <li>Balasan supervisor melalui <code dir="auto">contact_supervisor</code> dilingkupi ke parent session id yang tepat; sesi Selesai lain tidak menerimanya.</li>

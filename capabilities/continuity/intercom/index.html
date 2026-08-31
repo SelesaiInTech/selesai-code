@@ -98,7 +98,7 @@
 <ul>
 <li>Send a fire-and-forget message with <code dir="auto">intercom({ action: "send", to: "worker", message: "..." })</code>.</li>
 <li>Ask a blocking question with <code dir="auto">intercom({ action: "ask", to: "planner", message: "..." })</code>; the reply comes back as the tool result with a 10-minute timeout.</li>
-<li>Reply to the most recent inbound ask with <code dir="auto">intercom({ action: "reply", message: "..." })</code>.</li>
+<li>Reply to the most recent inbound ask with <code dir="auto">intercom({ action: "reply", message: "..." })</code>. During a turn triggered by an inbound ask, a non-reply <code dir="auto">send</code> to a different target is refused, so a guessed parent/root CWD cannot receive an accidental reply.</li>
 <li>List pending asks with <code dir="auto">intercom({ action: "pending" })</code> or check broker and session status with <code dir="auto">intercom({ action: "status" })</code>.</li>
 </ul>
 <h2 id="commands-tools-and-shortcuts">Commands, tools, and shortcuts</h2>

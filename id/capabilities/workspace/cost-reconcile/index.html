@@ -83,8 +83,8 @@
 </ul>
 <h2 id="yang-disiapkan">Yang disiapkan</h2>
 <ul>
-<li>Memasang <code dir="auto">fetch</code> pembungkus stream sekali per proses yang memindai respons API LLM untuk biaya yang dilaporkan provider dan id respons. Pembungkus menyelesaikan capture sebelum SDK provider men-finalisasi pesan asisten.</li>
-<li>Pada <code dir="auto">message_end</code>, menggantikan <code dir="auto">usage.cost.total</code> pesan asisten final dengan jumlah tagihan yang dilaporkan provider sebelum pesan dipersistenkan, dan menulis entri sesi kustom <code dir="auto">cost-reconcile</code> per id respons (dibatasi per sesi) untuk kompatibilitas zentui dan sesi yang ada.</li>
+<li>Memasang <code dir="auto">fetch</code> pembungkus stream sekali per proses yang memindai respons API LLM untuk biaya yang dilaporkan provider dan id respons. Respons streaming mengulang id respons lintas chunk dan membawa id tool-call (<code dir="auto">call_*</code>), sehingga pembungkus meng-key biaya tagihan untuk setiap id yang ditemukan. Capture selesai sebelum SDK provider men-finalisasi pesan asisten.</li>
+<li>Pada <code dir="auto">message_end</code>, menggantikan <code dir="auto">usage.cost.total</code> pesan asisten final dengan jumlah tagihan yang dilaporkan provider sebelum pesan dipersistenkan, mengonsumsi hanya entri yang cocok dengan <code dir="auto">responseId</code> pesan final, dan menulis entri sesi kustom <code dir="auto">cost-reconcile</code> per id respons (dibatasi per sesi) untuk kompatibilitas zentui dan sesi yang ada. Capture duplikat untuk id yang sama (retry) ditandai ambigu daripada menetapkan salah satu tagihan.</li>
 <li>Footer zentui mengutamakan entri hasil rekonsiliasi daripada total rate card saat keduanya ada untuk id respons yang sama, dan menyegarkan sekali setelah settle agar rekonsiliasi yang terlambat ikut terbaca.</li>
 <li>Label biaya diformat secara adaptif agar biaya per panggilan di bawah satu sen tetap terlihat: 3 desimal di $1+, 4 desimal di $0.01+, dan 6 desimal di bawahnya (mis. <code dir="auto">$0.000336</code>, bukan <code dir="auto">$0.000</code>).</li>
 </ul>
