@@ -897,6 +897,38 @@ Each command has:
 
 **Note**: Built-in TUI commands (`/settings`, `/hotkeys`, etc.) are included with `source: "builtin"` and `interactiveOnly: true`. They are display-only: they are handled only in interactive mode and would not execute if sent via `prompt`.
 
+#### get_skills
+
+Get the resolved skill catalog (one entry per discovered skill with its effective enablement) plus the raw `settings.skills` patterns for round-trip toggling. Enables the extension to mirror the TUI `/skills` toggle surface without reimplementing `isEnabledByOverrides` semantics.
+
+```json
+{"type": "get_skills"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_skills",
+  "success": true,
+  "data": {
+    "skills": [
+      {"name": "fix-tests", "description": "Fix failing tests", "scope": "global", "pattern": "fix-tests", "enabled": true}
+    ],
+    "patterns": ["+fix-tests", "-legacy-skill"]
+  }
+}
+```
+
+Each skill entry has:
+- `name`: Skill name (frontmatter `name`, falling back to the SKILL.md parent directory name)
+- `description`: Frontmatter description (optional)
+- `scope`: `"global"` (user-level) or `"project"` (project-level)
+- `pattern`: Path relative to the skill base dir — the same pattern the TUI writes as `+pattern`/`-pattern` into `settings.skills`
+- `enabled`: Resolved enablement per `isEnabledByOverrides` semantics (package-manager.ts)
+
+`patterns` is the raw merged `global + project` `settings.skills` array. To toggle a skill, write `set_settings {scope, values:{skills:[...]}}` with `+pattern`/`-pattern` entries applied, then send `reload` (the TUI reloads after every toggle).
+
 ## Events
 
 Events are streamed to stdout as JSON lines during agent operation. Events do not generally include an `id` field; `bash_execution_update` includes the `id` of its originating `bash` command when one was provided.

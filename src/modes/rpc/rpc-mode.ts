@@ -13,9 +13,9 @@
 
 import * as crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, unlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { generateHandoff } from "../../core/handoff.ts";
 import { buildGitCommandPrompt } from "../../core/git-command.ts";
@@ -40,7 +40,8 @@ import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import { createSyntheticSourceInfo } from "../../core/source-info.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { getChangelogPath, parseChangelog } from "../../utils/changelog.ts";
-import { VERSION, getAgentDir, getBundledDefaultsDir, getShareViewerUrl } from "../../config.ts";
+import { parseFrontmatter } from "../../utils/frontmatter.ts";
+import { VERSION, CONFIG_DIR_NAME, getAgentDir, getBundledDefaultsDir, getShareViewerUrl } from "../../config.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -54,6 +55,7 @@ import type {
 	RpcResponse,
 	RpcSessionInfo,
 	RpcSessionState,
+	RpcSkillInfo,
 	RpcSlashCommand,
 	PrototypePhase,
 	QuicktypePhase,
@@ -1106,6 +1108,63 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				}
 
 				return success(id, "get_commands", { commands });
+			}
+
+			// =================================================================
+			// Skills (resolved catalog + raw toggle patterns)
+			// =================================================================
+
+			case "get_skills": {
+				const resolvedSkills = session.resourceLoader.getResolvedSkills();
+				const agentDir = getAgentDir();
+				const cwd = session.sessionManager.getCwd();
+				const skills: RpcSkillInfo[] = [];
+
+				// Mirror the TUI skill-toggle resolution (buildSkillToggleItems):
+				// name/pattern from the SKILL.md parent dir, scope from resource metadata,
+				// enabled per isEnabledByOverrides via the resource loader.
+				for (const resource of resolvedSkills) {
+					const pathStr = resource.path;
+					const isSkillFile = basename(pathStr) === "SKILL.md";
+					const name = isSkillFile ? basename(dirname(pathStr)) : basename(pathStr);
+					const scope = resource.metadata.scope === "project" ? "project" : "user";
+					const baseDir =
+						resource.metadata.baseDir ??
+						(scope === "project" ? join(cwd, CONFIG_DIR_NAME) : agentDir);
+					const pattern = relative(baseDir, pathStr) || name;
+
+					let frontmatterName: string | undefined;
+					let description: string | undefined;
+					try {
+						const raw = readFileSync(pathStr, "utf-8");
+						const { frontmatter } = parseFrontmatter<{ name?: unknown; description?: unknown }>(raw);
+						if (typeof frontmatter.name === "string" && frontmatter.name.trim()) {
+							frontmatterName = frontmatter.name.trim();
+						}
+						if (typeof frontmatter.description === "string" && frontmatter.description.trim()) {
+							description = frontmatter.description.trim();
+						}
+					} catch {
+						// Unreadable skill file: keep path-derived name, no description.
+					}
+
+					skills.push({
+						name: frontmatterName ?? name,
+						description,
+						scope: scope === "project" ? "project" : "global",
+						pattern,
+						enabled: resource.enabled,
+					});
+				}
+				skills.sort((a, b) => a.name.localeCompare(b.name));
+
+				// Raw global+project merged settings.skills patterns so the caller can
+				// round-trip the exact write shape via set_settings + reload.
+				const patterns = [
+					...(session.settingsManager.getGlobalSettings().skills ?? []),
+					...(session.settingsManager.getProjectSettings().skills ?? []),
+				];
+				return success(id, "get_skills", { skills, patterns });
 			}
 
 			// =================================================================

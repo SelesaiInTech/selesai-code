@@ -148,7 +148,10 @@ export type RpcCommand =
 	| { id?: string; type: "get_messages" }
 
 	// Commands (available for invocation via prompt)
-	| { id?: string; type: "get_commands" };
+	| { id?: string; type: "get_commands" }
+
+	// Skills (resolved catalog + raw toggle patterns)
+	| { id?: string; type: "get_skills" };
 
 // ============================================================================
 // RPC Slash Command (for get_commands response)
@@ -166,6 +169,20 @@ export interface RpcSlashCommand {
 	sourceInfo: SourceInfo;
 	/** True for interactive-TUI-only builtins that cannot be invoked via prompt */
 	interactiveOnly?: boolean;
+}
+
+/** A resolved skill in the get_skills catalog (mirrors the TUI skill-toggle resolution). */
+export interface RpcSkillInfo {
+	/** Skill name (frontmatter name, falling back to the SKILL.md parent directory name). */
+	name: string;
+	/** Skill description from frontmatter. */
+	description?: string;
+	/** "global" for user-level skills, "project" for project-level skills. */
+	scope: "global" | "project";
+	/** Toggle pattern relative to the skill base dir (same shape the TUI writes to settings.skills). */
+	pattern: string;
+	/** Resolved enabled state per isEnabledByOverrides semantics. */
+	enabled: boolean;
 }
 
 /** Session listing entry (SessionInfo with transcript text stripped). */
@@ -349,6 +366,14 @@ export type RpcResponse =
 			command: "get_commands";
 			success: true;
 			data: { commands: RpcSlashCommand[] };
+	  }
+	// Skills
+	| {
+			id?: string;
+			type: "response";
+			command: "get_skills";
+			success: true;
+			data: { skills: RpcSkillInfo[]; patterns: string[] };
 	  }
 
 	// Settings

@@ -15,7 +15,7 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { ChangelogEntry } from "../../utils/changelog.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import type { RpcCommand, RpcResponse, RpcSessionInfo, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+import type { RpcCommand, RpcResponse, RpcSessionInfo, RpcSessionState, RpcSkillInfo, RpcSlashCommand } from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -536,6 +536,15 @@ export class RpcClient {
 	async getCommands(): Promise<RpcSlashCommand[]> {
 		const response = await this.send({ type: "get_commands" });
 		return this.getData<{ commands: RpcSlashCommand[] }>(response).commands;
+	}
+
+	/**
+	 * Get the resolved skill catalog (per-skill enabled state) plus the raw
+	 * global+project merged settings.skills patterns for round-trip toggling.
+	 */
+	async getSkills(): Promise<{ skills: RpcSkillInfo[]; patterns: string[] }> {
+		const response = await this.send({ type: "get_skills" });
+		return this.getData<{ skills: RpcSkillInfo[]; patterns: string[] }>(response);
 	}
 
 	// =========================================================================
