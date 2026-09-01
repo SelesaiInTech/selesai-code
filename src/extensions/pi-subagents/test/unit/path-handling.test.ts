@@ -106,4 +106,3 @@ describe("path.join vs template string concatenation", () => {
 		assert.equal(windowsJoin, path.join("parallel-0", "0-_code-reviewer", output));
 	});
 });
-

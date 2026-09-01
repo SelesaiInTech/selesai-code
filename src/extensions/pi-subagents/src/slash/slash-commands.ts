@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { keyText, type ExtensionAPI, type ExtensionContext } from "@selesai/code";
 import { Key, matchesKey, truncateToWidth, type Component, type KeyId, type TUI } from "@earendil-works/pi-tui";
-import { BUILTIN_AGENT_NAMES, discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../agents/agents.ts";
+import { discoverAgentSnapshot, discoverAgents, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../agents/agents.ts";
 import { listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
 import { resolveExistingReadPaths } from "../shared/settings.ts";
 import {
@@ -113,9 +113,13 @@ const extractExecutionFlags = (rawArgs: string): { args: string; bg: boolean; fo
 };
 
 function discoverSlashAgents(pi: ExtensionAPI, cwd: string, scope: AgentScope): { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; unknownAgentDiagnosticContext: UnknownAgentDiagnosticContext } {
-	const discovered = discoverAgents(cwd, scope);
-	if (listRuntimeAgentConfigs(pi).length === 0) return { ...discovered, unknownAgentDiagnosticContext: unknownAgentDiagnosticContext(discovered) };
-	const all = discoverAgentsAll(cwd);
+	if (listRuntimeAgentConfigs(pi).length === 0) {
+		const discovered = discoverAgents(cwd, scope);
+		return { ...discovered, unknownAgentDiagnosticContext: unknownAgentDiagnosticContext(discovered) };
+	}
+	const snapshot = discoverAgentSnapshot(cwd, scope, undefined, { includeChains: false });
+	const discovered = snapshot.effective;
+	const all = snapshot.all;
 	const configuredAgents: AgentConfig[] = [
 		...all.builtin,
 		...all.package,
@@ -131,13 +135,6 @@ const makeAgentCompletions = (pi: ExtensionAPI, state: SubagentState) => (prefix
 	return discoverSlashAgents(pi, state.baseCwd, "both").agents
 		.filter((agent) => agent.name.startsWith(prefix))
 		.map((agent) => ({ value: agent.name, label: agent.name }));
-};
-
-const makeBuiltinAgentNameCompletions = () => (prefix: string) => {
-	if (prefix.includes(" ")) return null;
-	return BUILTIN_AGENT_NAMES
-		.filter((name) => name.startsWith(prefix))
-		.map((name) => ({ value: name, label: name }));
 };
 
 const makeProviderCompletions = (state: SubagentState) => (prefix: string) => {
@@ -420,7 +417,7 @@ function detailsFromSessionEntry(entry: unknown): Details | undefined {
 	}
 	if (record.type !== "message" || !record.message || typeof record.message !== "object") return undefined;
 	const message = record.message as { role?: unknown; toolName?: unknown; details?: unknown };
-	if (message.role !== "toolResult" || (message.toolName !== "subagent" && message.toolName !== "subagent_wait")) return undefined;
+	if (message.role !== "toolResult" || (message.toolName !== "subagent" && message.toolName !== "bg_wait" && message.toolName !== "subagent_wait")) return undefined;
 	return isSubagentDetails(message.details) ? message.details : undefined;
 }
 
@@ -1014,7 +1011,7 @@ export function registerSlashCommands(
 			ctx.ui.notify(`Foreground run ${control.runId} is not currently detachable.`, "info");
 			return;
 		}
-		sendSlashText(pi, `Detached foreground run ${control.runId} without terminating its child. Use subagent({ action: "status", id: ${JSON.stringify(control.runId)} }) or subagent_wait({ id: ${JSON.stringify(control.runId)} }) to recover the eventual result. This does not daemonize the process or guarantee survival across Pi reload/restart.`);
+		sendSlashText(pi, `Detached foreground run ${control.runId} without terminating its child. Use subagent({ action: "status", id: ${JSON.stringify(control.runId)} }) or bg_wait({ id: ${JSON.stringify(control.runId)} }) to recover the eventual result. This does not daemonize the process or guarantee survival across Pi reload/restart.`);
 	};
 
 	pi.registerCommand("subagents-detach", {
@@ -1149,25 +1146,20 @@ export function registerSlashCommands(
 	});
 
 	pi.registerCommand("subagents-models", {
-		description: "Show runtime-loaded builtin subagent models",
-		getArgumentCompletions: makeBuiltinAgentNameCompletions(),
-			handler: async (args, ctx) => {
-				const trimmed = args.trim();
-				if (!trimmed) {
-					await runCommand(ctx, { action: "models" });
+		description: "Show model mappings for discovered subagents",
+		getArgumentCompletions: makeAgentCompletions(pi, state),
+		handler: async (args, ctx) => {
+			const trimmed = args.trim();
+			if (!trimmed) {
+				await runCommand(ctx, { action: "models" });
 				return;
 			}
 			const parts = trimmed.split(/\s+/).filter(Boolean);
 			if (parts.length !== 1) {
-				ctx.ui.notify("Usage: /subagents-models [builtin-agent-name]", "error");
+				ctx.ui.notify("Usage: /subagents-models [agent-name]", "error");
 				return;
 			}
-			const agent = parts[0]!;
-			if (!(BUILTIN_AGENT_NAMES as readonly string[]).includes(agent)) {
-				ctx.ui.notify(`Unknown builtin agent: ${agent}`, "error");
-				return;
-			}
-			await runCommand(ctx, { action: "models", agent });
+			await runCommand(ctx, { action: "models", agent: parts[0]! });
 		},
 	});
 

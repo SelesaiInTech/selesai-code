@@ -6,11 +6,11 @@ import test from "node:test";
 import { resolveCodexExecLaunch } from "../../src/runs/shared/codex-exec-adapter.ts";
 import { runExternalCli } from "../../src/runs/shared/external-cli-runner.ts";
 
-const enabled = process.env.PI_SUBAGENTS_CODEX_EXEC_SMOKE === "1";
+const enabled = process.env.SELESAI_SUBAGENTS_CODEX_EXEC_SMOKE === "1";
 
-test("maintainer Codex exec read-only smoke", { skip: enabled ? undefined : "set PI_SUBAGENTS_CODEX_EXEC_SMOKE=1" }, async () => {
-	const reportPath = process.env.PI_SUBAGENTS_CODEX_EXEC_SMOKE_REPORT;
-	assert.ok(reportPath, "PI_SUBAGENTS_CODEX_EXEC_SMOKE_REPORT is required");
+test("maintainer Codex exec read-only smoke", { skip: enabled ? undefined : "set SELESAI_SUBAGENTS_CODEX_EXEC_SMOKE=1" }, async () => {
+	const reportPath = process.env.SELESAI_SUBAGENTS_CODEX_EXEC_SMOKE_REPORT;
+	assert.ok(reportPath, "SELESAI_SUBAGENTS_CODEX_EXEC_SMOKE_REPORT is required");
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-codex-smoke-"));
 	const canaryPath = path.join(dir, "write-canary.txt");
 	const promptMarker = "CODEX_READ_PRIVATE_PROMPT_MARKER";

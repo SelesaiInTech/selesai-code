@@ -33,6 +33,37 @@ function result(agent: string, output: string) {
 	};
 }
 
+function countedWorkflowJob(onNodesRead: () => void): AsyncJobState {
+	const nodes = [
+		{ id: "step-0", kind: "step", agent: "scout", label: "Scout", status: "completed", flatIndex: 0, stepIndex: 0 },
+		{ id: "step-1", kind: "step", agent: "reviewer", label: "Review", status: "running", flatIndex: 1, stepIndex: 1 },
+	] as const;
+	return {
+		asyncId: "workflow-run",
+		asyncDir: "/tmp/workflow-run",
+		status: "running",
+		mode: "workflow",
+		agents: ["scout", "reviewer"],
+		currentStep: 1,
+		startedAt: 0,
+		updatedAt: 1000,
+		steps: [
+			{ index: 0, agent: "scout", status: "completed", workflowKey: "step-0" },
+			{ index: 1, agent: "reviewer", status: "running", workflowKey: "step-1" },
+		],
+		workflowGraph: {
+			runId: "workflow-run",
+			mode: "workflow",
+			phases: [],
+			currentNodeId: "step-1",
+			get nodes() {
+				onNodesRead();
+				return nodes;
+			},
+		} as never,
+	};
+}
+
 test("row clips content to the available width", () => {
 	const rendered = row("abcdef", 6, theme as any);
 	assert.equal(visibleWidth(rendered), 6);
@@ -160,7 +191,7 @@ test("widget render keys keep compact payloads quiet and expanded payloads fresh
 	assert.notEqual(widgetRenderKey(warningDetailChange, true), widgetRenderKey(preflightJob, true));
 });
 
-test("seeded running glyphs advance at wall-clock frame boundaries while unseeded glyphs stay static", () => {
+test("seeded running glyphs stay stable until the supplied animation frame advances", () => {
 	const originalNow = Date.now;
 	const runningGlyph = (lines: string[]): string => lines
 		.map((line) => line.match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●]/u)?.[0])
@@ -181,16 +212,18 @@ test("seeded running glyphs advance at wall-clock frame boundaries while unseede
 
 	try {
 		Date.now = () => 1_000;
-		const seededBeforeBoundary = runningGlyph(buildWidgetLines([seededJob], theme, 180));
-		const unseededBeforeBoundary = runningGlyph(buildWidgetLines([unseededJob], theme, 180));
+		const seededFrame0 = runningGlyph(buildWidgetLines([seededJob], theme, 180, false, 0));
+		const unseededBefore = runningGlyph(buildWidgetLines([unseededJob], theme, 180));
 
 		Date.now = () => 1_125;
-		const seededAfterBoundary = runningGlyph(buildWidgetLines([seededJob], theme, 180));
-		const unseededAfterBoundary = runningGlyph(buildWidgetLines([unseededJob], theme, 180));
+		const seededSameFrame = runningGlyph(buildWidgetLines([seededJob], theme, 180, false, 0));
+		const unseededAfter = runningGlyph(buildWidgetLines([unseededJob], theme, 180));
+		const seededNextFrame = runningGlyph(buildWidgetLines([seededJob], theme, 180, false, 1));
 
-		assert.notEqual(seededAfterBoundary, seededBeforeBoundary);
-		assert.equal(unseededAfterBoundary, unseededBeforeBoundary);
-		assert.equal(unseededBeforeBoundary, "●");
+		assert.equal(seededSameFrame, seededFrame0);
+		assert.equal(unseededAfter, unseededBefore);
+		assert.equal(unseededBefore, "●");
+		assert.notEqual(seededNextFrame, seededFrame0);
 	} finally {
 		Date.now = originalNow;
 	}
@@ -322,6 +355,23 @@ test("compact chain rendering uses workflow graph labels and parallel groups", (
 	assert.match(text, /Review A/);
 	assert.match(text, /Review B/);
 	assert.match(text, /Step 3\/3: Writer/);
+});
+
+test("widget rendering reuses one staged workflow projection", () => {
+	let nodeReads = 0;
+	const lines = buildWidgetLines([countedWorkflowJob(() => nodeReads++)], theme as any, 120, false, 0);
+
+	assert.equal(nodeReads, 1);
+	assert.match(lines.join("\n"), /staged lane · stage 2\/2 · Review · reviewer · running/);
+	assert.match(lines.join("\n"), /Stage 2\/2: Review/);
+});
+
+test("widget render keys reuse one staged workflow projection", () => {
+	let nodeReads = 0;
+
+	widgetRenderKey(countedWorkflowJob(() => nodeReads++));
+
+	assert.equal(nodeReads, 1);
 });
 
 test("compact chain rendering shows failed zero-child dynamic fanout groups", () => {

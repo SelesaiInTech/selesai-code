@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { SUBAGENT_CHILD_STATUS_EVENT } from "../../src/shared/types.ts";
-import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR } from "../../src/runs/shared/external-job-bridge.ts";
 import { SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
 import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
@@ -381,6 +383,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(job.runningSteps, 2);
 			assert.equal(job.completedSteps, 0);
 			assert.equal(job.activeParallelGroup, true);
+			assert.equal(state.statusProjectionSessionId, "session-restored");
 			assert.ok(state.poller, "expected restored active jobs to start polling");
 			assert.ok(ui.renderRequests >= 2, "expected reset and restore to request widget renders");
 			assert.equal(typeof ui.widgets.at(-1), "function", "expected restored jobs to render the widget");
@@ -426,7 +429,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			updateActiveRunIndex(runDir, "running");
 			const state = createState();
 			state.currentSessionId = "session-restored-nested";
-			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 60_000 });
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, { pollIntervalMs: 60_000 });
 			tracker.restoreActiveJobs();
 			assert.equal(state.asyncJobs.get("run-restored-nested")?.nestedRoute?.eventSink, nestedRoute.eventSink);
 
@@ -479,7 +482,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			updateActiveRunIndex(runDir, "running");
 			const state = createState();
 			state.currentSessionId = "session-workflow";
-			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 60_000 });
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, { pollIntervalMs: 60_000 });
 			tracker.restoreActiveJobs();
 			assert.deepEqual(state.asyncJobs.get("workflow-run")?.workflow?.emits, [{ stage: "scan" }]);
 			assert.equal(state.asyncJobs.get("workflow-run")?.sessionRoot, "/trusted/workflow-sessions");
@@ -509,7 +512,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			fs.mkdirSync(runDir, { recursive: true });
 			const state = createState();
 			state.currentSessionId = "session-late-status";
-			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 60_000 });
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, { pollIntervalMs: 60_000 });
 			tracker.handleStarted({ id: "late-status-run", asyncDir: runDir, sessionId: "session-late-status", agent: "worker" });
 
 			await new Promise((resolve) => setTimeout(resolve, 150));
@@ -530,6 +533,181 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("does not sweep bridge requests for native jobs after an absent request directory", async () => {
+		const asyncRoot = createTempDir("pi-async-job-native-bridge-");
+		try {
+			const runDir = path.join(asyncRoot, "native-run");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "native-run",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 100,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+			const state = createState();
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+				watch: (() => { throw new Error("native watcher disabled for test"); }) as never,
+			});
+			tracker.handleStarted({ id: "native-run", asyncDir: runDir, agent: "worker" });
+			await waitForCondition(() => state.asyncJobs.get("native-run")?.status === "running", "native bridge eligibility refresh");
+
+			const requestDir = path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+			assert.equal(fs.existsSync(requestDir), false, "native jobs should tolerate a missing bridge directory");
+			fs.mkdirSync(requestDir, { recursive: true });
+			const requestPath = path.join(requestDir, "native.json");
+			fs.writeFileSync(requestPath, "{malformed", "utf-8");
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			assert.equal(fs.existsSync(requestPath), true, "native jobs must not consume bridge requests");
+			assert.equal(fs.existsSync(path.join(runDir, "external-job-responses", "native.json")), false);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("services an existing request once an external-job runner is identified", async () => {
+		const asyncRoot = createTempDir("pi-async-job-external-bridge-");
+		let unregister: (() => void) | undefined;
+		try {
+			const runDir = path.join(asyncRoot, "external-run");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "external-run",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 100,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running", runner: { type: "external-job", provider: "tracker-provider", options: {} } }],
+			}), "utf-8");
+			const requestDir = path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+			fs.mkdirSync(requestDir, { recursive: true });
+			fs.writeFileSync(path.join(requestDir, "existing.json"), JSON.stringify({
+				id: "existing",
+				operation: "start",
+				provider: "tracker-provider",
+				createdAt: Date.now(),
+				start: {
+					prompt: "prompt",
+					promptDigest: "digest",
+					cwd: runDir,
+					runId: "external-run",
+					stepIndex: 0,
+					agent: "worker",
+					options: {},
+				},
+			}), "utf-8");
+			let starts = 0;
+			unregister = registerExternalJobProvider({
+				name: "tracker-provider",
+				start: () => { starts++; return { providerJobId: "provider-job", state: "completed" }; },
+				status: () => ({ providerJobId: "provider-job", state: "completed" }),
+				result: () => ({ providerJobId: "provider-job", state: "completed" }),
+				reattach: () => ({ providerJobId: "provider-job", state: "completed" }),
+			});
+			const state = createState();
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+				watch: (() => { throw new Error("native watcher disabled for test"); }) as never,
+			});
+			tracker.handleStarted({ id: "external-run", asyncDir: runDir, agent: "worker" });
+
+			const responsePath = path.join(runDir, "external-job-responses", "existing.json");
+			await waitForCondition(() => fs.existsSync(responsePath), "existing external bridge request");
+			const response = JSON.parse(fs.readFileSync(responsePath, "utf-8")) as { ok?: boolean; result?: { providerJobId?: string } };
+			assert.equal(response.ok, true);
+			assert.equal(response.result?.providerJobId, "provider-job");
+			assert.equal(starts, 1);
+		} finally {
+			unregister?.();
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("services requests created after the initial missing-directory sweep", async () => {
+		const asyncRoot = createTempDir("pi-async-job-late-bridge-");
+		let unregister: (() => void) | undefined;
+		try {
+			const runDir = path.join(asyncRoot, "late-external-run");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "late-external-run",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 100,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running", runner: { type: "external-job", provider: "tracker-provider-late", options: {} } }],
+			}), "utf-8");
+			const state = createState();
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+				watch: (() => { throw new Error("native watcher disabled for test"); }) as never,
+			});
+			tracker.handleStarted({ id: "late-external-run", asyncDir: runDir, agent: "worker" });
+			await waitForCondition(() => state.asyncJobs.get("late-external-run")?.steps?.[0]?.runner?.type === "external-job", "external bridge eligibility refresh");
+			assert.equal(fs.existsSync(path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR)), false);
+
+			unregister = registerExternalJobProvider({
+				name: "tracker-provider-late",
+				start: () => ({ providerJobId: "late-provider-job", state: "completed" }),
+				status: () => ({ providerJobId: "late-provider-job", state: "completed" }),
+				result: () => ({ providerJobId: "late-provider-job", state: "completed" }),
+				reattach: () => ({ providerJobId: "late-provider-job", state: "completed" }),
+			});
+			const requestDir = path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+			fs.mkdirSync(requestDir, { recursive: true });
+			fs.writeFileSync(path.join(requestDir, "late.json"), JSON.stringify({
+				id: "late",
+				operation: "start",
+				provider: "tracker-provider-late",
+				createdAt: Date.now(),
+				start: {
+					prompt: "prompt",
+					promptDigest: "digest",
+					cwd: runDir,
+					runId: "late-external-run",
+					stepIndex: 0,
+					agent: "worker",
+					options: {},
+				},
+			}), "utf-8");
+
+			await waitForCondition(() => fs.existsSync(path.join(runDir, "external-job-responses", "late.json")), "late external bridge request");
+			const response = JSON.parse(fs.readFileSync(path.join(runDir, "external-job-responses", "late.json"), "utf-8")) as { ok?: boolean; result?: { providerJobId?: string } };
+			assert.equal(response.ok, true);
+			assert.equal(response.result?.providerJobId, "late-provider-job");
+		} finally {
+			unregister?.();
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("keeps bridge servicing when status is missing", async () => {
+		const asyncRoot = createTempDir("pi-async-job-malformed-bridge-");
+		try {
+			const runDir = path.join(asyncRoot, "malformed-external-run");
+			fs.mkdirSync(path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR), { recursive: true });
+			fs.writeFileSync(path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR, "malformed.json"), "{malformed", "utf-8");
+			const state = createState();
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+				watch: (() => { throw new Error("native watcher disabled for test"); }) as never,
+			});
+			tracker.handleStarted({ id: "malformed-external-run", asyncDir: runDir, agent: "worker" });
+
+			const responsePath = path.join(runDir, "external-job-responses", "malformed.json");
+			await waitForCondition(() => fs.existsSync(responsePath), "malformed bridge response");
+			const response = JSON.parse(fs.readFileSync(responsePath, "utf-8")) as { ok?: boolean; code?: string };
+			assert.equal(response.ok, false);
+			assert.equal(response.code, "malformed-request");
+			assert.equal(fs.existsSync(path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR, "malformed.json")), false);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("does not request quiet running widget renders on every liveness tick", async () => {
 		const asyncRoot = createTempDir("pi-async-job-quiet-widget-");
 		try {
@@ -545,7 +723,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			}), "utf-8");
 			const state = createState();
 			const ui = createUiContext();
-			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 10 });
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, { pollIntervalMs: 10 });
 			tracker.resetJobs(ui.ctx as never);
 			tracker.handleStarted({ id: "quiet-run", asyncDir: runDir, agent: "worker" });
 
@@ -576,7 +754,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			const state = createState();
 			let nativeWatchCalls = 0;
 			let terminalHooks = 0;
-			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, {
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, {
 				platform: "darwin",
 				pollIntervalMs: 10,
 				onJobTerminal: () => terminalHooks++,
@@ -625,7 +803,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			};
 			fs.writeFileSync(statusPath, JSON.stringify(statusPayload), "utf-8");
 			const state = createState();
-			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 60_000 });
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, { pollIntervalMs: 60_000 });
 			tracker.handleStarted({ id: "run-nested-events", asyncDir: runDir, agent: "worker", nestedRoute });
 
 			await new Promise((resolve) => setTimeout(resolve, 150));
@@ -675,7 +853,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			updateActiveRunIndex(runDir, "running");
 			const state = createState();
 			state.currentSessionId = "session-workflow";
-			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 10 });
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, { pollIntervalMs: 10 });
 			tracker.restoreActiveJobs();
 			assert.equal(state.asyncJobs.get("workflow-child")?.parentWorkflowRunId, "workflow-parent");
 			assert.equal(state.asyncJobs.get("workflow-child")?.workflowKey, "review");
@@ -713,7 +891,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 
 			const state = createState();
 			state.currentSessionId = "session-owner";
-			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, {
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, {
 				pollIntervalMs: 10,
 			});
 			tracker.restoreActiveJobs();
@@ -730,7 +908,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const state = createState();
 			state.currentSessionId = "session-owner";
-			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, {
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, {
 				completionRetentionMs: 5,
 				pollIntervalMs: 10,
 			});
@@ -777,7 +955,11 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.doesNotThrow(() => tracker.restoreActiveJobs(ui.ctx as never));
 			assert.equal(state.asyncJobs.size, 0);
 			assert.equal(state.poller, null);
-			assert.match(String(errors[0]?.[0] ?? ""), /Failed to restore active async jobs/);
+			assert.match(String(errors[0]?.[0] ?? ""), /Skipping corrupt active async run 'run-bad-status'/);
+			assert.match(String(errors[0]?.[0] ?? ""), /status\.json/);
+			assert.match(String(errors[0]?.[0] ?? ""), /active marker retained because runner liveness is unknown/);
+			assert.equal(fs.existsSync(runDir), true);
+			assert.equal(fs.existsSync(path.join(asyncRoot, ACTIVE_RUN_INDEX_DIR, "run-bad-status")), true);
 		} finally {
 			console.error = originalError;
 			removeTempDir(asyncRoot);
@@ -866,7 +1048,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("rebuilds unchanged running widgets for quiet animation ticks and stops at terminal status", async () => {
+	it("requests quiet animation repaints without rebuilding widgets and stops at terminal status", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
 		try {
@@ -894,7 +1076,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 
 			const requestsAfterStart = ui.renderRequests;
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.updatedAt === 2000, "first status load");
-			assert.ok(ui.renderRequests > requestsAfterStart, "first status load should redraw the widget");
+			await waitForCondition(() => ui.renderRequests > requestsAfterStart, "first status load widget redraw");
 
 			const requestsAfterStatusLoaded = ui.renderRequests;
 			const widgetsAfterStatusLoaded = ui.widgets.length;
@@ -911,12 +1093,12 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				},
 			})}\n`, "utf-8");
 			await waitForCondition(() => recorder.events.some((event) => event.channel === "subagent:control-event"), "control event delivery");
-			await waitForCondition(() => ui.widgets.length > widgetsAfterStatusLoaded, "running widget cadence rebuild");
-			assert.ok(ui.renderRequests > requestsAfterStatusLoaded, "running widget cadence rebuild should request a repaint when the bridge supports it");
+			await waitForCondition(() => ui.renderRequests > requestsAfterStatusLoaded, "running widget cadence repaint");
+			assert.equal(ui.widgets.length, widgetsAfterStatusLoaded, "animation-only ticks should not replace the widget component when the bridge supports repaint requests");
 
 			writeStatus(3000, 1);
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.toolCount === 1, "changed status load");
-			assert.ok(ui.widgets.length > widgetsAfterStatusLoaded, "changed status should replace the widget component");
+			await waitForCondition(() => ui.widgets.length > widgetsAfterStatusLoaded, "changed status widget replacement");
 
 			writeStatus(4000, 1, "complete");
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.status === "complete", "terminal status load");
@@ -925,6 +1107,56 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			await new Promise((resolve) => setTimeout(resolve, 35));
 			assert.equal(ui.widgets.length, widgetsAfterTerminal, "terminal-only jobs must not rebuild on the cadence");
 			assert.equal(ui.renderRequests, requestsAfterTerminal, "terminal-only jobs must not request cadence repaints");
+		} finally {
+			tracker?.resetJobs();
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("coalesces close per-job status refreshes into one widget replacement", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-coalesce-");
+		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+		try {
+			const runA = path.join(asyncRoot, "run-a");
+			const runB = path.join(asyncRoot, "run-b");
+			fs.mkdirSync(runA, { recursive: true });
+			fs.mkdirSync(runB, { recursive: true });
+			const writeStatus = (runDir: string, id: string, lastUpdate: number) => fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: id,
+				mode: "single",
+				state: "running",
+				startedAt: 1000,
+				lastUpdate,
+				steps: [{ agent: id, status: "running", startedAt: 1000 }],
+			}), "utf-8");
+			writeStatus(runA, "run-a", 2000);
+			writeStatus(runB, "run-b", 2000);
+
+			const watchCallbacks: Array<(event: string, file?: string) => void> = [];
+			const watch: typeof fs.watch = ((watchPath: fs.PathLike, listener: fs.WatchListener<string>) => {
+				if (String(watchPath).includes("run-")) watchCallbacks.push((event, file) => listener(event as fs.WatchEventType, file));
+				return { close() {}, on() { return this; }, unref() {} } as unknown as fs.FSWatcher;
+			}) as typeof fs.watch;
+			const state = createState();
+			const ui = createUiContext();
+			const recorder = createEventRecorder();
+			tracker = createTracker(recorder.pi, state as never, asyncRoot, { pollIntervalMs: 10000, watch });
+			tracker.resetJobs(ui.ctx as never);
+			tracker.handleStarted({ id: "run-a", asyncDir: runA, agent: "worker" });
+			tracker.handleStarted({ id: "run-b", asyncDir: runB, agent: "reviewer" });
+			await waitForCondition(() => state.asyncJobs.get("run-a")?.updatedAt === 2000 && state.asyncJobs.get("run-b")?.updatedAt === 2000, "initial status loads");
+			await waitForCondition(() => watchCallbacks.length > 0, "watch callbacks");
+			await new Promise((resolve) => setTimeout(resolve, 60));
+			const widgetsAfterInitial = ui.widgets.length;
+
+			writeStatus(runA, "run-a", 3000);
+			writeStatus(runB, "run-b", 3000);
+			for (const callback of [...watchCallbacks]) callback("change", "status.json");
+
+			await waitForCondition(() => state.asyncJobs.get("run-a")?.updatedAt === 3000 && state.asyncJobs.get("run-b")?.updatedAt === 3000, "coalesced status loads");
+			await waitForCondition(() => ui.widgets.length === widgetsAfterInitial + 1, "coalesced widget replacement");
+			await new Promise((resolve) => setTimeout(resolve, 60));
+			assert.equal(ui.widgets.length, widgetsAfterInitial + 1, "close status refreshes should share one widget replacement");
 		} finally {
 			tracker?.resetJobs();
 			removeTempDir(asyncRoot);
@@ -970,7 +1202,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-late-dir");
 			const state = createState();
-			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, {
+			const tracker = createTracker(createEventRecorder().selesai, state as never, asyncRoot, {
 				completionRetentionMs: 5,
 				pollIntervalMs: 60_000,
 			});

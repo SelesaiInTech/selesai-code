@@ -39,7 +39,7 @@ describe("fork prompt cache keys", () => {
 		assert.equal(Array.from(longKey).length, 64);
 		assert.match(longKey, /^pi-fork:[0-9a-f]{56}$/);
 
-		const prefix = "/Users/example/.pi/agent/sessions/".repeat(3);
+		const prefix = "/Users/example/.selesai/agent/sessions/".repeat(3);
 		assert.notEqual(deriveForkPromptCacheKey(`${prefix}/one.jsonl`), deriveForkPromptCacheKey(`${prefix}/two.jsonl`));
 	});
 

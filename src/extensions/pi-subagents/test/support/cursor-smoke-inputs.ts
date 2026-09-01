@@ -26,11 +26,11 @@ function pathWithin(parent: string, child: string): boolean {
 }
 
 export function cursorSmokeInputs(env: NodeJS.ProcessEnv): CursorSmokeInputs {
-	if (env.PI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE !== "1") {
-		throw new Error("PI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE=1 is required to attest that the operator-managed workspace is disposable.");
+	if (env.SELESAI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE !== "1") {
+		throw new Error("SELESAI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE=1 is required to attest that the operator-managed workspace is disposable.");
 	}
-	const workspace = existingDirectory(env.PI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE, "PI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE");
-	const stateRoot = existingDirectory(env.PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT, "PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT");
+	const workspace = existingDirectory(env.SELESAI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE, "SELESAI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE");
+	const stateRoot = existingDirectory(env.SELESAI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT, "SELESAI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT");
 	if (pathWithin(workspace, stateRoot) || pathWithin(stateRoot, workspace)) {
 		throw new Error("Cursor smoke workspace and state root must be separate directories so the production --add-dir launch shape is exercised.");
 	}

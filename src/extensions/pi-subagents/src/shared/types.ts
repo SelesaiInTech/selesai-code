@@ -144,6 +144,20 @@ export interface WorkflowRecoveryAction {
 }
 
 /**
+ * Bounded, host-generated identity for a resolved pi-subagents workflow resource.
+ * Permission/policy extensions can use it to distinguish resolved content from
+ * raw workflow scripts. This audit projection never grants execution authority.
+ */
+export interface WorkflowResourceProvenanceV1 {
+	kind: "workflow";
+	name: string;
+	version: number;
+	invocation: "named";
+	expansion: "resolved";
+	id: string;
+}
+
+/**
  * Bounded, launch-declared workflow lane metadata. This is display and
  * triage information only; capability ceilings, authorization, and cleanup
  * safety remain owned by their existing enforcement and handoff paths.
@@ -189,6 +203,7 @@ export type WorkflowReceiptEntry = WorkflowReceiptEntryResumability & {
 	requestedContext?: "fresh" | "fork";
 	resolvedContext?: "fresh" | "fork" | "mixed";
 	outputReference?: string;
+	acceptanceRecovery?: AcceptanceRecoveryMetadata;
 	externalAdapter?: ExternalCliReceiptMetadata;
 	continuation: { runIds: string[] };
 };
@@ -199,6 +214,7 @@ export interface WorkflowReceipt {
 	state: WorkflowReceiptState;
 	createdAt: number;
 	entries: Record<string, WorkflowReceiptEntry>;
+	resource?: WorkflowResourceProvenanceV1;
 	hostSteps?: HostStepNodeV1[];
 	workflowChildren?: WorkflowChildSummaryV1;
 	workflowResolution?: WorkflowTerminalResolution;
@@ -330,7 +346,7 @@ export interface CompletionBatchConfig {
 
 export interface WaitToolConfigObject {
 	enabled?: boolean;
-	/** Default blocking window for subagent_wait calls that omit timeoutMs. */
+	/** Default blocking window for bg_wait calls that omit timeoutMs. */
 	defaultTimeoutMs?: number;
 }
 
@@ -758,6 +774,7 @@ export interface SteeringRecoveryDescriptor {
 	model?: string;
 	modelProvider?: string;
 	modelOverrideFromParent?: boolean;
+	modelOrigin?: "explicit" | "inherited" | "configured";
 	fallbackModels?: string[];
 	fast?: boolean;
 	thinking?: string;
@@ -1086,6 +1103,18 @@ export type AcceptanceLedgerStatus =
 	| "reviewed"
 	| "accepted";
 
+/**
+ * Durable child evidence that can be handed to a read-only review after the
+ * acceptance envelope itself was rejected. This never upgrades acceptance;
+ * the enclosing ledger remains rejected and the child remains unsuccessful.
+ */
+export interface AcceptanceRecoveryMetadata {
+	status: "available-for-review";
+	reason: "acceptance-metadata-rejected";
+	reportPath: string;
+	reportHash: string;
+}
+
 export interface AcceptanceLedger {
 	status: AcceptanceLedgerStatus;
 	evidenceStatus: AcceptanceEvidenceStatus;
@@ -1095,6 +1124,7 @@ export interface AcceptanceLedger {
 	criteria: ResolvedAcceptanceGate[];
 	childReport?: AcceptanceReport;
 	childReportParseError?: string;
+	recovery?: AcceptanceRecoveryMetadata;
 	runtimeChecks: AcceptanceRuntimeCheck[];
 	verifyRuns: AcceptanceVerifyResult[];
 	reviewResult?: AcceptanceReviewResult;
@@ -1283,7 +1313,7 @@ export interface WaitCompletionChild {
 }
 
 /**
- * Terminal completion observed for a run a subagent_wait call covered. Carries run
+ * Terminal completion observed for a run a bg_wait call covered. Carries run
  * identity and the artifact trail; output text stays in the tool result content.
  */
 export interface WaitCompletion {
@@ -1329,7 +1359,7 @@ export interface Details {
 	results: SingleResult[];
 	workflowChildren?: WorkflowChildSummaryV1;
 	/**
-	 * Terminal completion payloads for runs this subagent_wait call observed
+	 * Terminal completion payloads for runs this bg_wait call observed
 	 * finishing. Async completions travel as result files that are consumed and
 	 * deleted after text delivery, so without this field their run and artifact
 	 * identity never reaches tool_result details.
@@ -1401,6 +1431,7 @@ export interface Details {
 	mission?: MissionRecord;
 	workflow?: {
 		value?: unknown;
+		resource?: WorkflowResourceProvenanceV1;
 		preflightWarnings?: string[];
 		trace: Array<{
 			operation: "run" | "status" | "steer" | "host";
@@ -2117,6 +2148,8 @@ export interface ActiveAsyncCapacitySnapshot {
 export interface SubagentState {
 	baseCwd: string;
 	currentSessionId: string | null;
+	/** Session for which active status projections were restored successfully. */
+	statusProjectionSessionId?: string | null;
 	/** Reload-stable identity for this parent Pi process/window. */
 	completionOwnerId?: string;
 	/** Runtime-owned artifact resolution inputs used by Fleet transcript targeting. */
@@ -2283,6 +2316,8 @@ export interface RunSyncOptions {
 	allowIntercomDetach?: boolean;
 	intercomEvents?: IntercomEventBus;
 	onUpdate?: (r: import("@earendil-works/pi-agent-core").AgentToolResult<Details>) => void;
+	/** Internal structured-delegation transport optimization: skip unchanged live snapshots. */
+	suppressUnchangedDelegationUpdates?: boolean;
 	onControlEvent?: (event: ControlEvent) => void;
 	/** Exposes a non-terminating detach callback while the child is active. */
 	onDetachReady?: (detach: (reason?: string) => boolean) => void;
@@ -2318,6 +2353,8 @@ export interface RunSyncOptions {
 	fast?: boolean;
 	/** The override came from the running parent session, not configuration. */
 	modelOverrideFromParent?: boolean;
+	/** How the launch model was selected: explicit per-call, configured agent primary, or inherited parent. */
+	modelOrigin?: "explicit" | "inherited" | "configured";
 	/** LLM intent arbiter for the completion mutation guard (rescues read-only review runs). */
 	llmIntentArbiter?: import("../runs/shared/llm-intent-arbiter.ts").TaskMutationArbiter;
 	/** Override the agent's default thinking level for this run */

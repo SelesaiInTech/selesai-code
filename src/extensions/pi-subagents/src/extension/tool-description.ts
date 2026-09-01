@@ -10,13 +10,13 @@ const WORKFLOW_RESUME_KEY_GUIDANCE = "Each workflow key identifies one result la
 const WORKFLOW_OUTPUT_BINDING_GUIDANCE = "For durable workflow child files, set output on runs.run/runs.all; task filename prose is not an output declaration, and return the child's outputReference, outputPathMapping, or artifactPaths instead of inventing a literal path.";
 const WORKFLOW_LANES_GUIDANCE = "For bounded parallel sequential chains, use runs.lanes([{key,stages:[{key,agent,task},{key,resume:'previous',task},...]}]); first stages run together, later stages sequence per lane, and the bounded board reports lane-local failures. Only an explicit structuredOutput.verdict === 'blocked' blocks a successful stage; reviewer prose is not parsed.";
 const WORKFLOW_SCRIPT_PORTABILITY_GUIDANCE = "workflowScript rejects nested async function, arrow, and method helpers; use top-level await, plain helper functions that return runs.run(...), or explicit Promise chains instead.";
-const WORKFLOW_HOST_GUIDANCE = "For one non-interactive operator-owned command, await runs.host(key,{kind:'command',command,timeoutMs,output?,role?,provider?}). runs.host has no per-step cwd: commands and relative output paths use the workflow cwd; set cwd on the outer subagent request instead (for example, {cwd:'/path/to/worktree',workflowScript:'...'}), or put a trusted directory change in the command (for example, 'cd /path/to/worktree && npm test'). v1 supports only command steps; output is bounded and command failure fails the workflow.";
-const AGENT_CAPABILITY_GUIDANCE = "For capability selection, use { action: \"list\", capabilities: true } for compact prompt-free rows.";
+const WORKFLOW_RESOURCE_GUIDANCE = "For permission/policy-extension interoperability, use an extension-owned named resource such as {workflow:'review',args:{task:'...'}} or {workflow:'run-ci',args:{command:'npm test'}}. The host resolves the script and authority internally so policy can distinguish it from raw workflowScript/workflowScriptPath; args are bounded plain data, and do not combine workflow with agent, task, workflowScript, or workflowScriptPath.";
+const WORKFLOW_HOST_GUIDANCE = "For permission-sensitive host calls, use an extension-owned resource such as {workflow:'run-ci',args:{command:'npm test'}}; raw workflowScript/workflowScriptPath have unknown resource provenance and cannot use runs.host. In a resource that grants it, await runs.host(key,{kind:'command',command,timeoutMs,output?,role?,provider?}). runs.host has no per-step cwd: commands and relative output paths use the workflow cwd; set cwd on the outer subagent request instead (for example, {cwd:'/path/to/worktree',workflowScript:'...'}), or put a trusted directory change in the command (for example, 'cd /path/to/worktree && npm test'). v1 supports only command steps; output is bounded and command failure fails the workflow.";
 
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and only run executable/non-disabled agents.
 • Keep execution and management separate: omit action for structured single-child or workflowScript execution; use action only for management/control.
-• Async/background runs are the normal default unless config sets asyncByDefault:false; set async:true explicitly when async behavior matters. Use async:false only when the parent must block until completion. Async mode still shows progress. Final reviews and gate checks stay async; needing a result is not a blocking reason. After an async launch, continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll status just to wait; use subagent_wait only when the current request must finish in this turn.
+• Async/background runs are the normal default unless config sets asyncByDefault:false; set async:true explicitly when async behavior matters. Use async:false only when the parent must block until completion. Async mode still shows progress. Final reviews and gate checks stay async; needing a result is not a blocking reason. After an async launch, continue independent work only until its next dependency barrier; consume the result before work that depends on it. Ordinary async subagents notify this session natively, so return control and do not call bg_wait merely to get a completion wake. Do not sleep or poll status just to wait; use bg_wait only for provider, detached, or other background work without a native notification when this turn must receive its result.
 • ${WORKFLOW_RESUME_KEY_GUIDANCE}
 • ${WORKFLOW_OUTPUT_BINDING_GUIDANCE}
 • ${WORKFLOW_HOST_GUIDANCE}
@@ -26,6 +26,8 @@ export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Async runs expose asyncId/asyncDir with status.json, events.jsonl, output logs, status via { action: "status", id }, and lifecycle diagnostics via { action: "debug.run", id }. Include output paths and residual risks when reporting results.`;
 
 export const FULL_SUBAGENT_TOOL_DESCRIPTION = `Run one child with { agent, task? }; use { workflowScript } for inline orchestration or { workflowScriptPath } to load it from the request cwd. The script inputs are mutually exclusive. Omit action for execution. Use action only for management/control actions.
+
+${WORKFLOW_RESOURCE_GUIDANCE}
 
 EXECUTION:
 • ${EXTERNAL_CLI_RUNNER_GUIDANCE}
@@ -49,6 +51,8 @@ ${SUBAGENT_SAFETY_GUIDANCE}`;
 
 export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Run one child with { agent, task? }; use { workflowScript } for inline orchestration or { workflowScriptPath } to load it from the request cwd. The script inputs are mutually exclusive. Omit action for execution. Use action only for management/control actions.
 
+${WORKFLOW_RESOURCE_GUIDANCE}
+
 EXECUTE:
 • ${EXTERNAL_CLI_RUNNER_GUIDANCE}
 • Call { action:"list" } first and use only executable/non-disabled agents.
@@ -65,7 +69,7 @@ MANAGE / CONTROL:
 • A mission object needs exactly one non-empty title or summary; objective and labels are optional. goal may only be true and requires budget:{tokens}.
 
 ASYNC / SAFETY:
-• Omitted async follows asyncByDefault config; set async:true explicitly when async behavior matters. Continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll merely to wait; use subagent_wait only when this turn must receive results.
+• Omitted async follows asyncByDefault config; set async:true explicitly when async behavior matters. Continue independent work only until its next dependency barrier; consume the result before work that depends on it. Ordinary async subagents notify this session natively, so return control and do not call bg_wait merely to get a completion wake. Do not sleep or poll merely to wait; use bg_wait only for provider, detached, or other background work without a native notification when this turn must receive its result.
 • ${WORKFLOW_RESUME_KEY_GUIDANCE}
 • ${WORKFLOW_OUTPUT_BINDING_GUIDANCE}
 • ${WORKFLOW_HOST_GUIDANCE}

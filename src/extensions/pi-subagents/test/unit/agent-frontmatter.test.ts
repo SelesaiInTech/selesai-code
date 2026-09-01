@@ -1017,7 +1017,7 @@ Review nested project work.
 		assert.equal(agent.filePath, path.join(packageRoot, "agents", "reviewer.md"));
 	}));
 
-	it("keeps nearest project root discovery by default when a nested .pi exists", () => withTempHome(() => {
+	it("keeps nearest project root discovery by default when a nested .selesai exists", () => withTempHome(() => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-nearest-root-default-"));
 		tempDirs.push(dir);
 		const nested = path.join(dir, "packages", "app", "src");
@@ -1083,7 +1083,7 @@ Plan outer project work.
 		assert.equal(reviewer?.override?.path, path.join(dir, ".selesai", "settings.json"));
 	}));
 
-	it("keeps git-root discovery stable when a nested linked worktree creates incidental .pi state", () => withTempHome(() => {
+	it("keeps git-root discovery stable when a nested linked worktree creates incidental .selesai state", () => withTempHome(() => {
 		const { repo, worktree } = createNestedLinkedWorktree();
 		const { packageAgentName, packageAgentPath, settingsPath } = writeLinkedWorktreePackage(repo);
 

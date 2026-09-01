@@ -2,7 +2,39 @@
 
 ## [Unreleased]
 
-## [0.60.0] - 2026-08-31
+## [0.61.0] - 2026-08-31
+
+### Highlights
+- Subagent runs use less context and repeat less status text, so everyday delegation is cheaper and easier to scan.
+- Status, Fleet, widgets, RPC, and background-work views refresh with less duplicated work.
+- Async recovery is more reliable when active status files, child reports, or provider fallback attempts go wrong.
+- Workflow permissions are clearer with named workflow resources and `bg_wait` as the primary background wait tool.
+- Model listings now show effective models for discovered and runtime-registered agents.
+
+### Added
+- Add extension-owned named workflow resources so permission and policy extensions can distinguish trusted workflow resources from raw scripts. Thanks [@mathiasloh](https://github.com/mathiasloh) for #1751.
+- Add workflow-only `globalConcurrencyLimit` and `maxSubagentSpawnsPerRun` overrides for top-level `workflowScript` calls. Thanks [@RapierCraft](https://github.com/RapierCraft) for #1760.
+- Add `bg_wait` as the primary background-work wait tool while keeping `subagent_wait` as a deprecated compatibility alias (#1729).
+
+### Changed
+- Show effective model mappings for discovered and runtime-registered subagents through management and `/subagents-models`. Thanks [@RapierCraft](https://github.com/RapierCraft) for #1732.
+- Trim default subagent prompt guidelines to five parent-facing entries while keeping advanced workflow details in the packaged guide. Thanks [@Ran-Xing](https://github.com/Ran-Xing) for #1746.
+- Reduce repeated heartbeat status updates during delegated runs while keeping foreground progress and complete terminal responses (#1739).
+- Clarify that `fallbackModels` handles provider/model timeouts but not run-level `timeoutMs` / `maxRuntimeMs` expiry. Thanks [@kaplan-shaked](https://github.com/kaplan-shaked) for #1745.
+- Pass requested session and timestamp context to background-work providers so they can avoid listing unrelated sessions while preserving strict validation (#1737).
+- Avoid repeated external-run display normalization during Fleet refresh while still validating externally replaced or mutated records (#1736).
+- Clarify that `oracle` and top-reasoning models are escalation tools, not routine defaults.
+- Serve broad RPC status requests from restored in-memory state when safe, while preserving targeted status and transcript behavior (#1735).
+
+### Fixed
+- Isolate corrupt active async status files during restoration so valid runs remain available and corrupt run artifacts are preserved. Thanks [@zhexulong](https://github.com/zhexulong) for #1756.
+- Reduce async widget update churn during running workflows by repainting animation ticks without reinstalling the widget and coalescing close status refreshes (#1726).
+- Avoid repeated staged workflow projection during widget rendering. Thanks [@kkkhs](https://github.com/kkkhs) for #1730.
+- Preserve durable file-only child reports and continue read-only workflow review after malformed acceptance metadata (#1724).
+- Preserve model origins across fallback and fork preparation, so eligible fallbacks work for unavailable configured primaries while invalid explicit models still fail closed. Thanks [@xz-dev](https://github.com/xz-dev) for #1747.
+- Stop hidden 125ms spinner redraws while keeping progress refreshes and one-second animation frames (#1747).
+
+## [0.60.0] - 2026-08-30
 
 ### Highlights
 - Ask for the runtime delegation catalog as clean rows: `subagent({ action: "list", capabilities: true })` returns compact, prompt-free capability rows and machine metadata.

@@ -158,7 +158,7 @@ Inspect env.
 		assert.equal(fs.existsSync(path.join(agentDir, "agents", `${createdName}.md`)), true);
 	});
 
-	it("ignores nested .pi and sync-backups agent definitions", () => {
+	it("ignores nested .selesai and sync-backups agent definitions", () => {
 		const userAgentsDir = path.join(agentDir, "agents");
 		const rootAgentPath = path.join(userAgentsDir, "root-agent.md");
 		writeFile(rootAgentPath, `---

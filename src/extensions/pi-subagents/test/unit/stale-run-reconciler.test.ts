@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { checkPidLiveness, reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 
 function tempRoot(prefix: string): string {
@@ -393,6 +394,45 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(result.repaired, true);
 			assert.equal(result.status?.state, "complete");
 			assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf-8")).summary, "already done");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not abort the whole async-run list when one run's reconcile write throws", () => {
+		const root = tempRoot("pi-list-resilience-");
+		try {
+			const asyncDirRoot = path.join(root, "async-subagent-runs");
+			const asyncDir = path.join(asyncDirRoot, "run-stale");
+			fs.mkdirSync(path.join(asyncDirRoot, ".active-runs"), { recursive: true });
+			fs.writeFileSync(path.join(asyncDirRoot, ".active-runs", "run-stale"), "");
+			writeStatus(asyncDir, {
+				runId: "run-stale",
+				sessionId: "session-current",
+				state: "running",
+				pid: 12345,
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+			});
+			// Place the results dir under a regular file so the stale run's
+			// repair-write lookup throws ENOTDIR mid-reconcile, mirroring the
+			// unaddressable-run failures that used to abort the whole restore.
+			const blocker = path.join(root, "blocked");
+			fs.writeFileSync(blocker, "not a dir");
+			const badResultsDir = path.join(blocker, "async-subagent-results");
+
+			const runs = listAsyncRuns(asyncDirRoot, {
+				states: ["queued", "running"],
+				sessionId: "session-current",
+				resultsDir: badResultsDir,
+				now: () => 2000,
+			});
+
+			// The throwing run is still surfaced via the non-repairing status read;
+			// critically, no error escaped to abort restoring other runs.
+			assert.equal(runs.length, 1);
+			assert.equal(runs[0].id, "run-stale");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

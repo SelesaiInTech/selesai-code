@@ -69,6 +69,16 @@ describe("workflow receipts", () => {
 		assert.equal(readWorkflowReceipt(asyncRoot, "workflow-old").entries.advisor?.externalAdapter, undefined);
 	});
 
+	it("round-trips named workflow resource provenance", () => {
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-resource");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const resource = { kind: "workflow" as const, name: "review", version: 1, invocation: "named" as const, expansion: "resolved" as const, id: "resource-1" };
+		const receipt = buildWorkflowReceipt({ workflowRunId: "workflow-resource", state: "complete", children: [], resource, createdAt: 10 });
+		writeWorkflowReceipt(asyncDir, receipt);
+		assert.deepEqual(readWorkflowReceipt(asyncRoot, "workflow-resource").resource, resource);
+	});
+
 	it("round-trips bounded host CI/gate state in terminal receipts", () => {
 		const asyncRoot = tempRoot();
 		const asyncDir = path.join(asyncRoot, "workflow-host");
@@ -140,6 +150,26 @@ describe("workflow receipts", () => {
 		const serialized = JSON.stringify(receipt);
 		assert.doesNotMatch(serialized, /structuredOutput|artifactPaths|"output"/);
 		assert.ok(serialized.length < 400_000, `receipt metadata unexpectedly large: ${serialized.length}`);
+	});
+
+	it("round-trips durable acceptance recovery metadata in terminal receipts", () => {
+		const recovery = {
+			status: "available-for-review" as const,
+			reason: "acceptance-metadata-rejected" as const,
+			reportPath: "/tmp/writer-report.md",
+			reportHash: "b".repeat(64),
+		};
+		const receipt = buildWorkflowReceipt({
+			workflowRunId: "workflow-recovery",
+			state: "complete",
+			children: [child("writer", { ok: false, recovery })],
+			createdAt: 10,
+		});
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-recovery");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		writeWorkflowReceipt(asyncDir, receipt);
+		assert.deepEqual(readWorkflowReceipt(asyncRoot, "workflow-recovery").entries.writer?.acceptanceRecovery, recovery);
 	});
 
 	it("persists structured partial outcomes for workflows and children", () => {

@@ -366,7 +366,7 @@ describe("buildPiArgs session wiring", () => {
 		assert.equal(env[SUBAGENT_PARENT_SESSION_ENV], "direct-parent");
 	});
 
-	it("passes the child display session name through as PI_SUBAGENT_SESSION_NAME", () => {
+	it("passes the child display session name through as SELESAI_SUBAGENT_SESSION_NAME", () => {
 		const { env } = buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",
@@ -376,10 +376,10 @@ describe("buildPiArgs session wiring", () => {
 			sessionName: "worker: Fix the flaky test",
 		});
 
-		assert.equal(env.PI_SUBAGENT_SESSION_NAME, "worker: Fix the flaky test");
+		assert.equal(env.SELESAI_SUBAGENT_SESSION_NAME, "worker: Fix the flaky test");
 	});
 
-	it("omits PI_SUBAGENT_SESSION_NAME when no session name is provided", () => {
+	it("omits SELESAI_SUBAGENT_SESSION_NAME when no session name is provided", () => {
 		const { env } = buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",
@@ -388,7 +388,7 @@ describe("buildPiArgs session wiring", () => {
 			inheritSkills: false,
 		});
 
-		assert.equal(env.PI_SUBAGENT_SESSION_NAME, undefined);
+		assert.equal(env.SELESAI_SUBAGENT_SESSION_NAME, undefined);
 	});
 
 	it("falls back to inherited parent session env for permission forwarding", () => {

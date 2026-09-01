@@ -34,7 +34,7 @@ const SUBAGENT_INHERIT_SKILLS_ENV = "SELESAI_SUBAGENT_INHERIT_SKILLS";
 export const SUBAGENT_INTERCOM_SESSION_NAME_ENV = "SELESAI_SUBAGENT_INTERCOM_SESSION_NAME";
 /** Human-readable child display name (agent + task excerpt) set by the parent
  *  at launch; applied via pi.setSessionName when no intercom target exists. */
-export const SUBAGENT_SESSION_NAME_ENV = "PI_SUBAGENT_SESSION_NAME";
+export const SUBAGENT_SESSION_NAME_ENV = "SELESAI_SUBAGENT_SESSION_NAME";
 const STEERING_LEGACY_SETTLE_FALLBACK_MS = 1000;
 const STEERING_SAFETY_POLL_INTERVAL_MS = 5000;
 

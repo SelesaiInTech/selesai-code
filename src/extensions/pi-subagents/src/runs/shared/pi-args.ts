@@ -181,7 +181,7 @@ export interface BuildPiArgsInput {
 	promptFileStem?: string;
 	intercomSessionName?: string;
 	/** Human-readable display name for the child session (agent + task excerpt,
-	 *  derived by the caller). Passed to the child as PI_SUBAGENT_SESSION_NAME;
+	 *  derived by the caller). Passed to the child as SELESAI_SUBAGENT_SESSION_NAME;
 	 *  the prompt runtime applies it via pi.setSessionName unless an intercom
 	 *  target takes precedence. */
 	sessionName?: string;
@@ -939,7 +939,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		env.SELESAI_SUBAGENT_INTERCOM_SESSION_NAME = input.intercomSessionName;
 	}
 	if (input.sessionName?.trim()) {
-		env.PI_SUBAGENT_SESSION_NAME = input.sessionName.trim();
+		env.SELESAI_SUBAGENT_SESSION_NAME = input.sessionName.trim();
 	}
 	if (input.orchestratorIntercomTarget) {
 		env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = input.orchestratorIntercomTarget;

@@ -32,6 +32,7 @@ Method notes:
 - `steer` requires an async run `id` (plus optional child `index`) and a non-empty `message`; its reply preserves the normal acknowledged-delivery result. Optional `mode` values are `steer` (default), `follow_up`, and `auto`, and receipts include `deliveryStatus: "delivered" | "queued"`. RPC steering disables the direct tool's pause-and-revive recovery in every mode so an extension keeps authority over the exact child it spawned; `ping.capabilities.nonRecoveringSteer` advertises this guarantee.
 - `resume` requires a run target and non-empty `message`. It delegates to the existing revival path, which validates current-session ownership, persisted session/recovery metadata, stopped/live state, capability ceilings, and the exclusive session lease before returning the new async run details. Callers may request a `file-only` output path for the revived result without overriding its model, tools, or budgets. `ping.capabilities.resume` advertises this seam.
 - `stop` targets current-session top-level async runs through the stop control channel and records a `stopped` lifecycle instead of reporting a timeout.
+- `status` keeps targeted and rich requests on the executor-backed path. A request with no `id`, `runId`, `dir`, `index`, `view`, or `lines` may use the restored in-memory projections and a short summary; when the live state is missing, stale, session-mismatched, or not restored, it falls back to normal executor status. Status `view`, `lines`, and `index` are forwarded for targeted transcript/fleet requests. Successful replies retain `text`, `details`, `fleet`, and `asyncSnapshot`; the short summary intentionally omits canonical filesystem details, wait subscriptions, and budget annotations.
 
 Capability advertisements on `ping`:
 
@@ -42,6 +43,7 @@ Capability advertisements on `ping`:
 - `processTerminalProof` — the process-terminal proof status (see [observability.md](observability.md#process-terminal-proof)).
 - `nonRecoveringSteer` — RPC steering never pauses-and-revives.
 - `resume` — the revival seam described above.
+- `statusProjection: { version: 1, untargeted: "in-memory-when-ready", targeted: "executor" }` — untargeted status may use restored bounded projections; targeted or rich status remains executor-backed.
 - `fleetStatus: { version: 1 }` — successful `status` replies additionally include `data.fleet`.
 
 Structured delegation progress updates carry `runId` as soon as foreground execution allocates it, so a caller can retain the package-owned revival target even if its own tool turn is interrupted before the terminal response. Foreground `details.results[]` rows also include a numeric `index` that is unique within the run and stable across partial progress snapshots and the final result; use `(runId, index)` instead of row position to correlate single, counted parallel, and chain children.
@@ -53,6 +55,8 @@ When `ping.capabilities.fleetStatus` is `{ version: 1 }`, successful `status` re
 Entries are bounded, current-session public display records with an opaque reconciliation `key`, resolved `agent`, optional `role`, `model`, `effort`, caller-facing `goal`, safe `startedAt`, and `{ input, output, total }` tokens. `totalActive` and `omitted` preserve overflow information beyond the bounded entry window.
 
 The DTO intentionally never exposes run, async, or tool IDs. Clients must ignore unknown fields and fall back to status text when the capability is absent.
+
+`data.asyncSnapshot` is a separate bounded projection included on successful status replies when available. Its `runs[].id` contains the async run id; unlike the fleet DTO, it is not an opaque display key. Fleet keys remain opaque and must not be interpreted as run or async identifiers.
 
 ### Scope
 
@@ -129,7 +133,7 @@ updateExternalRun(ctx.sessionManager.getSessionId(), "dependency-review", {
 unregisterExternalRun(ctx.sessionManager.getSessionId(), "dependency-review");
 ```
 
-The API validates and caches bounded display fields when the caller registers or updates a job. FleetView reads that cache only. It does not poll caller code. `snapshotExternalRuns(sessionId)` and `listExternalRuns(sessionId)` return bounded current-session snapshots. By default, malformed cached records throw with the validation error. Display-only Fleet callers can pass `{ ignoreMalformed: true, onMalformedRecord }` to remove bad records and keep rendering with a programmatic diagnostic.
+The API validates and caches bounded display fields when the caller registers or updates a job. FleetView reads that cache only. It does not poll caller code. `snapshotExternalRuns(sessionId)` and `listExternalRuns(sessionId)` return bounded current-session snapshots. Snapshots filter the session-qualified cache key before inspecting record fields; API-written records avoid repeated normalization through module-private provenance, while records replaced or mutated through the process-local registry are validated on demand. By default, malformed records for the requested session throw with the validation error. Display-only Fleet callers can pass `{ ignoreMalformed: true, onMalformedRecord }` to remove bad records and keep rendering with a programmatic diagnostic.
 
 External jobs are observational. The caller owns execution, persistence, cancellation, and result delivery. FleetView does not expose stop, steer, resume, cancel, or Herdr controls for them. Supplied report and transcript paths are shown as bounded text only; FleetView does not read arbitrary external paths.
 
@@ -229,6 +233,8 @@ Results:
 - Result mode is explicit. Text remains literal even when it looks like JSON. Structured mode returns the separately captured, schema-validated JSON value.
 - Terminal usage reports input, output, cache-read, cache-write, cost, turns, tool calls, and duration alongside the effective model and thinking level when known.
 
+Live update events are bounded progress snapshots, not patches, so consumers should replace the prior snapshot rather than merge it as a delta. Structured delegation coalesces heartbeats whose delegation-visible progress and recent output are unchanged; a duration-only heartbeat therefore does not produce another update. The terminal response remains authoritative for the complete result, error, and final usage details.
+
 Bounds:
 
 - Schemas are capped at 64 KiB; tasks and returned text/structured values are capped at 1 MiB, with smaller bounds on identity/configuration strings and a maximum `timeoutMs` of 2,147,483,647.
@@ -279,7 +285,7 @@ Schedules created while a ceiling is active are rejected until durable schedule 
 
 ## Background-work provider API
 
-Other Pi extensions can make their current-session jobs visible to `subagent_wait` through the process-local provider contract:
+Other Pi extensions can make their current-session jobs visible to `bg_wait` through the process-local provider contract:
 
 ```ts
 import { registerBackgroundWorkProvider } from "pi-subagents/background-work";
@@ -287,8 +293,8 @@ import { registerBackgroundWorkProvider } from "pi-subagents/background-work";
 const dispose = registerBackgroundWorkProvider({
   name: "my-background-extension",
   wakeChannels: ["my-extension:job-finished"],
-  listActiveWork: () => jobs
-    .filter((job) => job.status === "running")
+  listActiveWork: (context) => jobs
+    .filter((job) => job.status === "running" && (!context || job.ownerSessionId === context.sessionId))
     .map((job) => ({ id: job.id, sessionId: job.ownerSessionId })),
   reconcile: ({ sessionId, nowMs }) => reconcileJobs(sessionId, nowMs),
 });
@@ -296,13 +302,14 @@ const dispose = registerBackgroundWorkProvider({
 
 Semantics:
 
-- Each item needs a stable provider-local ID and the exact Pi session ID that owns it. `subagent_wait` captures those identities rather than a count, so one job finishing while another starts still satisfies first-completion waits without losing the replacement.
+- Each item needs a stable provider-local ID and the exact Pi session ID that owns it. `bg_wait` captures those identities rather than a count, so one job finishing while another starts still satisfies first-completion waits without losing the replacement.
+- `listActiveWork` receives an optional `{ sessionId, nowMs }` context during snapshots. Providers can use `sessionId` to avoid scanning unrelated work; existing zero-argument `() => items` providers continue to work, and returned items are still validated and filtered to the exact requested session.
 - It filters snapshots to the active session, fails closed if a provider disappears while its work is tracked, and surfaces malformed snapshots or provider errors with provider context.
 - Wake channels only shorten polling; validated snapshots remain authoritative.
 - Providers share a registry through `Symbol.for("pi-subagents.background-work.v1")`, allowing independently loaded extension modules to meet in one Pi process.
 - Registration is reload-safe: a new provider with the same name replaces the old callback, and the old disposer cannot remove the replacement. Call the disposer during extension shutdown when possible.
 
-Child processes do not gain provider tools or extensions automatically. Add `subagent_wait` to the child agent's `tools` allowlist and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting is serialized through foreground, async, resume, chain, parallel, and fanout launch paths; `SELESAI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence.
+Child processes do not gain provider tools or extensions automatically. Add `bg_wait` to the child agent's `tools` allowlist (or the deprecated `subagent_wait` compatibility alias) and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting is serialized through foreground, async, resume, chain, parallel, and fanout launch paths; `SELESAI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence.
 
 ## External job provider bridge
 
@@ -399,7 +406,7 @@ The API returns discriminated structured results with canonical project root, bi
 
 A host that embeds this extension owns whether completion wakes can be delivered at all.
 
-Ordinary async and foreground completion wakes use `registerSubagentNotify` and `sendCompletion`. They listen for completion events and deliver through `pi.sendMessage(..., { triggerTurn })`. Session shutdown stops the result watcher and disposes this completion notifier. `createWaitSubscriptionManager` is separate: it is the explicit non-blocking `subagent_wait` subscription path, not the ordinary completion wake path.
+Ordinary async and foreground completion wakes use `registerSubagentNotify` and `sendCompletion`. They listen for completion events and deliver through `pi.sendMessage(..., { triggerTurn })`. Session shutdown stops the result watcher and disposes this completion notifier. `createWaitSubscriptionManager` is separate: it is the explicit non-blocking `bg_wait` subscription path for work without native notification, not the ordinary completion wake path. `subagent_wait` remains a deprecated compatibility alias.
 
 Detached children do not stop when the session does. They are the host process's children, not the session's, so the run keeps going, completes, and notifies nobody. What is lost is the notification, not the work.
 

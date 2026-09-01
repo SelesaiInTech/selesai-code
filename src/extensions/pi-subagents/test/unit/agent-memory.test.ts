@@ -58,7 +58,7 @@ function withTempHome<T>(fn: (home: string) => T): T {
 	}
 }
 
-// Create a temp project root that findNearestProjectRoot will recognise (.pi dir present).
+// Create a temp project root that findNearestProjectRoot will recognise (.selesai dir present).
 function mkProject(): string {
 	const dir = mkdtemp("pi-subagents-mem-project-");
 	fs.mkdirSync(path.join(dir, ".selesai", "agents"), { recursive: true });

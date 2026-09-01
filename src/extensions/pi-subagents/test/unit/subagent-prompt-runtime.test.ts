@@ -62,7 +62,7 @@ const envSnapshot = {
 	SELESAI_SUBAGENT_CHILD_AGENT: process.env.SELESAI_SUBAGENT_CHILD_AGENT,
 	SELESAI_SUBAGENT_CHILD_INDEX: process.env.SELESAI_SUBAGENT_CHILD_INDEX,
 	SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG: process.env.SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG,
-	PI_SUBAGENT_SESSION_NAME: process.env.PI_SUBAGENT_SESSION_NAME,
+	SELESAI_SUBAGENT_SESSION_NAME: process.env.SELESAI_SUBAGENT_SESSION_NAME,
 };
 
 const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
@@ -131,8 +131,8 @@ afterEach(() => {
 	else process.env[SUBAGENT_CHILD_INDEX_ENV] = envSnapshot.SELESAI_SUBAGENT_CHILD_INDEX;
 	if (envSnapshot.SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG === undefined) delete process.env[CHILD_WATCHDOG_CONFIG_ENV];
 	else process.env[CHILD_WATCHDOG_CONFIG_ENV] = envSnapshot.SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG;
-	if (envSnapshot.PI_SUBAGENT_SESSION_NAME === undefined) delete process.env.PI_SUBAGENT_SESSION_NAME;
-	else process.env.PI_SUBAGENT_SESSION_NAME = envSnapshot.PI_SUBAGENT_SESSION_NAME;
+	if (envSnapshot.SELESAI_SUBAGENT_SESSION_NAME === undefined) delete process.env.SELESAI_SUBAGENT_SESSION_NAME;
+	else process.env.SELESAI_SUBAGENT_SESSION_NAME = envSnapshot.SELESAI_SUBAGENT_SESSION_NAME;
 });
 
 function setSupervisorEnv(): void {
@@ -1124,10 +1124,10 @@ describe("subagent prompt runtime", () => {
 			},
 		} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
 
-		assert.deepEqual(registered, ["subagent_wait"]);
+		assert.deepEqual(registered, ["bg_wait", "subagent_wait"]);
 		handlers.get("session_start")?.({});
 		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
-		assert.deepEqual(registered, ["subagent_wait"]);
+		assert.deepEqual(registered, ["bg_wait", "subagent_wait"]);
 	});
 
 	it("does not satisfy strict allowlists with native generic intercom", () => {
@@ -1152,12 +1152,12 @@ describe("subagent prompt runtime", () => {
 			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
 
 			handlers.get("session_start")?.({});
-			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
+			assert.deepEqual(registered, ["bg_wait", "subagent_wait", "contact_supervisor"]);
 			assert.throws(() => handlers.get("agent_start")?.({}), /requested unavailable child tools: read, grep, find, ls, bash, edit, write, intercom/);
 			assert.deepEqual(readChildToolDiagnostic(diagnosticPath), {
 				agent: "scout",
 				required: ["read", "grep", "find", "ls", "bash", "edit", "write", "intercom"],
-				available: ["subagent_wait", "contact_supervisor"],
+				available: ["bg_wait", "subagent_wait", "contact_supervisor"],
 				missing: ["read", "grep", "find", "ls", "bash", "edit", "write", "intercom"],
 			});
 		} finally {
@@ -1212,7 +1212,7 @@ describe("subagent prompt runtime", () => {
 		handlers.get("session_start")?.({});
 		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
 
-		assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
+		assert.deepEqual(registered, ["bg_wait", "subagent_wait", "contact_supervisor"]);
 	});
 
 	it("registers only native supervisor tools at runtime when pi-intercom is absent", async () => {
@@ -1234,10 +1234,10 @@ describe("subagent prompt runtime", () => {
 			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
 
 			handlers.get("session_start")?.({});
-			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
+			assert.deepEqual(registered, ["bg_wait", "subagent_wait", "contact_supervisor"]);
 
 			await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
-			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
+			assert.deepEqual(registered, ["bg_wait", "subagent_wait", "contact_supervisor"]);
 		} finally {
 			if (previousRequiredTools === undefined) delete process.env[REQUIRED_CHILD_TOOLS_ENV];
 			else process.env[REQUIRED_CHILD_TOOLS_ENV] = previousRequiredTools;

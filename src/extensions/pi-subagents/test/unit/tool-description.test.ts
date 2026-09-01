@@ -33,10 +33,10 @@ describe("registered subagent tool description", () => {
 		const description = buildSubagentToolDescription();
 		const metadata = buildSubagentToolPromptMetadata();
 		assert.equal(description, FULL_SUBAGENT_TOOL_DESCRIPTION);
-		assert.equal(metadata.promptSnippet, undefined);
-		assert.equal(metadata.promptGuidelines, undefined);
 		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for inline orchestration/i);
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
+		assert.equal(metadata.promptSnippet, undefined);
+		assert.equal(metadata.promptGuidelines, undefined);
 	});
 
 	it("keeps the full description when configured", () => {
@@ -54,7 +54,6 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /receipts are queued, delivered, missed, or failed/i);
 		assert.match(description, /repository mutation lanes.*worktree:true.*runs\.run\/runs\.all.*managed isolation/i);
 		assert.match(description, /ordinary JavaScript statement body.*explicit return/i);
-		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.match(description, /Sequential example/i);
 		assert.match(description, /Parallel example/i);
 		assert.match(description, /defaultSubagentContext wins over agent defaultContext/i);
@@ -74,6 +73,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /Oracle\/advisor consultations should use supervisor dialogue for material unknowns when available/i);
 		assert.match(description, /same-role fallback challenge and label it as fallback/i);
 		assert.match(description, /status\.json/);
+		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.match(description, /suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
 		assert.match(description, /suffix wins over the agent's thinking default/i);
 		assert.match(description, /watchdog\.configure' and is ignored on dispatch/i);
@@ -91,9 +91,10 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /runs\.steer\(key,message,options\?\).*prior keyed child/i);
 		assert.match(description, /never accepts a raw run id/i);
 		assert.match(description, /repository mutation lanes.*worktree:true.*runs\.run\/runs\.all.*managed isolation/i);
-		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.doesNotMatch(description, /tasks\[\]|chain\[\]/i);
-		assert.match(description, /subagent_wait/i);
+		assert.match(description, /ordinary async subagents notify this session natively.*return control.*do not call bg_wait/i);
+		assert.match(description, /bg_wait only for provider, detached, or other background work without a native notification/i);
+		assert.doesNotMatch(description, /subagent_wait/i);
 		assert.match(description, /continue independent work only until its next dependency barrier; consume the result before work that depends on it/i);
 		assert.match(description, /children\.list.*resume only rows reported resumable/i);
 		assert.match(description, /Each workflow key identifies one result lane.*new stable workflow key.*retained resume pass/i);
@@ -104,6 +105,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /same-role fallback challenge and label it as fallback/i);
 		assert.match(description, /exactly one non-empty title or summary/i);
 		assert.match(description, /goal may only be true and requires budget:\{tokens\}/i);
+		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.match(description, /Per-run thinking is a suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
 		assert.match(description, /suffix wins over the agent's thinking default/i);
 		assert.match(description, /watchdog\.configure' and is ignored on dispatch/i);
@@ -260,7 +262,7 @@ describe("registered subagent tool description", () => {
 		fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config), "utf-8");
 	}
 
-	it("registers split, full, compact, custom, and fallback descriptions from extension config", () => {
+	it("registers full, compact, custom, and fallback descriptions from extension config", () => {
 		const defaultAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-default-"));
 		writeExtensionConfig(defaultAgentDir, {});
 		const defaultTool = readRegisteredTool(defaultAgentDir);

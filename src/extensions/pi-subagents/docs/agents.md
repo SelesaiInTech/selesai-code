@@ -81,13 +81,13 @@ The adapter validates `codex --version` and `codex exec --help` only when a run 
 Maintainers can collect real smoke evidence without making it part of the normal test suite:
 
 ```bash
-PI_SUBAGENTS_CODEX_EXEC_SMOKE=1 \
-PI_SUBAGENTS_CODEX_EXEC_SMOKE_REPORT=/tmp/pi-subagents-codex-exec-smoke.json \
+SELESAI_SUBAGENTS_CODEX_EXEC_SMOKE=1 \
+SELESAI_SUBAGENTS_CODEX_EXEC_SMOKE_REPORT=/tmp/pi-subagents-codex-exec-smoke.json \
 node --experimental-strip-types --import ./test/support/register-loader.mjs \
   --test test/integration/codex-exec-smoke.test.ts
 
-PI_SUBAGENTS_CODEX_EXEC_WRITER_SMOKE=1 \
-PI_SUBAGENTS_CODEX_EXEC_WRITER_SMOKE_REPORT=/tmp/pi-subagents-codex-exec-writer-smoke.json \
+SELESAI_SUBAGENTS_CODEX_EXEC_WRITER_SMOKE=1 \
+SELESAI_SUBAGENTS_CODEX_EXEC_WRITER_SMOKE_REPORT=/tmp/pi-subagents-codex-exec-writer-smoke.json \
 node --experimental-strip-types --import ./test/support/register-loader.mjs \
   --test test/integration/codex-exec-writer-smoke.test.ts
 ```
@@ -116,13 +116,13 @@ The adapter validates `claude --version` and `claude --help` only when a run lau
 Maintainers can opt in to separate read-only and writer canaries:
 
 ```bash
-PI_SUBAGENTS_CLAUDE_CODE_SMOKE=1 \
-PI_SUBAGENTS_CLAUDE_CODE_SMOKE_REPORT=/tmp/pi-subagents-claude-code-smoke.json \
+SELESAI_SUBAGENTS_CLAUDE_CODE_SMOKE=1 \
+SELESAI_SUBAGENTS_CLAUDE_CODE_SMOKE_REPORT=/tmp/pi-subagents-claude-code-smoke.json \
 node --experimental-strip-types --import ./test/support/register-loader.mjs \
   --test test/integration/claude-code-smoke.test.ts
 
-PI_SUBAGENTS_CLAUDE_CODE_WRITER_SMOKE=1 \
-PI_SUBAGENTS_CLAUDE_CODE_WRITER_SMOKE_REPORT=/tmp/pi-subagents-claude-code-writer-smoke.json \
+SELESAI_SUBAGENTS_CLAUDE_CODE_WRITER_SMOKE=1 \
+SELESAI_SUBAGENTS_CLAUDE_CODE_WRITER_SMOKE_REPORT=/tmp/pi-subagents-claude-code-writer-smoke.json \
 node --experimental-strip-types --import ./test/support/register-loader.mjs \
   --test test/integration/claude-code-writer-smoke.test.ts
 ```
@@ -147,11 +147,11 @@ These headless smokes rely on saved workspace trust. Cursor documents no passive
 The smoke requires two existing, separate operator-managed directories and an explicit disposable-workspace attestation:
 
 ```bash
-export PI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE=/tmp/pi-subagents-cursor-smoke-workspace
-export PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT=/tmp/pi-subagents-cursor-smoke-state
-export PI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE=1
-mkdir -p "$PI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE" "$PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT"
-mkdir -p "$PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT/external-0.cursor-prompt"
+export SELESAI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE=/tmp/pi-subagents-cursor-smoke-workspace
+export SELESAI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT=/tmp/pi-subagents-cursor-smoke-state
+export SELESAI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE=1
+mkdir -p "$SELESAI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE" "$SELESAI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT"
+mkdir -p "$SELESAI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT/external-0.cursor-prompt"
 ```
 
 Do not place a file at `pi-subagents-cursor-write-canary.txt` in the workspace or any file, including `handoff.txt`, in the prompt directory. The harness refuses the pre-existing canary and any non-empty prompt directory. It does not delete the workspace, state root, or operator-owned prompt directory. It removes only its canary and private handoff file.
@@ -159,13 +159,13 @@ Do not place a file at `pi-subagents-cursor-write-canary.txt` in the workspace o
 Maintainers can then run separate read-only and writer canaries:
 
 ```bash
-PI_SUBAGENTS_CURSOR_AGENT_SMOKE=1 \
-PI_SUBAGENTS_CURSOR_AGENT_SMOKE_REPORT=/tmp/pi-subagents-cursor-agent-smoke.json \
+SELESAI_SUBAGENTS_CURSOR_AGENT_SMOKE=1 \
+SELESAI_SUBAGENTS_CURSOR_AGENT_SMOKE_REPORT=/tmp/pi-subagents-cursor-agent-smoke.json \
 node --experimental-strip-types --import ./test/support/register-loader.mjs \
   --test test/integration/cursor-agent-smoke.test.ts
 
-PI_SUBAGENTS_CURSOR_AGENT_WRITER_SMOKE=1 \
-PI_SUBAGENTS_CURSOR_AGENT_WRITER_SMOKE_REPORT=/tmp/pi-subagents-cursor-agent-writer-smoke.json \
+SELESAI_SUBAGENTS_CURSOR_AGENT_WRITER_SMOKE=1 \
+SELESAI_SUBAGENTS_CURSOR_AGENT_WRITER_SMOKE_REPORT=/tmp/pi-subagents-cursor-agent-writer-smoke.json \
 node --experimental-strip-types --import ./test/support/register-loader.mjs \
   --test test/integration/cursor-agent-writer-smoke.test.ts
 ```
@@ -305,7 +305,7 @@ Field notes:
 | `extensions` | Omitted means normal extensions; empty means no extensions; list values allowlist specific extensions. |
 | `subagentOnlyExtensions` | Extension paths loaded only in spawned child sessions for this agent. Tools registered there are unavailable to the main agent unless also installed through normal Pi extension configuration. |
 | `model` | Default model. Bare ids prefer the current provider when possible, then unique registry matches. |
-| `fallbackModels` | Ordered backup models for provider/model failures such as quota, auth, timeout, or unavailable model. Ordinary task failures do not trigger fallback. |
+| `fallbackModels` | Ordered backup models for provider/model failures such as quota, auth, provider-reported timeout, or unavailable model. Expiration of the run-level `timeoutMs` / `maxRuntimeMs` deadline is terminal and does not trigger fallback. Ordinary task failures do not trigger fallback. |
 | `thinking` | Appended as a `:level` suffix at runtime unless a suffix is already present. |
 | `systemPromptMode` | `replace` by default; `append` keeps Pi's base prompt. |
 | `inheritProjectContext` | Keeps or strips inherited repository instruction blocks. |
@@ -319,7 +319,7 @@ Field notes:
 | `defaultProgress` | Maintain `progress.md`. |
 | `async` | Default a single-agent launch to background (`true`) or foreground (`false`) when the call omits `async`. Explicit call values and `forceTopLevelAsync` win. |
 | `timeoutMs` | Positive integer default runtime deadline in milliseconds for single-agent launches. Foreground launches use 30 minutes when neither the call nor agent provides a timeout; explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win. |
-| `toolTimeoutMs` | Optional positive integer hard per-tool-call deadline in milliseconds. An explicit call value wins, then this agent default, global `toolTimeoutMs`, and `SELESAI_SUBAGENT_TOOL_TIMEOUT_MS`. When omitted, known-fast built-in tools get a five-minute default; long-running tools get attention notices but no hard default. It does not extend the run-level deadline; `contact_supervisor`, `intercom`, and `subagent_wait` are exempt. |
+| `toolTimeoutMs` | Optional positive integer hard per-tool-call deadline in milliseconds. An explicit call value wins, then this agent default, global `toolTimeoutMs`, and `SELESAI_SUBAGENT_TOOL_TIMEOUT_MS`. When omitted, known-fast built-in tools get a five-minute default; long-running tools get attention notices but no hard default. It does not extend the run-level deadline; `contact_supervisor`, `intercom`, `bg_wait`, and the deprecated `subagent_wait` alias are exempt. |
 | `acceptance` | Acceptance default for single-agent launches. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. Explicit call values win; chain and parallel acceptance remains task/step configuration. |
 | `acceptanceRole` | Optional `read-only` or `writer` role for automatic acceptance inference. Explicit task mutation or no-edit intent wins; otherwise the declared role replaces agent-name guessing. This does not grant or revoke tools. |
 | `mutationTools` | Comma-separated extension tool names whose calls count as mutation attempts for the completion guard. This declares evidence only; list and load each tool through `tools` and its extension provider as usual. |

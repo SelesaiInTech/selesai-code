@@ -5,11 +5,11 @@ import { resolveCursorAgentLaunch } from "../../src/runs/shared/cursor-agent-ada
 import { runExternalCli } from "../../src/runs/shared/external-cli-runner.ts";
 import { cursorSmokeInputs } from "../support/cursor-smoke-inputs.ts";
 
-const enabled = process.env.PI_SUBAGENTS_CURSOR_AGENT_SMOKE === "1";
+const enabled = process.env.SELESAI_SUBAGENTS_CURSOR_AGENT_SMOKE === "1";
 
-test("maintainer Cursor Agent prompt-file read-only smoke", { skip: enabled ? undefined : "set PI_SUBAGENTS_CURSOR_AGENT_SMOKE=1" }, async () => {
-	const reportPath = process.env.PI_SUBAGENTS_CURSOR_AGENT_SMOKE_REPORT;
-	assert.ok(reportPath, "PI_SUBAGENTS_CURSOR_AGENT_SMOKE_REPORT is required");
+test("maintainer Cursor Agent prompt-file read-only smoke", { skip: enabled ? undefined : "set SELESAI_SUBAGENTS_CURSOR_AGENT_SMOKE=1" }, async () => {
+	const reportPath = process.env.SELESAI_SUBAGENTS_CURSOR_AGENT_SMOKE_REPORT;
+	assert.ok(reportPath, "SELESAI_SUBAGENTS_CURSOR_AGENT_SMOKE_REPORT is required");
 	const { workspace, stateRoot, canaryPath, promptDirectory } = cursorSmokeInputs(process.env);
 	const promptMarker = "CURSOR_READ_PRIVATE_PROMPT_MARKER";
 	try {

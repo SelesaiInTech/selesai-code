@@ -24,6 +24,12 @@ interface SubagentParamsSchema {
 			minimum?: number;
 			description?: string;
 		};
+		workflow?: {
+			type?: string;
+			minLength?: number;
+			description?: string;
+		};
+		args?: JsonSchemaNode;
 		workflowScript?: {
 			type?: string;
 			minLength?: number;
@@ -32,6 +38,18 @@ interface SubagentParamsSchema {
 		workflowScriptPath?: {
 			type?: string;
 			minLength?: number;
+			description?: string;
+		};
+		globalConcurrencyLimit?: {
+			type?: string;
+			minimum?: number;
+			maximum?: number;
+			description?: string;
+		};
+		maxSubagentSpawnsPerRun?: {
+			type?: string;
+			minimum?: number;
+			maximum?: number;
 			description?: string;
 		};
 		preflight?: JsonSchemaNode;
@@ -186,7 +204,15 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(description, /else fresh/);
 	});
 
-	it("exposes trusted inline and file workflow script modes", () => {
+	it("exposes named resources plus raw inline and file workflow script modes", () => {
+		const workflow = SubagentParams?.properties?.workflow;
+		assert.equal(workflow?.type, "string");
+		assert.equal(workflow?.minLength, 1);
+		assert.match(String(workflow?.description ?? ""), /extension-owned workflow resource/i);
+		const args = SubagentParams?.properties?.args;
+		assert.equal(args?.type, "object");
+		assert.equal(args?.maxProperties, 16);
+		assert.match(String(args?.description ?? ""), /bounded plain-JSON/i);
 		const workflowScript = SubagentParams?.properties?.workflowScript;
 		assert.equal(workflowScript?.type, "string");
 		assert.equal(workflowScript?.minLength, 1);
@@ -206,6 +232,11 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(workflowScriptPath?.description ?? ""), /mutually exclusive with workflowScript/i);
 		assert.match(String(workflowScriptPath?.description ?? ""), /request cwd/i);
 		assert.match(String(workflowScriptPath?.description ?? ""), /host reads the file/i);
+		for (const name of ["globalConcurrencyLimit", "maxSubagentSpawnsPerRun"] as const) {
+			const capacity = SubagentParams?.properties?.[name];
+			assert.equal(capacity?.type, "integer");
+			assert.equal(capacity?.minimum, 1);
+		}
 		const preflight = SubagentParams?.properties?.preflight;
 		assert.equal(preflight?.type, "object");
 		assert.equal(preflight?.additionalProperties, false);
@@ -367,10 +398,22 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.deepEqual(controlSchema.properties?.notifyChannels?.items?.enum, ["event", "async", "intercom"]);
 	});
 
-	it("exposes tolerant wait mode on subagent_wait", () => {
+	it("exposes tolerant wait mode on bg_wait", () => {
 		const properties = SubagentWaitParams?.properties as Record<string, JsonSchemaNode> | undefined;
+		const id = properties?.id;
+		const nonBlocking = properties?.nonBlocking;
+		const all = properties?.all;
 		const stopOnAttention = properties?.stopOnAttention;
 		const timeoutMs = properties?.timeoutMs;
+		assert.ok(id, "id schema should exist");
+		assert.match(String(id.description ?? ""), /ordinary async subagent runs already notify this session natively/i);
+		assert.match(String(id.description ?? ""), /same-turn blocking results are truly needed/);
+		assert.ok(nonBlocking, "nonBlocking schema should exist");
+		assert.match(String(nonBlocking.description ?? ""), /provider, detached, or other background work without a native completion notification/i);
+		assert.match(String(nonBlocking.description ?? ""), /do not need a subscription/);
+		assert.ok(all, "all schema should exist");
+		assert.match(String(all.description ?? ""), /same-turn result.*truly needed/);
+		assert.doesNotMatch(String(all.description ?? ""), /spawn a replacement/);
 		assert.ok(stopOnAttention, "stopOnAttention schema should exist");
 		assert.equal(stopOnAttention.type, "boolean");
 		assert.match(String(stopOnAttention.description ?? ""), /idle or long-thinking attention/);
@@ -438,8 +481,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const serialized = JSON.stringify(schema);
-		// Mission, inspector, inline workflow, guide, toolTimeoutMs, and capability-list fields intentionally expanded the public tool surface.
-		assert.ok(serialized.length < 17_600, `expected compact schema under 17.6k chars, got ${serialized.length}`);
+		// Mission, inspector, named-resource/inline workflow, guide, toolTimeoutMs, and capability-list fields intentionally expand the public tool surface.
+		assert.ok(serialized.length <= 18_000, `expected compact schema at or under 18k chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		assert.equal(serialized.split("Optional acceptance policy.").length - 1, 1);

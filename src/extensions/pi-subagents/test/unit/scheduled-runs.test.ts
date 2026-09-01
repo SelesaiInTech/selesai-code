@@ -388,7 +388,7 @@ describe("project schedule management", () => {
 		assert.equal(fs.existsSync(path.join(outside, "schedules")), false);
 	});
 
-	it("allows a default project schedule root through a shared Git worktree .pi symlink", async () => {
+	it("allows a default project schedule root through a shared Git worktree .selesai symlink", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-worktree-link-"));
 		roots.push(root);
 		const repository = path.join(root, "repository");
@@ -416,7 +416,7 @@ describe("project schedule management", () => {
 		assert.equal(fs.existsSync(path.join(worktree, ".pi-subagents", "schedules", "shared", "schedule.json")), true);
 	});
 
-	it("rejects a Git worktree .pi symlink outside the shared config root", () => {
+	it("rejects a Git worktree .selesai symlink outside the shared config root", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-worktree-escape-"));
 		roots.push(root);
 		const repository = path.join(root, "repository");

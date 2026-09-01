@@ -17,9 +17,9 @@ function roots(): { root: string; workspace: string; stateRoot: string } {
 
 function env(workspace: string, stateRoot: string): NodeJS.ProcessEnv {
 	return {
-		PI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE: "1",
-		PI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE: workspace,
-		PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT: stateRoot,
+		SELESAI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE: "1",
+		SELESAI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE: workspace,
+		SELESAI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT: stateRoot,
 	};
 }
 
@@ -42,7 +42,7 @@ test("resolves existing disposable Cursor smoke roots", () => {
 test("requires disposable attestation and separate existing roots", () => {
 	const input = roots();
 	try {
-		assert.throws(() => cursorSmokeInputs({ ...env(input.workspace, input.stateRoot), PI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE: undefined }), /DISPOSABLE=1 is required/);
+		assert.throws(() => cursorSmokeInputs({ ...env(input.workspace, input.stateRoot), SELESAI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE: undefined }), /DISPOSABLE=1 is required/);
 		assert.throws(() => cursorSmokeInputs(env(input.workspace, path.join(input.workspace, "missing"))), /STATE_ROOT must point to an existing directory/);
 		assert.throws(() => cursorSmokeInputs(env(input.workspace, input.workspace)), /must be separate directories/);
 	} finally {
