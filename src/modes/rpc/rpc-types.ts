@@ -8,10 +8,13 @@
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model } from "@earendil-works/pi-ai";
 import type { SessionStats } from "../../core/agent-session.ts";
+import type { KeybindingsConfig } from "../../core/keybindings.ts";
+import type { Settings, SettingsScope } from "../../core/settings-manager.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { ChangelogEntry } from "../../utils/changelog.ts";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -69,9 +72,50 @@ export type RpcCommand =
 	| { id?: string; type: "clone" }
 	| { id?: string; type: "get_fork_messages" }
 	| { id?: string; type: "get_entries"; since?: string }
-	| { id?: string; type: "get_tree" }
+	| { id?: string; type: "get_tree"; filter?: "default" | "no-tools" | "user-only" | "labeled-only" | "all" }
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
+
+	// Settings
+	| {
+			id?: string;
+			type: "get_settings";
+			scope?: "global" | "project" | "effective";
+	  }
+	| { id?: string; type: "set_settings"; scope?: SettingsScope; values: Partial<Settings> }
+	| { id?: string; type: "factory_reset_settings" }
+
+	// Auth
+	| { id?: string; type: "get_auth_providers" }
+	| { id?: string; type: "login"; providerId: string; authType: "oauth" | "api_key" }
+	| { id?: string; type: "logout"; providerId: string }
+	| { id?: string; type: "get_auth_state" }
+
+	// Scoped models
+	| { id?: string; type: "get_scoped_models" }
+	| { id?: string; type: "set_scoped_models"; enabled?: string[]; reorder?: string[] }
+
+	// Session import
+	| { id?: string; type: "import_jsonl"; path: string }
+
+	// Git helper
+	| { id?: string; type: "git"; command: string }
+
+	// Reload
+	| { id?: string; type: "reload" }
+
+	// Tree ops
+	| { id?: string; type: "set_entry_label"; entryId: string; label?: string }
+
+	// Trust
+	| { id?: string; type: "get_trust" }
+	| { id?: string; type: "set_trust"; decision: boolean | null }
+
+	// Hotkeys / version / share
+	| { id?: string; type: "get_hotkeys" }
+	| { id?: string; type: "get_available_themes" }
+	| { id?: string; type: "get_version_info" }
+	| { id?: string; type: "share_gist"; public?: boolean }
 
 	// Messages
 	| { id?: string; type: "get_messages" }
@@ -90,9 +134,11 @@ export interface RpcSlashCommand {
 	/** Human-readable description */
 	description?: string;
 	/** What kind of command this is */
-	source: "extension" | "prompt" | "skill";
+	source: "extension" | "prompt" | "skill" | "builtin";
 	/** Source metadata for the owning resource */
 	sourceInfo: SourceInfo;
+	/** True for interactive-TUI-only builtins that cannot be invoked via prompt */
+	interactiveOnly?: boolean;
 }
 
 // ============================================================================
@@ -265,6 +311,122 @@ export type RpcResponse =
 			data: { commands: RpcSlashCommand[] };
 	  }
 
+	// Settings
+	| {
+			id?: string;
+			type: "response";
+			command: "get_settings";
+			success: true;
+			data: { scope: "global" | "project" | "effective"; settings: Settings };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "set_settings";
+			success: true;
+			data: { scope: SettingsScope; values: Partial<Settings> };
+	  }
+	| { id?: string; type: "response"; command: "factory_reset_settings"; success: true }
+
+	// Auth
+	| {
+			id?: string;
+			type: "response";
+			command: "get_auth_providers";
+			success: true;
+			data: {
+				providers: Array<{ providerId: string; name: string; authTypes: Array<"oauth" | "api_key"> }>;
+			};
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "login";
+			success: true;
+			data: { providerId: string; authType: "oauth" | "api_key"; message: string };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "logout";
+			success: true;
+			data: { providerId: string };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_auth_state";
+			success: true;
+			data: { providers: Array<{ providerId: string; authType: "oauth" | "api_key"; source: string }> };
+	  }
+
+	// Scoped models
+	| {
+			id?: string;
+			type: "response";
+			command: "get_scoped_models";
+			success: true;
+			data: { enabled: string[]; models: Model<any>[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "set_scoped_models";
+			success: true;
+			data: { enabled: string[] };
+	  }
+
+	// Session import
+	| { id?: string; type: "response"; command: "import_jsonl"; success: true; data: { sessionPath: string } }
+
+	// Git helper
+	| { id?: string; type: "response"; command: "git"; success: true }
+
+	// Reload
+	| { id?: string; type: "response"; command: "reload"; success: true }
+
+	// Tree ops
+	| { id?: string; type: "response"; command: "set_entry_label"; success: true; data: { labelId: string } }
+
+	// Trust
+	| {
+			id?: string;
+			type: "response";
+			command: "get_trust";
+			success: true;
+			data: {
+				cwd: string;
+				savedDecision: { path: string; decision: boolean } | null;
+				projectTrusted: boolean;
+				trustRequired: boolean;
+			};
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "set_trust";
+			success: true;
+			data: { decision: boolean | null; restartRequired: boolean };
+	  }
+
+	// Hotkeys / version / share
+	| { id?: string; type: "response"; command: "get_hotkeys"; success: true; data: { hotkeys: KeybindingsConfig } }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_available_themes";
+			success: true;
+			data: { themes: Array<{ name: string; path?: string }>; current: string | undefined };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_version_info";
+			success: true;
+			data: { version: string; changelog: ChangelogEntry[] };
+	  }
+	| { id?: string; type: "response"; command: "share_gist"; success: true; data: { url: string; gistUrl: string } }
+
 	// Error response (any command can fail)
 	| { id?: string; type: "response"; command: string; success: false; error: string };
 
@@ -283,6 +445,8 @@ export type RpcExtensionUIRequest =
 			method: "input";
 			title: string;
 			placeholder?: string;
+			/** "secret": render as single-line password (e.g. API key entry). Defaults to "text". */
+			inputKind?: "text" | "secret";
 			timeout?: number;
 	  }
 	| { type: "extension_ui_request"; id: string; method: "editor"; title: string; prefill?: string }

@@ -740,7 +740,7 @@ Each command has:
   - `"path"`: Explicit path via CLI or settings
 - `path`: Absolute file path to the command source (optional)
 
-**Note**: Built-in TUI commands (`/settings`, `/hotkeys`, etc.) are not included. They are handled only in interactive mode and would not execute if sent via `prompt`.
+**Note**: Built-in TUI commands (`/settings`, `/hotkeys`, etc.) are included with `source: "builtin"` and `interactiveOnly: true`. They are display-only: they are handled only in interactive mode and would not execute if sent via `prompt`.
 
 ## Events
 

@@ -6,11 +6,14 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import type { ImageContent, Model } from "@earendil-works/pi-ai";
 import type { AgentSessionEvent, SessionStats } from "../../core/agent-session.ts";
+import type { KeybindingsConfig } from "../../core/keybindings.ts";
+import type { Settings } from "../../core/settings-manager.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { ChangelogEntry } from "../../utils/changelog.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
 
@@ -428,10 +431,12 @@ export class RpcClient {
 	}
 
 	/**
-	 * Get the session entry tree.
+	 * Get the session entry tree, optionally filtered.
 	 */
-	async getTree(): Promise<{ tree: SessionTreeNode[]; leafId: string | null }> {
-		const response = await this.send({ type: "get_tree" });
+	async getTree(
+		filter?: "default" | "no-tools" | "user-only" | "labeled-only" | "all",
+	): Promise<{ tree: SessionTreeNode[]; leafId: string | null }> {
+		const response = await this.send({ type: "get_tree", ...(filter ? { filter } : {}) });
 		return this.getData<{ tree: SessionTreeNode[]; leafId: string | null }>(response);
 	}
 
@@ -459,11 +464,203 @@ export class RpcClient {
 	}
 
 	/**
-	 * Get available commands (extension commands, prompt templates).
+	 * Get available commands (extension commands, prompt templates, builtins).
 	 */
 	async getCommands(): Promise<RpcSlashCommand[]> {
 		const response = await this.send({ type: "get_commands" });
 		return this.getData<{ commands: RpcSlashCommand[] }>(response).commands;
+	}
+
+	// =========================================================================
+	// Settings
+	// =========================================================================
+
+	/**
+	 * Get settings for a scope ("global" | "project" | "effective", default "effective").
+	 */
+	async getSettings(scope?: "global" | "project" | "effective"): Promise<{ scope: string; settings: Settings }> {
+		const response = await this.send({ type: "get_settings", ...(scope ? { scope } : {}) });
+		return this.getData<{ scope: "global" | "project" | "effective"; settings: Settings }>(response);
+	}
+
+	/**
+	 * Bulk-update settings and persist.
+	 */
+	async setSettings(values: Partial<Settings>, scope: "global" | "project" = "global"): Promise<void> {
+		await this.send({ type: "set_settings", scope, values });
+	}
+
+	/**
+	 * Reset settings to bundled factory defaults (backup preserved).
+	 */
+	async factoryResetSettings(): Promise<void> {
+		await this.send({ type: "factory_reset_settings" });
+	}
+
+	// =========================================================================
+	// Auth
+	// =========================================================================
+
+	/**
+	 * List providers and the login methods they support.
+	 */
+	async getAuthProviders(): Promise<Array<{ providerId: string; name: string; authTypes: Array<"oauth" | "api_key"> }>> {
+		const response = await this.send({ type: "get_auth_providers" });
+		return this.getData<{ providers: Array<{ providerId: string; name: string; authTypes: Array<"oauth" | "api_key"> }> }>(
+			response,
+		).providers;
+	}
+
+	/**
+	 * Login to a provider. API-key flows emit `extension_ui_request: input` with
+	 * `inputKind: "secret"`; OAuth flows open a browser and emit notify events.
+	 */
+	async login(providerId: string, authType: "oauth" | "api_key"): Promise<{ providerId: string; authType: "oauth" | "api_key"; message: string }> {
+		const response = await this.send({ type: "login", providerId, authType });
+		return this.getData<{ providerId: string; authType: "oauth" | "api_key"; message: string }>(response);
+	}
+
+	/**
+	 * Log out of a provider, removing stored credentials.
+	 */
+	async logout(providerId: string): Promise<void> {
+		await this.send({ type: "logout", providerId });
+	}
+
+	/**
+	 * Get providers with configured auth (stored credential or environment).
+	 */
+	async getAuthState(): Promise<Array<{ providerId: string; authType: "oauth" | "api_key"; source: string }>> {
+		const response = await this.send({ type: "get_auth_state" });
+		return this.getData<{ providers: Array<{ providerId: string; authType: "oauth" | "api_key"; source: string }> }>(
+			response,
+		).providers;
+	}
+
+	// =========================================================================
+	// Scoped models
+	// =========================================================================
+
+	/**
+	 * Get enabled model patterns (Ctrl+P cycling scope) and available models.
+	 */
+	async getScopedModels(): Promise<{ enabled: string[]; models: Model<any>[] }> {
+		const response = await this.send({ type: "get_scoped_models" });
+		return this.getData<{ enabled: string[]; models: Model<any>[] }>(response);
+	}
+
+	/**
+	 * Set enabled model patterns and/or reorder them (Ctrl+P cycling order).
+	 */
+	async setScopedModels(options: { enabled?: string[]; reorder?: string[] } = {}): Promise<string[]> {
+		const response = await this.send({ type: "set_scoped_models", ...options });
+		return this.getData<{ enabled: string[] }>(response).enabled;
+	}
+
+	// =========================================================================
+	// Session import
+	// =========================================================================
+
+	/**
+	 * Import and resume a session from a JSONL file (replaces current session).
+	 */
+	async importJsonl(path: string): Promise<string> {
+		const response = await this.send({ type: "import_jsonl", path });
+		return this.getData<{ sessionPath: string }>(response).sessionPath;
+	}
+
+	// =========================================================================
+	// Git helper / reload / tree ops
+	// =========================================================================
+
+	/**
+	 * Run the git helper (worktrees/checkpoints/commits/push). Same behavior as
+	 * the `prompt` command: success is reported on preflight, then the normal
+	 * agent/message event stream follows.
+	 */
+	async git(command: string): Promise<void> {
+		await this.send({ type: "git", command });
+	}
+
+	/**
+	 * Reload keybindings, extensions, skills, prompts, themes, and context files.
+	 */
+	async reload(): Promise<void> {
+		await this.send({ type: "reload" });
+	}
+
+	/**
+	 * Set or clear a label on a session entry (undefined/empty clears).
+	 */
+	async setEntryLabel(entryId: string, label?: string): Promise<string> {
+		const response = await this.send({ type: "set_entry_label", entryId, label });
+		return this.getData<{ labelId: string }>(response).labelId;
+	}
+
+	// =========================================================================
+	// Trust
+	// =========================================================================
+
+	/**
+	 * Get the current project trust decision and status.
+	 */
+	async getTrust(): Promise<{
+		cwd: string;
+		savedDecision: { path: string; decision: boolean } | null;
+		projectTrusted: boolean;
+		trustRequired: boolean;
+	}> {
+		const response = await this.send({ type: "get_trust" });
+		return this.getData<{
+			cwd: string;
+			savedDecision: { path: string; decision: boolean } | null;
+			projectTrusted: boolean;
+			trustRequired: boolean;
+		}>(response);
+	}
+
+	/**
+	 * Save a project trust decision. Decision takes full effect after restart.
+	 */
+	async setTrust(decision: boolean | null): Promise<{ decision: boolean | null; restartRequired: boolean }> {
+		const response = await this.send({ type: "set_trust", decision });
+		return this.getData<{ decision: boolean | null; restartRequired: boolean }>(response);
+	}
+
+	// =========================================================================
+	// Hotkeys / version / share
+	// =========================================================================
+
+	/**
+	 * Get the effective keybinding map.
+	 */
+	async getHotkeys(): Promise<KeybindingsConfig> {
+		const response = await this.send({ type: "get_hotkeys" });
+		return this.getData<{ hotkeys: KeybindingsConfig }>(response).hotkeys;
+	}
+
+	/**
+	 * Get available themes (built-in + custom) and the current theme setting.
+	 */
+	async getAvailableThemes(): Promise<{ themes: Array<{ name: string; path?: string }>; current: string | undefined }> {
+		const response = await this.send({ type: "get_available_themes" });
+		return this.getData<{ themes: Array<{ name: string; path?: string }>; current: string | undefined }>(response);
+	}
+
+	/**
+	 * Get the current version and parsed changelog entries.
+	 */
+	async getVersionInfo(): Promise<{ version: string; changelog: ChangelogEntry[] }> {
+		const response = await this.send({ type: "get_version_info" });
+		return this.getData<{ version: string; changelog: ChangelogEntry[] }>(response);
+	}
+
+	/**
+	 * Share the current session as a secret GitHub gist (requires `gh` CLI).
+	 */
+	async shareGist(): Promise<{ url: string; gistUrl: string }> {
+		const response = await this.send({ type: "share_gist", public: false });
+		return this.getData<{ url: string; gistUrl: string }>(response);
 	}
 
 	// =========================================================================

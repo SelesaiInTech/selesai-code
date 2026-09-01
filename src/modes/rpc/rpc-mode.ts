@@ -12,8 +12,14 @@
  */
 
 import * as crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { chmodSync, copyFileSync, existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { generateHandoff } from "../../core/handoff.ts";
+import { buildGitCommandPrompt } from "../../core/git-command.ts";
+import { KeybindingsManager } from "../../core/keybindings.ts";
 import type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
@@ -26,9 +32,17 @@ import {
 	waitForRawStdoutBackpressure,
 	writeRawStdout,
 } from "../../core/output-guard.ts";
+import { ProjectTrustStore, hasTrustRequiringProjectResources } from "../../core/trust-manager.ts";
+import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
+import { createSyntheticSourceInfo } from "../../core/source-info.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
+import { getChangelogPath, parseChangelog } from "../../utils/changelog.ts";
+import { VERSION, getAgentDir, getBundledDefaultsDir, getShareViewerUrl } from "../../config.ts";
+import { openBrowser } from "../../utils/open-browser.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
+import { getAvailableThemesWithPaths, setRegisteredThemes } from "../interactive/theme/theme.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
+import type { SessionTreeNode } from "../../core/session-manager.ts";
 import type {
 	RpcCommand,
 	RpcExtensionUIRequest,
@@ -65,6 +79,49 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
 		writeRawStdout(serializeJsonLine(obj));
+	};
+
+	/**
+	 * Filter a session tree with the same semantics as the TUI tree selector
+	 * (tree-selector.ts FilterMode). Hidden leaf pruning is preserved.
+	 */
+	const filterTree = (
+		nodes: SessionTreeNode[],
+		mode: "default" | "no-tools" | "user-only" | "labeled-only" | "all",
+	): SessionTreeNode[] => {
+		const passes = (node: SessionTreeNode): boolean => {
+			const entry = node.entry;
+			const isSettingsEntry =
+				entry.type === "label" ||
+				entry.type === "custom" ||
+				entry.type === "model_change" ||
+				entry.type === "thinking_level_change" ||
+				entry.type === "session_info";
+			switch (mode) {
+				case "user-only":
+					return entry.type === "message" && entry.message.role === "user";
+				case "no-tools":
+					return !isSettingsEntry && !(entry.type === "message" && entry.message.role === "toolResult");
+				case "labeled-only":
+					return node.label !== undefined;
+				case "all":
+					return true;
+				default:
+					return !isSettingsEntry;
+			}
+		};
+
+		const visit = (nodes: SessionTreeNode[]): SessionTreeNode[] => {
+			const result: SessionTreeNode[] = [];
+			for (const node of nodes) {
+				if (!passes(node)) continue;
+				const children = visit(node.children);
+				result.push({ ...node, children });
+			}
+			return result;
+		};
+
+		return visit(nodes);
 	};
 
 	const success = <T extends RpcCommand["type"]>(
@@ -722,7 +779,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 			case "get_tree": {
 				const sessionManager = session.sessionManager;
-				return success(id, "get_tree", { tree: sessionManager.getTree(), leafId: sessionManager.getLeafId() });
+				const tree = sessionManager.getTree();
+				const filter = command.filter ?? "default";
+				const filtered = filter === "all" ? tree : filterTree(tree, filter);
+				return success(id, "get_tree", { tree: filtered, leafId: sessionManager.getLeafId() });
 			}
 
 			case "get_last_assistant_text": {
@@ -772,7 +832,484 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					});
 				}
 
+				// Built-in TUI commands: display-only, cannot be invoked via prompt.
+				for (const builtin of BUILTIN_SLASH_COMMANDS) {
+					commands.push({
+						name: builtin.name,
+						description: builtin.description
+							+ (builtin.argumentHint ? ` ${builtin.argumentHint}` : ""),
+						source: "builtin",
+						sourceInfo: createSyntheticSourceInfo(`builtin:${builtin.name}`, { source: "builtin" }),
+						interactiveOnly: true,
+					});
+				}
+
 				return success(id, "get_commands", { commands });
+			}
+
+			// =================================================================
+			// Settings
+			// =================================================================
+
+			case "get_settings": {
+				const scope = command.scope ?? "effective";
+				const settings =
+					scope === "global"
+						? session.settingsManager.getGlobalSettings()
+						: scope === "project"
+							? session.settingsManager.getProjectSettings()
+							: session.settingsManager.getEffectiveSettings();
+				return success(id, "get_settings", { scope, settings });
+			}
+
+			case "set_settings": {
+				const scope = command.scope ?? "global";
+				try {
+					if (scope === "project") {
+						session.settingsManager.setProjectSettings(command.values);
+					} else {
+						session.settingsManager.setGlobalSettings(command.values);
+					}
+					await session.settingsManager.flush();
+					return success(id, "set_settings", { scope, values: structuredClone(command.values) });
+				} catch (writeError: unknown) {
+					return error(
+						id,
+						"set_settings",
+						writeError instanceof Error ? writeError.message : String(writeError),
+					);
+				}
+			}
+
+			case "factory_reset_settings": {
+				if (session.isStreaming) {
+					return error(id, "factory_reset_settings", "Wait for the current response to finish before resetting settings.");
+				}
+				if (session.isCompacting) {
+					return error(id, "factory_reset_settings", "Wait for compaction to finish before resetting settings.");
+				}
+				try {
+					const agentDir = getAgentDir();
+					const settingsPath = join(agentDir, "settings.json");
+					const bundledPath = join(getBundledDefaultsDir(), "settings.json");
+					if (!existsSync(bundledPath)) {
+						return error(id, "factory_reset_settings", `Bundled defaults not found at ${bundledPath}`);
+					}
+					if (existsSync(settingsPath)) {
+						copyFileSync(settingsPath, `${settingsPath}.bak`);
+					}
+					copyFileSync(bundledPath, settingsPath);
+					try {
+						chmodSync(settingsPath, 0o600);
+					} catch {
+						// best-effort
+					}
+					await session.reload();
+					return success(id, "factory_reset_settings");
+				} catch (resetError: unknown) {
+					return error(
+						id,
+						"factory_reset_settings",
+						resetError instanceof Error ? resetError.message : String(resetError),
+					);
+				}
+			}
+
+			// =================================================================
+			// Auth
+			// =================================================================
+
+			case "get_auth_providers": {
+				const providers = session.modelRuntime
+					.getProviders()
+					.map((provider) => {
+						const authTypes: Array<"oauth" | "api_key"> = [];
+						if (provider.auth.oauth) authTypes.push("oauth");
+						if (provider.auth.apiKey) authTypes.push("api_key");
+						return { providerId: provider.id, name: provider.name, authTypes };
+					})
+					.sort((a, b) => a.name.localeCompare(b.name));
+				return success(id, "get_auth_providers", { providers });
+			}
+
+			case "login": {
+				const provider = session.modelRuntime.getProvider(command.providerId);
+				if (!provider) {
+					return error(id, "login", `Unknown provider: ${command.providerId}`);
+				}
+				if (command.authType === "oauth" && !provider.auth.oauth) {
+					return error(id, "login", `Provider ${command.providerId} does not support OAuth login`);
+				}
+				if (command.authType === "api_key" && !provider.auth.apiKey) {
+					return error(id, "login", `Provider ${command.providerId} does not support API key login`);
+				}
+				try {
+					const abortController = new AbortController();
+					await session.modelRuntime.login(command.providerId, command.authType, {
+						signal: abortController.signal,
+						prompt: async (prompt) => {
+							if (prompt.signal?.aborted) throw new Error("Login cancelled");
+							const id = crypto.randomUUID();
+							const result = await new Promise<RpcExtensionUIResponse>((resolve, reject) => {
+								const onAbort = () => {
+									cleanup();
+									resolve({ type: "extension_ui_response", id, cancelled: true });
+								};
+								const cleanup = () => {
+									prompt.signal?.removeEventListener("abort", onAbort);
+									pendingExtensionRequests.delete(id);
+								};
+								prompt.signal?.addEventListener("abort", onAbort, { once: true });
+								pendingExtensionRequests.set(id, {
+									resolve: (response) => {
+										cleanup();
+										resolve(response);
+									},
+									reject: (err) => {
+										cleanup();
+										reject(err);
+									},
+								});
+								const request: Record<string, unknown> = {
+									type: "extension_ui_request",
+									id,
+									method: prompt.type === "select" ? "select" : "input",
+									title: prompt.message,
+								};
+								if (prompt.type === "select") {
+									request.options = prompt.options.map((option) =>
+										option.description ? `${option.label} (${option.description})` : option.label,
+									);
+								} else {
+									if (prompt.placeholder) request.placeholder = prompt.placeholder;
+									if (prompt.type === "secret") request.inputKind = "secret";
+								}
+								output(request as RpcExtensionUIRequest);
+							});
+							if (result.type === "extension_ui_response" && "cancelled" in result && result.cancelled) {
+								throw new Error("Login cancelled");
+							}
+							if ("value" in result) return result.value as string;
+							if ("values" in result) return (result.values ? result.values[0] : undefined) as string;
+							return undefined as unknown as string;
+						},
+						notify: (event) => {
+							if (event.type === "auth_url") {
+								openBrowser(event.url);
+								output({
+									type: "extension_ui_request",
+									id: crypto.randomUUID(),
+									method: "notify",
+									message: event.instructions
+										? `Open in your browser: ${event.url}\n${event.instructions}`
+										: `Open in your browser: ${event.url}`,
+									notifyType: "info",
+								} as RpcExtensionUIRequest);
+							} else if (event.type === "device_code") {
+								openBrowser(event.verificationUri);
+								output({
+									type: "extension_ui_request",
+									id: crypto.randomUUID(),
+									method: "notify",
+									message: `Open ${event.verificationUri} and enter code: ${event.userCode}`,
+									notifyType: "info",
+								} as RpcExtensionUIRequest);
+							} else if (event.type === "info") {
+								output({
+									type: "extension_ui_request",
+									id: crypto.randomUUID(),
+									method: "notify",
+									message: event.message,
+									notifyType: "info",
+								} as RpcExtensionUIRequest);
+							} else if (event.type === "progress") {
+								output({
+									type: "extension_ui_request",
+									id: crypto.randomUUID(),
+									method: "notify",
+									message: event.message,
+									notifyType: "info",
+								} as RpcExtensionUIRequest);
+							}
+						},
+					});
+					const actionLabel =
+						command.authType === "oauth" ? `Logged in to ${provider.name}` : `Saved API key for ${provider.name}`;
+					const authType = command.authType;
+					const isUnknownModel = session.model?.provider === "unknown" && session.model?.id === "unknown";
+					if (isUnknownModel) {
+						const available = await session.modelRuntime.getAvailable();
+						const providerModels = available.filter((model) => model.provider === command.providerId);
+						if (providerModels.length > 0) {
+							await session.setModel(providerModels[0]!);
+						}
+					}
+					return success(id, "login", {
+						providerId: command.providerId,
+						authType,
+						message: `${actionLabel}. Credentials saved.`,
+					});
+				} catch (loginError: unknown) {
+					const message = loginError instanceof Error ? loginError.message : String(loginError);
+					if (message === "Login cancelled") {
+						return error(id, "login", "Login cancelled");
+					}
+					return error(id, "login", message);
+				}
+			}
+
+			case "logout": {
+				const provider = session.modelRuntime.getProvider(command.providerId);
+				if (!provider) {
+					return error(id, "logout", `Unknown provider: ${command.providerId}`);
+				}
+				try {
+					await session.modelRuntime.logout(command.providerId);
+					return success(id, "logout", { providerId: command.providerId });
+				} catch (logoutError: unknown) {
+					return error(
+						id,
+						"logout",
+						logoutError instanceof Error ? logoutError.message : String(logoutError),
+					);
+				}
+			}
+
+			case "get_auth_state": {
+				try {
+					const credentials = await session.modelRuntime.listCredentials();
+					const providers = credentials.map(({ providerId, type }) => ({
+						providerId,
+						authType: type,
+						source: "stored",
+					}));
+					// Environment/configured auth not in the credential store.
+					for (const provider of session.modelRuntime.getProviders()) {
+						if (providers.some((entry) => entry.providerId === provider.id)) continue;
+						const status = session.modelRuntime.getProviderAuthStatus(provider.id);
+						if (status.configured) {
+							providers.push({
+								providerId: provider.id,
+								authType: session.modelRuntime.isUsingOAuth(provider.id) ? "oauth" : "api_key",
+								source: status.label ?? status.source ?? "environment",
+							});
+						}
+					}
+					return success(id, "get_auth_state", { providers });
+				} catch (authStateError: unknown) {
+					return error(
+						id,
+						"get_auth_state",
+						authStateError instanceof Error ? authStateError.message : String(authStateError),
+					);
+				}
+			}
+
+			// =================================================================
+			// Scoped Models
+			// =================================================================
+
+			case "get_scoped_models": {
+				const enabled = session.settingsManager.getEnabledModels() ?? [];
+				const scoped = session.scopedModels.map((entry) => entry.model);
+				const models = scoped.length > 0 ? scoped : await session.modelRuntime.getAvailable();
+				return success(id, "get_scoped_models", { enabled, models: [...models] });
+			}
+
+			case "set_scoped_models": {
+				if (command.enabled !== undefined) {
+					session.settingsManager.setEnabledModels(command.enabled.length > 0 ? command.enabled : undefined);
+				}
+				const enabled = session.settingsManager.getEnabledModels() ?? [];
+				if (command.reorder !== undefined && command.reorder.length > 0) {
+					const patternSet = new Set(command.reorder);
+					const kept = enabled.filter((pattern) => patternSet.has(pattern));
+					const added = command.reorder.filter((pattern) => !kept.includes(pattern));
+					session.settingsManager.setEnabledModels([...kept, ...added]);
+				}
+				await session.settingsManager.flush();
+				return success(id, "set_scoped_models", { enabled: session.settingsManager.getEnabledModels() ?? [] });
+			}
+
+			// =================================================================
+			// Session Import
+			// =================================================================
+
+			case "import_jsonl": {
+				try {
+					await runtimeHost.importFromJsonl(command.path);
+					await rebindSession();
+					const sessionFile = session.sessionFile;
+					return success(id, "import_jsonl", { sessionPath: sessionFile ?? command.path });
+				} catch (importError: unknown) {
+					return error(
+						id,
+						"import_jsonl",
+						importError instanceof Error ? importError.message : String(importError),
+					);
+				}
+			}
+
+			// =================================================================
+			// Git helper
+			// =================================================================
+
+			case "git": {
+				const prompt = buildGitCommandPrompt(command.command);
+				let gitPreflightSucceeded = false;
+				void session
+					.prompt(prompt, {
+						streamingBehavior: "steer",
+						source: "rpc",
+						preflightResult: (didSucceed) => {
+							if (didSucceed) {
+								gitPreflightSucceeded = true;
+								output(success(id, "git"));
+							}
+						},
+					})
+					.catch((e) => {
+						if (!gitPreflightSucceeded) {
+							output(error(id, "git", e.message));
+						}
+					});
+				return undefined;
+			}
+
+			// =================================================================
+			// Reload
+			// =================================================================
+
+			case "reload": {
+				if (session.isStreaming) {
+					return error(id, "reload", "Wait for the current response to finish before reloading.");
+				}
+				if (session.isCompacting) {
+					return error(id, "reload", "Wait for compaction to finish before reloading.");
+				}
+				try {
+					await session.reload();
+					return success(id, "reload");
+				} catch (reloadError: unknown) {
+					return error(
+						id,
+						"reload",
+						reloadError instanceof Error ? reloadError.message : String(reloadError),
+					);
+				}
+			}
+
+			// =================================================================
+			// Tree ops
+			// =================================================================
+
+			case "set_entry_label": {
+				try {
+					const labelId = session.sessionManager.appendLabelChange(command.entryId, command.label);
+					return success(id, "set_entry_label", { labelId });
+				} catch (labelError: unknown) {
+					return error(
+						id,
+						"set_entry_label",
+						labelError instanceof Error ? labelError.message : String(labelError),
+					);
+				}
+			}
+
+			// =================================================================
+			// Trust
+			// =================================================================
+
+			case "get_trust": {
+				const cwd = session.sessionManager.getCwd();
+				const trustStore = new ProjectTrustStore(runtimeHost.services.agentDir);
+				const entry = trustStore.getEntry(cwd);
+				return success(id, "get_trust", {
+					cwd,
+					savedDecision: entry ? { path: entry.path, decision: entry.decision } : null,
+					projectTrusted: session.settingsManager.isProjectTrusted(),
+					trustRequired: hasTrustRequiringProjectResources(cwd),
+				});
+			}
+
+			case "set_trust": {
+				const cwd = session.sessionManager.getCwd();
+				const trustStore = new ProjectTrustStore(runtimeHost.services.agentDir);
+				try {
+					if (command.decision === null) {
+						trustStore.set(cwd, null);
+					} else {
+						trustStore.set(cwd, command.decision);
+					}
+					return success(id, "set_trust", { decision: command.decision, restartRequired: command.decision !== null });
+				} catch (trustError: unknown) {
+					return error(
+						id,
+						"set_trust",
+						trustError instanceof Error ? trustError.message : String(trustError),
+					);
+				}
+			}
+
+			// =================================================================
+			// Hotkeys / version / share
+			// =================================================================
+
+			case "get_hotkeys": {
+				const keybindings = KeybindingsManager.create();
+				const hotkeys = keybindings.getEffectiveConfig();
+				return success(id, "get_hotkeys", { hotkeys });
+			}
+
+			case "get_available_themes": {
+				// Mirror TUI startup: register extension/package themes before listing.
+				setRegisteredThemes(session.resourceLoader.getThemes().themes);
+				const themes = getAvailableThemesWithPaths().map(({ name, path }) => ({ name, path }));
+				const currentSetting = session.settingsManager.getThemeSetting();
+				const current = currentSetting?.includes("/") ? undefined : currentSetting;
+				return success(id, "get_available_themes", { themes, current });
+			}
+
+			case "get_version_info": {
+				const changelog = parseChangelog(getChangelogPath());
+				return success(id, "get_version_info", { version: VERSION, changelog });
+			}
+
+			case "share_gist": {
+				try {
+					const authResult = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });
+					if (authResult.status !== 0) {
+						return error(
+							id,
+							"share_gist",
+							"GitHub CLI is not logged in. Run 'gh auth login' first.",
+						);
+					}
+					const tmpFile = join(tmpdir(), `selesai-session-${crypto.randomUUID()}.html`);
+					await session.exportToHtml(tmpFile);
+					const result = spawnSync(
+						"gh",
+						["gist", "create", "--public=false", tmpFile],
+						{ encoding: "utf-8" },
+					);
+					try {
+						unlinkSync(tmpFile);
+					} catch {
+						// best-effort cleanup
+					}
+					if (result.status !== 0) {
+						return error(id, "share_gist", (result.stderr ?? "Unknown error").trim() || "Failed to create gist");
+					}
+					const gistUrl = (result.stdout ?? "").trim();
+					const gistId = gistUrl.split("/").pop();
+					if (!gistId) {
+						return error(id, "share_gist", "Failed to parse gist ID from gh output");
+					}
+					const previewUrl = getShareViewerUrl(gistId);
+					return success(id, "share_gist", { url: previewUrl, gistUrl });
+				} catch (shareError: unknown) {
+					return error(id, "share_gist", shareError instanceof Error ? shareError.message : String(shareError));
+				}
 			}
 
 			default: {

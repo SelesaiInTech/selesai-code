@@ -497,6 +497,53 @@ export class SettingsManager {
 		return structuredClone(this.projectSettings);
 	}
 
+	/** Merged effective settings (project overrides global, nested objects merge recursively). */
+	getEffectiveSettings(): Settings {
+		return structuredClone(this.settings);
+	}
+
+	/**
+	 * Bulk-update global settings and persist. Nested object fields merge
+	 * recursively; undefined values are ignored (use null to clear a field).
+	 */
+	setGlobalSettings(values: Partial<Settings>): void {
+		const merged = deepMergeSettings(this.globalSettings, values);
+		this.globalSettings = merged;
+		for (const field of Object.keys(values) as (keyof Settings)[]) {
+			const value = values[field];
+			if (value === undefined) continue;
+			if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+				for (const nestedKey of Object.keys(value)) {
+					this.markModified(field, nestedKey);
+				}
+			} else {
+				this.markModified(field);
+			}
+		}
+		this.save();
+	}
+
+	/**
+	 * Bulk-update project settings and persist. Throws when the project is not trusted.
+	 */
+	setProjectSettings(values: Partial<Settings>): void {
+		this.assertProjectTrustedForWrite();
+		const projectSettings = deepMergeSettings(this.projectSettings, values);
+		this.projectSettings = projectSettings;
+		for (const field of Object.keys(values) as (keyof Settings)[]) {
+			const value = values[field];
+			if (value === undefined) continue;
+			if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+				for (const nestedKey of Object.keys(value)) {
+					this.markProjectModified(field, nestedKey);
+				}
+			} else {
+				this.markProjectModified(field);
+			}
+		}
+		this.saveProjectSettings(this.projectSettings);
+	}
+
 	isProjectTrusted(): boolean {
 		return this.projectTrusted;
 	}
