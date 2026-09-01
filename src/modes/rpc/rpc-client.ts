@@ -15,7 +15,7 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { ChangelogEntry } from "../../utils/changelog.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+import type { RpcCommand, RpcResponse, RpcSessionInfo, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -196,9 +196,10 @@ export class RpcClient {
 	 * Send a prompt to the agent.
 	 * Returns immediately after sending; use onEvent() to receive streaming events.
 	 * Use waitForIdle() to wait for completion.
+	 * @param queueWhileCompacting - Buffer the prompt during compaction and send after compaction_end.
 	 */
-	async prompt(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "prompt", message, images });
+	async prompt(message: string, images?: ImageContent[], queueWhileCompacting?: boolean): Promise<void> {
+		await this.send({ type: "prompt", message, images, queueWhileCompacting });
 	}
 
 	/**
@@ -257,22 +258,23 @@ export class RpcClient {
 	}
 
 	/**
-	 * Cycle to next model.
+	 * Cycle to next (or previous) model.
 	 */
-	async cycleModel(): Promise<{
+	async cycleModel(direction?: "forward" | "backward"): Promise<{
 		model: { provider: string; id: string };
 		thinkingLevel: ThinkingLevel;
 		isScoped: boolean;
 	} | null> {
-		const response = await this.send({ type: "cycle_model" });
+		const response = await this.send({ type: "cycle_model", direction });
 		return this.getData(response);
 	}
 
 	/**
 	 * Get list of available models.
+	 * @param refresh - When true, refresh model catalogs before listing (TUI parity).
 	 */
-	async getAvailableModels(): Promise<ModelInfo[]> {
-		const response = await this.send({ type: "get_available_models" });
+	async getAvailableModels(refresh?: boolean): Promise<ModelInfo[]> {
+		const response = await this.send({ type: "get_available_models", refresh });
 		return this.getData<{ models: ModelInfo[] }>(response).models;
 	}
 
@@ -382,8 +384,8 @@ export class RpcClient {
 	/**
 	 * Export session to HTML.
 	 */
-	async exportHtml(outputPath?: string): Promise<{ path: string }> {
-		const response = await this.send({ type: "export_html", outputPath });
+	async exportHtml(outputPath?: string, themeName?: string): Promise<{ path: string }> {
+		const response = await this.send({ type: "export_html", outputPath, themeName });
 		return this.getData(response);
 	}
 
@@ -453,6 +455,71 @@ export class RpcClient {
 	 */
 	async setSessionName(name: string): Promise<void> {
 		await this.send({ type: "set_session_name", name });
+	}
+
+	// =========================================================================
+	// Tree navigation (rev 3)
+	// =========================================================================
+
+	/**
+	 * Navigate the session tree to a target entry, optionally summarizing the
+	 * branch being left. Mirrors the TUI tree-selector flow.
+	 */
+	async navigateTree(options: {
+		targetId: string;
+		summarize?: boolean;
+		customInstructions?: string;
+		replaceInstructions?: boolean;
+		label?: string;
+	}): Promise<{
+		editorText?: string;
+		cancelled: boolean;
+		aborted?: boolean;
+		summaryEntry?: unknown | null;
+	}> {
+		const response = await this.send({ type: "navigate_tree", ...options });
+		return this.getData(response);
+	}
+
+	// =========================================================================
+	// Session discovery / management (rev 3)
+	// =========================================================================
+
+	/**
+	 * List sessions. scope "current" = sessions in the active cwd; "all" = across all projects.
+	 */
+	async listSessions(scope?: "current" | "all"): Promise<RpcSessionInfo[]> {
+		const response = await this.send({ type: "list_sessions", scope });
+		return this.getData<{ sessions: RpcSessionInfo[] }>(response).sessions;
+	}
+
+	/**
+	 * Rename a session (by path). Does not switch the active runtime.
+	 */
+	async renameSession(path: string, name: string): Promise<void> {
+		const response = await this.send({ type: "rename_session", path, name });
+		this.getData(response);
+	}
+
+	/**
+	 * Delete a session file (trash first, unlink fallback). Active session is rejected.
+	 * @returns The method used: "trash" or "unlink".
+	 */
+	async deleteSession(path: string): Promise<{ method: "trash" | "unlink" }> {
+		const response = await this.send({ type: "delete_session", path });
+		return this.getData(response);
+	}
+
+	/**
+	 * Set session-only (ephemeral) scoped models — resolved to concrete model ids,
+	 * not persisted to settings. Clears scope with an empty array.
+	 */
+	async setSessionModels(options: { enabled?: string[]; reorder?: string[] }): Promise<{
+		enabled: string[];
+		models: ModelInfo[];
+	}> {
+		const response = await this.send({ type: "set_session_models", ...options });
+		return this.getData(response);
 	}
 
 	/**
@@ -658,8 +725,8 @@ export class RpcClient {
 	/**
 	 * Share the current session as a secret GitHub gist (requires `gh` CLI).
 	 */
-	async shareGist(): Promise<{ url: string; gistUrl: string }> {
-		const response = await this.send({ type: "share_gist", public: false });
+	async shareGist(themeName?: string): Promise<{ url: string; gistUrl: string }> {
+		const response = await this.send({ type: "share_gist", public: false, themeName });
 		return this.getData<{ url: string; gistUrl: string }>(response);
 	}
 

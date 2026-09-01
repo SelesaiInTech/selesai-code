@@ -198,6 +198,13 @@ export type AgentSessionEvent =
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
 	| { type: "bash_execution_update"; id?: string; delta: string }
 	| { type: "image_captioning_start" }
+	| {
+			type: "session_tree";
+			newLeafId: string | null;
+			oldLeafId: string | null;
+			summaryEntry?: BranchSummaryEntry | null;
+			fromExtension?: boolean;
+	  }
 	| { type: "image_captioning_end"; ok: boolean };
 
 /** Listener function for agent session events */
@@ -3449,14 +3456,16 @@ export class AgentSession {
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
 
-			// Emit session_tree event
-			await this._extensionRunner.emit({
-				type: "session_tree",
+			// Emit session_tree event (extension runners + RPC stdout subscribers)
+			const treeEvent = {
+				type: "session_tree" as const,
 				newLeafId: this.sessionManager.getLeafId(),
 				oldLeafId,
 				summaryEntry,
 				fromExtension: summaryText ? fromExtension : undefined,
-			});
+			};
+			await this._extensionRunner.emit(treeEvent);
+			this._emit(treeEvent);
 
 			// Emit to custom tools
 

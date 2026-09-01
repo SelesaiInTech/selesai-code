@@ -12,7 +12,7 @@ import type { KeybindingsConfig } from "../../core/keybindings.ts";
 import type { Settings, SettingsScope } from "../../core/settings-manager.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
-import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { BranchSummaryEntry, SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { ChangelogEntry } from "../../utils/changelog.ts";
 
@@ -22,7 +22,15 @@ import type { ChangelogEntry } from "../../utils/changelog.ts";
 
 export type RpcCommand =
 	// Prompting
-	| { id?: string; type: "prompt"; message: string; images?: ImageContent[]; streamingBehavior?: "steer" | "followUp" }
+	| {
+			id?: string;
+			type: "prompt";
+			message: string;
+			images?: ImageContent[];
+			streamingBehavior?: "steer" | "followUp";
+			/** Buffer the prompt during compaction and auto-send it after compaction_end (mirrors TUI compaction queue). */
+			queueWhileCompacting?: boolean;
+	  }
 	| { id?: string; type: "steer"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "follow_up"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "abort" }
@@ -35,8 +43,8 @@ export type RpcCommand =
 
 	// Model
 	| { id?: string; type: "set_model"; provider: string; modelId: string }
-	| { id?: string; type: "cycle_model" }
-	| { id?: string; type: "get_available_models" }
+	| { id?: string; type: "cycle_model"; direction?: "forward" | "backward" }
+	| { id?: string; type: "get_available_models"; refresh?: boolean }
 
 	// Thinking
 	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel }
@@ -66,7 +74,7 @@ export type RpcCommand =
 
 	// Session
 	| { id?: string; type: "get_session_stats" }
-	| { id?: string; type: "export_html"; outputPath?: string }
+	| { id?: string; type: "export_html"; outputPath?: string; themeName?: string }
 	| { id?: string; type: "switch_session"; sessionPath: string }
 	| { id?: string; type: "fork"; entryId: string }
 	| { id?: string; type: "clone" }
@@ -98,6 +106,25 @@ export type RpcCommand =
 	// Session import
 	| { id?: string; type: "import_jsonl"; path: string }
 
+	// Tree navigation
+	| {
+			id?: string;
+			type: "navigate_tree";
+			targetId: string;
+			summarize?: boolean;
+			customInstructions?: string;
+			replaceInstructions?: boolean;
+			label?: string;
+	  }
+
+	// Session discovery / management
+	| { id?: string; type: "list_sessions"; scope?: "current" | "all" }
+	| { id?: string; type: "rename_session"; path: string; name: string }
+	| { id?: string; type: "delete_session"; path: string }
+
+	// Session-only scoped models (ephemeral, not persisted)
+	| { id?: string; type: "set_session_models"; enabled?: string[]; reorder?: string[] }
+
 	// Git helper
 	| { id?: string; type: "git"; command: string }
 
@@ -115,7 +142,7 @@ export type RpcCommand =
 	| { id?: string; type: "get_hotkeys" }
 	| { id?: string; type: "get_available_themes" }
 	| { id?: string; type: "get_version_info" }
-	| { id?: string; type: "share_gist"; public?: boolean }
+	| { id?: string; type: "share_gist"; public?: boolean; themeName?: string }
 
 	// Messages
 	| { id?: string; type: "get_messages" }
@@ -139,6 +166,19 @@ export interface RpcSlashCommand {
 	sourceInfo: SourceInfo;
 	/** True for interactive-TUI-only builtins that cannot be invoked via prompt */
 	interactiveOnly?: boolean;
+}
+
+/** Session listing entry (SessionInfo with transcript text stripped). */
+export interface RpcSessionInfo {
+	path: string;
+	id: string;
+	cwd: string;
+	name?: string;
+	parentSessionPath?: string;
+	created: string;
+	modified: string;
+	messageCount: number;
+	firstMessage: string;
 }
 
 // ============================================================================
@@ -378,6 +418,40 @@ export type RpcResponse =
 
 	// Session import
 	| { id?: string; type: "response"; command: "import_jsonl"; success: true; data: { sessionPath: string } }
+
+	// Tree navigation
+	| {
+			id?: string;
+			type: "response";
+			command: "navigate_tree";
+			success: true;
+			data: {
+				editorText?: string;
+				cancelled: boolean;
+				aborted?: boolean;
+				summaryEntry?: BranchSummaryEntry | null;
+			};
+	  }
+
+	// Session discovery / management
+	| {
+			id?: string;
+			type: "response";
+			command: "list_sessions";
+			success: true;
+			data: { sessions: RpcSessionInfo[] };
+	  }
+	| { id?: string; type: "response"; command: "rename_session"; success: true; data: { path: string; name: string } }
+	| { id?: string; type: "response"; command: "delete_session"; success: true; data: { path: string; method: "trash" | "unlink" } }
+
+	// Session-only scoped models
+	| {
+			id?: string;
+			type: "response";
+			command: "set_session_models";
+			success: true;
+			data: { enabled: string[]; models: Model<any>[] };
+	  }
 
 	// Git helper
 	| { id?: string; type: "response"; command: "git"; success: true }

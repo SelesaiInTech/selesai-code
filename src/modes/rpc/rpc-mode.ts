@@ -20,6 +20,9 @@ import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { generateHandoff } from "../../core/handoff.ts";
 import { buildGitCommandPrompt } from "../../core/git-command.ts";
 import { KeybindingsManager } from "../../core/keybindings.ts";
+import { SessionManager } from "../../core/session-manager.ts";
+import { resolveModelScope } from "../../core/model-resolver.ts";
+import { refreshModelCatalogs } from "../interactive/model-catalog-refresh.ts";
 import type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
@@ -40,6 +43,7 @@ import { getChangelogPath, parseChangelog } from "../../utils/changelog.ts";
 import { VERSION, getAgentDir, getBundledDefaultsDir, getShareViewerUrl } from "../../config.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import { getAvailableThemesWithPaths, setRegisteredThemes } from "../interactive/theme/theme.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type { SessionTreeNode } from "../../core/session-manager.ts";
@@ -48,10 +52,11 @@ import type {
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcResponse,
+	RpcSessionInfo,
 	RpcSessionState,
 	RpcSlashCommand,
-				PrototypePhase,
-				QuicktypePhase,
+	PrototypePhase,
+	QuicktypePhase,
 } from "./rpc-types.ts";
 
 // Re-export types for consumers
@@ -60,6 +65,7 @@ export type {
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcResponse,
+	RpcSessionInfo,
 	RpcSessionState,
 	RpcSlashCommand,
 	PrototypePhase,
@@ -144,6 +150,13 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		string,
 		{ resolve: (value: any) => void; reject: (error: Error) => void }
 	>();
+
+	// Prompts buffered while compacting (queueWhileCompacting) — flushed after compaction_end.
+	const compactionPromptQueue: Array<{
+		message: string;
+		images?: ImageContent[];
+		streamingBehavior?: "steer" | "followUp";
+	}> = [];
 
 	// Shutdown request flag
 	let shutdownRequested = false;
@@ -425,6 +438,29 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			if (event.type === "agent_settled") {
 				void checkShutdownRequested();
 			}
+			if (event.type === "compaction_end" && compactionPromptQueue.length > 0) {
+				// TUI flushCompactionQueue parity: replay buffered prompts after compaction finishes.
+				// Completed compaction replays in-order (extension commands via prompt, rest by
+				// their original streaming behavior); aborted compaction discards the buffer.
+				if (event.aborted || event.errorMessage) {
+					compactionPromptQueue.length = 0;
+					return;
+				}
+				const queued = compactionPromptQueue.splice(0);
+				void (async () => {
+					for (const item of queued) {
+						try {
+							await session.prompt(item.message, {
+								images: item.images,
+								streamingBehavior: item.streamingBehavior,
+								source: "rpc",
+							});
+						} catch {
+							// Replay failures surface through agent error handling; do not kill the stream.
+						}
+					}
+				})();
+			}
 		});
 		unsubscribeBackpressure = session.agent.subscribe(async () => {
 			await waitForRawStdoutBackpressure();
@@ -463,6 +499,27 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				// Start prompt handling immediately, but emit the authoritative response only after
 				// prompt preflight succeeds. Queued and immediately handled prompts also count as success.
 				let preflightSucceeded = false;
+
+				// During compaction: either buffer and auto-send after compaction_end (TUI parity),
+				// or fail fast with a clear error when the caller did not opt in.
+				if (session.isCompacting) {
+					if (!command.queueWhileCompacting) {
+						return error(
+							id,
+							"prompt",
+							"Agent is compacting; set queueWhileCompacting:true to buffer this prompt and send it after compaction, or wait for compaction_end.",
+						);
+					}
+					const queued = {
+						message: command.message,
+						images: command.images,
+						streamingBehavior: command.streamingBehavior,
+					};
+					output(success(id, "prompt")); // accepted into the buffer
+					compactionPromptQueue.push(queued);
+					return undefined;
+				}
+
 				void session
 					.prompt(command.message, {
 						images: command.images,
@@ -494,6 +551,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			}
 
 			case "abort": {
+				// TUI Esc parity: cancel in-flight branch summarization and compaction as well,
+				// not just the active agent turn (session.abort() alone covers retry + agent).
+				session.abortBranchSummary();
+				session.abortCompaction();
 				await session.abort();
 				return success(id, "abort");
 			}
@@ -590,7 +651,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			}
 
 			case "cycle_model": {
-				const result = await session.cycleModel();
+				const result = await session.cycleModel(command.direction ?? "forward");
 				if (!result) {
 					return success(id, "cycle_model", null);
 				}
@@ -598,6 +659,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			}
 
 			case "get_available_models": {
+				if (command.refresh) {
+					// TUI parity: refresh model catalogs before listing (shared coordinator).
+					try {
+						await refreshModelCatalogs(session.modelRuntime, AbortSignal.timeout(15_000));
+					} catch {
+						// Fall back to the current snapshot if the network refresh fails.
+					}
+				}
 				const models = await session.modelRuntime.getAvailable();
 				return success(id, "get_available_models", { models });
 			}
@@ -727,7 +796,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			}
 
 			case "export_html": {
-				const path = await session.exportToHtml(command.outputPath);
+				const path = await session.exportToHtml(command.outputPath, { themeName: command.themeName });
 				return success(id, "export_html", { path });
 			}
 
@@ -797,6 +866,178 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				}
 				session.setSessionName(name);
 				return success(id, "set_session_name");
+			}
+
+			// =================================================================
+			// Tree navigation
+			// =================================================================
+
+			case "navigate_tree": {
+				if (session.isStreaming) {
+					return error(
+						id,
+						"navigate_tree",
+						"Wait for the current response to finish before navigating the session tree.",
+					);
+				}
+				try {
+					const result = await session.navigateTree(command.targetId, {
+						summarize: command.summarize,
+						customInstructions: command.customInstructions,
+						replaceInstructions: command.replaceInstructions,
+						label: command.label,
+					});
+					return success(id, "navigate_tree", {
+						editorText: result.editorText,
+						cancelled: result.cancelled,
+						aborted: result.aborted,
+						summaryEntry: result.summaryEntry ?? null,
+					});
+				} catch (navigationError: unknown) {
+					return error(
+						id,
+						"navigate_tree",
+						navigationError instanceof Error ? navigationError.message : String(navigationError),
+					);
+				}
+			}
+
+			// =================================================================
+			// Session discovery / management
+			// =================================================================
+
+			case "list_sessions": {
+				try {
+					const sessionManager = session.sessionManager;
+					const isAll = command.scope === "all";
+					const source = isAll
+						? sessionManager.usesDefaultSessionDir()
+							? await SessionManager.listAll()
+							: await SessionManager.listAll(sessionManager.getSessionDir())
+						: await SessionManager.list(sessionManager.getCwd(), sessionManager.getSessionDir());
+					const sessions = source.map((info) => ({
+						path: info.path,
+						id: info.id,
+						cwd: info.cwd,
+						name: info.name,
+						parentSessionPath: info.parentSessionPath,
+						created: Number.isNaN(info.created.getTime()) ? new Date(0).toISOString() : info.created.toISOString(),
+						modified: Number.isNaN(info.modified.getTime()) ? new Date(0).toISOString() : info.modified.toISOString(),
+						messageCount: info.messageCount,
+						firstMessage: info.firstMessage,
+					}));
+					return success(id, "list_sessions", { sessions });
+				} catch (listError: unknown) {
+					return error(
+						id,
+						"list_sessions",
+						listError instanceof Error ? listError.message : String(listError),
+					);
+				}
+			}
+
+			case "rename_session": {
+				const name = command.name.trim();
+				if (!name) {
+					return error(id, "rename_session", "Session name cannot be empty");
+				}
+				if (!existsSync(command.path)) {
+					return error(id, "rename_session", `Session file not found: ${command.path}`);
+				}
+				try {
+					const target = SessionManager.open(command.path);
+					target.appendSessionInfo(name);
+					return success(id, "rename_session", { path: command.path, name });
+				} catch (renameError: unknown) {
+					return error(
+						id,
+						"rename_session",
+						renameError instanceof Error ? renameError.message : String(renameError),
+					);
+				}
+			}
+
+			case "delete_session": {
+				if (command.path === session.sessionFile) {
+					return error(id, "delete_session", "Cannot delete the currently active session.");
+				}
+				if (!existsSync(command.path)) {
+					return error(id, "delete_session", `Session file not found: ${command.path}`);
+				}
+				try {
+					// trash-CLI-first with unlink fallback (identical to the TUI session selector).
+					const trashArgs = command.path.startsWith("-") ? ["--", command.path] : [command.path];
+					const trashResult = spawnSync("trash", trashArgs, { encoding: "utf-8" });
+					if (trashResult.status === 0 || !existsSync(command.path)) {
+						return success(id, "delete_session", { path: command.path, method: "trash" });
+					}
+					unlinkSync(command.path);
+					return success(id, "delete_session", { path: command.path, method: "unlink" });
+				} catch (deleteError: unknown) {
+					return error(
+						id,
+						"delete_session",
+						deleteError instanceof Error ? deleteError.message : String(deleteError),
+					);
+				}
+			}
+
+			// =================================================================
+			// Session-only scoped models (ephemeral, not persisted)
+			// =================================================================
+
+			case "set_session_models": {
+				try {
+					if (command.reorder !== undefined && command.reorder.length > 0) {
+						// Reorder-only path: rebuild scope from the reordered pattern list.
+						const scoped = await resolveModelScope(command.reorder, session.modelRuntime);
+						session.setScopedModels(
+							scoped.map((sm) => ({ model: sm.model, thinkingLevel: sm.thinkingLevel })),
+						);
+						return success(id, "set_session_models", {
+							enabled: scoped.map((sm) => `${sm.model.provider}/${sm.model.id}`),
+							models: scoped.map((sm) => sm.model),
+						});
+					}
+					if (command.enabled === undefined) {
+						return error(id, "set_session_models", "Provide either enabled or reorder.");
+					}
+					if (command.enabled.length === 0) {
+						session.setScopedModels([]);
+						return success(id, "set_session_models", { enabled: [], models: [] });
+					}
+					const patterns = command.enabled;
+					const allModels = await session.modelRuntime.getAvailable();
+					const allModelIds = new Set(allModels.map((model) => `${model.provider}/${model.id}`));
+					const allEnabled = patterns.every((pattern) => allModelIds.has(pattern));
+					if (allEnabled) {
+						// Every enabled id resolves to a concrete model: build scope directly.
+						const enabledSet = new Set(patterns);
+						const scopedModels = allModels.filter((model) =>
+							enabledSet.has(`${model.provider}/${model.id}`),
+						);
+						session.setScopedModels(scopedModels.map((model) => ({ model })));
+						return success(id, "set_session_models", {
+							enabled: scopedModels.map((model) => `${model.provider}/${model.id}`),
+							models: scopedModels,
+						});
+					}
+					// Patterns contain a scope/wildcard (e.g. "anthropic/*"): resolve against the registry.
+					const scoped = await resolveModelScope(patterns, session.modelRuntime);
+					session.setScopedModels(
+						scoped.map((sm) => ({ model: sm.model, thinkingLevel: sm.thinkingLevel })),
+					);
+					return success(id, "set_session_models", {
+						enabled: scoped.map((sm) => `${sm.model.provider}/${sm.model.id}`),
+						models: scoped.map((sm) => sm.model),
+					});
+				} catch (scopeError: unknown) {
+					return error(
+						id,
+						"set_session_models",
+						scopeError instanceof Error ? scopeError.message : String(scopeError),
+					);
+				}
 			}
 
 			// =================================================================
@@ -1286,7 +1527,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 						);
 					}
 					const tmpFile = join(tmpdir(), `selesai-session-${crypto.randomUUID()}.html`);
-					await session.exportToHtml(tmpFile);
+					await session.exportToHtml(tmpFile, { themeName: command.themeName });
 					const result = spawnSync(
 						"gh",
 						["gist", "create", "--public=false", tmpFile],
