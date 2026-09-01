@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.7] - 2026-09-01
+
+### Added
+- **`pi-intercom` `/alias` command.** You can now set the current session alias from the CLI with `/alias <name>` (or run `/alias menu` in the TUI to prompt for one) instead of relying only on the auto-assigned session name. Intercom broker peers see the updated identity immediately.
+
 ## [0.13.6] - 2026-08-31
 
 ### Fixed

@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.7 — pi-intercom session alias command
+
+- Added a **`/alias` command to `pi-intercom`**: set the current session alias from the CLI with `/alias <name>` (or `/alias menu` in the TUI to prompt for one), so broker peers see the new session identity immediately instead of relying only on the auto-assigned name.
+
 ## 0.13.6 — Packaging fix for the web-agent YouTube reader
 
 - Fixed the bundled **pi-web-agent** YouTube reader dependency: the published `@selesai/code` package now includes the root `youtube-caption-extractor` runtime dependency, so pasting a YouTube URL loads the transcript in source checkouts and global npm installs instead of failing with `Cannot find module 'youtube-caption-extractor'`.

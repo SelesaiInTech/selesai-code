@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.7 — Perintah alias sesi pi-intercom
+
+- Menambahkan **perintah `/alias` ke `pi-intercom`**: atur alias sesi aktif dari CLI dengan `/alias <name>` (atau `/alias menu` di TUI untuk meminta input), sehingga sesi peer broker langsung melihat identitas sesi baru alih-alih hanya mengandalkan nama otomatis.
+
 ## 0.13.6 — Perbaikan packaging untuk YouTube reader web-agent
 
 - Memperbaiki dependency YouTube reader bundled **pi-web-agent**: package `@selesai/code` yang dipublikasikan kini menyertakan dependency runtime root `youtube-caption-extractor`, sehingga menempelkan URL YouTube memuat transkrip dengan benar di source checkout dan instalasi npm global alih-alih gagal dengan `Cannot find module 'youtube-caption-extractor'`.

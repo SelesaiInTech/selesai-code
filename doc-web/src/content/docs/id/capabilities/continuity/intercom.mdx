@@ -28,6 +28,7 @@ Extension `pi-intercom` menambahkan pesan 1:1 langsung antar sesi Selesai di mes
 ## Yang disiapkan
 
 - Mendaftarkan slash command `/intercom` dan shortcut `Alt+M` untuk membuka overlay daftar sesi.
+- Mendaftarkan slash command `/alias` untuk mengatur alias sesi aktif dari CLI.
 - Mendaftarkan tool `intercom` untuk discovery sesi, kirim, ask, dan reply yang didorong agent.
 - Mendaftarkan tool `contact_supervisor` secara native ketika `pi-subagents` menyediakan child bridge metadata (`SELESAI_SUBAGENT_ORCHESTRATOR_TARGET`, `SELESAI_SUBAGENT_RUN_ID`, `SELESAI_SUBAGENT_CHILD_AGENT`, `SELESAI_SUBAGENT_CHILD_INDEX`).
 - Memulai broker lokal sesuai permintaan dan mempublikasikan presence (name, cwd, model, status, penggunaan konteks) untuk sesi yang terhubung.
@@ -50,6 +51,7 @@ Extension `pi-intercom` menambahkan pesan 1:1 langsung antar sesi Selesai di mes
 | Perintah / shortcut | Deskripsi |
 | --- | --- |
 | `/intercom` | Buka overlay daftar sesi. |
+| `/alias <name>` | Atur alias sesi aktif (`/alias menu` meminta input). |
 | `Alt+M` | Buka overlay daftar sesi. |
 | `intercom({ action: "list" })` | Daftar sesi lokal yang terhubung. |
 | `intercom({ action: "list-cwd" })` | Daftar sesi terhubung di working directory yang sama. |

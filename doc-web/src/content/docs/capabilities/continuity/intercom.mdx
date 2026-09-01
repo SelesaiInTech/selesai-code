@@ -28,6 +28,7 @@ The `pi-intercom` extension adds direct 1:1 messaging between Selesai sessions o
 ## What it sets up
 
 - Registers the `/intercom` slash command and the `Alt+M` shortcut to open the session list overlay.
+- Registers the `/alias` slash command to set the current session alias from the CLI.
 - Registers the `intercom` tool for agent-driven session discovery, sends, asks, and replies.
 - Registers a native `contact_supervisor` tool when `pi-subagents` supplies child bridge metadata (`SELESAI_SUBAGENT_ORCHESTRATOR_TARGET`, `SELESAI_SUBAGENT_RUN_ID`, `SELESAI_SUBAGENT_CHILD_AGENT`, `SELESAI_SUBAGENT_CHILD_INDEX`).
 - Starts a local broker on demand and publishes presence (name, cwd, model, status, context usage) for connected sessions.
@@ -50,6 +51,7 @@ The `pi-intercom` extension adds direct 1:1 messaging between Selesai sessions o
 | Command / shortcut | Description |
 | --- | --- |
 | `/intercom` | Open the session list overlay. |
+| `/alias <name>` | Set the current session alias (`/alias menu` prompts for one). |
 | `Alt+M` | Open the session list overlay. |
 | `intercom({ action: "list" })` | List connected local sessions. |
 | `intercom({ action: "list-cwd" })` | List connected sessions in the same working directory. |
