@@ -64,6 +64,14 @@ With images:
 
 If the agent is streaming and no `streamingBehavior` is specified, the command returns an error.
 
+**During compaction**: If the agent is compacting, the command is rejected unless `queueWhileCompacting` is set:
+
+```json
+{"type": "prompt", "message": "Follow-up", "queueWhileCompacting": true}
+```
+
+With `queueWhileCompacting: true` the prompt is accepted into a buffer (`success: true` is returned immediately) and auto-replayed in order after `compaction_end`. If compaction aborts or errors, the buffer is discarded.
+
 **Extension commands**: If the message is an extension command (e.g., `/mycommand`), it executes immediately even during streaming. Extension commands manage their own LLM interaction via `pi.sendMessage()`.
 
 **Input expansion**: Skill commands (`/skill:name`) and prompt templates (`/template`) are expanded before sending/queueing.
@@ -240,6 +248,14 @@ Cycle to the next available model. Returns `null` data if only one model availab
 {"type": "cycle_model"}
 ```
 
+Optional `direction` (defaults to `"forward"`):
+
+```json
+{"type": "cycle_model", "direction": "backward"}
+```
+
+`direction` is `"forward"` or `"backward"`.
+
 Response:
 ```json
 {
@@ -262,6 +278,12 @@ List all configured models.
 
 ```json
 {"type": "get_available_models"}
+```
+
+Optional `refresh` flag (TUI parity) re-fetches model catalogs before listing; a small timeout applies and the current snapshot is used if the network refresh fails:
+
+```json
+{"type": "get_available_models", "refresh": true}
 ```
 
 Response contains an array of full [Model](#model) objects:
@@ -556,6 +578,11 @@ With custom path:
 {"type": "export_html", "outputPath": "/tmp/session.html"}
 ```
 
+Optional `themeName` selects the export theme (otherwise the current theme is used):
+```json
+{"type": "export_html", "outputPath": "/tmp/session.html", "themeName": "dark"}
+```
+
 Response:
 ```json
 {
@@ -702,6 +729,134 @@ Response:
 
 The current session name is available via `get_state` in the `sessionName` field. To set the initial name when starting RPC mode, pass `--name <name>` or `-n <name>` to the `pi --mode rpc` process.
 
+#### navigate_tree
+
+Navigate the session tree to a different entry (the TUI tree selector equivalent). Rejects while the agent is streaming; emits a `session_tree` event on success.
+
+```json
+{"type": "navigate_tree", "targetId": "abc123"}
+```
+
+Optional fields:
+- `summarize`: summarize the branch between the old leaf and the target before navigating.
+- `customInstructions`: custom summary instructions (with `summarize`).
+- `replaceInstructions`: replace (rather than append to) the default summary instructions.
+- `label`: attach the given label to the target entry.
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "navigate_tree",
+  "success": true,
+  "data": {
+    "editorText": "...",
+    "cancelled": false,
+    "aborted": false,
+    "summaryEntry": null
+  }
+}
+```
+
+`editorText` is present when the target is a user message (it becomes the editor prefill). `aborted` is set when a `session_before_navigate`-style extension handler cancels the navigation. Fails with `Entry <id> not found` for unknown targets and `No model available for summarization` when `summarize` is requested but no model is configured.
+
+#### list_sessions
+
+List sessions. `scope` defaults to `"current"` (sessions in the current cwd/session dir); `"all"` searches the full session store.
+
+```json
+{"type": "list_sessions"}
+{"type": "list_sessions", "scope": "all"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "list_sessions",
+  "success": true,
+  "data": {
+    "sessions": [
+      {
+        "path": "/path/to/session.jsonl",
+        "id": "abc123",
+        "cwd": "/path/to/project",
+        "name": "my-feature-work",
+        "parentSessionPath": null,
+        "created": "2026-09-01T00:00:00.000Z",
+        "modified": "2026-09-01T01:00:00.000Z",
+        "messageCount": 42,
+        "firstMessage": "First user prompt..."
+      }
+    ]
+  }
+}
+```
+
+`name` is omitted when unset. `created`/`modified` are ISO strings; sessions with invalid timestamps (e.g. hand-written JSONL) are reported as epoch (`1970-01-01T00:00:00.000Z`).
+
+#### rename_session
+
+Rename a session by writing the name into its JSONL header. The file must exist; an empty name is rejected.
+
+```json
+{"type": "rename_session", "path": "/path/to/session.jsonl", "name": "my-feature-work"}
+```
+
+Response: `{"command": "rename_session", "success": true, "data": {"path": "/path/to/session.jsonl", "name": "my-feature-work"}}`
+
+#### delete_session
+
+Delete a session. Moves it to the operating system trash when available, else unlinks the file directly. Refuses to delete the currently active session.
+
+```json
+{"type": "delete_session", "path": "/path/to/session.jsonl"}
+```
+
+Response: `{"command": "delete_session", "success": true, "data": {"path": "/path/to/session.jsonl", "method": "trash"}}`
+
+`method` is `"trash"` or `"unlink"`.
+
+#### set_session_models
+
+Scope the session to a subset of models (mirrors the TUI session-only model scoping). Ephemeral: never writes settings files and does not affect the persistent scoped-model configuration. Pass an empty array to clear the session scope.
+
+```json
+{"type": "set_session_models", "enabled": ["anthropic/claude-sonnet-4-20250514", "anthropic/*"]}
+```
+
+`enabled` entries are concrete `provider/id` identifiers or scope/wildcard patterns (e.g. `"anthropic/*"`). `reorder` (a reordered pattern list) rebuilds the scope without changing which models are enabled. At least one of the two must be present.
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "set_session_models",
+  "success": true,
+  "data": {
+    "enabled": ["anthropic/claude-sonnet-4-20250514"],
+    "models": [{...}]
+  }
+}
+```
+
+`enabled` is the resolved list of `provider/id` strings; `models` is the matching array of [Model](#model) objects.
+
+#### share_gist
+
+Export the session to HTML and share it as a private GitHub gist (requires the GitHub CLI authenticated via `gh auth login`).
+
+```json
+{"type": "share_gist"}
+```
+
+Optional `themeName` selects the export theme:
+```json
+{"type": "share_gist", "themeName": "dark"}
+```
+
+Response: `{"command": "share_gist", "success": true, "data": {"url": "https://github.com/user/...", "gistUrl": "https://gist.github.com/..."}}`
+
 ### Commands
 
 #### get_commands
@@ -766,6 +921,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `compaction_end` | Compaction completes |
 | `auto_retry_start` | Auto-retry begins (after transient error) |
 | `auto_retry_end` | Auto-retry completes (success or final failure) |
+| `session_tree` | Session tree navigated (new leaf, old leaf, optional summary entry) |
 | `extension_error` | Extension threw an error |
 
 ### agent_start
@@ -956,6 +1112,20 @@ If `reason` was `"overflow"` and compaction succeeds, `willRetry` is `true` and 
 If compaction was aborted, `result` is `null` and `aborted` is `true`.
 
 If compaction failed (e.g., API quota exceeded), `result` is `null`, `aborted` is `false`, and `errorMessage` contains the error description.
+
+### session_tree
+
+Emitted after a `navigate_tree` (or an extension-initiated tree navigation) moves the session to a new leaf. `oldLeafId`/`newLeafId` are the session tree leaves before and after the navigation; `summaryEntry` is present when the navigation summarized the branch. `fromExtension` is true when the navigation was initiated by an extension.
+
+```json
+{
+  "type": "session_tree",
+  "oldLeafId": "def456",
+  "newLeafId": "abc123",
+  "summaryEntry": null,
+  "fromExtension": false
+}
+```
 
 ### auto_retry_start / auto_retry_end
 
