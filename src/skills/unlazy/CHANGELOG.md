@@ -1,5 +1,14 @@
 # Changelog
 
+## Selesai fork
+
+This copy ships inside the Selesai repo at `src/skills/unlazy`. It is edited to describe the Selesai host:
+
+- Drop the Claude Code Stop hook, installer, `gate-check --bind`, and the Codex/Claude launch adapters; remove their code, tests, and documentation.
+- Document Selesai's native `subagent` async runs as the launch adapter in `references/dispatch.md`.
+
+Upstream history below is left intact and may mention Claude Code, Codex, the Stop hook, and other hosts that this fork removed.
+
 ## Unreleased, target 2.1.0
 
 This section describes the current source tree. It does not claim that `2.1.0` has a Git tag or GitHub Release.

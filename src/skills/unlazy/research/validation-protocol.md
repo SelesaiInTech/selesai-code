@@ -78,4 +78,4 @@ Describe results for the tested models, snapshots, tasks, and environments. Do n
 
 ## Repository-level validation
 
-The current implementation has a separate deterministic test suite for parser, checker, lease, hook, installer, and portability behavior. Run it with the repository's documented test command. Those software tests validate implementation behavior; they do not validate broad claims about model psychology or task productivity.
+The current implementation has a separate deterministic test suite for parser, checker, lease, and portability behavior. Run it with the repository's documented test command. Those software tests validate implementation behavior; they do not validate broad claims about model psychology or task productivity.

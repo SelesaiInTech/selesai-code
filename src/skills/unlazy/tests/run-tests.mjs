@@ -16,8 +16,6 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GATE_CHECK = join(HERE, "..", "scripts", "gate-check.mjs");
-const STOP_HOOK = join(HERE, "..", "scripts", "stop-hook.mjs");
-const INSTALL = join(HERE, "..", "scripts", "install-hooks.mjs");
 const filter = process.argv[2] || "";
 const APPROVAL_ROOT = mkdtempSync(join(tmpdir(), "unlazy-test-approvals-"));
 
@@ -43,7 +41,7 @@ function sandbox() {
 
 function run(script, args, opts = {}) {
   return new Promise((res) => {
-    const actions = new Set(["--status", "--claim", "--release", "--list-scopes", "--log", "--bind", "--help", "-h"]);
+    const actions = new Set(["--status", "--claim", "--release", "--list-scopes", "--log", "--help", "-h"]);
     const needsApproval = script === GATE_CHECK && !opts.noApprove && !args.some((arg) => actions.has(arg));
     const actualArgs = needsApproval && !args.includes("--approve") ? ["--approve", ...args] : args;
     const child = execFile(process.execPath, [script, ...actualArgs], {
@@ -338,198 +336,6 @@ test("status log: appends, and appends survive concurrency", async () => {
   } finally { s.cleanup(); }
 });
 
-test("hook: does not block on a pipeline this session does not own", async () => {
-  const s = sandbox();
-  try {
-    // api is finished; web has never been started. Ending the api session must
-    // not be blocked by web's gates.
-    s.write(".unlazy/api/gates/leaf-1.md", "# Gates\n\n- [x] G1: done\n  EVIDENCE: measured, 8/8 passed\n");
-    s.write(".unlazy/web/gates/leaf-1.md", "# Gates\n\n" + gate("G1", "not started", null, null));
-    const r = await run(STOP_HOOK, ["--scope", "api"], { cwd: s.dir, stdin: JSON.stringify({ cwd: s.dir }) });
-    assertLacks(r.out, '"decision":"block"', "hook");
-    assert(r.code === 0, "hook should exit 0");
-  } finally { s.cleanup(); }
-});
-
-test("hook: blocks on its own scope, naming qualified ids", async () => {
-  const s = sandbox();
-  try {
-    s.write(".unlazy/api/gates/leaf-7.md", "# Gates\n\n" + gate("G3", "unfinished", null, null));
-    s.write(".unlazy/web/gates/leaf-1.md", "# Gates\n\n- [x] G1: done\n  EVIDENCE: proven\n");
-    const r = await run(STOP_HOOK, ["--scope", "api"], { cwd: s.dir, stdin: JSON.stringify({ cwd: s.dir }) });
-    assertHas(r.out, '"decision":"block"');
-    assertHas(r.out, "leaf-7:G3");
-    assertHas(r.out, "[scope api]");
-  } finally { s.cleanup(); }
-});
-
-test("hook: abandonment allows Stop but reports an explicit bounded handoff", async () => {
-  const s = sandbox();
-  try {
-    s.write(".unlazy/api/gates/leaf-7.md", [
-      "# Gates",
-      "",
-      "- [ ] G3: impossible",
-      "  EVIDENCE: pending",
-      "",
-      "ABANDON: G3 secret-looking reason that must stay ledger-local",
-      "",
-    ].join("\n"));
-    const r = await run(STOP_HOOK, ["--scope", "api"], {
-      cwd: s.dir,
-      stdin: JSON.stringify({ cwd: s.dir, session_id: "handoff-test" }),
-    });
-    assertLacks(r.out, '"decision":"block"');
-    assertHas(r.out, "HANDOFF REQUIRED");
-    assertHas(r.out, "leaf-7:G3");
-    assertLacks(r.out, "secret-looking reason");
-  } finally { s.cleanup(); }
-});
-
-test("hook: unresolvable scope allows the stop instead of blocking blindly", async () => {
-  const s = sandbox();
-  try {
-    s.write(".unlazy/api/gates/leaf-1.md", "# Gates\n\n" + gate("G1", "a", null, null));
-    s.write(".unlazy/web/gates/leaf-1.md", "# Gates\n\n" + gate("G1", "b", null, null));
-    const r = await run(STOP_HOOK, [], { cwd: s.dir, stdin: JSON.stringify({ cwd: s.dir }) });
-    assertLacks(r.out, '"decision":"block"', "hook");
-    assertHas(r.out, "2 pipelines");
-  } finally { s.cleanup(); }
-});
-
-test("hook: session binding resolves the scope among several", async () => {
-  const s = sandbox();
-  try {
-    s.write(".unlazy/api/gates/leaf-1.md", "# Gates\n\n" + gate("G1", "a", null, null));
-    s.write(".unlazy/web/gates/leaf-1.md", "# Gates\n\n" + gate("G1", "b", null, null));
-    const bind = await run(GATE_CHECK, ["--scope", "web", "--bind", "sess-abc"], { cwd: s.dir });
-    assertHas(bind.out, "bound session sess-abc to scope web");
-    const r = await run(STOP_HOOK, [], { cwd: s.dir, stdin: JSON.stringify({ cwd: s.dir, session_id: "sess-abc" }) });
-    assertHas(r.out, '"decision":"block"');
-    assertHas(r.out, "[scope web]");
-  } finally { s.cleanup(); }
-});
-
-test("hook: each pipeline keeps its own loop-guard counter", async () => {
-  const s = sandbox();
-  try {
-    s.write(".unlazy/api/gates/leaf-1.md", "# Gates\n\n" + gate("G1", "a", null, null));
-    s.write(".unlazy/web/gates/leaf-1.md", "# Gates\n\n" + gate("G1", "b", null, null));
-    const stdin = JSON.stringify({ cwd: s.dir });
-    for (let i = 0; i < 7; i++) await run(STOP_HOOK, ["--scope", "api"], { cwd: s.dir, stdin });
-    const apiState = JSON.parse(s.read(".unlazy/api/hook-state.json"));
-    const apiSession = Object.values(apiState.sessions)[0];
-    assert(apiSession.blocks === 7, "api counter should be 7, got " + apiSession.blocks);
-    // api has exhausted its guard and now releases; web is untouched and still blocks.
-    const apiNow = await run(STOP_HOOK, ["--scope", "api"], { cwd: s.dir, stdin });
-    assertHas(apiNow.out, "releasing after 6 blocks");
-    const webNow = await run(STOP_HOOK, ["--scope", "web"], { cwd: s.dir, stdin });
-    assertHas(webNow.out, '"decision":"block"');
-  } finally { s.cleanup(); }
-});
-
-test("hook: the loop guard tracks gate state, not file bytes", async () => {
-  const s = sandbox();
-  try {
-    // A cosmetic edit is not progress. Keying the guard to raw bytes let any
-    // touch of the ledger reset the counter, so an agent that keeps editing
-    // without meeting a gate is never released. Re-running the checker did the
-    // same thing by rewriting evidence text.
-    s.write(".unlazy/api/gates/leaf-1.md", "# Gates\n\n" + gate("G1", "a", null, null) + gate("G2", "b", null, null));
-    const stdin = JSON.stringify({ cwd: s.dir });
-    for (let i = 0; i < 6; i++) {
-      const blocked = await run(STOP_HOOK, ["--scope", "api"], { cwd: s.dir, stdin });
-      assertHas(blocked.out, '"decision":"block"');
-    }
-    s.write(".unlazy/api/gates/leaf-1.md",
-      s.read(".unlazy/api/gates/leaf-1.md") + "\n<!-- still thinking about it -->\n");
-    const afterCosmetic = await run(STOP_HOOK, ["--scope", "api"], { cwd: s.dir, stdin });
-    assertHas(afterCosmetic.out, "releasing after 6 blocks");
-  } finally { s.cleanup(); }
-});
-
-test("hook: meeting a gate resets the loop guard", async () => {
-  const s = sandbox();
-  try {
-    // The converse of the test above: real progress must still rearm the guard,
-    // or a long run would be released while it is genuinely advancing.
-    s.write(".unlazy/api/gates/leaf-1.md", "# Gates\n\n" + gate("G1", "a", null, null) + gate("G2", "b", null, null));
-    const stdin = JSON.stringify({ cwd: s.dir });
-    for (let i = 0; i < 3; i++) await run(STOP_HOOK, ["--scope", "api"], { cwd: s.dir, stdin });
-    s.write(".unlazy/api/gates/leaf-1.md",
-      "# Gates\n\n- [x] G1: a\n  EVIDENCE: measured 3 of 3\n\n" + gate("G2", "b", null, null));
-    for (let i = 0; i < 4; i++) {
-      const blocked = await run(STOP_HOOK, ["--scope", "api"], { cwd: s.dir, stdin });
-      assertHas(blocked.out, '"decision":"block"');
-    }
-  } finally { s.cleanup(); }
-});
-
-test("hook: no gate files anywhere means silence", async () => {
-  const s = sandbox();
-  try {
-    const r = await run(STOP_HOOK, [], { cwd: s.dir, stdin: JSON.stringify({ cwd: s.dir }) });
-    assert(r.out.trim() === "", "expected no output, got: " + r.out);
-    assert(r.code === 0, "expected exit 0");
-  } finally { s.cleanup(); }
-});
-
-test("install: repeated install stays a single Stop entry", async () => {
-  const s = sandbox();
-  try {
-    await run(INSTALL, ["--scope", "api"], { cwd: s.dir });
-    await run(INSTALL, ["--scope", "api"], { cwd: s.dir });
-    const cfg = JSON.parse(s.read(".claude/settings.local.json"));
-    assert(cfg.hooks.Stop.length === 1, "expected 1 Stop entry, got " + cfg.hooks.Stop.length);
-    assertHas(cfg.hooks.Stop[0].hooks[0].command, "--scope api", "hook command");
-  } finally { s.cleanup(); }
-});
-
-test("install: changing the scope replaces the entry instead of stacking", async () => {
-  const s = sandbox();
-  try {
-    await run(INSTALL, ["--scope", "api"], { cwd: s.dir });
-    await run(INSTALL, ["--scope", "web"], { cwd: s.dir });
-    const cfg = JSON.parse(s.read(".claude/settings.local.json"));
-    assert(cfg.hooks.Stop.length === 1, "expected 1 Stop entry, got " + cfg.hooks.Stop.length);
-    assertHas(cfg.hooks.Stop[0].hooks[0].command, "--scope web", "hook command");
-  } finally { s.cleanup(); }
-});
-
-test("install: uninstall removes our entry and leaves others alone", async () => {
-  const s = sandbox();
-  try {
-    s.write(".claude/settings.local.json", JSON.stringify({
-      hooks: { Stop: [{ hooks: [{ type: "command", command: "node other-tool.mjs" }] }] },
-    }, null, 2));
-    await run(INSTALL, ["--scope", "api"], { cwd: s.dir });
-    const r = await run(INSTALL, ["--uninstall"], { cwd: s.dir });
-    assertHas(r.out, "Removed unlazy Stop hook");
-    const cfg = JSON.parse(s.read(".claude/settings.local.json"));
-    assert(cfg.hooks.Stop.length === 1, "expected the unrelated hook to remain");
-    assertHas(cfg.hooks.Stop[0].hooks[0].command, "other-tool.mjs", "unrelated hook");
-  } finally { s.cleanup(); }
-});
-
-test("install: an upstream v2.0 entry is still recognised and removable", async () => {
-  const s = sandbox();
-  try {
-    s.write(".claude/settings.local.json", JSON.stringify({
-      hooks: {
-        Stop: [{
-          hooks: [{
-            type: "command",
-            command: 'node "/home/me/.claude/skills/unlazy/scripts/stop-hook.mjs"',
-          }],
-        }],
-      },
-    }, null, 2));
-    const r = await run(INSTALL, ["--uninstall"], { cwd: s.dir });
-    assertHas(r.out, "Removed unlazy Stop hook");
-    const cfg = JSON.parse(s.read(".claude/settings.local.json"));
-    assert(!cfg.hooks, "settings should be left clean, got " + JSON.stringify(cfg));
-  } finally { s.cleanup(); }
-});
 
 // ---------------------------------------------------------------- driver
 

@@ -11,7 +11,7 @@ Decide before fan-out:
 - Interfaces: <signatures, schemas, formats, integration points>
 - Ownership: <one complete set of repository-relative paths per leaf; no absolute paths, traversal, or concurrent overlap>
 - Dependencies: <leaf ids that must be VERIFIED first>
-- Host launch mode: <Codex native subagents | Claude background Agents | Claude Dynamic Workflow | sequential fallback>
+- Host launch mode: <Selesai subagent async runs | sequential fallback>
 - Wave policy: <which independent READY leaves launch together and the maximum host concurrency>
 - Toolchain: <runtime versions, shell, working-directory rules, test commands>
 - Conventions: <naming, errors, compatibility, formatting>

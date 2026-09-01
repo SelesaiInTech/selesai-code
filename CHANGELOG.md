@@ -2,6 +2,12 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.8] - 2026-09-01
+
+### Changed
+- **Unlazy skill is Selesai-native.** The bundled `unlazy` skill was scrubbed of its Claude Code / Codex assumptions. The Stop-hook installer, the `stop-hook` and `install-hooks` scripts, the `--bind` session binding, and the Codex/Claude launch adapters were removed; dispatch now runs on Selesai's native async `subagent` runs. The remaining hooks/installer references, hook and installer tests, and related documentation were removed.
+- **Ponytail extension test script.** `src/extensions/ponytail` now uses `vitest run test/` as its test command, keeping the node builtin test run available as `test:node`.
+
 ## [0.13.7] - 2026-09-01
 
 ### Added

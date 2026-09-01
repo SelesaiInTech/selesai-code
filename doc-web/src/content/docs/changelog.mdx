@@ -3,6 +3,11 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.8 — Selesai-native unlazy skill, ponytail test command
+
+- The bundled **unlazy** skill is now Selesai-native: its Claude Code / Codex specific parts were removed (Stop-hook installer and scripts, `--bind` session binding, Codex/Claude launch adapters), and parallel dispatch now uses Selesai's native async subagent runs.
+- The **ponytail** extension's `test` script now runs `vitest run test/`; the node builtin test run stays available as `test:node`.
+
 ## 0.13.7 — pi-intercom session alias command
 
 - Added a **`/alias` command to `pi-intercom`**: set the current session alias from the CLI with `/alias <name>` (or `/alias menu` in the TUI to prompt for one), so broker peers see the new session identity immediately instead of relying only on the auto-assigned name.

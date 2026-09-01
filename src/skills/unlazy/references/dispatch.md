@@ -45,25 +45,22 @@ node <skill-dir>/scripts/dispatch-check.mjs status --scope <scope> --wave ready-
 
 The state loader requires string ids, handles, and abandonment reasons plus a possible transition history: returns require an all-started sealed wave, terminal timestamps must exist and follow prior transitions, and a fully returned wave must be complete. Hand-editing an impossible terminal state fails closed. The primary `gate-check.mjs --scope <scope>` reduction includes this aggregate state and cannot print `ALL MET` while a wave is open, sealed, abandoned, or invalid.
 
-## Codex adapter
+## Selesai launch adapter
 
-[Current Codex releases support parallel subagents](https://developers.openai.com/codex/agent-configuration/subagents). Use the native subagent tools available in the host. When the tools are named `spawn_agent` and `wait_agent`, follow this exact order:
+Use the native `subagent` tool. Launch each leaf as one async child and record the returned run id as the handle. Follow the same barrier: schedule the whole fan-out before collecting its first result.
 
-1. call `spawn_agent` once for each leaf in the open wave
-2. record each returned agent id with `dispatch-check start`
-3. seal the wave
-4. call `wait_agent` only after seal
-5. record each completion with `dispatch-check return`, then reverify it
+```text
+# open the wave with dispatch-check (step above)
+# then, per leaf, launch one async subagent run and record its run id:
+subagent({ agent: "worker", task: leafBrief, async: true })  # -> returns a run id
+node <skill-dir>/scripts/dispatch-check.mjs start --scope <scope> --wave ready-1 --leaf leaf-1.1.1 --handle <run-id>
+node <skill-dir>/scripts/dispatch-check.mjs seal --scope <scope> --wave ready-1
+# only after seal: wait for results (async completion notifies the session natively;
+# use bg_wait only for provider/detached work without a native notification)
+# per returned leaf: node <skill-dir>/scripts/dispatch-check.mjs return --scope ... --leaf ...
+```
 
-Do not use `codex exec` as a substitute. It creates a separate CLI process rather than a native subagent owned and visible through the current host.
-
-## Claude Code adapter
-
-[Claude Code background subagents run concurrently](https://code.claude.com/docs/en/sub-agents#run-subagents-in-foreground-or-background). Launch every leaf as a background `Agent` task, record every returned task or agent id, and seal before reading any result. Do not issue foreground Agent calls one after another.
-
-For a large regular fan-out, prefer a [Dynamic Workflow](https://code.claude.com/docs/en/workflows). Its `pipeline()` primitive runs agent work across a list under the runtime's concurrency limit. The workflow must still preserve the same semantic barrier: schedule the whole fan-out before collecting its first result. Open a CLI dispatch wave only when the workflow surface exposes a distinct native handle for each agent. Otherwise retain the generated workflow script and runtime progress as branch evidence without claiming a CLI-verified wave.
-
-Do not use `claude -p` as a substitute for an available native background Agent or workflow. A shell process farm loses the current session's native scheduling and observability.
+Do not use `subagent({ action: "list" })` scheduling tricks or a shell process farm as a substitute; keep each leaf an owned, observable async run. A worker's own subagent fanout is bounded by the child tool allowlist; unlazy waves are driven from the parent.
 
 ## Failure and fallback
 
@@ -73,7 +70,7 @@ If a native launch fails before returning a handle, leave the wave open, fix the
 node <skill-dir>/scripts/dispatch-check.mjs abandon --scope <scope> --wave ready-1 --reason "<bounded nonblank reason>"
 ```
 
-An abandoned wave is terminal and `status` exits `1`. The Stop hook does not block on it, but emits a bounded `HANDOFF REQUIRED` message naming the wave without copying its free-form reason into the privileged host message. Surface the reason from dispatch state in the final handoff. If the host has no nonblocking launch capability, record the limitation in `PLAN.md`, execute a declared sequential fallback, and do not open or describe a parallel wave.
+An abandoned wave is terminal and `status` exits `1` and the aggregate scope reduction prints `HANDOFF REQUIRED` until the reason is surfaced in the final report. If the host has no nonblocking launch capability, record the limitation in `PLAN.md`, execute a declared sequential fallback, and do not open or describe a parallel wave.
 
 Opening a wave is an execution claim. Do not invent handles, record a foreground result as a start, or call simultaneous work proved merely because commands ran quickly.
 

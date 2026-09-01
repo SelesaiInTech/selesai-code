@@ -2,7 +2,7 @@
 // gate-lint.mjs : audit whether a ledger is worth passing.
 // Zero dependencies. Node 16+.
 //
-// The checker and the Stop hook decide whether gates were met. Neither asks
+// The checker decides whether gates were met. It does not ask
 // whether the gates were worth meeting. A gate reading "the entire feature
 // works perfectly" with `CHECK: echo ok` and `EXPECT: ok` passes the checker,
 // the parent re-verification and the hook, because the oracle is real, runs,

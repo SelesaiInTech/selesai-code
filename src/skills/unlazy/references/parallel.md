@@ -13,8 +13,7 @@ Scopes and ownership leases coordinate cooperating unlazy processes. They preven
       leaf-*.md
       node-*.md
     status.log
-    session
-    hook-state.json
+    dispatch.json
   locks/
 ```
 
@@ -29,9 +28,7 @@ A scoped checker invocation selects one pipeline in this order:
 3. the only scope present
 4. the legacy layout when no scoped pipeline exists
 
-The Stop hook can additionally use the current Claude Code `session_id` binding written by `--bind`. A binding associates a session with a scope; it is not authentication.
-
-When several scopes exist and none resolves, the checker refuses instead of running every ledger. The Stop hook allows the stop with a diagnostic instead of blocking a session on an unknown pipeline.
+When several scopes exist and none resolves, the checker refuses instead of running every ledger. Scope resolution is the only selector; there is no hook binding.
 
 Use scope ids that match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` and are not `.` or `..`. Do not use separators, traversal, or absolute paths.
 
@@ -41,7 +38,6 @@ A scope limits unlazy's own:
 
 - default gate discovery
 - status log target
-- Stop-hook resolution and progress state
 - lease owner label
 
 A scope does not limit a `CHECK:` process. Checks inherit ambient operating-system access and can read or write outside the scope. Use separate worktrees or stronger process isolation when commands themselves must be isolated.
@@ -102,17 +98,9 @@ node <skill-dir>/scripts/gate-check.mjs --scope api --log "leaf-1.2.1 verified"
 
 Append-only logging reduces lost updates; it does not replace the live state fields in `PLAN.md`.
 
-## Session-keyed hook state
+## Per-session scope state
 
-The Stop hook keys progress state to the resolved scope and current session. Concurrent hook calls serialize their state update. Completion or disappearance of the ledger clears obsolete state. One session cannot consume another session's six no-progress blocks.
-
-The hook may be pinned with installer `--scope` or resolve a session binding written by:
-
-```text
-node <skill-dir>/scripts/gate-check.mjs --scope api --bind <session-id>
-```
-
-Do not treat a stored session id as a secret or identity proof.
+Dispatch state and status logs are per-scope. Do not treat a session or run id as a secret or identity proof.
 
 ## Choose the right isolation level
 

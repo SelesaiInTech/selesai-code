@@ -4,7 +4,7 @@ Thanks for improving unlazy. Keep changes focused, testable, portable, and hones
 
 ## Welcome changes
 
-- parser, checker, hook, installer, concurrency, and portability fixes
+- parser, checker, concurrency, and portability fixes
 - sharper gate-authoring or orchestration guidance
 - regression tests for reported behavior
 - recent research that directly supports a narrowly worded claim
@@ -13,15 +13,15 @@ Thanks for improving unlazy. Keep changes focused, testable, portable, and hones
 ## Ground rules
 
 1. **Keep enforcement structural.** Completion is decided by valid ledgers, current evidence, parent re-verification, and integration checks.
-2. **Treat the format as one contract.** A ledger-format change must update the shared parser, checker, hook, templates, references, and tests together.
-3. **Fail closed on malformed completion state.** Invalid input must not become `ALL MET` or a silent Stop-hook allow unless the documented security boundary requires a diagnostic allow.
+2. **Treat the format as one contract.** A ledger-format change must update the shared parser, checker, templates, references, and tests together.
+3. **Fail closed on malformed completion state.** Invalid input must not become `ALL MET`.
 4. **Treat `CHECK:` as code.** Preserve explicit approval, approval invalidation, and non-executing status behavior. Do not weaken the trust boundary for convenience.
-5. **Keep Node 16 compatibility and zero runtime dependencies.** Use Node standard-library APIs available on the supported floor. Test Windows, macOS, and Linux behavior when changing shell, path, newline, file-lock, or installer code.
+5. **Keep Node 16 compatibility and zero runtime dependencies.** Use Node standard-library APIs available on the supported floor. Test Windows, macOS, and Linux behavior when changing shell, path, newline, or file-lock code.
 6. **Make claims exact.** Use primary research or official platform documentation when available. Distinguish a checkpoint metric from end-to-end success, an overall fit from a subset fit, and exploratory observations from reproducible results.
 7. **Keep skill metadata valid.** `SKILL.md` frontmatter contains only `name` and a trigger-rich third-person `description`. Keep `agents/openai.yaml` aligned and do not add icon paths without real assets.
 8. **Use imperative skill prose and progressive disclosure.** Keep core workflow in `SKILL.md`; put detailed contracts in directly linked references.
 9. **Use no em dash or en dash.** Use a hyphen, colon, or sentence break.
-10. **Preserve unrelated user configuration.** Installer changes must validate container shapes, update atomically, and remove only unlazy's own handlers.
+
 
 ## Tests
 
@@ -43,11 +43,8 @@ For script changes, add a regression that fails before the fix. Cover the releva
 - Windows process-tree cleanup success, helper failure, direct-child fallback, and timeout settlement
 - sequential default and deterministic bounded `--jobs`
 - simultaneous conflicting lease claims, conservative glob overlap, unsafe paths, unknown leaves, and release
-- concurrent gate updates and concurrent session-keyed hook state
-- native dispatch open/start/seal/return, partial-launch abandonment, and semantic progress hashing
+- native dispatch open/start/seal/return and partial-launch abandonment
 - PLAN contract omissions, stale owners/observations, amendments, explicit removal, and the focused solo path
-- Stop-hook block, progress reset, six-block release, all-met cleanup, ambiguity, and session routing
-- installer install, idempotence, moved paths, target-shape refusal, unrelated-handler preservation, and uninstall
 
 Run syntax checks and the skill validator as part of final verification. Keep tests deterministic and isolated from real user settings.
 

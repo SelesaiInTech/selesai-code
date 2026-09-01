@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
   UNLAZY_DIR, appendStatus, claimLeases, formatDocument, gateState,
-  hookStatePath, listScopes, parseGates, qualify, releaseLeases, resolveTarget,
+  listScopes, parseGates, qualify, releaseLeases, resolveTarget,
   scopeRoot, sha256, sleep, validateScopeId, withFileLock, writeAtomic,
 } from "./lib/gates.mjs";
 import { terminateProcessTree } from "./lib/process-tree.mjs";
@@ -37,7 +37,6 @@ pipeline actions:
   --claim --scope ID [--leaf NAME]   atomically claim the leaf's OWNS paths
   --release --scope ID [--leaf NAME] release serialized ownership leases
   --log TEXT --scope ID              append one status line
-  --bind SESSION --scope ID          bind a session to one pipeline
   --list-scopes                      list .unlazy pipelines
 
 targeting:
@@ -58,7 +57,7 @@ const FLAG_OPTIONS = new Set([
 ]);
 const VALUE_OPTIONS = new Set([
   "--scope", "--leaf", "--timeout", "--jobs", "--cwd", "--root",
-  "--log", "--bind", "--shell",
+  "--log", "--shell",
 ]);
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const MAX_APPROVAL_BYTES = 256 * 1024;
@@ -154,7 +153,7 @@ if (opt.help || opt.h) {
 
 const actionNames = [];
 for (const key of ["claim", "release", "list-scopes"]) if (opt[key]) actionNames.push("--" + key);
-for (const key of ["log", "bind"]) if (opt[key] !== undefined) actionNames.push("--" + key);
+for (const key of ["log"]) if (opt[key] !== undefined) actionNames.push("--" + key);
 if (actionNames.length > 1) failUsage("pipeline actions are mutually exclusive: " + actionNames.join(", "));
 const action = actionNames[0] || null;
 
@@ -206,20 +205,6 @@ if (action === "--log") {
     process.exit(0);
   } catch (error) {
     console.error("gate-check: cannot append status: " + error.message);
-    process.exit(2);
-  }
-}
-
-if (action === "--bind") {
-  if (!scope) failUsage("--bind needs --scope ID or exactly one discoverable pipeline");
-  if (!String(opt.bind).trim()) failUsage("--bind needs a non-blank session id");
-  const path = join(scopeRoot(root, scope), "session");
-  try {
-    writeAtomic(path, String(opt.bind).trim() + "\n", { root });
-    console.log("bound session " + opt.bind + " to scope " + scope);
-    process.exit(0);
-  } catch (error) {
-    console.error("gate-check: cannot bind session: " + error.message);
     process.exit(2);
   }
 }
@@ -841,7 +826,7 @@ for (const ledger of ledgers) {
 // A scoped pipeline is complete only when both its ledgers and its native
 // dispatch waves are resolved. Per-wave `dispatch-check status` is useful for
 // inspection, but completion cannot depend on callers remembering a second
-// command (or on the optional Stop hook being installed).
+// command.
 const aggregateDispatch = dispatchStatus(root, scope);
 if (aggregateDispatch.errors.length) {
   for (const error of aggregateDispatch.errors) console.error("gate-check: " + error);

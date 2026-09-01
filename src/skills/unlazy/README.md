@@ -24,16 +24,15 @@ npx skills add Leonxlnx/unlazy
 
 Add `-g` for a user-level install or `--all` for every detected agent.
 
-Manual locations:
+Manual location:
 
 ```text
-Claude Code:  ~/.claude/skills/unlazy
-Codex CLI:    ~/.codex/skills/unlazy
+Selesai:  ~/.selesai/agent/skills/unlazy
 ```
 
-Clone the repository into the relevant directory. Invoke it as `/unlazy` where slash skills are supported, `$unlazy` in Codex, or by a natural-language trigger from the skill description.
+Clone the repository into the skills directory. Invoke it as `/unlazy` where slash skills are supported or by a natural-language trigger from the skill description.
 
-The core is [SKILL.md](SKILL.md). The checker and optional hook require Node 16 or newer and use no third-party runtime packages.
+The core is [SKILL.md](SKILL.md). The checker and dispatch tools require Node 16 or newer and use no third-party runtime packages.
 
 ## Quick start
 
@@ -90,7 +89,7 @@ Use `--help` for the complete current CLI.
 
 A runnable gate passes only when its process exits `0` and `EXPECT:` matches combined output. Evidence records the resolved shell, resolved working directory, exit status, a short `PATH` fingerprint, the match result, and a SHA-256/byte-count fingerprint of successful output. Raw successful output is neither echoed nor persisted. The pre-execution transcript shows the resolved `PATH`, capped for display. Old evidence is not re-execution; parent verification uses `--reverify`.
 
-The parser rejects zero-gate ledgers, duplicate ids, incomplete runnable gates, invalid expectations, and abandonment with a missing reason or unknown gate id. It ignores fenced examples, preserves CRLF or LF when updating, and inserts a missing evidence line when needed. A valid abandonment is terminal handoff rather than success: the checker exits `1` with `HANDOFF REQUIRED`, and Stop allows exit while reporting qualified ids.
+The parser rejects zero-gate ledgers, duplicate ids, incomplete runnable gates, invalid expectations, and abandonment with a missing reason or unknown gate id. It ignores fenced examples, preserves CRLF or LF when updating, and inserts a missing evidence line when needed. A valid abandonment is terminal handoff rather than success: the checker exits `1` with `HANDOFF REQUIRED`, and the final report must say so.
 
 The checker can prove only the command oracle you declare. It cannot infer that an English title and arbitrary shell code mean the same thing. Good gates therefore:
 
@@ -114,7 +113,7 @@ Parent re-verification should use the same declared shell and required toolchain
 
 Approval records live under `~/.unlazy/approved` by default. `UNLAZY_APPROVAL_DIR` may select another owner-private real directory, but its canonical target must remain outside the checked repository. Symlinked stores and linked, replaced, or non-private records fail closed. Each record is specific to the absolute ledger and gate, exact `CHECK:` and `EXPECT:`, resolved `CWD:` and shell, timeout, output and regex limits, regex worker limits, platform, and full inherited `PATH`. Editing any bound input requires approval again.
 
-Approval is consent, not a sandbox. Approval storage is a canonical, owner-private directory outside the repository; records are accepted only as single-link private regular files. Approval does not hash called scripts, fixtures, dependencies, or other transitive inputs, and `--status`/Stop do not revalidate old evidence. Reinspect changed dependencies and run `--reverify`; see [SECURITY.md](SECURITY.md) for the bounded digest pattern when user-designed dependency identity is needed. Checks run with ambient filesystem, environment, credential, and network access. Scopes and ownership leases coordinate cooperating processes but do not restrict what a process can read or write.
+Approval is consent, not a sandbox. Approval storage is a canonical, owner-private directory outside the repository; records are accepted only as single-link private regular files. Approval does not hash called scripts, fixtures, dependencies, or other transitive inputs, and `--status` does not revalidate old evidence. Reinspect changed dependencies and run `--reverify`; see [SECURITY.md](SECURITY.md) for the bounded digest pattern when user-designed dependency identity is needed. Checks run with ambient filesystem, environment, credential, and network access. Scopes and ownership leases coordinate cooperating processes but do not restrict what a process can read or write.
 
 ## Orchestration and parallel work
 
@@ -143,21 +142,9 @@ For every independent READY set, open a native launch wave, record each host age
 
 `gate-check.mjs --scope <id>` reduces the scope's ledgers and dispatch waves together. It prints `ALL MET` only when every gate is met and every wave is complete; an abandoned wave remains a non-successful `HANDOFF REQUIRED` outcome.
 
-## Optional Claude Code Stop hook
+## Finish discipline
 
-The hook scans the current session's resolved ledger and dispatch state and returns Claude Code's documented top-level `decision: "block"` response while gates remain unmet or launch waves remain incomplete. It does not execute checks. Its own session-keyed progress guard releases after six consecutive blocks without semantic gate/dispatch progress; metadata-only edits do not reset it. Abandonment stays visible as an explicit bounded handoff in pure, mixed-blocking, and final-release messages, without echoing free-form reasons.
-
-Install only with the user's consent:
-
-```text
-node <path-to-skill>/scripts/install-hooks.mjs
-node <path-to-skill>/scripts/install-hooks.mjs --scope api
-node <path-to-skill>/scripts/install-hooks.mjs --uninstall
-```
-
-Default installation writes `.claude/settings.local.json`. Keep that file, `.unlazy/`, and `.unlazy-hook-state.json` in the project's ignore rules. `--shared` writes absolute Node and hook-script paths into project settings, so it is usually not portable and can expose local directory names. `--global` writes the current user's Claude settings.
-
-The installer preserves unrelated hooks, refuses malformed settings shapes, and identifies moved unlazy entries without depending on the install directory name. It writes settings atomically and creates `<settings-file>.unlazy.bak` beside an existing settings file before replacing it.
+Completion is enforced by the skill itself: finish a leaf only with the four passes clean and every gate met with evidence, end a session only when every required gate is met or a required handoff is explicitly named, and run `--reverify` for anything returned by dispatched leaves.
 
 ## What 2.1.0 changes
 
@@ -173,7 +160,6 @@ The unreleased `2.1.0` source integrates the useful parts of community PRs while
 - advisory gate linting with opt-in strict failure
 - non-successful gate abandonment that cannot promote parent completion
 - bounded Windows timeout process-tree cleanup with a live nested-descendant CI regression
-- session-keyed Stop-hook state and atomic settings updates with a backup
 - Node 16 support, zero runtime dependencies, a package test command, and CI
 - accurate security, portability, research, and reproducibility documentation
 
@@ -193,7 +179,7 @@ references/parallel.md           scope and lease coordination limits
 references/token-economy.md      attention and verification cost discipline
 research/validation-protocol.md  historical limitations and rerun protocol
 templates/                       plan, leaf, and branch ledger templates
-scripts/                         checker, linter, dispatch recorder, installer, and Stop hook
+scripts/                         checker, linter, and dispatch recorder
 tests/                           deterministic behavior and regression tests
 ```
 

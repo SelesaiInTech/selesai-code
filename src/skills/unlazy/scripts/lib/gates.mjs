@@ -74,7 +74,7 @@ function parseRegex(expect) {
   };
 }
 
-// The checker and Stop hook both consume this exact result. Diagnostics are
+// The checker consumes this exact result. Diagnostics are
 // returned together so callers can report all malformed input in one pass.
 export function parseGates(text, options = {}) {
   const source = String(text);
@@ -410,10 +410,6 @@ export function resolveTarget(options = {}) {
 
 export function statusLogPath(root, scope) {
   return scope ? join(scopeRoot(root, scope), "status.log") : join(root, "unlazy-status.log");
-}
-
-export function hookStatePath(root, scope) {
-  return scope ? join(scopeRoot(root, scope), "hook-state.json") : join(root, ".unlazy-hook-state.json");
 }
 
 function assertSafeStatePath(root, target) {

@@ -79,7 +79,6 @@ Do not invent a dependency during dispatch. Add it to `PLAN.md`, correct the aff
 1. **Leaf self-check:** catches ordinary incompleteness but remains self-certification.
 2. **Parent `--reverify`:** executes each runnable oracle again instead of trusting old or manually written evidence.
 3. **Branch integration:** catches locally correct children that do not compose.
-4. **Optional Stop hook:** blocks the driver from ending while its resolved pipeline has unmet ledgers or incomplete dispatch waves. It does not execute checks or validate their meaning.
 
 The parent must use the same required toolchain and declared shell. If the environment differs, record and resolve the mismatch instead of accepting old evidence.
 

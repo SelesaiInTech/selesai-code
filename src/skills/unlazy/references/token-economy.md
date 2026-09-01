@@ -6,7 +6,7 @@ Spend model attention on implementation and judgment. Move repeated, determinist
 
 - **Use runnable checks.** External command execution does not itself require model inference. The agent still spends context on the command, returned output, failure interpretation, and evidence review.
 - **Cap evidence.** Store resolved environment facts plus the automatic output fingerprint, never raw successful output or a full build log.
-- **Keep the Stop hook scan-only.** The hook itself does not call a model. A block causes another agent continuation, which does consume model work, so keep the six-block no-progress guard and make each block actionable.
+- **Keep enforcement cheap.** Verification is a resolved command, an exit status, and a fingerprint — not a transcript. A leaf is finished only when every gate is met and a final improvement pass finds nothing.
 - **Use sequential checks by default.** Raise `--jobs` only for independent checks when wall-clock savings justify harder failure diagnosis.
 
 ## Keep contexts focused

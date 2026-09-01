@@ -19,8 +19,6 @@ const SCRIPTS = [
   "scripts/gate-check.mjs",
   "scripts/gate-lint.mjs",
   "scripts/dispatch-check.mjs",
-  "scripts/stop-hook.mjs",
-  "scripts/install-hooks.mjs",
   "scripts/lib/gates.mjs",
   "scripts/lib/dispatch.mjs",
   "scripts/lib/check-supervisor.mjs",
@@ -93,13 +91,6 @@ check("approval identity binds execution semantics", () => {
   return missing.length ? "approval oracle missing source tokens: " + missing.join(", ") : null;
 });
 
-check("the hook resolves a scope rather than globbing the tree", () => {
-  const src = read("scripts/stop-hook.mjs");
-  if (!src.includes("resolveTarget")) return "stop-hook.mjs does not resolve a scope";
-  if (!src.includes("hookStatePath")) return "stop-hook.mjs does not use a per-scope state path";
-  return null;
-});
-
 check("every local resource the skill names exists", () => {
   const skill = read("SKILL.md");
   const missing = [];
@@ -138,12 +129,8 @@ check("request reconciliation keeps the focused solo cheap path", () => {
 
 check("abandonment is terminal handoff rather than ALL MET", () => {
   const checker = read("scripts/gate-check.mjs");
-  const hook = read("scripts/stop-hook.mjs");
   if (!checker.includes("HANDOFF REQUIRED") || !checker.includes("totalAbandoned === 0")) {
     return "gate checker can still classify abandonment as completion";
-  }
-  if (!hook.includes("HANDOFF REQUIRED") || !hook.includes("handoffs")) {
-    return "Stop hook does not surface bounded abandonment handoff";
   }
   return null;
 });

@@ -1,6 +1,6 @@
 # Gate file format
 
-A gate ledger is a machine-checked completion contract. The checker and Stop hook use the same strict parser. Invalid structure fails closed instead of producing a completion certificate.
+A gate ledger is a machine-checked completion contract, parsed by one strict parser. Invalid structure fails closed instead of producing a completion certificate.
 
 ## Minimal format
 
@@ -56,7 +56,7 @@ A nonzero process never passes merely because its error text contains the expect
 
 Evidence records the resolved shell, resolved working directory, exit status, a short `PATH` hash and entry count, the successful match, and a SHA-256/byte-count fingerprint of combined output. The pre-execution transcript prints the resolved `PATH`, capped at 800 characters for display; evidence avoids persisting the full machine-specific value or raw successful output. Failure diagnostics are bounded, terminal-only, and control-stripped. This makes an environment mismatch visible and prevents a success token from hiding a process failure. A checked gate whose evidence is absent or still `pending` remains unmet.
 
-`--status` parses and reports historical ledger state without executing a command or changing a file. It does not inspect current artifacts or revalidate old evidence, and the Stop hook has the same non-executing boundary. Use `--reverify` for parent verification: it executes every runnable gate, including gates already checked, and returns a gate to unmet when the oracle no longer passes. Its summary reports both all commands rerun and the subset that had previously been met.
+`--status` parses and reports historical ledger state without executing a command or changing a file. It does not inspect current artifacts or revalidate old evidence. Use `--reverify` for parent verification: it executes every runnable gate, including gates already checked, and returns a gate to unmet when the oracle no longer passes. Its summary reports both all commands rerun and the subset that had previously been met.
 
 ## Approval boundary
 
@@ -125,7 +125,7 @@ Make a ledger require its own quality by linting as a gate:
 
 ## Abandonment
 
-Use abandonment only when a required outcome is genuinely impossible within the authorized task. Keep the original gate, add one non-empty reason, and name the abandonment in the final report. An abandonment is a terminal visible handoff, not a passing check: `gate-check` prints `HANDOFF REQUIRED` and exits `1` even when every non-abandoned gate is met. The Stop hook allows the session to end but emits a bounded handoff message containing qualified ids, not free-form reasons. Never promote an abandoned child through a parent `ALL MET` oracle or describe the task as fully complete.
+Use abandonment only when a required outcome is genuinely impossible within the authorized task. Keep the original gate, add one non-empty reason, and name the abandonment in the final report. An abandonment is a terminal visible handoff, not a passing check: `gate-check` prints `HANDOFF REQUIRED` and exits `1` even when every non-abandoned gate is met, and the final report must say so. Never promote an abandoned child through a parent `ALL MET` oracle or describe the task as fully complete.
 
 ## Concurrency
 
