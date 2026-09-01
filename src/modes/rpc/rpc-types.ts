@@ -547,7 +547,20 @@ export type RpcExtensionUIRequest =
 			widgetPlacement?: "aboveEditor" | "belowEditor";
 	  }
 	| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
-	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string };
+	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string }
+	| {
+			type: "extension_ui_request";
+			id: string;
+			method: "working";
+			/** Working/loading message shown during streaming. Omit to restore the default. */
+			message?: string;
+			/** Show or hide the built-in working loader row during streaming. */
+			visible?: boolean;
+			/** Custom animation frames for the normal streaming loader. Empty array hides the indicator; omit to restore the default spinner. */
+			frames?: string[];
+			/** Frame interval in milliseconds for animated indicators. */
+			intervalMs?: number;
+	  };
 
 // ============================================================================
 // Extension UI Commands (stdin)

@@ -1179,13 +1179,13 @@ Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()
 There are two categories of extension UI methods:
 
 - **Dialog methods** (`select`, `multiselect`, `confirm`, `input`, `editor`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
-- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
+- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`, `working`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
 
 If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The client does not need to track timeouts.
 
 Some `ExtensionUIContext` methods are not supported or degraded in RPC mode because they require direct TUI access:
 - `custom()` returns `undefined`
-- `setWorkingMessage()`, `setWorkingIndicator()`, `setFooter()`, `setHeader()`, `setEditorComponent()`, `setToolsExpanded()` are no-ops
+- `setWorkingIndicator()` emits a `working` extension_ui_request (see below); `setFooter()`, `setHeader()`, `setEditorComponent()`, `setToolsExpanded()` are no-ops
 - `getEditorText()` returns `""`
 - `getToolsExpanded()` returns `false`
 - `pasteToEditor()` delegates to `setEditorText()` (no paste/collapse handling)
@@ -1356,6 +1356,28 @@ Set the text in the input editor. Fire-and-forget.
   "text": "prefilled text for the user"
 }
 ```
+
+#### working
+
+Control the streaming "working" loader row. Fire-and-forget; the host renders the loader. This mirrors the TUI's `setWorkingMessage()` / `setWorkingVisible()` / `setWorkingIndicator()` extension methods.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-10",
+  "method": "working",
+  "message": "Analyzing repository...",
+  "visible": true,
+  "frames": ["⠋", "⠙", "⠹"],
+  "intervalMs": 80
+}
+```
+
+Fields (all optional, applied as a patch):
+- `message`: phase text shown next to the loader. Omit to keep (or restore to default).
+- `visible`: show/hide the loader row.
+- `frames`: custom animation frames for the normal streaming loader. An empty array hides the indicator; omitting restores the default spinner. Compaction/retry loaders keep their built-in styling.
+- `intervalMs`: frame interval in milliseconds for animated indicators.
 
 ### Extension UI Responses (stdin)
 

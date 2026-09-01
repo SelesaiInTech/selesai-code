@@ -257,16 +257,36 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			} as RpcExtensionUIRequest);
 		},
 
-		setWorkingMessage(_message?: string): void {
-			// Working message not supported in RPC mode - requires TUI loader access
+		setWorkingMessage(message?: string): void {
+			// Fire and forget - host renders the working loader row
+			output({
+				type: "extension_ui_request",
+				id: crypto.randomUUID(),
+				method: "working",
+				...(message !== undefined ? { message } : {}),
+			} as RpcExtensionUIRequest);
 		},
 
-		setWorkingVisible(_visible: boolean): void {
-			// Working visibility not supported in RPC mode - requires TUI loader access
+		setWorkingVisible(visible: boolean): void {
+			// Fire and forget - host shows/hides the working loader row
+			output({
+				type: "extension_ui_request",
+				id: crypto.randomUUID(),
+				method: "working",
+				visible,
+			} as RpcExtensionUIRequest);
 		},
 
-		setWorkingIndicator(_options?: WorkingIndicatorOptions): void {
-			// Working indicator customization not supported in RPC mode - requires TUI loader access
+		setWorkingIndicator(options?: WorkingIndicatorOptions): void {
+			// Fire and forget - host customizes the working indicator. Custom frames only
+			// affect the normal streaming loader; compaction/retry keep built-in styling.
+			output({
+				type: "extension_ui_request",
+				id: crypto.randomUUID(),
+				method: "working",
+				...(options?.frames !== undefined ? { frames: options.frames } : {}),
+				...(options?.intervalMs !== undefined ? { intervalMs: options.intervalMs } : {}),
+			} as RpcExtensionUIRequest);
 		},
 
 		setHiddenThinkingLabel(_label?: string): void {
