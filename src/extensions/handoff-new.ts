@@ -108,12 +108,15 @@ async function handoffNew(args: string, ctx: ExtensionCommandContext) {
 		return;
 	}
 
+	// Read the name before newSession: the original ctx is invalidated once
+	// the session is replaced, so it cannot be read inside setup().
+	const sessionName = ctx.sessionManager.getSessionName();
+
 	const newSessionResult = await ctx.newSession({
 		parentSession: currentSessionFile,
 		// Carry the current session's name over to the new session as the starting point.
 		setup: (replacementManager) => {
-			const name = ctx.sessionManager.getSessionName();
-			if (name) replacementManager.appendSessionInfo(name);
+			if (sessionName) replacementManager.appendSessionInfo(sessionName);
 		},
 		withSession: async (replacementCtx) => {
 			await replacementCtx.sendUserMessage(result);
