@@ -138,11 +138,13 @@ describe("handoff-new extension", () => {
 		model?: any;
 		customResult?: string | null;
 		mode?: string;
+		sessionName?: string;
 	} = {}) {
-		const calls: { newSession: any; userMessage: string | null; notify: { msg: string; kind: string }[] } = {
+		const calls: { newSession: any; userMessage: string | null; notify: { msg: string; kind: string }[]; setupName: string | null } = {
 			newSession: null,
 			userMessage: null,
 			notify: [],
+			setupName: null,
 		};
 		const ctx: any = {
 			mode: opts.mode ?? "tui",
@@ -150,6 +152,7 @@ describe("handoff-new extension", () => {
 			sessionManager: {
 				getBranch: () => (opts.branch === undefined ? [userEntry("we decided to build X")] : opts.branch),
 				getSessionFile: () => "/tmp/old.json",
+				getSessionName: () => opts.sessionName ?? undefined,
 			},
 			modelRegistry: {
 				async getApiKeyAndHeaders() {
@@ -165,6 +168,12 @@ describe("handoff-new extension", () => {
 			},
 			async newSession(options: any) {
 				calls.newSession = options;
+				if (options?.setup) {
+					const mgr: any = { named: [] as string[] };
+					mgr.appendSessionInfo = (name: string) => mgr.named.push(name);
+					await options.setup(mgr);
+					calls.setupName = mgr.named.at(-1) ?? null;
+				}
 				if (options?.withSession) {
 					await options.withSession(ctx);
 				}
@@ -181,6 +190,20 @@ describe("handoff-new extension", () => {
 		expect(calls.newSession.parentSession).toBe("/tmp/old.json");
 		expect(calls.userMessage).toBe("HANDOFF PROMPT");
 		expect(calls.newSession.cancelled).toBeUndefined();
+	});
+
+	it("session name carries over to the new session", async () => {
+		const { commands } = createPiHarness();
+		const { ctx, calls } = createCtx({ sessionName: "db migration" });
+		await commands.get("handoff-new")!.handler("goal", ctx);
+		expect(calls.setupName).toBe("db migration");
+	});
+
+	it("no session name leaves the new session unnamed for auto-naming", async () => {
+		const { commands } = createPiHarness();
+		const { ctx, calls } = createCtx({ sessionName: undefined });
+		await commands.get("handoff-new")!.handler("goal", ctx);
+		expect(calls.setupName).toBeNull();
 	});
 
 	it("no goal arg uses DEFAULT_GOAL", async () => {
@@ -275,6 +298,7 @@ describe("handoff-new extension", () => {
 			sessionManager: {
 				getBranch: () => [userEntry("we decided to build X")],
 				getSessionFile: () => "/tmp/old.json",
+				getSessionName: () => undefined,
 			},
 			modelRegistry: {
 				async getApiKeyAndHeaders() {
@@ -372,6 +396,7 @@ describe("handoff-new extension", () => {
 			sessionManager: {
 				getBranch: () => [userEntry("we decided to build X")],
 				getSessionFile: () => "/tmp/old.json",
+				getSessionName: () => undefined,
 			},
 			modelRegistry: {
 				async getApiKeyAndHeaders() {

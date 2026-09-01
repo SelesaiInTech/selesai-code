@@ -110,6 +110,11 @@ async function handoffNew(args: string, ctx: ExtensionCommandContext) {
 
 	const newSessionResult = await ctx.newSession({
 		parentSession: currentSessionFile,
+		// Carry the current session's name over to the new session as the starting point.
+		setup: (replacementManager) => {
+			const name = ctx.sessionManager.getSessionName();
+			if (name) replacementManager.appendSessionInfo(name);
+		},
 		withSession: async (replacementCtx) => {
 			await replacementCtx.sendUserMessage(result);
 		},
