@@ -2,6 +2,15 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.10] - 2026-09-02
+
+### Added
+- **RPC rev-3 interactive-TUI parity batch.** New RPC commands `navigate_tree`, `list_sessions`, `rename_session`, `delete_session`, and `set_session_models`; new option fields for `prompt.queueWhileCompacting`, `cycle_model.direction`, `get_available_models.refresh`, and theme passthrough for `export_html`/`share_gist`.
+
+### Changed
+- **handoff-new carries the session name.** The new session started by `/handoff-new` (and RPC `handoff_new`) now inherits the current session's name as its starting name.
+- **pi-subagents uses only built-in agents.** The bundled pi-subagents extension now ships only the built-in agents (`advisor`, `delegate`, `oracle`, `researcher`, `reviewer`, `scout`, `worker`) and drops the custom agent definitions and Claude Code / Codex / Cursor agent adapters, so subagents work in any host without external CLIs.
+
 ## [0.13.9] - 2026-09-01
 
 ### Changed

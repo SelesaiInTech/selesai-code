@@ -28,7 +28,7 @@ The `handoff-new` extension creates a fresh continuation prompt from the current
 - Registers the `/handoff-new` slash command.
 - Reads the current session branch, including message and compaction entries.
 - Calls the configured model with a system prompt that asks for a handoff document and preserves branch structure around compaction summaries.
-- Starts a new session whose parent is the current session file, seeded with the generated handoff text.
+- Starts a new session whose parent is the current session file, seeded with the generated handoff text. The current session's name is carried over as the new session's starting name.
 - Emits a `handoff-new` custom entry in the current session as a breadcrumb.
 
 ## What you can configure
@@ -38,7 +38,7 @@ The `handoff-new` extension creates a fresh continuation prompt from the current
 
 ## What you can do
 
-- Run `/handoff-new` to continue from a clean session after the model summarizes the current thread.
+- Run `/handoff-new` to continue from a clean session after the model summarizes the current thread. The new session keeps the current session's name (you can rename it with `/name`).
 - Run `/handoff-new implement the remaining database migrations` to tell the next session exactly what to focus on.
 - Use the output as an editable continuation prompt before the new session starts.
 

@@ -38,12 +38,12 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 
 ## Yang dapat dilakukan
 
-- Meminta dalam bahasa alami: `Ask commentator to review this diff.`
-- Menjalankan satu agen: `/run commentator "review this plan"`.
-- Menjalankan satu agen secara inline: `#architect Ubah rencana ini menjadi rencana implementasi langkah-demi-langkah.` — `#nama-agent` di mana pun dalam pesan (awal, tengah, atau akhir) menjalankan agen tersebut secara langsung (seperti `/run`). Nama yang tidak dikenal atau ambigu hanya menghasilkan notifikasi dan input dikonsumsi bila mention berada di awal pesan; mention di tengah pesan (mis. `issue #42`) lolos tanpa diubah.
-- Menjalankan agen secara berurutan: `/chain explorer "scan auth" -> architect "design refactor" -> builder "implement it"`.
-- Menjalankan agen secara paralel: `/parallel commentator "check correctness" -> commentator "check tests"`.
-- Menggunakan sintaks grup inline: `/chain explorer -> (commentator "A" | commentator "B") -> writer "fix"`.
+- Meminta dalam bahasa alami: `Ask reviewer to review this diff.`
+- Menjalankan satu agen: `/run reviewer "review this plan"`.
+- Menjalankan satu agen secara inline: `#worker Ubah rencana ini menjadi rencana implementasi langkah-demi-langkah.` — `#nama-agent` di mana pun dalam pesan (awal, tengah, atau akhir) menjalankan agen tersebut secara langsung (seperti `/run`). Nama yang tidak dikenal atau ambigu hanya menghasilkan notifikasi dan input dikonsumsi bila mention berada di awal pesan; mention di tengah pesan (mis. `issue #42`) lolos tanpa diubah.
+- Menjalankan agen secara berurutan: `/chain scout "scan auth" -> oracle "design refactor" -> worker "implement it"`.
+- Menjalankan agen secara paralel: `/parallel reviewer "check correctness" -> reviewer "check tests"`.
+- Menggunakan sintaks grup inline: `/chain scout -> (reviewer "A" | reviewer "B") -> worker "fix"`.
 - Menjalankan di background: tambahkan `--bg`. Memulai dari sesi forked: tambahkan `--fork`.
 - Memeriksa run aktif: `subagent({ action: "status" })`.
 - Menghentikan run: `/subagents-stop <run-id>` atau `subagent({ action: "stop", id: "..." })`.
@@ -85,12 +85,13 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 
 | Agen | Penggunaan |
 | --- | --- |
-| `architect` | Menghasilkan rencana implementasi konkret dari konteks yang ada. |
-| `builder` | Mengimplementasikan pekerjaan yang disetujui dan memvalidasi hasil. |
-| `commentator` | Mereview kode, rencana, dan diff; menangkap drift dan merekomendasikan perbaikan. |
-| `explorer` | Rekognisi codebase lokal yang cepat. |
-| `recapper` | Menyusun konteks handoff untuk agen selanjutnya. |
+| `advisor` | Berkonsultasi tentang rencana dan desain; memberi panduan yang terarah. |
+| `delegate` | Delegasi tujuan umum untuk sebuah pekerjaan yang terdefinisi. |
+| `oracle` | Menjawab pertanyaan dengan sumber tepercaya dan penalaran. |
 | `researcher` | Riset web/docs dengan sumber. |
+| `reviewer` | Mereview kode, rencana, dan diff; menangkap drift dan merekomendasikan perbaikan. |
+| `scout` | Rekognisi codebase lokal yang cepat. |
+| `worker` | Mengimplementasikan pekerjaan yang disetujui dan memvalidasi hasil. |
 
 ## Batasan dan keamanan
 
@@ -100,7 +101,7 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 - Budget model, tool, penggunaan, dan spawn; ceiling agent yang diizinkan; limit kedalaman; checkpoint; serta pengaturan watchdog diberlakukan oleh runtime.
 - Hasil delegasi normal bersifat reference-first: penyelesaian mengembalikan referensi output tersimpan plus status/informasi lifecycle; periksa output penuh melalui path output tersimpan, status/transkrip async, atau `resume`. `outputMode: "inline"` memulihkan pengiriman inline lama, dan `output: false` menonaktifkan persistensi output tahan lama.
 - Saran routing berbasis tugas bersifat advisori dan heuristik: tidak pernah meluncurkan atau menjadwalkan pekerjaan, dan preflight saat launch tetap menjadi titik penegakan.
-- Discovery file agen terurut; project agent menggantikan user agent, dan user agent menggantikan builtin dengan nama yang sama.
+- Ekstensi pi-subagents hanya mengirim agen builtin yang tercantum di atas (plus `researcher`); file agen kustom yang Anda tambahkan di direktori agen Anda sendiri tetap berfungsi dan menggantikan builtin dengan nama yang sama. Agen CLI eksternal (Claude Code, Codex, Cursor) tidak lagi dikirim.
 - Skill `pi-subagents` adalah panduan dokumentasi/prompt, bukan entrypoint extension yang diinstal secara terpisah. Skill ini dikirim baik di dalam extension maupun sebagai skill bawaan tingkat-atas (`src/skills/pi-subagents/`) yang dimuat dari package saat boot dan di-seed ke direktori agent saat first run.
 - Skill `workflow` bawaan adalah panduan parent untuk mengoordinasikan pi-subagents, bukan pipeline slash-command tetap. Skill ini hanya memilih tahap rekonesans, perencanaan, penulisan, review, dan fix yang diperlukan tugas.
 

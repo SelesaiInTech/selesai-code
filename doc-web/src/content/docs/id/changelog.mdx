@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.10 — Perintah RPC rev-3, nama sesi handoff-new, subagent builtin-only
+
+- **Batch paritas RPC rev-3.** Perintah RPC baru untuk host headless: `navigate_tree` (navigasi leaf session-tree dengan opsi summarization/instruksi), `list_sessions` (penemuan sesi di cwd atau semua scope), `rename_session`, `delete_session` (trash-first, menolak sesi yang aktif), dan `set_session_models` (mutasi scoped-model ephemeral). Field opsi baru: `prompt.queueWhileCompacting` (buffer prompt selama compaction), `cycle_model.direction` (forward|backward), `get_available_models.refresh` (refresh katalog model on-demand), serta `export_html.themeName` / `share_gist.themeName` theme passthrough.
+- **handoff-new membawa nama sesi.** Sesi baru yang dimulai oleh `/handoff-new` atau RPC `handoff_new` kini mewarisi nama sesi saat ini alih-alih dimulai tanpa nama.
+- **pi-subagents hanya mengirim agen builtin.** Ekstensi pi-subagents kini hanya mengirim agen builtin (`advisor`, `delegate`, `oracle`, `researcher`, `reviewer`, `scout`, `worker`) dan menghapus definisi agen kustom serta adapter agen Claude Code / Codex / Cursor, sehingga run subagent kompatibel di host mana pun tanpa CLI eksternal.
+
 ## 0.13.9 — Penamaan sesi otomatis hanya untuk sesi tanpa nama
 
 - Ekstensi bundled **auto-session-name** kini memberi nama sesi hanya jika sesi belum memiliki nama. Jika sesi sudah memiliki nama (ditentukan manual dengan `/name` atau dibuat sebelumnya), penamaan dilewati sepenuhnya — tidak ada panggilan LLM ekstra dan nama Anda yang sudah ada tidak ditimpa. Sesi tanpa nama tetap diberi nama otomatis seperti sebelumnya.

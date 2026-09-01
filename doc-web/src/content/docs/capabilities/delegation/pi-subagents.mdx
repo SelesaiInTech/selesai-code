@@ -38,12 +38,12 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 
 ## What you can do
 
-- Ask in plain language: `Ask commentator to review this diff.`
-- Run a single agent: `/run commentator "review this plan"`.
-- Invoke a single agent inline: `#architect Turn this plan into a step-by-step implementation plan.` — `#agent-name` anywhere in a message (start, middle, or end) runs that agent directly (like `/run`). Unknown or ambiguous agent names only produce a notification and consume the input when the mention is at the start of the message; mid-message mentions (e.g. `issue #42`) pass through untouched.
-- Run agents in sequence: `/chain explorer "scan auth" -> architect "design refactor" -> builder "implement it"`.
-- Run agents in parallel: `/parallel commentator "check correctness" -> commentator "check tests"`.
-- Use inline group syntax: `/chain explorer -> (commentator "A" | commentator "B") -> writer "fix"`.
+- Ask in plain language: `Ask reviewer to review this diff.`
+- Run a single agent: `/run reviewer "review this plan"`.
+- Invoke a single agent inline: `#worker Turn this plan into a step-by-step implementation plan.` — `#agent-name` anywhere in a message (start, middle, or end) runs that agent directly (like `/run`). Unknown or ambiguous agent names only produce a notification and consume the input when the mention is at the start of the message; mid-message mentions (e.g. `issue #42`) pass through untouched.
+- Run agents in sequence: `/chain scout "scan auth" -> oracle "design refactor" -> worker "implement it"`.
+- Run agents in parallel: `/parallel reviewer "check correctness" -> reviewer "check tests"`.
+- Use inline group syntax: `/chain scout -> (reviewer "A" | reviewer "B") -> worker "fix"`.
 - Run in the background: append `--bg`. Start from a forked session: append `--fork`.
 - Inspect active runs: `subagent({ action: "status" })`.
 - Stop a run: `/subagents-stop <run-id>` or `subagent({ action: "stop", id: "..." })`.
@@ -85,12 +85,13 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 
 | Agent | Use |
 | --- | --- |
-| `architect` | Produce a concrete implementation plan from existing context. |
-| `builder` | Implement approved work and validate results. |
-| `commentator` | Review code, plans, and diffs; catch drift and recommend fixes. |
-| `explorer` | Fast local codebase reconnaissance. |
-| `recapper` | Compile handoff context for later agents. |
+| `advisor` | Consult on plans and designs; give focused guidance. |
+| `delegate` | General-purpose delegation for a defined piece of work. |
+| `oracle` | Answer questions with high-trust sources and reasoning. |
 | `researcher` | Web/docs research with sources. |
+| `reviewer` | Review code, plans, and diffs; catch drift and recommend fixes. |
+| `scout` | Fast local codebase reconnaissance. |
+| `worker` | Implement approved work and validate results. |
 
 ## Limits and safety
 
@@ -100,7 +101,7 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 - Model, tool, usage, and spawn budgets; allowed-agent ceilings; depth limits; checkpoints; and watchdog settings are enforced by the runtime.
 - Normal delegated results are reference-first: completion returns saved-output references plus status/lifecycle information; inspect full output through the saved output path, async status/transcript, or `resume`. `outputMode: "inline"` restores legacy inline delivery, and `output: false` disables durable output persistence.
 - Task-aware routing advice is advisory and heuristic: it never launches or schedules work, and launch-time preflight remains the enforcement point.
-- Agent file discovery is ordered; project agents override user agents, and user agents override builtins of the same name.
+- The bundled pi-subagents extension ships only the built-in agents listed above (plus `researcher`); custom agent files you add under your own agent directories still work and override builtins of the same name. External CLI agents (Claude Code, Codex, Cursor) are no longer bundled.
 - The `pi-subagents` skill is documentation/prompt guidance, not an independently installed extension entrypoint. It ships both inside the extension and as a top-level bundled skill (`src/skills/pi-subagents/`) that loads from the package at boot and seeds into the agent dir on first run.
 - The bundled `workflow` skill is parent guidance for coordinating pi-subagents, not a fixed slash-command pipeline. It selects only the reconnaissance, planning, writing, review, and fix stages a task needs.
 

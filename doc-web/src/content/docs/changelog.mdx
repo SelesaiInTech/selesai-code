@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.10 — RPC rev-3 commands, handoff-new session name, builtin-only subagents
+
+- **RPC rev-3 parity batch.** New RPC commands for headless hosts: `navigate_tree` (session-tree leaf navigation with summarization/instructions options), `list_sessions` (session discovery across cwd or all scopes), `rename_session`, `delete_session` (trash-first, rejects the active session), and `set_session_models` (ephemeral scoped-model mutation). New option fields: `prompt.queueWhileCompacting` (buffer prompts during compaction), `cycle_model.direction` (forward|backward), `get_available_models.refresh` (on-demand model catalog refresh), and `export_html.themeName` / `share_gist.themeName` theme passthrough.
+- **handoff-new carries the session name.** The new session started by `/handoff-new` or RPC `handoff_new` now inherits the current session's name instead of starting unnamed.
+- **pi-subagents ships only built-in agents.** The bundled pi-subagents extension now ships only the built-in agents (`advisor`, `delegate`, `oracle`, `researcher`, `reviewer`, `scout`, `worker`) and drops the custom agent definitions plus the Claude Code / Codex / Cursor agent adapters, so subagent runs are compatible in any host without external CLIs.
+
 ## 0.13.9 — Auto session naming only for unnamed sessions
 
 - The bundled **auto-session-name** extension now names a session only when it has no name yet. If the session already has a name (set manually with `/name` or generated earlier), naming is skipped entirely — no extra LLM call and no clobbering of your existing name. Unnamed sessions are still auto-named as before.
