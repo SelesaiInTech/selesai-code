@@ -87,14 +87,14 @@
 <li>Mendaftarkan slash command <code dir="auto">/handoff-new</code>.</li>
 <li>Membaca branch sesi saat ini, termasuk entri pesan dan kompaksi.</li>
 <li>Memanggil model yang dikonfigurasi dengan system prompt yang meminta dokumen handoff dan mempertahankan struktur branch di sekitar ringkasan kompaksi.</li>
-<li>Memulai sesi baru yang parent-nya adalah file sesi saat ini, diisi dengan teks handoff yang dibuat.</li>
+<li>Memulai sesi baru yang parent-nya adalah file sesi saat ini, diisi dengan teks handoff yang dibuat. Nama sesi saat ini dibawa sebagai nama awal sesi baru.</li>
 <li>Memancarkan entri kustom <code dir="auto">handoff-new</code> di sesi saat ini sebagai jejak.</li>
 </ul>
 <h2 id="yang-dapat-dikonfigurasi">Yang dapat dikonfigurasi</h2>
 <div class="extension-customization astro-a55efrp7"><p class="astro-a55efrp7">Handoff sesi dikontrol oleh argumen goal. Template prompt adalah milik source.</p><div class="callout astro-a55efrp7" role="note"><strong class="astro-a55efrp7">Tidak ada konfigurasi user</strong><p class="astro-a55efrp7">Kemampuan ini tidak mengekspos pengaturan yang dapat diedit user. Perilakunya dikontrol oleh command dan aturan runtime yang didokumentasikan di bawah.</p></div><h3 class="astro-a55efrp7">Kontrol command, tool, dan shortcut</h3><div class="customization-table-wrapper astro-a55efrp7"><table class="customization-table astro-a55efrp7"><thead class="astro-a55efrp7"><tr class="astro-a55efrp7"><th class="astro-a55efrp7">Kunci / path</th><th class="astro-a55efrp7">Deskripsi</th></tr></thead><tbody class="astro-a55efrp7"><tr class="astro-a55efrp7"><td class="astro-a55efrp7"><code class="astro-a55efrp7">/handoff-new &lt;goal&gt;</code></td><td class="astro-a55efrp7">Buat prompt kelanjutan di sesi baru.</td></tr></tbody></table></div><h3 class="astro-a55efrp7">Bukti source</h3><ul class="source-path-list astro-a55efrp7"><li class="astro-a55efrp7"><code class="astro-a55efrp7">src/extensions/handoff-new.ts</code><a href="https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/handoff-new.ts" target="_blank" rel="noopener noreferrer" class="astro-a55efrp7">Handoff source</a></li><li class="astro-a55efrp7"><code class="astro-a55efrp7">src/skills/handoff/</code><a href="https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/handoff/" target="_blank" rel="noopener noreferrer" class="astro-a55efrp7">Handoff skill</a></li><li class="astro-a55efrp7"><code class="astro-a55efrp7">src/skills/selesai-handoff/</code></li></ul></div>
 <h2 id="yang-dapat-dilakukan">Yang dapat dilakukan</h2>
 <ul>
-<li>Jalankan <code dir="auto">/handoff-new</code> untuk melanjutkan dari sesi bersih setelah model meringkas thread saat ini.</li>
+<li>Jalankan <code dir="auto">/handoff-new</code> untuk melanjutkan dari sesi bersih setelah model meringkas thread saat ini. Sesi baru tetap memakai nama sesi saat ini (bisa diganti dengan <code dir="auto">/name</code>).</li>
 <li>Jalankan <code dir="auto">/handoff-new implement the remaining database migrations</code> untuk memberitahu sesi berikutnya fokus yang tepat.</li>
 <li>Gunakan output sebagai prompt kelanjutan yang dapat diedit sebelum sesi baru dimulai.</li>
 </ul>

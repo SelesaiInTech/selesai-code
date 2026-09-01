@@ -87,14 +87,14 @@
 <li>Registers the <code dir="auto">/handoff-new</code> slash command.</li>
 <li>Reads the current session branch, including message and compaction entries.</li>
 <li>Calls the configured model with a system prompt that asks for a handoff document and preserves branch structure around compaction summaries.</li>
-<li>Starts a new session whose parent is the current session file, seeded with the generated handoff text.</li>
+<li>Starts a new session whose parent is the current session file, seeded with the generated handoff text. The current session’s name is carried over as the new session’s starting name.</li>
 <li>Emits a <code dir="auto">handoff-new</code> custom entry in the current session as a breadcrumb.</li>
 </ul>
 <h2 id="what-you-can-configure">What you can configure</h2>
 <div class="extension-customization astro-a55efrp7"><p class="astro-a55efrp7">Session handoff is controlled by the goal argument. The prompt template is source-owned.</p><div class="callout astro-a55efrp7" role="note"><strong class="astro-a55efrp7">No user configuration</strong><p class="astro-a55efrp7">This capability does not expose user-editable settings. Its behavior is controlled by the commands and runtime rules documented below.</p></div><h3 class="astro-a55efrp7">Command, tool, and shortcut controls</h3><div class="customization-table-wrapper astro-a55efrp7"><table class="customization-table astro-a55efrp7"><thead class="astro-a55efrp7"><tr class="astro-a55efrp7"><th class="astro-a55efrp7">Key / path</th><th class="astro-a55efrp7">Description</th></tr></thead><tbody class="astro-a55efrp7"><tr class="astro-a55efrp7"><td class="astro-a55efrp7"><code class="astro-a55efrp7">/handoff-new &lt;goal&gt;</code></td><td class="astro-a55efrp7">Create a continuation prompt in a fresh session.</td></tr></tbody></table></div><h3 class="astro-a55efrp7">Source evidence</h3><ul class="source-path-list astro-a55efrp7"><li class="astro-a55efrp7"><code class="astro-a55efrp7">src/extensions/handoff-new.ts</code><a href="https://github.com/SelesaiInTech/selesai-code/blob/main/src/extensions/handoff-new.ts" target="_blank" rel="noopener noreferrer" class="astro-a55efrp7">Handoff source</a></li><li class="astro-a55efrp7"><code class="astro-a55efrp7">src/skills/handoff/</code><a href="https://github.com/SelesaiInTech/selesai-code/blob/main/src/skills/handoff/" target="_blank" rel="noopener noreferrer" class="astro-a55efrp7">Handoff skill</a></li><li class="astro-a55efrp7"><code class="astro-a55efrp7">src/skills/selesai-handoff/</code></li></ul></div>
 <h2 id="what-you-can-do">What you can do</h2>
 <ul>
-<li>Run <code dir="auto">/handoff-new</code> to continue from a clean session after the model summarizes the current thread.</li>
+<li>Run <code dir="auto">/handoff-new</code> to continue from a clean session after the model summarizes the current thread. The new session keeps the current session’s name (you can rename it with <code dir="auto">/name</code>).</li>
 <li>Run <code dir="auto">/handoff-new implement the remaining database migrations</code> to tell the next session exactly what to focus on.</li>
 <li>Use the output as an editable continuation prompt before the new session starts.</li>
 </ul>
