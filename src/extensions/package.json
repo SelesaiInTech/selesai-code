@@ -15,6 +15,7 @@
 			"./question",
 			"./grep-app",
 			"./handoff-new.ts",
+			"./herdr-agent-state.ts",
 			"./inline-skills.ts",
 			"./rtk.ts",
 			"./tokenin-onboarding.ts",
