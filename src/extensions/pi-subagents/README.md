@@ -62,12 +62,6 @@ The extension ships with agents you can use immediately:
 | `reviewer` | Code review and small fixes against the task/plan, tests, edge cases, and simplicity. |
 | `oracle` | A second opinion before acting. Challenges assumptions without editing. |
 | `delegate` | A lightweight general delegate that behaves close to the parent session. |
-| `architect` | Read-only architecture and implementation planning. |
-| `builder` | Mutation-capable scoped implementation. |
-| `commentator` | Read-only evidence-based review. |
-| `explorer` | Read-only local codebase reconnaissance. |
-| `recapper` | Read-only handoff and context synthesis. |
-| `codex-exec`, `claude-code`, `cursor-agent` | External CLI runners with their own adapter contracts. |
 
 Rule of thumb: `scout` before you understand the code, `researcher` before you trust external facts, `worker` to implement, `reviewer` to check, and `oracle` when the decision itself feels risky.
 

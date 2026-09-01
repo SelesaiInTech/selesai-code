@@ -29,7 +29,7 @@ Your goal:
 
 ### 1. Explore the context
 
-Call the subagent tool with `{ agent: "explorer", task: "..." }` (do not pass a model) when possible.
+Call the subagent tool with `{ agent: "scout", task: "..." }` (do not pass a model) when possible.
 
 If the context is partial:
 - Infer surrounding architecture cautiously

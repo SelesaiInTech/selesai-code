@@ -22,43 +22,27 @@ const PROMPT_FILE_UNSUPPORTED = {
 	resume: "The one-shot prompt-file adapter does not retain a durable external session identity.",
 } as const;
 
-export const CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS = [
-	"codex-exec",
-	"codex-exec-writer",
-	"claude-code",
-	"claude-code-writer",
-	"cursor-agent",
-	"cursor-agent-writer",
-] as const;
+export const CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS = [] as const;
 export type CodeOwnedExternalCliAdapterId = typeof CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS[number];
 
 const CODE_OWNED_EXTERNAL_CLI_ADAPTER_ID_SET = new Set<string>(CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS);
-export const CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL = CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS.map((id) => `'${id}'`).join(", ");
+export const CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL = "(none)";
 
 export function isCodeOwnedExternalCliAdapterId(value: unknown): value is CodeOwnedExternalCliAdapterId {
 	return typeof value === "string" && CODE_OWNED_EXTERNAL_CLI_ADAPTER_ID_SET.has(value);
 }
 
-const RESERVED_READ_ONLY_ADAPTERS = [
-	{ name: "claude-code", writer: "claude-code-writer", access: "file-write" },
-	{ name: "codex-exec", writer: "codex-exec-writer", access: "workspace-write" },
-	{ name: "cursor-agent", writer: "cursor-agent-writer", access: "workspace-write" },
-] as const;
+const RESERVED_READ_ONLY_ADAPTERS = [] as const;
 
 export function validateCodeOwnedProfileRunner(
-	agent: {
+	_agent: {
 		name: string;
 		localName?: string;
 		aliases?: readonly string[];
 		runner?: { type: string; adapter?: string };
 	},
 ): string | undefined {
-	const selectionNames = [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])];
-	for (const adapter of RESERVED_READ_ONLY_ADAPTERS) {
-		if (selectionNames.includes(adapter.name) && !(agent.runner?.type === "external-cli" && agent.runner.adapter === adapter.name)) {
-			return `Selection name '${adapter.name}' is reserved for the read-only '${adapter.name}' adapter. Use '${adapter.writer}' for explicit ${adapter.access} access.`;
-		}
-	}
+	// With no code-owned adapter profiles bundled, no selection names are reserved.
 	return undefined;
 }
 
@@ -81,26 +65,13 @@ export function resolveExternalCliRunnerStatus(input: {
 	promptDelivery?: "stdin";
 	capabilities?: ExternalCliCapabilityNarrowing;
 }): ExternalCliRunnerStatus {
-	const codexExec = input.adapter === "codex-exec";
-	const codexExecWriter = input.adapter === "codex-exec-writer";
-	const claudeCode = input.adapter === "claude-code";
-	const claudeCodeWriter = input.adapter === "claude-code-writer";
-	const cursorAgent = input.adapter === "cursor-agent";
-	const cursorAgentWriter = input.adapter === "cursor-agent-writer";
-	const cursor = cursorAgent || cursorAgentWriter;
-	const unsupported = cursor ? PROMPT_FILE_UNSUPPORTED : UNSUPPORTED;
+	const unsupported = UNSUPPORTED;
 	return {
 		type: "external-cli",
 		command: input.command,
 		args: input.args ?? [],
-		promptDelivery: cursor ? "prompt-file" : input.promptDelivery ?? "stdin",
-		adapter: { id: input.adapter ?? "external-cli", version: 1, executionMode: cursor ? "one-shot-prompt-file" : "one-shot-stdin" },
-		...(codexExec ? { safety: { sandbox: "read-only" as const, approvalPolicy: "never" as const, ephemeral: true as const } } : {}),
-		...(codexExecWriter ? { safety: { access: "workspace-write" as const, sandbox: "workspace-write" as const, approvalPolicy: "never" as const, ephemeral: true as const } } : {}),
-		...(claudeCode ? { safety: { access: "read-only" as const, authentication: "existing-cli-required" as const, permissionMode: "plan" as const, tools: "none" as const, mcp: "empty-strict" as const, settingSources: "user" as const, userSettingsTrust: "required" as const, sessionPersistence: false as const } } : {}),
-		...(claudeCodeWriter ? { safety: { access: "workspace-write" as const, authentication: "existing-cli-required" as const, permissionMode: "acceptEdits" as const, tools: "Read,Write,Edit,Glob,Grep" as const, mcp: "empty-strict" as const, settingSources: "user" as const, userSettingsTrust: "required" as const, sessionPersistence: false as const } } : {}),
-		...(cursorAgent ? { safety: { access: "read-only" as const, authentication: "cursor-api-key-or-existing-login" as const, mode: "ask" as const, sandbox: "enabled" as const, workspaceTrust: "existing-required" as const, sessionReuse: false as const } } : {}),
-		...(cursorAgentWriter ? { safety: { access: "workspace-write" as const, authentication: "cursor-api-key-or-existing-login" as const, mode: "print" as const, sandbox: "enabled" as const, workspaceTrust: "existing-required" as const, sessionReuse: false as const } } : {}),
+		promptDelivery: input.promptDelivery ?? "stdin",
+		adapter: { id: input.adapter ?? "external-cli", version: 1, executionMode: "one-shot-stdin" },
 		capabilities: {
 			stop: true,
 			steer: false,

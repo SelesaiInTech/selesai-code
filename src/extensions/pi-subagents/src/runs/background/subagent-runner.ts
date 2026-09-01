@@ -144,9 +144,6 @@ import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
-import { resolveClaudeCodeLaunch } from "../shared/claude-code-adapter.ts";
-import { resolveCodexExecLaunch } from "../shared/codex-exec-adapter.ts";
-import { resolveCursorAgentLaunch } from "../shared/cursor-agent-adapter.ts";
 import { resolveExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { runExternalJob } from "../shared/external-job-runner.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
@@ -1480,28 +1477,15 @@ async function runSingleStepInner(
 
 	if (step.runner?.type === "external-cli") {
 		const externalCwd = step.cwd ?? ctx.cwd;
-		const adapterLaunch = step.runner.adapter === "codex-exec" || step.runner.adapter === "codex-exec-writer"
-			? resolveCodexExecLaunch({ adapter: step.runner.adapter, command: step.runner.command, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
-			: step.runner.adapter === "claude-code" || step.runner.adapter === "claude-code-writer"
-				? resolveClaudeCodeLaunch({ adapter: step.runner.adapter, command: step.runner.command })
-				: step.runner.adapter === "cursor-agent" || step.runner.adapter === "cursor-agent-writer"
-					? resolveCursorAgentLaunch({ adapter: step.runner.adapter, command: step.runner.command, cwd: externalCwd, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
-				: undefined;
-		const runner = resolveExternalCliRunnerStatus({ ...step.runner, ...(adapterLaunch ? { args: adapterLaunch.args } : {}) });
+		const runner = resolveExternalCliRunnerStatus({ ...step.runner });
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 		const external = await runExternalCli(omitUndefinedProperties({
-			command: adapterLaunch?.command ?? runner.command,
-			args: adapterLaunch?.args ?? runner.args,
+			command: runner.command,
+			args: runner.args,
 			cwd: externalCwd,
 			prompt: buildExternalCliPrompt(step.systemPrompt ?? "", task),
 			asyncDir: path.dirname(ctx.outputFile),
 			stepIndex: ctx.flatIndex,
-			environment: adapterLaunch?.environment,
-			preflight: adapterLaunch?.preflight,
-			parser: adapterLaunch?.parser,
-			finalOutputPath: adapterLaunch?.finalOutputPath,
-			promptFilePath: adapterLaunch?.promptFilePath,
-			temporaryDirectories: adapterLaunch?.temporaryDirectories,
 			registerTimeout: ctx.registerTimeout,
 			registerStop: ctx.registerStop,
 			timeoutMessage: ctx.timeoutMessage,

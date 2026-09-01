@@ -22,12 +22,11 @@ Read `../pi-subagents/SKILL.md` and its references to pick builtin/custom agents
 
 | Subtask | Agent |
 | --- | --- |
-| Codebase recon / find seams | `scout` or `explorer` |
+| Codebase recon / find seams | `scout` |
 | External/uncertain research | `researcher` |
-| Implementation planning | `architect` |
-| Scoped implementation | `worker` or `builder` |
-| Independent review | `reviewer` or `commentator` |
-| Parent-synthesized fixes | `worker` |
+| Scoped implementation | `worker` or `delegate` |
+| Independent review | `reviewer` |
+| Material architecture/product tradeoffs | `oracle` or Council Mode |
 
 For material architecture/product tradeoffs, resolve them first with an `oracle` or Council Mode before implementation.
 
@@ -52,21 +51,16 @@ const scout = await runs.run("scout", {
   agent: "scout",
   task: "Find the code seams, existing helpers, and constraints involved. Do not edit."
 });
-const plan = await runs.run("plan", {
-  agent: "architect",
-  reads: [scout.outputReference],
-  task: "Plan the change from the scout findings. Return files, order, checks, non-goals."
-});
 const worker = await runs.run("implement", {
   agent: "worker",
-  reads: [plan.outputReference],
-  task: "Implement the approved plan. Return changed files, checks run, residual risks, decisions needing approval."
+  reads: [scout.outputReference],
+  task: "Implement the requested change from the scout findings. Return changed files, checks run, residual risks, decisions needing approval."
 });
 const reviews = await runs.all([
-  { key: "correctness", agent: "reviewer", reads: [plan.outputReference, worker.outputReference], task: "Inspect the current diff for correctness and regressions. Do not edit." },
-  { key: "simplicity", agent: "reviewer", reads: [plan.outputReference, worker.outputReference], task: "Inspect the current diff for unnecessary complexity. Do not edit." }
+  { key: "correctness", agent: "reviewer", reads: [scout.outputReference, worker.outputReference], task: "Inspect the current diff for correctness and regressions. Do not edit." },
+  { key: "simplicity", agent: "reviewer", reads: [scout.outputReference, worker.outputReference], task: "Inspect the current diff for unnecessary complexity. Do not edit." }
 ]);
-return { plan: plan.outputReference, worker: worker.outputReference, reviews: reviews.map((result) => result.outputReference) };
+return { worker: worker.outputReference, reviews: reviews.map((result) => result.outputReference) };
 ```
 
 ### Parallel independent subtasks

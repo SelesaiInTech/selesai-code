@@ -52,7 +52,7 @@ Choose the lowest-complexity solution that works.
 
 ## Reuse Before Build
 
-Before creating anything new (use explorer agent):
+Before creating anything new (use scout agent):
 
 - Search for existing implementations
 - Search for existing utilities
