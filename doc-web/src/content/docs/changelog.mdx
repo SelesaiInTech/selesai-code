@@ -3,6 +3,15 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.11 — RPC get_skills command, working loader parity, herdr-agent-state extension
+
+- **RPC `get_skills` command.** New RPC command returning the resolved skill catalog (one entry per discovered skill with its effective enablement) plus the raw merged `global + project` `settings.skills` patterns, so hosts can mirror the TUI `/skills` toggle surface without reimplementing `isEnabledByOverrides` semantics. Exposed on the typed client as `RpcClient.getSkills()`.
+- **RPC `working` loader parity.** `ctx.ui.setWorkingMessage()`, `setWorkingVisible()`, and `setWorkingIndicator()` now emit a fire-and-forget `extension_ui_request {method: "working"}` (message/visible/frames/intervalMs patch fields) instead of no-oping in RPC mode, so the host can render the streaming loader row.
+- **herdr-agent-state extension.** New bundled extension that reports session/lifecycle state (`working`/`blocked`/`idle`) plus session references to the Herdr pane over `HERDR_SOCKET_PATH`. Instance state lives inside the factory so successor sessions after `/new`, fork, resume, or reload keep reporting; only the monotonic `reportSeq` stays module-level to satisfy Herdr's per-source sequence guard.
+
+### Fixed
+- **handoff-new no longer fails session creation.** The `setup` callback read the session name from the (already replaced) extension ctx, throwing the stale-ctx error and aborting `newSession` with "Failed to create session". The name is now captured before `newSession()` and passed into `setup` as a plain value; the session name still carries over as before.
+
 ## 0.13.10 — RPC rev-3 commands, handoff-new session name, builtin-only subagents
 
 - **RPC rev-3 parity batch.** New RPC commands for headless hosts: `navigate_tree` (session-tree leaf navigation with summarization/instructions options), `list_sessions` (session discovery across cwd or all scopes), `rename_session`, `delete_session` (trash-first, rejects the active session), and `set_session_models` (ephemeral scoped-model mutation). New option fields: `prompt.queueWhileCompacting` (buffer prompts during compaction), `cycle_model.direction` (forward|backward), `get_available_models.refresh` (on-demand model catalog refresh), and `export_html.themeName` / `share_gist.themeName` theme passthrough.

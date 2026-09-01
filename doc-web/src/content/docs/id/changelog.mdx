@@ -3,6 +3,15 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.11 — Perintah RPC get_skills, paritas loader working, ekstensi herdr-agent-state
+
+- **Perintah RPC `get_skills`.** Perintah RPC baru yang mengembalikan katalog skill ter-resolve (satu entri per skill yang ditemukan dengan status enable efektifnya) plus pola `settings.skills` gabungan `global + project` mentah, sehingga host dapat mencerminkan permukaan toggle `/skills` TUI tanpa mengimplementasikan ulang semantik `isEnabledByOverrides`. Tersedia pada klien bertipe sebagai `RpcClient.getSkills()`.
+- **Paritas loader `working` RPC.** `ctx.ui.setWorkingMessage()`, `setWorkingVisible()`, dan `setWorkingIndicator()` kini memancarkan `extension_ui_request {method: "working"}` fire-and-forget (field patch message/visible/frames/intervalMs) alih-alih no-op dalam mode RPC, sehingga host dapat merender baris loader streaming.
+- **Ekstensi herdr-agent-state.** Ekstensi bundled baru yang melaporkan status siklus hidup sesi (`working`/`blocked`/`idle`) plus referensi sesi ke pane Herdr melalui `HERDR_SOCKET_PATH`. State instance berada di dalam factory sehingga sesi penerus setelah `/new`, fork, resume, atau reload tetap melapor; hanya `reportSeq` monoton yang tetap di level modul untuk memenuhi guard urutan per-source Herdr.
+
+### Diperbaiki
+- **handoff-new tidak lagi gagal membuat sesi.** Callback `setup` membaca nama sesi dari ctx ekstensi yang sudah diganti, sehingga melempar error stale-ctx dan membatalkan `newSession` dengan "Failed to create session". Nama kini ditangkap sebelum `newSession()` dan diteruskan ke `setup` sebagai nilai biasa; nama sesi tetap diwariskan seperti sebelumnya.
+
 ## 0.13.10 — Perintah RPC rev-3, nama sesi handoff-new, subagent builtin-only
 
 - **Batch paritas RPC rev-3.** Perintah RPC baru untuk host headless: `navigate_tree` (navigasi leaf session-tree dengan opsi summarization/instruksi), `list_sessions` (penemuan sesi di cwd atau semua scope), `rename_session`, `delete_session` (trash-first, menolak sesi yang aktif), dan `set_session_models` (mutasi scoped-model ephemeral). Field opsi baru: `prompt.queueWhileCompacting` (buffer prompt selama compaction), `cycle_model.direction` (forward|backward), `get_available_models.refresh` (refresh katalog model on-demand), serta `export_html.themeName` / `share_gist.themeName` theme passthrough.

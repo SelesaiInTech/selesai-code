@@ -2,6 +2,16 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.11] - 2026-09-02
+
+### Added
+- **RPC rev-4 `get_skills` command.** New RPC command returning the resolved skill catalog (one entry per discovered skill with its effective enablement) plus the raw merged `global + project` `settings.skills` patterns, so hosts can mirror the TUI `/skills` toggle surface without reimplementing `isEnabledByOverrides` semantics. Exposed on the typed client as `RpcClient.getSkills()`.
+- **RPC `working` loader parity.** `ctx.ui.setWorkingMessage()`, `setWorkingVisible()`, and `setWorkingIndicator()` now emit a fire-and-forget `extension_ui_request {method: "working"}` (message/visible/frames/intervalMs patch fields) instead of no-oping in RPC mode, so the host can render the streaming loader row.
+- **Herdr agent-state extension.** New bundled extension that reports session/lifecycle state (`working`/`blocked`/`idle`) plus session references to the Herdr pane over `HERDR_SOCKET_PATH`. Instance state lives inside the factory so successor sessions after `/new`, fork, resume, or reload keep reporting; only the monotonic `reportSeq` stays module-level to satisfy Herdr's per-source sequence guard.
+
+### Fixed
+- **handoff-new no longer fails session creation.** The `setup` callback read the session name from the (already replaced) extension ctx, throwing the stale-ctx error and aborting `newSession` with "Failed to create session". The name is now captured before `newSession()` and passed into `setup` as a plain value; the session name still carries over as before.
+
 ## [0.13.10] - 2026-09-02
 
 ### Added
