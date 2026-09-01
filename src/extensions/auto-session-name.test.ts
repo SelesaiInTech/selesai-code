@@ -35,9 +35,11 @@ function userEntry(text: string, id: string): SessionEntry {
 function createHarness(branch: SessionEntry[] = []) {
 	const handlers = new Map<string, Handler>();
 	const setSessionName = vi.fn();
+	const getSessionName = vi.fn(() => undefined);
 	const pi = {
 		on: vi.fn((event: string, handler: Handler) => handlers.set(event, handler)),
 		setSessionName,
+		getSessionName,
 	} as unknown as ExtensionAPI;
 	const model = { provider: "openai", id: "gpt-5", name: "GPT-5" };
 	const ctx = {
@@ -49,7 +51,7 @@ function createHarness(branch: SessionEntry[] = []) {
 	} as unknown as ExtensionContext;
 
 	autoSessionNameExtension(pi);
-	return { handlers, setSessionName, ctx };
+	return { handlers, setSessionName, getSessionName, ctx };
 }
 
 function textResponse(text: string) {
@@ -68,6 +70,16 @@ describe("auto-session-name", () => {
 	it("registers an input handler", () => {
 		const { handlers } = createHarness();
 		expect(handlers.has("input")).toBe(true);
+	});
+
+	it("skips naming when the session already has a name", async () => {
+		const { handlers, getSessionName, setSessionName, ctx } = createHarness();
+		getSessionName.mockReturnValue("Existing name");
+
+		await handlers.get("input")!({ type: "input", text: "hi", source: "interactive" }, ctx);
+
+		expect(completeMock).not.toHaveBeenCalled();
+		expect(setSessionName).not.toHaveBeenCalled();
 	});
 
 	it("names the session from the user prompt with a small system prompt and 10-token cap", async () => {

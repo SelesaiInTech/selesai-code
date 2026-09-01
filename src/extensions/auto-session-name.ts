@@ -1,10 +1,11 @@
 /**
  * auto-session-name
  *
- * Names the session on every user message using the currently selected model.
- * Sends only user messages (current prompt plus previous user messages,
- * truncated) for context, capped at 10 output tokens (1-5 word name).
- * Thinking is never enabled. Equivalent to running /name automatically.
+ * Names the session using the currently selected model, but only when the
+ * session has no name yet — a user-set or previously generated name is never
+ * clobbered. Sends only user messages (current prompt plus previous user
+ * messages, truncated) for context, capped at 10 output tokens (1-5 word
+ * name). Thinking is never enabled. Equivalent to running /name automatically.
  */
 
 import { complete } from "@earendil-works/pi-ai/compat";
@@ -52,6 +53,9 @@ export default function autoSessionNameExtension(pi: ExtensionAPI): void {
 		const text = event.text.trim();
 		if (!text || text.startsWith("/")) return;
 		if (!ctx.model) return;
+		// Only auto-name sessions that have no name yet; never clobber a
+		// user-set or previously generated name.
+		if (pi.getSessionName()) return;
 
 		const seq = ++namingSeq;
 		void (async () => {

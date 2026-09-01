@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.9 — Penamaan sesi otomatis hanya untuk sesi tanpa nama
+
+- Ekstensi bundled **auto-session-name** kini memberi nama sesi hanya jika sesi belum memiliki nama. Jika sesi sudah memiliki nama (ditentukan manual dengan `/name` atau dibuat sebelumnya), penamaan dilewati sepenuhnya — tidak ada panggilan LLM ekstra dan nama Anda yang sudah ada tidak ditimpa. Sesi tanpa nama tetap diberi nama otomatis seperti sebelumnya.
+
 ## 0.13.8 — Skill unlazy ramah-Selesai, perintah tes ponytail
 
 - Skill bundled **unlazy** kini ramah-Selesai: bagian spesifik Claude Code / Codex dihapus (installer dan skrip Stop-hook, binding sesi `--bind`, adapter launch Codex/Claude), dan dispatch paralel kini memakai subagent async asli Selesai.

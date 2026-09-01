@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.9] - 2026-09-01
+
+### Changed
+- **Auto session naming only names unnamed sessions.** The bundled `auto-session-name` extension now skips naming entirely when the current session already has a name (user-set via `/name` or generated earlier), instead of re-naming on every user message. Previously generated names are never clobbered; empty sessions are still auto-named as before.
+
 ## [0.13.8] - 2026-09-01
 
 ### Changed

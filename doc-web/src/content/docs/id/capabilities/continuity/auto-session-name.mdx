@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-Ekstensi `auto-session-name` memberi nama sesi pada setiap pesan user menggunakan model yang sedang dipilih. Ia hanya mengirim riwayat pesan user (tanpa hasil tool, balasan assistant, atau thinking), membatasi nama hingga lima kata, dan berjalan di latar belakang sehingga tidak pernah menunda pesan Anda.
+Ekstensi `auto-session-name` memberi nama sesi ketika sesi belum memiliki nama, menggunakan model yang sedang dipilih. Ia hanya mengirim riwayat pesan user (tanpa hasil tool, balasan assistant, atau thinking), membatasi nama hingga lima kata, dan berjalan di latar belakang sehingga tidak pernah menunda pesan Anda. Sesi yang sudah memiliki nama (ditentukan manual dengan `/name` atau dibuat sebelumnya) tidak diutak-atik.
 
 <ExtensionStatus
   distribution="bundled"
@@ -25,6 +25,7 @@ Ekstensi `auto-session-name` memberi nama sesi pada setiap pesan user menggunaka
 ## Yang disiapkan
 
 - Mendengarkan event `input` dan mengabaikan pesan bersumber ekstensi, slash command, dan teks kosong.
+- Hanya bertindak ketika sesi belum memiliki nama: jika sesi sudah memiliki nama, panggilan penamaan dilewati sepenuhnya.
 - Mengumpulkan prompt user saat ini plus hingga 20 pesan user sebelumnya (terbaru dulu, masing-masing 200 karakter) sebagai satu-satunya konteks.
 - Meminta nama sesi 1–5 kata ke model dengan batas output 10 token, lalu menerapkannya via `setSessionName`.
 - Menonaktifkan thinking secara eksplisit (`reasoning_effort: "none"`) agar model reasoning tidak menghabiskan anggaran penamaan untuk penalaran internal.
@@ -38,8 +39,8 @@ Tidak ada pengaturan user. Panjang nama, batas konteks, dan anggaran token adala
 
 ## Yang dapat dilakukan
 
-- Menjaga nama sesi tetap mutakhir secara otomatis saat topik percakapan berubah.
-- Melihat nama diperbarui tanpa menjalankan `/name` manual setelah setiap pesan.
+- Mendapatkan nama yang dihasilkan otomatis untuk sesi baru yang belum bernama tanpa menjalankan `/name` manual.
+- Mempertahankan nama yang ditentukan manual atau dihasilkan sebelumnya; tidak pernah ditimpa oleh ekstensi.
 - Mengirim pesan tanpa latensi tambahan dari panggilan penamaan.
 
 ## Perintah, tool, dan shortcut

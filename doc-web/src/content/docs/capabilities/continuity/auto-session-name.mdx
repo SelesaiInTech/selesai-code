@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-The `auto-session-name` extension names the session on every user message using the currently selected model. It sends only user-message history (no tool results, assistant replies, or thinking), caps the name at five words, and runs in the background so it never delays your message.
+The `auto-session-name` extension names the session when it has no name yet, using the currently selected model. It sends only user-message history (no tool results, assistant replies, or thinking), caps the name at five words, and runs in the background so it never delays your message. Sessions that already have a name (set manually with `/name` or generated earlier) are left untouched.
 
 <ExtensionStatus
   distribution="bundled"
@@ -25,6 +25,7 @@ The `auto-session-name` extension names the session on every user message using 
 ## What it sets up
 
 - Listens to the `input` event and ignores extension-sourced messages, slash commands, and empty text.
+- Only acts when the session has no name yet: if the session already has a name, the naming call is skipped entirely.
 - Collects the current user prompt plus up to 20 previous user messages (newest first, 200 characters each) as the only context.
 - Asks the model for a 1–5 word session name with a 10-token output cap, then applies it via `setSessionName`.
 - Disables thinking explicitly (`reasoning_effort: "none"`) so reasoning models do not burn the naming budget on internal reasoning.
@@ -38,8 +39,8 @@ There are no user-facing settings. The name length, context limits, and token ca
 
 ## What you can do
 
-- Keep session names current automatically as the conversation topic changes.
-- See the name update without running `/name` manually after each message.
+- Get an auto-generated name for a new, unnamed session without running `/name` manually.
+- Keep a manually set or previously generated name; it is never overwritten by the extension.
 - Send messages without any added latency from the naming call.
 
 ## Commands, tools, and shortcuts

@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.9 — Auto session naming only for unnamed sessions
+
+- The bundled **auto-session-name** extension now names a session only when it has no name yet. If the session already has a name (set manually with `/name` or generated earlier), naming is skipped entirely — no extra LLM call and no clobbering of your existing name. Unnamed sessions are still auto-named as before.
+
 ## 0.13.8 — Selesai-native unlazy skill, ponytail test command
 
 - The bundled **unlazy** skill is now Selesai-native: its Claude Code / Codex specific parts were removed (Stop-hook installer and scripts, `--bind` session binding, Codex/Claude launch adapters), and parallel dispatch now uses Selesai's native async subagent runs.
