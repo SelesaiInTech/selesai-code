@@ -1,2121 +1,2158 @@
 {
-  "catalog": [
+ "catalog": [
+  {
+   "slug": "pi-subagents",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Subagent delegation supports extension-level config plus user/project settings that override default agents, models, thinking, extensions, and runtime budgets.",
+    "id": "Delegasi subagent mendukung konfigurasi tingkat ekstensi ditambah pengaturan user/proyek yang mengganti agent, model, thinking, ekstensi, dan anggaran runtime bawaan."
+   },
+   "sourcePaths": [
+    "src/extensions/pi-subagents/src/shared/types.ts",
+    "src/extensions/pi-subagents/src/agents/agents.ts",
+    "src/extensions/pi-subagents/src/runs/shared/model-scope.ts"
+   ],
+   "scopes": [
     {
-      "slug": "pi-subagents",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Subagent delegation supports extension-level config plus user/project settings that override default agents, models, thinking, extensions, and runtime budgets.",
-        "id": "Delegasi subagent mendukung konfigurasi tingkat ekstensi ditambah pengaturan user/proyek yang mengganti agent, model, thinking, ekstensi, dan anggaran runtime bawaan."
-      },
-      "sourcePaths": [
-        "src/extensions/pi-subagents/src/shared/types.ts",
-        "src/extensions/pi-subagents/src/agents/agents.ts",
-        "src/extensions/pi-subagents/src/runs/shared/model-scope.ts"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Extension config",
-            "id": "Konfigurasi ekstensi"
-          },
-          "path": "~/.selesai/agent/extensions/subagent/config.json",
-          "precedence": {
-            "en": "Lowest; applies unless overridden by user/project settings or an explicit call argument.",
-            "id": "Terendah; berlaku kecuali ditimpa oleh pengaturan user/proyek atau argumen pemanggilan eksplisit."
-          }
-        },
-        {
-          "label": {
-            "en": "User settings",
-            "id": "Pengaturan user"
-          },
-          "path": "~/.selesai/agent/settings.json",
-          "precedence": {
-            "en": "Overrides extension defaults; overridden by project settings.",
-            "id": "Mengganti default ekstensi; ditimpa oleh pengaturan proyek."
-          }
-        },
-        {
-          "label": {
-            "en": "Project settings",
-            "id": "Pengaturan proyek"
-          },
-          "path": ".selesai/settings.json",
-          "precedence": {
-            "en": "Highest persistent layer for settings-backed agent values.",
-            "id": "Lapis persisten tertinggi untuk nilai agent berbasis pengaturan."
-          }
-        },
-        {
-          "label": {
-            "en": "Per-call precedence",
-            "id": "Preseden per pemanggilan"
-          },
-          "path": "tool/slash arguments and agent frontmatter",
-          "precedence": {
-            "en": "Explicit call arguments and agent frontmatter beat all config layers.",
-            "id": "Argumen pemanggilan eksplisit dan frontmatter agent mengalahkan semua lapisan konfigurasi."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "asyncByDefault",
-          "type": "boolean",
-          "default": "false",
-          "description": {
-            "en": "Run single subagent calls in the background by default.",
-            "id": "Jalankan pemanggilan subagent tunggal di latar belakang secara default."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "forceTopLevelAsync",
-          "type": "boolean",
-          "default": "false",
-          "description": {
-            "en": "Force top-level subagent invocations to run asynchronously.",
-            "id": "Paksakan pemanggilan subagent tingkat atas untuk berjalan secara asinkron."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "fleetView",
-          "type": "boolean",
-          "default": "true",
-          "description": {
-            "en": "Show the Claude Code-style navigable fleet panel below the editor.",
-            "id": "Tampilkan panel fleet yang dapat dinavigasi seperti Claude Code di bawah editor."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "asyncWidget",
-          "type": "boolean",
-          "default": "true when fleetView disabled, otherwise false",
-          "description": {
-            "en": "Show the legacy above-editor async runs widget.",
-            "id": "Tampilkan widget async runs legacy di atas editor."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "toolDescriptionMode",
-          "type": "string",
-          "default": "\"compact\"",
-          "allowedValues": "\"full\", \"compact\", \"custom\"",
-          "description": {
-            "en": "Variant of the parent-facing subagent tool description. Defaults to compact.",
-            "id": "Varian deskripsi tool subagent yang menghadap parent. Default: compact."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "waitTool",
-          "type": "boolean | object",
-          "default": "(not configured)",
-          "description": {
-            "en": "Register a wait/notify tool for subagents. Pass true or { enabled: true }.",
-            "id": "Daftarkan tool wait/notify untuk subagent. Berikan true atau { enabled: true }."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "defaultSessionDir",
-          "type": "string",
-          "default": "(system temp or session path)",
-          "description": {
-            "en": "Base directory used for subagent sessions when no explicit path is given.",
-            "id": "Direktori dasar untuk sesi subagent bila tidak ada path eksplisit."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "singleRunOutputBaseDir",
-          "type": "string",
-          "default": "(not configured)",
-          "description": {
-            "en": "Base directory used for single-run output artifacts.",
-            "id": "Direktori dasar untuk artefak output single-run."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "maxSubagentDepth",
-          "type": "number",
-          "default": "2",
-          "description": {
-            "en": "Maximum nested subagent depth for this session.",
-            "id": "Kedalaman bersarang subagent maksimum untuk sesi ini."
-          },
-          "persistence": "extension config or settings.json"
-        },
-        {
-          "key": "maxSubagentSpawnsPerSession",
-          "type": "number",
-          "default": "unlimited",
-          "description": {
-            "en": "Optional cumulative cap on subagent spawns across a session. 0 means unlimited.",
-            "id": "Batas kumulatif opsional pembuatan subagent dalam satu sesi. 0 berarti tidak terbatas."
-          },
-          "persistence": "extension config or SELESAI_SUBAGENT_MAX_SPAWNS_PER_SESSION"
-        },
-        {
-          "key": "maxWorkflowAutoRelaunches",
-          "type": "number",
-          "default": "12",
-          "description": {
-            "en": "How many times an async scripted workflow may auto-relaunch with a fresh fan-out budget after exhausting it before the goal is clean. 0 means unlimited.",
-            "id": "Berapa kali workflow berskrip async boleh me-relaunch otomatis dengan budget fan-out baru setelah budget habis sebelum goal bersih. 0 berarti tidak terbatas."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "globalConcurrencyLimit",
-          "type": "number",
-          "default": "20",
-          "description": {
-            "en": "Global cap on simultaneously-running subagent tasks within a run.",
-            "id": "Batas global tugas subagent yang berjalan bersamaan dalam satu run."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "control",
-          "type": "object",
-          "default": "(disabled)",
-          "description": {
-            "en": "Lifecycle control notifications: enabled, thresholds (ms/turns/tokens), failed-tool count, channels (event/async/intercom), and notifyOn events.",
-            "id": "Notifikasi kontrol siklus hidup: enabled, threshold (ms/turn/token), jumlah failed-tool, channel (event/async/intercom), dan notifyOn events."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "completionBatch",
-          "type": "object",
-          "default": "(disabled)",
-          "description": {
-            "en": "Smart completion batching: enabled, debounceMs, maxWaitMs, stragglerDebounceMs, stragglerMaxWaitMs, stragglerWindowMs.",
-            "id": "Pengelompokan smart completion: enabled, debounceMs, maxWaitMs, stragglerDebounceMs, stragglerMaxWaitMs, stragglerWindowMs."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "turnBudget",
-          "type": "object",
-          "default": "(not configured)",
-          "description": {
-            "en": "Turn budget: maxTurns, optional graceTurns.",
-            "id": "Anggaran turn: maxTurns, graceTurns opsional."
-          },
-          "persistence": "extension config or per-agent frontmatter"
-        },
-        {
-          "key": "toolBudget",
-          "type": "object",
-          "default": "(not configured)",
-          "description": {
-            "en": "Tool budget: hard limit, optional soft limit, and optional block list or \"*\".",
-            "id": "Anggaran tool: batas hard, batas soft opsional, dan daftar block atau \"*\" opsional."
-          },
-          "persistence": "extension config or per-agent frontmatter"
-        },
-        {
-          "key": "parallel.maxTasks",
-          "type": "number",
-          "default": "8",
-          "description": {
-            "en": "Default maximum parallel tasks for top-level parallel runs.",
-            "id": "Jumlah tugas paralel maksimum default untuk run paralel tingkat atas."
-          },
-          "persistence": "extension config or call argument"
-        },
-        {
-          "key": "parallel.concurrency",
-          "type": "number",
-          "default": "4",
-          "description": {
-            "en": "Default concurrency for top-level parallel runs.",
-            "id": "Konkurensi default untuk run paralel tingkat atas."
-          },
-          "persistence": "extension config or call argument"
-        },
-        {
-          "key": "chain.dynamicFanout.maxItems",
-          "type": "number",
-          "default": "(not configured)",
-          "description": {
-            "en": "Maximum number of dynamic items generated by a chain fan-out step.",
-            "id": "Jumlah item maksimum yang dihasilkan oleh langkah chain fan-out dinamis."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "worktreeSetupHook",
-          "type": "string",
-          "default": "(not configured)",
-          "description": {
-            "en": "Path to a shell command run when preparing parallel/chain worktrees.",
-            "id": "Path ke shell command yang dijalankan saat menyiapkan worktree paralel/chain."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "worktreeSetupHookTimeoutMs",
-          "type": "number",
-          "default": "(not configured)",
-          "description": {
-            "en": "Timeout for the worktree setup hook.",
-            "id": "Timeout untuk worktree setup hook."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "worktreeBaseDir",
-          "type": "string",
-          "default": "(system temp)",
-          "description": {
-            "en": "Base directory for parallel/chain worktrees.",
-            "id": "Direktori dasar untuk worktree paralel/chain."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "artifactDir",
-          "type": "string",
-          "default": "\"project\" (cwd/.pi-subagents)",
-          "allowedValues": "\"project\", \"session\", \"temp\"",
-          "description": {
-            "en": "Where subagent artifact files are stored.",
-            "id": "Lokasi penyimpanan file artefak subagent."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "intercomBridge",
-          "type": "object",
-          "default": "(off)",
-          "description": {
-            "en": "Intercom bridge mode: off, fork-only, or always; plus optional instructionFile.",
-            "id": "Mode intercom bridge: off, fork-only, atau always; plus instructionFile opsional."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "proactiveSkillSubagents",
-          "type": "object | false",
-          "default": "(disabled)",
-          "description": {
-            "en": "Recommend skill-backed subagents: enabled, minReferences, maxRecommendations, preferredAgent. Set to false to disable.",
-            "id": "Rekomendasikan subagent berbasis skill: enabled, minReferences, maxRecommendations, preferredAgent. Atur false untuk menonaktifkan."
-          },
-          "persistence": "extension config"
-        },
-        {
-          "key": "subagents.defaultModel",
-          "type": "string",
-          "default": "(not configured)",
-          "description": {
-            "en": "Default model applied to built-in agents that do not declare a model. Project overrides user.",
-            "id": "Model default untuk agent bawaan yang tidak menyatakan model. Proyek menimpa user."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "subagents.defaultThinking",
-          "type": "string",
-          "default": "(not configured)",
-          "description": {
-            "en": "Default thinking suffix applied to built-in agents without an explicit thinking value.",
-            "id": "Suffix thinking default untuk agent bawaan tanpa nilai thinking eksplisit."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "subagents.defaultExtensions",
-          "type": "string[]",
-          "default": "(not configured)",
-          "description": {
-            "en": "Default extensions added to agents that do not declare extensions.",
-            "id": "Ekstensi default yang ditambahkan ke agent tanpa deklarasi ekstensi."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "subagents.disableBuiltins",
-          "type": "boolean",
-          "default": "false",
-          "description": {
-            "en": "Disable loading of built-in agent definitions.",
-            "id": "Nonaktifkan pemuatan definisi agent bawaan."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "subagents.disableThinking",
-          "type": "boolean",
-          "default": "false",
-          "description": {
-            "en": "Disable thinking suffix defaults for built-in agents.",
-            "id": "Nonaktifkan default suffix thinking untuk agent bawaan."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "subagents.modelScope",
-          "type": "object",
-          "default": "(not configured)",
-          "description": {
-            "en": "Enforce an allow-list of model patterns when enforce is true. allow is an array of glob-style patterns (only * is special).",
-            "id": "Terapkan daftar izin pola model saat enforce true. allow adalah array pola bergaya glob (hanya * yang spesial)."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "subagents.agentOverrides.<agent>",
-          "type": "object",
-          "default": "(not configured)",
-          "description": {
-            "en": "Per-agent overrides for built-in agents: model, thinking, fallbackModels, tools, mcpDirectTools, extensions, subagentOnlyExtensions, skills, systemPromptMode, defaultAsync, defaultTimeoutMs, defaultTurnBudget, defaultAcceptance, acceptanceRole, output, defaultReads, defaultProgress, interactive, maxSubagentDepth, completionGuard, toolBudget, memory, disabled.",
-            "id": "Penimpaan per agent untuk agent bawaan: model, thinking, fallbackModels, tools, mcpDirectTools, extensions, subagentOnlyExtensions, skills, systemPromptMode, defaultAsync, defaultTimeoutMs, defaultTurnBudget, defaultAcceptance, acceptanceRole, output, defaultReads, defaultProgress, interactive, maxSubagentDepth, completionGuard, toolBudget, memory, disabled."
-          },
-          "persistence": "settings.json"
-        }
-      ],
-      "envVars": [
-        {
-          "key": "SELESAI_SUBAGENT_MAX_DEPTH",
-          "description": {
-            "en": "Runtime override for the current maximum subagent depth.",
-            "id": "Penimpaan runtime untuk kedalaman subagent maksimum saat ini."
-          }
-        },
-        {
-          "key": "SELESAI_SUBAGENT_MAX_SPAWNS_PER_SESSION",
-          "description": {
-            "en": "Runtime override for max spawns per session. Use 0 for unlimited.",
-            "id": "Penimpaan runtime untuk max spawns per sesi. Gunakan 0 untuk tidak terbatas."
-          }
-        },
-        {
-          "key": "SELESAI_SUBAGENT_DEPTH",
-          "description": {
-            "en": "Incremented automatically for nested subagent runs; do not set manually.",
-            "id": "Dinaikkan otomatis untuk run subagent bersarang; jangan atur manual."
-          }
-        },
-        {
-          "key": "SELESAI_SUBAGENT_PARENT_SESSION",
-          "description": {
-            "en": "Forwarded to child sessions so async subagents can locate their parent.",
-            "id": "Diteruskan ke sesi anak sehingga subagent async dapat menemukan parent-nya."
-          }
-        }
-      ],
-      "controls": [
-        {
-          "name": "subagent({ ... })",
-          "description": {
-            "en": "Foreground or async subagent tool call.",
-            "id": "Pemanggilan tool subagent foreground atau async."
-          }
-        },
-        {
-          "name": "/run, /chain, /parallel, /run-chain",
-          "description": {
-            "en": "Slash commands for common run modes.",
-            "id": "Slash command untuk mode run umum."
-          }
-        },
-        {
-          "name": "/subagents-doctor, /subagents-stop, /subagent-cost, /subagents-models, /subagents-profiles, /parallel-review",
-          "description": {
-            "en": "Management and monitoring commands.",
-            "id": "Command manajemen dan monitoring."
-          }
-        },
-        {
-          "name": "/subagents-watchdog [status|on|off|model ...]",
-          "description": {
-            "en": "Runtime watchdog status and controls.",
-            "id": "Status dan kontrol watchdog runtime."
-          }
-        },
-        {
-          "name": "subagent({ action: \"status\" })",
-          "description": {
-            "en": "Inspect live run status and child activity.",
-            "id": "Periksa status run dan aktivitas child."
-          }
-        }
-      ],
-      "noConfig": false
+     "label": {
+      "en": "Extension config",
+      "id": "Konfigurasi ekstensi"
+     },
+     "path": "~/.selesai/agent/extensions/subagent/config.json",
+     "precedence": {
+      "en": "Lowest; applies unless overridden by user/project settings or an explicit call argument.",
+      "id": "Terendah; berlaku kecuali ditimpa oleh pengaturan user/proyek atau argumen pemanggilan eksplisit."
+     }
     },
     {
-      "slug": "pi-web-agent",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Web research supports layered global/project backend and presentation config, API keys stored in settings.json, and runtime command controls.",
-        "id": "Riset web mendukung konfigurasi backend dan presentasi global/proyek berlapis, kunci API disimpan di settings.json, dan kontrol command runtime."
-      },
-      "sourcePaths": [
-        "src/extensions/pi-web-agent/src/presentation/types.ts",
-        "src/extensions/pi-web-agent/src/presentation/config-store.ts",
-        "src/extensions/pi-web-agent/src/backends/config.ts",
-        "src/extensions/pi-web-agent/src/backends/settings-reader.ts",
-        "src/extensions/pi-web-agent/src/backends/doctor.ts",
-        "src/extensions/pi-web-agent/src/backends/factory.ts"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Global backend/presentation config",
-            "id": "Konfigurasi backend/presentasi global"
-          },
-          "path": "~/.selesai/agent/extensions/pi-web-agent/config.json",
-          "precedence": {
-            "en": "Default lowest; overridden by project config.",
-            "id": "Default terendah; ditimpa oleh konfigurasi proyek."
-          }
-        },
-        {
-          "label": {
-            "en": "Project backend/presentation config",
-            "id": "Konfigurasi backend/presentasi proyek"
-          },
-          "path": ".selesai/extensions/pi-web-agent/config.json",
-          "precedence": {
-            "en": "Overrides global config values.",
-            "id": "Menimpa nilai konfigurasi global."
-          }
-        },
-        {
-          "label": {
-            "en": "User settings for secrets",
-            "id": "Pengaturan user untuk rahasia"
-          },
-          "path": "~/.selesai/agent/settings.json",
-          "precedence": {
-            "en": "Brave API key is read from webAgent.braveApiKey. Firecrawl key can live in config or env var.",
-            "id": "Kunci Brave API dibaca dari webAgent.braveApiKey. Kunci Firecrawl dapat berada di config atau variabel env."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "presentation.defaultMode",
-          "type": "string",
-          "default": "\"compact\"",
-          "allowedValues": "\"compact\", \"preview\", \"verbose\"",
-          "description": {
-            "en": "Default presentation mode for web agent results.",
-            "id": "Mode presentasi default untuk hasil web agent."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "presentation.tools.<web_search|web_fetch|web_fetch_headless|web_explore>.mode",
-          "type": "string",
-          "allowedValues": "\"compact\", \"preview\", \"verbose\"",
-          "description": {
-            "en": "Per-tool presentation override.",
-            "id": "Penimpaan presentasi per tool."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.search.provider",
-          "type": "string",
-          "default": "\"duckduckgo\"",
-          "allowedValues": "\"duckduckgo\", \"searxng\", \"brave\"",
-          "description": {
-            "en": "Search backend provider.",
-            "id": "Provider backend pencarian."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.search.baseUrl",
-          "type": "string",
-          "description": {
-            "en": "Base URL for searxng or brave endpoints when required.",
-            "id": "Base URL untuk endpoint searxng atau brave bila diperlukan."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.search.fallback",
-          "type": "string",
-          "allowedValues": "\"duckduckgo\"",
-          "description": {
-            "en": "Only valid when provider is searxng or brave. Other values are rejected.",
-            "id": "Hanya valid saat provider adalah searxng atau brave. Nilai lain ditolak."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.search.options.categories",
-          "type": "string[]",
-          "description": {
-            "en": "SearXNG categories. Must be non-empty when provided.",
-            "id": "Kategori SearXNG. Harus tidak kosong bila diberikan."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.search.options.language",
-          "type": "string",
-          "description": {
-            "en": "SearXNG language. Must not be empty when provided.",
-            "id": "Bahasa SearXNG. Tidak boleh kosong bila diberikan."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.search.options.safesearch",
-          "type": "number",
-          "allowedValues": "0, 1, 2",
-          "description": {
-            "en": "SearXNG safe-search level.",
-            "id": "Tingkat safe-search SearXNG."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.fetch.provider",
-          "type": "string",
-          "default": "\"http\"",
-          "allowedValues": "\"http\", \"firecrawl\"",
-          "description": {
-            "en": "Fetch backend provider.",
-            "id": "Provider backend fetch."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.fetch.baseUrl",
-          "type": "string",
-          "description": {
-            "en": "Firecrawl base URL (required for firecrawl provider).",
-            "id": "Base URL Firecrawl (wajib untuk provider firecrawl)."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.fetch.apiKey",
-          "type": "string",
-          "sensitive": true,
-          "description": {
-            "en": "Firecrawl API key. Prefer PI_WEB_AGENT_FIRECRAWL_API_KEY env var.",
-            "id": "Kunci API Firecrawl. Utamakan variabel env PI_WEB_AGENT_FIRECRAWL_API_KEY."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.fetch.fallback",
-          "type": "string",
-          "allowedValues": "\"http\"",
-          "description": {
-            "en": "Only valid when provider is firecrawl.",
-            "id": "Hanya valid saat provider adalah firecrawl."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.fetch.options.formats",
-          "type": "string[]",
-          "description": {
-            "en": "Firecrawl output formats. Must be non-empty when provided.",
-            "id": "Format output Firecrawl. Harus tidak kosong bila diberikan."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.fetch.options.onlyMainContent",
-          "type": "boolean",
-          "description": {
-            "en": "Firecrawl main-content-only flag.",
-            "id": "Flag Firecrawl hanya konten utama."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "backends.headless.provider",
-          "type": "string",
-          "default": "\"local-browser\"",
-          "allowedValues": "\"local-browser\"",
-          "description": {
-            "en": "Headless escalation provider. The only supported value is local-browser.",
-            "id": "Provider eskalasi headless. Satu-satunya nilai yang didukung adalah local-browser."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "webAgent.braveApiKey",
-          "type": "string",
-          "sensitive": true,
-          "description": {
-            "en": "Brave Search API key stored in settings.json. Also accepts PI_WEB_AGENT_BRAVE_API_KEY env var.",
-            "id": "Kunci API Brave Search disimpan di settings.json. Juga menerima variabel env PI_WEB_AGENT_BRAVE_API_KEY."
-          },
-          "persistence": "settings.json"
-        }
-      ],
-      "envVars": [
-        {
-          "key": "PI_WEB_AGENT_BRAVE_API_KEY",
-          "sensitive": true,
-          "description": {
-            "en": "Override or supply the Brave API key without storing it in settings.json.",
-            "id": "Timpa atau sediakan kunci Brave API tanpa menyimpannya di settings.json."
-          }
-        },
-        {
-          "key": "PI_WEB_AGENT_FIRECRAWL_API_KEY",
-          "sensitive": true,
-          "description": {
-            "en": "Override or supply the Firecrawl API key without storing it in config.json.",
-            "id": "Timpa atau sediakan kunci Firecrawl API tanpa menyimpannya di config.json."
-          }
-        }
-      ],
-      "controls": [
-        {
-          "name": "web_explore({ query: \"...\" })",
-          "description": {
-            "en": "Agent tool that runs search, fetch, and headless escalation.",
-            "id": "Tool agent yang menjalankan pencarian, fetch, dan eskalasi headless."
-          }
-        },
-        {
-          "name": "/web-agent",
-          "description": {
-            "en": "Runtime command with settings, show, doctor, changelog, reset project, and reset global subcommands.",
-            "id": "Command runtime dengan subcommand settings, show, doctor, changelog, reset project, dan reset global."
-          }
-        }
-      ],
-      "noConfig": false
+     "label": {
+      "en": "User settings",
+      "id": "Pengaturan user"
+     },
+     "path": "~/.selesai/agent/settings.json",
+     "precedence": {
+      "en": "Overrides extension defaults; overridden by project settings.",
+      "id": "Mengganti default ekstensi; ditimpa oleh pengaturan proyek."
+     }
     },
     {
-      "slug": "question",
-      "distribution": "bundled",
-      "overview": {
-        "en": "The question tool is schema-driven. Questions are configured per tool call; there are no persistent user settings.",
-        "id": "Tool question didorong schema. Pertanyaan dikonfigurasi per pemanggilan tool; tidak ada pengaturan user persisten."
-      },
-      "sourcePaths": [
-        "src/extensions/question/schemas.ts"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Per-tool-call schema",
-            "id": "Schema per pemanggilan tool"
-          },
-          "path": "question({ questions: [...] })",
-          "precedence": {
-            "en": "All options are supplied by the agent inside the tool call.",
-            "id": "Semua opsi diberikan oleh agent di dalam pemanggilan tool."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "questions[].id",
-          "type": "string",
-          "default": "q1, q2, ...",
-          "description": {
-            "en": "Stable answer id. Auto-generated when omitted.",
-            "id": "Id jawaban yang stabil. Dibuat otomatis bila dihilangkan."
-          },
-          "persistence": "tool call"
-        },
-        {
-          "key": "questions[].label",
-          "type": "string",
-          "default": "Q1, Q2, ...",
-          "description": {
-            "en": "Short page label shown in the wizard.",
-            "id": "Label halaman singkat yang ditampilkan di wizard."
-          },
-          "persistence": "tool call"
-        },
-        {
-          "key": "questions[].question",
-          "type": "string",
-          "description": {
-            "en": "Question text shown to the user.",
-            "id": "Teks pertanyaan yang ditampilkan ke user."
-          },
-          "persistence": "tool call"
-        },
-        {
-          "key": "questions[].context",
-          "type": "string",
-          "description": {
-            "en": "Optional plain-text context shown before the question.",
-            "id": "Konteks plain-text opsional yang ditampilkan sebelum pertanyaan."
-          },
-          "persistence": "tool call"
-        },
-        {
-          "key": "questions[].type",
-          "type": "string",
-          "allowedValues": "\"select\", \"multiselect\", \"text\"",
-          "description": {
-            "en": "Question type. image and info are not supported.",
-            "id": "Tipe pertanyaan. image dan info tidak didukung."
-          },
-          "persistence": "tool call"
-        },
-        {
-          "key": "questions[].options",
-          "type": "array",
-          "description": {
-            "en": "Required for select and multiselect. Each option has value, label, and optional description.",
-            "id": "Wajib untuk select dan multiselect. Setiap opsi memiliki value, label, dan description opsional."
-          },
-          "persistence": "tool call"
-        },
-        {
-          "key": "questions[].allowOther",
-          "type": "boolean",
-          "default": "false",
-          "description": {
-            "en": "Allow a custom text answer for select/multiselect.",
-            "id": "Izinkan jawaban teks kustom untuk select/multiselect."
-          },
-          "persistence": "tool call"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "question({ questions })",
-          "description": {
-            "en": "Batch wizard with review and submission screens.",
-            "id": "Wizard batch dengan layar review dan submission."
-          }
-        }
-      ],
-      "noConfig": false
+     "label": {
+      "en": "Project settings",
+      "id": "Pengaturan proyek"
+     },
+     "path": ".selesai/settings.json",
+     "precedence": {
+      "en": "Highest persistent layer for settings-backed agent values.",
+      "id": "Lapis persisten tertinggi untuk nilai agent berbasis pengaturan."
+     }
     },
     {
-      "slug": "grep-app",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Public code search uses per-call filter and fetch options. There are no persistent user settings.",
-        "id": "Pencarian kode publik menggunakan opsi filter dan fetch per pemanggilan. Tidak ada pengaturan user persisten."
-      },
-      "sourcePaths": [
-        "src/extensions/grep-app/index.ts"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Tool call arguments",
-            "id": "Argumen pemanggilan tool"
-          },
-          "path": "grep_app({ ... })",
-          "precedence": {
-            "en": "All behavior is controlled by each tool call.",
-            "id": "Semua perilaku dikontrol oleh setiap pemanggilan tool."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "query",
-          "type": "string",
-          "description": {
-            "en": "grep.app search query.",
-            "id": "Query pencarian grep.app."
-          },
-          "persistence": "tool call"
-        },
-        {
-          "key": "filter",
-          "type": "string",
-          "description": {
-            "en": "Optional filter, e.g. language or repository.",
-            "id": "Filter opsional, misalnya bahasa atau repository."
-          },
-          "persistence": "tool call"
-        },
-        {
-          "key": "fetchUrl",
-          "type": "string",
-          "description": {
-            "en": "URL of a result to fetch.",
-            "id": "URL hasil yang akan di-fetch."
-          },
-          "persistence": "tool call"
-        },
-        {
-          "key": "startLine / endLine",
-          "type": "number",
-          "description": {
-            "en": "Optional line range for fetched source.",
-            "id": "Rentang baris opsional untuk source yang di-fetch."
-          },
-          "persistence": "tool call"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "grep_app({ ... })",
-          "description": {
-            "en": "Search tool and fetch tool.",
-            "id": "Tool pencarian dan fetch."
-          }
-        }
-      ],
-      "noConfig": false
-    },
-    {
-      "slug": "pi-intercom",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Intercom reads a single config file for broker command, args, confirmation, status suffix, and enable flags.",
-        "id": "Intercom membaca satu file konfigurasi untuk command broker, argumen, konfirmasi, suffix status, dan flag enable."
-      },
-      "sourcePaths": [
-        "src/extensions/pi-intercom/config.ts"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Intercom config",
-            "id": "Konfigurasi intercom"
-          },
-          "path": "~/.selesai/agent/intercom/config.json",
-          "precedence": {
-            "en": "Only config file; no project layer.",
-            "id": "Hanya file konfigurasi; tidak ada lapisan proyek."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "brokerCommand",
-          "type": "string",
-          "default": "\"npx\"",
-          "description": {
-            "en": "Command used to spawn the broker process.",
-            "id": "Command untuk menjalankan proses broker."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "brokerArgs",
-          "type": "string[]",
-          "default": "[\"--no-install\", \"tsx\"]",
-          "description": {
-            "en": "Arguments passed to brokerCommand before the broker script path.",
-            "id": "Argumen yang diteruskan ke brokerCommand sebelum path skrip broker."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "confirmSend",
-          "type": "boolean",
-          "default": "false",
-          "description": {
-            "en": "Require confirmation before non-reply sends in interactive sessions.",
-            "id": "Wajibkan konfirmasi sebelum pengiriman non-reply di sesi interaktif."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "enabled",
-          "type": "boolean",
-          "default": "true",
-          "description": {
-            "en": "Enable or disable intercom entirely.",
-            "id": "Aktifkan atau nonaktifkan intercom sepenuhnya."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "replyHint",
-          "type": "boolean",
-          "default": "true",
-          "description": {
-            "en": "Show a reply hint in incoming messages.",
-            "id": "Tampilkan petunjuk reply di pesan masuk."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "status",
-          "type": "string",
-          "default": "(not set)",
-          "description": {
-            "en": "Optional custom status suffix appended to automatic lifecycle status.",
-            "id": "Suffix status kustom opsional yang ditambahkan ke status siklus hidup otomatis."
-          },
-          "persistence": "config.json"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "ask / reply tools",
-          "description": {
-            "en": "Send messages or replies between named local sessions.",
-            "id": "Kirim pesan atau balasan antar sesi lokal yang diberi nama."
-          }
-        }
-      ],
-      "noConfig": false
-    },
-    {
-      "slug": "context-compaction-reminder",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Context reminder is fully automatic. The threshold and suggestion behavior are fixed.",
-        "id": "Pengingat konteks sepenuhnya otomatis. Threshold dan perilaku saran sudah tetap."
-      },
-      "sourcePaths": [
-        "src/extensions/context-compaction-reminder.ts"
-      ],
-      "scopes": [],
-      "settings": [
-        {
-          "key": "threshold",
-          "type": "number",
-          "default": "128,000 tokens",
-          "description": {
-            "en": "Fixed warning threshold. Not user-configurable.",
-            "id": "Threshold peringatan tetap. Tidak dapat dikonfigurasi user."
-          },
-          "persistence": "source-defined"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "/handoff-new",
-          "description": {
-            "en": "Suggested command when the context threshold is crossed.",
-            "id": "Command yang disarankan saat threshold konteks terlampaui."
-          }
-        }
-      ],
-      "noConfig": true
-    },
-    {
-      "slug": "copy-turn",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Copy turn is a command-only extension. It accepts one argument and has no persistent settings.",
-        "id": "Copy turn adalah ekstensi command-only. Menerima satu argumen dan tidak memiliki pengaturan persisten."
-      },
-      "sourcePaths": [
-        "src/extensions/copy-turn.ts"
-      ],
-      "scopes": [],
-      "settings": [
-        {
-          "key": "hash",
-          "type": "string",
-          "description": {
-            "en": "Turn hash passed as the /cp argument. Not persisted.",
-            "id": "Hash turn yang diberikan sebagai argumen /cp. Tidak dipersisten."
-          },
-          "persistence": "command argument"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "/cp <hash>",
-          "description": {
-            "en": "Copy the content of the referenced user or assistant turn.",
-            "id": "Salin konten turn user atau assistant yang direferensikan."
-          }
-        }
-      ],
-      "noConfig": true
-    },
-    {
-      "slug": "handoff-new",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Session handoff is controlled by the goal argument. The prompt template is source-owned.",
-        "id": "Handoff sesi dikontrol oleh argumen goal. Template prompt adalah milik source."
-      },
-      "sourcePaths": [
-        "src/extensions/handoff-new.ts",
-        "src/skills/handoff/",
-        "src/skills/selesai-handoff/"
-      ],
-      "scopes": [],
-      "settings": [
-        {
-          "key": "goal",
-          "type": "string",
-          "description": {
-            "en": "Next-focus text passed as the /handoff-new argument.",
-            "id": "Teks fokus berikutnya yang diberikan sebagai argumen /handoff-new."
-          },
-          "persistence": "command argument"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "/handoff-new <goal>",
-          "description": {
-            "en": "Create a continuation prompt in a fresh session.",
-            "id": "Buat prompt kelanjutan di sesi baru."
-          }
-        }
-      ],
-      "noConfig": true
-    },
-    {
-      "slug": "undo",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Undo tracks edits, writes, and mutating shell commands per turn. Retention and buffer sizes are fixed.",
-        "id": "Undo melacak edit, write, dan shell command bermutasi per turn. Retensi dan ukuran buffer sudah tetap."
-      },
-      "sourcePaths": [
-        "src/extensions/undo.ts"
-      ],
-      "scopes": [],
-      "settings": [
-        {
-          "key": "undo buffer",
-          "type": "number",
-          "default": "512 KiB",
-          "description": {
-            "en": "Fixed retention limit for the undo stack. Not user-configurable.",
-            "id": "Batas retensi tetap untuk stack undo. Tidak dapat dikonfigurasi user."
-          },
-          "persistence": "source-defined"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "/undo",
-          "description": {
-            "en": "Undo the last tracked turn.",
-            "id": "Batalkan turn terakhir yang terlacak."
-          }
-        },
-        {
-          "name": "/undo --force",
-          "description": {
-            "en": "Force undo when confirmation would normally be required.",
-            "id": "Paksa undo saat konfirmasi biasanya diperlukan."
-          }
-        }
-      ],
-      "noConfig": true
-    },
-    {
-      "slug": "pi-rewind-hook",
-      "distribution": "optional",
-      "overview": {
-        "en": "Optional Rewind reads all settings from the rewind key in settings.json. It has no standalone /rewind command.",
-        "id": "Rewind opsional membaca semua pengaturan dari kunci rewind di settings.json. Tidak ada command /rewind mandiri."
-      },
-      "sourcePaths": [
-        "src/extensions/pi-rewind-hook/index.ts",
-        "src/extensions/pi-rewind-hook/README.md"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "User settings",
-            "id": "Pengaturan user"
-          },
-          "path": "~/.selesai/agent/settings.json",
-          "precedence": {
-            "en": "All Rewind settings live under rewind.*.",
-            "id": "Semua pengaturan Rewind berada di bawah rewind.*."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "rewind.silentCheckpoints",
-          "type": "boolean",
-          "default": "false",
-          "description": {
-            "en": "Hide footer/status and checkpoint notifications.",
-            "id": "Sembunyikan footer/status dan notifikasi checkpoint."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "rewind.retention.maxSnapshots",
-          "type": "number",
-          "default": "(unlimited)",
-          "description": {
-            "en": "Optional cap on unpinned unique snapshot commits kept reachable.",
-            "id": "Batas opsional pada commit snapshot unik yang tidak dipin dan tetap reachable."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "rewind.retention.maxAgeDays",
-          "type": "number",
-          "default": "(unlimited)",
-          "description": {
-            "en": "Optional age limit in days for unpinned snapshot commits.",
-            "id": "Batas usia opsional dalam hari untuk commit snapshot yang tidak dipin."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "rewind.retention.pinLabeledEntries",
-          "type": "boolean",
-          "default": "false",
-          "description": {
-            "en": "Keep snapshots bound to labeled nodes exempt from maxSnapshots/maxAgeDays pruning.",
-            "id": "Pertahankan snapshot yang terikat ke node labeled agar tidak dipangkas oleh maxSnapshots/maxAgeDays."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "rewind.retention.scanMode",
-          "type": "string",
-          "default": "\"ancestor-only\"",
-          "allowedValues": "\"ancestor-only\", \"repo-sessions\"",
-          "description": {
-            "en": "Retention discovery mode: follow current session lineage only, or scan discovered session roots.",
-            "id": "Mode discovery retensi: hanya ikuti silsilah sesi saat ini, atau pindai root sesi yang ditemukan."
-          },
-          "persistence": "settings.json"
-        },
-        {
-          "key": "rewind.retention.startupBudgetMs",
-          "type": "number",
-          "default": "(unlimited)",
-          "description": {
-            "en": "Optional startup time budget for retention sweeps. Exceeded sweeps are skipped and deferred.",
-            "id": "Anggaran waktu startup opsional untuk sweep retensi. Sweep yang melebihi dilewati dan ditunda."
-          },
-          "persistence": "settings.json"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "/fork and /tree",
-          "description": {
-            "en": "Rewind triggers automatically during fork and tree navigation.",
-            "id": "Rewind dipicu otomatis saat navigasi fork dan tree."
-          }
-        }
-      ],
-      "noConfig": false
-    },
-    {
-      "slug": "tokenin-onboarding",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Token onboarding uses environment suppression, an onboarding marker, and account storage. Credentials are sensitive values stored locally.",
-        "id": "Onboarding token menggunakan penekanan env, marker onboarding, dan penyimpanan akun. Kredensial adalah nilai sensitif yang disimpan secara lokal."
-      },
-      "sourcePaths": [
-        "src/extensions/tokenin-onboarding.ts"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "User marker and accounts",
-            "id": "Marker dan akun user"
-          },
-          "path": "~/.selesai/agent/",
-          "precedence": {
-            "en": "Marker file and multi-account tokenin-auth.json live here.",
-            "id": "File marker dan tokenin-auth.json multi-akun berada di sini."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": ".tokenInOnboardingComplete",
-          "type": "marker file",
-          "description": {
-            "en": "Written when onboarding is complete so the prompt does not reappear.",
-            "id": "Ditulis saat onboarding seelsai agar prompt tidak muncul lagi."
-          },
-          "persistence": "~/.selesai/agent/.tokenInOnboardingComplete"
-        },
-        {
-          "key": "tokenin-auth.json",
-          "type": "file",
-          "description": {
-            "en": "Multi-account TokenIN storage. Written with mode 0o600.",
-            "id": "Penyimpanan TokenIN multi-akun. Ditulis dengan mode 0o600."
-          },
-          "persistence": "~/.selesai/agent/tokenin-auth.json",
-          "sensitive": true
-        },
-        {
-          "key": "providers.tokenin.apiKey",
-          "type": "string",
-          "description": {
-            "en": "Legacy models.json key removed during onboarding.",
-            "id": "Kunci models.json legacy dihapus selama onboarding."
-          },
-          "persistence": "models.json (legacy, removed)",
-          "sensitive": true
-        }
-      ],
-      "envVars": [
-        {
-          "key": "SELESAI_SKIP_TOKENIN_ONBOARDING",
-          "description": {
-            "en": "Set to 1 to disable the first-run TokenIN onboarding prompt.",
-            "id": "Atur ke 1 untuk menonaktifkan prompt onboarding TokenIN pertama kali."
-          }
-        }
-      ],
-      "controls": [
-        {
-          "name": "/tokenin add|switch|remove|usage",
-          "description": {
-            "en": "Manage stored TokenIN accounts and show quota usage.",
-            "id": "Kelola akun TokenIN yang tersimpan dan tampilkan penggunaan kuota."
-          }
-        }
-      ],
-      "noConfig": false
-    },
-    {
-      "slug": "web-agent-onboarding",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Web-agent onboarding writes the Brave API key to settings and generates a Brave backend override. It can be re-run via /setup-web-search.",
-        "id": "Onboarding web agent menulis kunci API Brave ke pengaturan dan membuat override backend Brave. Dapat dijalankan ulang via /setup-web-search."
-      },
-      "sourcePaths": [
-        "src/extensions/web-agent-onboarding.ts",
-        "src/extensions/pi-web-agent/src/backends/settings-reader.ts"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "User marker and config",
-            "id": "Marker dan konfigurasi user"
-          },
-          "path": "~/.selesai/agent/",
-          "precedence": {
-            "en": "Marker file, settings.json key, and pi-web-agent backend config are written here.",
-            "id": "File marker, kunci settings.json, dan konfigurasi backend pi-web-agent ditulis di sini."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": ".webAgentOnboardingComplete",
-          "type": "marker file",
-          "description": {
-            "en": "Written when onboarding completes.",
-            "id": "Ditulis saat onboarding selesai."
-          },
-          "persistence": "~/.selesai/agent/.webAgentOnboardingComplete"
-        },
-        {
-          "key": "webAgent.braveApiKey",
-          "type": "string",
-          "description": {
-            "en": "Brave Search API key stored in settings.json.",
-            "id": "Kunci API Brave Search disimpan di settings.json."
-          },
-          "persistence": "settings.json",
-          "sensitive": true
-        },
-        {
-          "key": "backends.search.provider",
-          "type": "string",
-          "default": "\"brave\"",
-          "description": {
-            "en": "Generated backend override with DuckDuckGo fallback.",
-            "id": "Override backend yang dibuat dengan fallback DuckDuckGo."
-          },
-          "persistence": "~/.selesai/agent/extensions/pi-web-agent/config.json"
-        }
-      ],
-      "envVars": [
-        {
-          "key": "SELESAI_SKIP_WEB_AGENT_ONBOARDING",
-          "description": {
-            "en": "Set to 1 to disable the first-run web-agent onboarding prompt.",
-            "id": "Atur ke 1 untuk menonaktifkan prompt onboarding web agent pertama kali."
-          }
-        }
-      ],
-      "controls": [
-        {
-          "name": "/setup-web-search",
-          "description": {
-            "en": "Re-run the Brave Search onboarding flow and reload extensions.",
-            "id": "Jalankan ulang alur onboarding Brave Search dan muat ulang ekstensi."
-          }
-        }
-      ],
-      "noConfig": false
-    },
-    {
-      "slug": "llama",
-      "distribution": "core",
-      "overview": {
-        "en": "Core llama.cpp model management is configured via provider auth and slash commands. It is a hidden built-in extension, not a manifest entry.",
-        "id": "Manajemen model llama.cpp inti dikonfigurasi melalui auth provider dan slash command. Ini adalah ekstensi bawaan tersembunyi, bukan entri manifest."
-      },
-      "sourcePaths": [
-        "src/core/llama/index.ts",
-        "src/core/built-in-extensions.ts",
-        "src/core/llama/client.ts"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Provider auth",
-            "id": "Auth provider"
-          },
-          "path": "/login llama.cpp",
-          "precedence": {
-            "en": "Credentials and base URL are stored via the model registry's provider auth flow.",
-            "id": "Kredensial dan base URL disimpan melalui alur auth provider model registry."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "baseUrl",
-          "type": "string",
-          "description": {
-            "en": "Llama.cpp server URL. /login stores the URL in provider auth env.LLAMA_BASE_URL. At runtime, LLAMA_BASE_URL env var (if set) takes precedence over that stored value.",
-            "id": "URL server llama.cpp. /login menyimpan URL di provider auth env.LLAMA_BASE_URL. Saat runtime, variabel env LLAMA_BASE_URL (jika diatur) didahulukan daripada nilai yang tersimpan."
-          },
-          "persistence": "provider auth"
-        },
-        {
-          "key": "apiKey",
-          "type": "string",
-          "description": {
-            "en": "Optional API key for the llama.cpp server. Stored in provider auth; falls back to LLAMA_API_KEY env var at runtime if no stored key exists.",
-            "id": "Kunci API opsional untuk server llama.cpp. Disimpan di provider auth; fallback ke variabel env LLAMA_API_KEY saat runtime jika tidak ada kunci tersimpan."
-          },
-          "persistence": "provider auth",
-          "sensitive": true
-        }
-      ],
-      "envVars": [
-        {
-          "key": "LLAMA_BASE_URL",
-          "description": {
-            "en": "Highest-priority runtime override for the configured llama.cpp server URL. Also used as the default during /login if no URL is entered.",
-            "id": "Override runtime prioritas tertinggi untuk URL server llama.cpp yang dikonfigurasi. Juga digunakan sebagai default saat /login jika tidak ada URL yang dimasukkan."
-          }
-        },
-        {
-          "key": "LLAMA_API_KEY",
-          "description": {
-            "en": "Runtime fallback API key for the llama.cpp server.",
-            "id": "Fallback kunci API runtime untuk server llama.cpp."
-          },
-          "sensitive": true
-        },
-        {
-          "key": "HF_TOKEN",
-          "description": {
-            "en": "Hugging Face token used to search and download gated models.",
-            "id": "Token Hugging Face untuk mencari dan mengunduh model gated."
-          },
-          "sensitive": true
-        }
-      ],
-      "controls": [
-        {
-          "name": "/login llama.cpp",
-          "description": {
-            "en": "Configure base URL and optional API key for the llama.cpp provider.",
-            "id": "Konfigurasikan base URL dan kunci API opsional untuk provider llama.cpp."
-          }
-        },
-        {
-          "name": "/llama",
-          "description": {
-            "en": "Open the TUI model manager. Only available in interactive mode.",
-            "id": "Buka pengelola model TUI. Hanya tersedia dalam mode interaktif."
-          }
-        }
-      ],
-      "noConfig": false
-    },
-    {
-      "slug": "inline-skills",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Inline skills depend on installed skill files. The # token and autocomplete behavior are fixed; there are no persistent settings.",
-        "id": "Skill inline bergantung pada file skill yang terpasang. Token # dan perilaku autocomplete sudah tetap; tidak ada pengaturan persisten."
-      },
-      "sourcePaths": [
-        "src/extensions/inline-skills.ts",
-        "src/core/skills.ts"
-      ],
-      "scopes": [],
-      "settings": [
-        {
-          "key": "installed skill files",
-          "type": "file dependency",
-          "description": {
-            "en": "Inline invitations only work when matching skill files exist.",
-            "id": "Ajakan inline hanya berfungsi saat file skill yang cocok ada."
-          },
-          "persistence": "skill files"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "#skill-name",
-          "description": {
-            "en": "Type # followed by a skill name to trigger autocomplete.",
-            "id": "Ketik # diikuti nama skill untuk memicu autocomplete."
-          }
-        },
-        {
-          "name": "[[skill:...]]",
-          "description": {
-            "en": "Legacy inline skill invitation syntax.",
-            "id": "Sintaks ajakan skill inline legacy."
-          }
-        }
-      ],
-      "noConfig": true
-    },
-    {
-      "slug": "ponytail",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Ponytail's default mode is resolved from environment, then config file, then the built-in default. Session commands can switch mode without persisting it.",
-        "id": "Mode default Ponytail di-resolve dari environment, lalu file config, lalu default bawaan. Command sesi dapat mengganti mode tanpa mempersistennya."
-      },
-      "sourcePaths": [
-        "src/extensions/ponytail/ponytail-config.cjs"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Ponytail config",
-            "id": "Konfigurasi Ponytail"
-          },
-          "path": "$XDG_CONFIG_HOME/ponytail/config.json, ~/.config/ponytail/config.json, or %APPDATA%\\ponytail\\config.json",
-          "precedence": {
-            "en": "XDG_CONFIG_HOME takes precedence; falls back to POSIX or Windows paths.",
-            "id": "XDG_CONFIG_HOME didahulukan; fallback ke path POSIX atau Windows."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "defaultMode",
-          "type": "string",
-          "default": "\"full\"",
-          "allowedValues": "\"off\", \"lite\", \"full\", \"ultra\", \"review\"",
-          "description": {
-            "en": "Default communication mode. \"review\" is treated as \"full\" when persisted.",
-            "id": "Mode komunikasi default. \"review\" diperlakukan sebagai \"full\" saat dipersisten."
-          },
-          "persistence": "config.json"
-        }
-      ],
-      "envVars": [
-        {
-          "key": "PONYTAIL_DEFAULT_MODE",
-          "description": {
-            "en": "Highest-priority override for the default mode.",
-            "id": "Override prioritas tertinggi untuk mode default."
-          },
-          "allowedValues": "\"off\", \"lite\", \"full\", \"ultra\", \"review\""
-        }
-      ],
-      "controls": [
-        {
-          "name": "/skill:ponytail*",
-          "description": {
-            "en": "Invoke Ponytail skills.",
-            "id": "Panggil skill Ponytail."
-          }
-        },
-        {
-          "name": "/ponytail default",
-          "description": {
-            "en": "Persist the current session's mode to the config file.",
-            "id": "Persistenkan mode sesi saat ini ke file config."
-          }
-        },
-        {
-          "name": "stop ponytail / normal mode",
-          "description": {
-            "en": "Whole-message deactivation phrases.",
-            "id": "Frasa deaktivasi seluruh pesan."
-          }
-        }
-      ],
-      "noConfig": false
-    },
-    {
-      "slug": "rtk",
-      "distribution": "bundled",
-      "overview": {
-        "en": "RTK is managed by Selesai when needed. The extension rewrites commands when a verified rtk binary is available and not disabled.",
-        "id": "RTK dikelola oleh Selesai saat diperlukan. Ekstensi menulis ulang command saat biner rtk terverifikasi tersedia dan tidak dinonaktifkan."
-      },
-      "sourcePaths": [
-        "src/extensions/rtk.ts"
-      ],
-      "scopes": [],
-      "settings": [
-        {
-          "key": "rtk binary version",
-          "type": "string",
-          "default": ">= 0.23.0",
-          "description": {
-            "en": "Required rtk version; Selesai reuses PATH or its managed binary directory.",
-            "id": "Versi rtk yang diperlukan; Selesai menggunakan PATH atau direktori biner terkelola."
-          },
-          "persistence": "managed or external binary"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "automatic bash rewrite",
-          "description": {
-            "en": "Transparent; no user command required.",
-            "id": "Transparan; tidak diperlukan command user."
-          }
-        },
-        {
-          "name": "RTK_DISABLED=1",
-          "description": {
-            "en": "Set this environment variable to disable RTK command rewriting and managed installation for the session.",
-            "id": "Atur variabel lingkungan ini untuk menonaktifkan penulisan ulang command RTK dan instalasi terkelola untuk sesi ini."
-          }
-        },
-        {
-          "name": "PI_OFFLINE=1",
-          "description": {
-            "en": "Set this environment variable to disable startup network operations, preventing managed binary downloads.",
-            "id": "Atur variabel lingkungan ini untuk menonaktifkan operasi jaringan saat startup, mencegah pengunduhan biner terkelola."
-          }
-        }
-      ],
-      "noConfig": true
-    },
-    {
-      "slug": "agent-browser",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Agent-browser setup is prompt-driven: Selesai offers to install the external CLI when it is missing. The install flow can be skipped or re-run; there are no persistent settings.",
-        "id": "Setup agent-browser didorong prompt: Selesai menawarkan instalasi CLI eksternal saat belum ada. Alur instalasi dapat dilewati atau dijalankan ulang; tidak ada pengaturan persisten."
-      },
-      "sourcePaths": [
-        "src/extensions/agent-browser.ts",
-        "src/skills/agent-browser/SKILL.md"
-      ],
-      "scopes": [],
-      "settings": [
-        {
-          "key": "agent-browser CLI",
-          "type": "external binary",
-          "default": "(not installed)",
-          "description": {
-            "en": "Optional global npm CLI. Selesai offers to install and provision it on first startup when missing.",
-            "id": "CLI npm global opsional. Selesai menawarkan untuk menginstal dan menyediakannya saat startup pertama jika belum ada."
-          },
-          "persistence": "external binary"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "SELESAI_SKIP_AGENT_BROWSER_SETUP=1",
-          "description": {
-            "en": "Set this environment variable to skip the automated setup prompt.",
-            "id": "Atur variabel lingkungan ini untuk melewati prompt setup otomatis."
-          }
-        },
-        {
-          "name": "/setup-agent-browser",
-          "description": {
-            "en": "Re-run the install flow any time, including after declining.",
-            "id": "Jalankan ulang alur instalasi kapan saja, termasuk setelah menolak."
-          }
-        }
-      ],
-      "noConfig": true
-    },
-    {
-      "slug": "workflow",
-      "distribution": "core",
-      "overview": {
-        "en": "A bundled parent-only skill that chooses the smallest safe pi-subagents implementation flow.",
-        "id": "Skill bawaan khusus parent yang memilih alur implementasi pi-subagents aman yang paling kecil."
-      },
-      "sourcePaths": [
-        "src/skills/workflow/SKILL.md"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Skill policy",
-            "id": "Kebijakan skill"
-          },
-          "path": "src/skills/workflow/SKILL.md (source-defined)",
-          "precedence": {
-            "en": "The parent adapts stages to the task; no user configuration file controls the flow.",
-            "id": "Parent menyesuaikan tahap dengan tugas; tidak ada file konfigurasi user yang mengontrol alur."
-          }
-        }
-      ],
-      "settings": [],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "$workflow",
-          "description": {
-            "en": "Apply adaptive implementation orchestration guidance.",
-            "id": "Terapkan panduan orkestrasi implementasi adaptif."
-          }
-        }
-      ],
-      "noConfig": true
-    },
-    {
-      "slug": "zentui",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Zentui configures independent editor, user-message, working-line, footer, segment, git, and extension surfaces from one zentui.json, with live /zentui pickers.",
-        "id": "Zentui mengonfigurasi permukaan editor, pesan user, working line, footer, segmen, git, dan ekstensi yang independen dari satu zentui.json, dengan picker /zentui langsung."
-      },
-      "sourcePaths": [
-        "src/extensions/pi-zentui/extensions/zentui/config.ts"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Zentui config",
-            "id": "Konfigurasi zentui"
-          },
-          "path": "~/.selesai/agent/zentui.json",
-          "precedence": {
-            "en": "Single file written by /zentui; no project layer.",
-            "id": "Satu file yang ditulis /zentui; tidak ada lapisan proyek."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "components.editor.style",
-          "type": "string",
-          "default": "opencode",
-          "description": {
-            "en": "Editor surface: opencode, opencode-copy-friendly, accent-rail, or minimalist.",
-            "id": "Permukaan editor: opencode, opencode-copy-friendly, accent-rail, atau minimalist."
-          },
-          "persistence": "zentui.json"
-        },
-        {
-          "key": "components.footer.style",
-          "type": "string",
-          "default": "native",
-          "description": {
-            "en": "Footer style: native, starship, or hidden.",
-            "id": "Gaya footer: native, starship, atau hidden."
-          },
-          "persistence": "zentui.json"
-        },
-        {
-          "key": "components.userMessages.style",
-          "type": "string",
-          "default": "framed",
-          "description": {
-            "en": "User-message style: framed, framed-copy-friendly, compact, or labeled.",
-            "id": "Gaya pesan user: framed, framed-copy-friendly, compact, atau labeled."
-          },
-          "persistence": "zentui.json"
-        },
-        {
-          "key": "components.workingLine.enabled",
-          "type": "boolean",
-          "default": "true",
-          "description": {
-            "en": "Take over Pi's complete working-line row and settled turn summary.",
-            "id": "Ambil alih baris working line lengkap Pi dan ringkasan turn yang selesai."
-          },
-          "persistence": "zentui.json"
-        },
-        {
-          "key": "components.footer.styles.starship.pathDisplay.mode",
-          "type": "string",
-          "default": "basename",
-          "description": {
-            "en": "Starship footer path display: basename, full, or repository.",
-            "id": "Tampilan path footer starship: basename, full, atau repository."
-          },
-          "persistence": "zentui.json"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "/zentui",
-          "description": {
-            "en": "Open the live configuration picker; changes save to zentui.json.",
-            "id": "Buka picker konfigurasi langsung; perubahan disimpan ke zentui.json."
-          }
-        },
-        {
-          "name": "/zentui editor toggle",
-          "description": {
-            "en": "Toggle the editor surface without opening the picker.",
-            "id": "Toggle permukaan editor tanpa membuka picker."
-          }
-        },
-        {
-          "name": "/zentui messages toggle",
-          "description": {
-            "en": "Toggle user-message framing without opening the picker.",
-            "id": "Toggle framing pesan user tanpa membuka picker."
-          }
-        },
-        {
-          "name": "/zentui working-line",
-          "description": {
-            "en": "Configure working-line takeover and turn summary.",
-            "id": "Konfigurasikan pengambilalihan working line dan ringkasan turn."
-          }
-        },
-        {
-          "name": "/zentui format <template>",
-          "description": {
-            "en": "Set the compact footer format template.",
-            "id": "Atur template format footer compact."
-          }
-        }
-      ],
-      "noConfig": false
-    },
-    {
-      "slug": "tps",
-      "distribution": "bundled",
-      "overview": {
-        "en": "The TPS tracker is automatic: it listens to message and tool events, shows live tok/s in the status area, and needs no configuration.",
-        "id": "Pelacak TPS bersifat otomatis: mendengarkan event message dan tool, menampilkan tok/s langsung di area status, dan tidak memerlukan konfigurasi."
-      },
-      "sourcePaths": [
-        "src/extensions/tps.ts"
-      ],
-      "scopes": [],
-      "settings": [
-        {
-          "key": "tps status",
-          "type": "status line",
-          "default": "live tok/s",
-          "description": {
-            "en": "Live tokens-per-second for the main model and subagent runs; fixed reliability gates, not user-configurable.",
-            "id": "Token-per-detik langsung untuk model utama dan run subagent; gate keandalan tetap, tidak dapat dikonfigurasi user."
-          },
-          "persistence": "source-defined"
-        }
-      ],
-      "envVars": [],
-      "controls": [],
-      "noConfig": true
-    },
-    {
-      "slug": "auto-session-name",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Auto session naming is automatic: on every user message it asks the current model for a short name using only user-message history, and never blocks the message send.",
-        "id": "Penamaan sesi otomatis bersifat otomatis: pada setiap pesan user ia meminta nama singkat ke model saat ini hanya dari riwayat pesan user, dan tidak pernah memblokir pengiriman pesan."
-      },
-      "sourcePaths": [
-        "src/extensions/auto-session-name.ts"
-      ],
-      "scopes": [],
-      "settings": [],
-      "envVars": [],
-      "controls": [],
-      "noConfig": true
-    },
-    {
-      "slug": "cost-reconcile",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Cost reconciliation is automatic: it captures provider-reported costs from LLM responses and records them as session entries; the zentui footer prefers them over rate-card estimates.",
-        "id": "Rekonsiliasi biaya bersifat otomatis: ia menangkap biaya yang dilaporkan provider dari respons LLM dan mencatatnya sebagai entri sesi; footer zentui mengutamakannya daripada estimasi rate card."
-      },
-      "sourcePaths": [
-        "src/extensions/cost-reconcile.ts"
-      ],
-      "scopes": [],
-      "settings": [],
-      "envVars": [],
-      "controls": [],
-      "noConfig": true
-    },
-    {
-      "slug": "pi-tool-display",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Tool display configures compact tool rendering, diff views, output truncation, and the native user message box from one config.json, with /tool-display presets.",
-        "id": "Tool display mengonfigurasi rendering tool ringkas, tampilan diff, pemotongan output, dan kotak pesan user native dari satu config.json, dengan preset /tool-display."
-      },
-      "sourcePaths": [
-        "src/extensions/pi-tool-display/src/types.ts",
-        "src/extensions/pi-tool-display/config/config.example.json"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Tool display config",
-            "id": "Konfigurasi tool display"
-          },
-          "path": "~/.selesai/agent/extensions/pi-tool-display/config.json",
-          "precedence": {
-            "en": "Single user-level file written by /tool-display; no project layer.",
-            "id": "Satu file tingkat user yang ditulis /tool-display; tidak ada lapisan proyek."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "readOutputMode",
-          "type": "string",
-          "default": "hidden",
-          "description": {
-            "en": "Read tool output mode: hidden, summary, or preview.",
-            "id": "Mode output tool read: hidden, summary, atau preview."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "searchOutputMode",
-          "type": "string",
-          "default": "hidden",
-          "description": {
-            "en": "Search tool output mode: hidden, count, or preview.",
-            "id": "Mode output tool search: hidden, count, atau preview."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "bashOutputMode",
-          "type": "string",
-          "default": "opencode",
-          "description": {
-            "en": "Bash output mode: opencode, summary, or preview.",
-            "id": "Mode output bash: opencode, summary, atau preview."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "previewLines",
-          "type": "number",
-          "default": "8",
-          "description": {
-            "en": "Lines shown in preview mode.",
-            "id": "Baris yang ditampilkan dalam mode preview."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "boxedToolCalls",
-          "type": "boolean",
-          "default": "true",
-          "description": {
-            "en": "Draw an ASCII border around each tool call and its output.",
-            "id": "Gambar border ASCII di sekitar setiap panggilan tool dan outputnya."
-          },
-          "persistence": "config.json"
-        },
-        {
-          "key": "enableNativeUserMessageBox",
-          "type": "boolean",
-          "default": "true",
-          "description": {
-            "en": "Use the native user message box.",
-            "id": "Gunakan kotak pesan user native."
-          },
-          "persistence": "config.json"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "/tool-display show",
-          "description": {
-            "en": "Show the effective config summary.",
-            "id": "Tampilkan ringkasan konfigurasi efektif."
-          }
-        },
-        {
-          "name": "/tool-display preset <opencode|balanced|verbose|boxed>",
-          "description": {
-            "en": "Apply a rendering preset.",
-            "id": "Terapkan preset rendering."
-          }
-        },
-        {
-          "name": "/tool-display reset",
-          "description": {
-            "en": "Reset to the default boxed preset.",
-            "id": "Reset ke preset boxed bawaan."
-          }
-        }
-      ],
-      "noConfig": false
-    },
-    {
-      "slug": "pi-hermes-memory",
-      "distribution": "bundled",
-      "overview": {
-        "en": "Persistent memory stores facts, preferences, corrections, and skills across sessions, with session search and configurable review/flush behavior.",
-        "id": "Memori persisten menyimpan fakta, preferensi, koreksi, dan skill lintas sesi, dengan pencarian sesi serta perilaku review/flush yang dapat dikonfigurasi."
-      },
-      "sourcePaths": [
-        "src/extensions/pi-hermes-memory/src/config.ts",
-        "src/extensions/pi-hermes-memory/src/tools/memory-tool.ts",
-        "src/extensions/pi-hermes-memory/src/tools/session-search-tool.ts"
-      ],
-      "scopes": [
-        {
-          "label": {
-            "en": "Memory storage",
-            "id": "Penyimpanan memori"
-          },
-          "path": "~/.selesai/agent/pi-hermes-memory/ (agent dir)",
-          "precedence": {
-            "en": "Memory, skills, and the SQLite search store live under the Selesai agent directory; project memories are per project under projects-memory/.",
-            "id": "Memori, skill, dan store pencarian SQLite berada di direktori agent Selesai; memori proyek per proyek di bawah projects-memory/."
-          }
-        }
-      ],
-      "settings": [
-        {
-          "key": "memoryMode",
-          "type": "string",
-          "default": "policy-only",
-          "description": {
-            "en": "How the memory policy is injected into the system prompt.",
-            "id": "Cara kebijakan memori disuntikkan ke system prompt."
-          },
-          "persistence": "config file"
-        },
-        {
-          "key": "reviewEnabled",
-          "type": "boolean",
-          "default": "true",
-          "description": {
-            "en": "Enables background review nudges and session flush.",
-            "id": "Mengaktifkan nudge review latar belakang dan session flush."
-          },
-          "persistence": "config file"
-        },
-        {
-          "key": "reviewTransport",
-          "type": "string",
-          "default": "direct",
-          "description": {
-            "en": "direct (in-process completeSimple) or subprocess (pi -p) for LLM-driven memory operations.",
-            "id": "direct (completeSimple in-process) atau subprocess (pi -p) untuk operasi memori berbasis LLM."
-          },
-          "persistence": "config file"
-        },
-        {
-          "key": "sessionSearch.variant",
-          "type": "string",
-          "default": "legacy",
-          "description": {
-            "en": "legacy snippet search or anchors mode reading session JSONL directly.",
-            "id": "Pencarian snippet legacy atau mode anchors yang membaca session JSONL langsung."
-          },
-          "persistence": "config file"
-        }
-      ],
-      "envVars": [],
-      "controls": [
-        {
-          "name": "/memory-insights",
-          "description": {
-            "en": "Show everything stored in memory and the user profile.",
-            "id": "Tampilkan semua yang tersimpan di memori dan profil user."
-          }
-        },
-        {
-          "name": "/memory-skills",
-          "description": {
-            "en": "Open the interactive skills manager.",
-            "id": "Buka pengelola skill interaktif."
-          }
-        },
-        {
-          "name": "/memory-consolidate",
-          "description": {
-            "en": "Manually trigger memory consolidation.",
-            "id": "Picu konsolidasi memori secara manual."
-          }
-        },
-        {
-          "name": "/memory-interview",
-          "description": {
-            "en": "Pre-fill the user profile with a few questions.",
-            "id": "Isi profil user dengan beberapa pertanyaan."
-          }
-        },
-        {
-          "name": "/memory-switch-project",
-          "description": {
-            "en": "List project memories and entry counts.",
-            "id": "Daftar memori proyek dan jumlah entri."
-          }
-        },
-        {
-          "name": "/memory-index-sessions",
-          "description": {
-            "en": "Import past Pi sessions into the search database.",
-            "id": "Impor sesi Pi masa lalu ke database pencarian."
-          }
-        },
-        {
-          "name": "/memory-sync-markdown",
-          "description": {
-            "en": "Backfill Markdown memories into the SQLite search store.",
-            "id": "Backfill memori Markdown ke store pencarian SQLite."
-          }
-        },
-        {
-          "name": "/memory-preview-context",
-          "description": {
-            "en": "Preview the memory policy blocks appended to the system prompt.",
-            "id": "Pratinjau blok kebijakan memori yang ditambahkan ke system prompt."
-          }
-        },
-        {
-          "name": "/learn-memory-tool",
-          "description": {
-            "en": "Skill that teaches how to use the memory system.",
-            "id": "Skill yang mengajarkan cara memakai sistem memori."
-          }
-        }
-      ],
-      "noConfig": false
+     "label": {
+      "en": "Per-call precedence",
+      "id": "Preseden per pemanggilan"
+     },
+     "path": "tool/slash arguments and agent frontmatter",
+     "precedence": {
+      "en": "Explicit call arguments and agent frontmatter beat all config layers.",
+      "id": "Argumen pemanggilan eksplisit dan frontmatter agent mengalahkan semua lapisan konfigurasi."
+     }
     }
-  ]
+   ],
+   "settings": [
+    {
+     "key": "asyncByDefault",
+     "type": "boolean",
+     "default": "false",
+     "description": {
+      "en": "Run single subagent calls in the background by default.",
+      "id": "Jalankan pemanggilan subagent tunggal di latar belakang secara default."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "forceTopLevelAsync",
+     "type": "boolean",
+     "default": "false",
+     "description": {
+      "en": "Force top-level subagent invocations to run asynchronously.",
+      "id": "Paksakan pemanggilan subagent tingkat atas untuk berjalan secara asinkron."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "fleetView",
+     "type": "boolean",
+     "default": "true",
+     "description": {
+      "en": "Show the Claude Code-style navigable fleet panel below the editor.",
+      "id": "Tampilkan panel fleet yang dapat dinavigasi seperti Claude Code di bawah editor."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "asyncWidget",
+     "type": "boolean",
+     "default": "true when fleetView disabled, otherwise false",
+     "description": {
+      "en": "Show the legacy above-editor async runs widget.",
+      "id": "Tampilkan widget async runs legacy di atas editor."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "toolDescriptionMode",
+     "type": "string",
+     "default": "\"compact\"",
+     "allowedValues": "\"full\", \"compact\", \"custom\"",
+     "description": {
+      "en": "Variant of the parent-facing subagent tool description. Defaults to compact.",
+      "id": "Varian deskripsi tool subagent yang menghadap parent. Default: compact."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "waitTool",
+     "type": "boolean | object",
+     "default": "(not configured)",
+     "description": {
+      "en": "Register a wait/notify tool for subagents. Pass true or { enabled: true }.",
+      "id": "Daftarkan tool wait/notify untuk subagent. Berikan true atau { enabled: true }."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "defaultSessionDir",
+     "type": "string",
+     "default": "(system temp or session path)",
+     "description": {
+      "en": "Base directory used for subagent sessions when no explicit path is given.",
+      "id": "Direktori dasar untuk sesi subagent bila tidak ada path eksplisit."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "singleRunOutputBaseDir",
+     "type": "string",
+     "default": "(not configured)",
+     "description": {
+      "en": "Base directory used for single-run output artifacts.",
+      "id": "Direktori dasar untuk artefak output single-run."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "maxSubagentDepth",
+     "type": "number",
+     "default": "2",
+     "description": {
+      "en": "Maximum nested subagent depth for this session.",
+      "id": "Kedalaman bersarang subagent maksimum untuk sesi ini."
+     },
+     "persistence": "extension config or settings.json"
+    },
+    {
+     "key": "maxSubagentSpawnsPerSession",
+     "type": "number",
+     "default": "unlimited",
+     "description": {
+      "en": "Optional cumulative cap on subagent spawns across a session. 0 means unlimited.",
+      "id": "Batas kumulatif opsional pembuatan subagent dalam satu sesi. 0 berarti tidak terbatas."
+     },
+     "persistence": "extension config or SELESAI_SUBAGENT_MAX_SPAWNS_PER_SESSION"
+    },
+    {
+     "key": "maxWorkflowAutoRelaunches",
+     "type": "number",
+     "default": "12",
+     "description": {
+      "en": "How many times an async scripted workflow may auto-relaunch with a fresh fan-out budget after exhausting it before the goal is clean. 0 means unlimited.",
+      "id": "Berapa kali workflow berskrip async boleh me-relaunch otomatis dengan budget fan-out baru setelah budget habis sebelum goal bersih. 0 berarti tidak terbatas."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "globalConcurrencyLimit",
+     "type": "number",
+     "default": "20",
+     "description": {
+      "en": "Global cap on simultaneously-running subagent tasks within a run.",
+      "id": "Batas global tugas subagent yang berjalan bersamaan dalam satu run."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "control",
+     "type": "object",
+     "default": "(disabled)",
+     "description": {
+      "en": "Lifecycle control notifications: enabled, thresholds (ms/turns/tokens), failed-tool count, channels (event/async/intercom), and notifyOn events.",
+      "id": "Notifikasi kontrol siklus hidup: enabled, threshold (ms/turn/token), jumlah failed-tool, channel (event/async/intercom), dan notifyOn events."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "completionBatch",
+     "type": "object",
+     "default": "(disabled)",
+     "description": {
+      "en": "Smart completion batching: enabled, debounceMs, maxWaitMs, stragglerDebounceMs, stragglerMaxWaitMs, stragglerWindowMs.",
+      "id": "Pengelompokan smart completion: enabled, debounceMs, maxWaitMs, stragglerDebounceMs, stragglerMaxWaitMs, stragglerWindowMs."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "turnBudget",
+     "type": "object",
+     "default": "(not configured)",
+     "description": {
+      "en": "Turn budget: maxTurns, optional graceTurns.",
+      "id": "Anggaran turn: maxTurns, graceTurns opsional."
+     },
+     "persistence": "extension config or per-agent frontmatter"
+    },
+    {
+     "key": "toolBudget",
+     "type": "object",
+     "default": "(not configured)",
+     "description": {
+      "en": "Tool budget: hard limit, optional soft limit, and optional block list or \"*\".",
+      "id": "Anggaran tool: batas hard, batas soft opsional, dan daftar block atau \"*\" opsional."
+     },
+     "persistence": "extension config or per-agent frontmatter"
+    },
+    {
+     "key": "parallel.maxTasks",
+     "type": "number",
+     "default": "8",
+     "description": {
+      "en": "Default maximum parallel tasks for top-level parallel runs.",
+      "id": "Jumlah tugas paralel maksimum default untuk run paralel tingkat atas."
+     },
+     "persistence": "extension config or call argument"
+    },
+    {
+     "key": "parallel.concurrency",
+     "type": "number",
+     "default": "4",
+     "description": {
+      "en": "Default concurrency for top-level parallel runs.",
+      "id": "Konkurensi default untuk run paralel tingkat atas."
+     },
+     "persistence": "extension config or call argument"
+    },
+    {
+     "key": "chain.dynamicFanout.maxItems",
+     "type": "number",
+     "default": "(not configured)",
+     "description": {
+      "en": "Maximum number of dynamic items generated by a chain fan-out step.",
+      "id": "Jumlah item maksimum yang dihasilkan oleh langkah chain fan-out dinamis."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "worktreeSetupHook",
+     "type": "string",
+     "default": "(not configured)",
+     "description": {
+      "en": "Path to a shell command run when preparing parallel/chain worktrees.",
+      "id": "Path ke shell command yang dijalankan saat menyiapkan worktree paralel/chain."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "worktreeSetupHookTimeoutMs",
+     "type": "number",
+     "default": "(not configured)",
+     "description": {
+      "en": "Timeout for the worktree setup hook.",
+      "id": "Timeout untuk worktree setup hook."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "worktreeBaseDir",
+     "type": "string",
+     "default": "(system temp)",
+     "description": {
+      "en": "Base directory for parallel/chain worktrees.",
+      "id": "Direktori dasar untuk worktree paralel/chain."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "artifactDir",
+     "type": "string",
+     "default": "\"project\" (cwd/.pi-subagents)",
+     "allowedValues": "\"project\", \"session\", \"temp\"",
+     "description": {
+      "en": "Where subagent artifact files are stored.",
+      "id": "Lokasi penyimpanan file artefak subagent."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "intercomBridge",
+     "type": "object",
+     "default": "(off)",
+     "description": {
+      "en": "Intercom bridge mode: off, fork-only, or always; plus optional instructionFile.",
+      "id": "Mode intercom bridge: off, fork-only, atau always; plus instructionFile opsional."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "proactiveSkillSubagents",
+     "type": "object | false",
+     "default": "(disabled)",
+     "description": {
+      "en": "Recommend skill-backed subagents: enabled, minReferences, maxRecommendations, preferredAgent. Set to false to disable.",
+      "id": "Rekomendasikan subagent berbasis skill: enabled, minReferences, maxRecommendations, preferredAgent. Atur false untuk menonaktifkan."
+     },
+     "persistence": "extension config"
+    },
+    {
+     "key": "subagents.defaultModel",
+     "type": "string",
+     "default": "(not configured)",
+     "description": {
+      "en": "Default model applied to built-in agents that do not declare a model. Project overrides user.",
+      "id": "Model default untuk agent bawaan yang tidak menyatakan model. Proyek menimpa user."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "subagents.defaultThinking",
+     "type": "string",
+     "default": "(not configured)",
+     "description": {
+      "en": "Default thinking suffix applied to built-in agents without an explicit thinking value.",
+      "id": "Suffix thinking default untuk agent bawaan tanpa nilai thinking eksplisit."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "subagents.defaultExtensions",
+     "type": "string[]",
+     "default": "(not configured)",
+     "description": {
+      "en": "Default extensions added to agents that do not declare extensions.",
+      "id": "Ekstensi default yang ditambahkan ke agent tanpa deklarasi ekstensi."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "subagents.disableBuiltins",
+     "type": "boolean",
+     "default": "false",
+     "description": {
+      "en": "Disable loading of built-in agent definitions.",
+      "id": "Nonaktifkan pemuatan definisi agent bawaan."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "subagents.disableThinking",
+     "type": "boolean",
+     "default": "false",
+     "description": {
+      "en": "Disable thinking suffix defaults for built-in agents.",
+      "id": "Nonaktifkan default suffix thinking untuk agent bawaan."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "subagents.modelScope",
+     "type": "object",
+     "default": "(not configured)",
+     "description": {
+      "en": "Enforce an allow-list of model patterns when enforce is true. allow is an array of glob-style patterns (only * is special).",
+      "id": "Terapkan daftar izin pola model saat enforce true. allow adalah array pola bergaya glob (hanya * yang spesial)."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "subagents.agentOverrides.<agent>",
+     "type": "object",
+     "default": "(not configured)",
+     "description": {
+      "en": "Per-agent overrides for built-in agents: model, thinking, fallbackModels, tools, mcpDirectTools, extensions, subagentOnlyExtensions, skills, systemPromptMode, defaultAsync, defaultTimeoutMs, defaultTurnBudget, defaultAcceptance, acceptanceRole, output, defaultReads, defaultProgress, interactive, maxSubagentDepth, completionGuard, toolBudget, memory, disabled.",
+      "id": "Penimpaan per agent untuk agent bawaan: model, thinking, fallbackModels, tools, mcpDirectTools, extensions, subagentOnlyExtensions, skills, systemPromptMode, defaultAsync, defaultTimeoutMs, defaultTurnBudget, defaultAcceptance, acceptanceRole, output, defaultReads, defaultProgress, interactive, maxSubagentDepth, completionGuard, toolBudget, memory, disabled."
+     },
+     "persistence": "settings.json"
+    }
+   ],
+   "envVars": [
+    {
+     "key": "SELESAI_SUBAGENT_MAX_DEPTH",
+     "description": {
+      "en": "Runtime override for the current maximum subagent depth.",
+      "id": "Penimpaan runtime untuk kedalaman subagent maksimum saat ini."
+     }
+    },
+    {
+     "key": "SELESAI_SUBAGENT_MAX_SPAWNS_PER_SESSION",
+     "description": {
+      "en": "Runtime override for max spawns per session. Use 0 for unlimited.",
+      "id": "Penimpaan runtime untuk max spawns per sesi. Gunakan 0 untuk tidak terbatas."
+     }
+    },
+    {
+     "key": "SELESAI_SUBAGENT_DEPTH",
+     "description": {
+      "en": "Incremented automatically for nested subagent runs; do not set manually.",
+      "id": "Dinaikkan otomatis untuk run subagent bersarang; jangan atur manual."
+     }
+    },
+    {
+     "key": "SELESAI_SUBAGENT_PARENT_SESSION",
+     "description": {
+      "en": "Forwarded to child sessions so async subagents can locate their parent.",
+      "id": "Diteruskan ke sesi anak sehingga subagent async dapat menemukan parent-nya."
+     }
+    }
+   ],
+   "controls": [
+    {
+     "name": "subagent({ ... })",
+     "description": {
+      "en": "Foreground or async subagent tool call.",
+      "id": "Pemanggilan tool subagent foreground atau async."
+     }
+    },
+    {
+     "name": "/run, /chain, /parallel, /run-chain",
+     "description": {
+      "en": "Slash commands for common run modes.",
+      "id": "Slash command untuk mode run umum."
+     }
+    },
+    {
+     "name": "/subagents-doctor, /subagents-stop, /subagent-cost, /subagents-models, /subagents-profiles, /parallel-review",
+     "description": {
+      "en": "Management and monitoring commands.",
+      "id": "Command manajemen dan monitoring."
+     }
+    },
+    {
+     "name": "/subagents-watchdog [status|on|off|model ...]",
+     "description": {
+      "en": "Runtime watchdog status and controls.",
+      "id": "Status dan kontrol watchdog runtime."
+     }
+    },
+    {
+     "name": "subagent({ action: \"status\" })",
+     "description": {
+      "en": "Inspect live run status and child activity.",
+      "id": "Periksa status run dan aktivitas child."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "pi-web-agent",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Web research supports layered global/project backend and presentation config, API keys stored in settings.json, and runtime command controls.",
+    "id": "Riset web mendukung konfigurasi backend dan presentasi global/proyek berlapis, kunci API disimpan di settings.json, dan kontrol command runtime."
+   },
+   "sourcePaths": [
+    "src/extensions/pi-web-agent/src/presentation/types.ts",
+    "src/extensions/pi-web-agent/src/presentation/config-store.ts",
+    "src/extensions/pi-web-agent/src/backends/config.ts",
+    "src/extensions/pi-web-agent/src/backends/settings-reader.ts",
+    "src/extensions/pi-web-agent/src/backends/doctor.ts",
+    "src/extensions/pi-web-agent/src/backends/factory.ts"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "Global backend/presentation config",
+      "id": "Konfigurasi backend/presentasi global"
+     },
+     "path": "~/.selesai/agent/extensions/pi-web-agent/config.json",
+     "precedence": {
+      "en": "Default lowest; overridden by project config.",
+      "id": "Default terendah; ditimpa oleh konfigurasi proyek."
+     }
+    },
+    {
+     "label": {
+      "en": "Project backend/presentation config",
+      "id": "Konfigurasi backend/presentasi proyek"
+     },
+     "path": ".selesai/extensions/pi-web-agent/config.json",
+     "precedence": {
+      "en": "Overrides global config values.",
+      "id": "Menimpa nilai konfigurasi global."
+     }
+    },
+    {
+     "label": {
+      "en": "User settings for secrets",
+      "id": "Pengaturan user untuk rahasia"
+     },
+     "path": "~/.selesai/agent/settings.json",
+     "precedence": {
+      "en": "Brave API key is read from webAgent.braveApiKey. Firecrawl key can live in config or env var.",
+      "id": "Kunci Brave API dibaca dari webAgent.braveApiKey. Kunci Firecrawl dapat berada di config atau variabel env."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": "presentation.defaultMode",
+     "type": "string",
+     "default": "\"compact\"",
+     "allowedValues": "\"compact\", \"preview\", \"verbose\"",
+     "description": {
+      "en": "Default presentation mode for web agent results.",
+      "id": "Mode presentasi default untuk hasil web agent."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "presentation.tools.<web_search|web_fetch|web_fetch_headless|web_explore>.mode",
+     "type": "string",
+     "allowedValues": "\"compact\", \"preview\", \"verbose\"",
+     "description": {
+      "en": "Per-tool presentation override.",
+      "id": "Penimpaan presentasi per tool."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.search.provider",
+     "type": "string",
+     "default": "\"duckduckgo\"",
+     "allowedValues": "\"duckduckgo\", \"searxng\", \"brave\"",
+     "description": {
+      "en": "Search backend provider.",
+      "id": "Provider backend pencarian."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.search.baseUrl",
+     "type": "string",
+     "description": {
+      "en": "Base URL for searxng or brave endpoints when required.",
+      "id": "Base URL untuk endpoint searxng atau brave bila diperlukan."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.search.fallback",
+     "type": "string",
+     "allowedValues": "\"duckduckgo\"",
+     "description": {
+      "en": "Only valid when provider is searxng or brave. Other values are rejected.",
+      "id": "Hanya valid saat provider adalah searxng atau brave. Nilai lain ditolak."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.search.options.categories",
+     "type": "string[]",
+     "description": {
+      "en": "SearXNG categories. Must be non-empty when provided.",
+      "id": "Kategori SearXNG. Harus tidak kosong bila diberikan."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.search.options.language",
+     "type": "string",
+     "description": {
+      "en": "SearXNG language. Must not be empty when provided.",
+      "id": "Bahasa SearXNG. Tidak boleh kosong bila diberikan."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.search.options.safesearch",
+     "type": "number",
+     "allowedValues": "0, 1, 2",
+     "description": {
+      "en": "SearXNG safe-search level.",
+      "id": "Tingkat safe-search SearXNG."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.fetch.provider",
+     "type": "string",
+     "default": "\"http\"",
+     "allowedValues": "\"http\", \"firecrawl\"",
+     "description": {
+      "en": "Fetch backend provider.",
+      "id": "Provider backend fetch."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.fetch.baseUrl",
+     "type": "string",
+     "description": {
+      "en": "Firecrawl base URL (required for firecrawl provider).",
+      "id": "Base URL Firecrawl (wajib untuk provider firecrawl)."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.fetch.apiKey",
+     "type": "string",
+     "sensitive": true,
+     "description": {
+      "en": "Firecrawl API key. Prefer PI_WEB_AGENT_FIRECRAWL_API_KEY env var.",
+      "id": "Kunci API Firecrawl. Utamakan variabel env PI_WEB_AGENT_FIRECRAWL_API_KEY."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.fetch.fallback",
+     "type": "string",
+     "allowedValues": "\"http\"",
+     "description": {
+      "en": "Only valid when provider is firecrawl.",
+      "id": "Hanya valid saat provider adalah firecrawl."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.fetch.options.formats",
+     "type": "string[]",
+     "description": {
+      "en": "Firecrawl output formats. Must be non-empty when provided.",
+      "id": "Format output Firecrawl. Harus tidak kosong bila diberikan."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.fetch.options.onlyMainContent",
+     "type": "boolean",
+     "description": {
+      "en": "Firecrawl main-content-only flag.",
+      "id": "Flag Firecrawl hanya konten utama."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "backends.headless.provider",
+     "type": "string",
+     "default": "\"local-browser\"",
+     "allowedValues": "\"local-browser\"",
+     "description": {
+      "en": "Headless escalation provider. The only supported value is local-browser.",
+      "id": "Provider eskalasi headless. Satu-satunya nilai yang didukung adalah local-browser."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "webAgent.braveApiKey",
+     "type": "string",
+     "sensitive": true,
+     "description": {
+      "en": "Brave Search API key stored in settings.json. Also accepts PI_WEB_AGENT_BRAVE_API_KEY env var.",
+      "id": "Kunci API Brave Search disimpan di settings.json. Juga menerima variabel env PI_WEB_AGENT_BRAVE_API_KEY."
+     },
+     "persistence": "settings.json"
+    }
+   ],
+   "envVars": [
+    {
+     "key": "PI_WEB_AGENT_BRAVE_API_KEY",
+     "sensitive": true,
+     "description": {
+      "en": "Override or supply the Brave API key without storing it in settings.json.",
+      "id": "Timpa atau sediakan kunci Brave API tanpa menyimpannya di settings.json."
+     }
+    },
+    {
+     "key": "PI_WEB_AGENT_FIRECRAWL_API_KEY",
+     "sensitive": true,
+     "description": {
+      "en": "Override or supply the Firecrawl API key without storing it in config.json.",
+      "id": "Timpa atau sediakan kunci Firecrawl API tanpa menyimpannya di config.json."
+     }
+    }
+   ],
+   "controls": [
+    {
+     "name": "web_explore({ query: \"...\" })",
+     "description": {
+      "en": "Agent tool that runs search, fetch, and headless escalation.",
+      "id": "Tool agent yang menjalankan pencarian, fetch, dan eskalasi headless."
+     }
+    },
+    {
+     "name": "/web-agent",
+     "description": {
+      "en": "Runtime command with settings, show, doctor, changelog, reset project, and reset global subcommands.",
+      "id": "Command runtime dengan subcommand settings, show, doctor, changelog, reset project, dan reset global."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "question",
+   "distribution": "bundled",
+   "overview": {
+    "en": "The question tool is schema-driven. Questions are configured per tool call; there are no persistent user settings.",
+    "id": "Tool question didorong schema. Pertanyaan dikonfigurasi per pemanggilan tool; tidak ada pengaturan user persisten."
+   },
+   "sourcePaths": [
+    "src/extensions/question/schemas.ts"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "Per-tool-call schema",
+      "id": "Schema per pemanggilan tool"
+     },
+     "path": "question({ questions: [...] })",
+     "precedence": {
+      "en": "All options are supplied by the agent inside the tool call.",
+      "id": "Semua opsi diberikan oleh agent di dalam pemanggilan tool."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": "questions[].id",
+     "type": "string",
+     "default": "q1, q2, ...",
+     "description": {
+      "en": "Stable answer id. Auto-generated when omitted.",
+      "id": "Id jawaban yang stabil. Dibuat otomatis bila dihilangkan."
+     },
+     "persistence": "tool call"
+    },
+    {
+     "key": "questions[].label",
+     "type": "string",
+     "default": "Q1, Q2, ...",
+     "description": {
+      "en": "Short page label shown in the wizard.",
+      "id": "Label halaman singkat yang ditampilkan di wizard."
+     },
+     "persistence": "tool call"
+    },
+    {
+     "key": "questions[].question",
+     "type": "string",
+     "description": {
+      "en": "Question text shown to the user.",
+      "id": "Teks pertanyaan yang ditampilkan ke user."
+     },
+     "persistence": "tool call"
+    },
+    {
+     "key": "questions[].context",
+     "type": "string",
+     "description": {
+      "en": "Optional plain-text context shown before the question.",
+      "id": "Konteks plain-text opsional yang ditampilkan sebelum pertanyaan."
+     },
+     "persistence": "tool call"
+    },
+    {
+     "key": "questions[].type",
+     "type": "string",
+     "allowedValues": "\"select\", \"multiselect\", \"text\"",
+     "description": {
+      "en": "Question type. image and info are not supported.",
+      "id": "Tipe pertanyaan. image dan info tidak didukung."
+     },
+     "persistence": "tool call"
+    },
+    {
+     "key": "questions[].options",
+     "type": "array",
+     "description": {
+      "en": "Required for select and multiselect. Each option has value, label, and optional description.",
+      "id": "Wajib untuk select dan multiselect. Setiap opsi memiliki value, label, dan description opsional."
+     },
+     "persistence": "tool call"
+    },
+    {
+     "key": "questions[].allowOther",
+     "type": "boolean",
+     "default": "false",
+     "description": {
+      "en": "Allow a custom text answer for select/multiselect.",
+      "id": "Izinkan jawaban teks kustom untuk select/multiselect."
+     },
+     "persistence": "tool call"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "question({ questions })",
+     "description": {
+      "en": "Batch wizard with review and submission screens.",
+      "id": "Wizard batch dengan layar review dan submission."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "grep-app",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Public code search uses per-call filter and fetch options. There are no persistent user settings.",
+    "id": "Pencarian kode publik menggunakan opsi filter dan fetch per pemanggilan. Tidak ada pengaturan user persisten."
+   },
+   "sourcePaths": [
+    "src/extensions/grep-app/index.ts"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "Tool call arguments",
+      "id": "Argumen pemanggilan tool"
+     },
+     "path": "grep_app({ ... })",
+     "precedence": {
+      "en": "All behavior is controlled by each tool call.",
+      "id": "Semua perilaku dikontrol oleh setiap pemanggilan tool."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": "query",
+     "type": "string",
+     "description": {
+      "en": "grep.app search query.",
+      "id": "Query pencarian grep.app."
+     },
+     "persistence": "tool call"
+    },
+    {
+     "key": "filter",
+     "type": "string",
+     "description": {
+      "en": "Optional filter, e.g. language or repository.",
+      "id": "Filter opsional, misalnya bahasa atau repository."
+     },
+     "persistence": "tool call"
+    },
+    {
+     "key": "fetchUrl",
+     "type": "string",
+     "description": {
+      "en": "URL of a result to fetch.",
+      "id": "URL hasil yang akan di-fetch."
+     },
+     "persistence": "tool call"
+    },
+    {
+     "key": "startLine / endLine",
+     "type": "number",
+     "description": {
+      "en": "Optional line range for fetched source.",
+      "id": "Rentang baris opsional untuk source yang di-fetch."
+     },
+     "persistence": "tool call"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "grep_app({ ... })",
+     "description": {
+      "en": "Search tool and fetch tool.",
+      "id": "Tool pencarian dan fetch."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "pi-intercom",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Intercom reads a single config file for broker command, args, confirmation, status suffix, and enable flags.",
+    "id": "Intercom membaca satu file konfigurasi untuk command broker, argumen, konfirmasi, suffix status, dan flag enable."
+   },
+   "sourcePaths": [
+    "src/extensions/pi-intercom/config.ts"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "Intercom config",
+      "id": "Konfigurasi intercom"
+     },
+     "path": "~/.selesai/agent/intercom/config.json",
+     "precedence": {
+      "en": "Only config file; no project layer.",
+      "id": "Hanya file konfigurasi; tidak ada lapisan proyek."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": "brokerCommand",
+     "type": "string",
+     "default": "\"npx\"",
+     "description": {
+      "en": "Command used to spawn the broker process.",
+      "id": "Command untuk menjalankan proses broker."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "brokerArgs",
+     "type": "string[]",
+     "default": "[\"--no-install\", \"tsx\"]",
+     "description": {
+      "en": "Arguments passed to brokerCommand before the broker script path.",
+      "id": "Argumen yang diteruskan ke brokerCommand sebelum path skrip broker."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "confirmSend",
+     "type": "boolean",
+     "default": "false",
+     "description": {
+      "en": "Require confirmation before non-reply sends in interactive sessions.",
+      "id": "Wajibkan konfirmasi sebelum pengiriman non-reply di sesi interaktif."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "enabled",
+     "type": "boolean",
+     "default": "true",
+     "description": {
+      "en": "Enable or disable intercom entirely.",
+      "id": "Aktifkan atau nonaktifkan intercom sepenuhnya."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "replyHint",
+     "type": "boolean",
+     "default": "true",
+     "description": {
+      "en": "Show a reply hint in incoming messages.",
+      "id": "Tampilkan petunjuk reply di pesan masuk."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "status",
+     "type": "string",
+     "default": "(not set)",
+     "description": {
+      "en": "Optional custom status suffix appended to automatic lifecycle status.",
+      "id": "Suffix status kustom opsional yang ditambahkan ke status siklus hidup otomatis."
+     },
+     "persistence": "config.json"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "ask / reply tools",
+     "description": {
+      "en": "Send messages or replies between named local sessions.",
+      "id": "Kirim pesan atau balasan antar sesi lokal yang diberi nama."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "context-compaction-reminder",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Context reminder is fully automatic. The threshold and suggestion behavior are fixed.",
+    "id": "Pengingat konteks sepenuhnya otomatis. Threshold dan perilaku saran sudah tetap."
+   },
+   "sourcePaths": [
+    "src/extensions/context-compaction-reminder.ts"
+   ],
+   "scopes": [],
+   "settings": [
+    {
+     "key": "threshold",
+     "type": "number",
+     "default": "128,000 tokens",
+     "description": {
+      "en": "Fixed warning threshold. Not user-configurable.",
+      "id": "Threshold peringatan tetap. Tidak dapat dikonfigurasi user."
+     },
+     "persistence": "source-defined"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "/handoff-new",
+     "description": {
+      "en": "Suggested command when the context threshold is crossed.",
+      "id": "Command yang disarankan saat threshold konteks terlampaui."
+     }
+    }
+   ],
+   "noConfig": true
+  },
+  {
+   "slug": "copy-turn",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Copy turn is a command-only extension. It accepts one argument and has no persistent settings.",
+    "id": "Copy turn adalah ekstensi command-only. Menerima satu argumen dan tidak memiliki pengaturan persisten."
+   },
+   "sourcePaths": [
+    "src/extensions/copy-turn.ts"
+   ],
+   "scopes": [],
+   "settings": [
+    {
+     "key": "hash",
+     "type": "string",
+     "description": {
+      "en": "Turn hash passed as the /cp argument. Not persisted.",
+      "id": "Hash turn yang diberikan sebagai argumen /cp. Tidak dipersisten."
+     },
+     "persistence": "command argument"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "/cp <hash>",
+     "description": {
+      "en": "Copy the content of the referenced user or assistant turn.",
+      "id": "Salin konten turn user atau assistant yang direferensikan."
+     }
+    }
+   ],
+   "noConfig": true
+  },
+  {
+   "slug": "handoff-new",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Session handoff is controlled by the goal argument. The prompt template is source-owned.",
+    "id": "Handoff sesi dikontrol oleh argumen goal. Template prompt adalah milik source."
+   },
+   "sourcePaths": [
+    "src/extensions/handoff-new.ts",
+    "src/skills/handoff/",
+    "src/skills/selesai-handoff/"
+   ],
+   "scopes": [],
+   "settings": [
+    {
+     "key": "goal",
+     "type": "string",
+     "description": {
+      "en": "Next-focus text passed as the /handoff-new argument.",
+      "id": "Teks fokus berikutnya yang diberikan sebagai argumen /handoff-new."
+     },
+     "persistence": "command argument"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "/handoff-new <goal>",
+     "description": {
+      "en": "Create a continuation prompt in a fresh session.",
+      "id": "Buat prompt kelanjutan di sesi baru."
+     }
+    }
+   ],
+   "noConfig": true
+  },
+  {
+   "slug": "undo",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Undo tracks edits, writes, and mutating shell commands per turn. Retention and buffer sizes are fixed.",
+    "id": "Undo melacak edit, write, dan shell command bermutasi per turn. Retensi dan ukuran buffer sudah tetap."
+   },
+   "sourcePaths": [
+    "src/extensions/undo.ts"
+   ],
+   "scopes": [],
+   "settings": [
+    {
+     "key": "undo buffer",
+     "type": "number",
+     "default": "512 KiB",
+     "description": {
+      "en": "Fixed retention limit for the undo stack. Not user-configurable.",
+      "id": "Batas retensi tetap untuk stack undo. Tidak dapat dikonfigurasi user."
+     },
+     "persistence": "source-defined"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "/undo",
+     "description": {
+      "en": "Undo the last tracked turn.",
+      "id": "Batalkan turn terakhir yang terlacak."
+     }
+    },
+    {
+     "name": "/undo --force",
+     "description": {
+      "en": "Force undo when confirmation would normally be required.",
+      "id": "Paksa undo saat konfirmasi biasanya diperlukan."
+     }
+    }
+   ],
+   "noConfig": true
+  },
+  {
+   "slug": "pi-rewind-hook",
+   "distribution": "optional",
+   "overview": {
+    "en": "Optional Rewind reads all settings from the rewind key in settings.json. It has no standalone /rewind command.",
+    "id": "Rewind opsional membaca semua pengaturan dari kunci rewind di settings.json. Tidak ada command /rewind mandiri."
+   },
+   "sourcePaths": [
+    "src/extensions/pi-rewind-hook/index.ts",
+    "src/extensions/pi-rewind-hook/README.md"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "User settings",
+      "id": "Pengaturan user"
+     },
+     "path": "~/.selesai/agent/settings.json",
+     "precedence": {
+      "en": "All Rewind settings live under rewind.*.",
+      "id": "Semua pengaturan Rewind berada di bawah rewind.*."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": "rewind.silentCheckpoints",
+     "type": "boolean",
+     "default": "false",
+     "description": {
+      "en": "Hide footer/status and checkpoint notifications.",
+      "id": "Sembunyikan footer/status dan notifikasi checkpoint."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "rewind.retention.maxSnapshots",
+     "type": "number",
+     "default": "(unlimited)",
+     "description": {
+      "en": "Optional cap on unpinned unique snapshot commits kept reachable.",
+      "id": "Batas opsional pada commit snapshot unik yang tidak dipin dan tetap reachable."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "rewind.retention.maxAgeDays",
+     "type": "number",
+     "default": "(unlimited)",
+     "description": {
+      "en": "Optional age limit in days for unpinned snapshot commits.",
+      "id": "Batas usia opsional dalam hari untuk commit snapshot yang tidak dipin."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "rewind.retention.pinLabeledEntries",
+     "type": "boolean",
+     "default": "false",
+     "description": {
+      "en": "Keep snapshots bound to labeled nodes exempt from maxSnapshots/maxAgeDays pruning.",
+      "id": "Pertahankan snapshot yang terikat ke node labeled agar tidak dipangkas oleh maxSnapshots/maxAgeDays."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "rewind.retention.scanMode",
+     "type": "string",
+     "default": "\"ancestor-only\"",
+     "allowedValues": "\"ancestor-only\", \"repo-sessions\"",
+     "description": {
+      "en": "Retention discovery mode: follow current session lineage only, or scan discovered session roots.",
+      "id": "Mode discovery retensi: hanya ikuti silsilah sesi saat ini, atau pindai root sesi yang ditemukan."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "rewind.retention.startupBudgetMs",
+     "type": "number",
+     "default": "(unlimited)",
+     "description": {
+      "en": "Optional startup time budget for retention sweeps. Exceeded sweeps are skipped and deferred.",
+      "id": "Anggaran waktu startup opsional untuk sweep retensi. Sweep yang melebihi dilewati dan ditunda."
+     },
+     "persistence": "settings.json"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "/fork and /tree",
+     "description": {
+      "en": "Rewind triggers automatically during fork and tree navigation.",
+      "id": "Rewind dipicu otomatis saat navigasi fork dan tree."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "tokenin-onboarding",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Token onboarding uses environment suppression, an onboarding marker, and account storage. Credentials are sensitive values stored locally.",
+    "id": "Onboarding token menggunakan penekanan env, marker onboarding, dan penyimpanan akun. Kredensial adalah nilai sensitif yang disimpan secara lokal."
+   },
+   "sourcePaths": [
+    "src/extensions/tokenin-onboarding.ts"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "User marker and accounts",
+      "id": "Marker dan akun user"
+     },
+     "path": "~/.selesai/agent/",
+     "precedence": {
+      "en": "Marker file and multi-account tokenin-auth.json live here.",
+      "id": "File marker dan tokenin-auth.json multi-akun berada di sini."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": ".tokenInOnboardingComplete",
+     "type": "marker file",
+     "description": {
+      "en": "Written when onboarding is complete so the prompt does not reappear.",
+      "id": "Ditulis saat onboarding seelsai agar prompt tidak muncul lagi."
+     },
+     "persistence": "~/.selesai/agent/.tokenInOnboardingComplete"
+    },
+    {
+     "key": "tokenin-auth.json",
+     "type": "file",
+     "description": {
+      "en": "Multi-account TokenIN storage. Written with mode 0o600.",
+      "id": "Penyimpanan TokenIN multi-akun. Ditulis dengan mode 0o600."
+     },
+     "persistence": "~/.selesai/agent/tokenin-auth.json",
+     "sensitive": true
+    },
+    {
+     "key": "providers.tokenin.apiKey",
+     "type": "string",
+     "description": {
+      "en": "Legacy models.json key removed during onboarding.",
+      "id": "Kunci models.json legacy dihapus selama onboarding."
+     },
+     "persistence": "models.json (legacy, removed)",
+     "sensitive": true
+    }
+   ],
+   "envVars": [
+    {
+     "key": "SELESAI_SKIP_TOKENIN_ONBOARDING",
+     "description": {
+      "en": "Set to 1 to disable the first-run TokenIN onboarding prompt.",
+      "id": "Atur ke 1 untuk menonaktifkan prompt onboarding TokenIN pertama kali."
+     }
+    }
+   ],
+   "controls": [
+    {
+     "name": "/tokenin add|switch|remove|usage",
+     "description": {
+      "en": "Manage stored TokenIN accounts and show quota usage.",
+      "id": "Kelola akun TokenIN yang tersimpan dan tampilkan penggunaan kuota."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "web-agent-onboarding",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Web-agent onboarding writes the Brave API key to settings and generates a Brave backend override. It can be re-run via /setup-web-search.",
+    "id": "Onboarding web agent menulis kunci API Brave ke pengaturan dan membuat override backend Brave. Dapat dijalankan ulang via /setup-web-search."
+   },
+   "sourcePaths": [
+    "src/extensions/web-agent-onboarding.ts",
+    "src/extensions/pi-web-agent/src/backends/settings-reader.ts"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "User marker and config",
+      "id": "Marker dan konfigurasi user"
+     },
+     "path": "~/.selesai/agent/",
+     "precedence": {
+      "en": "Marker file, settings.json key, and pi-web-agent backend config are written here.",
+      "id": "File marker, kunci settings.json, dan konfigurasi backend pi-web-agent ditulis di sini."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": ".webAgentOnboardingComplete",
+     "type": "marker file",
+     "description": {
+      "en": "Written when onboarding completes.",
+      "id": "Ditulis saat onboarding selesai."
+     },
+     "persistence": "~/.selesai/agent/.webAgentOnboardingComplete"
+    },
+    {
+     "key": "webAgent.braveApiKey",
+     "type": "string",
+     "description": {
+      "en": "Brave Search API key stored in settings.json.",
+      "id": "Kunci API Brave Search disimpan di settings.json."
+     },
+     "persistence": "settings.json",
+     "sensitive": true
+    },
+    {
+     "key": "backends.search.provider",
+     "type": "string",
+     "default": "\"brave\"",
+     "description": {
+      "en": "Generated backend override with DuckDuckGo fallback.",
+      "id": "Override backend yang dibuat dengan fallback DuckDuckGo."
+     },
+     "persistence": "~/.selesai/agent/extensions/pi-web-agent/config.json"
+    }
+   ],
+   "envVars": [
+    {
+     "key": "SELESAI_SKIP_WEB_AGENT_ONBOARDING",
+     "description": {
+      "en": "Set to 1 to disable the first-run web-agent onboarding prompt.",
+      "id": "Atur ke 1 untuk menonaktifkan prompt onboarding web agent pertama kali."
+     }
+    }
+   ],
+   "controls": [
+    {
+     "name": "/setup-web-search",
+     "description": {
+      "en": "Re-run the Brave Search onboarding flow and reload extensions.",
+      "id": "Jalankan ulang alur onboarding Brave Search dan muat ulang ekstensi."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "llama",
+   "distribution": "core",
+   "overview": {
+    "en": "Core llama.cpp model management is configured via provider auth and slash commands. It is a hidden built-in extension, not a manifest entry.",
+    "id": "Manajemen model llama.cpp inti dikonfigurasi melalui auth provider dan slash command. Ini adalah ekstensi bawaan tersembunyi, bukan entri manifest."
+   },
+   "sourcePaths": [
+    "src/core/llama/index.ts",
+    "src/core/built-in-extensions.ts",
+    "src/core/llama/client.ts"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "Provider auth",
+      "id": "Auth provider"
+     },
+     "path": "/login llama.cpp",
+     "precedence": {
+      "en": "Credentials and base URL are stored via the model registry's provider auth flow.",
+      "id": "Kredensial dan base URL disimpan melalui alur auth provider model registry."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": "baseUrl",
+     "type": "string",
+     "description": {
+      "en": "Llama.cpp server URL. /login stores the URL in provider auth env.LLAMA_BASE_URL. At runtime, LLAMA_BASE_URL env var (if set) takes precedence over that stored value.",
+      "id": "URL server llama.cpp. /login menyimpan URL di provider auth env.LLAMA_BASE_URL. Saat runtime, variabel env LLAMA_BASE_URL (jika diatur) didahulukan daripada nilai yang tersimpan."
+     },
+     "persistence": "provider auth"
+    },
+    {
+     "key": "apiKey",
+     "type": "string",
+     "description": {
+      "en": "Optional API key for the llama.cpp server. Stored in provider auth; falls back to LLAMA_API_KEY env var at runtime if no stored key exists.",
+      "id": "Kunci API opsional untuk server llama.cpp. Disimpan di provider auth; fallback ke variabel env LLAMA_API_KEY saat runtime jika tidak ada kunci tersimpan."
+     },
+     "persistence": "provider auth",
+     "sensitive": true
+    }
+   ],
+   "envVars": [
+    {
+     "key": "LLAMA_BASE_URL",
+     "description": {
+      "en": "Highest-priority runtime override for the configured llama.cpp server URL. Also used as the default during /login if no URL is entered.",
+      "id": "Override runtime prioritas tertinggi untuk URL server llama.cpp yang dikonfigurasi. Juga digunakan sebagai default saat /login jika tidak ada URL yang dimasukkan."
+     }
+    },
+    {
+     "key": "LLAMA_API_KEY",
+     "description": {
+      "en": "Runtime fallback API key for the llama.cpp server.",
+      "id": "Fallback kunci API runtime untuk server llama.cpp."
+     },
+     "sensitive": true
+    },
+    {
+     "key": "HF_TOKEN",
+     "description": {
+      "en": "Hugging Face token used to search and download gated models.",
+      "id": "Token Hugging Face untuk mencari dan mengunduh model gated."
+     },
+     "sensitive": true
+    }
+   ],
+   "controls": [
+    {
+     "name": "/login llama.cpp",
+     "description": {
+      "en": "Configure base URL and optional API key for the llama.cpp provider.",
+      "id": "Konfigurasikan base URL dan kunci API opsional untuk provider llama.cpp."
+     }
+    },
+    {
+     "name": "/llama",
+     "description": {
+      "en": "Open the TUI model manager. Only available in interactive mode.",
+      "id": "Buka pengelola model TUI. Hanya tersedia dalam mode interaktif."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "inline-skills",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Inline skills depend on installed skill files. The # token and autocomplete behavior are fixed; there are no persistent settings.",
+    "id": "Skill inline bergantung pada file skill yang terpasang. Token # dan perilaku autocomplete sudah tetap; tidak ada pengaturan persisten."
+   },
+   "sourcePaths": [
+    "src/extensions/inline-skills.ts",
+    "src/core/skills.ts"
+   ],
+   "scopes": [],
+   "settings": [
+    {
+     "key": "installed skill files",
+     "type": "file dependency",
+     "description": {
+      "en": "Inline invitations only work when matching skill files exist.",
+      "id": "Ajakan inline hanya berfungsi saat file skill yang cocok ada."
+     },
+     "persistence": "skill files"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "#skill-name",
+     "description": {
+      "en": "Type # followed by a skill name to trigger autocomplete.",
+      "id": "Ketik # diikuti nama skill untuk memicu autocomplete."
+     }
+    },
+    {
+     "name": "[[skill:...]]",
+     "description": {
+      "en": "Legacy inline skill invitation syntax.",
+      "id": "Sintaks ajakan skill inline legacy."
+     }
+    }
+   ],
+   "noConfig": true
+  },
+  {
+   "slug": "ponytail",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Ponytail's default mode is resolved from environment, then config file, then the built-in default. Session commands can switch mode without persisting it.",
+    "id": "Mode default Ponytail di-resolve dari environment, lalu file config, lalu default bawaan. Command sesi dapat mengganti mode tanpa mempersistennya."
+   },
+   "sourcePaths": [
+    "src/extensions/ponytail/ponytail-config.cjs"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "Ponytail config",
+      "id": "Konfigurasi Ponytail"
+     },
+     "path": "$XDG_CONFIG_HOME/ponytail/config.json, ~/.config/ponytail/config.json, or %APPDATA%\\ponytail\\config.json",
+     "precedence": {
+      "en": "XDG_CONFIG_HOME takes precedence; falls back to POSIX or Windows paths.",
+      "id": "XDG_CONFIG_HOME didahulukan; fallback ke path POSIX atau Windows."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": "defaultMode",
+     "type": "string",
+     "default": "\"full\"",
+     "allowedValues": "\"off\", \"lite\", \"full\", \"ultra\", \"review\"",
+     "description": {
+      "en": "Default communication mode. \"review\" is treated as \"full\" when persisted.",
+      "id": "Mode komunikasi default. \"review\" diperlakukan sebagai \"full\" saat dipersisten."
+     },
+     "persistence": "config.json"
+    }
+   ],
+   "envVars": [
+    {
+     "key": "PONYTAIL_DEFAULT_MODE",
+     "description": {
+      "en": "Highest-priority override for the default mode.",
+      "id": "Override prioritas tertinggi untuk mode default."
+     },
+     "allowedValues": "\"off\", \"lite\", \"full\", \"ultra\", \"review\""
+    }
+   ],
+   "controls": [
+    {
+     "name": "/skill:ponytail*",
+     "description": {
+      "en": "Invoke Ponytail skills.",
+      "id": "Panggil skill Ponytail."
+     }
+    },
+    {
+     "name": "/ponytail default",
+     "description": {
+      "en": "Persist the current session's mode to the config file.",
+      "id": "Persistenkan mode sesi saat ini ke file config."
+     }
+    },
+    {
+     "name": "stop ponytail / normal mode",
+     "description": {
+      "en": "Whole-message deactivation phrases.",
+      "id": "Frasa deaktivasi seluruh pesan."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "rtk",
+   "distribution": "bundled",
+   "overview": {
+    "en": "RTK is managed by Selesai when needed. The extension rewrites commands when a verified rtk binary is available and not disabled.",
+    "id": "RTK dikelola oleh Selesai saat diperlukan. Ekstensi menulis ulang command saat biner rtk terverifikasi tersedia dan tidak dinonaktifkan."
+   },
+   "sourcePaths": [
+    "src/extensions/rtk.ts"
+   ],
+   "scopes": [],
+   "settings": [
+    {
+     "key": "rtk binary version",
+     "type": "string",
+     "default": ">= 0.23.0",
+     "description": {
+      "en": "Required rtk version; Selesai reuses PATH or its managed binary directory.",
+      "id": "Versi rtk yang diperlukan; Selesai menggunakan PATH atau direktori biner terkelola."
+     },
+     "persistence": "managed or external binary"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "automatic bash rewrite",
+     "description": {
+      "en": "Transparent; no user command required.",
+      "id": "Transparan; tidak diperlukan command user."
+     }
+    },
+    {
+     "name": "RTK_DISABLED=1",
+     "description": {
+      "en": "Set this environment variable to disable RTK command rewriting and managed installation for the session.",
+      "id": "Atur variabel lingkungan ini untuk menonaktifkan penulisan ulang command RTK dan instalasi terkelola untuk sesi ini."
+     }
+    },
+    {
+     "name": "PI_OFFLINE=1",
+     "description": {
+      "en": "Set this environment variable to disable startup network operations, preventing managed binary downloads.",
+      "id": "Atur variabel lingkungan ini untuk menonaktifkan operasi jaringan saat startup, mencegah pengunduhan biner terkelola."
+     }
+    }
+   ],
+   "noConfig": true
+  },
+  {
+   "slug": "agent-browser",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Agent-browser setup is prompt-driven: Selesai offers to install the external CLI when it is missing. The install flow can be skipped or re-run; there are no persistent settings.",
+    "id": "Setup agent-browser didorong prompt: Selesai menawarkan instalasi CLI eksternal saat belum ada. Alur instalasi dapat dilewati atau dijalankan ulang; tidak ada pengaturan persisten."
+   },
+   "sourcePaths": [
+    "src/extensions/agent-browser.ts",
+    "src/skills/agent-browser/SKILL.md"
+   ],
+   "scopes": [],
+   "settings": [
+    {
+     "key": "agent-browser CLI",
+     "type": "external binary",
+     "default": "(not installed)",
+     "description": {
+      "en": "Optional global npm CLI. Selesai offers to install and provision it on first startup when missing.",
+      "id": "CLI npm global opsional. Selesai menawarkan untuk menginstal dan menyediakannya saat startup pertama jika belum ada."
+     },
+     "persistence": "external binary"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "SELESAI_SKIP_AGENT_BROWSER_SETUP=1",
+     "description": {
+      "en": "Set this environment variable to skip the automated setup prompt.",
+      "id": "Atur variabel lingkungan ini untuk melewati prompt setup otomatis."
+     }
+    },
+    {
+     "name": "/setup-agent-browser",
+     "description": {
+      "en": "Re-run the install flow any time, including after declining.",
+      "id": "Jalankan ulang alur instalasi kapan saja, termasuk setelah menolak."
+     }
+    }
+   ],
+   "noConfig": true
+  },
+  {
+   "slug": "workflow",
+   "distribution": "core",
+   "overview": {
+    "en": "A bundled parent-only skill that chooses the smallest safe pi-subagents implementation flow.",
+    "id": "Skill bawaan khusus parent yang memilih alur implementasi pi-subagents aman yang paling kecil."
+   },
+   "sourcePaths": [
+    "src/skills/workflow/SKILL.md"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "Skill policy",
+      "id": "Kebijakan skill"
+     },
+     "path": "src/skills/workflow/SKILL.md (source-defined)",
+     "precedence": {
+      "en": "The parent adapts stages to the task; no user configuration file controls the flow.",
+      "id": "Parent menyesuaikan tahap dengan tugas; tidak ada file konfigurasi user yang mengontrol alur."
+     }
+    }
+   ],
+   "settings": [],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "$workflow",
+     "description": {
+      "en": "Apply adaptive implementation orchestration guidance.",
+      "id": "Terapkan panduan orkestrasi implementasi adaptif."
+     }
+    }
+   ],
+   "noConfig": true
+  },
+  {
+   "slug": "zentui",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Zentui configures independent editor, user-message, working-line, footer, segment, git, and extension surfaces from one zentui.json, with live /zentui pickers.",
+    "id": "Zentui mengonfigurasi permukaan editor, pesan user, working line, footer, segmen, git, dan ekstensi yang independen dari satu zentui.json, dengan picker /zentui langsung."
+   },
+   "sourcePaths": [
+    "src/extensions/pi-zentui/extensions/zentui/config.ts"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "Zentui config",
+      "id": "Konfigurasi zentui"
+     },
+     "path": "~/.selesai/agent/zentui.json",
+     "precedence": {
+      "en": "Single file written by /zentui; no project layer.",
+      "id": "Satu file yang ditulis /zentui; tidak ada lapisan proyek."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": "components.editor.style",
+     "type": "string",
+     "default": "opencode",
+     "description": {
+      "en": "Editor surface: opencode, opencode-copy-friendly, accent-rail, or minimalist.",
+      "id": "Permukaan editor: opencode, opencode-copy-friendly, accent-rail, atau minimalist."
+     },
+     "persistence": "zentui.json"
+    },
+    {
+     "key": "components.footer.style",
+     "type": "string",
+     "default": "native",
+     "description": {
+      "en": "Footer style: native, starship, or hidden.",
+      "id": "Gaya footer: native, starship, atau hidden."
+     },
+     "persistence": "zentui.json"
+    },
+    {
+     "key": "components.userMessages.style",
+     "type": "string",
+     "default": "framed",
+     "description": {
+      "en": "User-message style: framed, framed-copy-friendly, compact, or labeled.",
+      "id": "Gaya pesan user: framed, framed-copy-friendly, compact, atau labeled."
+     },
+     "persistence": "zentui.json"
+    },
+    {
+     "key": "components.workingLine.enabled",
+     "type": "boolean",
+     "default": "true",
+     "description": {
+      "en": "Take over Pi's complete working-line row and settled turn summary.",
+      "id": "Ambil alih baris working line lengkap Pi dan ringkasan turn yang selesai."
+     },
+     "persistence": "zentui.json"
+    },
+    {
+     "key": "components.footer.styles.starship.pathDisplay.mode",
+     "type": "string",
+     "default": "basename",
+     "description": {
+      "en": "Starship footer path display: basename, full, or repository.",
+      "id": "Tampilan path footer starship: basename, full, atau repository."
+     },
+     "persistence": "zentui.json"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "/zentui",
+     "description": {
+      "en": "Open the live configuration picker; changes save to zentui.json.",
+      "id": "Buka picker konfigurasi langsung; perubahan disimpan ke zentui.json."
+     }
+    },
+    {
+     "name": "/zentui editor toggle",
+     "description": {
+      "en": "Toggle the editor surface without opening the picker.",
+      "id": "Toggle permukaan editor tanpa membuka picker."
+     }
+    },
+    {
+     "name": "/zentui messages toggle",
+     "description": {
+      "en": "Toggle user-message framing without opening the picker.",
+      "id": "Toggle framing pesan user tanpa membuka picker."
+     }
+    },
+    {
+     "name": "/zentui working-line",
+     "description": {
+      "en": "Configure working-line takeover and turn summary.",
+      "id": "Konfigurasikan pengambilalihan working line dan ringkasan turn."
+     }
+    },
+    {
+     "name": "/zentui format <template>",
+     "description": {
+      "en": "Set the compact footer format template.",
+      "id": "Atur template format footer compact."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "tps",
+   "distribution": "bundled",
+   "overview": {
+    "en": "The TPS tracker is automatic: it listens to message and tool events, shows live tok/s in the status area, and needs no configuration.",
+    "id": "Pelacak TPS bersifat otomatis: mendengarkan event message dan tool, menampilkan tok/s langsung di area status, dan tidak memerlukan konfigurasi."
+   },
+   "sourcePaths": [
+    "src/extensions/tps.ts"
+   ],
+   "scopes": [],
+   "settings": [
+    {
+     "key": "tps status",
+     "type": "status line",
+     "default": "live tok/s",
+     "description": {
+      "en": "Live tokens-per-second for the main model and subagent runs; fixed reliability gates, not user-configurable.",
+      "id": "Token-per-detik langsung untuk model utama dan run subagent; gate keandalan tetap, tidak dapat dikonfigurasi user."
+     },
+     "persistence": "source-defined"
+    }
+   ],
+   "envVars": [],
+   "controls": [],
+   "noConfig": true
+  },
+  {
+   "slug": "auto-session-name",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Auto session naming is automatic: on every user message it asks the current model for a short name using only user-message history, and never blocks the message send.",
+    "id": "Penamaan sesi otomatis bersifat otomatis: pada setiap pesan user ia meminta nama singkat ke model saat ini hanya dari riwayat pesan user, dan tidak pernah memblokir pengiriman pesan."
+   },
+   "sourcePaths": [
+    "src/extensions/auto-session-name.ts"
+   ],
+   "scopes": [],
+   "settings": [],
+   "envVars": [],
+   "controls": [],
+   "noConfig": true
+  },
+  {
+   "slug": "cost-reconcile",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Cost reconciliation is automatic: it captures provider-reported costs from LLM responses and records them as session entries; the zentui footer prefers them over rate-card estimates.",
+    "id": "Rekonsiliasi biaya bersifat otomatis: ia menangkap biaya yang dilaporkan provider dari respons LLM dan mencatatnya sebagai entri sesi; footer zentui mengutamakannya daripada estimasi rate card."
+   },
+   "sourcePaths": [
+    "src/extensions/cost-reconcile.ts"
+   ],
+   "scopes": [],
+   "settings": [],
+   "envVars": [],
+   "controls": [],
+   "noConfig": true
+  },
+  {
+   "slug": "pi-tool-display",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Tool display configures compact tool rendering, diff views, output truncation, and the native user message box from one config.json, with /tool-display presets.",
+    "id": "Tool display mengonfigurasi rendering tool ringkas, tampilan diff, pemotongan output, dan kotak pesan user native dari satu config.json, dengan preset /tool-display."
+   },
+   "sourcePaths": [
+    "src/extensions/pi-tool-display/src/types.ts",
+    "src/extensions/pi-tool-display/config/config.example.json"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "Tool display config",
+      "id": "Konfigurasi tool display"
+     },
+     "path": "~/.selesai/agent/extensions/pi-tool-display/config.json",
+     "precedence": {
+      "en": "Single user-level file written by /tool-display; no project layer.",
+      "id": "Satu file tingkat user yang ditulis /tool-display; tidak ada lapisan proyek."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": "readOutputMode",
+     "type": "string",
+     "default": "hidden",
+     "description": {
+      "en": "Read tool output mode: hidden, summary, or preview.",
+      "id": "Mode output tool read: hidden, summary, atau preview."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "searchOutputMode",
+     "type": "string",
+     "default": "hidden",
+     "description": {
+      "en": "Search tool output mode: hidden, count, or preview.",
+      "id": "Mode output tool search: hidden, count, atau preview."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "bashOutputMode",
+     "type": "string",
+     "default": "opencode",
+     "description": {
+      "en": "Bash output mode: opencode, summary, or preview.",
+      "id": "Mode output bash: opencode, summary, atau preview."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "previewLines",
+     "type": "number",
+     "default": "8",
+     "description": {
+      "en": "Lines shown in preview mode.",
+      "id": "Baris yang ditampilkan dalam mode preview."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "boxedToolCalls",
+     "type": "boolean",
+     "default": "true",
+     "description": {
+      "en": "Draw an ASCII border around each tool call and its output.",
+      "id": "Gambar border ASCII di sekitar setiap panggilan tool dan outputnya."
+     },
+     "persistence": "config.json"
+    },
+    {
+     "key": "enableNativeUserMessageBox",
+     "type": "boolean",
+     "default": "true",
+     "description": {
+      "en": "Use the native user message box.",
+      "id": "Gunakan kotak pesan user native."
+     },
+     "persistence": "config.json"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "/tool-display show",
+     "description": {
+      "en": "Show the effective config summary.",
+      "id": "Tampilkan ringkasan konfigurasi efektif."
+     }
+    },
+    {
+     "name": "/tool-display preset <opencode|balanced|verbose|boxed>",
+     "description": {
+      "en": "Apply a rendering preset.",
+      "id": "Terapkan preset rendering."
+     }
+    },
+    {
+     "name": "/tool-display reset",
+     "description": {
+      "en": "Reset to the default boxed preset.",
+      "id": "Reset ke preset boxed bawaan."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "pi-hermes-memory",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Persistent memory stores facts, preferences, corrections, and skills across sessions, with session search and configurable review/flush behavior.",
+    "id": "Memori persisten menyimpan fakta, preferensi, koreksi, dan skill lintas sesi, dengan pencarian sesi serta perilaku review/flush yang dapat dikonfigurasi."
+   },
+   "sourcePaths": [
+    "src/extensions/pi-hermes-memory/src/config.ts",
+    "src/extensions/pi-hermes-memory/src/tools/memory-tool.ts",
+    "src/extensions/pi-hermes-memory/src/tools/session-search-tool.ts"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "Memory storage",
+      "id": "Penyimpanan memori"
+     },
+     "path": "~/.selesai/agent/pi-hermes-memory/ (agent dir)",
+     "precedence": {
+      "en": "Memory, skills, and the SQLite search store live under the Selesai agent directory; project memories are per project under projects-memory/.",
+      "id": "Memori, skill, dan store pencarian SQLite berada di direktori agent Selesai; memori proyek per proyek di bawah projects-memory/."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": "memoryMode",
+     "type": "string",
+     "default": "policy-only",
+     "description": {
+      "en": "How the memory policy is injected into the system prompt.",
+      "id": "Cara kebijakan memori disuntikkan ke system prompt."
+     },
+     "persistence": "config file"
+    },
+    {
+     "key": "reviewEnabled",
+     "type": "boolean",
+     "default": "true",
+     "description": {
+      "en": "Enables background review nudges and session flush.",
+      "id": "Mengaktifkan nudge review latar belakang dan session flush."
+     },
+     "persistence": "config file"
+    },
+    {
+     "key": "reviewTransport",
+     "type": "string",
+     "default": "direct",
+     "description": {
+      "en": "direct (in-process completeSimple) or subprocess (pi -p) for LLM-driven memory operations.",
+      "id": "direct (completeSimple in-process) atau subprocess (pi -p) untuk operasi memori berbasis LLM."
+     },
+     "persistence": "config file"
+    },
+    {
+     "key": "sessionSearch.variant",
+     "type": "string",
+     "default": "legacy",
+     "description": {
+      "en": "legacy snippet search or anchors mode reading session JSONL directly.",
+      "id": "Pencarian snippet legacy atau mode anchors yang membaca session JSONL langsung."
+     },
+     "persistence": "config file"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "/memory-insights",
+     "description": {
+      "en": "Show everything stored in memory and the user profile.",
+      "id": "Tampilkan semua yang tersimpan di memori dan profil user."
+     }
+    },
+    {
+     "name": "/memory-skills",
+     "description": {
+      "en": "Open the interactive skills manager.",
+      "id": "Buka pengelola skill interaktif."
+     }
+    },
+    {
+     "name": "/memory-consolidate",
+     "description": {
+      "en": "Manually trigger memory consolidation.",
+      "id": "Picu konsolidasi memori secara manual."
+     }
+    },
+    {
+     "name": "/memory-interview",
+     "description": {
+      "en": "Pre-fill the user profile with a few questions.",
+      "id": "Isi profil user dengan beberapa pertanyaan."
+     }
+    },
+    {
+     "name": "/memory-switch-project",
+     "description": {
+      "en": "List project memories and entry counts.",
+      "id": "Daftar memori proyek dan jumlah entri."
+     }
+    },
+    {
+     "name": "/memory-index-sessions",
+     "description": {
+      "en": "Import past Pi sessions into the search database.",
+      "id": "Impor sesi Pi masa lalu ke database pencarian."
+     }
+    },
+    {
+     "name": "/memory-sync-markdown",
+     "description": {
+      "en": "Backfill Markdown memories into the SQLite search store.",
+      "id": "Backfill memori Markdown ke store pencarian SQLite."
+     }
+    },
+    {
+     "name": "/memory-preview-context",
+     "description": {
+      "en": "Preview the memory policy blocks appended to the system prompt.",
+      "id": "Pratinjau blok kebijakan memori yang ditambahkan ke system prompt."
+     }
+    },
+    {
+     "name": "/learn-memory-tool",
+     "description": {
+      "en": "Skill that teaches how to use the memory system.",
+      "id": "Skill yang mengajarkan cara memakai sistem memori."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
+   "slug": "herdr-agent-state",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Herdr pane state is fully automatic and environment-driven. It activates only when HERDR_ENV=1 with HERDR_SOCKET_PATH and HERDR_PANE_ID set.",
+    "id": "Status pane Herdr sepenuhnya otomatis dan digerakkan lingkungan. Aktif hanya saat HERDR_ENV=1 dengan HERDR_SOCKET_PATH dan HERDR_PANE_ID diatur."
+   },
+   "sourcePaths": [
+    "src/extensions/herdr-agent-state.ts"
+   ],
+   "scopes": [],
+   "settings": [],
+   "envVars": [
+    {
+     "key": "HERDR_ENV",
+     "description": {
+      "en": "Must be 1 for the extension to activate.",
+      "id": "Harus 1 agar ekstensi aktif."
+     }
+    },
+    {
+     "key": "HERDR_SOCKET_PATH",
+     "description": {
+      "en": "Local Unix-domain socket path for pane reports.",
+      "id": "Path socket Unix lokal untuk laporan pane."
+     }
+    },
+    {
+     "key": "HERDR_PANE_ID",
+     "description": {
+      "en": "Pane identifier the reports are attributed to.",
+      "id": "Identitas pane tempat laporan diatribusikan."
+     }
+    }
+   ],
+   "controls": []
+  }
+ ]
 }

@@ -17,7 +17,7 @@ export type FirecrawlOptions = {
 };
 
 export type SearchBackendConfig = {
-  provider: 'duckduckgo' | 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily';
+  provider: 'duckduckgo' | 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily' | 'tokenin';
   baseUrl?: string;
   fallback?: 'duckduckgo';
   options?: SearxngOptions;
@@ -54,7 +54,7 @@ export type BackendConfigFile = {
 };
 
 export const DEFAULT_BACKEND_CONFIG: BackendConfig = {
-  search: { provider: 'duckduckgo' },
+  search: { provider: 'tokenin', fallback: 'duckduckgo' },
   fetch: { provider: 'http' },
   headless: { provider: 'local-browser' }
 };
@@ -86,7 +86,7 @@ function extractFirecrawlOptions(value: unknown): FirecrawlOptions | undefined {
   return Object.keys(options).length > 0 ? options : undefined;
 }
 
-const PROVIDER_NAMES: SearchProviderName[] = ['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily'];
+const PROVIDER_NAMES: SearchProviderName[] = ['duckduckgo', 'searxng', 'brave', 'youcom', 'exa', 'tavily', 'tokenin'];
 
 export function usableSearchProviders(
   search: SearchBackendConfig,
@@ -99,6 +99,7 @@ export function usableSearchProviders(
   if (env.YDC_API_KEY?.trim()) usable.push('youcom');
   if (env.EXA_API_KEY?.trim()) usable.push('exa');
   if (env.TAVILY_API_KEY?.trim()) usable.push('tavily');
+  if (hasActiveTokenInAccount()) usable.push('tokenin');
   return usable;
 }
 
@@ -129,7 +130,8 @@ export function extractBackendConfigOverride(
     backends?.search?.provider === 'brave' ||
     backends?.search?.provider === 'youcom' ||
     backends?.search?.provider === 'exa' ||
-    backends?.search?.provider === 'tavily'
+    backends?.search?.provider === 'tavily' ||
+    backends?.search?.provider === 'tokenin'
   ) {
     override.search = { provider: backends.search.provider };
     if (backends.search.provider === 'searxng' && typeof backends.search.baseUrl === 'string') {
@@ -186,8 +188,8 @@ export function validateBackendConfig(config: BackendConfig): string[] {
     issues.push('fetch provider firecrawl requires backends.fetch.baseUrl');
   }
 
-  if (config.search.fallback === 'duckduckgo' && config.search.provider !== 'searxng' && config.search.provider !== 'brave' && config.search.provider !== 'youcom' && config.search.provider !== 'exa' && config.search.provider !== 'tavily') {
-    issues.push('search fallback duckduckgo is only supported when search provider is searxng, brave, youcom, exa, or tavily');
+  if (config.search.fallback === 'duckduckgo' && config.search.provider !== 'searxng' && config.search.provider !== 'brave' && config.search.provider !== 'youcom' && config.search.provider !== 'exa' && config.search.provider !== 'tavily' && config.search.provider !== 'tokenin') {
+    issues.push('search fallback duckduckgo is only supported when search provider is searxng, brave, youcom, exa, tavily, or tokenin');
   }
 
   if (config.fetch.fallback === 'http' && config.fetch.provider !== 'firecrawl') {

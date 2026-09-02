@@ -3,6 +3,7 @@ import { createBraveSearchTool } from '../search/brave.js';
 import { createYouComSearchTool } from '../search/youcom.js';
 import { createExaSearchTool } from '../search/exa.js';
 import { createTavilySearchTool } from '../search/tavily.js';
+import { createTokenInSearchTool } from '../search/tokenin.js';
 import { createSearxngSearchTool } from '../search/searxng.js';
 import { createFanoutSearch } from '../search/fanout.js';
 import { buildFetchPresentation } from '../presentation/fetch-presentation.js';
@@ -31,6 +32,7 @@ export type BackendFactoryDeps = {
   createYouComSearch?: typeof createYouComSearchTool;
   createExaSearch?: typeof createExaSearchTool;
   createTavilySearch?: typeof createTavilySearchTool;
+  createTokenInSearch?: typeof createTokenInSearchTool;
   createHttpFetch?: typeof createWebFetchTool;
   createFirecrawlFetch?: typeof createFirecrawlFetcher;
   createHeadlessFetch?: typeof createWebFetchHeadlessTool;
@@ -71,7 +73,7 @@ function invalidFirecrawlFetch() {
 function withSearchFallback(
   primary: BackendSet['search'],
   fallback: BackendSet['search'],
-  fallbackFrom: 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily' | 'duckduckgo'
+  fallbackFrom: 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily' | 'tokenin' | 'duckduckgo'
 ): BackendSet['search'] {
   return async (input) => {
     const first = await primary(input);
@@ -124,6 +126,7 @@ export function createBackendSet(
   const createYouComSearch = deps.createYouComSearch ?? createYouComSearchTool;
   const createExaSearch = deps.createExaSearch ?? createExaSearchTool;
   const createTavilySearch = deps.createTavilySearch ?? createTavilySearchTool;
+  const createTokenInSearch = deps.createTokenInSearch ?? createTokenInSearchTool;
   const createHttpFetch = deps.createHttpFetch ?? createWebFetchTool;
   const createFirecrawlFetch = deps.createFirecrawlFetch ?? createFirecrawlFetcher;
   const createHeadlessFetch = deps.createHeadlessFetch ?? createWebFetchHeadlessTool;
@@ -142,6 +145,8 @@ export function createBackendSet(
         return createExaSearch({ apiKey: process.env.EXA_API_KEY });
       case 'tavily':
         return createTavilySearch({ apiKey: process.env.TAVILY_API_KEY });
+      case 'tokenin':
+        return createTokenInSearch();
       case 'duckduckgo':
       default:
         return createDuckDuckGoSearch();
@@ -160,7 +165,9 @@ export function createBackendSet(
           ? createExaSearch({ apiKey: process.env.EXA_API_KEY })
           : config.search.provider === 'tavily'
             ? createTavilySearch({ apiKey: process.env.TAVILY_API_KEY })
-            : createDuckDuckGoSearch();
+            : config.search.provider === 'tokenin'
+              ? createTokenInSearch()
+              : createDuckDuckGoSearch();
 
   if (config.search.provider === 'searxng' && config.search.fallback === 'duckduckgo') {
     search = withSearchFallback(search, createDuckDuckGoSearch(), 'searxng');
@@ -180,6 +187,10 @@ export function createBackendSet(
 
   if (config.search.provider === 'tavily' && config.search.fallback === 'duckduckgo') {
     search = withSearchFallback(search, createDuckDuckGoSearch(), 'tavily');
+  }
+
+  if (config.search.provider === 'tokenin' && config.search.fallback === 'duckduckgo') {
+    search = withSearchFallback(search, createDuckDuckGoSearch(), 'tokenin');
   }
 
   const fanoutConfig = config.search.fanout;

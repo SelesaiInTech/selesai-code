@@ -66,6 +66,14 @@ const { command } = Astro.props;
     cursor: pointer;
     font-size: var(--sl-text-xs);
     padding: 0.375rem 0.625rem;
+    transition: background-color 180ms ease, border-color 180ms ease, transform 120ms ease;
+  }
+  .copy-button:hover {
+    border-color: var(--selesai-border-hover);
+    background: var(--selesai-surface-raised);
+  }
+  .copy-button:active {
+    transform: scale(0.96);
   }
   .copy-button:focus-visible {
     outline: 2px solid var(--sl-color-accent);
@@ -76,6 +84,6 @@ const { command } = Astro.props;
     inset-block-end: 0.5rem;
     inset-inline-end: 0.5rem;
     font-size: var(--sl-text-xs);
-    color: var(--sl-color-accent-high);
+    color: var(--sl-color-text-accent);
   }
 </style>

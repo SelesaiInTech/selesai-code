@@ -16,7 +16,7 @@ export type SearchResult = {
   snippet: string;
 };
 
-export type SearchProviderName = 'duckduckgo' | 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily';
+export type SearchProviderName = 'duckduckgo' | 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily' | 'tokenin';
 
 export type FanoutMode = 'off' | 'on' | 'auto';
 
@@ -32,9 +32,9 @@ export type ToolError = {
 };
 
 export type SearchMetadata = {
-  backend: 'duckduckgo' | 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily';
+  backend: SearchProviderName;
   cacheHit: boolean;
-  fallbackFrom?: 'searxng' | 'brave' | 'youcom' | 'exa' | 'tavily' | 'duckduckgo';
+  fallbackFrom?: Exclude<SearchProviderName, 'tokenin'>;
   fallbackReason?: string;
   fanout?: FanoutMetadata;
 };

@@ -1,0 +1,58 @@
+---
+draft: false
+title: Herdr pane state
+---
+
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+The `herdr-agent-state` extension reports Selesai's lifecycle state to a Herdr pane over a local Unix-domain socket, so the pane shows the agent as working, blocked, or idle instead of a stale status.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./herdr-agent-state.ts"
+  runtimeSurface="automatic"
+  locale="en"
+/>
+
+## Setup and prerequisites
+
+- This extension is bundled with Selesai. It is loaded automatically; you do not need to install it separately.
+- It activates only when Herdr integration is enabled: `HERDR_ENV=1` with `HERDR_SOCKET_PATH` and `HERDR_PANE_ID` set. Outside Herdr it is a no-op.
+- TUI sessions only. RPC, JSON, and print modes are headless and do not report state.
+
+## What it sets up
+
+- Reports the current agent state (`working`, `blocked`, `idle`) to the Herdr pane, with the blocking label when the agent is waiting on a decision.
+- Reports session identity (`agent_session_path` or `agent_session_id`) so the pane can attribute state to the right session.
+- Releases the pane on quit so a late report cannot reclaim a pane whose agent already exited.
+- Keeps a monotonic report sequence across reloads, so a successor session never restarts below the previous instance's high-water mark.
+
+## What you can configure
+
+<ExtensionCustomization slug="herdr-agent-state" locale="en" />
+
+This extension has no user configuration. It is driven entirely by the Herdr environment variables above.
+
+## What you can do
+
+- Run Selesai inside a Herdr pane and watch the pane status track the agent: working while a turn runs, blocked while it waits on a question, idle between turns.
+- Start a new session, resume, fork, or reload in the same pane and see the state hand off to the successor instance without a stale report.
+
+## Commands, tools, and shortcuts
+
+| Surface | Description |
+| --- | --- |
+| `pane.report_agent` | State report (working / blocked / idle) with optional message. |
+| `pane.report_agent_session` | Session identity report on session start. |
+| `pane.release_agent` | Pane release on quit. |
+
+## Limits and safety
+
+- Same-machine only: reports go over the local Herdr socket; there is no remote transport.
+- Reports are only sent while `HERDR_ENV=1`; without Herdr the extension does nothing.
+- The blocked label is the label Herdr supplies with the `herdr:blocked` event; Selesai does not invent one.
+- State is best-effort: a detached process can outlive its pane, and the pane is released only on a clean quit.
+
+<SourceEvidence slug="herdr-agent-state" />

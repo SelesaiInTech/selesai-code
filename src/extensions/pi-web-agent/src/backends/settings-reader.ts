@@ -4,7 +4,28 @@
 // minimal settings.json read. Ceiling: if selesai moves web search config elsewhere, this
 // helper needs updating; upgrade path = upstream pi-web-agent adopting a settings hook.
 import { existsSync, readFileSync } from 'node:fs';
-import { getSettingsPath } from '@selesai/code';
+import { join } from 'node:path';
+import { getAgentDir, getSettingsPath } from '@selesai/code';
+
+/**
+ * True when tokenin-auth.json (written by the tokenin-onboarding extension)
+ * has an active account. Used to decide whether the tokenin search provider is
+ * usable. Never throws.
+ */
+export function hasActiveTokenInAccount(authPath: string = join(getAgentDir(), 'tokenin-auth.json')): boolean {
+	try {
+		if (!existsSync(authPath)) return false;
+		const parsed = JSON.parse(readFileSync(authPath, 'utf-8')) as unknown;
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+		const auth = parsed as { accounts?: unknown; activeId?: unknown };
+		if (!Array.isArray(auth.accounts) || typeof auth.activeId !== 'string') return false;
+		return auth.accounts.some(
+			(a) => a && typeof a === 'object' && !Array.isArray(a) && (a as { id?: unknown }).id === auth.activeId
+		);
+	} catch {
+		return false;
+	}
+}
 
 /**
  * Read the Brave API key from selesai settings.json (webAgent.braveApiKey).

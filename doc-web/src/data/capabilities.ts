@@ -151,6 +151,21 @@ export const capabilities: Capability[] = [
     runtimeSurface: "mixed",
   },
   {
+    slug: "herdr-agent-state",
+    category: "continuity-and-recovery",
+    en: { displayName: "Herdr pane state", benefit: "Reports Selesai's working, blocked, and idle state to a Herdr pane over a local socket." },
+    id: { displayName: "Status pane Herdr", benefit: "Melaporkan status working, blocked, dan idle Selesai ke pane Herdr melalui socket lokal." },
+    sourcePaths: ["src/extensions/herdr-agent-state.ts"],
+    sourceLinks: [
+      links("Extension source", "src/extensions/herdr-agent-state.ts"),
+    ],
+    guideRoute: "capabilities/continuity/herdr-agent-state",
+    piComparison: "bundled",
+    distribution: "bundled",
+    manifestEntry: "./herdr-agent-state.ts",
+    runtimeSurface: "automatic",
+  },
+  {
     slug: "undo",
     category: "continuity-and-recovery",
     en: { displayName: "Turn-level undo", benefit: "Undo tracked edits, writes, and detected mutating shell commands one turn at a time." },

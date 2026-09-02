@@ -91,6 +91,10 @@ const desc = kind === "bundled" ? t.bundledDesc : kind === "optional" ? t.option
     border: 1px solid var(--selesai-border);
     border-radius: 0.55rem;
     background: var(--selesai-surface-raised);
+    transition: border-color 180ms ease;
+  }
+  .extension-status:hover {
+    border-color: var(--selesai-border-hover);
   }
   .extension-status.is-bundled {
     border-inline-start: 4px solid var(--selesai-status-ok);
@@ -99,7 +103,7 @@ const desc = kind === "bundled" ? t.bundledDesc : kind === "optional" ? t.option
     border-inline-start: 4px solid var(--selesai-status-warn);
   }
   .extension-status.is-core {
-    border-inline-start: 4px solid var(--sl-color-accent-high);
+    border-inline-start: 4px solid var(--sl-color-accent);
   }
   .extension-status__badge {
     display: flex;
@@ -119,7 +123,7 @@ const desc = kind === "bundled" ? t.bundledDesc : kind === "optional" ? t.option
     background: var(--selesai-status-warn);
   }
   .extension-status.is-core .extension-status__dot {
-    background: var(--sl-color-accent-high);
+    background: var(--sl-color-accent);
   }
   .extension-status__desc {
     margin: 0;

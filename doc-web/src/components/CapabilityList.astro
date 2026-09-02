@@ -68,6 +68,16 @@ const statusLabels: Record<Distribution, string> = {
     padding: 1rem 0.25rem;
     color: var(--sl-color-text);
     text-decoration: none;
+    transition: background-color 180ms ease;
+  }
+
+  a:hover,
+  a:focus-visible {
+    background: var(--selesai-surface-raised);
+  }
+
+  a:active {
+    transform: scale(0.995);
   }
 
   strong {
@@ -92,7 +102,7 @@ const statusLabels: Record<Distribution, string> = {
     color: var(--selesai-status-warn);
   }
   .status-badge[data-distribution="core"] {
-    color: var(--sl-color-accent-high);
+    color: var(--sl-color-text-accent);
   }
 
   .comparison-badge {
@@ -106,7 +116,7 @@ const statusLabels: Record<Distribution, string> = {
   }
 
   .comparison-badge[data-comparison="core-differentiator"] {
-    color: var(--sl-color-accent-high);
+    color: var(--sl-color-text-accent);
     background: var(--sl-color-accent-low);
   }
 
@@ -121,13 +131,13 @@ const statusLabels: Record<Distribution, string> = {
   }
 
   .arrow {
-    color: var(--sl-color-accent-high);
+    color: var(--sl-color-text-accent);
     transition: transform 150ms ease;
   }
 
   a:hover strong,
   a:focus-visible strong {
-    color: var(--sl-color-accent-high);
+    color: var(--sl-color-text-accent);
   }
 
   a:hover .arrow {

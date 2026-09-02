@@ -24,7 +24,7 @@
 
 import * as path from "node:path";
 import * as fs from "node:fs";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { MemoryStore } from "./store/memory-store.js";
 import { SkillStore } from "./store/skill-store.js";
 import { DatabaseManager } from "./store/db.js";
@@ -106,6 +106,10 @@ export default function (pi: ExtensionAPI) {
 
   const shouldMigrateExtensionRoot = !configuredMemoryDir || pointsToLegacyMemoryDir;
   let persistenceInitialized = false;
+  // Captured at session_start: the extension factory runs with no session, but
+  // the auto-consolidator needs model access to use the fast in-process direct
+  // transport instead of always spawning a slow `pi -p` subprocess agent.
+  let sessionModelCtx: Pick<ExtensionContext, "model" | "modelRegistry"> | null = null;
 
   const store = new MemoryStore({ ...config, memoryDir: globalDir });
   // Factory may run with no session (Pi public contract). Do not snapshot
@@ -182,6 +186,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── 1. Load memory from disk on session start ──
   pi.on("session_start", async (_event, ctx) => {
+    sessionModelCtx = { model: ctx.model, modelRegistry: ctx.modelRegistry };
     if (!persistenceInitialized) {
       try {
         await measureLifecycle("session-start.persistence-sync", async () => {
@@ -286,6 +291,7 @@ export default function (pi: ExtensionAPI) {
       config.consolidationTimeoutMs,
       toolTarget,
       config,
+      sessionModelCtx,
     );
     if (result.deferred) {
       console.info(`⏳ Auto-consolidation for '${toolTarget}' deferred: ${result.error ?? "another session holds the consolidation lock"}`);

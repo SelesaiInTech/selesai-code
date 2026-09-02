@@ -46,6 +46,7 @@ const BUNDLED_EXTENSION_GUIDES = {
   "./pi-subagents": "delegation/pi-subagents",
   "./pi-web-agent": "research/web-agent",
   "./pi-hermes-memory": "continuity/pi-hermes-memory",
+  "./herdr-agent-state.ts": "continuity/herdr-agent-state",
   "./web-agent-onboarding.ts": "workspace/web-agent-onboarding",
   "./tps.ts": "workspace/tps",
   "./pi-zentui/extensions/zentui/index.ts": "workspace/zentui",

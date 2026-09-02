@@ -1,70 +1,74 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
-/* Selesai docs in the ClickHouse design language:
-   near-pure black canvas, one electric yellow, flat hairline surfaces. No shadows, no gradients, no second accent. */
+/* Selesai docs in the Intercom design language:
+   warm cream canvas, charcoal ink as the system primary, one restrained orange
+   accent reserved for the Selesai-difference signal. Depth comes from
+   white-on-cream surface lift and hairlines — never drop shadows. */
+
 :root {
-  --sl-color-black: #0a0a0a;
-  --sl-color-accent-low: #3a3a1f;
-  --sl-color-accent: #faff69;
-  --sl-color-accent-high: #faff69;
-  --sl-color-text-accent: #faff69;
-  --sl-color-text-invert: #0a0a0a;
-  --sl-color-bg: #0a0a0a;
-  --sl-color-bg-nav: rgb(10 10 10 / 88%);
-  --sl-color-bg-sidebar: #0a0a0a;
-  --sl-color-bg-inline-code: #1a1a1a;
-  --sl-color-hairline-shade: #242424;
-  --sl-color-hairline: #2a2a2a;
-  --sl-color-hairline-light: #3a3a3a;
-  --sl-color-white: #ffffff;
-  --sl-color-text: #cccccc;
-  --sl-color-gray-1: #e6e6e6;
-  --sl-color-gray-2: #cccccc;
-  --sl-color-gray-3: #888888;
-  --sl-color-gray-4: #5a5a5a;
-  --sl-color-gray-5: #3a3a3a;
-  --sl-color-gray-6: #2a2a2a;
+  /* Dark mode: warm charcoal, not pure black. */
+  --sl-color-black: #141311;
+  --sl-color-accent-low: rgb(255 86 0 / 12%);
+  --sl-color-accent: #ff5600;
+  --sl-color-accent-high: #ff7a3d;
+  --sl-color-text-accent: #ff7a3d;
+  --sl-color-text-invert: #141311;
+  --sl-color-bg: #141311;
+  --sl-color-bg-nav: rgb(20 19 17 / 88%);
+  --sl-color-bg-sidebar: #141311;
+  --sl-color-bg-inline-code: #1d1b19;
+  --sl-color-hairline-shade: #262320;
+  --sl-color-hairline: #2e2a26;
+  --sl-color-hairline-light: #3d3833;
+  --sl-color-white: #f2efe9;
+  --sl-color-text: #c9c4ba;
+  --sl-color-gray-1: #f2efe9;
+  --sl-color-gray-2: #b8b2a8;
+  --sl-color-gray-3: #8a857c;
+  --sl-color-gray-4: #5f5a52;
+  --sl-color-gray-5: #3d3833;
+  --sl-color-gray-6: #2e2a26;
   --sl-sidebar-width: 17.5rem;
   --sl-content-width: 55rem;
-  --selesai-surface: #1a1a1a;
-  --selesai-surface-raised: #242424;
-  --selesai-border: #2a2a2a;
-  --selesai-border-strong: #3a3a3a;
-  --selesai-border-hover: #3a3a3a;
+  --selesai-surface: #1d1b19;
+  --selesai-surface-raised: #262320;
+  --selesai-border: #2e2a26;
+  --selesai-border-strong: #3d3833;
+  --selesai-border-hover: #4a443c;
   --selesai-status-ok: #22c55e;
   --selesai-status-warn: #f59e0b;
-  --sl-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --sl-font: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --sl-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
-/* Docs keep a light mode for accessibility; it stays paper-white with the yellow reserved for fills. */
+/* Light mode: the Intercom cream canvas. */
 :root[data-theme="light"] {
-  --sl-color-black: #ffffff;
-  --sl-color-accent-low: #f5f6cf;
-  --sl-color-accent: #faff69;
-  --sl-color-accent-high: #5c6100;
-  --sl-color-text-accent: #5c6100;
-  --sl-color-text-invert: #0a0a0a;
-  --sl-color-bg: #fdfdf8;
-  --sl-color-bg-nav: rgb(253 253 248 / 88%);
-  --sl-color-bg-sidebar: #fbfbf4;
-  --sl-color-bg-inline-code: #f2f3e2;
-  --sl-color-hairline-shade: #e8e8da;
-  --sl-color-hairline: #e2e2d2;
-  --sl-color-hairline-light: #d4d4c2;
-  --sl-color-white: #0a0a0a;
-  --sl-color-text: #2b2b24;
-  --sl-color-gray-1: #3c3c32;
-  --sl-color-gray-2: #4c4c40;
-  --sl-color-gray-3: #6f6f60;
-  --sl-color-gray-4: #94948a;
-  --sl-color-gray-5: #d4d4c2;
-  --sl-color-gray-6: #e8e8da;
+  --sl-color-black: #f5f1ec;
+  --sl-color-accent-low: #fdeee4;
+  --sl-color-accent: #ff5600;
+  --sl-color-accent-high: #c2410c;
+  --sl-color-text-accent: #c2410c;
+  --sl-color-text-invert: #111111;
+  --sl-color-bg: #f5f1ec;
+  --sl-color-bg-nav: rgb(245 241 236 / 88%);
+  --sl-color-bg-sidebar: #f5f1ec;
+  --sl-color-bg-inline-code: #faf7f2;
+  --sl-color-hairline-shade: #e8e3da;
+  --sl-color-hairline: #d3cec6;
+  --sl-color-hairline-light: #b9b3a9;
+  --sl-color-white: #111111;
+  --sl-color-text: #3a3833;
+  --sl-color-gray-1: #111111;
+  --sl-color-gray-2: #626260;
+  --sl-color-gray-3: #7b7b78;
+  --sl-color-gray-4: #9c9fa5;
+  --sl-color-gray-5: #d3cec6;
+  --sl-color-gray-6: #e8e3da;
   --selesai-surface: #ffffff;
-  --selesai-surface-raised: #f6f7ea;
-  --selesai-border: #e2e2d2;
-  --selesai-border-strong: #d4d4c2;
-  --selesai-border-hover: #b9b9a0;
+  --selesai-surface-raised: #faf7f2;
+  --selesai-border: #d3cec6;
+  --selesai-border-strong: #b9b3a9;
+  --selesai-border-hover: #8f887d;
   --selesai-status-ok: #15803d;
   --selesai-status-warn: #b45309;
 }
@@ -79,7 +83,7 @@ body {
 
 ::selection {
   background: var(--sl-color-accent);
-  color: #0a0a0a;
+  color: var(--sl-color-text-invert);
 }
 
 header.header {
@@ -101,7 +105,7 @@ header.header {
 .site-title {
   gap: 0.7rem;
   color: var(--sl-color-white);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.025em;
 }
 
@@ -121,16 +125,22 @@ header.header {
 #starlight__sidebar a,
 #starlight__sidebar summary {
   border-radius: 0.5rem;
+  transition: background-color 180ms ease, color 180ms ease;
 }
 
-/* Active nav item = ClickHouse active tab: surface fill, white text. */
+#starlight__sidebar a:hover,
+#starlight__sidebar summary:hover {
+  background: var(--selesai-surface-raised);
+}
+
+/* Active nav item: white pill lifted on cream, orange signal edge. */
 #starlight__sidebar a[aria-current="page"] {
   background: var(--selesai-surface);
   color: var(--sl-color-white);
   box-shadow: none;
+  border-inline-start: 2px solid var(--sl-color-accent);
 }
 
-/* Flat canvas. Depth comes from surface contrast, not atmospheric decoration. */
 .content-panel {
   border-color: var(--selesai-border) !important;
 }
@@ -140,8 +150,8 @@ header.header {
 .sl-markdown-content h3,
 [data-page-title] {
   color: var(--sl-color-white);
-  font-weight: 700;
-  letter-spacing: -0.035em;
+  font-weight: 600;
+  letter-spacing: -0.03em;
 }
 
 .sl-markdown-content h2 {
@@ -152,6 +162,11 @@ header.header {
   color: var(--sl-color-text-accent);
   text-decoration-color: color-mix(in srgb, var(--sl-color-text-accent) 45%, transparent);
   text-underline-offset: 0.2em;
+  transition: text-decoration-color 180ms ease;
+}
+
+.sl-markdown-content a:not(.capability-card):not([class]):hover {
+  text-decoration-color: var(--sl-color-text-accent);
 }
 
 .sl-markdown-content code:not(:where(.not-content *)) {
@@ -223,10 +238,14 @@ header.header {
     font: 600 var(--sl-text-sm) / 1 var(--sl-font);
     letter-spacing: -0.01em;
     white-space: nowrap;
+    transition: border-color 180ms ease, color 180ms ease;
   }
   .floating-toc.is-collapsed .floating-toc__toggle:hover {
     border-color: var(--selesai-border-hover);
     color: var(--sl-color-white);
+  }
+  .floating-toc.is-collapsed .floating-toc__toggle:active {
+    transform: scale(0.98);
   }
   .floating-toc__close-icon { display: none; }
   .floating-toc__list-icon { width: 1rem; height: 1rem; color: var(--sl-color-text-accent); }
@@ -316,17 +335,17 @@ header.header {
   border-radius: 999px;
   font-size: var(--sl-text-2xs);
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--sl-color-gray-2);
   vertical-align: 0.08em;
 }
 
-/* The one yellow badge: the Selesai-difference signal. */
+/* The one orange badge: the Selesai-difference signal. */
 .legend-badge--difference {
   border-color: transparent;
   background: var(--sl-color-accent);
-  color: #0a0a0a;
+  color: var(--sl-color-text-invert);
   font-weight: 700;
 }
 
@@ -342,7 +361,7 @@ header.header {
 
 .hero h1[data-page-title] {
   font-size: clamp(var(--sl-text-4xl), 4vw + 0.5rem, var(--sl-text-7xl));
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.04em;
   line-height: 1.05;
 }
@@ -353,29 +372,44 @@ header.header {
   line-height: 1.6;
 }
 
-/* ClickHouse buttons: 8px radius, yellow primary with black type, dark secondary. */
+/* Intercom buttons: charcoal primary, white secondary, orange reserved. */
 .sl-link-button.primary {
-  background: var(--sl-color-accent);
-  color: #0a0a0a;
+  background: var(--sl-color-white);
+  color: var(--sl-color-bg);
 }
 
 .sl-link-button.primary:hover,
 .sl-link-button.primary:focus-visible {
-  background: #e6eb52;
-  color: #0a0a0a;
+  background: var(--sl-color-gray-1);
+  color: var(--sl-color-bg);
+}
+
+.sl-link-button.secondary {
+  background: var(--selesai-surface);
+  border: 1px solid var(--selesai-border-strong);
+  color: var(--sl-color-white);
+}
+
+.sl-link-button.secondary:hover,
+.sl-link-button.secondary:focus-visible {
+  border-color: var(--selesai-border-hover);
+  background: var(--selesai-surface-raised);
 }
 
 .hero .actions a {
   height: 2.5rem;
   padding-inline: 1.25rem;
-  border: 1px solid transparent;
   border-radius: 0.5rem;
   font-weight: 600;
   letter-spacing: 0;
-  transition: background-color 180ms ease, border-color 180ms ease;
+  transition: background-color 180ms ease, border-color 180ms ease, transform 120ms ease;
 }
 
-/* Code-window card: flat dark surface, hairline border, JetBrains Mono. */
+.hero .actions a:active {
+  transform: scale(0.98);
+}
+
+/* Code-window card: warm dark surface, hairline border, JetBrains Mono. */
 .terminal-card {
   width: min(100%, 30rem);
   overflow: hidden;
@@ -455,21 +489,20 @@ header.header {
   margin-block-end: 2rem;
 }
 
-/* Caption-uppercase eyebrow: Inter 600, wide tracking, the yellow signal. */
+/* Sentence-case eyebrow in orange — Intercom style, no all-caps tracking. */
 .eyebrow {
   margin: 0 0 0.7rem !important;
   color: var(--sl-color-text-accent);
   font-family: var(--sl-font);
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .home-section__heading h2 {
   margin: 0;
   font-size: clamp(2rem, 5vw, 3.5rem);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.035em;
 }
 
@@ -485,6 +518,7 @@ header.header {
   color: var(--sl-color-text-accent);
   font-weight: 600;
   text-decoration: none;
+  transition: gap 180ms ease;
 }
 
 .home-link:hover {

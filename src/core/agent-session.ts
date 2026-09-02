@@ -326,6 +326,13 @@ function estimateMessagesTokens(messages: AgentMessage[]): number {
 // Constants
 // ============================================================================
 
+/** Max consecutive auto-continuations after a length stop (output token limit). */
+const MAX_LENGTH_CONTINUATIONS = 3;
+
+/** Follow-up message queued when the model hits the output token limit. */
+const LENGTH_CONTINUATION_MESSAGE =
+	"Your previous response was cut off because it reached the maximum output token limit. Continue from where you left off. Do not repeat content you already produced.";
+
 // ============================================================================
 // AgentSession Class
 // ============================================================================
@@ -364,6 +371,9 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+
+	// Length-stop continuation state (consecutive output-token-limit continuations)
+	private _lengthContinuations = 0;
 
 	// Bash execution state
 	private readonly _bashAbortControllers = new Set<AbortController>();
@@ -752,6 +762,12 @@ export class AgentSession {
 				const assistantMsg = event.message as AssistantMessage;
 				if (assistantMsg.stopReason !== "error") {
 					this._overflowRecoveryAttempted = false;
+				}
+
+				// Reset the length-continuation counter on any non-length stop so the
+				// cap only bounds consecutive output-token-limit continuations.
+				if (assistantMsg.stopReason !== "length") {
+					this._lengthContinuations = 0;
 				}
 
 				// Reset retry counter immediately on successful assistant response
@@ -1216,6 +1232,21 @@ export class AgentSession {
 		}
 
 		if (await this._checkCompaction(msg)) {
+			return true;
+		}
+
+		// A length stop means the model hit the output token limit mid-response.
+		// The agent loop already re-prompts when truncated tool calls are present;
+		// here the loop stopped on truncated text, so queue a follow-up to continue.
+		// Compaction runs first: a length stop caused by context pressure (input
+		// filling the window) should compact instead of blindly continuing.
+		if (
+			msg.stopReason === "length" &&
+			!msg.content.some((c) => c.type === "toolCall") &&
+			this._lengthContinuations < MAX_LENGTH_CONTINUATIONS
+		) {
+			this._lengthContinuations++;
+			await this._queueFollowUp(LENGTH_CONTINUATION_MESSAGE);
 			return true;
 		}
 

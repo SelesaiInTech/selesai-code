@@ -55,6 +55,10 @@ const links = explicitLinks ?? capability?.sourceLinks ?? [];
     margin: 0.125rem 0;
   }
   .source-evidence a {
-    color: var(--sl-color-accent-high);
+    color: var(--sl-color-text-accent);
+    text-underline-offset: 0.2em;
+  }
+  .source-evidence a:hover {
+    text-decoration-color: var(--sl-color-text-accent);
   }
 </style>

@@ -160,10 +160,18 @@ const labels = locale === "en"
   }
 
   thead th {
-    color: var(--sl-color-accent-high);
+    color: var(--sl-color-text-accent);
     font-size: 0.7rem;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
+  }
+
+  tbody tr {
+    transition: background-color 180ms ease;
+  }
+
+  tbody tr:hover {
+    background: var(--selesai-surface-raised);
   }
 
   tbody th {
@@ -193,7 +201,7 @@ const labels = locale === "en"
   }
 
   a {
-    color: var(--sl-color-accent-high);
+    color: var(--sl-color-text-accent);
     font-weight: 650;
     text-underline-offset: 0.2em;
   }

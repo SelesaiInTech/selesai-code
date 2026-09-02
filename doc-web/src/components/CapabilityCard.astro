@@ -57,13 +57,17 @@ const badge =
     background: var(--selesai-surface);
     color: var(--sl-color-text);
     text-decoration: none;
-    transition: border-color 180ms ease, background-color 180ms ease;
+    transition: border-color 180ms ease, background-color 180ms ease, transform 120ms ease;
   }
 
   .capability-card:hover,
   .capability-card:focus-visible {
     border-color: var(--selesai-border-hover);
     background: var(--selesai-surface-raised);
+  }
+
+  .capability-card:active {
+    transform: scale(0.98);
   }
 
   .capability-card:focus-visible {
@@ -87,7 +91,7 @@ const badge =
     border: 1px solid var(--selesai-border);
     border-radius: 0.65rem;
     background: var(--sl-color-accent-low);
-    color: var(--sl-color-accent-high);
+    color: var(--sl-color-text-accent);
     font-family: var(--__sl-font-mono);
     font-size: 0.8rem;
     font-weight: 800;
@@ -106,6 +110,7 @@ const badge =
     margin: 0.35rem 0 0;
     color: var(--sl-color-white);
     font-size: clamp(1.25rem, 2vw, 1.55rem);
+    font-weight: 600;
     letter-spacing: -0.025em;
     line-height: 1.15;
   }
@@ -130,16 +135,16 @@ const badge =
     text-transform: uppercase;
   }
 
-  /* The yellow badge is reserved for the Selesai-difference signal. */
+  /* The orange badge is reserved for the Selesai-difference signal. */
   .capability-card__badge--difference {
     border-color: transparent;
     background: var(--sl-color-accent);
-    color: #0a0a0a;
+    color: var(--sl-color-text-invert);
     font-weight: 700;
   }
 
   .capability-card__arrow {
-    color: var(--sl-color-accent-high);
+    color: var(--sl-color-text-accent);
     font-size: 1.25rem;
     transition: transform 180ms ease;
   }

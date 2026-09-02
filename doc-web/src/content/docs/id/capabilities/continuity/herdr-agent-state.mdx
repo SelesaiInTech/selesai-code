@@ -1,0 +1,58 @@
+---
+draft: false
+title: Status pane Herdr
+---
+
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+Ekstensi `herdr-agent-state` melaporkan status siklus hidup Selesai ke pane Herdr melalui socket Unix lokal, sehingga pane menampilkan agent sebagai working, blocked, atau idle, bukan status basi.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./herdr-agent-state.ts"
+  runtimeSurface="automatic"
+  locale="id"
+/>
+
+## Penyiapan dan prasyarat
+
+- Ekstensi ini dibundel bersama Selesai. Dimuat otomatis; tidak perlu dipasang terpisah.
+- Aktif hanya saat integrasi Herdr diaktifkan: `HERDR_ENV=1` dengan `HERDR_SOCKET_PATH` dan `HERDR_PANE_ID` diatur. Di luar Herdr, ekstensi ini no-op.
+- Hanya sesi TUI. Mode RPC, JSON, dan print bersifat headless dan tidak melaporkan status.
+
+## Yang disiapkan
+
+- Melaporkan status agent saat ini (`working`, `blocked`, `idle`) ke pane Herdr, beserta label blocking saat agent menunggu keputusan.
+- Melaporkan identitas sesi (`agent_session_path` atau `agent_session_id`) agar pane dapat mengaitkan status ke sesi yang tepat.
+- Melepas pane saat quit sehingga laporan yang terlambat tidak merebut kembali pane yang agent-nya sudah keluar.
+- Menjaga urutan laporan monotonik lintas reload, sehingga sesi penerus tidak pernah memulai di bawah high-water mark instance sebelumnya.
+
+## Yang dapat dikonfigurasi
+
+<ExtensionCustomization slug="herdr-agent-state" locale="id" />
+
+Ekstensi ini tidak memiliki konfigurasi user. Sepenuhnya dikendalikan oleh variabel lingkungan Herdr di atas.
+
+## Yang dapat dilakukan
+
+- Jalankan Selesai di dalam pane Herdr dan lihat status pane mengikuti agent: working saat turn berjalan, blocked saat menunggu pertanyaan, idle di antara turn.
+- Mulai sesi baru, resume, fork, atau reload di pane yang sama dan lihat status beralih ke instance penerus tanpa laporan basi.
+
+## Perintah, tool, dan shortcut
+
+| Permukaan | Deskripsi |
+| --- | --- |
+| `pane.report_agent` | Laporan status (working / blocked / idle) dengan pesan opsional. |
+| `pane.report_agent_session` | Laporan identitas sesi saat sesi dimulai. |
+| `pane.release_agent` | Pelepasan pane saat quit. |
+
+## Batasan dan keamanan
+
+- Hanya mesin yang sama: laporan dikirim melalui socket Herdr lokal; tidak ada transport jarak jauh.
+- Laporan hanya dikirim saat `HERDR_ENV=1`; tanpa Herdr ekstensi tidak melakukan apa pun.
+- Label blocked adalah label yang diberikan Herdr melalui event `herdr:blocked`; Selesai tidak membuatnya sendiri.
+- Status bersifat best-effort: proses yang terlepas dapat hidup lebih lama dari pane-nya, dan pane dilepas hanya saat quit bersih.
+
+<SourceEvidence slug="herdr-agent-state" />
