@@ -2,19 +2,27 @@
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-09-02
+
+### Highlights
+- Watchdog can now warn or block child launches before they start, based on role and model rules.
+- Watchdog reviews are easier to guide with safe diff access, reusable `WATCHDOG.md` instructions, and configurable child review cadence.
+- Watchdog findings are easier to see in parent results, completion notices, acceptance evidence, and Fleet.
+- Workflow status and async results are less noisy and more accurate.
+
 ### Added
-- Add watchdog launch rules under `subagents.watchdog.rules`: per-role model allow/deny globs that warn or block before a child starts.
-- Give watchdog reviewers a read-only `watchdog_diff` tool for the session-start diff, untracked paths, path narrowing, and stat mode.
-- Run child watchdog cadence reviews through `children.cadence` and `children.overrides.<agent>.cadence`, and keep both the head and tail of over-long review input.
-- Lift child watchdog warnings into parent results, acceptance (`watchdog-blocker`), completion notices, and Fleet `wd:<n>` chips.
-- Load standing watchdog reviewer instructions from project and agent `WATCHDOG.md` files on every review.
+- Add watchdog launch rules under `subagents.watchdog.rules`, with per-role model allow and deny globs that warn or block before a child starts.
+- Give watchdog reviewers a read-only `watchdog_diff` tool for session-start diffs, untracked paths, path narrowing, and stat summaries.
+- Run child watchdog reviews on a configurable cadence with `children.cadence` and `children.overrides.<agent>.cadence`.
+- Show child watchdog warnings in parent results, acceptance evidence, completion notices, and Fleet `wd:<n>` chips.
+- Load watchdog reviewer instructions from project and agent `WATCHDOG.md` files.
 
 ### Changed
-- Reject no-op watchdog settings: `delivery`, `showDuringRun`, `syncBacklog`, `lateWarningPolicy`, `compactAtPercent`, `reviewRetryDelayMs`, `maxReviewFailures`, `asyncCompletion`, and `guidance.systemPromptPath`.
-- Remove watchdog auto-follow. Pi 0.84+ already continues after displayed boundary warnings; repeated identical warnings stop after `subagents.watchdog.stalemateRepeats`. The `autoFollow` settings block is now unknown.
+- Reject unsupported watchdog settings that never took effect: `delivery`, `showDuringRun`, `syncBacklog`, `lateWarningPolicy`, `compactAtPercent`, `reviewRetryDelayMs`, `maxReviewFailures`, `asyncCompletion`, and `guidance.systemPromptPath`.
+- Remove watchdog auto-follow. Pi 0.84+ already continues after displayed boundary warnings, and repeated identical warnings now stop after `subagents.watchdog.stalemateRepeats`. The `autoFollow` settings block is now unknown.
 
 ### Fixed
-- Keep advisory preflight lanes out of runtime workflow rows and queued checklist counts (#1821). Thanks [@stekman08](https://github.com/stekman08).
+- Keep advisory preflight checks out of runtime workflow rows and queued checklist counts (#1821). Thanks [@stekman08](https://github.com/stekman08).
 - Preserve effective thinking in completed async step results. Thanks to [@Nickonomic](https://github.com/Nickonomic) for #1823.
 - Forward workflow child control overrides through new and retained launches, and suppress idle needs-attention notices before the first assistant turn (#1817). Thanks [@rrocxela](https://github.com/rrocxela).
 
