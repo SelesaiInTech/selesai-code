@@ -3745,6 +3745,7 @@ async function runSubagent(
 				config: controlConfig,
 				startedAt: step.startedAt ?? overallStartTime,
 				lastActivityAt,
+				turnCount: step.turnCount,
 				currentTool: step.currentTool,
 				thinking: step.thinking,
 				now,

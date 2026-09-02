@@ -1429,28 +1429,28 @@ describe("scripted workflow runtime", () => {
 		);
 	});
 
-	it("passes per-child worktree controls through runs.run and runs.all", async () => {
-		const launches: Array<{ key: string; worktree: unknown }> = [];
+	it("passes per-child workflow controls through runs.run and runs.all", async () => {
+		const launches: Array<{ key: string; worktree: unknown; control: unknown }> = [];
 		await runWorkflowScript({
 			script: `
-				const one = await runs.run("one", { agent: "worker", task: "one", worktree: true });
+				const one = await runs.run("one", { agent: "worker", task: "one", worktree: true, control: { needsAttentionAfterMs: 111 } });
 				const rest = await runs.all([
-					{ key: "two", agent: "worker", task: "two", worktree: true },
-					{ key: "three", agent: "reviewer", task: "three", worktree: false }
+					{ key: "two", agent: "worker", task: "two", worktree: true, control: { activeNoticeAfterMs: 222 } },
+					{ key: "three", agent: "reviewer", task: "three", worktree: false, control: { enabled: false } }
 				]);
 				return [one.key, ...rest.map((entry) => entry.key)];
 			`,
 			timeoutMs: 2_000,
 			async launch(key, params) {
-				launches.push({ key, worktree: params.worktree });
+				launches.push({ key, worktree: params.worktree, control: params.control });
 				return { key, ok: true, output: key, artifactPaths: [], results: [] };
 			},
 			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 		});
 		assert.deepEqual(launches, [
-			{ key: "one", worktree: true },
-			{ key: "two", worktree: true },
-			{ key: "three", worktree: false },
+			{ key: "one", worktree: true, control: { needsAttentionAfterMs: 111 } },
+			{ key: "two", worktree: true, control: { activeNoticeAfterMs: 222 } },
+			{ key: "three", worktree: false, control: { enabled: false } },
 		]);
 	});
 

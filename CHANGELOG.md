@@ -16,6 +16,7 @@
 ### Fixed
 - Keep advisory preflight lanes out of runtime workflow rows and queued checklist counts (#1821). Thanks [@stekman08](https://github.com/stekman08).
 - Preserve effective thinking in completed async step results. Thanks to [@Nickonomic](https://github.com/Nickonomic) for #1823.
+- Forward workflow child control overrides through new and retained launches, and suppress idle needs-attention notices before the first assistant turn (#1817). Thanks [@rrocxela](https://github.com/rrocxela).
 
 ## [0.63.0] - 2026-09-01
 

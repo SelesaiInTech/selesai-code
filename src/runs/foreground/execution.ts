@@ -965,6 +965,7 @@ async function runSingleAttempt(
 				config: controlConfig,
 				startedAt: startTime,
 				lastActivityAt: progress.lastActivityAt,
+				turnCount: progress.turnCount,
 				currentTool: progress.currentTool,
 				thinking: resolvedThinking,
 				now,

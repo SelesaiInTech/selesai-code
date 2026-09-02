@@ -1886,7 +1886,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("notifies the parent when an async workflow child needs attention", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [
-				{ jsonl: [events.toolStart("read", { path: "src/example.ts" }), events.toolEnd("read"), events.toolResult("read", "contents")] },
+				{ jsonl: [events.toolStart("read", { path: "src/example.ts" }), events.toolEnd("read"), events.toolResult("read", "contents"), events.assistantMessage("Started")] },
 				{ delay: 2_500, jsonl: [events.assistantMessage("Done")] },
 			],
 		});
@@ -6866,7 +6866,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("delivers delegated activity-state transitions despite heartbeat suppression", async () => {
 		const attentionUpdates: Array<{ details?: { progress?: ProgressSummary[] } }> = [];
 		const attentionReleasePath = path.join(tempDir, "release-delegated-attention");
-		mockPi.onCall({ output: "Done", waitForPath: attentionReleasePath });
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.assistantMessage("Started")] },
+				{ waitForPath: attentionReleasePath, jsonl: [events.assistantMessage("Done")] },
+			],
+		});
 		const attentionRun = runSync!(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
 			suppressUnchangedDelegationUpdates: true,
 			controlConfig: {
@@ -6881,7 +6886,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			onUpdate: (update: { details?: { progress?: ProgressSummary[] } }) => attentionUpdates.push(update),
 		});
 		try {
-			const deadline = Date.now() + 5_000;
+			const turnDeadline = Date.now() + 15_000;
+			while (!attentionUpdates.some((update) => (update.details?.progress?.[0]?.turnCount ?? 0) > 0) && Date.now() < turnDeadline) {
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+			assert.ok(attentionUpdates.some((update) => (update.details?.progress?.[0]?.turnCount ?? 0) > 0), "test fixture should complete one assistant turn before waiting for idle attention");
+
+			const deadline = Date.now() + 15_000;
 			while (!attentionUpdates.some((update) => update.details?.progress?.[0]?.activityState === "needs_attention") && Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, 50));
 			}
@@ -6922,6 +6933,31 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		} finally {
 			fs.writeFileSync(activeReleasePath, "release", "utf-8");
 			await activeRun;
+		}
+	});
+
+	it("does not deliver idle attention before a child completes its first assistant turn", async () => {
+		const updates: Array<{ details?: { progress?: ProgressSummary[] } }> = [];
+		const releasePath = path.join(tempDir, "release-zero-turn-attention");
+		mockPi.onCall({ output: "Done", waitForPath: releasePath });
+
+		const runPromise = runSync!(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			controlConfig: {
+				enabled: true,
+				needsAttentionAfterMs: 200,
+				activeNoticeAfterMs: 999_999,
+				notifyOn: ["needs_attention"],
+				notifyChannels: ["event"],
+			},
+			onUpdate: (update: { details?: { progress?: ProgressSummary[] } }) => updates.push(update),
+		});
+		try {
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			assert.equal(updates.some((update) => update.details?.progress?.[0]?.activityState === "needs_attention"), false);
+		} finally {
+			fs.writeFileSync(releasePath, "release", "utf-8");
+			const result = await runPromise;
+			assert.equal(result.exitCode, 0);
 		}
 	});
 

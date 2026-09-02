@@ -45,11 +45,12 @@ export function resolveControlConfig(
 	const enabled = override?.enabled ?? globalConfig?.enabled ?? DEFAULT_CONTROL_CONFIG.enabled;
 	const overrideNeedsAttentionAfterMs = parsePositiveInt(override?.needsAttentionAfterMs);
 	const globalNeedsAttentionAfterMs = parsePositiveInt(globalConfig?.needsAttentionAfterMs);
+	const globalNeedsAttentionAfterMsIsExplicit = (globalConfig as Partial<ResolvedControlConfig> | undefined)?.needsAttentionAfterMsIsExplicit ?? globalNeedsAttentionAfterMs !== undefined;
 	const needsAttentionAfterMs = overrideNeedsAttentionAfterMs
 		?? globalNeedsAttentionAfterMs
 		?? DEFAULT_CONTROL_CONFIG.needsAttentionAfterMs;
 	const needsAttentionAfterMsIsExplicit = overrideNeedsAttentionAfterMs !== undefined
-		|| globalNeedsAttentionAfterMs !== undefined;
+		|| globalNeedsAttentionAfterMsIsExplicit;
 	const activeNoticeAfterMs = parsePositiveInt(override?.activeNoticeAfterMs)
 		?? parsePositiveInt(globalConfig?.activeNoticeAfterMs)
 		?? DEFAULT_CONTROL_CONFIG.activeNoticeAfterMs;
@@ -98,11 +99,12 @@ export function deriveActivityState(input: {
 	config: ResolvedControlConfig;
 	startedAt: number;
 	lastActivityAt?: number;
+	turnCount?: number;
 	currentTool?: string;
 	thinking?: string | false;
 	now?: number;
 }): ActivityState | undefined {
-	if (!input.config.enabled || input.currentTool) return undefined;
+	if (!input.config.enabled || input.currentTool || (input.turnCount ?? 0) === 0) return undefined;
 	const now = input.now ?? Date.now();
 	const lastActivity = input.lastActivityAt ?? input.startedAt;
 	const ageMs = Math.max(0, now - lastActivity);

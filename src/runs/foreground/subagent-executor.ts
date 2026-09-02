@@ -2070,7 +2070,7 @@ async function resumeAsyncRun(input: {
 		// place rather than allocating a second provider worktree around it.
 		worktree: input.params.worktree === true && !("managedWorktree" in target && target.managedWorktree === true),
 		lane: input.params.lane ?? recoveryDescriptor?.lane,
-		controlConfig: recoveryDescriptor?.controlConfig ?? resolveControlConfig(input.deps.config.control, input.params.control),
+		controlConfig: resolveRevivalControlConfig({ globalConfig: input.deps.config.control, requestedControl: input.params.control, recoveryControlConfig: recoveryDescriptor?.controlConfig }),
 		intercomBridge: input.params.intercomBridge ?? recoveryDescriptor?.intercomBridge,
 		controlIntercomTarget: intercomBridge.active ? intercomBridge.orchestratorTarget : undefined,
 		childIntercomTarget: intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
@@ -4443,6 +4443,7 @@ export function prepareWorkflowLaunchParams(
 		if (output !== undefined && typeof output !== "string" && typeof output !== "boolean") throw new Error("output must be a path string or boolean.");
 		const outputMode = Object.hasOwn(childParams, "outputMode") ? childParams.outputMode : workflowDefaults.outputMode;
 		if (outputMode !== undefined && outputMode !== "inline" && outputMode !== "file-only") throw new Error("outputMode must be 'inline' or 'file-only'.");
+		const control = mergeWorkflowControlOverrides(workflowDefaults.control, childParams.control as ControlConfig | undefined);
 		return {
 			action: "resume",
 			id: childParams.resume.trim(),
@@ -4461,14 +4462,17 @@ export function prepareWorkflowLaunchParams(
 			...(options.missionDetached ? { mission: false } : {}),
 			...(timeoutMs !== undefined ? { timeoutMs: timeoutMs as number } : {}),
 			...(toolBudget !== undefined ? { toolBudget: toolBudget as ToolBudgetConfig } : {}),
+			...(control !== undefined ? { control } : {}),
 			...(intercomBridge !== undefined ? { intercomBridge: intercomBridge as IntercomBridgeConfig } : {}),
 			...(capabilityCeiling ? { capabilityCeiling } : {}),
 		};
 	}
+	const control = mergeWorkflowControlOverrides(workflowDefaults.control, childParams.control as ControlConfig | undefined);
 	const launchParams = {
 		...workflowDefaults,
 		async: options.externalAsyncRequired === true && childParams.async === undefined && workflowDefaults.async === undefined ? true : false,
 		...childParams,
+		...(control !== undefined ? { control } : {}),
 		...(options.externalAsyncRequired === true && childParams.async === undefined && workflowDefaults.async === undefined ? { workflowAwaitAsync: true } : {}),
 		...(options.missionDetached ? { mission: false } : {}),
 		workflowParentRunId: parentWorkflowRunId,
@@ -4485,6 +4489,17 @@ export function prepareWorkflowLaunchParams(
 	const normalizedGate = normalizeGateParams(launchParams);
 	if (!normalizedGate.ok) throw new Error(normalizedGate.error);
 	return normalizedGate.params;
+}
+
+function mergeWorkflowControlOverrides(workflowControl: ControlConfig | undefined, childControl: ControlConfig | undefined): ControlConfig | undefined {
+	if (childControl === undefined) return workflowControl;
+	if (workflowControl === undefined) return childControl;
+	return { ...workflowControl, ...childControl };
+}
+
+export function resolveRevivalControlConfig(input: { globalConfig?: ControlConfig; requestedControl?: ControlConfig; recoveryControlConfig?: ResolvedControlConfig }): ResolvedControlConfig {
+	if (input.requestedControl === undefined) return input.recoveryControlConfig ?? resolveControlConfig(input.globalConfig, undefined);
+	return resolveControlConfig(input.recoveryControlConfig ?? input.globalConfig, input.requestedControl);
 }
 
 type GateParamsNormalizationResult =
