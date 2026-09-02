@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.12] - 2026-09-03
+
+### Added
+- **Auto-continue after output token limit.** When the model stops because it reached the maximum output token limit (`stopReason: "length"`) mid-response, the agent now queues a follow-up "continue from where you left off" message and re-prompts automatically instead of stopping with the "response may be incomplete" error. Truncated tool calls were already re-issued by the agent loop; this covers truncated text. The continuation is capped at 3 consecutive length stops (the counter resets on any normal stop) so a model that keeps hitting the cap doesn't loop forever, and context-pressure length stops still trigger compaction first.
+
 ## [0.13.11] - 2026-09-02
 
 ### Added

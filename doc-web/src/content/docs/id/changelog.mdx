@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.12 — Lanjut otomatis setelah batas token output
+
+- **Respons yang terpotong oleh batas token output kini dilanjutkan otomatis.** Saat model berhenti karena mencapai batas maksimum token output (`stopReason: "length"`) di tengah respons, Selesai mengantrekan pesan lanjutan "lanjutkan dari bagian terakhir" dan meminta ulang model alih-alih berhenti dengan error "response may be incomplete". Tool call yang terpotong sudah ditangani ulang oleh agent loop; ini mencakup teks yang terpotong. Lanjutan dibatasi maksimal 3 kali berurutan (penghitung direset pada setiap berhenti normal) sehingga model yang terus mencapai batas tidak berputar selamanya, dan length stop yang disebabkan tekanan konteks tetap memicu compaction terlebih dahulu.
+
 ## 0.13.11 — Perintah RPC get_skills, paritas loader working, ekstensi herdr-agent-state
 
 - **Perintah RPC `get_skills`.** Perintah RPC baru yang mengembalikan katalog skill ter-resolve (satu entri per skill yang ditemukan dengan status enable efektifnya) plus pola `settings.skills` gabungan `global + project` mentah, sehingga host dapat mencerminkan permukaan toggle `/skills` TUI tanpa mengimplementasikan ulang semantik `isEnabledByOverrides`. Tersedia pada klien bertipe sebagai `RpcClient.getSkills()`.

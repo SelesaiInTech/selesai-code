@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.12 — Auto-continue after output token limit
+
+- **Responses cut off by the output token limit now continue automatically.** When the model stops because it reached the maximum output token limit (`stopReason: "length"`) mid-response, Selesai queues a follow-up "continue from where you left off" message and re-prompts the model instead of stopping with the "response may be incomplete" error. Truncated tool calls were already re-issued by the agent loop; this covers truncated text. The continuation is capped at 3 consecutive length stops (the counter resets on any normal stop) so a model that keeps hitting the cap doesn't loop forever, and length stops caused by context pressure still trigger compaction first.
+
 ## 0.13.11 — RPC get_skills command, working loader parity, herdr-agent-state extension
 
 - **RPC `get_skills` command.** New RPC command returning the resolved skill catalog (one entry per discovered skill with its effective enablement) plus the raw merged `global + project` `settings.skills` patterns, so hosts can mirror the TUI `/skills` toggle surface without reimplementing `isEnabledByOverrides` semantics. Exposed on the typed client as `RpcClient.getSkills()`.
