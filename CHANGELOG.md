@@ -4,11 +4,18 @@ All notable changes to the `pi-intercom` extension will be documented in this fi
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-02
+
+### Highlights
+- You can now give the current session a friendly alias from pi-intercom.
+- Aliases show up right away in the session list, messages, replies, overlays, and incoming-message displays.
+- Windows broker startup is more reliable with non-ASCII profile paths and stricter Windows Script Host setups.
+
 ### Added
-- Added `/alias <name>` plus the interactive `/alias` and `/alias menu` forms for naming the current session. The alias is published immediately and reused by existing intercom list, send, reply, overlay, and incoming-message displays. Thanks to [@yceachan](https://github.com/yceachan) for issue #122.
+- Added `/alias <name>` plus the interactive `/alias` and `/alias menu` forms for naming the current session. Thanks to [@yceachan](https://github.com/yceachan) for issue #122.
 
 ### Fixed
-- Write the hidden Windows broker launcher as UTF-16LE with a BOM and explicitly select the VBScript engine so startup works with non-ASCII paths and WSH configurations that cannot infer `.vbs`. Thanks to [@maelo1028](https://github.com/maelo1028) for issue #121 and [@Agustin-Prieto](https://github.com/Agustin-Prieto) for issue #123.
+- Fixed hidden Windows broker startup when the user profile path contains non-ASCII characters or Windows Script Host cannot infer the VBScript engine. Thanks to [@maelo1028](https://github.com/maelo1028) for issue #121 and [@Agustin-Prieto](https://github.com/Agustin-Prieto) for issue #123.
 
 ## [0.12.1] - 2026-08-29
 
