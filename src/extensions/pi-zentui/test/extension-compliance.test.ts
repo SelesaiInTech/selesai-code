@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
+	AssistantMessageComponent,
 	initTheme,
 	ModelSelectorComponent,
 	SettingsSelectorComponent,
@@ -113,6 +114,8 @@ const settingsCommandDefaults: SettingsCommandDeps = {
 	setAccentRail() {},
 	setMinimalist() {},
 	setUserMessagesComponent() {},
+	thinkingStepsCapability: { available: false },
+	setThinkingStepsComponent: () => ({ applied: true }),
 	setWorkingLineComponent: () => ({ applied: true }),
 	setSelectorBordersComponent() {},
 	setFooterComponent() {},
@@ -180,6 +183,7 @@ function canonicalizeTestConfig(config: PolishedTuiConfig): PolishedTuiConfig {
 					: messages.colorSource,
 				styles: { ...messages.styles },
 			},
+			thinkingSteps: { ...config.components.thinkingSteps },
 			workingLine: {
 				...config.components.workingLine,
 				messages: {
@@ -559,7 +563,7 @@ function loadExtension(options: { thinkingLevel?: string; commands?: Map<string,
 		})}\n`,
 	);
 	const handlers = new Map<string, Handler[]>();
-	zentui({
+	const api = {
 		on(eventName: string, handler: Handler) {
 			handlers.set(eventName, [...(handlers.get(eventName) ?? []), handler]);
 		},
@@ -569,7 +573,8 @@ function loadExtension(options: { thinkingLevel?: string; commands?: Map<string,
 		getThinkingLevel() {
 			return options.thinkingLevel ?? "off";
 		},
-	} as never);
+	} as Record<string, unknown>;
+	zentui(api as never);
 	return handlers;
 }
 
@@ -757,6 +762,48 @@ describe("fixed-editor retirement contract", () => {
 });
 
 describe("Pi docs compliance", () => {
+	it("does not register a public Thinking Markdown transformer or command", async () => {
+		writeFileSync(
+			join(isolatedAgentDir.path, "zentui.json"),
+			JSON.stringify({ components: { thinkingSteps: { enabled: false, mode: "tree" } } }),
+		);
+		const commands = new Map<string, unknown>();
+		const handlers = loadExtension({ commands });
+		const indexSource = readFileSync(
+			join(import.meta.dirname, "../extensions/zentui/index.ts"),
+			"utf8",
+		);
+		expect(indexSource).not.toContain("registerMarkdown" + "Transformer");
+		const ctx = makeContext();
+		await emit(handlers, "session_start", ctx);
+		await emit(handlers, "session_shutdown", ctx);
+		expect(commands.has("thinking-steps")).toBe(false);
+	});
+
+	it("reloads external Thinking configuration synchronously for each session startup", async () => {
+		const configPath = join(isolatedAgentDir.path, "zentui.json");
+		writeFileSync(
+			configPath,
+			JSON.stringify({ components: { thinkingSteps: { enabled: false, mode: "tree" } } }),
+		);
+		const nativeUpdate = AssistantMessageComponent.prototype.updateContent;
+		const handlers = loadExtension();
+		const ctx = makeContext();
+
+		await emit(handlers, "session_start", ctx);
+		expect(AssistantMessageComponent.prototype.updateContent).toBe(nativeUpdate);
+		await emit(handlers, "session_shutdown", ctx);
+
+		writeFileSync(
+			configPath,
+			JSON.stringify({ components: { thinkingSteps: { enabled: true, mode: "rail" } } }),
+		);
+		await emit(handlers, "session_start", ctx);
+		expect(AssistantMessageComponent.prototype.updateContent).not.toBe(nativeUpdate);
+		await emit(handlers, "session_shutdown", ctx);
+		expect(AssistantMessageComponent.prototype.updateContent).toBe(nativeUpdate);
+	});
+
 	it("derives lazy data requirements from only the active wide and compact candidates", () => {
 		const starship = defaultConfig.components.footer.styles.starship;
 		const customWide = {
@@ -5733,7 +5780,7 @@ describe("Pi docs compliance", () => {
 		const themeLines = await renderSettings(defaultConfig);
 		expect(themeLines[0]).toContain("[borderMuted]────");
 		expect(themeLines.join("\n")).toContain("Appearance");
-		expect(themeLines.join("\n")).toContain("(1/8)");
+		expect(themeLines.join("\n")).toContain("(1/9)");
 		expect(themeLines.join("\n")).toContain("Tab/Shift+Tab to switch sections");
 		expect(themeLines.at(-1)).toContain("[borderMuted]────");
 		expect(themeLines.every((line) => visibleWidth(stripTestTags(line)) <= settingsWidth)).toBe(
@@ -5851,7 +5898,7 @@ describe("Pi docs compliance", () => {
 					const component = factory({ requestRender() {} }, makeTheme(), {}, () => {}) as {
 						handleInput?: (data: string) => void;
 					};
-					for (let index = 0; index < 4; index += 1) component.handleInput?.("\t");
+					for (let index = 0; index < 5; index += 1) component.handleInput?.("\t");
 					for (let index = 0; index < 3; index += 1) component.handleInput?.("\x1b[B");
 					component.handleInput?.(" ");
 					component.handleInput?.("\x1b[B");
@@ -5923,7 +5970,7 @@ describe("Pi docs compliance", () => {
 						{},
 						() => {},
 					) as { handleInput?: (data: string) => void };
-					for (let index = 0; index < 4; index += 1) component.handleInput?.("\t");
+					for (let index = 0; index < 5; index += 1) component.handleInput?.("\t");
 					for (let index = 0; index < 6; index += 1) component.handleInput?.("\x1b[B");
 					component.handleInput?.(" ");
 					component.handleInput?.(" ");
@@ -5941,7 +5988,7 @@ describe("Pi docs compliance", () => {
 			"Separator: pipe",
 		]);
 		expect(dependencyRenderRequests).toBe(4);
-		expect(tuiRenderRequests).toBe(8);
+		expect(tuiRenderRequests).toBe(9);
 	});
 
 	it("cycles branch length presets and returns custom JSON values to full", async () => {
@@ -5992,7 +6039,7 @@ describe("Pi docs compliance", () => {
 						const component = factory({ requestRender() {} }, makeTheme(), {}, () => {}) as {
 							handleInput?: (data: string) => void;
 						};
-						for (let index = 0; index < 6; index += 1) component.handleInput?.("\t");
+						for (let index = 0; index < 7; index += 1) component.handleInput?.("\t");
 						component.handleInput?.("\x1b[B");
 						for (let index = 0; index < presses; index += 1) component.handleInput?.(" ");
 					},
@@ -6149,6 +6196,7 @@ describe("Pi docs compliance", () => {
 			| "Appearance"
 			| "Editor"
 			| "User messages"
+			| "Thinking"
 			| "Working line"
 			| "Footer"
 			| "Segments"
@@ -6159,6 +6207,7 @@ describe("Pi docs compliance", () => {
 			"Appearance",
 			"Editor",
 			"User messages",
+			"Thinking",
 			"Working line",
 			"Footer",
 			"Segments",
@@ -6417,7 +6466,7 @@ describe("Pi docs compliance", () => {
 
 		expect(placements).toEqual([{ key: "alpha", placement: "off" }]);
 		expect(dependencyRenderRequests).toBe(1);
-		expect(tuiRenderRequests).toBe(8);
+		expect(tuiRenderRequests).toBe(9);
 	});
 
 	it("does not show inactive saved placements in the extension segments tab", async () => {
@@ -7172,7 +7221,7 @@ describe("three-state Footer lifecycle", () => {
 			const settings = factory({ requestRender() {} }, makeTheme(), {}, () => {}) as {
 				handleInput(data: string): void;
 			};
-			for (let index = 0; index < 4; index++) settings.handleInput("\t");
+			for (let index = 0; index < 5; index++) settings.handleInput("\t");
 			settings.handleInput(" ");
 		};
 		const ctx = makeContext({ ui: harness.ui });

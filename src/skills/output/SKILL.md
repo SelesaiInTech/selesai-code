@@ -1,8 +1,6 @@
 ---
-name: full-output-enforcement
-category: discipline
+name: output
 description: Overrides default LLM truncation behavior. Enforces complete code generation, bans placeholder patterns, and handles token-limit splits cleanly. Apply to any task requiring exhaustive, unabridged output.
-license: MIT
 ---
 
 # Full-Output Enforcement

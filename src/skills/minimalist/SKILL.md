@@ -1,8 +1,6 @@
 ---
-name: minimalist-ui
-category: design
+name: minimalist
 description: Clean editorial-style interfaces. Warm monochrome palette, typographic contrast, flat bento grids, muted pastels. No gradients, no heavy shadows.
-license: MIT
 ---
 
 # Protocol: Premium Utilitarian Minimalism UI Architect

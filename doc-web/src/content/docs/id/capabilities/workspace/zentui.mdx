@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../../components/SourceEvidence.astro";
 
-Zentui adalah statusline terinspirasi Starship dan TUI bergaya Opencode untuk Selesai. Memberikan empat permukaan kepemilikan dan styling independen — editor, pesan user, working line, dan footer — dengan statusline opsional bergaya Starship.
+Zentui adalah statusline terinspirasi Starship dan TUI bergaya Opencode untuk Selesai. Memberikan lima permukaan kepemilikan dan styling independen — editor, pesan user, thinking (eksperimental), working line, dan footer — dengan statusline opsional bergaya Starship.
 
 <ExtensionStatus
   distribution="bundled"
@@ -20,12 +20,13 @@ Zentui adalah statusline terinspirasi Starship dan TUI bergaya Opencode untuk Se
 
 - Dibundel bersama Selesai dan dimuat otomatis; tidak diperlukan instalasi terpisah.
 - Memerlukan sesi TUI interaktif; tidak berpengaruh dalam mode headless.
-- Permukaan editor, pesan user, working line, dan border selector masing-masing memiliki field `enabled` independen; footer menggunakan satu `style`: `native`, `starship`, atau `hidden`.
+- Permukaan editor, pesan user, thinking, working line, dan border selector masing-masing memiliki field `enabled` independen; footer menggunakan satu `style`: `native`, `starship`, atau `hidden`.
 
 ## Yang disiapkan
 
 - **Editor** — perlakuan input Opencode, Opencode copy-friendly, Accent Rail, dan Minimalist.
 - **Pesan user** — pesan transkrip framed, framed copy-friendly, compact, dan labeled.
+- **Thinking (Eksperimental)** — renderer privat opsional Rail, Tree, atau Streaming untuk thinking Pi, tanpa mengambil alih Working line.
 - **Working line** — pengambilalihan opsional atas baris sedang berjalan lengkap Pi dan ringkasan turn yang selesai.
 - **Footer** — footer native Pi, statusline bergaya Starship, atau footer nol-baris tersembunyi, dengan segmen yang dapat dikonfigurasi dan template format footer compact.
 - Mendaftarkan perintah `/zentui` untuk konfigurasi langsung dan toggle cepat.
@@ -34,7 +35,7 @@ Zentui adalah statusline terinspirasi Starship dan TUI bergaya Opencode untuk Se
 
 <ExtensionCustomization slug="zentui" locale="id" />
 
-Jalankan `/zentui` untuk mengonfigurasi Appearance, Editor, User messages, Working line, Footer, Segments, Git, dan Extensions. Gunakan `Tab` dan `Shift+Tab` untuk berpindah bagian; perubahan diterapkan langsung dan disimpan ke `~/.selesai/agent/zentui.json`.
+Jalankan `/zentui` untuk mengonfigurasi Appearance, Editor, User messages, Thinking (Eksperimental), Working line, Footer, Segments, Git, dan Extensions. Gunakan `Tab` dan `Shift+Tab` untuk berpindah bagian; perubahan diterapkan langsung dan disimpan ke `~/.selesai/agent/zentui.json`.
 
 ## Yang dapat dilakukan
 
@@ -50,6 +51,9 @@ Jalankan `/zentui` untuk mengonfigurasi Appearance, Editor, User messages, Worki
 - `/zentui format <template>` — atur format footer compact.
 
 ## Batasan dan keamanan
+
+- Hanya sesi TUI interaktif yang merender permukaan Zentui.
+- Thinking (Eksperimental) nonaktif secara default dan dapat rusak setelah pembaruan Pi. Streaming aktif dapat beralih langsung ke Rail atau Tree, dan Rail serta Tree dapat saling beralih langsung; pengaktifan pertama, pengaktifan ulang setelah nonaktif langsung, dan masuk ke Streaming dari mode struktural memerlukan restart Pi. Kegagalan kembali ke thinking native penuh.
 
 - Hanya sesi TUI interaktif yang merender permukaan Zentui.
 - Tampilan path footer Starship default `basename`; pilih mode `repository` untuk menghilangkan direktori repository itu sendiri.

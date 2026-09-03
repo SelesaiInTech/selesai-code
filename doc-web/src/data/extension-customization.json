@@ -1700,8 +1700,8 @@
    "slug": "zentui",
    "distribution": "bundled",
    "overview": {
-    "en": "Zentui configures independent editor, user-message, working-line, footer, segment, git, and extension surfaces from one zentui.json, with live /zentui pickers.",
-    "id": "Zentui mengonfigurasi permukaan editor, pesan user, working line, footer, segmen, git, dan ekstensi yang independen dari satu zentui.json, dengan picker /zentui langsung."
+    "en": "Zentui configures independent editor, user-message, thinking, working-line, footer, segment, git, and extension surfaces from one zentui.json, with live /zentui pickers.",
+    "id": "Zentui mengonfigurasi permukaan editor, pesan user, thinking, working line, footer, segmen, git, dan ekstensi yang independen dari satu zentui.json, dengan picker /zentui langsung."
    },
    "sourcePaths": [
     "src/extensions/pi-zentui/extensions/zentui/config.ts"
@@ -1767,6 +1767,26 @@
      "description": {
       "en": "Starship footer path display: basename, full, or repository.",
       "id": "Tampilan path footer starship: basename, full, atau repository."
+     },
+     "persistence": "zentui.json"
+    },
+    {
+     "key": "components.thinkingSteps.enabled",
+     "type": "boolean",
+     "default": "false",
+     "description": {
+      "en": "Opt-in private thinking renderer (Rail, Tree, or Streaming); experimental and may break after Pi updates.",
+      "id": "Renderer thinking privat opsional (Rail, Tree, atau Streaming); eksperimental dan dapat rusak setelah pembaruan Pi."
+     },
+     "persistence": "zentui.json"
+    },
+    {
+     "key": "components.thinkingSteps.mode",
+     "type": "string",
+     "default": "tree",
+     "description": {
+      "en": "Thinking mode: rail, tree, or streaming.",
+      "id": "Mode thinking: rail, tree, atau streaming."
      },
      "persistence": "zentui.json"
     }

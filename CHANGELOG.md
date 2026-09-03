@@ -2,6 +2,15 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.13] - 2026-09-04
+
+### Added
+- **Zentui Thinking (Experimental).** The bundled pi-zentui extension adds an opt-in private thinking renderer with three modes — `rail` (every parsed label in each native contiguous thinking run), `tree` (latest five labels per run), and `streaming` (host-rendered final rows with folding and timing). Disabled by default; configure via `/zentui` or `components.thinkingSteps` in `zentui.json`. Active Streaming can switch live to Rail or Tree, and Rail and Tree can switch live between each other; first enable, re-enable after a live disable, and entering Streaming from a structural mode require a Pi restart. Fail-open: startup failures, missing constructors, incompatible private child layouts, parser limits, theme/render/width errors, and displaced patch ownership all fall back to complete native thinking. Tested against Pi 0.80.5, 0.82.1, 0.83.0, 0.84.0, and 0.84.4.
+- **Bundled design skills reorganized.** The design skills now ship as a single canonical copy per skill: `brutalist`, `minimalist`, `output`, `redesign`, `soft`, `stitch`, `taste`, and `taste-v1` replace the previous duplicate `*-ui` / `*-skill` / `*-v1` variants, and the `category`/`license` frontmatter fields were dropped from the remaining skills.
+
+### Changed
+- **pi-subagents ported to upstream v0.64.0.** The vendored pi-subagents extension advances from v0.61.0 to v0.64.0: watchdog launch rules (`subagents.watchdog.rules`) with per-role model allow/deny globs, a read-only `watchdog_diff` tool, configurable child review cadence, `WATCHDOG.md` reviewer instructions, watchdog warnings surfaced in parent results and acceptance evidence, and quieter workflow/async status. Unsupported watchdog settings that never took effect are now rejected, and watchdog auto-follow was removed. The fork-local async-status repair-write hardening is preserved.
+
 ## [0.13.12] - 2026-09-03
 
 ### Added
