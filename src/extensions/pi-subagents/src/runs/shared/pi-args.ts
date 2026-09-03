@@ -20,8 +20,10 @@ import { encodeExtensionBindings, SELESAI_SUBAGENT_EXTENSION_BINDINGS_ENV, type 
 import { RUNTIME_EXTENSION_ACK_PATH_ENV } from "./runtime-acknowledged-extensions.ts";
 import {
 	STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV,
+	STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV,
 	STRUCTURED_OUTPUT_CAPTURE_ENV,
 	STRUCTURED_OUTPUT_SCHEMA_ENV,
+	type StructuredOutputRuntime,
 } from "./structured-output.ts";
 import {
 	TEMP_ROOT_DIR,
@@ -45,7 +47,6 @@ import {
 } from "./tool-availability.ts";
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
-	encodeChildWatchdogConfig,
 	type ChildWatchdogConfig,
 } from "../../watchdog/child-status.ts";
 import { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV } from "../background/wait-config.ts";
@@ -91,11 +92,12 @@ export function resolveSubagentTaskDelivery(
 		: "auto";
 }
 
-function shouldDeliverTaskViaFile(
+export function shouldDeliverTaskViaFile(
 	task: string,
 	delivery: SubagentTaskDelivery,
+	platform: NodeJS.Platform = process.platform,
 ): boolean {
-	return delivery === "file" || task.length > TASK_ARG_LIMIT;
+	return delivery === "file" || platform === "darwin" || task.length > TASK_ARG_LIMIT;
 }
 const MAX_LAUNCH_RESOLVED_EXTENSION_IDS = 32;
 const PROMPT_RUNTIME_EXTENSION_PATH = path.join(
@@ -171,6 +173,7 @@ export interface BuildPiArgsInput {
 	inheritSkills: boolean;
 	requireReadTool?: boolean;
 	tools?: string[];
+	excludeTools?: string[];
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	systemPrompt?: string | null;
@@ -201,12 +204,7 @@ export interface BuildPiArgsInput {
 	steerInboxDir?: string;
 	steerCapabilityPath?: string;
 	steerAckDir?: string;
-	structuredOutput?: {
-		schema: JsonSchemaObject;
-		schemaPath: string;
-		outputPath: string;
-		acceptanceReportPath?: string;
-	};
+	structuredOutput?: StructuredOutputRuntime;
 	fast?: boolean;
 	modelCandidates?: readonly string[];
 	toolBudget?: ResolvedToolBudget;
@@ -300,6 +298,7 @@ function resolveFastModeExtension(input: Pick<ResolvePiLaunchToolPlanInput, "fas
 
 export interface ResolvePiLaunchToolPlanInput {
 	tools?: string[];
+	excludeTools?: string[];
 	allowNestedSubagents?: boolean;
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
@@ -329,6 +328,7 @@ export interface PiLaunchToolPlan {
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	requestedBuiltinTools: string[];
 	declaredBuiltinTools: string[];
+	excludeTools: string[];
 	toolExtensionPaths: string[];
 	resolvedMcpSelections: ResolvedMcpDirectToolSelection[];
 	effectiveMcpSelections: ResolvedMcpDirectToolSelection[];
@@ -499,8 +499,12 @@ export function resolvePiLaunchToolPlan(
 					? ["read", ...requestedBuiltinTools]
 					: requestedBuiltinTools
 				).filter((tool) => !allowedToolSet || allowedToolSet.has(tool));
-	const fanoutAuthorized = declaredBuiltinTools.includes("subagent") || (
+	const excludeTools = [...new Set((input.excludeTools ?? []).map((tool) => tool.trim()).filter(Boolean))];
+	const excludedToolSet = new Set(excludeTools);
+	const effectiveDeclaredBuiltinTools = declaredBuiltinTools.filter((tool) => !excludedToolSet.has(tool));
+	const fanoutAuthorized = effectiveDeclaredBuiltinTools.includes("subagent") || (
 		input.allowNestedSubagents === true &&
+		!excludedToolSet.has("subagent") &&
 		(!allowedToolSet || allowedToolSet.has("subagent"))
 	);
 	const toolExtensionPaths: string[] = capabilityCeiling?.denyExtensions
@@ -524,7 +528,7 @@ export function resolvePiLaunchToolPlan(
 			!allowedToolSet ||
 			allowedToolSet.has(selection.name) ||
 			isLegacyUnderscoreMcpToolAllowed(selection, allowedToolSet, resolvedMcpNames, legacyMcpNameCounts),
-	);
+	).filter((selection) => !excludedToolSet.has(selection.name));
 	const effectiveMcpTools = effectiveMcpSelections.map(
 		(selection) => selection.name,
 	);
@@ -540,10 +544,10 @@ export function resolvePiLaunchToolPlan(
 		input.tools !== undefined ||
 		(input.mcpDirectTools?.length ?? 0) > 0 ||
 		allowedToolSet !== undefined;
-	const internalTools = input.structuredOutput ? ["structured_output"] : [];
+	const internalTools = (input.structuredOutput ? ["structured_output"] : []).filter((tool) => !excludedToolSet.has(tool));
 	const effectiveToolAllowlist = [
 		...new Set([
-			...declaredBuiltinTools,
+			...effectiveDeclaredBuiltinTools,
 			...effectiveMcpTools,
 			...internalTools,
 		]),
@@ -554,11 +558,11 @@ export function resolvePiLaunchToolPlan(
 	// appended intercom alongside contact_supervisor, so that exact pairing is
 	// legacy plumbing, not a user demand for an external intercom provider;
 	// a lone intercom entry stays strictly required (#1207).
-	const legacySupervisorPairing = declaredBuiltinTools.includes("contact_supervisor");
+	const legacySupervisorPairing = effectiveDeclaredBuiltinTools.includes("contact_supervisor");
 	const requiredChildTools = explicitToolAllowlist
 		? [
 				...new Set([
-					...(input.tools !== undefined ? declaredBuiltinTools : []),
+					...(input.tools !== undefined ? effectiveDeclaredBuiltinTools : []),
 					...(input.mcpDirectTools?.length ? effectiveMcpTools : []),
 					...internalTools,
 				].filter((tool) => tool !== "contact_supervisor" && (!legacySupervisorPairing || tool !== "intercom"))),
@@ -620,6 +624,7 @@ export function resolvePiLaunchToolPlan(
 				ceiling: capabilityCeiling,
 				...(requestedToolNames ? { requestedTools: requestedToolNames } : {}),
 				effectiveTools: effectiveToolAllowlist,
+				...(excludeTools.length > 0 ? { excludeTools } : {}),
 				removedTools:
 					requestedToolNames?.filter(
 						(tool) => !effectiveToolAllowlist.includes(tool),
@@ -657,6 +662,7 @@ export function resolvePiLaunchToolPlan(
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
 		requestedBuiltinTools,
 		declaredBuiltinTools,
+		excludeTools,
 		toolExtensionPaths,
 		resolvedMcpSelections,
 		effectiveMcpSelections,
@@ -740,6 +746,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: input.tools,
+		excludeTools: input.excludeTools,
 		allowNestedSubagents: input.allowNestedSubagents,
 		extensions: input.extensions,
 		subagentOnlyExtensions: input.subagentOnlyExtensions,
@@ -766,6 +773,8 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		);
 		if (toolPlan.effectiveToolAllowlist.length > 0)
 			args.push(toolPlan.effectiveToolAllowlist.join(","));
+	} else if (toolPlan.excludeTools.length > 0) {
+		args.push("--exclude-tools", toolPlan.excludeTools.join(","));
 	}
 	if (toolPlan.disableAmbientExtensions) {
 		args.push("--no-extensions");
@@ -836,6 +845,11 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	);
 	env[RUNTIME_EXTENSION_ACK_PATH_ENV] = runtimeAcknowledgedExtensionsPath;
 	let toolDiagnosticPath: string | undefined;
+	// Child launch environments are merged over process.env. Explicitly clear
+	// parent-scoped diagnostics so a nested zero-tool child cannot validate
+	// against, or overwrite, its parent's required-tool report.
+	env[REQUIRED_CHILD_TOOLS_ENV] = undefined;
+	env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = undefined;
 	if (toolPlan.requiredChildTools.length > 0) {
 		if (!tempDir)
 			tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
@@ -999,10 +1013,13 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		env[SUBAGENT_CAPABILITY_CEILING_ENV] = encodedCapabilityCeiling;
 	if (encodedPermissionRules)
 		env[PERMISSION_POLICY_ENV] = encodedPermissionRules;
+	env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = undefined;
+	env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV] = undefined;
 	if (input.structuredOutput) {
 		env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
 		env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
 		if (input.structuredOutput.acceptanceReportPath) env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = input.structuredOutput.acceptanceReportPath;
+		if (input.structuredOutput.acceptanceReportRequired) env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV] = "1";
 	}
 	if (input.steerInboxDir) {
 		env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
@@ -1013,9 +1030,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	const encodedToolBudget = encodeToolBudgetEnv(input.toolBudget);
 	if (encodedToolBudget) env[TOOL_BUDGET_ENV] = encodedToolBudget;
 	env[TOOL_BUDGET_ZERO_AUTH_ENV] = input.allowZeroToolBudget ? "1" : undefined;
-	const encodedChildWatchdog = encodeChildWatchdogConfig(input.childWatchdog);
-	if (encodedChildWatchdog)
-		env[CHILD_WATCHDOG_CONFIG_ENV] = encodedChildWatchdog;
+	if (input.childWatchdog) env[CHILD_WATCHDOG_CONFIG_ENV] = JSON.stringify(input.childWatchdog);
 
 	env[SUBAGENT_PARENT_SESSION_ENV] =
 		input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";

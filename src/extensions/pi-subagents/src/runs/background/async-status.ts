@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { previewDisplayText } from "../../shared/display-text.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNodeV1, type HostStepState, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TimeoutRecoveryProjection, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type WorkflowPreflightV1, type WorkflowGraphSnapshot } from "../../shared/types.ts";
+import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNodeV1, type HostStepState, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TimeoutRecoveryProjection, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type WorktreeNaming, type WorkflowPreflightV1, type WorkflowGraphSnapshot } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, findNestedRouteForRootId, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
@@ -24,6 +24,7 @@ import { validateAsyncStatusLaneMetadata } from "../shared/lane-metadata.ts";
 import { formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary } from "../../workflows/workflow-preflight.ts";
 import { workflowGraphStageNodes } from "../shared/workflow-graph.ts";
 import { formatTimeoutRecoveryLines, projectTimeoutRecovery } from "../shared/mutation-evidence.ts";
+import { formatWorkflowChecklistText, projectWorkflowChecklist } from "../../workflows/workflow-checklist.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -39,6 +40,8 @@ interface AsyncRunStepSummary {
 	lane?: AsyncJobStep["lane"];
 	worktreePath?: string;
 	branch?: string;
+	provider?: "native" | "worktrunk";
+	naming?: WorktreeNaming;
 	runId?: string;
 	outputName?: string;
 	structured?: boolean;
@@ -337,6 +340,8 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.lane ? { lane: step.lane } : {}),
 			...(step.worktreePath ? { worktreePath: step.worktreePath } : {}),
 			...(step.branch ? { branch: step.branch } : {}),
+			...(step.provider ? { provider: step.provider } : {}),
+			...(step.naming ? { naming: step.naming } : {}),
 			...(step.runId ? { runId: step.runId } : {}),
 			...(step.outputName ? { outputName: step.outputName } : {}),
 			...(step.structured ? { structured: step.structured } : {}),
@@ -623,7 +628,7 @@ function formatStepLine(step: AsyncRunStepSummary): string {
 	if (step.durationMs !== undefined) parts.push(formatDuration(step.durationMs));
 	if (step.tokens) parts.push(`${formatTokens(step.tokens.total)} tok`);
 	if (step.lane) parts.push(`lane ${step.lane.key}`);
-	if (step.worktreePath) parts.push(`worktree ${shortenPath(step.worktreePath)} · branch ${step.branch ?? "unknown"}`);
+	if (step.worktreePath) parts.push(`worktree ${shortenPath(step.worktreePath)} · branch ${step.branch ?? "unknown"}${step.provider ? ` · provider ${step.provider}` : ""}`);
 	return parts.join(" | ");
 }
 
@@ -716,6 +721,17 @@ export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active as
 		if (run.preflight) lines.push(formatWorkflowPreflightPlanSummary(run.preflight, { indent: "  " }));
 		const preflightWarning = formatWorkflowPreflightWarningSummary(run.workflow?.preflightWarnings, { indent: "  " });
 		if (preflightWarning) lines.push(preflightWarning);
+		if (run.mode === "workflow") {
+			const checklist = projectWorkflowChecklist({
+				graph: run.workflowGraph,
+				steps: run.steps,
+				hostSteps: run.hostSteps,
+				preflight: run.preflight,
+				trace: run.workflow?.trace,
+				now: run.lastUpdate ?? run.endedAt ?? Date.now(),
+			});
+			lines.push(...formatWorkflowChecklistText(checklist, "  ", { includeItems: false }));
+		}
 		for (const step of run.steps) {
 			lines.push(`  ${formatStepLine(step)}`);
 			lines.push(...formatTimeoutRecoveryLines(step.timeoutRecovery, "    "));

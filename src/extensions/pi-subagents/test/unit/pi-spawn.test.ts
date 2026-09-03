@@ -8,6 +8,7 @@ import {
 	resolvePiCliScript,
 	type SelesaiSpawnDeps,
 } from "../../src/runs/shared/pi-spawn.ts";
+import { SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 
 function makeDeps(input: {
 	platform?: NodeJS.Platform;
@@ -73,6 +74,33 @@ describe("getPiSpawnCommand", () => {
 		assert.deepEqual(result, { command: "selesai", args });
 	});
 
+	for (const extension of ["js", "mjs", "cjs"] as const) {
+		it(`runs a Windows ${extension} SELESAI_SUBAGENT_SELESAI_BINARY override through Node`, () => {
+			const piBinary = `C:\\Program Files\\pi\\bin\\pi-cli.${extension}`;
+			const args = ["--mode", "json", "Task: check output"];
+			const result = getPiSpawnCommand(args, {
+				platform: "win32",
+				execPath: "C:\\Program Files\\nodejs\\node.exe",
+				env: { SELESAI_SUBAGENT_SELESAI_BINARY: piBinary },
+			});
+			assert.deepEqual(result, {
+				command: "C:\\Program Files\\nodejs\\node.exe",
+				args: [piBinary, ...args],
+			});
+		});
+	}
+
+	it("keeps a JavaScript SELESAI_SUBAGENT_SELESAI_BINARY override direct on POSIX", () => {
+		const piBinary = "/opt/pi/bin/pi-cli.mjs";
+		const args = ["--mode", "json", "Task: check output"];
+		const result = getPiSpawnCommand(args, {
+			platform: "darwin",
+			execPath: "/usr/local/bin/node",
+			env: { SELESAI_SUBAGENT_SELESAI_BINARY: piBinary },
+		});
+		assert.deepEqual(result, { command: piBinary, args });
+	});
+
 	for (const [platform, execPath] of [
 		["darwin", "/opt/selesai/selesai"],
 		["linux", "/opt/selesai/selesai"],
@@ -89,7 +117,8 @@ describe("getPiSpawnCommand", () => {
 				execPath,
 				argv1: "/missing/host.js",
 				packageJsonPath,
-				packageJsonContent: JSON.stringify({ bin: { selesai: "dist/cli.js" } }),
+				packageJsonContent: JSON.stringify({ name: "@selesai/code", bin: { selesai: "dist/cli.js" } }),
+
 				existing: [packageJsonPath, cliPath],
 			});
 			const args = ["--mode", "json", "-p", "Task: review diff"];
@@ -141,7 +170,8 @@ describe("getPiSpawnCommand", () => {
 			execPath: "/usr/local/bin/node",
 			argv1: "/opt/selesai/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { selesai: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ name: "@selesai/code", bin: { selesai: "dist/cli/index.js" } }),
+
 			existing: [packageJsonPath, cliPath],
 		});
 		const args = ["-p", "Task: hello"];
@@ -152,7 +182,103 @@ describe("getPiSpawnCommand", () => {
 		});
 	});
 
+	it("fails closed until the Windows CLI script becomes available", () => {
+		const packageJsonPath = "/opt/pi/package.json";
+		const cliPath = path.resolve(
+			path.dirname(packageJsonPath),
+			"dist/cli/index.js",
+		);
+		let cliAvailable = false;
+		const deps = makeDeps({
+			platform: "win32",
+			execPath: "C:\\Program Files\\nodejs\\node.exe",
+			argv1: "/opt/pi-web/dist/server.js",
+			packageJsonPath,
+			packageJsonContent: JSON.stringify({ name: "@selesai/code", bin: { selesai: "dist/cli/index.js" } }),
+			existing: [packageJsonPath],
+		});
+		deps.existsSync = (filePath) =>
+			filePath === packageJsonPath || (cliAvailable && filePath === cliPath);
+		const args = ["-p", "Task: hello"];
+
+		assert.throws(
+			() => getPiSpawnCommand(args, deps),
+			/Could not resolve the Pi CLI on Windows/,
+		);
+		cliAvailable = true;
+		assert.deepEqual(getPiSpawnCommand(args, deps), {
+			command: "C:\\Program Files\\nodejs\\node.exe",
+			args: [cliPath, ...args],
+		});
+	});
+
+	it("resolves the Windows CLI from the forwarded package-root env for wrapper hosts", () => {
+		const packageJsonPath = "/opt/pi/package.json";
+		const cliPath = path.resolve(
+			path.dirname(packageJsonPath),
+			"dist/cli/index.js",
+		);
+		const args = ["-p", "Task: hello"];
+		const result = getPiSpawnCommand(args, {
+			platform: "win32",
+			execPath: "C:\\Program Files\\nodejs\\node.exe",
+			argv1: "/opt/pi-web/dist/server.js",
+			env: { [SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV]: "/opt/pi" },
+			existsSync: (filePath) => filePath === packageJsonPath || filePath === cliPath,
+			readFileSync: () => JSON.stringify({
+				name: "@selesai/code",
+				bin: { selesai: "dist/cli/index.js" },
+			}),
+		});
+
+		assert.deepEqual(result, {
+			command: "C:\\Program Files\\nodejs\\node.exe",
+			args: [cliPath, ...args],
+		});
+	});
+
+	it("skips an unverified forwarded package-root env before resolving a verified Pi package", () => {
+		const tempDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "pi-spawn-unverified-env-root-"),
+		);
+		try {
+			const wrongRoot = path.join(tempDir, "not-selesai");
+			const wrongCli = path.join(wrongRoot, "bin", "evil.js");
+			const selesaiRoot = path.join(tempDir, "node_modules", "@selesai", "code");
+			const selesaiEntry = path.join(selesaiRoot, "dist", "index.js");
+			const selesaiCli = path.join(selesaiRoot, "dist", "cli.js");
+			fs.mkdirSync(path.dirname(wrongCli), { recursive: true });
+			fs.mkdirSync(path.dirname(selesaiCli), { recursive: true });
+			fs.writeFileSync(wrongCli, "console.log('evil');\n");
+			fs.writeFileSync(path.join(wrongRoot, "package.json"), JSON.stringify({ name: "not-selesai", bin: { selesai: "bin/evil.js" } }));
+			fs.writeFileSync(selesaiEntry, "export {};\n");
+			fs.writeFileSync(selesaiCli, "#!/usr/bin/env node\n");
+			fs.writeFileSync(path.join(selesaiRoot, "package.json"), JSON.stringify({ name: "@selesai/code", bin: { selesai: "dist/cli.js" } }));
+
+			const result = getPiSpawnCommand(["-p", "Task: hello"], {
+				platform: "win32",
+				execPath: "C:\\Program Files\\nodejs\\node.exe",
+				argv1: "/opt/pi-web/dist/server.js",
+				// The Selesai host repo root is itself named @selesai/code, so
+				// resolvePiPackageRoot() would find it before the temp verified
+				// package; pin the verified temp package to keep the test
+				// deterministic while still exercising the unverified env root.
+				piPackageRoot: selesaiRoot,
+				env: { [SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV]: wrongRoot },
+				resolvePackageEntry: () => selesaiEntry,
+			});
+
+			assert.deepEqual(result, {
+				command: "C:\\Program Files\\nodejs\\node.exe",
+				args: [selesaiCli, "-p", "Task: hello"],
+			});
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("falls back to plain selesai command on POSIX when CLI script cannot be resolved", () => {
+
 		const args = ["--mode", "json", "Task: check output"];
 		const result = getPiSpawnCommand(args, {
 			platform: "darwin",
@@ -281,7 +407,8 @@ describe("getPiSpawnCommand", () => {
 			execPath: "/usr/local/bin/node",
 			argv1: "/opt/selesai/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { selesai: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ name: "@selesai/code", bin: { selesai: "dist/cli/index.js" } }),
+
 			existing: [packageJsonPath, cliPath],
 		});
 		const result = getPiSpawnCommand(["-p", "Task: hello"], deps);
@@ -289,16 +416,6 @@ describe("getPiSpawnCommand", () => {
 		assert.equal(result.args[0], cliPath);
 	});
 
-	it("falls back to selesai when Windows CLI script cannot be resolved", () => {
-		const deps = makeDeps({
-			platform: "win32",
-			argv1: "/opt/selesai/subagent-runner.ts",
-			existing: [],
-		});
-		const args = ["-p", "Task: hello"];
-		const result = getPiSpawnCommand(args, deps);
-		assert.deepEqual(result, { command: "selesai", args });
-	});
 
 	it("walks from package main entry to resolve package bin", () => {
 		const tempDir = fs.mkdtempSync(
@@ -334,8 +451,8 @@ describe("getPiSpawnCommand", () => {
 	});
 });
 
-describe("getPiSpawnCommand with selesaiPackageRoot", () => {
-	it("resolves CLI script via selesaiPackageRoot when argv1 is not runnable", () => {
+describe("getPiSpawnCommand with piPackageRoot", () => {
+	it("resolves CLI script via piPackageRoot when argv1 is not runnable", () => {
 		const packageJsonPath = "/opt/selesai/package.json";
 		const cliPath = path.resolve(
 			path.dirname(packageJsonPath),
@@ -346,10 +463,11 @@ describe("getPiSpawnCommand with selesaiPackageRoot", () => {
 			execPath: "/usr/local/bin/node",
 			argv1: "/opt/selesai/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { selesai: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ name: "@selesai/code", bin: { selesai: "dist/cli/index.js" } }),
+
 			existing: [packageJsonPath, cliPath],
 		});
-		deps.selesaiPackageRoot = "/opt/pi";
+		deps.piPackageRoot = "/opt/pi";
 		const result = getPiSpawnCommand(["-p", "Task: hello"], deps);
 		assert.equal(result.command, "/usr/local/bin/node");
 		assert.equal(result.args[0], cliPath);
@@ -367,7 +485,7 @@ describe("resolvePiCliScript", () => {
 			platform: "win32",
 			argv1: "/opt/selesai/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: "dist/cli/index.mjs" }),
+			packageJsonContent: JSON.stringify({ name: "@selesai/code", bin: "dist/cli/index.mjs" }),
 			existing: [packageJsonPath, cliPath],
 		});
 		assert.equal(resolvePiCliScript(deps), cliPath);

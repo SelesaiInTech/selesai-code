@@ -252,9 +252,22 @@ describe("Herdr inspector", () => {
 			assert.match(dashboard, /decision-1: Choose UX/);
 			assert.match(dashboard, /closing it does not stop the run/i);
 
-			assert.match(submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500 }, "steer keep going"), /Steering queued for run run-123\. Message: "keep going"/);
+			assert.match(submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500 }, "steer keep going"), /Steering queued for run run-123\.\n\nMessage sent:\n```text\nkeep going\n```/);
 			assert.deepEqual(consumeSteerRequests(asyncDir).map((request) => ({ message: request.message, targetIndex: request.targetIndex, source: request.source })), [
 				{ message: "keep going", targetIndex: 0, source: "herdr-inspector" },
+			]);
+			assert.match(submitInspectorControl({ asyncDir, runId: "run-123", index: 0, refreshMs: 1_500 }, "keep going without a prefix"), /Steering queued for run run-123/);
+			assert.deepEqual(consumeSteerRequests(asyncDir).map((request) => ({ message: request.message, targetIndex: request.targetIndex, source: request.source })), [
+				{ message: "keep going without a prefix", targetIndex: 0, source: "herdr-inspector" },
+			]);
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ ...status, mode: "parallel", steps: [...status.steps!, { agent: "reviewer", status: "running" }] }), "utf-8");
+			const aggregateDashboard = formatInspectorDashboard({ status: { ...status, mode: "parallel", steps: [...status.steps!, { agent: "reviewer", status: "running" }] }, asyncDir });
+			assert.match(aggregateDashboard, /Controls: steer <message> \| stop \| status/);
+			assert.doesNotMatch(aggregateDashboard, /type guidance/);
+			assert.throws(() => submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500 }, "ambiguous plain guidance"), /Plain guidance requires a child-specific inspector/);
+			assert.match(submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500 }, "steer broadcast guidance"), /Steering queued for run run-123/);
+			assert.deepEqual(consumeSteerRequests(asyncDir).map((request) => ({ message: request.message, targetIndexes: request.targetIndexes, source: request.source })), [
+				{ message: "broadcast guidance", targetIndexes: [0, 1], source: "herdr-inspector" },
 			]);
 			assert.match(submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500 }, "stop"), /Stop requested/);
 			assert.equal(consumeStopRequest(asyncDir), true);
@@ -369,6 +382,8 @@ describe("Herdr inspector", () => {
 
 	it("fails closed when an idle-only project pane close sees active work", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-project-pane-busy-"));
+		const previousPiBinary = process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV];
+		process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV] = path.join(root, "pi-bin");
 		try {
 			const projectRoot = fs.realpathSync(root);
 			const calls: string[][] = [];
@@ -394,12 +409,16 @@ describe("Herdr inspector", () => {
 			assert.equal(calls.some((args) => args.join(" ") === "pane close w1:p11"), false);
 			assert.equal(readHerdrProjectPaneBinding(root)?.paneId, "w1:p11");
 		} finally {
+			if (previousPiBinary === undefined) delete process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV];
+			else process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV] = previousPiBinary;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 
 	it("preserves legacy model-facing recovery for transient and opaque pane inspection results", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-project-pane-legacy-"));
+		const previousPiBinary = process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV];
+		process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV] = path.join(root, "pi-bin");
 		try {
 			let splitCount = 0;
 			let getMode: "valid" | "timeout" | "opaque" = "valid";
@@ -436,6 +455,8 @@ describe("Herdr inspector", () => {
 			assert.match(text(closed), /INVALID_PANE_RESPONSE/);
 			assert.equal(readHerdrProjectPaneBinding(root)?.paneId, "w1:p32");
 		} finally {
+			if (previousPiBinary === undefined) delete process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV];
+			else process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV] = previousPiBinary;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

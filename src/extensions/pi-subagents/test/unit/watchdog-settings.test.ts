@@ -51,12 +51,10 @@ describe("watchdog settings", () => {
 		assert.equal(result.config.enabled, false);
 		assert.equal(result.config.main.enabled, false);
 		assert.equal(result.config.children.enabled, false);
-		assert.equal(result.config.asyncCompletion.enabled, false);
-		assert.equal(result.config.delivery, "held");
-		assert.equal(result.config.showDuringRun, false);
+		assert.equal(result.config.guidance.watchdogMd, true);
 		assert.equal(result.config.agentEndTimeoutMs, 30_000);
 		assert.equal(result.config.children.watchdogTailTimeoutMs, 120_000);
-		assert.equal(result.config.autoFollow.maxAttempts, 3);
+		assert.equal(result.config.stalemateRepeats, 3);
 		assert.deepEqual(result.config.scope, { enabled: true });
 		assert.deepEqual(result.config.cadence, { everyNTools: null });
 		assert.deepEqual(result.config.lsp, { enabled: true, timeoutMs: 3000, maxFiles: 20, maxDiagnostics: 50 });
@@ -83,14 +81,14 @@ describe("watchdog settings", () => {
 			subagents: {
 				watchdog: {
 					enabled: true,
-					autoFollow: { blockers: true, maxAttempts: 5 },
+					stalemateRepeats: 5,
 					children: {
-						autoFollow: { maxAttempts: 4 },
+						cadence: { everyNTools: 10 },
 						overrides: {
-							worker: { enabled: true, model: "anthropic/claude-test" },
+							worker: { enabled: true, model: "anthropic/claude-test", cadence: { everyNTools: 5 } },
 						},
 					},
-					guidance: { systemPromptPath: "/tmp/user-watchdog.md" },
+					guidance: { watchdogMd: false },
 					scope: { enabled: false },
 					cadence: { everyNTools: 10 },
 				},
@@ -99,11 +97,10 @@ describe("watchdog settings", () => {
 		writeJson(projectSettingsPath(), {
 			subagents: {
 				watchdog: {
-					autoFollow: { stalemateRepeats: 2 },
+					stalemateRepeats: 2,
 					lsp: { enabled: false, timeoutMs: 1500, maxFiles: 4, maxDiagnostics: 7 },
 					main: { model: "openai/gpt-test" },
 					children: {
-						autoFollow: { blockers: false },
 						overrides: {
 							worker: { thinking: "medium" },
 							reviewer: { enabled: false },
@@ -115,7 +112,6 @@ describe("watchdog settings", () => {
 
 		const result = resolveWatchdogConfig(tempProject, {
 			session: {
-				autoFollow: { maxAttempts: null },
 				children: {
 					overrides: {
 						worker: { enabled: false },
@@ -127,16 +123,17 @@ describe("watchdog settings", () => {
 		assert.equal(result.ok, true);
 		assert.equal(result.config.main.enabled, true);
 		assert.equal(result.config.main.model, "openai/gpt-test");
-		assert.deepEqual(result.config.autoFollow, { blockers: true, maxAttempts: null, stalemateRepeats: 2 });
-		assert.equal(result.config.guidance.systemPromptPath, "/tmp/user-watchdog.md");
+		assert.equal(result.config.stalemateRepeats, 2);
+		assert.equal(result.config.guidance.watchdogMd, false);
 		assert.deepEqual(result.config.scope, { enabled: false });
 		assert.deepEqual(result.config.cadence, { everyNTools: 10 });
+		assert.deepEqual(result.config.children.cadence, { everyNTools: 10 });
 		assert.deepEqual(result.config.lsp, { enabled: false, timeoutMs: 1500, maxFiles: 4, maxDiagnostics: 7 });
-		assert.deepEqual(result.config.children.autoFollow, { blockers: false, maxAttempts: 4, stalemateRepeats: 3 });
 		assert.deepEqual(result.config.children.overrides.worker, {
 			enabled: false,
 			model: "anthropic/claude-test",
 			thinking: "medium",
+			cadence: { everyNTools: 5 },
 		});
 		assert.deepEqual(result.config.children.overrides.reviewer, { enabled: false });
 	});
@@ -178,6 +175,29 @@ describe("watchdog settings", () => {
 		);
 	});
 
+	it("parses launch rules and rejects malformed rule fields", () => {
+		const rules = {
+			action: "block",
+			roleModels: { scout: { allow: ["openai-codex/gpt-5.6-luna:max"] }, oracle: { deny: ["*"], note: "ask first" } },
+		} as const;
+		writeJson(userSettingsPath(), {
+			subagents: {
+				watchdog: { rules },
+			},
+		});
+		const result = resolveWatchdogConfig(tempProject);
+		assert.equal(result.ok, true, result.errors[0]?.message);
+		assert.deepEqual(result.config.rules, rules);
+		assert.equal(resolveWatchdogConfig(tempProject, { session: { enabled: true } }).config.rules?.action, "block");
+
+		writeJson(userSettingsPath(), { subagents: { watchdog: { rules: { action: "shout" } } } });
+		assert.match(resolveWatchdogConfig(tempProject).errors[0]?.message ?? "", /invalid 'subagents\.watchdog\.rules\.action'; expected 'warn' or 'block'/);
+		writeJson(userSettingsPath(), { subagents: { watchdog: { rules: { roleModels: { scout: { allowed: ["x"] } } } } } });
+		assert.match(resolveWatchdogConfig(tempProject).errors[0]?.message ?? "", /unknown field 'subagents\.watchdog\.rules\.roleModels\.scout\.allowed'/);
+		writeJson(userSettingsPath(), { subagents: { watchdog: {} } });
+		assert.equal(resolveWatchdogConfig(tempProject).config.rules, undefined);
+	});
+
 	it("rejects invalid scope and cadence config at settings load", () => {
 		writeJson(userSettingsPath(), {
 			subagents: {
@@ -202,6 +222,9 @@ describe("watchdog settings", () => {
 		result = resolveWatchdogConfig(tempProject);
 		assert.equal(result.ok, false);
 		assert.match(result.errors[0]?.message ?? "", /invalid 'subagents\.watchdog\.cadence\.everyNTools'/);
+
+		writeJson(userSettingsPath(), { subagents: { watchdog: { children: { cadence: { everyNTools: 4 } } } } });
+		assert.match(resolveWatchdogConfig(tempProject).errors[0]?.message ?? "", /invalid 'subagents\.watchdog\.children\.cadence\.everyNTools'/);
 	});
 
 	it("rejects invalid LSP config at settings load", () => {

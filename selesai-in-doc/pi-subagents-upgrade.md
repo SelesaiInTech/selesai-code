@@ -13,11 +13,24 @@ convention.
   Fetch a tag with an explicit namespaced ref so it does not collide with pi's own semver tags:
   ```bash
   git fetch https://github.com/nicobailon/pi-subagents.git \
-    "refs/tags/v0.61.0:refs/tags/pi-subagents/v0.61.0"
+    "refs/tags/v0.61.0:refs/tags/pi-subagents/v0.61.0" \
+    "refs/tags/v0.64.0:refs/tags/pi-subagents/v0.64.0"
   ```
   Local bare `v0.60.0`/`v0.61.0` tags belong to `earendil-works/pi` (different project, same semver).
 
-## Vendoring process (how an upgrade was done for v0.60.0 → v0.61.0)
+## Upgrade history
+
+- **v0.60.0 → v0.61.0** (2026-08-31): first documented port; process below written from it.
+- **v0.61.0 → v0.64.0** (2026-09-02): second port, same 3-way merge process (unlazy scope
+  `subagents-upgrade`, see `.unlazy/subagents-upgrade/` for gates, check scripts, and frozen merge
+  references). Anchored delta: 155 files (69 src, 68 test, 7 docs, 3 skills, 5 root, 9 new);
+  3-way merge simulation 54+55 clean, 19 conflict, 9 new; conflicts resolved by hand with the
+  rules below. Upstream 0.64.0 highlights: watchdog launch rules (`subagents.watchdog.rules`),
+  `watchdog_diff` tool, configurable child review cadence, `WATCHDOG.md` instructions, quieter
+  workflow/async status. Upstream 0.64.0 also fixed the pre-existing async-retention unit failure
+  (unit suite went from 1 known failure to 2845/0).
+
+## Vendoring process (how an upgrade was done for v0.60.0 → v0.61.0, re-used for v0.61.0 → v0.64.0)
 
 The fork's delta from upstream is **almost entirely mechanical branding plus a few small behavior
 tweaks**. A wholesale upstream copy (or a 3-way `git merge-file` that blindly "keeps theirs" on
@@ -59,11 +72,12 @@ These differ from upstream and must survive future upgrades:
 ## Local uncommitted fix (must be re-applied on upgrade — NOT superseded)
 
 `src/extensions/pi-subagents/src/runs/background/async-status.ts` has a fork-only hardening that is
-**not absorbed** by upstream v0.61.0 (upstream's `isAsyncStatusIsolationError` does not match
-ENOTDIR repair-write failures). It wraps `reconcileAsyncRun` so a repair-write failure (unaddressable
-results dir) does not abort restoring the whole async-run list.
+**not absorbed** by upstream v0.61.0 or v0.64.0 (upstream's `isAsyncStatusIsolationError` does not
+match ENOTDIR repair-write failures). It wraps `reconcileAsyncRun` so a repair-write failure
+(unaddressable results dir) does not abort restoring the whole async-run list.
 
-- The fix coexists with upstream v0.61.0's `isolateCorruptActiveRun` (corrupt-status reads).
+- The fix coexists with upstream's `isolateCorruptActiveRun` (corrupt-status reads) in both
+  v0.61.0 and v0.64.0; the 0.64.0 port kept the fork fallback branch intact.
 - Merge rule: in `listAsyncRuns`, when `reconcileAsyncRun` throws:
   - if `isAsyncStatusIsolationError(...)` → let upstream isolate/continue;
   - otherwise (ENOTDIR repair-write) → fall back to a non-repairing `readStatus`.
@@ -83,9 +97,12 @@ fresh `rsync --delete` wipes it, `npm run typecheck` and the `host ci` integrati
 ```bash
 cd src/extensions/pi-subagents
 npx tsc --noEmit                       # clean (requires shim dist/ present)
-npm run test:unit                      # expected: only pre-existing async-retention failure
-npm run test:integration               # expected: 0 failures
+npm run test:unit                      # 0.64.0 baseline: 2845 pass / 0 fail
+npm run test:integration               # 0.64.0 baseline: 912 pass / 0 fail
 node --test --test-name-pattern "isolates active reconciliation validation failures" \
   test/integration/async-status.test.ts  # upstream isolation + fork fix coexist
-node --test test/unit/stale-run-reconciler.test.ts  # fork-local fix preserved
+node --test test/unit/stale-run-reconciler.test.ts  # fork-local fix preserved (11 tests)
 ```
+
+Known flake: `watchdog-lsp-diagnostics` ("malformed language-server JSON") times out under
+full-suite load ~1 in 3 runs, passes in isolation; retry once before treating as a failure.

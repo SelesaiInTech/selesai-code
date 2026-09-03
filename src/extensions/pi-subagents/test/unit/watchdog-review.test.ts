@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
+import { WATCHDOG_GUIDANCE_MAX_CHARS } from "../../src/watchdog/guidance.ts";
 import {
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
@@ -35,14 +39,11 @@ function cloneConfig(): ResolvedWatchdogConfig {
 	return {
 		...DEFAULT_WATCHDOG_CONFIG,
 		guidance: { ...DEFAULT_WATCHDOG_CONFIG.guidance },
-		autoFollow: { ...DEFAULT_WATCHDOG_CONFIG.autoFollow },
 		main: { ...DEFAULT_WATCHDOG_CONFIG.main },
 		children: {
 			...DEFAULT_WATCHDOG_CONFIG.children,
-			autoFollow: { ...DEFAULT_WATCHDOG_CONFIG.children.autoFollow },
 			overrides: { ...DEFAULT_WATCHDOG_CONFIG.children.overrides },
 		},
-		asyncCompletion: { ...DEFAULT_WATCHDOG_CONFIG.asyncCompletion },
 		lsp: { ...DEFAULT_WATCHDOG_CONFIG.lsp },
 	};
 }
@@ -238,6 +239,50 @@ describe("main watchdog review adapter", () => {
 
 		assert.equal(streamAborted, true);
 		assert.equal(result?.stopReason, "aborted");
+	});
+
+	it("includes WATCHDOG.md guidance in the system prompt", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "watchdog-review-guidance-"));
+		const originalAgentDir = process.env.SELESAI_CODING_AGENT_DIR;
+		try {
+			process.env.SELESAI_CODING_AGENT_DIR = path.join(dir, "agent");
+			fs.mkdirSync(path.join(dir, "project", ".selesai"), { recursive: true });
+			fs.writeFileSync(path.join(dir, "project", ".selesai", "WATCHDOG.md"), "Never accept skipped tests.\n", "utf-8");
+			fs.mkdirSync(path.join(dir, "agent"), { recursive: true });
+			fs.writeFileSync(path.join(dir, "agent", "WATCHDOG.md"), "u".repeat(WATCHDOG_GUIDANCE_MAX_CHARS), "utf-8");
+			const current = model("openai", "gpt-guidance");
+			const ctx = { ...(createCtx({ current }) as object), cwd: path.join(dir, "project") } as never;
+			const { streamFn, calls } = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
+
+			await createMainWatchdogReview(ctx, { streamFn })(request(enabledConfig(), []));
+			const prompt = String(calls[0]?.context.systemPrompt ?? "");
+			assert.match(prompt, /Standing instructions from WATCHDOG\.md \(project first, then user\):\nNever accept skipped tests\.\n\nu+$/);
+			assert.equal(prompt.split("(project first, then user):\n")[1]?.length, WATCHDOG_GUIDANCE_MAX_CHARS, "combined guidance is capped from the head");
+
+			const disabled = enabledConfig();
+			disabled.guidance = { watchdogMd: false };
+			const second = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
+			await createMainWatchdogReview(ctx, { streamFn: second.streamFn })(request(disabled, []));
+			assert.doesNotMatch(String(second.calls[0]?.context.systemPrompt ?? ""), /Standing instructions/);
+		} finally {
+			if (originalAgentDir === undefined) delete process.env.SELESAI_CODING_AGENT_DIR;
+			else process.env.SELESAI_CODING_AGENT_DIR = originalAgentDir;
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("offers watchdog_diff only when a repo baseline is available", async () => {
+		const current = model("openai", "gpt-diff");
+		const ctx = createCtx({ current });
+		const withBaseline = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
+		await createMainWatchdogReview(ctx, { streamFn: withBaseline.streamFn, diffBaseline: () => ({ root: "/tmp/watchdog-review", ref: "abc123" }) })(request(enabledConfig(), []));
+		assert.deepEqual(withBaseline.calls[0]?.context.tools?.map((tool) => tool.name).sort(), ["find", "grep", "ls", "read", "watchdog_diff", "watchdog_warn"]);
+		assert.match(String(withBaseline.calls[0]?.context.systemPrompt ?? ""), /watchdog_diff/);
+
+		const without = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
+		await createMainWatchdogReview(ctx, { streamFn: without.streamFn, diffBaseline: () => undefined })(request(enabledConfig(), []));
+		assert.deepEqual(without.calls[0]?.context.tools?.map((tool) => tool.name).sort(), ["find", "grep", "ls", "read", "watchdog_warn"]);
+		assert.doesNotMatch(String(without.calls[0]?.context.systemPrompt ?? ""), /watchdog_diff/);
 	});
 
 	it("does not expose mutating tools to the watchdog agent", async () => {

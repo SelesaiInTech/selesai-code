@@ -168,8 +168,7 @@ from disabling `waitTool`, which returns immediately without arming a future
 wake. If a foreground child detaches for supervisor coordination, reply first,
 then wait on its id; do not resume or launch a replacement while it remains
 detached. Headless sessions also auto-drain exact current-session work at
-`agent_end` as a final safeguard. `subagent_wait` remains available as a
-deprecated compatibility alias for `bg_wait`.
+`agent_end` as a final safeguard. `subagent_wait` remains available as a deprecated compatibility alias for `bg_wait`.
 
 Providers are discovered through the `pi-subagents/background-work` registry and
 must expose a stable item id and owning session id. Load a provider through the
@@ -338,9 +337,10 @@ child changes land. Enabled watchdogs also run changed-file TypeScript/JavaScrip
 LSP diagnostics before the model pass when `typescript-language-server` is available.
 They keep bounded current-scope context from real user prompts (`watchdog.scope.enabled`)
 and can optionally run non-blocking Scopey-style cadence reviews every N tool results
-(`watchdog.cadence.everyNTools`). Cadence corrections and blocker auto-follow prompts
-are always transcript-visible; choose the watchdog model that matches the desired
-cheap-monitor vs strong-reviewer policy.
+(`watchdog.cadence.everyNTools`). Cadence corrections and boundary warnings are always
+transcript-visible; a boundary warning continues the run so the agent can act on it, and
+repeated identical warnings stop after `watchdog.stalemateRepeats`. Choose the watchdog
+model that matches the desired cheap-monitor vs strong-reviewer policy.
 
 Prefer a strong complementary model (for example Opus 4.8 high paired against a
 GPT 5.5 main session, or the reverse). Recommendation and configuration:

@@ -297,7 +297,7 @@ describe("workflow chat progress rendering", () => {
 		assert.doesNotMatch(text, /failed\s+detaches/);
 	});
 
-	it("seeds declared preflight lanes as planned before workflow trace entries", () => {
+	it("keeps advisory preflight lanes in plan metadata instead of runtime rows", () => {
 		const preflight = {
 			version: 1 as const,
 			coverage: "partial" as const,
@@ -306,40 +306,57 @@ describe("workflow chat progress rendering", () => {
 				{ key: "review", mode: "review" as const, expectedOutput: "review.md" },
 			],
 		};
-		assert.deepEqual(buildWorkflowChatProgressRows([], preflight).map((row) => ({ key: row.key, state: row.state })), [
-			{ key: "writer", state: "planned" },
-			{ key: "review", state: "planned" },
-		]);
-		const text = componentText(renderSubagentResult({
-			content: [{ type: "text", text: "Workflow running." }],
+		assert.deepEqual(buildWorkflowChatProgressRows([], preflight), []);
+		const result = {
+			content: [{ type: "text" as const, text: "Workflow running." }],
 			details: {
-				mode: "workflow",
+				mode: "workflow" as const,
 				runId: "wf_planned",
 				results: [],
 				preflight,
-				chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
+				chatProgress: { mode: "live-card" as const, repoRelation: "same" as const, repoLabel: "pi-subagents" },
 				workflow: { trace: [], emits: [], console: [] },
 			},
-		}, { expanded: false }, theme as any));
-		assert.match(text, /planned\s+writer/);
-		assert.match(text, /planned\s+review/);
+		};
+		const text = componentText(renderSubagentResult(result, { expanded: false }, theme as any));
+		assert.match(text, /Plan: 2 lanes · writer, review/);
+		assert.match(text, /waiting for workflow child launches/);
+		assert.doesNotMatch(text, /planned\s+writer/);
+		assert.doesNotMatch(text, /planned\s+review/);
 		assert.doesNotMatch(text, /mode:mutation/);
 		assert.doesNotMatch(text, /expected:review\.md/);
-		assert.doesNotMatch(text, /waiting for workflow child launches/);
 
-		const expanded = componentText(renderSubagentResult({
-			content: [{ type: "text", text: "Workflow running." }],
-			details: {
-				mode: "workflow",
-				runId: "wf_planned",
-				results: [],
-				preflight,
-				chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
-				workflow: { trace: [], emits: [], console: [] },
-			},
-		}, { expanded: true }, theme as any));
-		assert.match(expanded, /mode:mutation/);
-		assert.match(expanded, /expected:review\.md/);
+		const expanded = componentText(renderSubagentResult(result, { expanded: true }, theme as any));
+		assert.match(expanded, /Plan: 2 lanes · writer, review/);
+		assert.doesNotMatch(expanded, /planned\s+writer/);
+		assert.doesNotMatch(expanded, /planned\s+review/);
+	});
+
+	it("annotates an authoritative dotted child without adding its declared root", () => {
+		const preflight = { version: 1 as const, coverage: "partial" as const, lanes: [{ key: "pr14", mode: "review" as const }] };
+		const rows = buildWorkflowChatProgressRows([
+			{ operation: "run", key: "pr14.quality", generatedLaneKey: "pr14", state: "started", agent: "reviewer" },
+		], preflight);
+
+		assert.deepEqual(rows.map((row) => ({ key: row.key, state: row.state, mode: row.preflight?.mode })), [
+			{ key: "pr14.quality", state: "running", mode: "review" },
+		]);
+	});
+
+	it("prefers a specific preflight lane over an earlier broad generated alias", () => {
+		const preflight = {
+			version: 1 as const,
+			coverage: "partial" as const,
+			lanes: [
+				{ key: "writer", mode: "mutation" as const },
+				{ key: "writer.quality", mode: "review" as const },
+			],
+		};
+		const rows = buildWorkflowChatProgressRows([
+			{ operation: "run", key: "writer.quality.deep", generatedLaneKey: "writer", state: "started", agent: "reviewer" },
+		], preflight);
+
+		assert.equal(rows[0]?.preflight?.mode, "review");
 	});
 
 	it("uses the compact plan preview for collapsed workflow launch output", () => {
@@ -434,6 +451,7 @@ describe("workflow chat progress rendering", () => {
 			key: `step-${index}`,
 			state: "started" as const,
 			label: `review ${index}`,
+			phase: `phase-${index}`,
 		}));
 		const result = {
 			content: [{ type: "text" as const, text: "Workflow running." }],
@@ -454,6 +472,7 @@ describe("workflow chat progress rendering", () => {
 		const expanded = renderSubagentResult(result, { expanded: true }, theme as any, undefined, { horizontalSpacing: 0, compactResultMaxLines: 3 }).render(120);
 		assert.ok(expanded.length > 3);
 		assert.match(expanded[1]!, /^  Repo   pi-subagents\s*$/);
+		assert.match(expanded.join("\n"), /phase-9 1 active/);
 		assert.doesNotMatch(expanded.join("\n"), /rows hidden · .* expands/);
 	});
 

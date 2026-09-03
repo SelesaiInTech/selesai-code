@@ -343,7 +343,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
 				steps: [
 					{ agent: "scout", status: "complete" },
-					{ agent: "reviewer", status: "running", currentTool: "read", transcriptPath },
+					{ agent: "reviewer", status: "running", currentTool: "read", transcriptPath, model: "mock/test-model", thinking: "high" },
 					{ agent: "worker", status: "running" },
 					{ agent: "writer", status: "pending" },
 				],
@@ -379,6 +379,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(job.cwd, customCwd);
 			assert.deepEqual(job.agents, ["reviewer", "worker"]);
 			assert.deepEqual(job.steps?.map((step: { index?: number }) => step.index), [1, 2]);
+			assert.equal(job.steps?.[0]?.thinking, "high");
 			assert.equal(job.stepsTotal, 2);
 			assert.equal(job.runningSteps, 2);
 			assert.equal(job.completedSteps, 0);
@@ -1100,8 +1101,10 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.toolCount === 1, "changed status load");
 			await waitForCondition(() => ui.widgets.length > widgetsAfterStatusLoaded, "changed status widget replacement");
 
+			const requestsBeforeTerminal = ui.renderRequests;
 			writeStatus(4000, 1, "complete");
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.status === "complete", "terminal status load");
+			await waitForCondition(() => ui.renderRequests > requestsBeforeTerminal, "terminal status widget redraw");
 			const widgetsAfterTerminal = ui.widgets.length;
 			const requestsAfterTerminal = ui.renderRequests;
 			await new Promise((resolve) => setTimeout(resolve, 35));

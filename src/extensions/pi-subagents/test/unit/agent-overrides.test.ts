@@ -130,6 +130,19 @@ describe("builtin agent overrides", () => {
 		assert.equal(researcher?.mcpDirectTools, undefined);
 	});
 
+	it("applies excludeTools settings overrides to builtin agents", () => {
+		writeJson(path.join(tempHome, ".selesai", "agent", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					researcher: { excludeTools: ["write", "unknown_tool"] },
+				},
+			},
+		});
+
+		const researcher = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "researcher");
+		assert.deepEqual(researcher?.excludeTools, ["write", "unknown_tool"]);
+	});
+
 	it("surfaces invalid string tool override settings", () => {
 		const settingsPath = path.join(tempHome, ".selesai", "agent", "settings.json");
 		writeJson(settingsPath, {
@@ -703,9 +716,10 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.override?.scope, "project");
 	});
 
-	it("frontmatter wins per-field over agentOverrides for a shadowing project agent", () => {
+	it("agentOverrides replace frontmatter for a shadowing project agent", () => {
 		fs.mkdirSync(path.join(tempProject, ".selesai"), { recursive: true });
 		writeJson(path.join(tempProject, ".selesai", "settings.json"), {
+
 			subagents: { agentOverrides: { reviewer: { model: "openai/gpt-5.4" } } },
 		});
 		writeProjectAgent(tempProject, "reviewer", `---\nname: reviewer\ndescription: Project reviewer\nmodel: google/gemini-3-pro\n---\n\nUse the project reviewer.\n`);
@@ -713,13 +727,14 @@ describe("builtin agent overrides", () => {
 		const reviewer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "reviewer");
 		assert.ok(reviewer);
 		assert.equal(reviewer.source, "project");
-		assert.equal(reviewer.model, "google/gemini-3-pro");
-		assert.equal(reviewer.override, undefined);
+		assert.equal(reviewer.model, "openai/gpt-5.4");
+		assert.equal(reviewer.override?.scope, "project");
 	});
 
-	it("fills in unset fields on a custom project agent from project agentOverrides", () => {
+	it("applies project agentOverrides to a custom project agent", () => {
 		fs.mkdirSync(path.join(tempProject, ".selesai"), { recursive: true });
 		writeJson(path.join(tempProject, ".selesai", "settings.json"), {
+
 			subagents: {
 				agentOverrides: {
 					implementer: {
@@ -769,8 +784,9 @@ describe("builtin agent overrides", () => {
 		assert.equal(implementer.override?.path, path.join(tempProject, ".selesai", "settings.json"));
 	});
 
-	it("fills in unset fields on a custom user agent from user agentOverrides", () => {
+	it("applies user agentOverrides to a custom user agent", () => {
 		writeJson(path.join(tempHome, ".selesai", "agent", "settings.json"), {
+
 			subagents: { agentOverrides: { implementer: { model: "anthropic/claude-sonnet-4-6" } } },
 		});
 		writeUserAgent(tempHome, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
@@ -813,9 +829,10 @@ describe("builtin agent overrides", () => {
 		assert.equal(implementer.override?.scope, "project");
 	});
 
-	it("keeps explicit custom frontmatter fields over matching agentOverrides", () => {
+	it("agentOverrides replace explicit custom frontmatter fields", () => {
 		fs.mkdirSync(path.join(tempProject, ".selesai"), { recursive: true });
 		writeJson(path.join(tempProject, ".selesai", "settings.json"), {
+
 			subagents: {
 				agentOverrides: {
 					implementer: {
@@ -830,6 +847,7 @@ describe("builtin agent overrides", () => {
 						inheritProjectContext: true,
 						defaultContext: "fork",
 						acceptanceRole: "writer",
+						systemPrompt: "Override prompt",
 						completionGuard: true,
 					},
 				},
@@ -839,32 +857,34 @@ describe("builtin agent overrides", () => {
 
 		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
 		assert.ok(implementer);
-		assert.equal(implementer.output, "artifacts/explicit.md");
-		assert.equal(implementer.outputMode, "inline");
-		assert.deepEqual(implementer.defaultReads, ["explicit.md"]);
-		assert.equal(implementer.model, "google/gemini-3-pro");
-		assert.equal(implementer.fast, false);
-		assert.equal(implementer.thinking, "medium");
-		assert.deepEqual(implementer.tools, ["read"]);
-		assert.deepEqual(implementer.mcpDirectTools, ["local_tool"]);
-		assert.deepEqual(implementer.skills, ["agent-skill"]);
-		assert.equal(implementer.inheritProjectContext, false);
-		assert.equal(implementer.defaultContext, "fresh");
-		assert.equal(implementer.acceptanceRole, "read-only");
-		assert.equal(implementer.completionGuard, false);
-		assert.equal(implementer.override, undefined);
+		assert.equal(implementer.output, "artifacts/override.md");
+		assert.equal(implementer.outputMode, "file-only");
+		assert.deepEqual(implementer.defaultReads, ["override.md"]);
+		assert.equal(implementer.model, "anthropic/claude-sonnet-4-6");
+		assert.equal(implementer.fast, true);
+		assert.equal(implementer.thinking, "high");
+		assert.deepEqual(implementer.tools, ["bash"]);
+		assert.equal(implementer.mcpDirectTools, undefined);
+		assert.deepEqual(implementer.skills, ["override-skill"]);
+		assert.equal(implementer.inheritProjectContext, true);
+		assert.equal(implementer.defaultContext, "fork");
+		assert.equal(implementer.acceptanceRole, "writer");
+		assert.equal(implementer.systemPrompt, "Override prompt");
+		assert.equal(implementer.completionGuard, true);
+		assert.equal(implementer.override?.scope, "project");
 	});
 
-	it("keeps explicit output and defaultReads frontmatter when overrides clear them", () => {
+	it("lets false overrides clear explicit output and defaultReads frontmatter", () => {
 		fs.mkdirSync(path.join(tempProject, ".selesai"), { recursive: true });
 		writeJson(path.join(tempProject, ".selesai", "settings.json"), {
+
 			subagents: { agentOverrides: { implementer: { output: false, defaultReads: false } } },
 		});
 		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\noutput: explicit.md\ndefaultReads: explicit.md\n---\n\nDrive the failing test first.\n`);
 
 		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
-		assert.equal(implementer?.output, "explicit.md");
-		assert.deepEqual(implementer?.defaultReads, ["explicit.md"]);
+		assert.equal(implementer?.output, undefined);
+		assert.deepEqual(implementer?.defaultReads, undefined);
 	});
 
 	it("keeps an explicit empty defaultReads override distinct from false", () => {
@@ -1036,8 +1056,9 @@ describe("builtin agent overrides", () => {
 		const packageRoot = path.join(tempProject, "package-agents");
 		fs.mkdirSync(path.join(packageRoot, "agents"), { recursive: true });
 		writeJson(path.join(packageRoot, "package.json"), { "pi-subagents": { agents: ["agents"] } });
-		fs.writeFileSync(path.join(packageRoot, "agents", "package-scout.md"), `---\nname: package-scout\ndescription: Package scout\n---\n\nScout the package.\n`, "utf-8");
+		fs.writeFileSync(path.join(packageRoot, "agents", "package-scout.md"), `---\nname: package-scout\ndescription: Package scout\noutput: package-frontmatter.md\ndefaultReads: PACKAGE-FRONTMATTER.md\n---\n\nScout the package.\n`, "utf-8");
 		writeJson(path.join(tempProject, ".selesai", "settings.json"), {
+
 			packages: [packageRoot],
 			subagents: { agentOverrides: { "package-scout": { output: "package.md", defaultReads: ["PACKAGE.md"] } } },
 		});

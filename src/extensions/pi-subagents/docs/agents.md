@@ -27,6 +27,7 @@ Discovery notes:
 
 - Project discovery also reads legacy `.agents/**/*.md` files. If both `.agents/` and the project config agents directory define the same parsed runtime agent name, the project config directory wins.
 - Nested subdirectories are discovered recursively. `.chain.md` files do not define agents.
+- User and project settings can add extra recursive scan roots with `subagents.agentScanDirs`; fixed user/project agent directories keep higher priority than same-name agents from scan roots.
 - Installed Pi packages can expose agent directories from either `{"pi-subagents":{"agents":["./agents"]}}` or `{"pi":{"subagents":{"agents":["./agents"]}}}` in their package manifest. Package agents load above builtins and below user/project agents.
 - Use `agentScope: "user" | "project" | "both"` to control discovery. `both` is the default, and project definitions win runtime-name collisions.
 
@@ -61,6 +62,8 @@ External CLI agents use their own runner contract. Do not pass native Pi child o
 
 The bundled code-owned external adapters (`codex-exec`, `claude-code`, `cursor-agent` and their writer variants) were removed in favor of the built-in Pi agents. A custom agent with `runner.type: external-cli` (no adapter) still runs the generic one-shot stdin contract: `command` is executed with the prompt on stdin, and the bounded final output is treated as untrusted text.
 
+Native `oracle` runs inside Pi and can use its configured read tools. The Claude profiles send the assembled prompt to the local Claude Code CLI through stdin. An external-job agent sends the assembled prompt to its registered provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
+
 ### External-job state table
 
 | Durable file | Owner | States | Release predicate | Rollback predicate | Stale-head behavior | Fail-closed cases |
@@ -76,9 +79,9 @@ The `researcher` builtin uses `web_search`, `fetch_content`, and `get_search_con
 pi install npm:pi-web-access
 ```
 
-## Overriding builtins
+## Overriding builtins and custom agents
 
-You can override selected builtin fields without copying the whole agent. Overrides live in settings:
+You can override selected agent fields without copying the whole agent. Overrides live in settings:
 
 - User: `~/.selesai/agent/settings.json`
 - Project: project config settings file (`.pi/settings.json` in standard Pi)
@@ -100,9 +103,9 @@ Supported override fields: `description`, `output`, `outputMode`, `defaultReads`
 
 - `description` replaces the discovered description for builtin and custom agents, which lets list output show deployment-specific routing or model metadata.
 - Use `output: false`, `defaultReads: false`, `defaultContext: false`, or `acceptanceRole: false` to clear an inherited value.
-- Use `tools: "inherit"` on a builtin when that one role should omit its bundled tool allowlist and receive Pi's normal builtins and ambient extensions. This keeps strict tools as the default for other builtins.
+- Use `tools: "inherit"` when that one role should omit its bundled or frontmatter tool allowlist and receive Pi's normal builtins and ambient extensions.
 - Project overrides beat user overrides.
-- Matching user and project agents also receive override fields that their frontmatter leaves unset, so a shared project config agent can keep the persona while local settings choose the model.
+- Matching package, user, and project agents also receive override fields, which replace the same fields declared in their frontmatter. This lets a shared agent keep its persona while local settings choose the effective model, context, tools, or other supported options.
 
 Disable and restore:
 
@@ -142,6 +145,7 @@ package: code-analysis
 description: Fast codebase recon
 aliases: explorer, code-scout
 tools: read, grep, find, ls, bash, mcp:chrome-devtools
+excludeTools: bash
 extensions:
 subagentOnlyExtensions: ./tools/child-only-search.ts
 model: claude-haiku-4-5
@@ -170,7 +174,7 @@ allowNestedSubagents: true
 Your system prompt goes here.
 ```
 
-Simple-scalar list fields accept either a comma-separated form or a newline block list with one `- item` per line. This applies to `tools`, `defaultReads`, `skill`/`skills`, `skillPath`, `fallbackModels`, `extensions`, and `subagentOnlyExtensions`:
+Simple-scalar list fields accept either a comma-separated form or a newline block list with one `- item` per line. This applies to `tools`, `excludeTools`, `defaultReads`, `skill`/`skills`, `skillPath`, `fallbackModels`, `extensions`, and `subagentOnlyExtensions`:
 
 ```yaml
 tools:
@@ -188,6 +192,7 @@ Field notes:
 | `package` | Optional package identifier. A file with `name: scout` and `package: code-analysis` registers as `code-analysis.scout`; serialization keeps `name` and `package` separate. |
 | `aliases` | Optional comma-separated or block-list names that resolve to this agent for selection and explicit `agent` and task inputs. Runtime status, persistence, and config still use the canonical `name`. Exact canonical names take precedence over aliases, and alias collisions between distinct canonical agents fail as ambiguous. |
 | `tools` | Strict child tool allowlist. Named extension tools must also have their provider loaded. `mcp:` entries select direct MCP tools when `pi-mcp-adapter` is installed. |
+| `excludeTools` | Optional child tool deny-list applied after normal tool resolution. With an explicit `tools` allowlist, matching names are removed; when `tools` is omitted, the names are forwarded to Pi as `--exclude-tools` so the ambient tool set is inherited minus those names. Unknown names are ignored by Pi without making the agent definition invalid. |
 | `allowNestedSubagents` | Set `true` to authorize the child-safe nested `subagent` runtime without making omitted `tools` an allowlist. Inherited depth and capability ceilings remain authoritative. |
 | `extensions` | Omitted means normal extensions; empty means no extensions; list values allowlist specific extensions. |
 | `subagentOnlyExtensions` | Extension paths loaded only in spawned child sessions for this agent. Tools registered there are unavailable to the main agent unless also installed through normal Pi extension configuration. |
@@ -271,6 +276,8 @@ How `tools` behaves:
 - `tools` present: regular tool names become an explicit allowlist.
 - `tools:` empty: emits `--no-tools`.
 - `allowNestedSubagents: true`: explicitly enables child-safe nested fanout without turning omitted `tools` into an allowlist. Depth and inherited capability ceilings still apply.
+
+`excludeTools` is applied after this resolution. It can narrow an explicit `tools` allowlist or, when `tools` is omitted, compose with Pi's ambient builtin tools through `--exclude-tools`. Runtime-injected tools are excluded only when their exact names are listed. An empty `excludeTools` list has no effect.
 
 An allowlisted name does not load the extension that registers it. Load that provider through normal Pi extension discovery, `extensions`, `subagentOnlyExtensions`, or a path-like `tools` entry.
 

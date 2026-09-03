@@ -515,6 +515,26 @@ Do work
 		assert.deepEqual(worker?.extensions, [path.join(dir, ".selesai", "agents", "extension-one.ts"), path.join(dir, ".selesai", "agents", "extension-two.ts")]);
 		assert.deepEqual(worker?.subagentOnlyExtensions, [path.join(dir, ".selesai", "agents", "child-only.ts"), path.join(dir, ".selesai", "agents", "child-helper.ts")]);
 	});
+
+	it("discovers and serializes excludeTools without validating names", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-exclude-tools-frontmatter-"));
+		tempDirs.push(dir);
+		const agentPath = path.join(dir, ".selesai", "agents", "worker.md");
+		writeAgent(agentPath, `---
+name: worker
+description: Worker
+excludeTools:
+  - write
+  - made-up-tool
+---
+
+Do work
+`);
+
+		const worker = discoverAgents(dir, "project").agents.find((agent) => agent.name === "worker");
+		assert.deepEqual(worker?.excludeTools, ["write", "made-up-tool"]);
+		assert.match(serializeAgent(worker!), /^excludeTools: write, made-up-tool$/m);
+	});
 });
 
 describe("agent permission frontmatter", () => {

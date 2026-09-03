@@ -20,11 +20,15 @@ const config = resolveControlConfig(undefined, {
 describe("subagent control attention state", () => {
 	it("marks a run as needing attention only after the idle threshold", () => {
 		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, now: 50 }), undefined);
-		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, now: 400 }), "needs_attention");
+		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, turnCount: 1, now: 400 }), "needs_attention");
 		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, currentTool: "bash", now: 400 }), undefined);
-		assert.equal(deriveActivityState({ config, startedAt: 0, now: 400 }), "needs_attention");
+		assert.equal(deriveActivityState({ config, startedAt: 0, turnCount: 1, now: 400 }), "needs_attention");
 	});
 
+	it("does not mark a zero-turn run as needing attention", () => {
+		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, turnCount: 0, now: 400 }), undefined);
+		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, now: 400 }), undefined);
+	});
 
 	it("builds compact needs-attention control events", () => {
 		const event = buildControlEvent({
@@ -103,25 +107,34 @@ describe("subagent control attention state", () => {
 	it("scales the default idle threshold for higher thinking levels", () => {
 		const defaults = resolveControlConfig();
 
-		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, now: 60_001 }), "needs_attention");
-		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, thinking: "low", now: 60_001 }), "needs_attention");
-		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, thinking: "minimal", now: 60_001 }), "needs_attention");
-		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, thinking: "high", now: 60_001 }), undefined);
-		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, thinking: "high", now: 300_001 }), "needs_attention");
+		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, turnCount: 1, now: 60_001 }), "needs_attention");
+		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, turnCount: 1, thinking: "low", now: 60_001 }), "needs_attention");
+		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, turnCount: 1, thinking: "minimal", now: 60_001 }), "needs_attention");
+		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, turnCount: 1, thinking: "high", now: 60_001 }), undefined);
+		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, turnCount: 1, thinking: "high", now: 300_001 }), "needs_attention");
 	});
 
 	it("keeps explicit idle threshold overrides higher priority than thinking scale", () => {
 		const explicit = resolveControlConfig(undefined, { needsAttentionAfterMs: 90_000 });
 
 		assert.equal(explicit.needsAttentionAfterMsIsExplicit, true);
-		assert.equal(deriveActivityState({ config: explicit, startedAt: 0, thinking: "high", now: 90_001 }), "needs_attention");
+		assert.equal(deriveActivityState({ config: explicit, startedAt: 0, turnCount: 1, thinking: "high", now: 90_001 }), "needs_attention");
+	});
+
+	it("preserves inherited default idle scaling when merging a resolved control config", () => {
+		const inherited = resolveControlConfig();
+		const merged = resolveControlConfig(inherited, { activeNoticeAfterMs: 123_000 });
+
+		assert.equal(merged.needsAttentionAfterMsIsExplicit, false);
+		assert.equal(merged.activeNoticeAfterMs, 123_000);
+		assert.equal(deriveActivityState({ config: merged, startedAt: 0, turnCount: 1, thinking: "high", now: 60_001 }), undefined);
 	});
 
 	it("treats recovered resolved configs without explicitness metadata as fixed thresholds", () => {
 		const recovered = { ...resolveControlConfig(undefined, { needsAttentionAfterMs: 90_000 }) };
 		delete recovered.needsAttentionAfterMsIsExplicit;
 
-		assert.equal(deriveActivityState({ config: recovered, startedAt: 0, thinking: "high", now: 90_001 }), "needs_attention");
+		assert.equal(deriveActivityState({ config: recovered, startedAt: 0, turnCount: 1, thinking: "high", now: 90_001 }), "needs_attention");
 	});
 
 	it("marks non-exempt open tools for attention at the active threshold", () => {

@@ -88,7 +88,8 @@ export class WatchdogEmissionGuard {
 		this.startModelUpdate();
 	}
 
-	evaluate(warning: WatchdogWarning): WatchdogEmissionDecision {
+	/** `allowRepeatOf`: one already-accepted identity that may repeat (boundary re-findings before stalemate). */
+	evaluate(warning: WatchdogWarning, options: { allowRepeatOf?: string } = {}): WatchdogEmissionDecision {
 		if (isContentFree(warning.summary) || isContentFree(warning.evidence) || isContentFree(warning.recommendedAction)) {
 			return { accepted: false, reason: "content-free" };
 		}
@@ -102,8 +103,9 @@ export class WatchdogEmissionGuard {
 				&& warning.severity === "blocker";
 			if (!updateEscalation) return { accepted: false, reason: "update-budget", identity, underlyingIdentity };
 		}
-		if (priorSeverity !== undefined && !escalation) return { accepted: false, reason: "duplicate", identity, underlyingIdentity };
-		if (this.maxWarnings !== null && this.acceptedCount >= this.maxWarnings && !escalation) {
+		const repeat = priorSeverity !== undefined && options.allowRepeatOf === identity;
+		if (priorSeverity !== undefined && !escalation && !repeat) return { accepted: false, reason: "duplicate", identity, underlyingIdentity };
+		if (this.maxWarnings !== null && this.acceptedCount >= this.maxWarnings && !escalation && !repeat) {
 			return { accepted: false, reason: "max-warnings", identity, underlyingIdentity };
 		}
 

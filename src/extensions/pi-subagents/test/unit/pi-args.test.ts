@@ -16,6 +16,8 @@ import {
 } from "../../src/runs/shared/tool-budget.ts";
 import { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
+import { STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV } from "../../src/runs/shared/structured-output.ts";
+
 import {
 	CHILD_TOOL_DIAGNOSTIC_PATH_ENV,
 	MCP_DIRECT_CHILD_TOOLS_ENV,
@@ -46,6 +48,7 @@ import {
 	buildPiArgs,
 	projectLaunchResolvedChildExtensions,
 	resolvePiLaunchToolPlan,
+	shouldDeliverTaskViaFile,
 } from "../../src/runs/shared/pi-args.ts";
 
 const originalEnv = {
@@ -457,7 +460,6 @@ describe("buildPiArgs session wiring", () => {
 			inheritProjectContext: false,
 			inheritSkills: false,
 			childWatchdog: {
-				enabled: true,
 				runId: "run-1",
 				agent: "worker",
 				childIndex: 2,
@@ -465,15 +467,13 @@ describe("buildPiArgs session wiring", () => {
 				agentEndTimeoutMs: 500,
 				maxWarnings: 1,
 				lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
-				autoFollowBlockers: true,
-				autoFollowMaxAttempts: 3,
 				stalemateRepeats: 2,
+				cadence: { everyNTools: null },
 			},
 		});
 		const encoded = withWatchdog.env[CHILD_WATCHDOG_CONFIG_ENV];
 		assert.equal(typeof encoded, "string");
 		assert.deepEqual(JSON.parse(encoded ?? "{}"), {
-			enabled: true,
 			runId: "run-1",
 			agent: "worker",
 			childIndex: 2,
@@ -481,10 +481,67 @@ describe("buildPiArgs session wiring", () => {
 			agentEndTimeoutMs: 500,
 			maxWarnings: 1,
 			lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
-			autoFollowBlockers: true,
-			autoFollowMaxAttempts: 3,
 			stalemateRepeats: 2,
+			cadence: { everyNTools: null },
 		});
+	});
+});
+
+describe("excludeTools resolution", () => {
+	it("filters excluded names from explicit allowlists and runtime-injected tools", () => {
+		const plan = resolvePiLaunchToolPlan({
+			tools: ["read", "write"],
+			excludeTools: ["write", "structured_output"],
+			structuredOutput: true,
+		});
+		assert.deepEqual(plan.declaredBuiltinTools, ["read", "write"]);
+		assert.deepEqual(plan.excludeTools, ["write", "structured_output"]);
+		assert.deepEqual(plan.effectiveToolAllowlist, ["read"]);
+		assert.deepEqual(plan.internalTools, []);
+		assert.deepEqual(plan.requiredChildTools, ["read"]);
+
+		const built = buildPiArgs({
+			baseArgs: [],
+			task: "hello",
+			sessionEnabled: true,
+			inheritProjectContext: true,
+			inheritSkills: true,
+			tools: ["read", "write"],
+			excludeTools: ["write"],
+		});
+		assert.deepEqual(built.args.slice(0, 2), ["--tools", "read"]);
+		assert.equal(built.args.includes("--exclude-tools"), false);
+	});
+
+	it("forwards exclusions to Pi without inventing an ambient allowlist", () => {
+		const built = buildPiArgs({
+			baseArgs: [],
+			task: "hello",
+			sessionEnabled: true,
+			inheritProjectContext: true,
+			inheritSkills: true,
+			excludeTools: ["write", "unknown_tool"],
+		});
+		assert.deepEqual(built.args.slice(0, 2), ["--exclude-tools", "write,unknown_tool"]);
+		assert.equal(built.args.includes("--tools"), false);
+		assert.equal(built.args.includes("--no-tools"), false);
+	});
+
+	it("keeps empty tool sets all-off and makes excluded nested fanout unavailable", () => {
+		const empty = buildPiArgs({
+			baseArgs: [],
+			task: "hello",
+			sessionEnabled: true,
+			inheritProjectContext: true,
+			inheritSkills: true,
+			tools: [],
+			excludeTools: ["write"],
+		});
+		assert.equal(empty.args.includes("--no-tools"), true);
+		assert.equal(empty.args.includes("--exclude-tools"), false);
+
+		const plan = resolvePiLaunchToolPlan({ allowNestedSubagents: true, excludeTools: ["subagent"] });
+		assert.equal(plan.fanoutAuthorized, false);
 	});
 });
 
@@ -634,7 +691,7 @@ describe("buildPiArgs task delivery", () => {
 		return ref ? ref.slice(1) : undefined;
 	}
 
-	it("delivers short tasks inline by default", () => {
+	it("delivers short tasks through the platform default", () => {
 		const { args } = buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",
@@ -643,8 +700,13 @@ describe("buildPiArgs task delivery", () => {
 			inheritSkills: false,
 		});
 
-		assert.ok(args.includes("Task: hello"));
-		assert.equal(taskFileFromArgs(args), undefined);
+		if (process.platform === "darwin") {
+			assert.ok(taskFileFromArgs(args), "expected an @task.md argv reference on macOS");
+			assert.ok(!args.includes("Task: hello"));
+		} else {
+			assert.ok(args.includes("Task: hello"));
+			assert.equal(taskFileFromArgs(args), undefined);
+		}
 	});
 
 	it("delivers tasks over the argv limit via a temp file by default", () => {
@@ -681,6 +743,7 @@ describe("buildPiArgs task delivery", () => {
 
 	it("falls back to auto when SELESAI_SUBAGENT_TASK_DELIVERY is invalid", () => {
 		process.env.SELESAI_SUBAGENT_TASK_DELIVERY = "carrier-pigeon";
+
 		const { args } = buildPiArgs({
 			baseArgs: ["-p"],
 			task: longTask,
@@ -705,6 +768,13 @@ describe("buildPiArgs task delivery", () => {
 
 		assert.ok(taskFileFromArgs(args), "expected an @task.md argv reference");
 		assert.ok(!args.includes("Task: hello"));
+	});
+
+	it("selects file delivery for macOS or over-limit tasks", () => {
+		assert.equal(shouldDeliverTaskViaFile("short", "auto", "darwin"), true);
+		assert.equal(shouldDeliverTaskViaFile("short", "auto", "linux"), false);
+		assert.equal(shouldDeliverTaskViaFile("short", "auto", "win32"), false);
+		assert.equal(shouldDeliverTaskViaFile("x".repeat(8001), "auto", "linux"), true);
 	});
 });
 
@@ -974,6 +1044,27 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV], toolDiagnosticPath);
 	});
 
+	it("clears inherited tool diagnostics for nested zero-tool children", () => {
+		const inheritedDiagnosticPath = "/tmp/parent-tool-diagnostic.json";
+		const { env, toolDiagnosticPath } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "repair retained output",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: [],
+		});
+		const spawnEnv = {
+			[REQUIRED_CHILD_TOOLS_ENV]: JSON.stringify(["read", "bash"]),
+			[CHILD_TOOL_DIAGNOSTIC_PATH_ENV]: inheritedDiagnosticPath,
+			...env,
+		};
+
+		assert.equal(toolDiagnosticPath, undefined);
+		assert.equal(spawnEnv[REQUIRED_CHILD_TOOLS_ENV], undefined);
+		assert.equal(spawnEnv[CHILD_TOOL_DIAGNOSTIC_PATH_ENV], undefined);
+	});
+
 	it("strips the legacy supervisor pairing from requirements", () => {
 		const { args, env } = buildPiArgs({
 			baseArgs: ["-p"],
@@ -1042,6 +1133,8 @@ describe("buildPiArgs system prompt mode wiring", () => {
 				schema: { type: "object", properties: {}, additionalProperties: false },
 				schemaPath: "/tmp/schema.json",
 				outputPath: "/tmp/output.json",
+				acceptanceReportPath: "/tmp/acceptance.json",
+				acceptanceReportRequired: true,
 			},
 		});
 
@@ -1054,6 +1147,18 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			"fixture_search",
 			"structured_output",
 		]);
+		assert.equal(env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV], "/tmp/acceptance.json");
+		assert.equal(env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV], "1");
+	});
+
+	it("clears inherited acceptance capture for launches without outputSchema", () => {
+		const { env } = buildPiArgs({
+			baseArgs: ["-p"], task: "hello", sessionEnabled: false,
+			inheritProjectContext: false, inheritSkills: false,
+		});
+
+		assert.equal(env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV], undefined);
+		assert.equal(env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV], undefined);
 	});
 
 	it("forwards the Pi package root to child processes for host peer resolution", () => {
@@ -1267,7 +1372,8 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.deepEqual(requestedNames, [serverName, serverName]);
 		assert.equal(serverLaunch.args[serverLaunch.args.indexOf("--tools") + 1], "read,runtime-github_search_repositories,runtime-github_create_issue");
 		assert.equal(toolLaunch.args[toolLaunch.args.indexOf("--tools") + 1], "read,runtime-github_search_repositories");
-		assert.ok(serverLaunch.args.indexOf("--mcp-config") < serverLaunch.args.indexOf("Task: hello"));
+		const serverTaskArgIndex = serverLaunch.args.findIndex((arg) => arg === "Task: hello" || arg.endsWith("task.md"));
+		assert.ok(serverLaunch.args.indexOf("--mcp-config") < serverTaskArgIndex);
 		for (const launch of [serverLaunch, toolLaunch]) {
 			const configPath = launch.args[launch.args.indexOf("--mcp-config") + 1];
 			assert.ok(configPath);

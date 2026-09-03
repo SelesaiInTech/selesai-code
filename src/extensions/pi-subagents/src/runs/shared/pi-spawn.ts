@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
 
-export const PI_CODING_AGENT_PACKAGE = "@selesai/code";
+export const SELESAI_CODING_AGENT_PACKAGE = "@selesai/code";
 export const SELESAI_SUBAGENT_SELESAI_BINARY_ENV = "SELESAI_SUBAGENT_SELESAI_BINARY";
 
 export function findPiPackageRootFromEntry(
@@ -15,7 +16,7 @@ export function findPiPackageRootFromEntry(
 			const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as {
 				name?: unknown;
 			};
-			if (pkg.name === PI_CODING_AGENT_PACKAGE) return dir;
+			if (pkg.name === SELESAI_CODING_AGENT_PACKAGE) return dir;
 		}
 		dir = path.dirname(dir);
 	}
@@ -23,9 +24,13 @@ export function findPiPackageRootFromEntry(
 }
 
 export function resolveInstalledPiPackageRoot(): string | undefined {
-	return findPiPackageRootFromEntry(
-		fileURLToPath(import.meta.resolve(PI_CODING_AGENT_PACKAGE)),
-	);
+	try {
+		return findPiPackageRootFromEntry(
+			fileURLToPath(import.meta.resolve(SELESAI_CODING_AGENT_PACKAGE)),
+		);
+	} catch {
+		return undefined;
+	}
 }
 
 export function resolvePiPackageRoot(): string | undefined {
@@ -58,12 +63,21 @@ interface PiSpawnCommand {
 	args: string[];
 }
 
+interface PiPackageJson {
+	name?: unknown;
+	bin?: string | Record<string, string>;
+}
+
+function isNodeScriptPath(filePath: string): boolean {
+	return /\.(?:mjs|cjs|js)$/i.test(filePath);
+}
+
 function isRunnableNodeScript(
 	filePath: string,
 	existsSync: (filePath: string) => boolean,
 ): boolean {
 	if (!existsSync(filePath)) return false;
-	return /\.(?:mjs|cjs|js)$/i.test(filePath);
+	return isNodeScriptPath(filePath);
 }
 
 function normalizePath(filePath: string): string {
@@ -75,6 +89,23 @@ function isStandaloneSelesaiExecutable(execPath: string): boolean {
 	return /^(?:selesai|selesai-code)(?:\.exe)?$/i.test(executableName ?? "");
 }
 
+function resolvePiCliScriptFromPackageJson(
+	packageJsonPath: string,
+	readFileSync: (filePath: string, encoding: "utf-8") => string,
+	existsSync: (filePath: string) => boolean,
+): string | undefined {
+	const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as PiPackageJson;
+	if (packageJson.name !== SELESAI_CODING_AGENT_PACKAGE) return undefined;
+	const binField = packageJson.bin;
+	const binPath =
+		typeof binField === "string"
+			? binField
+			: (binField?.selesai ?? Object.values(binField ?? {})[0]);
+	if (!binPath) return undefined;
+	const candidate = path.resolve(path.dirname(packageJsonPath), binPath);
+	return isRunnableNodeScript(candidate, existsSync) ? candidate : undefined;
+}
+
 export function resolvePiCliScript(
 	deps: PiSpawnDeps = {},
 ): string | undefined {
@@ -84,6 +115,7 @@ export function resolvePiCliScript(
 		deps.readFileSync ??
 		((filePath, encoding) => fs.readFileSync(filePath, encoding));
 	const argv1 = deps.argv1 ?? process.argv[1];
+	const env = deps.env ?? process.env;
 
 	if (argv1) {
 		const argvPath = normalizePath(argv1);
@@ -99,38 +131,29 @@ export function resolvePiCliScript(
 		}
 	}
 
-	try {
-		const resolvePackageJson =
-			deps.resolvePackageJson ??
-			(() => {
-				const root = deps.piPackageRoot ?? resolvePiPackageRoot();
-				if (root) return path.join(root, "package.json");
-				const packageRoot = deps.resolvePackageEntry
-					? findPiPackageRootFromEntry(deps.resolvePackageEntry())
-					: resolveInstalledPiPackageRoot();
-				if (!packageRoot)
-					throw new Error(
-						`Could not resolve ${PI_CODING_AGENT_PACKAGE} package root`,
-					);
-				return path.join(packageRoot, "package.json");
-			});
-		const packageJsonPath = resolvePackageJson();
-		const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
-			bin?: string | Record<string, string>;
-		};
-		const binField = packageJson.bin;
-		const binPath =
-			typeof binField === "string"
-				? binField
-				: (binField?.selesai ?? Object.values(binField ?? {})[0]);
-		if (!binPath) return undefined;
-		const candidate = path.resolve(path.dirname(packageJsonPath), binPath);
-		if (isRunnableNodeScript(candidate, existsSync)) {
-			return candidate;
+	const packageJsonCandidates: Array<() => string | undefined> = [];
+	if (deps.resolvePackageJson) packageJsonCandidates.push(deps.resolvePackageJson);
+	for (const root of [deps.piPackageRoot, env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV], resolvePiPackageRoot()]) {
+		const trimmed = root?.trim();
+		if (trimmed) packageJsonCandidates.push(() => path.join(trimmed, "package.json"));
+	}
+	packageJsonCandidates.push(() => {
+		const packageRoot = deps.resolvePackageEntry
+			? findPiPackageRootFromEntry(deps.resolvePackageEntry())
+			: resolveInstalledPiPackageRoot();
+		return packageRoot ? path.join(packageRoot, "package.json") : undefined;
+	});
+
+	for (const candidatePackageJson of packageJsonCandidates) {
+		try {
+			const packageJsonPath = candidatePackageJson();
+			if (!packageJsonPath) continue;
+			const candidate = resolvePiCliScriptFromPackageJson(packageJsonPath, readFileSync, existsSync);
+			if (candidate) return candidate;
+		} catch {
+			// Keep resolving; callers decide whether a PATH fallback is safe.
+
 		}
-	} catch {
-		// Verified CLI resolution is optional; falling back to `pi` lets PATH handle execution.
-		return undefined;
 	}
 
 	return undefined;
@@ -140,10 +163,18 @@ export function getPiSpawnCommand(
 	args: string[],
 	deps: PiSpawnDeps = {},
 ): PiSpawnCommand {
+	const platform = deps.platform ?? process.platform;
 	const env = deps.env ?? process.env;
 	const selesaiBinary = env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV]?.trim();
 	if (selesaiBinary) {
+		if (platform === "win32" && isNodeScriptPath(selesaiBinary)) {
+			return {
+				command: deps.execPath ?? process.execPath,
+				args: [selesaiBinary, ...args],
+			};
+		}
 		return { command: selesaiBinary, args };
+
 	}
 
 	const execPath = deps.execPath ?? process.execPath;
@@ -157,6 +188,11 @@ export function getPiSpawnCommand(
 			command: execPath,
 			args: [piCliPath, ...args],
 		};
+	}
+	if (platform === "win32") {
+		throw new Error(
+			`Could not resolve the Pi CLI on Windows. Set ${SELESAI_SUBAGENT_SELESAI_BINARY_ENV} or ensure ${SELESAI_CODING_AGENT_PACKAGE} is installed.`,
+		);
 	}
 
 	return { command: "selesai", args };

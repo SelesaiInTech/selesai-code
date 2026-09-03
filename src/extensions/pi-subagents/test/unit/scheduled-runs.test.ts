@@ -97,6 +97,10 @@ function text(result: Awaited<ReturnType<ScheduledRunManager["handleToolCall"]>>
 	return result.content[0]?.type === "text" ? result.content[0].text : "";
 }
 
+function detailRecords(result: Awaited<ReturnType<ScheduledRunManager["handleToolCall"]>>): Array<Record<string, unknown>> {
+	return result.details?.schedules?.records as Array<Record<string, unknown>> ?? [];
+}
+
 async function flush(): Promise<void> {
 	for (let i = 0; i < 8; i++) await Promise.resolve();
 }
@@ -156,6 +160,85 @@ describe("project schedule management", () => {
 		assert.equal(secondTimers.values.size, 1, "a different session restores the project schedule");
 		const shown = await second.handleToolCall({ action: "schedule.show", id: "night-review" }, context(first.ctx.cwd, "session-b"));
 		assert.match(text(shown), /Night review/);
+	});
+
+	it("restores session-only schedules only in the creating session", async () => {
+		const owner = harness({ sessionId: "owner-session" });
+		const created = await owner.manager.handleToolCall({
+			action: "schedule.create",
+			id: "owner-only",
+			name: "Owner only",
+			every: "1h",
+			cwd: owner.ctx.cwd,
+			sessionOnly: true,
+			workflowScript: "return 1",
+		}, owner.ctx);
+		assert.equal(created.isError, undefined);
+		assert.equal(detailRecords(created)[0]?.sessionOnly, true);
+		assert.equal("ownerSessionFile" in detailRecords(created)[0]!, false);
+
+		const root = scheduledRunStorePath(owner.ctx.cwd, undefined, path.join(owner.root, "stores"));
+		const [record] = listScheduledRunSummaries(owner.ctx.cwd, path.join(owner.root, "stores"));
+		assert.equal(record?.sessionOnly, true);
+		assert.equal(record?.ownerSessionFile, owner.ctx.sessionManager.getSessionFile());
+
+		owner.manager.stop();
+		const otherTimers = new FakeTimers();
+		const otherLaunches: Launch[] = [];
+		const other = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(owner.root, "stores"),
+			now: () => owner.clock.now,
+			timers: otherTimers,
+			launch: (params, launchCtx) => new Promise((resolve) => otherLaunches.push({ params: params as Record<string, unknown>, ctx: launchCtx, resolve: resolve as Launch["resolve"] })) as never,
+		});
+		const otherContext = context(owner.ctx.cwd, "other-session");
+		other.bindSession(otherContext);
+		assert.equal(otherTimers.values.size, 0, "non-owner sessions must not arm session-only schedules");
+
+		const manual = await other.handleToolCall({ action: "schedule.run", id: "owner-only" }, otherContext);
+		assert.match(text(manual), /not its owner/);
+		assert.equal("ownerSessionFile" in detailRecords(manual)[0]!, false);
+		const shownToOther = await other.handleToolCall({ action: "schedule.show", id: "owner-only" }, otherContext);
+		assert.equal("ownerSessionFile" in detailRecords(shownToOther)[0]!, false);
+		const listedToOther = await other.handleToolCall({ action: "schedule.list" }, otherContext);
+		assert.equal("ownerSessionFile" in detailRecords(listedToOther)[0]!, false);
+		assert.equal(otherLaunches.length, 0);
+		assert.equal(listScheduledRunSummaries(owner.ctx.cwd, path.join(owner.root, "stores"))[0]?.ownerSessionFile, owner.ctx.sessionManager.getSessionFile());
+		assert.equal(fs.existsSync(path.join(root, "owner-only", "active.lock")), false);
+
+		const ownerTimers = new FakeTimers();
+		const ownerAgain = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(owner.root, "stores"),
+			now: () => owner.clock.now,
+			timers: ownerTimers,
+			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
+		});
+		ownerAgain.bindSession(context(owner.ctx.cwd, "owner-session"));
+		assert.equal(ownerTimers.values.size, 1, "the creating session must restore its schedule");
+	});
+
+	it("re-arms an owner timer after a non-owner context consumes it", async () => {
+		const h = harness({ sessionId: "owner-session" });
+		await h.manager.handleToolCall({ action: "schedule.create", id: "owner-only", cwd: h.ctx.cwd, every: "1h", sessionOnly: true, workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
+		const nextRunAt = listScheduledRunSummaries(h.ctx.cwd, path.join(h.root, "stores"))[0]?.trigger.nextRunAt;
+		h.manager.bindSession(context(h.ctx.cwd, "other-session"));
+		h.clock.now += 3_600_000;
+		h.timers.fireAll();
+		await flush();
+		assert.equal(h.launches.length, 0, "a non-owner context must not launch the schedule");
+		assert.equal(h.timers.values.size, 0, "the consumed non-owner timer is not left spinning");
+		assert.equal(listScheduledRunSummaries(h.ctx.cwd, path.join(h.root, "stores"))[0]?.trigger.nextRunAt, nextRunAt, "a non-owner context must not advance the schedule");
+
+		h.manager.bindSession(h.ctx);
+		assert.equal(h.timers.values.size, 1, "rebinding the owner must restore the timer");
+		h.timers.fireAll();
+		await flush();
+		assert.equal(h.launches.length, 1);
+		assert.equal(h.launches[0]!.ctx.sessionManager.getSessionId(), "owner-session");
+		h.launches[0]!.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "single", results: [], asyncId: "owner-async" } });
+		await flush();
 	});
 
 	it("does not let completed one-shot schedules consume maxPending capacity", async () => {
@@ -668,6 +751,11 @@ describe("recurring schedule execution", () => {
 		const targetCtx = context(target, "target-session");
 		h.manager.bindSession(targetCtx);
 		h.manager.bindSession(h.ctx);
+		const sessionOnly = await h.manager.handleToolCall({ action: "schedule.create", id: "session-only-targeted", cwd: target, every: "1h", sessionOnly: true, workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
+		assert.equal(sessionOnly.isError, true);
+		assert.match(text(sessionOnly), /sessionOnly schedules cannot use an explicit cross-project cwd/);
+		assert.deepEqual(listScheduledRunSummaries(target, path.join(h.root, "stores")), [], "rejected session-only schedules must not dead-end in the target project");
+
 		await h.manager.handleToolCall({ action: "schedule.create", id: "targeted", cwd: target, every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
 		h.clock.now += 3_600_000;
 		h.timers.fireAll();

@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@selesai/code";
+import { captureWatchdogDiffBaseline, type WatchdogDiffBaseline } from "./diff-tool.ts";
 import { MainWatchdogRuntime } from "./runtime.ts";
 import { createMainWatchdogReview } from "./review.ts";
 import { DEFAULT_WATCHDOG_CONFIG } from "./settings.ts";
@@ -23,11 +24,8 @@ export function childResolvedConfig(config: ChildWatchdogConfig): ResolvedWatchd
 			...(config.model ? { model: config.model } : {}),
 			...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
 		},
-		autoFollow: {
-			blockers: config.autoFollowBlockers,
-			maxAttempts: config.autoFollowMaxAttempts,
-			stalemateRepeats: config.stalemateRepeats,
-		},
+		stalemateRepeats: config.stalemateRepeats,
+		cadence: { ...config.cadence },
 		children: {
 			...DEFAULT_WATCHDOG_CONFIG.children,
 			watchdogTailTimeoutMs: config.watchdogTailTimeoutMs,
@@ -55,10 +53,11 @@ function writeStatus(event: unknown): void {
 
 export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[CHILD_WATCHDOG_CONFIG_ENV]): MainWatchdogRuntime | undefined {
 	const childConfig = decodeChildWatchdogConfig(rawConfig);
-	if (!childConfig?.enabled) return undefined;
+	if (!childConfig) return undefined;
 	let currentContext: ExtensionContext | undefined;
+	let diffBaseline: WatchdogDiffBaseline | undefined;
 	let seq = 0;
-	const emitStatus = (phase: ChildWatchdogPhase, followUpPending = false, reason?: string): void => {
+	const emitStatus = (phase: ChildWatchdogPhase, reason?: string): void => {
 		writeStatus({
 			type: CHILD_WATCHDOG_STATUS_EVENT,
 			...(childConfig.runId ? { runId: childConfig.runId } : {}),
@@ -67,19 +66,18 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 			seq: ++seq,
 			phase,
 			ts: Date.now(),
-			followUpPending,
 			...(reason ? { reason } : {}),
 		});
 	};
 	const resolved = childResolvedConfig(childConfig);
 	const runtime = new MainWatchdogRuntime({
 		resolveConfig: () => ({ ok: true, config: resolved, errors: [], sources: [{ scope: "session", exists: true }] }),
-		review: createMainWatchdogReview(() => currentContext, { getThinkingLevel: () => pi.getThinkingLevel() }),
+		review: createMainWatchdogReview(() => currentContext, { getThinkingLevel: () => pi.getThinkingLevel(), diffBaseline: () => diffBaseline }),
 		reviewDescription: "child model review",
 		reviewChangesOnly: true,
-		displayWarning: (details) => {
+		displayWarning: (details, options) => {
 			const childDetails = childWarningDetails(details, childConfig);
-			pi.sendMessage(createWatchdogWarningMessage(childDetails, { display: true, details: childDetails }));
+			pi.sendMessage(createWatchdogWarningMessage(childDetails, { display: true, details: childDetails }), options);
 		},
 	});
 	const rememberContext = (ctx: ExtensionContext) => {
@@ -88,6 +86,7 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => void;
 	onRuntimeEvent("session_start", (_event, ctx) => {
 		rememberContext(ctx);
+		diffBaseline = captureWatchdogDiffBaseline(ctx.cwd);
 		runtime.bindSession(ctx);
 		emitStatus("idle");
 	});
@@ -99,13 +98,17 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 		rememberContext(ctx);
 		runtime.handleTurnEnd(event, ctx);
 	});
+	onRuntimeEvent("tool_result", (_event, ctx) => {
+		rememberContext(ctx);
+		runtime.handleToolResult(ctx);
+	});
 	onRuntimeEvent("agent_end", async (event, ctx) => {
 		rememberContext(ctx);
 		emitStatus("reviewing");
 		await runtime.handleAgentEnd(event, ctx);
 		const snapshot = runtime.getSnapshot(ctx.cwd);
-		if (snapshot.status === "failed") emitStatus("failed", false, snapshot.lastError);
-		else if (snapshot.status === "stale") emitStatus("stale", false, "review stale");
+		if (snapshot.status === "failed") emitStatus("failed", snapshot.lastError);
+		else if (snapshot.status === "stale") emitStatus("stale", "review stale");
 		else emitStatus("idle");
 	});
 	onRuntimeEvent("session_shutdown", () => {

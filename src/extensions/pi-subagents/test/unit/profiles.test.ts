@@ -37,6 +37,7 @@ describe("profiles helpers", () => {
 		homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subprofiles-home-"));
 		process.env.HOME = homeDir;
 		process.env.USERPROFILE = homeDir;
+		process.env[SELESAI_SUBAGENT_SELESAI_BINARY_ENV] = path.join(homeDir, "pi-test-bin");
 	});
 
 	afterEach(() => {

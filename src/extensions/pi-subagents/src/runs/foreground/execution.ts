@@ -3,12 +3,12 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync } from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig } from "../../agents/agents.ts";
 import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
-import { alignForkedSessionCwd } from "../../shared/fork-context.ts";
+import { alignForkedSessionCwd } from "../../shared/fork-session-cwd.ts";
 import {
 	ensureArtifactsDir,
 	formatOutputArtifactContent,
@@ -73,7 +73,7 @@ import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledge
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
-import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
+import { clearStructuredOutputCaptures, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
 import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
@@ -115,6 +115,7 @@ import { consumeWorkflowChildPermit } from "../../shared/workflow-child-permit.t
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
 	acceptChildWatchdogEvent,
+	applyChildWatchdogMessage,
 	childWatchdogIsActive,
 	isChildWatchdogStatusEvent,
 	resolveChildWatchdogConfig,
@@ -411,6 +412,7 @@ async function runSingleAttempt(
 		inheritSkills: agent.inheritSkills,
 		requireReadTool: Boolean(shared.resolvedSkillNames?.length),
 		tools: agent.tools,
+		excludeTools: agent.excludeTools,
 		allowNestedSubagents: agent.allowNestedSubagents,
 		extensions: agent.extensions,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions,
@@ -464,6 +466,7 @@ async function runSingleAttempt(
 		cwd: options.cwd ?? runtimeCwd,
 		requireReadTool: Boolean(shared.resolvedSkillNames?.length),
 		structuredOutput: Boolean(options.structuredOutput),
+		excludeTools: agent.excludeTools,
 		fast: options.fast ?? agent.fast,
 		model: modelArg,
 		modelCandidates: shared.modelCandidates,
@@ -520,6 +523,7 @@ async function runSingleAttempt(
 		inheritSkills: agent.inheritSkills,
 		skills: shared.resolvedSkillNames ?? [],
 		tools: toolPlan.effectiveToolAllowlist,
+		...(toolPlan.excludeTools.length > 0 ? { excludeTools: toolPlan.excludeTools } : {}),
 		extensions: toolPlan.extensionArgs,
 		mcpDirectTools: toolPlan.effectiveMcpTools,
 		...(options.outputPath ? { outputPath: options.outputPath } : {}),
@@ -551,10 +555,14 @@ async function runSingleAttempt(
 	}, options.context);
 	const startTime = Date.now();
 	if (options.structuredOutput) {
-		try {
-			if (existsSync(options.structuredOutput.outputPath)) unlinkSync(options.structuredOutput.outputPath);
-		} catch {
-			// Missing/stale structured-output files are handled after the child exits.
+		const cleanupError = clearStructuredOutputCaptures(options.structuredOutput);
+		if (cleanupError) {
+			cleanupTempDir(tempDir);
+			result.exitCode = 1;
+			result.error = cleanupError;
+			result.finalOutput = cleanupError;
+			result.progressSummary = { toolCount: 0, tokens: 0, durationMs: Date.now() - startTime };
+			return result;
 		}
 	}
 	const controlConfig = options.controlConfig ?? DEFAULT_CONTROL_CONFIG;
@@ -772,7 +780,6 @@ async function runSingleAttempt(
 					phase: "stale",
 					seq: (childWatchdogState?.seq ?? 0) + 1,
 					lastUpdate: Date.now(),
-					followUpPending: false,
 					reason: "child watchdog tail timeout",
 					timedOut: true,
 				});
@@ -958,6 +965,7 @@ async function runSingleAttempt(
 				config: controlConfig,
 				startedAt: startTime,
 				lastActivityAt: progress.lastActivityAt,
+				turnCount: progress.turnCount,
 				currentTool: progress.currentTool,
 				thinking: resolvedThinking,
 				now,
@@ -1112,6 +1120,10 @@ async function runSingleAttempt(
 
 			if (evt.type === "message_end" && evt.message) {
 				result.messages!.push(evt.message);
+				if (childWatchdog) {
+					const next = applyChildWatchdogMessage(childWatchdogState, evt.message);
+					if (next) updateChildWatchdogState(next);
+				}
 				if (evt.message.role === "assistant") {
 					result.usage.turns++;
 					progress.turnCount = result.usage.turns;
@@ -2224,6 +2236,7 @@ async function runSyncCompletionInner(
 				reportOptional: isAgentContractV1(options.agentContract),
 				artifactsDir: options.artifactsDir,
 				runId: options.runId,
+				watchdog: result.watchdog,
 			});
 		}
 	} catch (error) {

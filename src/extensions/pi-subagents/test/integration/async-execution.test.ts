@@ -9,11 +9,13 @@
 
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fsDefault from "node:fs";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, tryImport } from "../support/helpers.ts";
+import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, resolveMockPiCallArgs, tryImport } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import { deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest } from "../../src/runs/background/control-channel.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
@@ -25,8 +27,10 @@ import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceil
 import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
-import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
+import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey, getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
 import { deriveForkPromptCacheKey, SUBAGENT_FORK_CACHE_KEY_ENV } from "../../src/runs/shared/pi-args.ts";
+import { resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
+import { SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { clearExclusions, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
 
 interface LaunchResolvedExtensions {
@@ -82,7 +86,7 @@ interface AsyncResultPayload {
 	totalTokens?: { input: number; output: number; total: number };
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
 	usageBudget?: UsageBudgetState;
-	results: Array<{ agent?: string; sessionName?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions; output?: string; outputState?: "present" | "absent" | "unknown"; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; timeoutRecovery?: { changedFiles?: string[]; message?: string; warning?: string; recoveryNeeded?: boolean; reason?: string; reportStatus?: string }; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; turns: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean; message?: string }; settlementDiagnostic?: { finalTextPresent?: boolean; mutation?: { expected?: boolean; attempted?: boolean; observed?: boolean }; requiredOutput?: { kind?: string; path?: string; missing?: boolean }; afterCompactionSettlement?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string; transcriptPath?: string }; outputSaveError?: string; metadataSaveError?: string; capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] }; capabilityAudit?: { effectiveTools?: string[]; removedTools?: string[]; extensionsDenied?: boolean } }>;
+	results: Array<{ agent?: string; sessionName?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions; output?: string; outputState?: "present" | "absent" | "unknown"; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; timeoutRecovery?: { changedFiles?: string[]; message?: string; warning?: string; recoveryNeeded?: boolean; reason?: string; reportStatus?: string }; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; thinking?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; turns: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean; message?: string }; settlementDiagnostic?: { finalTextPresent?: boolean; mutation?: { expected?: boolean; attempted?: boolean; observed?: boolean }; requiredOutput?: { kind?: string; path?: string; missing?: boolean }; afterCompactionSettlement?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string; transcriptPath?: string }; outputSaveError?: string; metadataSaveError?: string; capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] }; capabilityAudit?: { effectiveTools?: string[]; removedTools?: string[]; extensionsDenied?: boolean } }>;
 	outputs?: Record<string, { text?: string; structured?: unknown }>;
 	workflowGraph?: { nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; acceptanceStatus?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; acceptanceStatus?: string; error?: string }> }> };
 	parallelHandoff?: { version?: number; path?: string; groupCount?: number; childCount?: number; changedPatches?: number; cleanupState?: string };
@@ -154,6 +158,7 @@ interface AsyncStatusPayload {
 
 interface MockPiCallRecord {
 	args?: string[];
+	effectiveArgs?: string[];
 	systemPrompts?: Array<{ mode?: string; path?: string; text?: string; error?: string }>;
 	requiredChildTools?: string[];
 }
@@ -194,7 +199,7 @@ async function withIsolatedWatchdogSettings<T>(projectDir: string, run: () => Pr
 	}
 }
 
-function childWatchdogStatus(runId: string, phase: "idle" | "reviewing" | "autofollow" | "settling" | "stale" | "failed", seq: number, followUpPending = false) {
+function childWatchdogStatus(runId: string, phase: "idle" | "reviewing" | "stale" | "failed", seq: number) {
 	return {
 		type: CHILD_WATCHDOG_STATUS_EVENT,
 		runId,
@@ -204,7 +209,6 @@ function childWatchdogStatus(runId: string, phase: "idle" | "reviewing" | "autof
 		seq,
 		phase,
 		ts: Date.now() + seq,
-		followUpPending,
 	};
 }
 
@@ -379,7 +383,7 @@ async function waitForMockPiCall(mockPi: MockPi, index: number, timeoutMs = 30_0
 		if (callFile) {
 			const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
 			assert.ok(Array.isArray(payload.args), "expected recorded args");
-			return { args: payload.args, systemPrompts: payload.systemPrompts ?? [] };
+			return { args: resolveMockPiCallArgs(payload), systemPrompts: payload.systemPrompts ?? [] };
 		}
 		if (Date.now() > deadline) assert.fail(`Timed out waiting for recorded mock pi call ${index}`);
 		await new Promise((resolve) => setTimeout(resolve, 100));
@@ -398,7 +402,7 @@ function readLastMockPiArgs(mockPi: MockPi): string[] {
 	assert.ok(callFile, "expected a recorded mock pi call");
 	const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
 	assert.ok(Array.isArray(payload.args), "expected recorded args");
-	return payload.args;
+	return resolveMockPiCallArgs(payload);
 }
 
 function readMockPiArgs(mockPi: MockPi, index: number): string[] {
@@ -409,7 +413,7 @@ function readMockPiArgs(mockPi: MockPi, index: number): string[] {
 	assert.ok(callFile, `expected recorded call ${index}`);
 	const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
 	assert.ok(Array.isArray(payload.args), "expected recorded args");
-	return payload.args;
+	return resolveMockPiCallArgs(payload);
 }
 
 function readMockPiRequiredTools(mockPi: MockPi, index: number): string[] {
@@ -428,9 +432,10 @@ function readMockPiArgsMatching(mockPi: MockPi, text: string): string[] {
 		.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 		.sort();
 	for (const callFile of callFiles) {
-		const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as { args?: string[] };
+		const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
 		assert.ok(Array.isArray(payload.args), "expected recorded args");
-		if (payload.args.join("\n").includes(text)) return payload.args;
+		const args = resolveMockPiCallArgs(payload);
+		if (args.join("\n").includes(text)) return args;
 	}
 	assert.fail(`expected recorded call containing ${text}`);
 }
@@ -565,6 +570,56 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(status.state, "complete");
 		assert.equal(status.endedAt !== undefined, true);
+	});
+
+	it("preserves effective thinking in the completed async result artifact", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "completed with thinking" });
+		const id = `async-result-thinking-${Date.now().toString(36)}`;
+		const launch = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Report the configured reasoning level.",
+			agentConfig: makeAgent("worker", { model: "mock/test-model", thinking: "high", completionGuard: false }),
+			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model" }],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-result-thinking" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "launch failed");
+		const payload = await readAsyncPayload(id);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.thinking, "high");
+		assert.equal(status.steps?.[0]?.thinking, "high");
+	});
+
+	it("forwards the installed Pi package root through the async runner environment", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		// The child resolves piPackageRoot as resolvePiPackageRoot() ??
+		// resolveInstalledPiPackageRoot() at module load. In this fork the host
+		// repo root is itself named @selesai/code, so the argv1 walk finds it
+		// before the shim; mirror the child's expression for the expectation.
+		const packageRoot = resolvePiPackageRoot() ?? resolveInstalledPiPackageRoot();
+		assert.ok(packageRoot, "expected the test Pi package to be installed");
+		mockPi.onCall({ echoEnv: [SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV] });
+		const id = `async-package-root-env-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Report the forwarded package root.",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-package-root-env" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), {
+			[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV]: packageRoot,
+		});
 	});
 
 	it("persists the bounded usage projection in async results and metadata", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -990,6 +1045,124 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("establishes a lifecycle sidecar before an external CLI can run", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const id = `async-external-lifecycle-${Date.now().toString(36)}`;
+		const startedRunners: string[] = [];
+		const launch = executeAsyncSingle(id, {
+			agent: "external",
+			task: "Run external",
+			agentConfig: makeAgent("external", {
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", "setTimeout(() => process.stdout.write('external lifecycle'), 500)"] },
+			} as never),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			activeAsyncCapacity: {
+				owner: {},
+				markStarted: (runnerProcessInstanceId: string) => { startedRunners.push(runnerProcessInstanceId); },
+				markWorkflowStarted() {},
+				rollback: () => false,
+				rollbackBeforeRunnerProceed: () => false,
+				reconcile: () => ({ used: 1, limit: 1 }),
+			} as never,
+		});
+
+		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "launch failed");
+		const proof = JSON.parse(fs.readFileSync(path.join(launch.details.asyncDir ?? "", "process-terminal.json"), "utf-8")) as { state?: string; runId?: string; runnerProcessInstanceId?: string };
+		assert.equal(proof.state, "pending");
+		assert.equal(proof.runId, id);
+		assert.deepEqual(startedRunners, [proof.runnerProcessInstanceId]);
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.match(payload.results[0]?.output ?? "", /external lifecycle/);
+	});
+
+	it("continues startup when proceed authorization is published but temp cleanup fails", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async (t) => {
+		const id = `async-external-proceed-cleanup-${Date.now().toString(36)}`;
+		const originalRmSync = fsDefault.rmSync;
+		let proceedCleanupFailures = 0;
+		let rollbackCount = 0;
+		t.mock.method(fsDefault, "rmSync", ((target: fs.PathLike, options?: fs.RmOptions) => {
+			const targetPath = String(target);
+			if (targetPath.includes(".runner-startup-proceed.json.") && targetPath.endsWith(".tmp") && proceedCleanupFailures === 0) {
+				proceedCleanupFailures += 1;
+				throw new Error("simulated proceed cleanup failure");
+			}
+			return originalRmSync(target, options);
+		}) as typeof fsDefault.rmSync);
+		syncBuiltinESMExports();
+		t.after(() => syncBuiltinESMExports());
+
+		const launch = executeAsyncSingle(id, {
+			agent: "external",
+			task: "Run external",
+			agentConfig: makeAgent("external", {
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('external proceed cleanup')"] },
+			} as never),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			activeAsyncCapacity: {
+				owner: {},
+				markStarted() {},
+				markWorkflowStarted() {},
+				rollback() { rollbackCount += 1; return false; },
+				rollbackBeforeRunnerProceed() { rollbackCount += 1; return false; },
+				reconcile: () => ({ used: 1, limit: 1 }),
+			} as never,
+		});
+
+		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "launch failed");
+		assert.equal(proceedCleanupFailures, 1);
+		assert.equal(rollbackCount, 0);
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.match(payload.results[0]?.output ?? "", /external proceed cleanup/);
+	});
+
+	it("fails pre-proceed capacity bind without rebinding the killed runner", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async (t) => {
+		const parentSessionId = `session-capacity-bind-${Date.now().toString(36)}`;
+		const id = `async-capacity-bind-failure-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, id);
+		let ownerWrites = 0;
+		fs.rmSync(path.join(ACTIVE_ASYNC_CAPACITY_DIR, activeAsyncCapacitySessionKey(parentSessionId)), { recursive: true, force: true });
+		const activeAsyncCapacity = acquireActiveAsyncCapacity({ sessionId: parentSessionId, limit: 1, runId: id, kind: "runner", asyncDir }, {
+			writeOwner(filePath, owner) {
+				ownerWrites += 1;
+				if (ownerWrites === 1) throw new Error("simulated durable bind failure");
+				fs.mkdirSync(path.dirname(filePath), { recursive: true });
+				fs.writeFileSync(filePath, JSON.stringify(owner, null, 2));
+			},
+		});
+		assert.ok(activeAsyncCapacity);
+		const originalKill = process.kill;
+		t.mock.method(process, "kill", ((pid: number, signal?: NodeJS.Signals | 0) => {
+			if (signal === 0) return true;
+			return originalKill(pid, signal);
+		}) as typeof process.kill);
+
+		const launch = executeAsyncSingle(id, {
+			agent: "external",
+			task: "Run external",
+			agentConfig: makeAgent("external", {
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", "setTimeout(() => {}, 30000)"] },
+			} as never),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: parentSessionId },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			activeAsyncCapacity,
+		});
+
+		assert.equal(launch.isError, true);
+		assert.match(launch.content[0]?.text ?? "", /Failed to establish async runner capacity ownership/);
+		assert.equal(ownerWrites, 1);
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(status.state, "failed");
+		assert.match(status.error ?? "", /Failed to establish async runner capacity ownership/);
+		assert.equal(status.processTerminal?.state, "not-started");
+		assert.deepEqual(getActiveAsyncCapacitySnapshot(parentSessionId, 1), { used: 0, limit: 1 });
+	});
+
 	it("lets explicit fast false opt out async external chains from inherited fast mode", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const agent = makeAgent("external", {
 			fast: true,
@@ -1234,8 +1407,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		await waitForMockPiCall(mockPi, 0);
 		const callFile = fs.readdirSync(mockPi.dir).find((name) => name.endsWith(".json"));
 		assert.ok(callFile);
-		const call = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as { args?: string[] };
-		assert.match(call.args?.join("\n") ?? "", new RegExp(sentinel));
+		const call = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
+		assert.match(resolveMockPiCallArgs(call).join("\n"), new RegExp(sentinel));
 
 		const payload = await readAsyncPayload(id);
 		const artifactPaths = payload.results[0]?.artifactPaths;
@@ -1642,7 +1815,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			fs.writeFileSync(path.join(repo, "input.md"), "parallel partial child change\n", "utf-8");
 			const resultPath = await waitForAsyncResultFile(id, 8_000);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-			const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
+			const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed", 30_000);
 			assert.equal(payload.state, "failed");
 			assert.equal(payload.success, false);
 			assert.equal(payload.exitCode, 1);
@@ -2152,7 +2325,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(interactiveResult.content[0]?.text ?? "", /does not need a wait call/);
 		assert.match(interactiveResult.content[0]?.text ?? "", /native completion notification/);
 		assert.doesNotMatch(interactiveResult.content[0]?.text ?? "", /bg_wait\(\{ id:/);
-		assert.doesNotMatch(interactiveResult.content[0]?.text ?? "", /subagent_wait/);
 		assert.doesNotMatch(interactiveResult.content[0]?.text ?? "", /auto-drain/);
 		await waitForAsyncResultFile(interactiveId, 30_000);
 
@@ -2168,7 +2340,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(parallelResult.content[0]?.text ?? "", /Async parallel:/);
 		assert.match(parallelResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
 		assert.match(parallelResult.content[0]?.text ?? "", /Use bg_wait only/i);
-		assert.doesNotMatch(parallelResult.content[0]?.text ?? "", /subagent_wait/);
 		assert.equal(startedEvent(parallelId).goal, "[prompt redacted]");
 		const parallelResultPath = await waitForAsyncResultFile(parallelId, 10_000);
 		const parallelPayload = JSON.parse(fs.readFileSync(parallelResultPath, "utf-8")) as { agent?: string; mode?: string };
@@ -2260,7 +2431,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const asyncId = result.details?.asyncId;
 		assert.ok(asyncId, "expected asyncId");
 		const payload = await readAsyncPayload(asyncId);
-		assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance.level, "attested");
+		assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance.level, "none");
 	});
 
 
@@ -2293,7 +2464,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			maxSubagentDepth: 2,
 		});
 		const reviewPayload = await readAsyncPayload(reviewId);
-		assert.equal(reviewPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "attested");
+		assert.equal(reviewPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "none");
 	});
 
 
@@ -2334,7 +2505,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(fs.readFileSync(artifactPaths[0], "utf-8"), "chain first report");
 		assert.equal(fs.readFileSync(artifactPaths[1], "utf-8"), "chain second report");
 		const calls = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).sort();
-		const taskArgs = calls.map((name) => (JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord).args?.at(-1) ?? "");
+		const taskArgs = calls.map((name) => {
+			const call = JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord;
+			return resolveMockPiCallArgs(call).at(-1) ?? "";
+		});
 		assert.ok(taskArgs.find((task) => task.includes("Write first"))?.includes(path.join("parallel-0", "0-worker", "context.md")));
 		assert.ok(taskArgs.find((task) => task.includes("Write second"))?.includes(path.join("parallel-0", "1-worker", "context.md")));
 	});
@@ -2773,10 +2947,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(!result.isError);
 		const payload = await readAsyncPayload(id);
 		const explorerResults = payload.results.filter((child) => child.agent === "explorer");
-		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance?.level), ["attested", "attested"]);
+		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance?.level), ["none", "none"]);
 		const dynamicNode = payload.workflowGraph?.nodes?.[1];
-		assert.equal(dynamicNode?.acceptanceStatus, "attested");
-		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["attested", "attested"]);
+		assert.equal(dynamicNode?.acceptanceStatus, "not-required");
+		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["not-required", "not-required"]);
 	});
 
 	it("infers async dynamic acceptance after materializing item templates", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -4010,6 +4184,40 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "async full output\nwith details");
 	});
 
+	it("removes Pi turn-timing telemetry from runtime-persisted background output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const report = "## Review\n\nVERDICT: FINDINGS";
+		const timingFooter = "\x1b[38;2;136;136;136m✻ Turn took 5m 54s (Total time 5m 54s · 2 turns)\x1b[0m";
+		mockPi.onCall({ output: `${report}\n\n${timingFooter}` });
+		const id = `async-timing-footer-${Date.now().toString(36)}`;
+		const outputPath = path.join(tempDir, "async-review.md");
+		executeAsyncSingle(id, {
+			agent: "reviewer",
+			task: "Review without modifying files",
+			agentConfig: makeAgent("reviewer", { tools: ["read", "grep", "find", "ls"] }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			output: outputPath,
+			acceptance: false,
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), report);
+		assert.doesNotMatch(payload.summary ?? "", /Turn took/);
+		assert.doesNotMatch(payload.results[0]?.output ?? "", /Turn took/);
+	});
+
 	it("background single runs route relative outputs to outputBaseDir", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "async configured report" });
 		const id = `async-configured-output-base-${Date.now().toString(36)}`;
@@ -4382,6 +4590,29 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id, 10_000), "utf-8")) as AsyncResultPayload;
 		assert.equal(payload.success, true);
 		assert.deepEqual(payload.results[0]?.structuredOutput, { ok: true, note: "async" });
+	});
+
+	it("background outputSchema runs fail closed when required acceptanceReport is missing", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "structured", structuredOutput: { ok: true } });
+		const id = `async-schema-missing-acceptance-${Date.now().toString(36)}`;
+
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Return structured data",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			acceptance: { level: "checked", report: "on" },
+			structuredOutputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id, 10_000), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, false);
+		assert.match(payload.results[0]?.error ?? "", /Missing acceptanceReport/);
+		assert.equal(payload.results[0]?.acceptance?.status, "rejected");
 	});
 
 	it("background bash-enabled non-implementation agents can opt out of the completion guard", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -4827,6 +5058,59 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(payload.results[0]?.attemptedModels, ["mock/fallback"]);
 		const args = readMockPiArgs(mockPi, 0);
 		assert.equal(args[args.indexOf("--model") + 1], "mock/fallback");
+	});
+
+	it("aligns initial and resumed background forked sessions with an explicit child cwd", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Forked async work" });
+		const parentCwd = fs.realpathSync(tempDir);
+		const childCwd = path.join(tempDir, "child-cwd");
+		fs.mkdirSync(childCwd);
+		const parentSessionFile = path.join(tempDir, "parent-cross-cwd.jsonl");
+		const forkedSessionFile = path.join(tempDir, "forked-cross-cwd.jsonl");
+		const parentHeader = { type: "session", version: 1, id: "parent", cwd: parentCwd };
+		const childHeader = { type: "session", version: 1, id: "child", cwd: parentCwd, parentSession: parentSessionFile };
+		fs.writeFileSync(parentSessionFile, `${JSON.stringify(parentHeader)}\n`, "utf-8");
+		fs.writeFileSync(forkedSessionFile, `${JSON.stringify(childHeader)}\n`, "utf-8");
+		const ctx = {
+			...makeMinimalCtx(parentCwd),
+			sessionManager: {
+				getSessionId: () => "session-cross-cwd",
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf-current",
+				openSession: () => ({ createBranchedSession: () => forkedSessionFile }),
+			},
+		};
+
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
+		const launch = await executor.execute(
+			"forked-cross-cwd",
+			{ agent: "worker", task: "Do work", async: true, context: "fork", cwd: childCwd },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		assert.ok(launch.details.asyncId);
+		await readAsyncPayload(launch.details.asyncId);
+
+		const sessionHeader = JSON.parse(fs.readFileSync(forkedSessionFile, "utf-8").split("\n", 1)[0]!) as { cwd?: string };
+		assert.equal(sessionHeader.cwd, fs.realpathSync.native(childCwd));
+
+		fs.writeFileSync(forkedSessionFile, `${JSON.stringify(childHeader)}\n`, "utf-8");
+		mockPi.onCall({ output: "Resumed async work" });
+		const resumed = await executor.execute(
+			"resume-cross-cwd",
+			{ action: "resume", id: launch.details.asyncId, message: "Continue" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!resumed.isError, resumed.content[0]?.text);
+		assert.ok(resumed.details.asyncId);
+		await readAsyncPayload(resumed.details.asyncId);
+
+		const resumedHeader = JSON.parse(fs.readFileSync(forkedSessionFile, "utf-8").split("\n", 1)[0]!) as { cwd?: string };
+		assert.equal(resumedHeader.cwd, fs.realpathSync.native(childCwd));
 	});
 
 	it("background forked runs inherit a parent model outside the registry", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
@@ -5666,6 +5950,35 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 	});
 
+	it("background runs carry unaddressed child watchdog blockers into the result payload and acceptance", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		await withIsolatedWatchdogSettings(tempDir, async () => {
+			writeWatchdogSettings(tempDir);
+			const id = `async-watchdog-blocker-${Date.now().toString(36)}`;
+			mockPi.onCall({ jsonl: [events.acceptanceReport(), events.watchdogWarning("blocker", "Claims tests passed without running them")] });
+
+			executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Do work",
+				agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+				acceptance: { level: "checked", criteria: ["Ship it"] },
+			});
+
+			const resultPath = await waitForAsyncResultFile(id, 10_000);
+			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+			assert.equal(payload.success, false);
+			const child = payload.results[0] as AsyncResultPayload["results"][number] & { watchdog?: { warnings?: Array<{ severity: string; addressed: boolean; summary: string }> } };
+			assert.deepEqual(child.watchdog?.warnings?.map((warning) => [warning.severity, warning.addressed]), [["blocker", false]]);
+			const check = child.acceptance?.runtimeChecks?.find((entry) => entry.id === "watchdog-blocker");
+			assert.equal(check?.status, "failed");
+			assert.match(check?.message ?? "", /Unresolved watchdog blocker/);
+		});
+	});
+
 	it("background forced drain after final assistant output is cleanup success", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			jsonl: [events.assistantMessage("async-done-before-drain")],
@@ -5727,6 +6040,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			agent: "scout",
 			task: "Inspect something",
 			agentConfig: makeAgent("scout"),
+			acceptance: { level: "attested", criteria: ["Finish cleanly"] },
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,

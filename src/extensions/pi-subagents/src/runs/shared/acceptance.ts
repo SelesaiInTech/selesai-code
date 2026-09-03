@@ -21,7 +21,9 @@ import type {
 	ResolvedAcceptanceGate,
 	SingleResult,
 	SubagentRunMode,
+	ChildWatchdogProgress,
 } from "../../shared/types.ts";
+import { unresolvedChildWatchdogBlockers } from "../../watchdog/child-status.ts";
 import { isAgentContractV1 } from "./agent-contract.ts";
 import { classifyTaskMutationIntent, stripSeverityCompounds, taskMayMutate } from "./task-intent.ts";
 
@@ -47,7 +49,7 @@ const VALID_EVIDENCE_KINDS: AcceptanceEvidenceKind[] = [
 const VALID_EVIDENCE = new Set<AcceptanceEvidenceKind>(VALID_EVIDENCE_KINDS);
 const ACCEPTANCE_EVIDENCE_HELP = `Supported evidence kinds: ${VALID_EVIDENCE_KINDS.join(", ")}. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }.`;
 const ACCEPTANCE_OBJECT_EXAMPLE = "Example: { level: \"checked\", evidence: [\"commands-run\", \"changed-files\"] }.";
-const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "criteria", "evidence", "verify", "review", "stopRules", "reason"]);
+const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "report", "criteria", "evidence", "verify", "review", "stopRules", "reason"]);
 const ACCEPTANCE_GATE_KEYS = new Set(["id", "must", "evidence", "severity"]);
 const ACCEPTANCE_VERIFY_KEYS = new Set(["id", "command", "timeoutMs", "cwd", "env", "allowFailure"]);
 const ACCEPTANCE_REVIEW_KEYS = new Set(["agent", "focus", "required"]);
@@ -100,12 +102,13 @@ function inferLevel(input: {
 	const writeTask = taskMayWrite
 		|| (input.acceptanceRole === "writer" && !readOnlyTask)
 		|| (input.acceptanceRole === undefined && /\bworker\b/.test(agent) && !readOnlyTask);
-	const inferredReadOnly = readOnlyTask || (input.acceptanceRole === "read-only" && !taskMayWrite);
+	const inferredReadOnly = readOnlyTask || ((readOnlyAgent || input.acceptanceRole === "read-only") && !taskMayWrite);
 	const roleResolvesReadOnly = input.acceptanceRole !== undefined && inferredReadOnly;
+	const dynamicResolvesReadOnly = inferredReadOnly && !writeTask;
 	const keywordRiskReadOnly = input.acceptanceRole === undefined ? intent.kind === "read-only" : inferredReadOnly;
 	const risky = Boolean(input.async && writeTask)
-		|| (Boolean(input.dynamic) && !roleResolvesReadOnly)
-		|| (Boolean(input.dynamicGroup) && !roleResolvesReadOnly)
+		|| (Boolean(input.dynamic) && !roleResolvesReadOnly && !dynamicResolvesReadOnly)
+		|| (Boolean(input.dynamicGroup) && !roleResolvesReadOnly && !dynamicResolvesReadOnly)
 		|| (!keywordRiskReadOnly && /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/.test(task));
 
 	if (risky) {
@@ -131,7 +134,7 @@ function inferLevel(input: {
 	if (readOnlyAgent || readOnlyTask) {
 		reasons.push(input.acceptanceRole === "read-only" && !readOnlyTask ? "declared read-only acceptance role" : readOnlyAgent ? "read-only/reviewer-style agent" : "read-only task wording");
 		return {
-			level: "attested",
+			level: "none",
 			reasons,
 			criteria: ["Return concrete findings with file paths and severity when applicable"],
 			evidence: ["review-findings", "residual-risks"],
@@ -146,11 +149,46 @@ function inferLevel(input: {
 	};
 }
 
-export function normalizeAcceptanceInput(input: AcceptanceInput | undefined): AcceptanceConfig {
+type AcceptanceInputNormalizationResult = { value: unknown; error?: string };
+
+function normalizeAcceptanceValue(input: unknown, pathLabel = "acceptance"): AcceptanceInputNormalizationResult {
+	if (typeof input !== "string") return { value: input };
+	const trimmed = input.trim();
+	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return { value: input };
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(trimmed);
+	} catch (error) {
+		return {
+			value: input,
+			error: `${pathLabel} JSON string must encode a valid acceptance object: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+		const kind = parsed === null ? "null" : Array.isArray(parsed) ? "an array" : typeof parsed;
+		return { value: input, error: `${pathLabel} JSON string must encode an object; got ${kind}.` };
+	}
+	return { value: parsed };
+}
+
+export function normalizeAcceptanceInput(input: unknown): AcceptanceConfig {
+	const normalized = normalizeAcceptanceValue(input);
+	if (normalized.error) throw new Error(normalized.error);
+	input = normalized.value;
 	if (input === undefined || input === "auto") return { level: "auto" };
 	if (input === false) return { level: "none", reason: "disabled by deprecated false shorthand" };
-	if (typeof input === "string") return { level: input };
-	return { ...input };
+	if (typeof input === "string") return { level: input as AcceptanceConfig["level"] };
+	return { ...(input as AcceptanceConfig) };
+}
+
+export type ResolvedAcceptanceReportMode = "off" | "optional" | "required";
+
+export function resolveAcceptanceReportMode(input: unknown): ResolvedAcceptanceReportMode {
+	const normalized = normalizeAcceptanceValue(input);
+	if (normalized.error) throw new Error(normalized.error);
+	const value = normalized.value;
+	const report = value && typeof value === "object" && !Array.isArray(value) ? (value as AcceptanceConfig).report : undefined;
+	return value === false || report === "off" ? "off" : report === "on" ? "required" : "optional";
 }
 
 type GateAcceptanceNormalizationResult =
@@ -158,7 +196,11 @@ type GateAcceptanceNormalizationResult =
 	| { ok: false; error: string };
 
 export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInput | undefined): GateAcceptanceNormalizationResult {
-	if (gate === undefined) return acceptance === undefined ? { ok: true } : { ok: true, acceptance };
+	if (gate === undefined) {
+		if (acceptance === undefined) return { ok: true };
+		const normalized = normalizeAcceptanceValue(acceptance);
+		return normalized.error ? { ok: false, error: normalized.error } : { ok: true, acceptance: normalized.value as AcceptanceInput };
+	}
 	if (typeof gate !== "string" || !gate.trim()) return { ok: false, error: "gate must be a non-empty command string." };
 	if (acceptance !== undefined) return { ok: false, error: "gate cannot be combined with acceptance; use one gate command or acceptance.verify." };
 	return { ok: true, acceptance: { level: "verified", verify: [{ id: "gate", command: gate.trim() }] } };
@@ -166,6 +208,10 @@ export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInp
 
 function explicitAcceptanceCanDisable(explicit: AcceptanceConfig): boolean {
 	return explicit.level === "none" && typeof explicit.reason === "string" && explicit.reason.trim().length > 0;
+}
+
+function explicitAcceptanceRequestsPolicy(explicit: AcceptanceConfig): boolean {
+	return (explicit.level !== undefined && explicit.level !== "auto") || Object.keys(explicit).some((key) => key !== "level");
 }
 
 function unsupportedEvidenceKindMessage(pathLabel: string, item: unknown): string {
@@ -177,6 +223,9 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	const errors: string[] = [];
 	if (input === undefined) return errors;
 	if (input === false) return errors;
+	const normalized = normalizeAcceptanceValue(input, pathLabel);
+	if (normalized.error) return [normalized.error];
+	input = normalized.value;
 	if (typeof input === "string") {
 		if (input === "reviewed") errors.push(`${pathLabel} ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
 		else if (!VALID_LEVELS.has(input as AcceptanceLevel)) errors.push(`${pathLabel} has invalid level '${input}'.`);
@@ -196,6 +245,9 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 		errors.push(`${pathLabel}.level ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
 	} else if (value.level !== undefined && (typeof value.level !== "string" || !VALID_LEVELS.has(value.level as AcceptanceLevel))) {
 		errors.push(`${pathLabel}.level must be one of auto, none, attested, checked, verified.`);
+	}
+	if (value.report !== undefined && value.report !== "on" && value.report !== "off") {
+		errors.push(`${pathLabel}.report must be on or off.`);
 	}
 	if (value.level === "none" && (typeof value.reason !== "string" || !value.reason.trim())) {
 		errors.push(`${pathLabel}.reason is required when level is none.`);
@@ -304,27 +356,43 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 
 export function validateExecutionAcceptance(input: {
 	acceptance?: unknown;
-	tasks?: Array<{ acceptance?: unknown }>;
+	outputSchema?: unknown;
+	tasks?: Array<{ acceptance?: unknown; outputSchema?: unknown }>;
 	chain?: Array<{
 		acceptance?: unknown;
-		parallel?: Array<{ acceptance?: unknown }> | { acceptance?: unknown };
+		outputSchema?: unknown;
+		parallel?: Array<{ acceptance?: unknown; outputSchema?: unknown }> | { acceptance?: unknown; outputSchema?: unknown };
 	}>;
 }): string[] {
 	const errors = validateAcceptanceInput(input.acceptance, "acceptance");
+	errors.push(...validateAcceptanceReportMode(input.acceptance, input.outputSchema, "acceptance"));
 	for (const [index, task] of (input.tasks ?? []).entries()) {
 		errors.push(...validateAcceptanceInput(task.acceptance, `tasks[${index}].acceptance`));
+		errors.push(...validateAcceptanceReportMode(task.acceptance, task.outputSchema, `tasks[${index}].acceptance`));
 	}
 	for (const [stepIndex, step] of (input.chain ?? []).entries()) {
 		errors.push(...validateAcceptanceInput(step.acceptance, `chain[${stepIndex}].acceptance`));
+		errors.push(...validateAcceptanceReportMode(step.acceptance, step.outputSchema, `chain[${stepIndex}].acceptance`));
 		if (Array.isArray(step.parallel)) {
 			for (const [taskIndex, task] of step.parallel.entries()) {
 				errors.push(...validateAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
+				errors.push(...validateAcceptanceReportMode(task.acceptance, task.outputSchema, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
 			}
 		} else if (step.parallel) {
 			errors.push(...validateAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
+			errors.push(...validateAcceptanceReportMode(step.parallel.acceptance, step.parallel.outputSchema, `chain[${stepIndex}].parallel.acceptance`));
 		}
 	}
 	return errors;
+}
+
+function validateAcceptanceReportMode(acceptance: unknown, outputSchema: unknown, pathLabel: string): string[] {
+	const normalized = normalizeAcceptanceValue(acceptance, pathLabel);
+	if (normalized.error) return [];
+	acceptance = normalized.value;
+	if (!acceptance || typeof acceptance !== "object" || Array.isArray(acceptance)) return [];
+	if (!("report" in acceptance)) return [];
+	return outputSchema === undefined ? [`${pathLabel}.report requires outputSchema.`] : [];
 }
 
 function normalizeCriteria(criteria: Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined, evidence: AcceptanceEvidenceKind[]): ResolvedAcceptanceGate[] {
@@ -376,12 +444,13 @@ export function resolveEffectiveAcceptance(input: {
 		};
 	}
 	const inferred = inferLevel(input);
+	const inferredLevel = inferred.level === "none" && explicitAcceptanceRequestsPolicy(explicit) ? "attested" : inferred.level;
 	const level = explicitAcceptanceCanDisable(explicit)
 		? "none"
 		: explicitLevel === "auto"
-			? inferred.level
-			: (LEVEL_RANK[explicitLevel] >= LEVEL_RANK[inferred.level] ? explicitLevel : inferred.level);
-	const evidence = unique([...(level === inferred.level ? inferred.evidence : requiredEvidenceForLevel(level)), ...(explicit.evidence ?? [])]);
+			? inferredLevel
+			: (LEVEL_RANK[explicitLevel] >= LEVEL_RANK[inferredLevel] ? explicitLevel : inferredLevel);
+	const evidence = unique([...(level === inferredLevel ? inferred.evidence : requiredEvidenceForLevel(level)), ...(explicit.evidence ?? [])]);
 	const criteria = normalizeCriteria(
 		(explicit.criteria?.length ? explicit.criteria : inferred.criteria) as Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }>,
 		evidence,
@@ -391,8 +460,8 @@ export function resolveEffectiveAcceptance(input: {
 		level,
 		explicit: input.explicit !== undefined,
 		inferredReason: inferred.reasons,
-		criteria,
-		evidence,
+		criteria: level === "none" ? [] : criteria,
+		evidence: level === "none" ? [] : evidence,
 		verify: explicit.verify ?? [],
 		review,
 		stopRules: explicit.stopRules ?? [],
@@ -851,7 +920,7 @@ function validateStringArrayField(errors: string[], value: unknown, pathLabel: s
 	}
 }
 
-function validateAcceptanceReport(value: unknown, pathLabel = ""): { report?: AcceptanceReport; errors: string[] } {
+export function validateAcceptanceReport(value: unknown, pathLabel = ""): { report?: AcceptanceReport; errors: string[] } {
 	const normalized = normalizeAcceptanceReportValue(value, pathLabel);
 	value = normalized.value;
 	pathLabel = normalized.pathLabel;
@@ -1293,6 +1362,7 @@ export async function evaluateAcceptance(input: {
 	reportOptional?: boolean;
 	artifactsDir?: string;
 	runId?: string;
+	watchdog?: ChildWatchdogProgress;
 }): Promise<AcceptanceLedger> {
 	const acceptance = input.acceptance;
 	const initialStatus = acceptance.level === "none" ? "not-required" : "claimed";
@@ -1308,9 +1378,16 @@ export async function evaluateAcceptance(input: {
 	};
 	if (acceptance.level === "none") return ledger;
 
+	if (input.watchdog) {
+		const unresolved = unresolvedChildWatchdogBlockers(input.watchdog);
+		ledger.runtimeChecks.push(unresolved.length
+			? { id: "watchdog-blocker", status: "failed", message: `Unresolved watchdog blocker: ${unresolved[0]!.summary}` }
+			: { id: "watchdog-blocker", status: "passed", message: "No unresolved watchdog blockers." });
+	}
+
 	const parsed: AcceptanceReportParseResult = input.reportError
 		? { error: input.reportError }
-		: input.report
+		: input.report !== undefined
 		? (() => {
 			const validation = validateAcceptanceReport(input.report);
 			return validation.report

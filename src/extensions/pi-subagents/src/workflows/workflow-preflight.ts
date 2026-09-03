@@ -146,8 +146,35 @@ function declaredKeys(preflight: WorkflowPreflightV1): Set<string> {
  * Treat declared lane keys as plan roots: `lane` is the lane itself and
  * `lane.stage` is a stage by convention, even without generated provenance.
  */
+export function workflowKeyMatchesPreflightLane(key: string, laneKey: string, generatedLaneKey?: string): boolean {
+	return generatedLaneKey === laneKey || key === laneKey || key.startsWith(`${laneKey}.`);
+}
+
+/** Select the most specific advisory lane without allowing declaration order to override an exact runtime key. */
+export function workflowPreflightLaneForRuntimeKey(
+	preflight: WorkflowPreflightV1 | undefined,
+	key: string,
+	preferredKeys: readonly (string | undefined)[] = [],
+): WorkflowPreflightLaneV1 | undefined {
+	const lanes = preflight?.lanes;
+	if (!lanes) return undefined;
+	const exact = lanes.find((lane) => lane.key === key);
+	if (exact) return exact;
+	let closestRoot: WorkflowPreflightLaneV1 | undefined;
+	for (const lane of lanes) {
+		if (key.startsWith(`${lane.key}.`) && (!closestRoot || lane.key.length > closestRoot.key.length)) closestRoot = lane;
+	}
+	if (closestRoot) return closestRoot;
+	for (const preferredKey of preferredKeys) {
+		if (!preferredKey) continue;
+		const preferred = lanes.find((lane) => lane.key === preferredKey);
+		if (preferred) return preferred;
+	}
+	return undefined;
+}
+
 function declaredLaneCoversWorkflowKey(entry: WorkflowTraceLike, laneKey: string): boolean {
-	return entry.key === laneKey || entry.key.startsWith(`${laneKey}.`);
+	return workflowKeyMatchesPreflightLane(entry.key, laneKey, entry.generatedLaneKey);
 }
 
 function keyCoveredByDeclaredLane(entry: WorkflowTraceLike, declared: ReadonlySet<string>): boolean {

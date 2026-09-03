@@ -86,10 +86,13 @@ const AcceptanceOverride = Type.Unsafe({
 			deprecated: true,
 			description: "Invalid as an explicit policy. Recognized only so preflight can explain that reviewed is an achieved status.",
 		},
+		{
+			type: "string",
+		},
 		{ type: "boolean", enum: [false] },
 		{ type: "object", additionalProperties: true },
 	],
-	description: `Optional acceptance policy. For reviewer/read-only calls, omit acceptance. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }. Supported evidence kinds: ${AcceptanceEvidenceKinds.join(", ")}. Evidence levels end at verified; use acceptance.review.required for review. Omitted means auto-inferred unless agentContract compatibility behavior is enabled.`,
+	description: `Optional acceptance policy. Prefer an inline JSON object. JSON-encoded object strings are tolerated only during input normalization; invalid strings fail closed. Reviewer/read-only calls, omit acceptance. { level: "checked", evidence: ["commands-run", "changed-files"] }. Supported evidence kinds: ${AcceptanceEvidenceKinds.join(",")}. acceptance.review.required.`,
 });
 
 const AgentContractOverride = Type.Object({
@@ -317,8 +320,9 @@ const SubagentParamProperties = {
 	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level for action='watchdog.configure' only (off/minimal/low/medium/high/xhigh/max, inherit, or false for off). Ignored on dispatch; set per-run child thinking with a suffix on the model string, e.g. model: 'provider/id:high'." })),
 	at: Type.Optional(Type.String({ description: "One-shot trigger for action='schedule.create': a relative delay such as '+10m' or an ISO timestamp with timezone." })),
 	every: Type.Optional(Type.String({ description: "Fixed recurring interval for action='schedule.create', such as '30m', '6h', '2d', or '2w'." })),
+	sessionOnly: Type.Optional(Type.Boolean()),
 	on: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "integer" }], description: "Calendar selector reserved for a later schedule slice." })),
-	timezone: Type.Optional(Type.String({ description: "IANA timezone reserved for a later calendar schedule slice." })),
+	timezone: Type.Optional(Type.String()),
 	overlap: Type.Optional(Type.String({ enum: ["skip"], description: "Overlap policy. This slice supports skip only." })),
 	catchUp: Type.Optional(Type.String({ enum: ["none", "latest"], description: "Missed occurrence policy for recurring schedules. Defaults to latest." })),
 	missionId: Type.Optional(Type.String({ description: "Mission id." })),

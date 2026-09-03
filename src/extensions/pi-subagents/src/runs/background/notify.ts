@@ -14,7 +14,7 @@ import {
 	createCompletionBatcher,
 	resolveCompletionBatchConfig,
 } from "./completion-batcher.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type ParallelHandoffReference, type ScheduleOrigin, type SubagentState } from "../../shared/types.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type ChildWatchdogProgress, type ChildWatchdogWarningSummary, type ParallelHandoffReference, type ScheduleOrigin, type SubagentState } from "../../shared/types.ts";
 import { safeTerminalText } from "../../shared/display-text.ts";
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { isUnexplainedProcessSignal } from "../shared/process-signal.ts";
@@ -30,6 +30,8 @@ export interface SubagentNotifyChildOutput {
 	previewTruncated?: boolean;
 	previewUnavailableReason?: string;
 }
+
+export type SubagentNotifyWatchdogBlocker = Pick<ChildWatchdogWarningSummary, "summary" | "addressed" | "stalemate"> & { agent: string };
 
 export interface SubagentNotifyDetails {
 	agent: string;
@@ -47,6 +49,7 @@ export interface SubagentNotifyDetails {
 	handoffPath?: string;
 	/** Present when a durable schedule launched the run. */
 	scheduleOrigin?: ScheduleOrigin;
+	watchdogBlockers?: SubagentNotifyWatchdogBlocker[];
 }
 
 export interface CompletionNotification {
@@ -85,7 +88,9 @@ export interface CompletionNotification {
 		timedOut?: boolean;
 		stopped?: boolean;
 		turnBudgetExceeded?: boolean;
+		watchdog?: ChildWatchdogProgress;
 	}>;
+	watchdog?: ChildWatchdogProgress;
 	timestamp?: number;
 	durationMs?: number;
 	cwd?: string;
@@ -249,9 +254,28 @@ function formatCorrelationLines(details: SubagentNotifyDetails): string[] {
 	].filter((line): line is string => line !== undefined);
 }
 
+const WATCHDOG_BLOCKERS_HEADING = "Watchdog blockers:";
+
+function formatWatchdogBlockerLines(details: SubagentNotifyDetails): string[] {
+	if (!details.watchdogBlockers?.length) return [];
+	return [WATCHDOG_BLOCKERS_HEADING, ...details.watchdogBlockers.map((blocker) => `- ${blocker.agent}: ${blocker.summary} (${blocker.stalemate ? "stalemate" : blocker.addressed ? "addressed" : "unaddressed"})`)];
+}
+
+// A stalemate blocker parses back as unaddressed; acceptance treats both as unresolved.
+function parseWatchdogBlockerLines(lines: string[]): SubagentNotifyWatchdogBlocker[] {
+	const blockers: SubagentNotifyWatchdogBlocker[] = [];
+	for (const line of lines) {
+		const match = line.match(/^- (.+?): (.+) \((addressed|unaddressed|stalemate)\)$/);
+		if (!match) break;
+		blockers.push({ agent: match[1]!, summary: match[2]!, addressed: match[3] === "addressed", stalemate: match[3] === "stalemate" });
+	}
+	return blockers;
+}
+
 export function formatSingleCompletion(details: SubagentNotifyDetails): string {
 	const sessionLine = formatSessionLine(details);
 	const correlationLines = formatCorrelationLines(details);
+	const watchdogLines = formatWatchdogBlockerLines(details);
 	const taskKind = details.source === "foreground" ? "Detached foreground task" : "Background task";
 	const scheduleLine = details.scheduleOrigin
 		? `Scheduled run from **${details.scheduleOrigin.name ?? details.scheduleOrigin.id}** (schedule ${details.scheduleOrigin.id}).`
@@ -262,6 +286,7 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
 		scheduleLine,
 		scheduleLine ? "" : undefined,
 		formatResultPreview(details),
+		...(watchdogLines.length ? ["", ...watchdogLines] : []),
 		details.handoffPath ? "" : undefined,
 		details.handoffPath ? `Parallel handoff: ${details.handoffPath}` : undefined,
 		correlationLines.length && !details.handoffPath ? "" : undefined,
@@ -300,7 +325,9 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 	const workflowRunIndex = body.findIndex((line) => line.startsWith("Workflow run: "));
 	const childRunsIndex = body.findIndex((line) => line.startsWith("Child runs: "));
 	const reconciledIndex = body.findIndex((line) => line.startsWith("Reconciled detached child: "));
-	const metadataIndexes = [sessionIndex, handoffIndex, workflowRunIndex, childRunsIndex, reconciledIndex].filter((index) => index >= 0);
+	const watchdogIndex = body.findIndex((line) => line === WATCHDOG_BLOCKERS_HEADING);
+	const watchdogBlockers = watchdogIndex >= 0 ? parseWatchdogBlockerLines(body.slice(watchdogIndex + 1)) : [];
+	const metadataIndexes = [sessionIndex, handoffIndex, workflowRunIndex, childRunsIndex, reconciledIndex, watchdogIndex].filter((index) => index >= 0);
 	const firstMetadataIndex = metadataIndexes.length ? Math.min(...metadataIndexes) : body.length;
 	const resultEnd = firstMetadataIndex > 0 && body[firstMetadataIndex - 1]?.trim() === "" ? firstMetadataIndex - 1 : firstMetadataIndex;
 	const resultPreview = body.slice(0, resultEnd).join("\n").trim() || "(no output)";
@@ -336,6 +363,7 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 		...(workflowRunId ? { workflowRunId } : {}),
 		...(childRuns?.length ? { childRuns } : {}),
 		...(reconciledFromDetachedChild ? { reconciledFromDetachedChild } : {}),
+		...(watchdogBlockers.length ? { watchdogBlockers } : {}),
 		...(sessionLabel && sessionValue ? { sessionLabel, sessionValue } : {}),
 	};
 }
@@ -349,6 +377,7 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
 		const sessionLine = formatSessionLine(detail);
 		blocks.push(`${index + 1}. ${detail.agent}${detail.taskInfo ?? ""}${detail.scheduleOrigin ? ` — scheduled run from ${detail.scheduleOrigin.name ?? detail.scheduleOrigin.id} (schedule ${detail.scheduleOrigin.id})` : ""}`);
 		blocks.push(formatResultPreview(detail));
+		blocks.push(...formatWatchdogBlockerLines(detail));
 		if (detail.handoffPath) blocks.push(`Parallel handoff: ${detail.handoffPath}`);
 		blocks.push(...formatCorrelationLines(detail));
 		if (sessionLine) blocks.push(sessionLine);
@@ -420,6 +449,18 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 	const handoffPath = typeof parallelHandoff?.path === "string" ? parallelHandoff.path : undefined;
 	const rawRunId = typeof result.runId === "string" ? result.runId : typeof result.id === "string" ? result.id : undefined;
 	const workflowRunId = (result.mode === "workflow" || agent === "workflow") && rawRunId ? rawRunId : undefined;
+	const directChild = !workflowRunId && result.results?.length === 1 ? result.results[0]! : undefined;
+	const directStructuredPreview = directChild
+		? childInlinePreview(directChild).preview
+		: undefined;
+	const directSummary = summary.trim();
+	const directAgent = typeof directChild?.agent === "string" ? directChild.agent : agent;
+	const directNoOutputSummary = directChild && (!directSummary
+		|| directSummary === "(no output)"
+		|| (directAgent && directSummary === `${directAgent}:\n(no output)`));
+	const resultPreview = directStructuredPreview && directNoOutputSummary
+		? `Structured output:\n${directStructuredPreview}`
+		: summary;
 	const childRuns = result.results?.flatMap((child) => {
 		const runId = typeof child.runId === "string" && child.runId.trim() ? child.runId.trim() : undefined;
 		const workflowKey = typeof child.workflowKey === "string" && child.workflowKey.trim() ? child.workflowKey.trim() : undefined;
@@ -450,6 +491,15 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		})
 		: undefined;
 	const reconciledFromDetachedChild = typeof result.reconciledFromDetachedChild === "string" ? result.reconciledFromDetachedChild : undefined;
+	const watchdogBlockers: SubagentNotifyWatchdogBlocker[] = [];
+	const collectWatchdogBlockers = (owner: string, progress: ChildWatchdogProgress | undefined) => {
+		for (const warning of progress?.warnings ?? []) {
+			if (warning.severity !== "blocker") continue;
+			watchdogBlockers.push({ agent: owner, summary: warning.summary, addressed: warning.addressed, stalemate: warning.stalemate });
+		}
+	};
+	collectWatchdogBlockers(agent, result.watchdog);
+	for (const child of result.results ?? []) collectWatchdogBlockers(typeof child.agent === "string" ? child.agent : agent, child.watchdog);
 	const session =
 		result.shareUrl
 			? { label: "Session", value: result.shareUrl }
@@ -468,13 +518,14 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		...(scheduleOrigin ? { scheduleOrigin } : {}),
 		...(result.source ? { source: result.source } : {}),
 		...(taskInfo ? { taskInfo } : {}),
-		resultPreview: summary,
+		resultPreview,
 		...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
 		...(handoffPath ? { handoffPath } : {}),
 		...(workflowRunId ? { workflowRunId } : {}),
 		...(childRuns.length ? { childRuns } : {}),
 		...(childOutputs?.length ? { childOutputs } : {}),
 		...(reconciledFromDetachedChild ? { reconciledFromDetachedChild } : {}),
+		...(watchdogBlockers.length ? { watchdogBlockers } : {}),
 		...(session ? { sessionLabel: session.label, sessionValue: session.value } : {}),
 	};
 }

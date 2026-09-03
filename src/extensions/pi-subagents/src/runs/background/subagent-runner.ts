@@ -13,7 +13,7 @@ import { updateActiveRunIndex } from "./active-run-index.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir, watchAsyncControlInbox, type SteerAck, type SteerCapability, type SteerRequest, type StopRequest } from "./control-channel.ts";
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
-import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
+import { SELESAI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
@@ -77,9 +77,10 @@ import {
 } from "../shared/parallel-utils.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, deriveForkPromptCacheKey, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
+import { alignForkedSessionCwd } from "../../shared/fork-session-cwd.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
-import { createStructuredOutputRuntime, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
+import { clearStructuredOutputCaptures, createStructuredOutputRuntime, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
 import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
@@ -123,6 +124,7 @@ import {
 	findWorktreeTaskCwdConflict,
 	formatWorktreeDiffSummary,
 	formatWorktreeTaskCwdConflict,
+	WORKTREE_AGENT_CWD_PLACEHOLDER,
 	type WorktreeSetup,
 } from "../shared/worktree.ts";
 import { findModelInfo, resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -130,7 +132,7 @@ import { assertThinkingWithinCeiling, decodeThinkingCeiling, SUBAGENT_THINKING_C
 import { launchBindingDigest } from "../../shared/launch-contract.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
-import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
+import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveAcceptanceReportMode, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
@@ -151,6 +153,7 @@ import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type 
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
 	acceptChildWatchdogEvent,
+	applyChildWatchdogMessage,
 	childWatchdogIsActive,
 	decodeChildWatchdogConfig,
 	isChildWatchdogStatusEvent,
@@ -181,6 +184,8 @@ interface SubagentRunConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
+	worktreeProvider?: import("../../shared/types.ts").WorktreeProvider;
+	worktreeBranchPrefix?: string;
 	controlConfig?: ResolvedControlConfig;
 	controlIntercomTarget?: string;
 	childIntercomTargets?: Array<string | undefined>;
@@ -241,6 +246,7 @@ interface StepResult {
 	sessionFile?: string;
 	intercomTarget?: string;
 	model?: string;
+	thinking?: string;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
 	/** True when the dispatch failed because the input exceeded the model's context window. */
@@ -846,6 +852,10 @@ function runPiStreaming(
 				const text = extractTextFromContent(event.message.content);
 				if (text) writeOutputText(text);
 
+				if (childWatchdogConfig && event.type === "message_end") {
+					const next = applyChildWatchdogMessage(childWatchdogState, event.message);
+					if (next) updateChildWatchdogState(next);
+				}
 				if (event.type !== "message_end" || event.message.role !== "assistant") return;
 				const hasToolCall = assistantStartsToolCall(event.message);
 				if (event.message.model) {
@@ -1062,7 +1072,6 @@ function runPiStreaming(
 					phase: "stale",
 					seq: (childWatchdogState?.seq ?? 0) + 1,
 					lastUpdate: Date.now(),
-					followUpPending: false,
 					reason: "child watchdog tail timeout",
 					timedOut: true,
 				});
@@ -1164,7 +1173,7 @@ function runPiStreaming(
 function resolvePiPackageRootFallback(): string {
 	const root = resolveInstalledPiPackageRoot();
 	if (root) return root;
-	throw new Error(`Could not resolve ${PI_CODING_AGENT_PACKAGE} package root`);
+	throw new Error(`Could not resolve ${SELESAI_CODING_AGENT_PACKAGE} package root`);
 }
 
 async function exportSessionHtml(sessionFile: string, outputDir: string, piPackageRoot?: string): Promise<string> {
@@ -1394,7 +1403,7 @@ async function runSingleStepInner(
 	}
 
 	const effectiveStructuredOutput = step.structuredOutput ?? (step.structuredOutputSchema
-		? createStructuredOutputRuntime(step.structuredOutputSchema, path.join(path.dirname(ctx.outputFile), "structured-output"))
+		? createStructuredOutputRuntime(step.structuredOutputSchema, path.join(path.dirname(ctx.outputFile), "structured-output"), { acceptanceReport: resolveAcceptanceReportMode(step.acceptanceInput) })
 		: undefined);
 	const placeholderRegex = new RegExp(ctx.placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
 	let task = step.task.replace(placeholderRegex, () => ctx.previousOutput);
@@ -1404,6 +1413,7 @@ async function runSingleStepInner(
 	if (!step.runner) {
 		resolvedTaskToolPlan = resolvePiLaunchToolPlan(omitUndefinedProperties({
 			tools: step.tools,
+			excludeTools: step.excludeTools,
 			allowNestedSubagents: step.allowNestedSubagents,
 			extensions: step.extensions,
 			subagentOnlyExtensions: step.subagentOnlyExtensions,
@@ -1611,6 +1621,9 @@ async function runSingleStepInner(
 	const effectiveCwd = step.cwd ?? ctx.cwd;
 	const cwdError = preflightLaunchCwd(step.requestedCwd ?? effectiveCwd, effectiveCwd);
 	if (cwdError) return { agent: step.agent, output: cwdError, error: cwdError, exitCode: 1, context: step.context };
+	if (step.context === "fork" && step.sessionFile && fs.existsSync(step.sessionFile)) {
+		alignForkedSessionCwd(step.sessionFile, effectiveCwd);
+	}
 
 	const candidates = step.modelCandidates !== undefined
 		? step.modelCandidates.length > 0 ? step.modelCandidates : [undefined]
@@ -1665,10 +1678,9 @@ async function runSingleStepInner(
 		}));
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 		if (effectiveStructuredOutput) {
-			try {
-				if (fs.existsSync(effectiveStructuredOutput.outputPath)) fs.unlinkSync(effectiveStructuredOutput.outputPath);
-			} catch {
-				// Missing/stale structured-output files are handled after the child exits.
+			const cleanupError = clearStructuredOutputCaptures(effectiveStructuredOutput);
+			if (cleanupError) {
+				return omitUndefinedProperties({ agent: step.agent, output: cleanupError, error: cleanupError, exitCode: 1, context: step.context });
 			}
 		}
 		const watchdogConfig = resolveWatchdogConfig(step.cwd ?? ctx.cwd);
@@ -1696,6 +1708,7 @@ async function runSingleStepInner(
 			inheritSkills: step.inheritSkills,
 			requireReadTool: Boolean(step.skills?.length),
 			tools: step.tools,
+			excludeTools: step.excludeTools,
 			allowNestedSubagents: step.allowNestedSubagents,
 			extensions: step.extensions,
 			subagentOnlyExtensions: step.subagentOnlyExtensions,
@@ -1745,6 +1758,7 @@ async function runSingleStepInner(
 		if (step.definitionDigest) {
 			const toolPlan = resolvedTaskToolPlan ?? resolvePiLaunchToolPlan(omitUndefinedProperties({
 				tools: step.tools,
+				excludeTools: step.excludeTools,
 				allowNestedSubagents: step.allowNestedSubagents,
 				extensions: step.extensions,
 				subagentOnlyExtensions: step.subagentOnlyExtensions,
@@ -1777,6 +1791,7 @@ async function runSingleStepInner(
 				inheritSkills: step.inheritSkills,
 				skills: step.skills,
 				tools: toolPlan.effectiveToolAllowlist,
+				...(toolPlan.excludeTools.length > 0 ? { excludeTools: toolPlan.excludeTools } : {}),
 				extensions: toolPlan.extensionArgs,
 				mcpDirectTools: toolPlan.effectiveMcpTools,
 				...(step.outputPath ? { outputPath: step.outputPath } : {}),
@@ -2141,6 +2156,7 @@ async function runSingleStepInner(
 			reportOptional: isAgentContractV1(step.agentContract),
 			artifactsDir: ctx.artifactsDir,
 			runId: ctx.id,
+			watchdog: finalResult?.watchdog,
 		}))
 		: undefined;
 	const stoppedAfterAcceptance = finalResult?.stopped === true || ctx.stopSignal?.aborted === true;
@@ -2218,6 +2234,7 @@ async function runSingleStepInner(
 		sessionFile: step.sessionFile,
 		intercomTarget: ctx.childIntercomTarget,
 		model: finalResult?.model,
+		thinking: resolveEffectiveThinking(finalResult?.model, step.thinking),
 		attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
 		modelAttempts,
 		contextOverflow: contextOverflow || undefined,
@@ -2316,6 +2333,8 @@ function requiredStatusStep(statusPayload: RunnerStatusPayload, index: number): 
 function setStatusWorktreeReference(statusStep: RunnerStatusStep, worktree: WorktreeSetup["worktrees"][number]): void {
 	statusStep.worktreePath = worktree.path;
 	statusStep.branch = worktree.branch;
+	if (worktree.provider) statusStep.provider = worktree.provider;
+	if (worktree.naming) statusStep.naming = worktree.naming;
 }
 
 function markParallelGroupSetupFailure(input: {
@@ -2396,6 +2415,18 @@ function markParallelGroupRunning(input: {
 	}));
 }
 
+function bindWorktreeCwd(step: SubagentStep, worktreeCwd: string): SubagentStep {
+	const bind = <T extends string | null | undefined>(value: T): T => value === null || value === undefined ? value : value.replaceAll(WORKTREE_AGENT_CWD_PLACEHOLDER, worktreeCwd) as T;
+	return {
+		...step,
+		task: bind(step.task) ?? step.task,
+		...(step.systemPrompt !== undefined ? { systemPrompt: bind(step.systemPrompt) } : {}),
+		...(step.outputPath !== undefined ? { outputPath: bind(step.outputPath) } : {}),
+		...(step.launchBindingTask !== undefined ? { launchBindingTask: bind(step.launchBindingTask) } : {}),
+		...(step.requestedCwd !== undefined ? { requestedCwd: bind(step.requestedCwd) } : {}),
+	};
+}
+
 function prepareParallelTaskRun(
 	task: SubagentStep,
 	cwd: string,
@@ -2404,8 +2435,9 @@ function prepareParallelTaskRun(
 ): { taskForRun: SubagentStep; taskCwd: string } {
 	if (!worktreeSetup) return { taskForRun: task, taskCwd: cwd };
 	const { cwd: _taskCwd, ...taskForRun } = task;
+	const boundTask = bindWorktreeCwd(taskForRun, worktreeSetup.worktrees[taskIndex]!.agentCwd);
 	return {
-		taskForRun,
+		taskForRun: boundTask,
 		taskCwd: worktreeSetup.worktrees[taskIndex]!.agentCwd,
 	};
 }
@@ -2864,6 +2896,7 @@ async function runSubagent(
 				success: statusResultSuccess(state, step),
 				sessionFile: step.sessionFile,
 				model: step.model,
+				thinking: step.thinking,
 				attemptedModels: step.attemptedModels,
 				modelAttempts: step.modelAttempts,
 				usage: usageFromAttempts(step.modelAttempts),
@@ -3543,6 +3576,15 @@ async function runSubagent(
 			writeStatusPayload(false);
 			return;
 		}
+		if (event.type === "message_end") {
+			const next = applyChildWatchdogMessage(step.watchdog, event.message, now);
+			if (next) step.watchdog = next;
+			if (next && (event.message as { role?: unknown } | undefined)?.role === "custom") {
+				statusPayload.lastUpdate = now;
+				writeStatusPayload(false);
+				return;
+			}
+		}
 		if (event.type === "tool_execution_start" && event.toolName) {
 			const mutates = isMutatingTool(event.toolName, event.args, flatSteps[flatIndex]?.mutationTools);
 			const currentPath = resolveCurrentPath(event.toolName, event.args);
@@ -3687,6 +3729,7 @@ async function runSubagent(
 				config: controlConfig,
 				startedAt: step.startedAt ?? overallStartTime,
 				lastActivityAt,
+				turnCount: step.turnCount,
 				currentTool: step.currentTool,
 				thinking: step.thinking,
 				now,
@@ -4308,6 +4351,7 @@ async function runSubagent(
 					sessionFile: pr.sessionFile,
 					intercomTarget: pr.intercomTarget,
 					model: pr.model,
+					thinking: pr.thinking,
 					attemptedModels: pr.attemptedModels,
 					modelAttempts: pr.modelAttempts,
 					contextOverflow: pr.contextOverflow,
@@ -4452,6 +4496,10 @@ async function runSubagent(
 				try {
 					worktreeSetup = createWorktrees(cwd, `${id}-s${stepIndex}`, group.parallel.length, omitUndefinedProperties({
 						agents: group.parallel.map((task) => task.agent),
+						labels: group.parallel.map((task) => task.lane?.key ?? config.workflowKey ?? task.outputName ?? task.label),
+						tasks: group.parallel.map((task) => task.task),
+						provider: config.worktreeProvider,
+						branchPrefix: config.worktreeBranchPrefix,
 						setupHook: config.worktreeSetupHook
 							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
 							: undefined,
@@ -4749,6 +4797,7 @@ async function runSubagent(
 						sessionFile: pr.sessionFile,
 						intercomTarget: pr.intercomTarget,
 						model: pr.model,
+						thinking: pr.thinking,
 						attemptedModels: pr.attemptedModels,
 						modelAttempts: pr.modelAttempts,
 						contextOverflow: pr.contextOverflow,
@@ -4884,6 +4933,10 @@ async function runSubagent(
 				try {
 					singleWorktreeSetup = createWorktrees(cwd, `${id}-s${stepIndex}`, 1, omitUndefinedProperties({
 						agents: [seqStep.agent],
+						labels: [seqStep.lane?.key ?? config.workflowKey ?? seqStep.outputName ?? seqStep.label],
+						tasks: [seqStep.task],
+						provider: config.worktreeProvider,
+						branchPrefix: config.worktreeBranchPrefix,
 						setupHook: config.worktreeSetupHook
 							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
 							: undefined,
@@ -4938,7 +4991,9 @@ async function runSubagent(
 			}));
 
 			flushPendingStepSteers(flatIndex);
-			const executionStep = singleWorktreeSetup ? { ...seqStep, cwd: singleCwd } : seqStep;
+			const executionStep = singleWorktreeSetup
+				? bindWorktreeCwd({ ...seqStep, cwd: singleCwd }, singleCwd)
+				: seqStep;
 			let singleResult: Awaited<ReturnType<typeof runSingleStepWithTimeout>>;
 			try {
 				singleResult = await runSingleStepWithTimeout(executionStep, compactOptional<SingleStepContext>({
@@ -5002,6 +5057,7 @@ async function runSubagent(
 				sessionFile: singleResult.sessionFile,
 				intercomTarget: singleResult.intercomTarget,
 				model: singleResult.model,
+				thinking: singleResult.thinking,
 				attemptedModels: singleResult.attemptedModels,
 				modelAttempts: singleResult.modelAttempts,
 				contextOverflow: singleResult.contextOverflow,
@@ -5365,6 +5421,7 @@ async function runSubagent(
 				sessionFile: r.sessionFile,
 				intercomTarget: r.intercomTarget,
 				model: r.model,
+				thinking: r.thinking,
 				attemptedModels: r.attemptedModels,
 				modelAttempts: r.modelAttempts,
 				contextOverflow: r.contextOverflow,

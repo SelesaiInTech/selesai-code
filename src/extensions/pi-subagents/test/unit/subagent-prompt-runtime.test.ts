@@ -17,7 +17,7 @@ import {
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
+import { clearStructuredOutputCaptures, STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { getAgentDir } from "../../src/shared/utils.ts";
 import { PERMISSION_POLICY_ENV } from "../../src/runs/shared/permissions.ts";
@@ -49,6 +49,8 @@ const envSnapshot = {
 	SELESAI_SUBAGENT_STEER_ACK_DIR: process.env.SELESAI_SUBAGENT_STEER_ACK_DIR,
 	SELESAI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: process.env.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE,
 	SELESAI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
+	SELESAI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE: process.env.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE,
+	SELESAI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED: process.env.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED,
 	SELESAI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS: process.env.SELESAI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS,
 	SELESAI_SUBAGENT_TOOL_BUDGET: process.env.SELESAI_SUBAGENT_TOOL_BUDGET,
 	SELESAI_SUBAGENT_PERMISSION_POLICY: process.env.SELESAI_SUBAGENT_PERMISSION_POLICY,
@@ -62,7 +64,7 @@ const envSnapshot = {
 	SELESAI_SUBAGENT_CHILD_AGENT: process.env.SELESAI_SUBAGENT_CHILD_AGENT,
 	SELESAI_SUBAGENT_CHILD_INDEX: process.env.SELESAI_SUBAGENT_CHILD_INDEX,
 	SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG: process.env.SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG,
-	SELESAI_SUBAGENT_SESSION_NAME: process.env.SELESAI_SUBAGENT_SESSION_NAME,
+
 };
 
 const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
@@ -105,6 +107,10 @@ afterEach(() => {
 	else process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = envSnapshot.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
 	if (envSnapshot.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA === undefined) delete process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
 	else process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = envSnapshot.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA;
+	if (envSnapshot.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE === undefined) delete process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV];
+	else process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = envSnapshot.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE;
+	if (envSnapshot.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED === undefined) delete process.env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV];
+	else process.env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV] = envSnapshot.SELESAI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED;
 	if (envSnapshot.SELESAI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS === undefined) delete process.env[RUNTIME_EXTENSION_ACK_PATH_ENV];
 	else process.env[RUNTIME_EXTENSION_ACK_PATH_ENV] = envSnapshot.SELESAI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS;
 	if (envSnapshot.SELESAI_SUBAGENT_TOOL_BUDGET === undefined) delete process.env[TOOL_BUDGET_ENV];
@@ -131,8 +137,7 @@ afterEach(() => {
 	else process.env[SUBAGENT_CHILD_INDEX_ENV] = envSnapshot.SELESAI_SUBAGENT_CHILD_INDEX;
 	if (envSnapshot.SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG === undefined) delete process.env[CHILD_WATCHDOG_CONFIG_ENV];
 	else process.env[CHILD_WATCHDOG_CONFIG_ENV] = envSnapshot.SELESAI_SUBAGENT_WATCHDOG_CHILD_CONFIG;
-	if (envSnapshot.SELESAI_SUBAGENT_SESSION_NAME === undefined) delete process.env.SELESAI_SUBAGENT_SESSION_NAME;
-	else process.env.SELESAI_SUBAGENT_SESSION_NAME = envSnapshot.SELESAI_SUBAGENT_SESSION_NAME;
+
 });
 
 function setSupervisorEnv(): void {
@@ -182,9 +187,8 @@ describe("subagent prompt runtime", () => {
 				agentEndTimeoutMs: 5,
 				maxWarnings: null,
 				lsp: { enabled: false, timeoutMs: 100, maxFiles: 1, maxDiagnostics: 1 },
-				autoFollowBlockers: false,
-				autoFollowMaxAttempts: null,
 				stalemateRepeats: 2,
+				cadence: { everyNTools: null },
 			});
 			const handlers: Array<(event: { toolName?: string; input?: unknown }, ctx: { signal?: AbortSignal }) => unknown> = [];
 			registerPermissionGate({ on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: { signal?: AbortSignal }) => unknown) { if (event === "tool_call") handlers.push(handler); } } as never, async () => new Promise(() => undefined));
@@ -696,9 +700,8 @@ describe("subagent prompt runtime", () => {
 			agentEndTimeoutMs: 500,
 			maxWarnings: null,
 			lsp: { enabled: false, timeoutMs: 3000, maxFiles: 20, maxDiagnostics: 50 },
-			autoFollowBlockers: false,
-			autoFollowMaxAttempts: 3,
 			stalemateRepeats: 2,
+			cadence: { everyNTools: null },
 		});
 		const handlersWith = new Map<string, unknown[]>();
 		registerSubagentPromptRuntime({
@@ -747,6 +750,86 @@ describe("subagent prompt runtime", () => {
 			const result = await execute("tool-1", { value: { ok: true } });
 			assert.equal(result.terminate, true);
 			assert.deepEqual(JSON.parse(fs.readFileSync(outputPath, "utf-8")), { ok: true });
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("requires and validates acceptanceReport when structured capture is required", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-structured-acceptance-"));
+		try {
+			const schemaPath = path.join(dir, "schema.json");
+			const outputPath = path.join(dir, "output.json");
+			const acceptancePath = path.join(dir, "acceptance.json");
+			fs.writeFileSync(schemaPath, JSON.stringify({ type: "object" }), "utf-8");
+			process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = schemaPath;
+			process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = outputPath;
+			process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = acceptancePath;
+			process.env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV] = "1";
+			let execute: ((_id: string, params: { value: unknown; acceptanceReport?: unknown }) => Promise<unknown>) | undefined;
+			let parameters: { required?: string[] } | undefined;
+
+			registerSubagentPromptRuntime({
+				registerTool(tool: { name: string; parameters: unknown; execute: typeof execute }) {
+					if (tool.name === "structured_output") {
+						execute = tool.execute;
+						parameters = tool.parameters as { required?: string[] };
+					}
+				},
+				on() {},
+			} as { registerTool(tool: { name: string; parameters: unknown; execute: typeof execute }): void; on(): void });
+
+			assert.deepEqual(parameters?.required, ["value", "acceptanceReport"]);
+			await assert.rejects(execute!("missing", { value: {} }), /Missing acceptanceReport/);
+			await assert.rejects(execute!("empty", { value: {}, acceptanceReport: {} }), /expected at least one acceptance report field/);
+			await execute!("valid", { value: {}, acceptanceReport: { manualNotes: "validated evidence" } });
+			assert.deepEqual(JSON.parse(fs.readFileSync(acceptancePath, "utf-8")), { manualNotes: "validated evidence" });
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("clears stale optional acceptance reports when structured output omits them", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-structured-acceptance-stale-"));
+		try {
+			const schemaPath = path.join(dir, "schema.json");
+			const outputPath = path.join(dir, "output.json");
+			const acceptancePath = path.join(dir, "acceptance.json");
+			fs.writeFileSync(schemaPath, JSON.stringify({ type: "object" }), "utf-8");
+			fs.writeFileSync(acceptancePath, JSON.stringify({ manualNotes: "stale" }), "utf-8");
+			process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = schemaPath;
+			process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = outputPath;
+			process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = acceptancePath;
+			let execute: ((_id: string, params: { value: unknown }) => Promise<unknown>) | undefined;
+
+			registerSubagentPromptRuntime({
+				registerTool(tool: { name: string; execute: typeof execute }) {
+					if (tool.name === "structured_output") execute = tool.execute;
+				},
+				on() {},
+			} as { registerTool(tool: { name: string; execute: typeof execute }): void; on(): void });
+
+			await execute!("without-report", { value: {} });
+			assert.equal(fs.existsSync(acceptancePath), false);
+			assert.deepEqual(JSON.parse(fs.readFileSync(outputPath, "utf-8")), {});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("reports capture cleanup failures after clearing every stale file it can", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-structured-cleanup-"));
+		try {
+			const outputPath = path.join(dir, "output.json");
+			const acceptancePath = path.join(dir, "acceptance.json");
+			fs.mkdirSync(outputPath);
+			fs.writeFileSync(acceptancePath, JSON.stringify({ manualNotes: "stale" }), "utf-8");
+
+			const error = clearStructuredOutputCaptures({ schema: { type: "object" }, schemaPath: path.join(dir, "schema.json"), outputPath, acceptanceReportPath: acceptancePath });
+
+			assert.match(error ?? "", /Failed to clear stale structured output capture/);
+			assert.equal(fs.existsSync(outputPath), true);
+			assert.equal(fs.existsSync(acceptancePath), false);
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}

@@ -13,6 +13,7 @@ import {
 	formatWorkflowPreflightWarningSummary,
 	normalizeWorkflowPreflight,
 	validateWorkflowPreflight,
+	workflowPreflightLaneForRuntimeKey,
 	workflowPreflightWarnings,
 } from "../../src/workflows/workflow-preflight.ts";
 
@@ -121,6 +122,21 @@ describe("workflow preflight metadata", () => {
 		assert.ok(WORKFLOW_PREFLIGHT_MAX_CLAIMS > 0);
 	});
 
+	it("selects exact lanes before generated or dotted-root matches", () => {
+		const overlapping = {
+			version: 1 as const,
+			coverage: "partial" as const,
+			lanes: [
+				{ key: "writer", mode: "mutation" as const },
+				{ key: "writer.quality", mode: "review" as const },
+			],
+		};
+
+		assert.equal(workflowPreflightLaneForRuntimeKey(overlapping, "writer.quality")?.mode, "review");
+		assert.equal(workflowPreflightLaneForRuntimeKey(overlapping, "writer.quality.deep", ["writer"])?.mode, "review");
+		assert.equal(workflowPreflightLaneForRuntimeKey(overlapping, "generated", ["writer"])?.mode, "mutation");
+	});
+
 	it("treats exact and direct dotted keys as declared lane stages by convention", () => {
 		const lanes = normalizeWorkflowPreflight({
 			version: 1,
@@ -151,5 +167,11 @@ describe("workflow preflight metadata", () => {
 
 		const exactTrace = [{ operation: "run", key: "audit", state: "completed" as const }];
 		assert.deepEqual(workflowPreflightWarnings(lanes, exactTrace, { settled: true }), []);
+
+		const hyphenatedTrace = [{ operation: "run", key: "audit-quality", state: "completed" as const }];
+		assert.deepEqual(workflowPreflightWarnings(lanes, hyphenatedTrace, { settled: true }), [
+			"Preflight advisory: workflow key 'audit-quality' launched without a declared lane.",
+			"Preflight advisory: declared lane 'audit' was not launched.",
+		]);
 	});
 });

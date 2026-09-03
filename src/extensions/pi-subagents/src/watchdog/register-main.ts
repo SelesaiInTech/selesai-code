@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@s
 import { Text } from "@earendil-works/pi-tui";
 import { resolveEffectiveThinking, splitKnownThinkingSuffix, THINKING_LEVELS, type ThinkingLevel } from "../shared/model-info.ts";
 import { SLASH_TEXT_RESULT_TYPE } from "../shared/types.ts";
+import { captureWatchdogDiffBaseline, type WatchdogDiffBaseline } from "./diff-tool.ts";
 import { recommendStrongWatchdogModel, resolveWatchdogModelInput, parseWatchdogThinkingInput } from "./model-selection.ts";
 import { renderWatchdogWarning } from "./render.ts";
 import { createMainWatchdogReview } from "./review.ts";
@@ -120,7 +121,8 @@ export function buildWatchdogStatus(snapshot: ReturnType<MainWatchdogRuntime["ge
 		childrenLine(snapshot),
 		recommendationLine(ctx),
 		`Agent-end timeout: ${snapshot.config.agentEndTimeoutMs}ms`,
-		`Auto-follow: ${snapshot.enabled && snapshot.config.autoFollow.blockers ? "on for blockers" : "off"} · attempts ${snapshot.autoFollowAttempts}${snapshot.config.autoFollow.maxAttempts === null ? "" : `/${snapshot.config.autoFollow.maxAttempts}`}${snapshot.autoFollowQueued ? " · queued" : ""}${snapshot.autoFollowStalemate ? " · stalemate" : ""}`,
+		`Stalemate: ${snapshot.boundaryRepeats}/${snapshot.config.stalemateRepeats}${snapshot.stalemate ? " · stopped" : ""}`,
+		`Rules: ${snapshot.config.rules ? `${Object.keys(snapshot.config.rules.roleModels).length} role models · ${snapshot.config.rules.action}` : "none"}`,
 		`Review model call: ${snapshot.reviewDescription}`,
 	];
 	if (snapshot.failedReviews > 0) lines.push(`Failed reviews: ${snapshot.failedReviews}`);
@@ -238,7 +240,7 @@ function createTestWarning(severity: "concern" | "blocker", text: string): Watch
 		summary: text,
 		evidence: `Manual /subagents-watchdog test ${severity} message from the main session.`,
 		recommendedAction: severity === "blocker"
-			? "Verify the renderer, transcript delivery, and auto-follow policy."
+			? "Verify the renderer and transcript delivery."
 			: "Verify the renderer and transcript delivery; decide manually whether any action is needed.",
 	};
 }
@@ -376,17 +378,15 @@ async function handleWatchdogCommand(
 
 export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatchdogOptions = {}): MainWatchdogRuntime {
 	let currentContext: ExtensionContext | undefined;
+	let diffBaseline: WatchdogDiffBaseline | undefined;
 	const rememberContext = (ctx: ExtensionContext) => {
 		currentContext = ctx;
 	};
 	const runtime = options.runtime ?? new MainWatchdogRuntime({
-		review: options.review ?? createMainWatchdogReview(() => currentContext, { getThinkingLevel: () => pi.getThinkingLevel() }),
+		review: options.review ?? createMainWatchdogReview(() => currentContext, { getThinkingLevel: () => pi.getThinkingLevel(), diffBaseline: () => diffBaseline }),
 		reviewDescription: options.review ? "injected seam" : "real model review",
 		reviewChangesOnly: true,
-		displayWarning: (details, delivery) => {
-			pi.sendMessage(createWatchdogWarningMessage(details, { display: true, details }), delivery?.deliverAs === "steer" ? { deliverAs: "steer" } : undefined);
-		},
-		sendUserMessage: (message) => pi.sendUserMessage(message),
+		displayWarning: (details, options) => pi.sendMessage(createWatchdogWarningMessage(details, { display: true, details }), options),
 	});
 
 	pi.registerMessageRenderer<WatchdogWarningDetails>(SUBAGENT_WATCHDOG_WARNING_TYPE, (message, renderOptions, theme) => {
@@ -410,6 +410,7 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 
 	pi.on("session_start", (_event, ctx) => {
 		rememberContext(ctx);
+		diffBaseline = captureWatchdogDiffBaseline(ctx.cwd);
 		runtime.bindSession(ctx);
 	});
 	pi.on("before_agent_start", (event, ctx) => {
@@ -428,8 +429,8 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 		rememberContext(ctx);
 		return runtime.handleAgentEnd(event, ctx);
 	});
-	pi.on("session_before_switch", () => runtime.reset("session switch", { clearReviewInputSignature: true, clearLspLedger: true, clearScope: true, resetAutoFollow: true }));
-	pi.on("session_before_fork", () => runtime.reset("session fork", { clearReviewInputSignature: true, clearLspLedger: true, clearScope: true, resetAutoFollow: true }));
+	pi.on("session_before_switch", () => runtime.reset("session switch", { clearReviewInputSignature: true, clearLspLedger: true, clearScope: true }));
+	pi.on("session_before_fork", () => runtime.reset("session fork", { clearReviewInputSignature: true, clearLspLedger: true, clearScope: true }));
 	pi.on("session_compact", () => runtime.reset("session compact", { clearScope: true }));
 	pi.on("session_shutdown", () => {
 		currentContext = undefined;

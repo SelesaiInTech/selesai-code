@@ -60,3 +60,4 @@ export function markWatchdogAutoFollowPromptEvent<T extends object>(event: T): T
 	Object.defineProperty(event, WATCHDOG_AUTO_FOLLOW_PROMPT_MARKER, { value: true });
 	return event;
 }
+

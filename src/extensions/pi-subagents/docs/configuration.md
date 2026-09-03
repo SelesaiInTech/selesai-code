@@ -2,7 +2,7 @@
 
 `pi-subagents` reads optional JSON config from `~/.selesai/agent/extensions/subagent/config.json`. This page lists every key, plus the environment variables and the settings-file keys that affect config resolution.
 
-Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `defaultThinking`, `defaultExtensions`, `agentOverrides`, `modelScope`, `disableThinking`, `disableBuiltins`, watchdog settings) live in Pi settings files, not this config file. `modelScope.agents.<name>` adds per-agent restrictions, and `allow: ["inherit"]` permits the current parent model. See [models.md](models.md), [agents.md](agents.md), and [watchdog.md](watchdog.md).
+Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `defaultThinking`, `defaultExtensions`, `agentOverrides`, `agentScanDirs`, `modelScope`, `disableThinking`, `disableBuiltins`, watchdog settings) live in Pi settings files, not this config file. `modelScope.agents.<name>` adds per-agent restrictions, and `allow: ["inherit"]` permits the current parent model. See [models.md](models.md), [agents.md](agents.md), and [watchdog.md](watchdog.md).
 
 ## Project root resolution (settings)
 
@@ -17,6 +17,20 @@ By default, project settings resolve from the nearest parent directory that cont
 ```
 
 `"git-root"` keeps package discovery, project agents, chains, and `agentOverrides` anchored to the git worktree root when that root also has Pi project config. A nested project can still opt back into nearest-root behavior by setting `"projectRootResolution": "nearest"` in its own `.pi/settings.json`.
+
+## Extra agent scan directories (settings)
+
+Add recursive user or project agent roots with `subagents.agentScanDirs` in Pi settings:
+
+```json
+{
+  "subagents": {
+    "agentScanDirs": ["~/.selesai/flows/*/agents"]
+  }
+}
+```
+
+Entries support `~` expansion. A single `*` path segment expands one directory level, so package-like folders can each expose an `agents/` directory. Missing directories are ignored. Fixed user/project agent directories still win over same-name agents from scan roots.
 
 ## `modelExclusions`
 
@@ -342,10 +356,10 @@ Routes relative `output` paths for single-agent `/run` calls under this director
 
 Controls nested delegation when no inherited `SELESAI_SUBAGENT_MAX_DEPTH` is already in effect. Per-agent `maxSubagentDepth` can tighten the limit for that agent's child runs, but cannot relax an inherited stricter limit. This applies even to children that explicitly declare `tools: subagent` or `allowNestedSubagents: true`; at the cap, execution fanout is blocked instead of silently hiding nested work.
 
-## `SELESAI_SUBAGENT_PI_BINARY`
+## `SELESAI_SUBAGENT_SELESAI_BINARY`
 
 ```bash
-export SELESAI_SUBAGENT_PI_BINARY=/path/to/pi-or-wrapper
+export SELESAI_SUBAGENT_SELESAI_BINARY=/path/to/pi-or-wrapper
 ```
 
 Overrides the command used to launch child Pi processes. Package wrappers can set this to their own `pi`/agent binary so subagents inherit wrapper flags, environment setup, and bundled resources without relying on `PATH` ordering. Empty or whitespace-only values are ignored.
@@ -356,7 +370,7 @@ Overrides the command used to launch child Pi processes. Package wrappers can se
 export SELESAI_SUBAGENT_TASK_DELIVERY=file   # auto | file (default: auto)
 ```
 
-Controls how the task text reaches the child Pi process. `auto` (default) passes short tasks as an inline argv token and writes tasks longer than 8000 characters to a temp `task.md` referenced as `@<path>`. `file` always uses a temp file, keeping the task out of argv entirely.
+Controls how the task text reaches the child Pi process. `auto` (default) passes short non-macOS tasks as an inline argv token, and writes macOS tasks plus tasks longer than 8000 characters to a temp `task.md` referenced as `@<path>`. `file` always uses a temp file, keeping the task out of argv entirely.
 
 Use `file` on hosts where endpoint protection (EDR) pre-execution scanning denies child processes whose command line embeds a long natural-language task — that denial surfaces as an immediate zero-activity `SIGKILL`. Independently of this setting, startup retries automatically escalate to file delivery after an unexplained zero-activity `SIGKILL`. Empty, whitespace-only, or unrecognized values fall back to `auto`.
 
@@ -390,7 +404,19 @@ The default injected guidance tells children to use `contact_supervisor` with `r
 { "worktreeBaseDir": "/Users/matt/code/.worktrees/pi-subagents" }
 ```
 
-Sets the base directory for `worktree: true` runs. Relative paths resolve from the repository root, `~/...` expands to your home directory, and `SELESAI_SUBAGENTS_WORKTREE_DIR` is used when config is unset. The default remains the system temp directory.
+Sets the base directory for `worktree: true` runs. Relative paths resolve from the repository root, `~/...` expands to your home directory, and `PI_SUBAGENTS_WORKTREE_DIR` is used when config is unset. The default remains the system temp directory.
+
+## `worktreeProvider`
+
+```json
+{ "worktreeProvider": "auto", "worktreeBranchPrefix": "pi-subagents/" }
+```
+
+Selects the managed worktree allocator: `auto` (the default) uses Worktrunk when its machine-readable interface is available and otherwise falls back to Pi's native Git worktrees; `native` always uses Pi's Git implementation; and `worktrunk` fails closed when Worktrunk is unavailable or incompatible. A configured `worktreeBaseDir` (or `PI_SUBAGENTS_WORKTREE_DIR`) selects native allocation and cannot be combined with explicit `worktrunk`.
+
+`worktreeBranchPrefix` is normalized as a Git ref namespace and defaults to `pi-subagents/`. Branch names include readable task/lane identity plus run and fan-out indexes. Pi continues to own setup hooks, launch, handoff/diff evidence, resume, and cleanup; Worktrunk is used only to allocate and report the worktree path.
+
+Set `worktree` to `true` to make managed worktree isolation the default for launches that omit the per-call `worktree` flag. A per-call value still takes precedence.
 
 ## `worktreeSetupHook`
 
@@ -455,11 +481,11 @@ Each fixed action resolves to `"auto"`, `"confirm"`, or `"forbid"`. This is inte
 
 Controls where subagent artifact files (inputs, outputs, transcripts, metadata) are stored:
 
-- `"project"` (default): writes to `<cwd>/.pi-subagents/artifacts/`.
-- `"session"`: stores artifacts under pi's session directory (`~/.selesai/agent/sessions/<session>/subagent-artifacts/`), keeping the working directory clean. It falls back to the OS temp directory when no session file exists.
+- `"project"`: writes to `<cwd>/.pi-subagents/artifacts/`.
+- `"session"` (default): stores artifacts under pi's session directory (`~/.selesai/agent/sessions/<session>/subagent-artifacts/`), keeping the working directory clean. It falls back to the OS temp directory when no session file exists.
 - `"temp"`: uses the OS temp directory.
 
-This preference also controls the default workflow artifact directory used by scripted chaining. `"project"` uses `<cwd>/.pi-subagents/chain-runs/`; the directory keeps its legacy name for compatibility. `"session"` and `"temp"` use the user-scoped temp workflow artifact directory.
+This preference also controls the default workflow artifact directory used by scripted chaining. `"project"` uses `<cwd>/.pi-subagents/chain-runs/`; the directory keeps its legacy name for compatibility. The default `"session"` and `"temp"` use the user-scoped temp workflow artifact directory.
 
 The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically. Temporary workflow artifact directories are cleaned up separately after 24 hours.
 

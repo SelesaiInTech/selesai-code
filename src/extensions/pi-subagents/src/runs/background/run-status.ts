@@ -28,6 +28,8 @@ import { formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetD
 import { workflowGraphStageNodes } from "../shared/workflow-graph.ts";
 import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { formatTimeoutRecoveryLines } from "../shared/mutation-evidence.ts";
+import { formatWorkflowChecklistText, projectWorkflowChecklist } from "../../workflows/workflow-checklist.ts";
+import { validHostStepNodes } from "../shared/host-step-status.ts";
 
 interface RunStatusParams {
 	action?: string;
@@ -74,7 +76,7 @@ function formatWorkflowDebug(status: AsyncStatus): string[] {
 		status.lane ? `Lane: ${status.lane.key}${status.lane.mode ? ` (${status.lane.mode})` : ""}` : undefined,
 	].filter((line): line is string => line !== undefined);
 	for (const [index, step] of (status.steps ?? []).entries()) {
-		lines.push(`  ${index + 1}. key ${step.workflowKey ?? "n/a"} · ${runStatusStepDisplayName(step)} · ${step.status} · async ${step.async === undefined ? "unknown" : step.async ? "yes" : "no"}${step.runId ? ` · run ${step.runId}` : ""}${step.lane ? ` · lane ${step.lane.key}` : ""}${step.worktreePath ? ` · worktree ${step.worktreePath} · branch ${step.branch ?? "unknown"}` : ""}`);
+		lines.push(`  ${index + 1}. key ${step.workflowKey ?? "n/a"} · ${runStatusStepDisplayName(step)} · ${step.status} · async ${step.async === undefined ? "unknown" : step.async ? "yes" : "no"}${step.runId ? ` · run ${step.runId}` : ""}${step.lane ? ` · lane ${step.lane.key}` : ""}${step.worktreePath ? ` · worktree ${step.worktreePath} · branch ${step.branch ?? "unknown"}${step.provider ? ` · provider ${step.provider}` : ""}` : ""}`);
 	}
 	return lines;
 }
@@ -522,6 +524,14 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				status.mode === "workflow" && workflowReturnPreview !== undefined ? `Return: ${workflowReturnPreview}` : undefined,
 				status.mode === "workflow" && workflowEmitPreview !== undefined ? `Latest emit: ${workflowEmitPreview}` : undefined,
 				`Progress: ${progressLabel}`,
+				...(status.mode === "workflow" ? formatWorkflowChecklistText(projectWorkflowChecklist({
+					graph: status.workflowGraph,
+					steps: status.steps,
+					hostSteps: validHostStepNodes(status.workflowGraph),
+					preflight: status.preflight,
+					trace: status.workflow?.trace,
+					now: status.lastUpdate ?? status.endedAt ?? Date.now(),
+				}), "", { includeItems: false }) : []),
 				status.pendingAppends ? `Pending appends: ${status.pendingAppends}` : undefined,
 				`Started: ${started}`,
 				`Updated: ${updated}`,
@@ -551,6 +561,9 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				const display = runStatusStepDisplayName(step);
 				const phase = step.phase ? `[${step.phase}] ` : "";
 				lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`);
+				const structuredOutputPreview = step.structuredOutput === undefined ? undefined : formatWorkflowJsonPreview(step.structuredOutput, 4_000);
+				if (structuredOutputPreview !== undefined) lines.push(`  Structured output: ${structuredOutputPreview}`);
+				if (step.structuredOutputPath) lines.push(`  Structured output path: ${step.structuredOutputPath}`);
 				lines.push(...formatTimeoutRecoveryLines(step.timeoutRecovery, "  "));
 				if (step.runner?.type === "external-cli") {
 					const runner = normalizeExternalCliRunnerStatus(step.runner);
@@ -670,7 +683,14 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (data.parallelHandoff?.path) lines.push(`Parallel handoff: ${data.parallelHandoff.path}`);
 			const children = Array.isArray(data.results) ? data.results : data.agent ? [{ agent: data.agent, sessionFile: data.sessionFile }] : [];
 			lines.push(...formatTimeoutRecoveryLines(data.timeoutRecovery, "  "));
-			for (const child of children) lines.push(...formatTimeoutRecoveryLines(child.timeoutRecovery, "  "));
+			for (const [index, child] of children.entries()) {
+				const structuredOutput = (child as { structuredOutput?: unknown }).structuredOutput;
+				const structuredOutputPreview = structuredOutput === undefined ? undefined : formatWorkflowJsonPreview(structuredOutput, 4_000);
+				if (structuredOutputPreview !== undefined) lines.push(`  Structured output${children.length > 1 ? ` (${index + 1})` : ""}: ${structuredOutputPreview}`);
+				const structuredOutputPath = (child as { structuredOutputPath?: unknown }).structuredOutputPath;
+				if (typeof structuredOutputPath === "string" && structuredOutputPath.trim()) lines.push(`  Structured output path${children.length > 1 ? ` (${index + 1})` : ""}: ${structuredOutputPath}`);
+				lines.push(...formatTimeoutRecoveryLines(child.timeoutRecovery, "  "));
+			}
 			lines.push(formatResumeGuidance(runId, children, data.sessionFile, { stopped: status === "stopped" }));
 			if (data.summary) lines.push("", data.summary);
 			const workflowChildren = parseWorkflowChildSummary((data as unknown as Record<string, unknown>).workflowChildren);

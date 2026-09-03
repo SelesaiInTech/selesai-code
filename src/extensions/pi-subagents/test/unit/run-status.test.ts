@@ -360,6 +360,70 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("shows host steps in exact workflow status checklist", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-host-checklist-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-workflow-host");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-workflow-host",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				workflowGraph: { runId: "run-workflow-host", mode: "workflow", phases: [], nodes: [{ id: "ci", kind: "host-step", label: "CI", status: "running", hostStep: { version: 1, kind: "host-step", monitorKind: "ci", id: "ci", label: "CI", state: "running", updatedAt: 200 } }] },
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-workflow-host" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir: path.join(root, "results"),
+				kill: () => true,
+				now: () => 250,
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /Workflow checklist: 0\/1 done · 1 active/);
+			assert.match(text, /CI 1 active/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps preflight as a plan hint outside the runtime checklist", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-preflight-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-workflow-preflight");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-workflow-preflight",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				preflight: { version: 1, lanes: [{ key: "pr14", mode: "review" }] },
+				steps: [{ agent: "reviewer", workflowKey: "pr14-quality", status: "running" }],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-workflow-preflight" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir: path.join(root, "results"),
+				kill: () => true,
+				now: () => 250,
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /Plan: 1 lane · pr14/);
+			assert.match(text, /Workflow checklist: 0\/1 done · 1 active/);
+			assert.doesNotMatch(text, /1 queued/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("refuses to tail status outputFile paths outside the async directory", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-transcript-escape-"));
 		try {
@@ -1446,6 +1510,8 @@ describe("async run status inspection", () => {
 				results: [{
 					agent: "worker",
 					success: false,
+					structuredOutput: { payload: { ok: true } },
+					structuredOutputPath: "/runs/structured-output/output.json",
 					timeoutRecovery: {
 						termination: "timed-out",
 						changedFiles: ["input.md"],
@@ -1470,6 +1536,8 @@ describe("async run status inspection", () => {
 			assert.match(text, /Recovery needed: review the diff and artifacts before resuming or launching dependent stages\./);
 			assert.match(text, /requested report: missing/);
 			assert.match(text, /changed tracked files: input\.md/);
+			assert.match(text, /Structured output: \{"payload":\{"ok":true\}\}/);
+			assert.match(text, /Structured output path: \/runs\/structured-output\/output\.json/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

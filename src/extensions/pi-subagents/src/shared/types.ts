@@ -15,6 +15,7 @@ import type { ThinkingLevel } from "./model-info.ts";
 import type { GlobalMissionIndexRecord, MissionRecord, MissionStoreConfig } from "../missions/types.ts";
 import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 import type { WorkflowChildPermitContext } from "./workflow-child-permit.ts";
+import type { WatchdogWarningDetails } from "../watchdog/types.ts";
 
 // ============================================================================
 // Basic Types
@@ -382,6 +383,17 @@ export type SubagentResultStatus = "completed" | "failed" | "paused" | "stopped"
 export type SubagentOutputState = "present" | "absent" | "unknown";
 export type SubagentRunMode = "single" | "parallel" | "chain" | "workflow";
 export type SubagentResultMode = SubagentRunMode;
+export type WorktreeProvider = "auto" | "native" | "worktrunk";
+export type ManagedWorktreeProvider = Exclude<WorktreeProvider, "auto">;
+
+export interface WorktreeNaming {
+	requestedBranch: string;
+	branchPrefix: string;
+	label: string;
+	sanitizedPathComponent: string;
+	collision?: "branch" | "path" | "both";
+	collisionSuffix?: string;
+}
 
 export interface ParallelHandoffPatch {
 	path: string;
@@ -425,6 +437,10 @@ export interface ParallelHandoffCleanupTask {
 	index: number;
 	path: string;
 	branch: string;
+	/** Provider that allocated this worktree; omitted in old manifests. */
+	provider?: ManagedWorktreeProvider;
+	/** Branch/path naming evidence retained with the cleanup authority. */
+	naming?: WorktreeNaming;
 	worktreeRemoved: boolean;
 	branchRemoved: boolean;
 	preserved?: boolean;
@@ -780,6 +796,7 @@ export interface SteeringRecoveryDescriptor {
 	thinking?: string;
 	thinkingCeiling?: ThinkingLevel;
 	tools?: string[];
+	excludeTools?: string[];
 	allowNestedSubagents?: boolean;
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
@@ -878,13 +895,19 @@ export interface SubagentResultIntercomPayload {
 // Progress Tracking
 // ============================================================================
 
+export interface ChildWatchdogWarningSummary extends Pick<WatchdogWarningDetails, "severity" | "category" | "summary" | "evidence" | "recommendedAction" | "displayedAt"> {
+	/** True when a later assistant turn in the child followed the warning. */
+	addressed: boolean;
+	stalemate: boolean;
+}
+
 export interface ChildWatchdogProgress {
-	phase: "idle" | "reviewing" | "autofollow" | "settling" | "stale" | "failed";
+	phase: "idle" | "reviewing" | "stale" | "failed";
 	seq: number;
 	lastUpdate: number;
-	followUpPending: boolean;
 	reason?: string;
 	timedOut?: boolean;
+	warnings?: ChildWatchdogWarningSummary[];
 }
 
 export interface AgentProgress {
@@ -994,6 +1017,7 @@ export interface AcceptanceReviewGate {
 
 export interface AcceptanceConfig {
 	level?: AcceptanceLevel;
+	report?: "on" | "off";
 	criteria?: Array<string | AcceptanceGate>;
 	evidence?: AcceptanceEvidenceKind[];
 	verify?: AcceptanceVerifyCommand[];
@@ -1200,6 +1224,8 @@ export interface SingleResult {
 	 * result row's array position.
 	 */
 	index: number;
+	/** Workflow child key that owns this result when returned from workflow details. */
+	workflowKey?: string;
 	agent: string;
 	task: string;
 	/** Human-readable display name for the child's own session (agent + task
@@ -1305,6 +1331,8 @@ export interface WaitCompletionChild {
 	sessionFile?: string;
 	success?: boolean;
 	outputState?: SubagentOutputState;
+	structuredOutput?: unknown;
+	structuredOutputPath?: string;
 	error?: string;
 	model?: string;
 	contextOverflow?: boolean;
@@ -1342,7 +1370,7 @@ export interface AgentCapabilityRow {
 	restrictionSources?: string[];
 	aliases?: string[];
 	runner: { type: "pi" } | { type: "external-cli"; adapter?: string; capabilities: ExternalCliCapabilities } | { type: "external-job"; provider: string; available?: boolean; capabilities: ExternalJobRunnerStatus["capabilities"] };
-	tools: { ambient: boolean; names: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
+	tools: { ambient: boolean; names: string[]; excludeTools?: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
 	model?: { value?: string; fallbackModels?: string[]; thinking?: string | false };
 	execution?: { defaultAsync?: boolean; timeoutMs?: number };
 	output?: { path?: string; mode?: OutputMode };
@@ -1839,6 +1867,10 @@ export interface AsyncStatus {
 		worktreePath?: string;
 		/** Display-only branch copied at launch; handoff remains authoritative. */
 		branch?: string;
+		/** Display-only provisioning provider copied at launch; handoff remains authoritative. */
+		provider?: ManagedWorktreeProvider;
+		/** Display-only naming evidence copied at launch; handoff remains authoritative. */
+		naming?: WorktreeNaming;
 		/** Child run identity for workflow capacity reconciliation. */
 		runId?: string;
 		/** True only when this workflow child owns a detached async runner. */
@@ -2552,7 +2584,13 @@ export interface ExtensionConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
-	/** Where to store subagent artifact files. Defaults to "project" (cwd/.pi-subagents). Set to "session" for the pi session directory, or OS temp when unavailable. */
+	/** Enable managed worktrees when a launch does not provide an explicit value. */
+	worktree?: boolean;
+	/** Worktree allocator selection. Defaults to auto. */
+	worktreeProvider?: WorktreeProvider;
+	/** Namespace used by managed worktree branches. Defaults to pi-subagents/. */
+	worktreeBranchPrefix?: string;
+	/** Where to store subagent artifact files. Defaults to "session" (the pi session directory, or OS temp when unavailable). Set to "project" for cwd/.pi-subagents. */
 	artifactDir?: ArtifactDirPreference;
 	/** Artifact cleanup retention. Set cleanupDays to 0 to disable cleanup. */
 	artifactConfig?: Pick<ArtifactConfig, "cleanupDays">;

@@ -2,6 +2,82 @@
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-09-02
+
+### Highlights
+- Watchdog can now warn or block child launches before they start, based on role and model rules.
+- Watchdog reviews are easier to guide with safe diff access, reusable `WATCHDOG.md` instructions, and configurable child review cadence.
+- Watchdog findings are easier to see in parent results, completion notices, acceptance evidence, and Fleet.
+- Workflow status and async results are less noisy and more accurate.
+
+### Added
+- Add watchdog launch rules under `subagents.watchdog.rules`, with per-role model allow and deny globs that warn or block before a child starts.
+- Give watchdog reviewers a read-only `watchdog_diff` tool for session-start diffs, untracked paths, path narrowing, and stat summaries.
+- Run child watchdog reviews on a configurable cadence with `children.cadence` and `children.overrides.<agent>.cadence`.
+- Show child watchdog warnings in parent results, acceptance evidence, completion notices, and Fleet `wd:<n>` chips.
+- Load watchdog reviewer instructions from project and agent `WATCHDOG.md` files.
+
+### Changed
+- Reject unsupported watchdog settings that never took effect: `delivery`, `showDuringRun`, `syncBacklog`, `lateWarningPolicy`, `compactAtPercent`, `reviewRetryDelayMs`, `maxReviewFailures`, `asyncCompletion`, and `guidance.systemPromptPath`.
+- Remove watchdog auto-follow. Pi 0.84+ already continues after displayed boundary warnings, and repeated identical warnings now stop after `subagents.watchdog.stalemateRepeats`. The `autoFollow` settings block is now unknown.
+
+### Fixed
+- Keep advisory preflight checks out of runtime workflow rows and queued checklist counts (#1821). Thanks [@stekman08](https://github.com/stekman08).
+- Preserve effective thinking in completed async step results. Thanks to [@Nickonomic](https://github.com/Nickonomic) for #1823.
+- Forward workflow child control overrides through new and retained launches, and suppress idle needs-attention notices before the first assistant turn (#1817). Thanks [@rrocxela](https://github.com/rrocxela).
+
+## [0.63.0] - 2026-09-01
+
+### Highlights
+- Workflow progress is easier to scan in status, Fleet, and live widgets.
+- Additional agent folders can now be configured without copying definitions into one directory.
+- Worktrunk users get managed worktrees automatically, with native Git available as the fallback.
+- Fleet can jump straight into the selected child run's Herdr inspector.
+- Async runs clean up and report edge cases more reliably.
+
+### Added
+- Show workflow progress as stacked checklist summaries in status, Fleet, and live widget views (#1806).
+- Add configurable extra agent scan directories with one-segment wildcard expansion. Thanks to [@mystery4f](https://github.com/mystery4f) for #1801.
+- Make Worktrunk a first-class managed worktree provider, selected automatically when available with native Git as the fallback (#1800).
+- Let Fleet open the selected async child in its child-specific Herdr inspector. Thanks to [@stekman08](https://github.com/stekman08) for #1790.
+
+### Changed
+- Show workflow checklist phases first in collapsed views, while keeping child details available when expanded (#1810).
+
+### Fixed
+- Keep isolated test runs from writing agent definitions into an inherited `SELESAI_CODING_AGENT_DIR`. Thanks to [@mapleluvr](https://github.com/mapleluvr) for #1809.
+- Prevent nested tool-availability diagnostics from failing an otherwise valid parent result. Thanks to [@robertvangor](https://github.com/robertvangor) for #1802.
+- Free async capacity correctly after workflows finish, even when saved step status is stale. Thanks to [@boggylp](https://github.com/boggylp) for #1804.
+- Make `subagents.agentOverrides.<name>` replace matching custom-agent frontmatter fields, consistently with builtin agents. Thanks to [@expoli](https://github.com/expoli) for #1796.
+- Strip the trailing Pi turn-timing footer from child output. Thanks to [@fkhawajagh](https://github.com/fkhawajagh) for #1792.
+- Keep inferred acceptance reports out of reviewer and read-only child prompts. Thanks to [@expoli](https://github.com/expoli) for #1797.
+- Preserve coordinated read-only intent when direct async children resume, and show captured structured output in completion and status evidence. Thanks to [@fkhawajagh](https://github.com/fkhawajagh) for #1788.
+- Keep macOS subagent tasks out of argv by delivering them through temporary files. Thanks to [@josephkallas](https://github.com/josephkallas) for #1793.
+
+## [0.62.0] - 2026-08-31
+
+### Highlights
+- Child agents can report completion evidence more cleanly and stay away from tools they should not use.
+- Session-only schedules keep personal scheduled work tied to the session that created it.
+- Async forked runs now start and resume in the working directory you requested.
+- Windows child launches are more reliable, with clearer errors when Pi cannot find a valid CLI.
+- External CLI and read-only recovery paths are sturdier when workers disappear or prompts include unusual line separators.
+
+### Added
+- Let native children with `outputSchema` include required acceptance evidence in the same `structured_output` call with `acceptance.report: "on"`; `acceptance.report: "off"` keeps fenced acceptance reports. Thanks [@mapleluvr](https://github.com/mapleluvr) for #1770.
+- Add per-agent `excludeTools` deny-lists that compose with Pi's ambient or explicit child tool selection. Thanks [@expoli](https://github.com/expoli) for #1776.
+- Add session-only durable schedules that only run in the session that created them. Thanks [@yangfeng20](https://github.com/yangfeng20) for #1777.
+
+### Fixed
+- Keep async forked runs in the requested child `cwd` when they start or resume. Thanks [@stekman08](https://github.com/stekman08) for #1785.
+- Accept JSON-encoded acceptance objects from model tool calls, while still failing clearly for malformed strings. Thanks [@mapleluvr](https://github.com/mapleluvr) for #1781.
+- Keep steer and follow-up receipt statuses separate from their redacted message previews (#1773).
+- Create async lifecycle sidecars before external CLI workers begin worktree changes, so disappeared runners are reported as failed runs. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1764.
+- Preserve explicit read-only intent when escaped line separators surround no-edit wording. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1765.
+- Launch child Pi processes through the resolved CLI JavaScript on Windows, and run JavaScript `SELESAI_SUBAGENT_SELESAI_BINARY` overrides with Node. Thanks [@caohuipeng](https://github.com/caohuipeng) for #1768.
+- Resolve the installed Pi CLI on Windows wrapper hosts from the forwarded package root, and report a clear error when no verified CLI can be found. Thanks [@lux032](https://github.com/lux032) for #1780.
+
+
 ## [0.61.0] - 2026-08-31
 
 ### Highlights
@@ -1086,7 +1162,7 @@
 - Added `totalCost` rollups to foreground single, parallel, and chain run details, including nested foreground subagent costs and compact progress display. Thanks to Clark Everson (@gr3enarr0w) for #345.
 - Added `globalConcurrencyLimit` to cap simultaneously running subagent tasks across parallel groups in a single run. Thanks to Clark Everson (@gr3enarr0w) for #349.
 - Added stable v1 async lifecycle artifact metadata in `status.json`, `events.jsonl`, and result JSON so observability and workflow gates can correlate subagent runs without scraping terminal output. Thanks to Clark Everson (@gr3enarr0w) for #350.
-- Added `SELESAI_SUBAGENT_PI_BINARY` to let wrappers launch child agents through an explicit Pi binary instead of resolving `pi` from `PATH`. Thanks to David Barroso (@dbarrosop) for #341.
+- Added `SELESAI_SUBAGENT_SELESAI_BINARY` to let wrappers launch child agents through an explicit Pi binary instead of resolving `pi` from `PATH`. Thanks to David Barroso (@dbarrosop) for #341.
 - Added `worktreeBaseDir` and `SELESAI_SUBAGENTS_WORKTREE_DIR` so worktree isolation can use a stable trusted base directory. Thanks to Matt Robenolt (@mattrobenolt) for #185.
 - Added `singleRunOutputBaseDir` so single-agent relative outputs can be routed to a configured artifact directory. Thanks to Oleksii Nikiforov (@NikiforovAll) for #173.
 - Added `maxSubagentSpawnsPerSession` and `SELESAI_SUBAGENT_MAX_SPAWNS_PER_SESSION` to cap total subagent launches in one session. Thanks to @eightHundreds for #239.

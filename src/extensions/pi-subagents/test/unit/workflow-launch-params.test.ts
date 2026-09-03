@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { prepareWorkflowLaunchParams, promptAuditRedoParams, sanitizeRunPathSegment } from "../../src/runs/foreground/subagent-executor.ts";
+import { prepareWorkflowLaunchParams, promptAuditRedoParams, resolveRevivalControlConfig, sanitizeRunPathSegment } from "../../src/runs/foreground/subagent-executor.ts";
+import { resolveControlConfig } from "../../src/runs/shared/subagent-control.ts";
 
 describe("workflow launch params", () => {
 	it("keeps omitted workflow child async foreground", () => {
@@ -30,6 +31,20 @@ describe("workflow launch params", () => {
 		);
 		assert.equal(params.globalConcurrencyLimit, undefined);
 		assert.equal(params.maxSubagentSpawnsPerRun, undefined);
+	});
+
+	it("merges partial control overrides into workflow child defaults", () => {
+		const params = prepareWorkflowLaunchParams(
+			{ control: { needsAttentionAfterMs: 111, activeNoticeAfterMs: 222 } },
+			{ agent: "worker", task: "Run", control: { activeNoticeAfterMs: 333 } },
+			"workflow-run",
+			"run",
+		);
+
+		assert.deepEqual(params.control, {
+			needsAttentionAfterMs: 111,
+			activeNoticeAfterMs: 333,
+		});
 	});
 
 	it("marks only new async workflow children to preserve live supervisor-detach awaits", () => {
@@ -236,6 +251,40 @@ describe("workflow launch params", () => {
 				intercomBridge: { mode: "off" },
 			},
 		);
+	});
+
+	it("forwards control defaults and overrides to retained workflow children", () => {
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{ control: { needsAttentionAfterMs: 111, activeNoticeAfterMs: 222 } },
+				{ resume: "retained-run", task: "Continue", control: { activeNoticeAfterMs: 333 } },
+				"workflow-run",
+				"continue",
+			),
+			{
+				action: "resume",
+				id: "retained-run",
+				message: "Continue",
+				workflowParentRunId: "workflow-run",
+				workflowKey: "continue",
+				control: {
+					needsAttentionAfterMs: 111,
+					activeNoticeAfterMs: 333,
+				},
+			},
+		);
+	});
+
+	it("lets retained workflow child control overrides amend recovered control configs", () => {
+		const recovered = resolveControlConfig(undefined, { needsAttentionAfterMs: 111, activeNoticeAfterMs: 222 });
+		const control = resolveRevivalControlConfig({
+			recoveryControlConfig: recovered,
+			requestedControl: { activeNoticeAfterMs: 333, notifyChannels: [] },
+		});
+
+		assert.equal(control.needsAttentionAfterMs, 111);
+		assert.equal(control.activeNoticeAfterMs, 333);
+		assert.deepEqual(control.notifyChannels, []);
 	});
 
 	it("does not inherit parent deadlines for retained workflow children", () => {
