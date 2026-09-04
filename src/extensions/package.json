@@ -26,6 +26,7 @@
 			"./pi-hermes-memory",
 			"./web-agent-onboarding.ts",
 			"./tps.ts",
+			"./capability-gateway",
 			"./pi-zentui/extensions/zentui/index.ts"
 		]
 	}

@@ -121,6 +121,7 @@ export type {
 	RegisteredCommand,
 	RegisteredTool,
 	ResolvedCommand,
+	ResolvedSkillInfo,
 	SessionBeforeCompactEvent,
 	SessionBeforeForkEvent,
 	SessionBeforeSwitchEvent,

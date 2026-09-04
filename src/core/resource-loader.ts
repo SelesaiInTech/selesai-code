@@ -44,6 +44,20 @@ export interface ResourceLoader {
 	getExtensionDiagnostics(): ResourceDiagnostic[];
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 	getResolvedSkills(): ResolvedResource[];
+	/**
+	 * Skills eligible for the system-prompt skill index (trust-filtered,
+	 * model-invocation-eligible). Extensions may replace this view via
+	 * setSkillsIndexFilter to implement progressive disclosure without
+	 * touching the resolved catalog.
+	 */
+	getPromptSkills(): Skill[];
+	/**
+	 * Replace the skill view used when rendering the system-prompt skill index.
+	 * The filter receives the default eligible view and returns the view to
+	 * render. Passing undefined restores the default. The resolved catalog
+	 * (getSkills/getResolvedSkills) is never mutated.
+	 */
+	setSkillsIndexFilter(filter: ((skills: Skill[]) => Skill[]) | undefined): void;
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
 	getAgents(): { agents: AgentPersona[]; diagnostics: ResourceDiagnostic[] };
@@ -252,6 +266,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private skills: Skill[];
 	private skillDiagnostics: ResourceDiagnostic[];
 	private resolvedSkills: ResolvedResource[] = [];
+	private skillsIndexFilter: ((skills: Skill[]) => Skill[]) | undefined;
 	private agents: AgentPersona[];
 	private agentDiagnostics: ResourceDiagnostic[];
 	private prompts: PromptTemplate[];
@@ -342,6 +357,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getResolvedSkills(): ResolvedResource[] {
 		return this.resolvedSkills;
+	}
+
+	getPromptSkills(): Skill[] {
+		const eligible = this.skills.filter((skill) => !skill.disableModelInvocation);
+		return this.skillsIndexFilter ? this.skillsIndexFilter(eligible) : eligible;
+	}
+
+	setSkillsIndexFilter(filter: ((skills: Skill[]) => Skill[]) | undefined): void {
+		this.skillsIndexFilter = filter;
 	}
 
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] } {

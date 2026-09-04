@@ -64,6 +64,7 @@ import type {
 	SessionManager,
 } from "../session-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
+import type { Skill } from "../skills.ts";
 import type { SourceInfo } from "../source-info.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import type { BashOperations } from "../tools/bash.ts";
@@ -458,6 +459,20 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	description: string;
 	/** Optional one-line snippet for the Available tools section in the default system prompt. Custom tools are omitted from that section when this is not provided. */
 	promptSnippet?: string;
+	/**
+	 * Optional discovery metadata for the capability gateway. When present, the
+	 * tool is eligible for catalog/discovery; when absent, a conservative
+	 * name/first-sentence fallback summary is used. Never contains the full
+	 * tool description or schema.
+	 */
+	discovery?: {
+		/** Short one-line purpose shown in the catalog. */
+		summary?: string;
+		/** Alternative names the router can match. */
+		aliases?: string[];
+		/** Stable category label. */
+		category?: string;
+	};
 	/** Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active. */
 	promptGuidelines?: string[];
 	/** Parameter schema (TypeBox) */
@@ -1368,6 +1383,22 @@ export interface ExtensionAPI {
 	/** Get the list of currently active tool names. */
 	getActiveTools(): string[];
 
+	/**
+	 * Get the resolved, trust-filtered skill catalog (enabled skills with
+	 * metadata). Skills hidden from model invocation are flagged so callers
+	 * can exclude them from automatic discovery.
+	 */
+	getResolvedSkills(): ResolvedSkillInfo[];
+
+	/**
+	 * Replace the skill view rendered into the system-prompt skill index.
+	 * The filter receives the default eligible view (trust-filtered,
+	 * model-invocation-eligible) and returns the view to render. Passing
+	 * undefined restores the default. The resolved skill catalog is never
+	 * mutated; explicit inline skill invocation is unaffected.
+	 */
+	setSkillsIndexFilter(filter: ((skills: Skill[]) => Skill[]) | undefined): void;
+
 	/** Get all configured tools with parameter schema, prompt guidelines, and source metadata. */
 	getAllTools(): ToolInfo[];
 
@@ -1598,9 +1629,19 @@ export type GetSessionNameHandler = () => string | undefined;
 export type GetActiveToolsHandler = () => string[];
 
 /** Tool info with name, description, parameter schema, prompt guidelines, and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines"> & {
+export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines" | "discovery"> & {
 	sourceInfo: SourceInfo;
 };
+
+/** A resolved, trust-filtered skill in the extension-facing catalog. */
+export interface ResolvedSkillInfo {
+	name: string;
+	description: string;
+	category?: string;
+	filePath: string;
+	scope: "user" | "project" | "temporary";
+	disableModelInvocation: boolean;
+}
 
 export type GetAllToolsHandler = () => ToolInfo[];
 
@@ -1657,6 +1698,8 @@ export interface ExtensionActions {
 	getActiveTools: GetActiveToolsHandler;
 	getAllTools: GetAllToolsHandler;
 	setActiveTools: SetActiveToolsHandler;
+	getResolvedSkills: () => ResolvedSkillInfo[];
+	setSkillsIndexFilter: (filter: ((skills: Skill[]) => Skill[]) | undefined) => void;
 	refreshTools: RefreshToolsHandler;
 	getCommands: GetCommandsHandler;
 	setModel: SetModelHandler;

@@ -18,6 +18,8 @@ function createMockSession() {
 	const resourceLoader = {
 		getExtensions: () => ({ extensions: [], errors: [], runtime: { flagValues: new Map(), pendingProviderRegistrations: [], pendingNativeProviderRegistrations: [], assertActive: () => {} } }),
 		getSkills: () => ({ skills: [], diagnostics: [] }),
+		getPromptSkills: () => [],
+		setSkillsIndexFilter: () => {},
 		getPrompts: () => ({ prompts: [], diagnostics: [] }),
 		getThemes: () => ({ themes: [], diagnostics: [] }),
 		getAgents: () => ({ agents: [], diagnostics: [] }),

@@ -190,6 +190,8 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		getActiveTools: notInitialized,
 		getAllTools: notInitialized,
 		setActiveTools: notInitialized,
+		getResolvedSkills: notInitialized,
+		setSkillsIndexFilter: notInitialized,
 		// registerTool() is valid during extension load; refresh is only needed post-bind.
 		refreshTools: () => {},
 		getCommands: notInitialized,
@@ -358,6 +360,16 @@ function createExtensionAPI(
 		getActiveTools(): string[] {
 			assertActive();
 			return runtime.getActiveTools();
+		},
+
+		getResolvedSkills() {
+			assertActive();
+			return runtime.getResolvedSkills();
+		},
+
+		setSkillsIndexFilter(filter) {
+			assertActive();
+			runtime.setSkillsIndexFilter(filter);
 		},
 
 		getAllTools() {

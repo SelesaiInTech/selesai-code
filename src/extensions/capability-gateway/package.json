@@ -1,0 +1,15 @@
+{
+	"name": "@selesai/capability-gateway",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Experimental progressive capability gateway: dormant extension tools and skills with compact catalog, deterministic routing, and native activation.",
+	"type": "module",
+	"pi": {
+		"extensions": ["./index.ts"]
+	},
+	"peerDependencies": {
+		"@selesai/code": "*",
+		"@earendil-works/pi-ai": "*",
+		"typebox": "*"
+	}
+}

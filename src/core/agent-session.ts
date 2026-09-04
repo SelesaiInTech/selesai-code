@@ -1044,6 +1044,7 @@ export class AgentSession {
 			description: definition.description,
 			parameters: definition.parameters,
 			promptGuidelines: definition.promptGuidelines,
+			discovery: definition.discovery,
 			sourceInfo,
 		}));
 	}
@@ -1173,7 +1174,7 @@ export class AgentSession {
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
 		const appendSystemPrompt =
 			loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined;
-		const loadedSkills = this._resourceLoader.getSkills().skills;
+		const loadedSkills = this._resourceLoader.getPromptSkills();
 		const loadedAgents = this._resourceLoader.getAgents().agents;
 		const loadedContextFiles = this._resourceLoader.getAgentsFiles().agentsFiles;
 
@@ -2814,6 +2815,23 @@ export class AgentSession {
 				getActiveTools: () => this.getActiveToolNames(),
 				getAllTools: () => this.getAllTools(),
 				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
+				getResolvedSkills: () =>
+					this._resourceLoader.getResolvedSkills().map((resource) => {
+						const skill = this._resourceLoader.getSkills().skills.find((s) => s.filePath === resource.path);
+						return {
+							name: skill?.name ?? basename(dirname(resource.path)),
+							description: skill?.description ?? "",
+							category: skill?.category,
+							filePath: resource.path,
+							scope: resource.metadata.scope === "project" ? "project" : "user",
+							disableModelInvocation: skill?.disableModelInvocation ?? false,
+						};
+					}),
+				setSkillsIndexFilter: (filter) => {
+					this._resourceLoader.setSkillsIndexFilter(filter);
+					this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+					this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
+				},
 				refreshTools: () => this._refreshToolRegistry(),
 				getCommands,
 				setModel: async (model) => {
