@@ -8,4 +8,14 @@ import CustomizationIndex from "../../../components/CustomizationIndex.astro";
 
 Selesai mengirimkan campuran **ekstensi manifest bundel** (dimuat otomatis), **ekstensi opsional** (dipasang terpisah), dan **ekstensi built-in inti** (bagian dari runtime, tidak tercantum di manifest ekstensi). Halaman ini mencantumkan masing-masing, lokasi pengaturannya, dan tautan ke panduannya.
 
+## Gateway kapabilitas progresif
+
+Tool dan skill ekstensi opsional tidak dimasukkan ke context model default, tetapi tetap tersedia sesuai kebutuhan:
+
+- Gunakan `capability_catalog` untuk mencari katalog ringkas.
+- Gunakan `capability_discover` dengan nama tool yang tepat, lalu panggil tool tersebut pada giliran berikutnya.
+- Gunakan `capability_skill_show` dengan nama skill yang tepat sebelum menerapkan skill.
+
+Tool bawaan tidak terpengaruh. Atur `SELESAI_CAPABILITY_GATEWAY=0` untuk menonaktifkan gateway.
+
 <CustomizationIndex locale="id" />

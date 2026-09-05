@@ -1,0 +1,54 @@
+---
+draft: false
+title: Progressive capability gateway
+---
+
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+The progressive capability gateway keeps optional extension tools and skills out of the default model context while making them available on demand.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./capability-gateway"
+  runtimeSurface="mixed"
+  locale="en"
+/>
+
+## Setup and prerequisites
+
+- Bundled with Selesai and loaded automatically.
+- No separate installation or configuration is required.
+- Built-in tools remain active and are not mediated by the gateway.
+
+## What it sets up
+
+- Keeps optional extension tools dormant until they are needed.
+- Replaces the full skill index with compact capability guidance.
+- Provides catalog search, native tool activation, and explicit skill loading.
+- Resets temporary tool activations when an agent run settles.
+
+## What you can configure
+
+<ExtensionCustomization slug="capability-gateway" locale="en" />
+
+Set `SELESAI_CAPABILITY_GATEWAY=0` before launching Selesai to disable the gateway and restore the normal tool and skill surface.
+
+## What you can do
+
+- Search optional capabilities with `capability_catalog`.
+- Activate a discovered tool with `capability_discover`.
+- Load a skill's complete instructions with `capability_skill_show` before applying it.
+
+## Commands, tools, and shortcuts
+
+The gateway registers `capability_catalog`, `capability_discover`, and `capability_skill_show` as model tools. They are not slash commands.
+
+## Limits and safety
+
+- Only catalogued tools can be activated; exact names are validated before activation.
+- Skills are never auto-loaded by routing; their instructions require an explicit show operation.
+- Routing is deterministic and local; ambiguous matches return a hint instead of activating a capability.
+
+<SourceEvidence slug="capability-gateway" />

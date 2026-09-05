@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.15 — Progressive capability gateway and stale-session hardening
+
+- **Progressive capability gateway.** Optional extension tools and skills stay out of the default model context while remaining discoverable through `capability_catalog`, `capability_discover`, and `capability_skill_show`. Built-in tools are unchanged, and the gateway can be disabled with `SELESAI_CAPABILITY_GATEWAY=0`.
+- **Capability catalog metadata.** Disabled skills recover their frontmatter descriptions, and catalog results are no longer capped at 20 entries.
+- **Zentui stale-session hardening.** Timer-driven working-line updates fail open when a captured extension context becomes stale after session replacement or reload.
+
 ## 0.13.13 — Zentui Thinking (Experimental), pi-subagents 0.64.0, design skills reorganized
 
 - **Zentui Thinking (Experimental).** The bundled pi-zentui extension adds an opt-in private thinking renderer with three modes — `rail` (every parsed label in each native contiguous thinking run), `tree` (latest five labels per run), and `streaming` (host-rendered final rows with folding and timing). Disabled by default; configure via `/zentui` or `components.thinkingSteps` in `zentui.json`. Active Streaming can switch live to Rail or Tree, and Rail and Tree can switch live between each other; first enable, re-enable after a live disable, and entering Streaming from a structural mode require a Pi restart. Fail-open: startup failures, missing constructors, incompatible private child layouts, parser limits, theme/render/width errors, and displaced patch ownership all fall back to complete native thinking. Tested against Pi 0.80.5, 0.82.1, 0.83.0, 0.84.0, and 0.84.4.

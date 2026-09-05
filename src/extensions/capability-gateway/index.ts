@@ -46,8 +46,6 @@ export const CAPABILITY_INSTRUCTION = `Optional capabilities (extension tools an
 - Load a skill's full instructions with capability_skill_show before applying it.
 Never invent optional tool names, actions, or fields; discover them first.`;
 
-const CATALOG_LIMIT = 20;
-
 function isEnabled(): boolean {
 	return process.env[GATEWAY_ENV] !== "0";
 }
@@ -64,13 +62,11 @@ function catalogEntries(pi: ExtensionAPI): CatalogEntry[] {
 	return [...tools, ...skills];
 }
 
-function formatCatalog(entries: CatalogEntry[], limit = CATALOG_LIMIT): string {
-	const shown = entries.slice(0, limit);
-	const lines = shown.map(
+function formatCatalog(entries: CatalogEntry[]): string {
+	const lines = entries.map(
 		(entry) =>
 			`- ${entry.kind} ${entry.name}${entry.category ? ` [${entry.category}]` : ""}: ${entry.summary}`,
 	);
-	if (entries.length > limit) lines.push(`… and ${entries.length - limit} more (refine your query)`);
 	return lines.length > 0 ? lines.join("\n") : "(no matching capabilities)";
 }
 

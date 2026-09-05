@@ -972,12 +972,17 @@ export function buildWorkingLinePreviewFrames(
 }
 
 function workingLineUi(ctx: WorkingLineContext): WorkingLineUi | undefined {
-	if (ctx.hasUI === false || (ctx.mode !== undefined && ctx.mode !== "tui")) return undefined;
-	const ui = ctx.ui as unknown as Partial<WorkingLineUi>;
-	if (typeof ui.setWorkingMessage !== "function" || typeof ui.setWorkingIndicator !== "function") {
+	try {
+		if (ctx.hasUI === false || (ctx.mode !== undefined && ctx.mode !== "tui")) return undefined;
+		const ui = ctx.ui as unknown as Partial<WorkingLineUi>;
+		if (typeof ui.setWorkingMessage !== "function" || typeof ui.setWorkingIndicator !== "function") {
+			return undefined;
+		}
+		return ui as WorkingLineUi;
+	} catch {
+		// A stale ctx (after session replacement or reload) must not crash timer-driven updates.
 		return undefined;
 	}
-	return ui as WorkingLineUi;
 }
 
 export type WorkingLineReconcileResult = { applied: boolean; reason?: string };

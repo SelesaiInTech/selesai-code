@@ -1684,6 +1684,32 @@ describe("working-line runtime ownership", () => {
 		expect(phaseSignature(retried.frames[0] ?? "")[0]).toBe("⣏⠀⣹");
 	});
 
+	it("drops timer-driven updates when the captured ctx goes stale after session replacement", () => {
+		vi.useFakeTimers();
+		try {
+			const harness = runtime(true);
+			harness.controller.startSession(harness.ctx);
+			harness.clock.start();
+			harness.controller.startAgent(harness.ctx);
+			harness.controller.startTurn(harness.ctx);
+			harness.calls.length = 0;
+			// Simulate a session replacement invalidating the captured ctx: its getters throw.
+			const stale = harness.ctx as { hasUI: boolean };
+			Object.defineProperty(stale, "hasUI", {
+				get() {
+					throw new Error("stale ctx");
+				},
+				configurable: true,
+			});
+			expect(() => vi.advanceTimersByTime(1000)).not.toThrow();
+			expect(harness.calls).toEqual([]);
+			harness.controller.dispose(harness.ctx);
+			harness.clock.reset();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("releases ownership when recovery also throws and waits for a clean reinstall", () => {
 		const current = config();
 		current.components.workingLine.enabled = true;

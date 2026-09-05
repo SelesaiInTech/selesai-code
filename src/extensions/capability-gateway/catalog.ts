@@ -6,7 +6,9 @@
  * never calls a model.
  */
 
-import type { ResolvedSkillInfo, ToolInfo } from "@selesai/code";
+import { readFileSync } from "node:fs";
+
+import { parseFrontmatter, type ResolvedSkillInfo, type ToolInfo } from "@selesai/code";
 
 export interface CatalogEntry {
 	name: string;
@@ -55,11 +57,21 @@ export function buildSkillCatalog(skills: ResolvedSkillInfo[]): CatalogEntry[] {
 		.map((skill) => ({
 			name: skill.name,
 			kind: "skill" as const,
-			summary: skill.description,
+			summary: skill.description || skillSummaryFromFile(skill.filePath),
 			aliases: [],
 			category: skill.category,
 			eligible: true,
 		}));
+}
+
+// Disabled skills resolve as paths but never parse; read the frontmatter description instead.
+function skillSummaryFromFile(filePath: string): string {
+	try {
+		const { frontmatter } = parseFrontmatter<{ description?: string }>(readFileSync(filePath, "utf-8"));
+		return firstSentence(frontmatter.description ?? "");
+	} catch {
+		return "";
+	}
 }
 
 export function normalizeQuery(text: string): string {

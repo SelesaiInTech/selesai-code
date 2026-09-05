@@ -1,0 +1,54 @@
+---
+draft: false
+title: Gateway kapabilitas progresif
+---
+
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+Gateway kapabilitas progresif menjaga tool dan skill ekstensi opsional di luar context model default, sambil membuatnya tersedia sesuai kebutuhan.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./capability-gateway"
+  runtimeSurface="mixed"
+  locale="id"
+/>
+
+## Penyiapan dan prasyarat
+
+- Dibundel bersama Selesai dan dimuat otomatis.
+- Tidak memerlukan instalasi atau konfigurasi terpisah.
+- Tool bawaan tetap aktif dan tidak dimediasi gateway.
+
+## Yang disiapkan
+
+- Menjaga tool ekstensi opsional tetap dormant sampai diperlukan.
+- Mengganti indeks skill lengkap dengan panduan kapabilitas ringkas.
+- Menyediakan pencarian katalog, aktivasi tool native, dan pemuatan skill eksplisit.
+- Mereset aktivasi tool sementara saat run agent selesai.
+
+## Yang dapat dikonfigurasi
+
+<ExtensionCustomization slug="capability-gateway" locale="id" />
+
+Atur `SELESAI_CAPABILITY_GATEWAY=0` sebelum menjalankan Selesai untuk menonaktifkan gateway dan mengembalikan permukaan tool serta skill normal.
+
+## Yang dapat dilakukan
+
+- Cari kapabilitas opsional dengan `capability_catalog`.
+- Aktifkan tool yang ditemukan dengan `capability_discover`.
+- Muat instruksi lengkap skill dengan `capability_skill_show` sebelum menerapkannya.
+
+## Perintah, tool, dan shortcut
+
+Gateway mendaftarkan `capability_catalog`, `capability_discover`, dan `capability_skill_show` sebagai tool model. Ketiganya bukan slash command.
+
+## Batasan dan keamanan
+
+- Hanya tool yang tercantum di katalog yang dapat diaktifkan; nama tepat divalidasi sebelum aktivasi.
+- Skill tidak pernah dimuat otomatis oleh routing; instruksinya memerlukan operasi show eksplisit.
+- Routing bersifat deterministik dan lokal; kecocokan ambigu menghasilkan petunjuk alih-alih mengaktifkan kapabilitas.
+
+<SourceEvidence slug="capability-gateway" />

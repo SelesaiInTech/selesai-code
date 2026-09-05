@@ -2,6 +2,15 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.15] - 2026-09-06
+
+### Added
+- **Progressive capability gateway.** Optional extension tools and skills now stay out of the default model context while remaining discoverable through `capability_catalog`, `capability_discover`, and `capability_skill_show`. Built-in tools are unchanged, and the gateway can be disabled with `SELESAI_CAPABILITY_GATEWAY=0`.
+
+### Fixed
+- **Capability catalog metadata.** Disabled skills now recover their frontmatter descriptions, and catalog results are no longer capped at 20 entries.
+- **Zentui stale-session updates.** Timer-driven working-line updates now fail open when a captured extension context becomes stale after session replacement or reload.
+
 ## [0.13.13] - 2026-09-04
 
 ### Added

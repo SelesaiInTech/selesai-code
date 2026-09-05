@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 import type { ResolvedSkillInfo, ToolInfo } from "@selesai/code";
 import {
@@ -61,6 +65,21 @@ describe("catalog metadata", () => {
 		]);
 		expect(entries.map((e) => e.name)).toEqual(["research"]);
 		expect(entries[0]!.kind).toBe("skill");
+	});
+
+	it("falls back to the file frontmatter description when the resolved description is empty", () => {
+		const dir = mkdtempSync(join(tmpdir(), "gw-skill-"));
+		const filePath = join(dir, "SKILL.md");
+		writeFileSync(
+			filePath,
+			"---\nname: brandkit\ndescription: Premium brand-kit image generation skill for creating high-end brand-guidelines boards.\n---\nbody\n",
+		);
+		try {
+			const entries = buildSkillCatalog([skill({ name: "brandkit", description: "", filePath })]);
+			expect(entries[0]!.summary).toBe("Premium brand-kit image generation skill for creating high-end brand-guidelines boards.");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 

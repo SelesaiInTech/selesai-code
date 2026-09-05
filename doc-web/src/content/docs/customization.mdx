@@ -8,4 +8,14 @@ import CustomizationIndex from "../../components/CustomizationIndex.astro";
 
 Selesai ships a mix of **bundled manifest extensions** (loaded automatically), **optional extensions** (installed separately), and **core built-in extensions** (part of the runtime, not listed in the extension manifest). This page lists each one, where its settings live, and links to its guide.
 
+## Progressive capability gateway
+
+Optional extension tools and skills are kept out of the default model context, but remain available on demand:
+
+- Use `capability_catalog` to search the compact catalog.
+- Use `capability_discover` with the exact tool name, then call the activated tool on the next turn.
+- Use `capability_skill_show` with the exact skill name before applying a skill.
+
+Built-in tools are unaffected. Set `SELESAI_CAPABILITY_GATEWAY=0` to disable the gateway.
+
 <CustomizationIndex locale="en" />

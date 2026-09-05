@@ -277,6 +277,21 @@ export const capabilities: Capability[] = [
     runtimeSurface: "automatic",
   },
   {
+    slug: "capability-gateway",
+    category: "terminal-workspace",
+    en: { displayName: "Progressive capability gateway", benefit: "Keep optional extension tools and skills out of the default model context while making them discoverable and activatable on demand." },
+    id: { displayName: "Gateway kapabilitas progresif", benefit: "Menjaga tool dan skill ekstensi opsional di luar context model default sambil membuatnya dapat ditemukan dan diaktifkan sesuai kebutuhan." },
+    sourcePaths: ["src/extensions/capability-gateway/"],
+    sourceLinks: [
+      links("Capability gateway source", "src/extensions/capability-gateway/"),
+    ],
+    guideRoute: "capabilities/workspace/capability-gateway",
+    piComparison: "core-differentiator",
+    distribution: "bundled",
+    manifestEntry: "./capability-gateway",
+    runtimeSurface: "mixed",
+  },
+  {
     slug: "zentui",
     category: "terminal-workspace",
     en: { displayName: "Zentui TUI", benefit: "Starship-style statusline and Opencode-style editor surfaces with independent per-component styling, configured via /zentui." },

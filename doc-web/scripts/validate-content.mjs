@@ -50,6 +50,7 @@ const BUNDLED_EXTENSION_GUIDES = {
   "./web-agent-onboarding.ts": "workspace/web-agent-onboarding",
   "./tps.ts": "workspace/tps",
   "./pi-zentui/extensions/zentui/index.ts": "workspace/zentui",
+  "./capability-gateway": "workspace/capability-gateway",
 };
 
 function loadCapabilities() {

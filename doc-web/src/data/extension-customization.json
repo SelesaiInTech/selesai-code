@@ -1697,6 +1697,46 @@
    "noConfig": true
   },
   {
+   "slug": "capability-gateway",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Optional extension tools and skills stay out of the default model context and are activated explicitly through the compact capability catalog.",
+    "id": "Tool dan skill ekstensi opsional tidak masuk context model default dan diaktifkan secara eksplisit melalui katalog kapabilitas ringkas."
+   },
+   "sourcePaths": [
+    "src/extensions/capability-gateway/"
+   ],
+   "scopes": [],
+   "settings": [],
+   "envVars": [
+    {
+     "key": "SELESAI_CAPABILITY_GATEWAY",
+     "description": {
+      "en": "Set to 0 to disable the progressive capability gateway.",
+      "id": "Atur ke 0 untuk menonaktifkan gateway kapabilitas progresif."
+     },
+     "allowedValues": "unset (enabled), 0 (disabled)"
+    }
+   ],
+   "controls": [
+    {
+     "name": "capability_catalog",
+     "description": {
+      "en": "Search the compact catalog of optional tools and skills.",
+      "id": "Cari katalog ringkas tool dan skill opsional."
+     }
+    },
+    {
+     "name": "capability_discover / capability_skill_show",
+     "description": {
+      "en": "Activate a catalogued tool or load a skill's full instructions.",
+      "id": "Aktifkan tool yang ada di katalog atau muat instruksi lengkap skill."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
    "slug": "zentui",
    "distribution": "bundled",
    "overview": {
