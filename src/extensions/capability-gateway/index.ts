@@ -62,6 +62,17 @@ function catalogEntries(pi: ExtensionAPI): CatalogEntry[] {
 	return [...tools, ...skills];
 }
 
+const EMBEDDED_SKILL_BLOCK = /<skill\s+name="([^"]+)"[^>]*>[\s\S]*?<\/skill>/gi;
+
+function routePrompt(prompt: string, entries: CatalogEntry[]): ReturnType<typeof route> {
+	const loadedSkills = new Set([...prompt.matchAll(EMBEDDED_SKILL_BLOCK)].map((match) => match[1]!.toLowerCase()));
+	const query = prompt.replace(EMBEDDED_SKILL_BLOCK, " ");
+	return route(
+		query,
+		entries.filter((entry) => entry.kind !== "skill" || !loadedSkills.has(entry.name.toLowerCase())),
+	);
+}
+
 function formatCatalog(entries: CatalogEntry[]): string {
 	const lines = entries.map(
 		(entry) =>
@@ -253,7 +264,7 @@ export default function capabilityGatewayExtension(pi: ExtensionAPI): void {
 	// ambiguity hints, or nothing for unrelated prompts.
 	// ------------------------------------------------------------------
 	pi.on("before_agent_start", (event) => {
-		const result = route(event.prompt, catalogEntries(pi));
+		const result = routePrompt(event.prompt, catalogEntries(pi));
 		if (result.action === "none") return undefined;
 		if (result.action === "activate" && result.entry) {
 			const active = pi.getActiveTools();

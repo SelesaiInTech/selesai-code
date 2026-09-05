@@ -3,6 +3,11 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.16 — Gateway inline-skill routing and TokenIn search fixes
+
+- **Capability gateway inline-skill routing.** Skills expanded inline via `$skill` references are no longer re-recommended through `capability_skill_show`.
+- **TokenIn search backend URL.** A custom `baseUrl` ending in `/v1` no longer produces a doubled `/v1/v1/search/…` path, and accounts with a blank `apiKey` are treated as unconfigured.
+
 ## 0.13.15 — Progressive capability gateway and stale-session hardening
 
 - **Progressive capability gateway.** Optional extension tools and skills stay out of the default model context while remaining discoverable through `capability_catalog`, `capability_discover`, and `capability_skill_show`. Built-in tools are unchanged, and the gateway can be disabled with `SELESAI_CAPABILITY_GATEWAY=0`.

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createBackendSet } from "../extensions/pi-web-agent/src/backends/factory.ts";
-import { DEFAULT_BACKEND_CONFIG } from "../extensions/pi-web-agent/src/backends/config.ts";
+import { DEFAULT_BACKEND_CONFIG, usableSearchProviders } from "../extensions/pi-web-agent/src/backends/config.ts";
 import { hasActiveTokenInAccount } from "../extensions/pi-web-agent/src/backends/settings-reader.ts";
 import {
 	createTokenInSearchTool,
@@ -45,6 +45,11 @@ describe("readActiveTokenInAccount", () => {
 		expect(readActiveTokenInAccount(path)).toBeUndefined();
 	});
 
+	it("returns undefined when the active account has a blank key", () => {
+		const path = makeAuthFile([{ id: "sk-a", label: "A", apiKey: "  " }], "sk-a");
+		expect(readActiveTokenInAccount(path)).toBeUndefined();
+	});
+
 	it("returns undefined when the file is missing or corrupt", () => {
 		expect(readActiveTokenInAccount(join(tmpdir(), "does-not-exist.json"))).toBeUndefined();
 		const dir = mkdtempSync(join(tmpdir(), "tokenin-search-"));
@@ -63,6 +68,11 @@ describe("hasActiveTokenInAccount", () => {
 
 	it("is false when no active account exists", () => {
 		const path = makeAuthFile([{ id: "sk-a", label: "A", apiKey: "sk-a" }], null);
+		expect(hasActiveTokenInAccount(path)).toBe(false);
+	});
+
+	it("is false when the active account key is blank", () => {
+		const path = makeAuthFile([{ id: "sk-a", label: "A", apiKey: "  " }], "sk-a");
 		expect(hasActiveTokenInAccount(path)).toBe(false);
 	});
 
@@ -103,7 +113,7 @@ describe("createTokenInSearchTool", () => {
 			{ title: "Two", url: "https://example.com/2", snippet: "second" },
 		]);
 		expect(calls).toHaveLength(1);
-		expect(calls[0].url).toBe(`${TOKENIN_DEFAULT_BASE_URL}/v1/search/${TOKENIN_SEARCH_TOOL_NAME}`);
+		expect(calls[0].url).toBe(`${TOKENIN_DEFAULT_BASE_URL}/search/${TOKENIN_SEARCH_TOOL_NAME}`);
 		expect(calls[0].headers.Authorization).toBe("Bearer sk-a");
 		expect(calls[0].body).toEqual({ query: "hello world", max_results: 10 });
 	});
@@ -121,7 +131,7 @@ describe("createTokenInSearchTool", () => {
 		});
 
 		await search({ query: "q" });
-		expect(calledUrl).toBe("https://custom.example/v1/v1/search/firecrawl");
+		expect(calledUrl).toBe("https://custom.example/v1/search/firecrawl");
 	});
 
 	it("errors with a helpful message when no account is configured", async () => {
@@ -152,6 +162,10 @@ describe("createTokenInSearchTool", () => {
 });
 
 describe("default backend wiring", () => {
+	it("computes usable providers without crashing", () => {
+		expect(usableSearchProviders({ provider: "tokenin", fallback: "duckduckgo" }, {})).toContain("duckduckgo");
+	});
+
 	it("defaults to the tokenin provider with duckduckgo fallback", () => {
 		expect(DEFAULT_BACKEND_CONFIG.search.provider).toBe("tokenin");
 		expect(DEFAULT_BACKEND_CONFIG.search.fallback).toBe("duckduckgo");
@@ -165,6 +179,13 @@ describe("default backend wiring", () => {
 				headless: { provider: "local-browser" },
 			},
 			{
+				createTokenInSearch: () =>
+					(async () => ({
+						status: "error",
+						results: [],
+						metadata: { backend: "tokenin", cacheHit: false },
+						error: { code: "BACKEND_CONFIG_INVALID", message: "No account" },
+					})) as never,
 				createDuckDuckGoSearch: () =>
 					(async () => ({
 						status: "ok",

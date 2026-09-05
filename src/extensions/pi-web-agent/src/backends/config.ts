@@ -1,4 +1,5 @@
 import type { FanoutMode, SearchProviderName } from '../types.js';
+import { hasActiveTokenInAccount } from './settings-reader.js';
 
 export type SearxngOptions = {
   categories?: string[];

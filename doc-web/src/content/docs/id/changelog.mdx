@@ -3,6 +3,11 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.16 — Routing inline-skill gateway dan perbaikan TokenIn search
+
+- **Routing inline-skill gateway.** Skill yang di-expand inline melalui referensi `$skill` tidak lagi direkomendasikan ulang melalui `capability_skill_show`.
+- **URL backend TokenIn search.** `baseUrl` kustom yang berakhiran `/v1` tidak lagi menghasilkan path ganda `/v1/v1/search/…`, dan akun dengan `apiKey` kosong diperlakukan sebagai belum dikonfigurasi.
+
 ## 0.13.15 — Gateway kapabilitas progresif dan hardening sesi stale
 
 - **Gateway kapabilitas progresif.** Tool dan skill ekstensi opsional tidak lagi masuk context model default, tetapi tetap dapat ditemukan melalui `capability_catalog`, `capability_discover`, dan `capability_skill_show`. Tool bawaan tidak berubah, dan gateway dapat dinonaktifkan dengan `SELESAI_CAPABILITY_GATEWAY=0`.

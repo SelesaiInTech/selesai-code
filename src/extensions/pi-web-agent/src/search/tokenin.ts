@@ -27,7 +27,9 @@ export function readActiveTokenInAccount(
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
     const auth = parsed as TokenInAuth;
     if (!Array.isArray(auth.accounts) || typeof auth.activeId !== 'string') return undefined;
-    return auth.accounts.find((a) => a && typeof a === 'object' && a.id === auth.activeId && typeof a.apiKey === 'string');
+    return auth.accounts.find(
+      (a) => a && typeof a === 'object' && a.id === auth.activeId && typeof a.apiKey === 'string' && a.apiKey.trim() !== ''
+    );
   } catch {
     return undefined;
   }
@@ -82,8 +84,10 @@ export function createTokenInSearchTool({
       });
     }
 
-    const baseUrl = (account.baseUrl ?? TOKENIN_DEFAULT_BASE_URL).replace(/\/+$/, '');
-    const url = `${baseUrl}/v1/search/${TOKENIN_SEARCH_TOOL_NAME}`;
+    const rootUrl = (account.baseUrl ?? TOKENIN_DEFAULT_BASE_URL)
+      .replace(/\/+$/, '')
+      .replace(/\/v1$/, '');
+    const url = `${rootUrl}/v1/search/${TOKENIN_SEARCH_TOOL_NAME}`;
 
     try {
       const response = await fetchImpl(url, {

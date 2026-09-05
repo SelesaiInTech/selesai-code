@@ -2,6 +2,13 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.16] - 2026-09-06
+
+### Fixed
+- **Capability gateway inline-skill routing.** `$skill` references expanded by inline skills are no longer re-recommended through `capability_skill_show`; embedded `<skill>` blocks are excluded from prompt routing.
+- **TokenIn search backend URL.** A custom `baseUrl` ending in `/v1` no longer produces a doubled `/v1/v1/search/…` path, and accounts with a blank `apiKey` are now treated as unconfigured instead of triggering doomed requests.
+- **TokenIn search fallback typing.** Search fallback metadata can now reference any provider, matching actual failover behavior.
+
 ## [0.13.15] - 2026-09-06
 
 ### Added

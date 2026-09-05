@@ -49,6 +49,7 @@ The gateway registers `capability_catalog`, `capability_discover`, and `capabili
 
 - Only catalogued tools can be activated; exact names are validated before activation.
 - Skills are never auto-loaded by routing; their instructions require an explicit show operation.
+- Skills already expanded inline via `$skill` references are excluded from prompt routing, so they are not re-recommended through `capability_skill_show`.
 - Routing is deterministic and local; ambiguous matches return a hint instead of activating a capability.
 
 <SourceEvidence slug="capability-gateway" />

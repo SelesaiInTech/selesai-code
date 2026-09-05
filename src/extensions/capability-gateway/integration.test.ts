@@ -16,6 +16,7 @@ import {
 const EXTENSIONS_DIR = fileURLToPath(new URL("../../", import.meta.url));
 const GATEWAY_DIR = fileURLToPath(new URL(".", import.meta.url));
 const GREP_APP_DIR = fileURLToPath(new URL("../grep-app", import.meta.url));
+const INLINE_SKILLS_FILE = fileURLToPath(new URL("../inline-skills.ts", import.meta.url));
 
 interface Harness {
 	session: AgentSession;
@@ -211,5 +212,27 @@ describe("capability gateway integration", () => {
 		// into the prompt and the skill is not auto-activated.
 		expect(result?.messages?.[0]?.content).toContain("research");
 		expect(h.session.systemPrompt).not.toContain("Research instructions body.");
+	});
+
+	it("does not recommend capability_skill_show for an inline-loaded $skill", async () => {
+		const h = await createGatewaySession({
+			enabled: true,
+			withSkill: true,
+			extensions: [GATEWAY_DIR, GREP_APP_DIR, INLINE_SKILLS_FILE],
+		});
+		harnesses.push(h);
+		const runner = h.session.extensionRunner;
+		const input = await runner.emitInput("Use $research now", undefined, "interactive", undefined);
+		expect(input.action).toBe("transform");
+		if (input.action !== "transform") throw new Error("inline skill was not expanded");
+		expect(input.text).toContain("Research instructions body.");
+
+		const result = await runner.emitBeforeAgentStart(
+			input.text,
+			undefined,
+			h.session.systemPrompt,
+			{ cwd: process.cwd() } as never,
+		);
+		expect(result).toBeUndefined();
 	});
 });

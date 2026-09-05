@@ -34,7 +34,7 @@ export type ToolError = {
 export type SearchMetadata = {
   backend: SearchProviderName;
   cacheHit: boolean;
-  fallbackFrom?: Exclude<SearchProviderName, 'tokenin'>;
+  fallbackFrom?: SearchProviderName;
   fallbackReason?: string;
   fanout?: FanoutMetadata;
 };

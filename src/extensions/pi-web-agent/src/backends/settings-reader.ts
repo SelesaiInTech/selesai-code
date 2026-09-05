@@ -19,9 +19,11 @@ export function hasActiveTokenInAccount(authPath: string = join(getAgentDir(), '
 		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
 		const auth = parsed as { accounts?: unknown; activeId?: unknown };
 		if (!Array.isArray(auth.accounts) || typeof auth.activeId !== 'string') return false;
-		return auth.accounts.some(
-			(a) => a && typeof a === 'object' && !Array.isArray(a) && (a as { id?: unknown }).id === auth.activeId
-		);
+		return auth.accounts.some((a) => {
+			if (!a || typeof a !== 'object' || Array.isArray(a)) return false;
+			const account = a as { id?: unknown; apiKey?: unknown };
+			return account.id === auth.activeId && typeof account.apiKey === 'string' && account.apiKey.trim() !== '';
+		});
 	} catch {
 		return false;
 	}
