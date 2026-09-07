@@ -3,6 +3,11 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.17 — Pi v0.85.1 sync and vendored-extension upgrades
+
+- **Pi v0.85.1 upstream sync.** Ported the coding-agent source from v0.84.4 to v0.85.1 per file: tool `ctx.cwd` handling, proxy/CONNECT tunneling, skills with Bash-only tools, session import/fork/share fixes, EXIF orientation, musl fd/ripgrep downloads, model catalog updates, per-turn thinking effort, prompt-cache TTL, compaction abort, signal exit codes, fullscreen transcript controls, and more.
+- **Vendored extension upgrades.** pi-subagents 0.64.0 → 0.66.0, pi-intercom 0.12.1 → 0.13.0, pi-zentui 0.22.3 → 0.23.0, pi-hermes-memory 0.9.7 → 0.9.8, with all Selesai fork deltas re-applied.
+
 ## 0.13.16 — Gateway inline-skill routing and TokenIn search fixes
 
 - **Capability gateway inline-skill routing.** Skills expanded inline via `$skill` references are no longer re-recommended through `capability_skill_show`.
