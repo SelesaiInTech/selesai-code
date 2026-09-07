@@ -58,6 +58,20 @@ The session list only shows intercom-connected sessions, not every open Selesai 
 
 If a session is unnamed, pi-intercom exposes a collision-resistant runtime-only fallback alias like `subagent-chat-1a2b3c4d-5e6f-7a8b` so other connected sessions can target it. That alias is not persisted as the Selesai session title or treated as a reconnect identity, so `selesai --resume` can keep showing the transcript snippet without allowing a different unnamed process to inherit queued mail.
 
+### Name your current session
+
+Use `/alias <name>` as a pi-intercom-friendly way to name the current session:
+
+```text
+/alias api-worker
+```
+
+The alias is Selesai's session name, so it is persisted in the session and immediately
+published to pi-intercom peers. Session lists, send/reply results, overlays, and
+incoming message headers use it when available. In an interactive UI, `/alias`
+or `/alias menu` opens an input for the current session's alias; it does not
+rename other sessions. Use `/alias <name>` in non-UI modes.
+
 ## Quick Start
 
 ### From the Keyboard
@@ -135,11 +149,11 @@ The most natural use of pi-intercom is splitting a task between two sessions —
 
 ### Setup
 
-Open two terminals and start pi in each. Name them so they can find each other:
+Open two terminals and start Selesai in each. Name them so they can find each other:
 
 ```
 # Terminal 1                    # Terminal 2
-/name planner                   /name worker
+/alias planner                 /alias worker
 ```
 
 Verify they see each other from either session:

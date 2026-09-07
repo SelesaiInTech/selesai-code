@@ -6,8 +6,8 @@ import {
 	TEMP_ROOT_DIR,
 	type AsyncJobState,
 	type AsyncStatus,
-	type LaunchResolvedChildExtensionsV1,
-	type RuntimeAcknowledgedChildExtensionsV1,
+	type LaunchResolvedChildExtensions,
+	type RuntimeAcknowledgedChildExtensions,
 	type NestedRouteInfo,
 	type TurnBudgetState,
 	type NestedRunSummary,
@@ -16,17 +16,7 @@ import {
 	type SubagentRunMode,
 	type SubagentState,
 } from "../../shared/types.ts";
-import { isSafeNestedPathId, parseNestedPathEnv, sanitizeNestedPath, type NestedPathEntry } from "./nested-path.ts";
-import {
-	SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV,
-	SUBAGENT_PARENT_CHILD_INDEX_ENV,
-	SUBAGENT_PARENT_CONTROL_INBOX_ENV,
-	SUBAGENT_PARENT_DEPTH_ENV,
-	SUBAGENT_PARENT_EVENT_SINK_ENV,
-	SUBAGENT_PARENT_PATH_ENV,
-	SUBAGENT_PARENT_ROOT_RUN_ID_ENV,
-	SUBAGENT_PARENT_RUN_ID_ENV,
-} from "./pi-args.ts";
+import { isSafeNestedPathId, sanitizeNestedPath, type NestedPathEntry } from "./nested-path.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { sanitizeProcessTerminal } from "../background/process-terminal.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
@@ -141,13 +131,9 @@ export function createNestedRoute(rootRunId: string): NestedRoute {
 	return { rootRunId, eventSink, controlInbox, capabilityToken };
 }
 
-export function resolveNestedRouteFromEnv(env: NodeJS.ProcessEnv = process.env): NestedRoute | undefined {
-	const rootRunId = env[SUBAGENT_PARENT_ROOT_RUN_ID_ENV];
-	const eventSink = env[SUBAGENT_PARENT_EVENT_SINK_ENV];
-	const controlInbox = env[SUBAGENT_PARENT_CONTROL_INBOX_ENV];
-	const capabilityToken = env[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV];
-	if (!rootRunId || !eventSink || !controlInbox || !capabilityToken) return undefined;
-	const route = { rootRunId, eventSink, controlInbox, capabilityToken };
+/** Validate a route handed to an in-process child against its on-disk metadata. */
+export function resolveNestedRoute(route: NestedRoute): NestedRoute {
+	const { rootRunId, capabilityToken } = route;
 	validateRouteShape(route);
 	const routeFile = path.join(commonRouteRoot(route), ROUTE_FILE);
 	const metadata = JSON.parse(fs.readFileSync(routeFile, "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
@@ -157,24 +143,38 @@ export function resolveNestedRouteFromEnv(env: NodeJS.ProcessEnv = process.env):
 	return route;
 }
 
-export function resolveInheritedNestedRouteFromEnv(env: NodeJS.ProcessEnv = process.env): NestedRoute | undefined {
+export function resolveInheritedNestedRoute(route: NestedRoute): NestedRoute | undefined {
 	try {
-		return resolveNestedRouteFromEnv(env);
+		return resolveNestedRoute(route);
 	} catch (error) {
 		console.error("Ignoring invalid nested subagent event route:", error);
 		return undefined;
 	}
 }
 
-export function resolveNestedParentAddressFromEnv(env: NodeJS.ProcessEnv = process.env): { parentRunId: string; parentStepIndex?: number; depth: number; path: NestedPathEntry[] } | undefined {
-	const parentRunId = env[SUBAGENT_PARENT_RUN_ID_ENV];
-	if (!isSafeNestedId(parentRunId)) return undefined;
-	const rawIndex = env[SUBAGENT_PARENT_CHILD_INDEX_ENV];
-	const parentStepIndex = rawIndex && /^\d+$/.test(rawIndex) ? Number(rawIndex) : undefined;
-	const depth = Math.min(Math.max(1, clampNumber(Number(env[SUBAGENT_PARENT_DEPTH_ENV])) ?? 1), MAX_DEPTH);
-	const parsedPath = parseNestedPathEnv(env[SUBAGENT_PARENT_PATH_ENV]);
-	const nestedPath = parsedPath.length ? parsedPath : [{ runId: parentRunId, ...(parentStepIndex !== undefined ? { stepIndex: parentStepIndex } : {}) }];
-	return { parentRunId, ...(parentStepIndex !== undefined ? { parentStepIndex } : {}), depth, path: nestedPath };
+export interface NestedParentAddress {
+	parentRunId: string;
+	parentStepIndex?: number;
+	depth: number;
+	path: NestedPathEntry[];
+}
+
+/** The nested route an executor inherited from its own child runtime, validated against disk. */
+export function inheritedNestedRouteOf(runtime: { nestedRoute?: NestedRoute } | undefined): NestedRoute | undefined {
+	return runtime?.nestedRoute ? resolveInheritedNestedRoute(runtime.nestedRoute) : undefined;
+}
+
+/** The executor's own position in the nested run tree, from its child runtime. */
+export function inheritedNestedParentAddressOf(runtime: { nestedParent?: { parentRunId: string; parentChildIndex?: number; depth: number; path: NestedPathEntry[] } } | undefined): NestedParentAddress | undefined {
+	const parent = runtime?.nestedParent;
+	if (!parent || !isSafeNestedId(parent.parentRunId)) return undefined;
+	const depth = Math.min(Math.max(1, clampNumber(parent.depth) ?? 1), MAX_DEPTH);
+	return {
+		parentRunId: parent.parentRunId,
+		...(parent.parentChildIndex !== undefined ? { parentStepIndex: parent.parentChildIndex } : {}),
+		depth,
+		path: parent.path.length ? parent.path : [{ runId: parent.parentRunId, ...(parent.parentChildIndex !== undefined ? { stepIndex: parent.parentChildIndex } : {}) }],
+	};
 }
 
 export function resolveNestedAsyncDir(rootRunId: string, run: NestedRunSummary): string | undefined {
@@ -217,7 +217,7 @@ function sanitizeCost(value: unknown): NestedRunSummary["totalCost"] | undefined
 		: undefined;
 }
 
-function sanitizeLaunchResolvedExtensions(value: unknown): LaunchResolvedChildExtensionsV1 | undefined {
+function sanitizeLaunchResolvedExtensions(value: unknown): LaunchResolvedChildExtensions | undefined {
 	if (!value || typeof value !== "object") return undefined;
 	const raw = value as Record<string, unknown>;
 	if (raw.version !== 1 || raw.source !== "launch-resolved" || typeof raw.disableAmbientExtensions !== "boolean") return undefined;
@@ -241,7 +241,7 @@ function sanitizeLaunchResolvedExtensions(value: unknown): LaunchResolvedChildEx
 	};
 }
 
-function sanitizeRuntimeAcknowledgedExtensions(value: unknown): RuntimeAcknowledgedChildExtensionsV1 | undefined {
+function sanitizeRuntimeAcknowledgedExtensions(value: unknown): RuntimeAcknowledgedChildExtensions | undefined {
 	if (!value || typeof value !== "object") return undefined;
 	const raw = value as Record<string, unknown>;
 	if (raw.version !== 1 || raw.source !== "child-runtime" || !Array.isArray(raw.ids)) return undefined;
@@ -261,7 +261,7 @@ function sanitizeRuntimeAcknowledgedExtensions(value: unknown): RuntimeAcknowled
 	};
 }
 
-function runtimeAcknowledgedEntry(value: unknown): { runtimeAcknowledgedExtensions: RuntimeAcknowledgedChildExtensionsV1 } | Record<string, never> {
+function runtimeAcknowledgedEntry(value: unknown): { runtimeAcknowledgedExtensions: RuntimeAcknowledgedChildExtensions } | Record<string, never> {
 	const sanitized = sanitizeRuntimeAcknowledgedExtensions(value);
 	return sanitized ? { runtimeAcknowledgedExtensions: sanitized } : {};
 }
@@ -286,7 +286,7 @@ function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
 }
 
 function sanitizeState(value: unknown, fallback: NestedRunState): NestedRunState {
-	return value === "queued" || value === "running" || value === "complete" || value === "failed" || value === "partial" || value === "paused" || value === "stopped"
+	return value === "queued" || value === "running" || value === "complete" || value === "failed" || value === "partial" || value === "paused" || value === "stopped" || value === "rejected"
 		? value
 		: fallback;
 }
@@ -296,7 +296,7 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 	const raw = input as Record<string, unknown>;
 	const agent = stringValue(raw.agent, 128);
 	if (!agent) return undefined;
-	const status = raw.status === "pending" || raw.status === "running" || raw.status === "complete" || raw.status === "completed" || raw.status === "failed" || raw.status === "paused" || raw.status === "stopped"
+	const status = raw.status === "pending" || raw.status === "running" || raw.status === "complete" || raw.status === "completed" || raw.status === "failed" || raw.status === "partial" || raw.status === "paused" || raw.status === "stopped" || raw.status === "rejected"
 		? raw.status
 		: "pending";
 	const model = stringValue(raw.model);
@@ -438,7 +438,7 @@ export function parseNestedEventRecords(content: string, route: NestedRoute): Ne
 }
 
 function terminal(state: NestedRunState): boolean {
-	return state === "complete" || state === "failed" || state === "partial" || state === "paused" || state === "stopped";
+	return state === "complete" || state === "failed" || state === "partial" || state === "paused" || state === "rejected" || state === "stopped";
 }
 
 function mergeBoundedChildren(existing: NestedRunSummary[] | undefined, incoming: NestedRunSummary[] | undefined): NestedRunSummary[] | undefined {
@@ -947,15 +947,6 @@ export function readNestedControlResults(route: NestedRoute): NestedControlResul
 		.flatMap((entry) => readControlResultsFromFile(route, path.join(route.eventSink, entry)));
 }
 
-export function nestedRouteEnv(route: NestedRoute): Record<string, string> {
-	return {
-		[SUBAGENT_PARENT_EVENT_SINK_ENV]: route.eventSink,
-		[SUBAGENT_PARENT_CONTROL_INBOX_ENV]: route.controlInbox,
-		[SUBAGENT_PARENT_ROOT_RUN_ID_ENV]: route.rootRunId,
-		[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV]: route.capabilityToken,
-	};
-}
-
 export function attachRootChildrenToSteps<T extends { children?: NestedRunSummary[]; index?: number }>(rootRunId: string, steps: T[] | undefined, children: NestedRunSummary[] | undefined): void {
 	if (!steps?.length) return;
 	for (const step of steps) {
@@ -1064,13 +1055,6 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 			...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
 			...(step.capabilityAudit ? { capabilityAudit: step.capabilityAudit } : {}),
 		})).slice(0, MAX_STEPS) } : {}),
-	};
-}
-
-export function nestedArtifactEnv(rootRunId: string, parentRunId: string): Record<string, string> {
-	return {
-		SELESAI_SUBAGENT_NESTED_ROOT_RUN_ID: rootRunId,
-		SELESAI_SUBAGENT_NESTED_PARENT_RUN_ID: parentRunId,
 	};
 }
 

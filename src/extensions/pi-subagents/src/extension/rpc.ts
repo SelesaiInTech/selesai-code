@@ -24,7 +24,7 @@ import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
 import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
-import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, type ResolvedAsyncStatusChild } from "../runs/shared/child-identity.ts";
+import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, stopStoppableAsyncStatusChildren, type ResolvedAsyncStatusChild } from "../runs/shared/child-identity.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
 export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
@@ -616,8 +616,8 @@ function stopAsyncRun(
 		}
 	}
 	if (initialStatus.mode === "workflow" && initialStatus.state === "running") {
+		const stopChild = options.state?.workflowChildStops?.get(initialRunId);
 		if (child) {
-			const stopChild = options.state?.workflowChildStops?.get(initialRunId);
 			if (stopChild) {
 				if (!stopChild(child.id, `Workflow child '${child.id}' stopped by RPC.`)) throw new SubagentRpcError("invalid_state", `Child '${childId}' in workflow ${initialRunId} is not available to stop.`);
 				emitChildStopping(initialRunId, location.asyncDir, child);
@@ -633,6 +633,7 @@ function stopAsyncRun(
 		}
 		const workflowController = options.state?.workflowControllers?.get(initialRunId);
 		if (workflowController && !child) {
+			stopStoppableAsyncStatusChildren(initialStatus, stopChild, "Workflow stopped by RPC.");
 			workflowController.abort(new Error("Workflow stopped by RPC."));
 			return {
 				runId: initialRunId,
@@ -642,27 +643,10 @@ function stopAsyncRun(
 				message: `Stop requested for async run ${initialRunId}.`,
 			};
 		}
-		try {
-			deliverStopRequest({
-				asyncDir: location.asyncDir,
-				pid: initialStatus.pid,
-				kill: options.kill,
-				now: options.now,
-				source: "rpc-stop",
-				...(child ? { targetIndex: child.index, childId: child.id } : {}),
-			});
-		} catch (error) {
-			throw new SubagentRpcError("execution_failed", error instanceof Error ? error.message : String(error));
-		}
-		if (child) emitChildStopping(initialRunId, location.asyncDir, child);
-		return {
-			runId: initialRunId,
-			asyncDir: location.asyncDir,
-			previousState: initialStatus.state,
-			state: "stopping",
-			...(child ? { childId: child.id } : {}),
-			message: child ? `Stop requested for child ${child.id} in async run ${initialRunId}.` : `Stop requested for async run ${initialRunId}.`,
-		};
+		// Workflow controls live in-process; a persisted run directory cannot restore them.
+		throw new SubagentRpcError("invalid_state", child
+			? `Child '${child.id}' in workflow ${initialRunId} has no live stop callback available.`
+			: `Workflow ${initialRunId} has no live run controller available to stop.`);
 	}
 
 	let status;

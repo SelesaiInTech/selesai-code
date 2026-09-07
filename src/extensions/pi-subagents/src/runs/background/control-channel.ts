@@ -1,7 +1,7 @@
 /**
  * Cross-OS control channel for async subagent runs.
  *
- * Background runs use child processes. Unix detaches them from the parent process.
+ * Background runs use a detached runner process. Unix detaches it from the parent process.
  * The original control path delivered an interrupt with
  * `process.kill(pid, SIGUSR2|SIGBREAK)`, but Windows cannot
  * deliver those signals cross-process via `process.kill` and throws `ENOSYS`,
@@ -74,33 +74,10 @@ export interface SteerRequest {
 	source?: string;
 }
 
-export interface SteerCapability {
-	type: "steer-capability";
-	protocolVersion: 1;
-	index: number;
-	pid: number;
-	readyAt: number;
-	supported: boolean;
-}
-
-export interface SteerAck {
-	type: "steer-ack";
-	protocolVersion: 1;
-	requestId: string;
-	index: number;
-	ts: number;
-	state: "delivered" | "queued" | "failed";
-	deliveryStatus?: SteerDeliveryStatus;
-	message: string;
-}
-
 const STEER_REQUESTS_DIR = "steer-requests";
 const STOP_REQUESTS_DIR = "stop-requests";
 const REVIVAL_BRIEFS_DIR = "revival-briefs";
 export const MAX_STEER_QUEUE_SIZE = 20;
-const STEER_TARGETS_DIR = "steer-targets";
-const STEER_CAPABILITIES_DIR = "steer-capabilities";
-const STEER_ACKS_DIR = "steer-acks";
 const STEER_INBOX_CLOSED_FILE = "steer-inbox-closed.json";
 const MAX_STEER_MESSAGE_BYTES = 128 * 1024;
 const MAX_STEER_REQUEST_ID_LENGTH = 256;
@@ -141,35 +118,6 @@ export function steerInboxClosedPath(asyncDir: string): string {
 
 export function closeSteerInbox(asyncDir: string, state: string, write: (filePath: string, payload: object) => void = writeAtomicJson): void {
 	write(steerInboxClosedPath(asyncDir), { version: 1, closedAt: Date.now(), state });
-}
-
-/** Per-child inbox consumed by the child prompt runtime inside the Pi process. */
-export function stepSteerInboxDir(asyncDir: string, index: number): string {
-	assertChildIndex(index);
-	return path.join(controlInboxDir(asyncDir), STEER_TARGETS_DIR, String(index));
-}
-
-export function steerCapabilitiesDir(asyncDir: string): string {
-	return path.join(controlInboxDir(asyncDir), STEER_CAPABILITIES_DIR);
-}
-
-export function steerCapabilityPath(asyncDir: string, index: number): string {
-	assertChildIndex(index);
-	return path.join(steerCapabilitiesDir(asyncDir), `${index}.json`);
-}
-
-export function steerAcksDir(asyncDir: string, index: number): string {
-	assertChildIndex(index);
-	return path.join(controlInboxDir(asyncDir), STEER_ACKS_DIR, String(index));
-}
-
-function steerAckFileName(requestId: string): string {
-	return `${Buffer.from(requestId).toString("base64url")}.json`;
-}
-
-export function steerAckPathFromDir(dir: string, requestId: string): string {
-	if (!/^[^\s]+$/.test(requestId) || requestId.length > 256) throw new Error("steer acknowledgment requestId is invalid.");
-	return path.join(dir, steerAckFileName(requestId));
 }
 
 function assertChildIndex(index: number): void {
@@ -227,45 +175,6 @@ export function writeSteerRequestToExistingDir(dir: string, request: SteerReques
 	const requestPath = path.join(dir, steerRequestFileName(request));
 	writeJsonToExistingDir(requestPath, request);
 	return requestPath;
-}
-
-export function writeSteerCapabilityAt(filePath: string, capability: Omit<SteerCapability, "type" | "protocolVersion">): string {
-	assertChildIndex(capability.index);
-	if (!Number.isInteger(capability.pid) || capability.pid <= 0) throw new Error("steer capability pid must be a positive integer.");
-	if (!Number.isFinite(capability.readyAt) || capability.readyAt <= 0) throw new Error("steer capability readyAt must be a finite timestamp.");
-	const record: SteerCapability = { type: "steer-capability", protocolVersion: 1, ...capability };
-	writeAtomicJson(filePath, record);
-	return filePath;
-}
-
-export function writeSteerCapability(asyncDir: string, capability: Omit<SteerCapability, "type" | "protocolVersion">): string {
-	return writeSteerCapabilityAt(steerCapabilityPath(asyncDir, capability.index), capability);
-}
-
-function steerAckWritePath(filePath: string, ack: Omit<SteerAck, "type" | "protocolVersion">): string {
-	const parsed = path.parse(filePath);
-	const stateOrder = ack.state === "queued" ? "0" : ack.state === "delivered" ? "1" : "2";
-	const timestamp = String(Math.trunc(ack.ts)).padStart(13, "0");
-	for (let suffix = 0; suffix < 1_000; suffix += 1) {
-		const candidate = path.join(parsed.dir, `${parsed.name}-${timestamp}-${stateOrder}-${ack.state}${suffix === 0 ? "" : `-${suffix}`}${parsed.ext}`);
-		if (!fs.existsSync(candidate)) return candidate;
-	}
-	throw new Error("steer acknowledgment queue is full.");
-}
-
-export function writeSteerAckAt(filePath: string, ack: Omit<SteerAck, "type" | "protocolVersion">): string {
-	assertChildIndex(ack.index);
-	if (!/^[^\s]+$/.test(ack.requestId) || ack.requestId.length > 256) throw new Error("steer acknowledgment requestId is invalid.");
-	if (!Number.isFinite(ack.ts) || ack.ts <= 0) throw new Error("steer acknowledgment ts must be a finite timestamp.");
-	if (!ack.message.trim() || ack.message.length > 1000) throw new Error("steer acknowledgment message is invalid.");
-	const record: SteerAck = { type: "steer-ack", protocolVersion: 1, ...ack, message: ack.message.trim() };
-	const ackPath = steerAckWritePath(filePath, ack);
-	writeAtomicJson(ackPath, record);
-	return ackPath;
-}
-
-export function writeSteerAck(asyncDir: string, ack: Omit<SteerAck, "type" | "protocolVersion">): string {
-	return writeSteerAckAt(path.join(steerAcksDir(asyncDir, ack.index), steerAckFileName(ack.requestId)), ack);
 }
 
 /**
@@ -350,97 +259,6 @@ export function requestAsyncSteer(
 	return requestPath;
 }
 
-export function enqueueStepSteer(asyncDir: string, index: number, request: SteerRequest): string {
-	assertChildIndex(index);
-	const { targetIndexes: _targetIndexes, ...singleTargetRequest } = request;
-	return writeSteerRequestToDir(stepSteerInboxDir(asyncDir, index), { ...singleTargetRequest, targetIndex: index, type: "steer" });
-}
-
-function parseSteerCapability(raw: unknown): SteerCapability | undefined {
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-	const input = raw as Partial<SteerCapability>;
-	if (input.type !== "steer-capability" || input.protocolVersion !== 1) return undefined;
-	const { index, pid, readyAt, supported } = input;
-	if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 1_000_000) return undefined;
-	if (typeof pid !== "number" || typeof readyAt !== "number" || !Number.isInteger(pid) || pid <= 0 || !Number.isFinite(readyAt) || readyAt <= 0 || typeof supported !== "boolean") return undefined;
-	return { type: "steer-capability", protocolVersion: 1, index, pid, readyAt, supported };
-}
-
-function parseSteerAck(raw: unknown): SteerAck | undefined {
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-	const input = raw as Partial<SteerAck>;
-	if (input.type !== "steer-ack" || input.protocolVersion !== 1 || typeof input.requestId !== "string" || !/^[^\s]+$/.test(input.requestId) || input.requestId.length > 256) return undefined;
-	const { index, ts, state, message } = input;
-	if (typeof index !== "number" || typeof ts !== "number" || !Number.isInteger(index) || index < 0 || index > 1_000_000 || !Number.isFinite(ts) || ts <= 0) return undefined;
-	if (state !== "delivered" && state !== "queued" && state !== "failed") return undefined;
-	if (input.deliveryStatus !== undefined && input.deliveryStatus !== "delivered" && input.deliveryStatus !== "queued") return undefined;
-	if (typeof message !== "string" || !message.trim() || message.length > 1000) return undefined;
-	return { type: "steer-ack", protocolVersion: 1, requestId: input.requestId, index, ts, state, ...(input.deliveryStatus ? { deliveryStatus: input.deliveryStatus } : {}), message: message.trim() };
-}
-
-export function readSteerCapability(asyncDir: string, index: number): SteerCapability | undefined {
-	try {
-		return parseSteerCapability(JSON.parse(fs.readFileSync(steerCapabilityPath(asyncDir, index), "utf-8")));
-	} catch {
-		return undefined;
-	}
-}
-
-export function consumeSteerCapabilities(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "readdirSync" | "readFileSync"> = fs): SteerCapability[] {
-	const dir = steerCapabilitiesDir(asyncDir);
-	if (!fsImpl.existsSync(dir)) return [];
-	const capabilities: SteerCapability[] = [];
-	for (const entry of fsImpl.readdirSync(dir).filter((name) => /^\d+\.json$/.test(name)).sort()) {
-		try {
-			const capability = parseSteerCapability(JSON.parse(fsImpl.readFileSync(path.join(dir, entry), "utf-8")));
-			if (capability) capabilities.push(capability);
-		} catch {
-			// A partially written or malformed capability is ignored until a valid one arrives.
-		}
-	}
-	return capabilities;
-}
-
-export function consumeSteerAckFromDir(
-	dir: string,
-	requestId: string,
-	fsImpl: Pick<typeof fs, "existsSync" | "readdirSync" | "readFileSync" | "rmSync"> = fs,
-): SteerAck | undefined {
-	if (!fsImpl.existsSync(dir)) return undefined;
-	let entries: string[];
-	try { entries = fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort(); } catch { return undefined; }
-	for (const entry of entries) {
-		const target = path.join(dir, entry);
-		let ack: SteerAck | undefined;
-		try { ack = parseSteerAck(JSON.parse(fsImpl.readFileSync(target, "utf-8"))); } catch { ack = undefined; }
-		if (ack?.requestId !== requestId) continue;
-		try { fsImpl.rmSync(target, { force: true }); } catch { return undefined; }
-		return ack;
-	}
-	return undefined;
-}
-
-export function consumeSteerAcks(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "readdirSync" | "readFileSync" | "rmSync"> = fs): SteerAck[] {
-	const root = path.join(controlInboxDir(asyncDir), STEER_ACKS_DIR);
-	if (!fsImpl.existsSync(root)) return [];
-	const acks: SteerAck[] = [];
-	let indexNames: string[];
-	try { indexNames = fsImpl.readdirSync(root).filter((name) => /^\d+$/.test(name)); } catch { return []; }
-	for (const indexName of indexNames) {
-		const dir = path.join(root, indexName);
-		let entries: string[];
-		try { entries = fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort(); } catch { continue; }
-		for (const entry of entries) {
-			const target = path.join(dir, entry);
-			let ack: SteerAck | undefined;
-			try { ack = parseSteerAck(JSON.parse(fsImpl.readFileSync(target, "utf-8"))); } catch { ack = undefined; }
-			try { fsImpl.rmSync(target, { force: true }); } catch { continue; }
-			if (ack) acks.push(ack);
-		}
-	}
-	return acks;
-}
-
 function parseSteerRequest(raw: unknown): SteerRequest | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
 	const input = raw as Partial<SteerRequest>;
@@ -457,28 +275,36 @@ function parseSteerRequest(raw: unknown): SteerRequest | undefined {
 	};
 }
 
-export function consumeSteerRequestsFromDir(dir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): SteerRequest[] {
-	if (!fsImpl.existsSync(dir)) return [];
+export function consumeSteerRequestsFromDir(dir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs, onError: (error: unknown) => void = () => {}): SteerRequest[] {
 	let entries: string[];
 	try {
 		entries = fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort();
-	} catch {
+	} catch (error) {
 		// Leave requests in place so the periodic poll can retry the scan.
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") onError(error);
 		return [];
 	}
 	const requests: SteerRequest[] = [];
 	for (const entry of entries) {
 		const requestPath = path.join(dir, entry);
 		let parsed: SteerRequest | undefined;
+		let text: string;
 		try {
-			parsed = parseSteerRequest(JSON.parse(fsImpl.readFileSync(requestPath, "utf-8")));
+			text = fsImpl.readFileSync(requestPath, "utf-8");
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") onError(error);
+			continue;
+		}
+		try {
+			parsed = parseSteerRequest(JSON.parse(text));
 		} catch {
 			parsed = undefined;
 		}
 		try {
 			fsImpl.rmSync(requestPath, { recursive: true });
-		} catch {
+		} catch (error) {
 			// Already removed by a concurrent check — do not execute it twice.
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") onError(error);
 			continue;
 		}
 		if (parsed) requests.push(parsed);
@@ -486,8 +312,8 @@ export function consumeSteerRequestsFromDir(dir: string, fsImpl: Pick<typeof fs,
 	return requests.sort((left, right) => left.ts - right.ts || left.id.localeCompare(right.id));
 }
 
-export function consumeSteerRequests(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): SteerRequest[] {
-	return consumeSteerRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);
+export function consumeSteerRequests(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs, onError?: (error: unknown) => void): SteerRequest[] {
+	return consumeSteerRequestsFromDir(steerRequestsDir(asyncDir), fsImpl, onError);
 }
 
 export function queueRevivalBrief(asyncDir: string, request: SteerRequest): string {
@@ -569,17 +395,26 @@ function parseStopRequest(raw: unknown): StopRequest | undefined {
 function consumeStopRequestFile(
 	requestPath: string,
 	fsImpl: Pick<typeof fs, "rmSync" | "readFileSync">,
+	onError?: (error: unknown) => void,
 ): StopRequest | undefined {
+	let text: string;
+	try {
+		text = fsImpl.readFileSync(requestPath, "utf-8");
+	} catch (error) {
+		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) onError?.(error);
+		return undefined;
+	}
 	let request: StopRequest | undefined;
 	try {
-		request = parseStopRequest(JSON.parse(fsImpl.readFileSync(requestPath, "utf-8")));
+		request = parseStopRequest(JSON.parse(text));
 	} catch {
 		request = undefined;
 	}
 	try {
 		fsImpl.rmSync(requestPath, { force: true, recursive: true });
-	} catch {
-		// Already removed by a concurrent check — do not execute it twice.
+	} catch (error) {
+		// Execute only after successful removal.
+		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) onError?.(error);
 		return undefined;
 	}
 	return request;
@@ -588,6 +423,7 @@ function consumeStopRequestFile(
 export function consumeStopRequestPayloads(
 	asyncDir: string,
 	fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
+	onError?: (error: unknown) => void,
 ): StopRequest[] {
 	const dir = stopRequestsDir(asyncDir);
 	const requests: StopRequest[] = [];
@@ -595,18 +431,19 @@ export function consumeStopRequestPayloads(
 		let entries: string[];
 		try {
 			entries = fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort();
-		} catch {
+		} catch (error) {
+			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) onError?.(error);
 			entries = [];
 		}
 		for (const entry of entries) {
-			const request = consumeStopRequestFile(path.join(dir, entry), fsImpl);
+			const request = consumeStopRequestFile(path.join(dir, entry), fsImpl, onError);
 			if (request) requests.push(request);
 		}
 	}
 
 	const legacyPath = stopRequestPath(asyncDir);
 	if (fsImpl.existsSync(legacyPath)) {
-		const request = consumeStopRequestFile(legacyPath, fsImpl);
+		const request = consumeStopRequestFile(legacyPath, fsImpl, onError);
 		if (request) requests.push(request);
 	}
 	return requests.sort((left, right) => (left.ts ?? 0) - (right.ts ?? 0));
@@ -652,21 +489,21 @@ export function deliverStopRequest(input: {
 	requestAsyncStop(input.asyncDir, { ...(input.source ? { source: input.source } : {}), ...(input.targetIndex !== undefined ? { targetIndex: input.targetIndex } : {}), ...(input.childId ? { childId: input.childId } : {}) }, { now: input.now });
 }
 
+
 /**
- * Runner side: watch the control inbox and route interrupt requests into
- * `onInterrupt`. Uses `fs.watch` when available and starts interval polling
+ * Active owner: watch and consume only kinds with installed handlers.
+ * Uses `fs.watch` when available and starts interval polling
  * only when native watching is unavailable or fails. Fires once per distinct
  * request. Returns a disposer.
  */
 export function watchAsyncControlInbox(
 	asyncDir: string,
 	opts: {
-		onInterrupt: () => void;
+		onInterrupt?: () => void;
 		onTimeout?: () => void;
 		onStop?: (request: StopRequest) => void;
 		onSteer?: (request: SteerRequest) => void;
-		onSteerCapability?: (capability: SteerCapability) => void;
-		onSteerAck?: (ack: SteerAck) => void;
+		onError?: (error: unknown, phase: "install" | "scan" | "callback", request?: SteerRequest) => void;
 		pollIntervalMs?: number;
 		safetyPollIntervalMs?: number;
 		platform?: NodeJS.Platform;
@@ -677,24 +514,44 @@ export function watchAsyncControlInbox(
 	const fsImpl = opts.fs ?? fs;
 	const timers = opts.timers ?? { setInterval, clearInterval };
 	const dir = controlInboxDir(asyncDir);
+	const report = (error: unknown, phase: "install" | "scan" | "callback", request?: SteerRequest): void => {
+		try {
+			if (opts.onError) opts.onError(error, phase, request);
+			else console.error(`Control inbox ${phase} failed:`, error);
+		} catch (reportError) {
+			console.error("Control inbox error reporter failed:", reportError);
+		}
+	};
+	const dirs = [
+		...(opts.onInterrupt || opts.onTimeout || opts.onStop ? [dir] : []),
+		...(opts.onStop ? [stopRequestsDir(asyncDir)] : []),
+		...(opts.onSteer ? [steerRequestsDir(asyncDir)] : []),
+	];
+	if (dirs.length === 0) return () => {};
 	try {
-		fsImpl.mkdirSync(dir, { recursive: true });
-	} catch {
-		// Best effort — the poll/watch below tolerates a missing dir.
+		for (const target of dirs) fsImpl.mkdirSync(target, { recursive: true });
+	} catch (error) {
+		report(error, "install");
 	}
 
 	let disposed = false;
 	const check = (): void => {
 		if (disposed) return;
 		try {
-			for (const stopRequest of consumeStopRequestPayloads(asyncDir, fsImpl)) opts.onStop?.(stopRequest);
-			if (consumeTimeoutRequest(asyncDir, fsImpl)) opts.onTimeout?.();
-			if (consumeInterruptRequest(asyncDir, fsImpl)) opts.onInterrupt();
-			for (const request of consumeSteerRequests(asyncDir, fsImpl)) opts.onSteer?.(request);
-			for (const capability of consumeSteerCapabilities(asyncDir, fsImpl)) opts.onSteerCapability?.(capability);
-			for (const ack of consumeSteerAcks(asyncDir, fsImpl)) opts.onSteerAck?.(ack);
-		} catch {
-			// Never let inbox errors crash the runner.
+			if (opts.onStop) for (const request of consumeStopRequestPayloads(asyncDir, fsImpl, (error) => report(error, "scan"))) {
+				try { opts.onStop(request); } catch (error) { report(error, "callback"); }
+			}
+			if (opts.onTimeout && consumeTimeoutRequest(asyncDir, fsImpl)) {
+				try { opts.onTimeout(); } catch (error) { report(error, "callback"); }
+			}
+			if (opts.onInterrupt && consumeInterruptRequest(asyncDir, fsImpl)) {
+				try { opts.onInterrupt(); } catch (error) { report(error, "callback"); }
+			}
+			if (opts.onSteer) for (const request of consumeSteerRequestsFromDir(steerRequestsDir(asyncDir), fsImpl, (error) => report(error, "scan"))) {
+				try { opts.onSteer(request); } catch (error) { report(error, "callback", request); }
+			}
+		} catch (error) {
+			report(error, "scan");
 		}
 	};
 
@@ -702,56 +559,31 @@ export function watchAsyncControlInbox(
 	check();
 
 	const watchers: fs.FSWatcher[] = [];
-	const watchedDirs = new Set<string>();
 	let interval: ReturnType<typeof setInterval> | undefined;
 	let safetyInterval: ReturnType<typeof setInterval> | undefined;
 	const startPolling = (): void => {
 		if (interval || disposed) return;
+		if (safetyInterval) { timers.clearInterval(safetyInterval); safetyInterval = undefined; }
 		interval = timers.setInterval(check, opts.pollIntervalMs ?? POLL_INTERVAL_MS);
 		interval.unref?.();
 	};
-	const startSafetyPolling = (): void => {
-		if (safetyInterval || disposed) return;
-		safetyInterval = timers.setInterval(check, opts.safetyPollIntervalMs ?? CONTROL_SAFETY_POLL_INTERVAL_MS);
-		safetyInterval.unref?.();
-	};
-	const watchDir = (target: string, create = false): void => {
-		if (disposed || watchedDirs.has(target)) return;
-		if (create) fsImpl.mkdirSync(target, { recursive: true });
-		const watcher = fsImpl.watch(resolveWatchPath(target, fsImpl.realpathSync.native), () => {
-			watchExistingSteerAckDirs();
-			check();
-		});
-		watcher.on?.("error", startPolling);
-		watchers.push(watcher);
-		watchedDirs.add(target);
-	};
-	const watchExistingSteerAckDirs = (): void => {
-		const ackRoot = path.join(dir, STEER_ACKS_DIR);
-		let entries: string[];
-		try {
-			entries = fsImpl.readdirSync(ackRoot).filter((name) => /^\d+$/.test(name));
-		} catch {
-			return;
-		}
-		for (const entry of entries) watchDir(path.join(ackRoot, entry));
-	};
 	try {
 		if (shouldUseNativeFsWatch("runner-control-inbox", opts.platform)) {
-			watchDir(dir);
-			watchDir(stopRequestsDir(asyncDir), true);
-			watchDir(steerRequestsDir(asyncDir), true);
-			watchDir(steerCapabilitiesDir(asyncDir), true);
-			watchDir(path.join(dir, STEER_ACKS_DIR), true);
-			watchExistingSteerAckDirs();
-			startSafetyPolling();
+			for (const target of dirs) {
+				const watcher = fsImpl.watch(resolveWatchPath(target, fsImpl.realpathSync.native), check);
+				watcher.on?.("error", startPolling);
+				watchers.push(watcher);
+			}
+			if (!interval) {
+				safetyInterval = timers.setInterval(check, opts.safetyPollIntervalMs ?? CONTROL_SAFETY_POLL_INTERVAL_MS);
+				safetyInterval.unref?.();
+			}
 		} else {
 			startPolling();
 		}
 	} catch {
 		startPolling();
 	}
-
 	return () => {
 		if (disposed) return;
 		disposed = true;

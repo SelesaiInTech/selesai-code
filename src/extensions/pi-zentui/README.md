@@ -37,6 +37,8 @@ Editor, User messages, Thinking (Experimental), Working line, and selector borde
 
 The Starship Footer shows directory, Git, runtime, context, tokens, and cost. Optional segments include model/provider, package version, session duration, `user@host`, time, OS, Git commit, Git metrics, and third-party extension statuses. The layout is segment-driven by default and supports a complete Starship-style format template.
 
+When the Working line is enabled, third-party extensions can publish keyed text segments through Pi's shared event bus. Zentui composes those segments into the owned row so Classic and KITT animate across them with the built-in content. See the [Working-line extension integration](https://github.com/lmilojevicc/pi-zentui/blob/main/docs/configuration.md#working-line-extension-integration) reference.
+
 Zentui detects a broad set of runtime and language modules, preserves Nerd Font icons with an ASCII mode, and can source colors from the active Pi theme or directly from the terminal palette.
 
 ## Screenshots
@@ -94,6 +96,21 @@ Run `/zentui` inside Pi to configure Appearance, Editor, User messages, Thinking
 ```text
 ~/.pi/agent/zentui.json
 ```
+
+### Component presets
+
+Choose **Appearance → Preset** in `/zentui`, or run `/zentui preset <id>`:
+
+| ID | Editor (enabled) | Footer | User messages |
+| --- | --- | --- | --- |
+| `opencode` | Opencode | Starship | Framed |
+| `opencode-copy-friendly` | Opencode (copy-friendly) | Starship | Framed (copy-friendly) |
+| `rail` | Accent Rail | Starship | Compact (accent rail) |
+| `minimalist` | Minimalist | Hidden (zero rows) | Zentui styling disabled |
+
+Presets apply once, saving only these component selections. Colors, color sources, style options, icons, Footer segments/formats, selector borders, Working line, and Thinking remain unchanged. Minimalist preserves the dormant message style and leaves Pi's native message presentation alone. Hidden suppresses the Footer; it is not Native.
+
+The displayed preset is derived from your current selections: individual changes may show **Custom**, and returning to a matching combination restores its name. No `preset` config key is saved or reapplied at startup. Defaults are unchanged and match Opencode. Selecting a preset keeps settings open for further adjustments. Editor installation waits until the panel closes; if editor ownership prevents application, the saved choice may require reloading Pi.
 
 A small starter config:
 

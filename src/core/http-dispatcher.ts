@@ -84,6 +84,8 @@ export function configureHttpDispatcher(timeoutMs: number = DEFAULT_HTTP_IDLE_TI
 	const dispatcher = withUndiciErrorListener(
 		new undici.EnvHttpProxyAgent({
 			allowH2: false,
+			// Keep HTTP origins on CONNECT tunnels as they were before Undici 8.7.
+			proxyTunnel: true,
 			bodyTimeout: normalizedTimeoutMs,
 			headersTimeout: normalizedTimeoutMs,
 			clientFactory: createUndiciClient,

@@ -37,6 +37,17 @@ test("the root entrypoint exposes the runtime error flag to TypeScript consumers
 		fs.writeFileSync(path.join(consumerRoot, "consumer.ts"), `
 import "pi-subagents";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { registerWorkflowResource, type RegisterWorkflowResourceInput, type WorkflowResourceDefinition, type WorkflowResourceRegistration } from "pi-subagents/workflow-resources";
+
+const definition: WorkflowResourceDefinition = {
+	name: "consumer.check", version: 1,
+	resolve: (args) => typeof args.task === "string"
+		? { script: "return 1;", hostCommands: [{ key: "check", command: "node --version" }] }
+		: { error: "task required" },
+};
+const input: RegisterWorkflowResourceInput = { sessionId: "consumer", definition };
+const registration: WorkflowResourceRegistration = registerWorkflowResource(input);
+registration.dispose();
 
 const result: AgentToolResult<undefined> = {
 	content: [],
@@ -60,6 +71,7 @@ void result.isError;
 				baseUrl: consumerRoot,
 				paths: {
 					"pi-subagents": [path.join(projectRoot, "index.ts")],
+					"pi-subagents/workflow-resources": [path.join(projectRoot, "src/api/workflow-resources.ts")],
 				"@earendil-works/pi-agent-core": [path.join(projectRoot, "node_modules", "@earendil-works", "pi-agent-core", "dist", "index.d.ts")],
 				},
 			},
@@ -108,11 +120,12 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./external-job-provider": "./src/api/external-job-provider.ts",
 		"./external-runs": "./src/api/external-runs.ts",
 		"./capability-ceiling": "./src/api/capability-ceiling.ts",
+		"./workflow-resources": "./src/api/workflow-resources.ts",
 		"./delegation": "./src/api/delegation.ts",
 		"./preflight": "./src/api/preflight.ts",
 		"./control-channel": "./src/api/control-channel.ts",
 		"./intercom-bridge": "./src/api/intercom-bridge.ts",
-		"./pi-args": "./src/api/pi-args.ts",
+		"./child-tool-plan": "./src/api/child-tool-plan.ts",
 		"./shared-types": "./src/api/shared-types.ts",
 		"./project-panes": "./src/api/project-panes.ts",
 	});
@@ -134,6 +147,9 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(typeof externalRuns.snapshotExternalRuns, "function");
 	assert.equal(typeof externalRuns.unregisterExternalRun, "function");
 	const capability = await import("pi-subagents/capability-ceiling");
+	const workflowResources = await import("pi-subagents/workflow-resources");
+	assert.deepEqual(Object.keys(workflowResources), ["registerWorkflowResource"]);
+	assert.equal(typeof workflowResources.registerWorkflowResource, "function");
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_VERSION, 1);
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY, "pi-subagents.capability-ceiling.v1");
 	const delegation = await import("pi-subagents/delegation");
@@ -145,9 +161,9 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(typeof controlChannel.requestAsyncStop, "function");
 	const intercomBridge = await import("pi-subagents/intercom-bridge");
 	assert.equal(typeof intercomBridge.resolveIntercomSessionTarget, "function");
-	const piArgs = await import("pi-subagents/pi-args");
-	assert.equal(typeof piArgs.resolvePiLaunchToolPlan, "function");
-	assert.equal("buildPiArgs" in piArgs, false);
+	const childToolPlan = await import("pi-subagents/child-tool-plan");
+	assert.equal(typeof childToolPlan.resolvePiLaunchToolPlan, "function");
+	assert.deepEqual(Object.keys(childToolPlan).sort(), ["resolvePiLaunchToolPlan"]);
 	const sharedTypes = await import("pi-subagents/shared-types");
 	assert.equal(typeof sharedTypes.wrapForkTask, "function");
 	assert.equal(typeof sharedTypes.DEFAULT_FORK_PREAMBLE, "string");

@@ -32,6 +32,7 @@ export interface ImportedAsyncRootResult {
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
 	artifactPaths?: ArtifactPaths;
+	savedOutputPath?: string;
 	outputSaveError?: string;
 	transcriptPath?: string;
 	transcriptError?: string;
@@ -71,6 +72,7 @@ interface AsyncResultFile {
 		structuredOutputSchemaPath?: string;
 		acceptance?: AcceptanceLedger;
 		artifactPaths?: ArtifactPaths;
+		savedOutputPath?: string;
 		outputSaveError?: string;
 		transcriptPath?: string;
 		transcriptError?: string;
@@ -121,6 +123,11 @@ function selectedStatusStep(status: AsyncStatus | null, index: number): NonNulla
 
 function isTerminalStatus(status: AsyncStatus | null, index: number): boolean {
 	if (!status) return false;
+	// A workflow-owned single runner publishes its result after completing its
+	// step. Keep that window open while root process proof is absent or pending;
+	// explicit terminal/unavailable proof retains the existing step fallback.
+	if (status.mode === "single" && status.parentWorkflowRunId
+		&& (!status.processTerminal || status.processTerminal.state === "pending")) return TERMINAL_STATES.has(status.state);
 	const step = selectedStatusStep(status, index);
 	if (step && TERMINAL_STEP_STATUSES.has(step.status)) return true;
 	return TERMINAL_STATES.has(status.state);
@@ -229,6 +236,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 		...(child?.structuredOutputSchemaPath ?? step?.structuredOutputSchemaPath ? { structuredOutputSchemaPath: child?.structuredOutputSchemaPath ?? step?.structuredOutputSchemaPath } : {}),
 		...(child?.acceptance ?? step?.acceptance ? { acceptance: child?.acceptance ?? step?.acceptance } : {}),
 		...(child?.artifactPaths ? { artifactPaths: child.artifactPaths } : {}),
+		...(child?.savedOutputPath ? { savedOutputPath: child.savedOutputPath } : {}),
 		...(child?.outputSaveError ? { outputSaveError: child.outputSaveError } : {}),
 		...(child?.transcriptPath ?? step?.transcriptPath ? { transcriptPath: child?.transcriptPath ?? step?.transcriptPath } : {}),
 		...(child?.transcriptError ? { transcriptError: child.transcriptError } : {}),

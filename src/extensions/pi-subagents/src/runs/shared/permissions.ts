@@ -53,17 +53,6 @@ export function permissionDecision(rules: PermissionRules | undefined, toolName:
 	return rules?.[toolName] ?? "allow";
 }
 
-export function encodePermissionRules(rules: PermissionRules | undefined): string | undefined {
-	if (!rules || Object.keys(rules).length === 0) return undefined;
-	const encoded = JSON.stringify(rules);
-	if (Buffer.byteLength(encoded, "utf-8") > MAX_POLICY_BYTES) throw new Error("Resolved permission policy is too large.");
-	return encoded;
-}
-
-export function decodePermissionRules(encoded: string | undefined): PermissionRules | undefined {
-	if (!encoded?.trim()) return undefined;
-	return validatePermissionRules(JSON.parse(encoded), PERMISSION_POLICY_ENV);
-}
 
 function redact(value: unknown, key = "", depth = 0): unknown {
 	if (SECRET_KEY.test(key)) return "[redacted]";

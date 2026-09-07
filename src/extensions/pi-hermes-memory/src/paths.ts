@@ -5,7 +5,7 @@ import { DEFAULT_PROJECTS_MEMORY_DIR } from "./constants.js";
 
 // Route through the host resolver only. The upstream `PI_CODING_AGENT_DIR`
 // env var is deliberately NOT honored here: on the Selesai fork it would
-// silently point memory at ~/.pi/agent while the host reads ~/.selesai/agent.
+// silently point memory at the upstream agent dir while the host reads ~/.selesai/agent.
 export const AGENT_ROOT = getAgentDir();
 
 export function expandHome(input: string): string {

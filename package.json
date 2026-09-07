@@ -1,6 +1,6 @@
 {
   "name": "@selesai/code",
-  "version": "0.13.16",
+  "version": "0.13.17",
   "description": "Maintained, extension-first Pi coding agent with built-in workflows, subagents, web research, questions, skills, and an enhanced terminal UI.",
   "type": "module",
   "repository": {
@@ -60,9 +60,9 @@
   },
   "dependencies": {
     "@ast-grep/cli": "0.45.0",
-    "@earendil-works/pi-agent-core": "0.84.4",
-    "@earendil-works/pi-ai": "0.84.4",
-    "@earendil-works/pi-tui": "0.84.4",
+    "@earendil-works/pi-agent-core": "0.85.1",
+    "@earendil-works/pi-ai": "0.85.1",
+    "@earendil-works/pi-tui": "0.85.1",
     "@mozilla/readability": "^0.6.0",
     "@silvia-odwyer/photon-node": "0.3.4",
     "acorn": "8.18.0",

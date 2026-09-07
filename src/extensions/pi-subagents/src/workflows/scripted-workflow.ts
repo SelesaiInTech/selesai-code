@@ -5,11 +5,20 @@ import { Worker } from "node:worker_threads";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/parallel-utils.ts";
 import { HOST_STEP_MAX_COUNT } from "../runs/shared/host-step-status.ts";
 import { classifyTaskMutationIntent } from "../runs/shared/task-intent.ts";
-import type { AcceptanceRecoveryMetadata, HostStepNodeV1, SingleResult } from "../shared/types.ts";
+import { describeGateAcceptanceConflict } from "../runs/shared/acceptance.ts";
+import type { AcceptanceRecoveryMetadata, HostStepNode, SingleResult } from "../shared/types.ts";
 import { normalizeWorkflowHostCommandParams, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "./host-command.ts";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const BASE_REF_VALIDATION_ERROR = "baseRef must be a valid Git ref: use HEAD or a supported named ref (for example, refs/heads/main). Full 40/64-character commit IDs and revision expressions are unsupported.";
+function validGitRef(ref: unknown): ref is string {
+	if (typeof ref !== "string" || !ref || ref === "@" || Buffer.byteLength(ref, "utf-8") > 1024 || ref.startsWith("/") || ref.endsWith("/") || ref.includes("//") || ref.includes("..") || ref.includes("@{")) return false;
+	if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(ref)) return false;
+	if (/[[\]\\~^:?*\u0000-\u0020\u007f]/u.test(ref) || ref.endsWith(".") || ref.endsWith(".lock")) return false;
+	return ref.split("/").every((component) => component.length > 0 && component !== "." && component !== ".." && !component.startsWith(".") && !component.endsWith(".") && !component.endsWith(".lock"));
+}
 const requireFromPackage = createRequire(import.meta.url);
+const WORKFLOW_ASSEMBLY_FLUSH_TIMEOUT_MS = 5_000;
 
 export interface WorkflowScriptValidationError {
 	message: string;
@@ -49,6 +58,12 @@ let suppressNativePromiseConsumption = 0;
 const activeNativePromises = [];
 const pending = new Map();
 const runKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+function validGitRef(ref) {
+  if (typeof ref !== "string" || !ref || ref === "@" || new TextEncoder().encode(ref).length > 1024 || ref.startsWith("/") || ref.endsWith("/") || ref.includes("//") || ref.includes("..") || ref.includes("@{")) return false;
+  if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(ref)) return false;
+  if (/[[\]\\~^:?*\u0000-\u0020\u007f]/u.test(ref) || ref.endsWith(".") || ref.endsWith(".lock")) return false;
+  return ref.split("/").every((component) => component.length > 0 && component !== "." && component !== ".." && !component.startsWith(".") && !component.endsWith(".") && !component.endsWith(".lock"));
+}
 const trackedPromiseTrackers = new WeakMap();
 const trackedPromiseTargets = new WeakMap();
 let nativePromiseTrackers = new WeakMap();
@@ -59,6 +74,12 @@ function stableRunJson(value) {
   if (Array.isArray(value)) return "[" + value.map(stableRunJson).join(",") + "]";
   if (value && typeof value === "object") return "{" + Object.keys(value).sort().map((key) => JSON.stringify(key) + ":" + stableRunJson(value[key])).join(",") + "}";
   return JSON.stringify(value) ?? "undefined";
+}
+
+function canonicalRunParams(params) {
+  if (params.gate === undefined || params.acceptance !== false) return params;
+  const { acceptance: _acceptance, ...withoutAcceptance } = params;
+  return withoutAcceptance;
 }
 
 function isDirectWorkflowScriptPromiseHandlerCall() {
@@ -432,7 +453,7 @@ function validateLaneSpecs(laneSpecs) {
       validateLaneStageBounds(validationParams, stageLabel);
       validateRunCall(generatedKey, validationParams, stageLabel, validationFingerprints);
       const existingFingerprint = runFingerprints.get(generatedKey);
-      if (existingFingerprint !== undefined && (resume === "previous" || existingFingerprint !== stableRunJson(params))) {
+      if (existingFingerprint !== undefined && (resume === "previous" || existingFingerprint !== stableRunJson(canonicalRunParams(params)))) {
         throw new Error("runs.lanes generated child key '" + generatedKey + "' is already used with incompatible launch params.");
       }
       stages.push({ key: stageKey, generatedKey, resume, params });
@@ -601,6 +622,19 @@ function validateLaneMetadata(value, label, workflowKey) {
   }
 }
 
+function describeGateAcceptanceConflict(gate, acceptance) {
+  const render = (value) => {
+    let encoded;
+    try {
+      encoded = JSON.stringify(value) ?? String(value);
+    } catch {
+      encoded = String(value);
+    }
+    return encoded.length > 120 ? encoded.slice(0, 120) + "..." : encoded;
+  };
+  return " Both fields were present: gate=" + render(gate) + " acceptance=" + render(acceptance) + ".";
+}
+
 function validateRunCall(key, params, label, fingerprints) {
   if (typeof key !== "string" || !runKeyPattern.test(key)) throw new Error(label + " has an invalid key.");
   if (hostKeys.has(key)) throw new Error("Workflow key '" + key + "' is already used by runs.host.");
@@ -611,9 +645,10 @@ function validateRunCall(key, params, label, fingerprints) {
   }
   if (Object.prototype.hasOwnProperty.call(params, "clarify")) throw new Error(label + " does not support clarify UI.");
   if (params.worktree !== undefined && typeof params.worktree !== "boolean") throw new Error(label + " worktree must be true or false.");
+  if (params.baseRef !== undefined && (typeof params.baseRef !== "string" || !validGitRef(params.baseRef))) throw new Error(label + " baseRef must be a valid Git ref: use HEAD or a supported named ref (for example, refs/heads/main). Full 40/64-character commit IDs and revision expressions are unsupported.");
   validateLaneMetadata(params.lane, label + " lane", key);
   if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) throw new Error(label + " gate must be a non-empty command string.");
-  if (params.gate !== undefined && params.acceptance !== undefined) throw new Error(label + " gate cannot be combined with acceptance; use one gate command or acceptance.verify.");
+  if (params.gate !== undefined && params.acceptance !== undefined && params.acceptance !== false) throw new Error(label + " gate cannot be combined with acceptance; use one gate command or acceptance.verify." + describeGateAcceptanceConflict(params.gate, params.acceptance));
   if (params.gate !== undefined && params.resume !== undefined) throw new Error(label + " gate is not supported with retained resume.");
   if (params.extensionBindings !== undefined && params.resume !== undefined) throw new Error(label + " extensionBindings is not supported with retained resume; resume uses the original retained child binding.");
   if (params.resume !== undefined && typeof params.resume !== "string") {
@@ -630,7 +665,7 @@ function validateRunCall(key, params, label, fingerprints) {
   if (params.resume !== undefined && (typeof params.task !== "string" || !params.task.trim())) throw new Error(label + " resume requires a non-empty task follow-up.");
   validateExtensionBindings(params.extensionBindings, label);
   assertJsonValue(params, label + " params");
-  const fingerprint = stableRunJson(params);
+  const fingerprint = stableRunJson(canonicalRunParams(params));
   const existing = fingerprints.get(key);
   if (existing !== undefined && existing !== fingerprint) throw new Error("Duplicate workflow key '" + key + "' used with incompatible launch params.");
   fingerprints.set(key, fingerprint);
@@ -1070,15 +1105,17 @@ export interface RunWorkflowScriptOptions {
 	oneUsePermit?: { claim: (key: string) => string | undefined };
 	timeoutMs?: number;
 	signal?: AbortSignal;
+	/** Let an async workflow flush pure result assembly after reload once every child is terminal. */
+	continueAfterAbortWhenChildrenSettled?: (abortError: Error) => boolean;
 	/** Maximum children executing concurrently within this workflow. Defaults to 20. */
 	globalConcurrencyLimit?: number;
 	admit?: (calls: Array<{ key: string; params: Record<string, unknown> }>) => void | Promise<void>;
 	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal, admission: { admitted: boolean; batch: boolean }) => Promise<WorkflowScriptChildResult>;
-	resolveResume?: (reference: WorkflowReceiptResumeReference, signal: AbortSignal) => string | WorkflowResolvedResumeReference | Promise<string | WorkflowResolvedResumeReference>;
+	resolveResume?: (reference: WorkflowReceiptResumeReference | string, signal: AbortSignal, index?: number) => string | WorkflowResolvedResumeReference | Promise<string | WorkflowResolvedResumeReference>;
 	status: (keyOrRunId: string, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
 	steer?: (key: string, message: string, options: WorkflowSteerOptions, signal: AbortSignal) => Promise<WorkflowSteerResult>;
 	host?: (key: string, params: WorkflowHostCommandParams, signal: AbortSignal) => Promise<WorkflowHostCommandResult>;
-	onHostStep?: (hostStep: HostStepNodeV1) => void;
+	onHostStep?: (hostStep: HostStepNode) => void;
 	state?: {
 		get: (key: string) => unknown | Promise<unknown>;
 		set: (key: string, value: unknown) => void | Promise<void>;
@@ -1354,6 +1391,12 @@ function stableJson(value: unknown): string {
 	return JSON.stringify(value) ?? "undefined";
 }
 
+function canonicalRunParams(params: Record<string, unknown>): Record<string, unknown> {
+	if (params.gate === undefined || params.acceptance !== false) return params;
+	const { acceptance: _acceptance, ...withoutAcceptance } = params;
+	return withoutAcceptance;
+}
+
 function validateKey(value: unknown, owner = "runs.run"): string {
 	if (typeof value !== "string" || !KEY_PATTERN.test(value)) {
 		throw new Error(`${owner} key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.`);
@@ -1460,7 +1503,7 @@ function definitelyNonJson(node: AstNode, normalizeUndefined = false): string | 
 	if (node.type === "ObjectExpression" && Array.isArray(node.properties)) {
 		const values = new Map<string, AstNode>();
 		for (const property of node.properties) {
-			if (!astNode(property) || property.type !== "Property" || !astNode(property.value)) return undefined;
+			if (!astNode(property) || property.type !== "Property" || !astNode(property.value) || property.kind !== "init") return undefined;
 			const key = staticPropertyKey(property);
 			if (key === undefined) return undefined;
 			values.set(key, property.value);
@@ -1487,6 +1530,26 @@ function directObjectPropertyValue(node: AstNode, name: string): AstNode | undef
 		if (staticPropertyKey(property) === name) value = property.value;
 	}
 	return value;
+}
+
+function validateStaticBaseRef(params: AstNode, owner: string): WorkflowScriptValidationError[] {
+	if (params.type !== "ObjectExpression" || !Array.isArray(params.properties)) return [];
+	// Inspect the final definition only. A later spread or unknown key may overwrite it.
+	for (let index = params.properties.length - 1; index >= 0; index--) {
+		const property = params.properties[index];
+		if (!astNode(property) || property.type !== "Property") return [];
+		const key = staticPropertyKey(property);
+		if (key === undefined) return [];
+		if (key !== "baseRef") continue;
+		if (property.kind !== "init" || !astNode(property.value)) return [];
+		const valueNode = property.value;
+		const value = literalString(valueNode);
+		if ((value !== undefined || valueNode.type === "Literal") && !validGitRef(value)) {
+			return [{ message: `${owner} ${BASE_REF_VALIDATION_ERROR}`, ...nodeLocation(valueNode) }];
+		}
+		return [];
+	}
+	return [];
 }
 
 function directRunsAllKeys(call: AstNode): Array<{ key: string; node: AstNode }> {
@@ -1530,6 +1593,7 @@ export function validateWorkflowScript(script: string): WorkflowScriptValidation
 			const key = literalString(keyNode);
 			if (keyNode && key !== undefined && !KEY_PATTERN.test(key)) errors.push({ message: "runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", ...nodeLocation(keyNode) });
 			if (astNode(args[1])) {
+				errors.push(...validateStaticBaseRef(args[1], "runs.run"));
 				const message = definitelyNonJson(args[1]);
 				if (message) errors.push({ message: `runs.run params are invalid: ${message}.`, ...nodeLocation(args[1]) });
 			}
@@ -1539,6 +1603,7 @@ export function validateWorkflowScript(script: string): WorkflowScriptValidation
 			const args = Array.isArray(node.arguments) ? node.arguments : [];
 			if (astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements)) {
 				for (const item of args[0].elements) if (astNode(item)) {
+					errors.push(...validateStaticBaseRef(item, "runs.all item"));
 					const message = definitelyNonJson(item);
 					if (message) errors.push({ message: `runs.all item params are invalid: ${message}.`, ...nodeLocation(item) });
 				}
@@ -1614,7 +1679,7 @@ function resolveWorkflowParserEntry(): string {
 	}
 }
 
-const AUTO_RESUME_PARAM_KEYS = ["acceptance", "agentContract", "index", "intercomBridge", "label", "lane", "maxRuntimeMs", "output", "outputMode", "outputSchema", "phase", "skill", "skills", "task", "timeoutMs", "toolBudget", "worktree"] as const;
+const AUTO_RESUME_PARAM_KEYS = ["acceptance", "agentContract", "baseRef", "index", "intercomBridge", "label", "lane", "maxRuntimeMs", "output", "outputMode", "outputSchema", "phase", "skill", "skills", "task", "timeoutMs", "toolBudget", "worktree"] as const;
 
 function isZeroUsage(usage: unknown): boolean {
 	if (!isRecord(usage)) return false;
@@ -1682,6 +1747,9 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	let acceptanceRecoveryBarrier: { key: string } | undefined;
 	let settled = false;
 	let finishing = false;
+	let assemblyAbortRequested = false;
+	let assemblyFlushTimer: ReturnType<typeof setTimeout> | undefined;
+	let abortError: Error | undefined;
 
 	const partial = (): Omit<WorkflowScriptResult, "value"> => ({ emits, console: consoleEntries, trace, children: childOrder.flatMap((key) => {
 		const child = children.get(key);
@@ -1706,7 +1774,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			console.error("Workflow onLanePlan callback failed:", error);
 		}
 	};
-	const hostStepChanged = (hostStep: HostStepNodeV1) => {
+	const hostStepChanged = (hostStep: HostStepNode) => {
 		try {
 			options.onHostStep?.(hostStep);
 		} catch (error) {
@@ -1750,6 +1818,10 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		const finish = (outcome: { value: unknown } | { error: Error & { workflowErrorKind?: unknown } }) => {
 			if (settled || finishing) return;
 			finishing = true;
+			if (assemblyFlushTimer !== undefined) {
+				clearTimeout(assemblyFlushTimer);
+				assemblyFlushTimer = undefined;
+			}
 			childController.abort("error" in outcome ? outcome.error : new Error("Workflow script completed."));
 			void Promise.allSettled([...steers.values(), ...hostCalls.values()].map(({ promise }) => promise)).then(() => {
 				if (settled) return;
@@ -1781,6 +1853,26 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				: typeof signalReason === "string"
 					? new Error(signalReason)
 					: new Error("Workflow script aborted.");
+			if (finishing) return;
+			abortError = error;
+			const allChildrenSettled = launches.size > 0
+				&& [...launches.keys()].every((key) => children.has(key));
+			let mayFlushAssembly = false;
+			try {
+				mayFlushAssembly = options.continueAfterAbortWhenChildrenSettled?.(error) === true;
+			} catch (callbackError) {
+				const callbackMessage = callbackError instanceof Error ? callbackError.message : String(callbackError);
+				return finish({ error: new Error(`Workflow assembly flush eligibility failed: ${callbackMessage}`) });
+			}
+			if (mayFlushAssembly && allChildrenSettled) {
+				// A reloaded async workflow may already be past its last child launch.
+				// Keep the worker alive for pure result assembly, but abort the child
+				// signal so any later launch or side effect cannot use stale context.
+				assemblyAbortRequested = true;
+				childController.abort(error);
+				assemblyFlushTimer = setTimeout(() => finish({ error }), WORKFLOW_ASSEMBLY_FLUSH_TIMEOUT_MS);
+				return;
+			}
 			for (const key of launches.keys()) {
 				if (children.has(key)) continue;
 				stoppedLaunches.add(key);
@@ -1873,6 +1965,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				return;
 			}
 			if (message.type !== "call" || typeof message.callId !== "number" || typeof message.method !== "string" || !isRecord(message.args)) return;
+			if (assemblyAbortRequested) return finish({ error: abortError ?? new Error("Workflow context was replaced or reloaded.") });
 
 			const respond = (promise: Promise<unknown>, responsePath?: string, onBoundaryError?: (error: unknown) => void) => {
 				void promise.then(
@@ -1977,7 +2070,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				if (!options.host) return respond(Promise.reject(new Error("runs.host is unavailable in this host context.")));
 				if (hostCalls.size >= HOST_STEP_MAX_COUNT) return respond(Promise.reject(new Error(`workflowScript supports at most ${HOST_STEP_MAX_COUNT} runs.host calls.`)));
 				const startedAt = Date.now();
-				const startedStep: HostStepNodeV1 = {
+				const startedStep: HostStepNode = {
 					version: 1,
 					kind: "host-step",
 					monitorKind: "command",
@@ -2038,7 +2131,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					}
 					return result;
 				});
-			const fingerprint = stableJson(params);
+			const fingerprint = stableJson(canonicalRunParams(params));
 			const existing = launches.get(key);
 			if (existing) {
 				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
@@ -2059,11 +2152,14 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (params.worktree !== undefined && typeof params.worktree !== "boolean") {
 				return respond(Promise.reject(new Error(`runs.run('${key}') worktree must be true or false.`)));
 			}
+			if (params.baseRef !== undefined && (typeof params.baseRef !== "string" || !validGitRef(params.baseRef))) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') ${BASE_REF_VALIDATION_ERROR}`)));
+			}
 			if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') gate must be a non-empty command string.`)));
 			}
-			if (params.gate !== undefined && params.acceptance !== undefined) {
-				return respond(Promise.reject(new Error(`runs.run('${key}') gate cannot be combined with acceptance; use one gate command or acceptance.verify.`)));
+			if (params.gate !== undefined && params.acceptance !== undefined && params.acceptance !== false) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') gate cannot be combined with acceptance; use one gate command or acceptance.verify.` + describeGateAcceptanceConflict(params.gate, params.acceptance))));
 			}
 			if (params.gate !== undefined && params.resume !== undefined) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') gate is not supported with retained resume.`)));
@@ -2110,10 +2206,11 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				const childStopController = new AbortController();
 				childStopControllers.set(key, childStopController);
 				const childSignal = combinedAbortSignal([childController.signal, childStopController.signal]);
-				const resolvedResumeValue = resumeReference
+				const resumeInput = resumeReference ?? (typeof params.resume === "string" && options.resolveResume ? params.resume : undefined);
+				const resolvedResumeValue = resumeInput
 					? await Promise.resolve().then(() => {
 						if (!options.resolveResume) throw new Error("Keyed workflow receipt resume is unavailable in this host.");
-						return options.resolveResume(resumeReference, childSignal);
+						return options.resolveResume(resumeInput, childSignal, typeof params.index === "number" ? params.index : undefined);
 					})
 					: undefined;
 				const resolvedResume = typeof resolvedResumeValue === "string"
@@ -2129,6 +2226,10 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 						: [];
 					resolvedResumeLineage = [...new Set(lineage.length ? lineage : [resolvedResumeId!])];
 					if (resolvedResumeLineage.at(-1) !== resolvedResumeId) resolvedResumeLineage.push(resolvedResumeId!);
+					if (typeof resumeInput === "string") {
+						const predecessor = [...children.values()].find((child) => child.runId === resolvedResumeId);
+						if (predecessor?.continuation && predecessor.continuation.runIds.at(-1) === resolvedResumeId) resolvedResumeLineage = predecessor.continuation.runIds;
+					}
 				}
 				const launchParams = resolvedResumeId ? { ...params, resume: resolvedResumeId } : params;
 				await launchSemaphore.acquire();

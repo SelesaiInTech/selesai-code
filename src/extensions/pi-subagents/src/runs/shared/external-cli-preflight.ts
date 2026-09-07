@@ -5,6 +5,7 @@ import * as path from "node:path";
 const MAX_PROBE_OUTPUT_BYTES = 256 * 1024;
 const MAX_PROBE_TIMEOUT_MS = 5_000;
 const MAX_CACHE_ENTRIES = 64;
+const MAX_AVAILABILITY_REASON_LENGTH = 256;
 
 export type ExternalCliPreflightInvalidationReason = "launch" | "auth" | "parser" | "permission";
 
@@ -32,6 +33,10 @@ type CachedPreflight = Omit<ExternalCliPreflightResult, "cacheHit">;
 const cache = new Map<string, CachedPreflight>();
 const lookup = new Map<string, string>();
 
+export type ExternalCliBinaryAvailability =
+	| { available: true }
+	| { available: false; unavailableReason: string };
+
 function resolveBinary(command: string, env: NodeJS.ProcessEnv): string {
 	if (path.isAbsolute(command) || command.includes(path.sep)) {
 		const resolved = path.resolve(command);
@@ -50,6 +55,17 @@ function resolveBinary(command: string, env: NodeJS.ProcessEnv): string {
 		}
 	}
 	throw new Error(`External CLI binary '${command}' was not found on PATH.`);
+}
+
+/** Resolve only the configured command; unlike preflight, this never starts a child process. */
+export function resolveExternalCliBinaryAvailability(command: string, env: NodeJS.ProcessEnv): ExternalCliBinaryAvailability {
+	try {
+		resolveBinary(command, env);
+		return { available: true };
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		return { available: false, unavailableReason: reason.slice(0, MAX_AVAILABILITY_REASON_LENGTH) };
+	}
 }
 
 function probeWithTimeout(binaryPath: string, args: readonly string[], env: NodeJS.ProcessEnv, label: string, timeoutMs: number, cwd?: string): string {

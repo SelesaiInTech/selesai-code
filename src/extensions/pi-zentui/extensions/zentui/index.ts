@@ -36,6 +36,7 @@ import {
 	type SelectorBordersComponentConfig,
 	type SeparatorStyle,
 	saveAccentRailEditorStylePatch,
+	saveComponentPreset,
 	saveEditorComponentPatch,
 	saveExtensionStatusColorMode,
 	saveExtensionStatusDefaultPlacement,
@@ -74,6 +75,7 @@ import {
 } from "./interaction-summary";
 import { LiveContextController } from "./live-context";
 import { readPackageVersionResult } from "./package-version";
+import { getComponentPreset } from "./presets";
 import {
 	createProjectRefreshScheduler,
 	type ProjectRefreshRun,
@@ -97,6 +99,7 @@ import {
 	snapshotWorkingLineHighStyle,
 	WorkingLineController,
 } from "./working-line";
+import { WorkingLineExtensionSegments } from "./working-line-extension-segments";
 
 const ZENTUI_EDITOR_FACTORY = Symbol.for("pi-zentui.editor-factory");
 const ZENTUI_EDITOR_BASE_FACTORY = Symbol.for("pi-zentui.editor-base-factory");
@@ -293,6 +296,7 @@ export default function (pi: ExtensionAPI) {
 	const liveContext = new LiveContextController(sessionLifecycle, refresh);
 	const getActiveTheme = () => activeTheme;
 	const getCurrentConfig = () => currentConfig;
+	let invalidateWorkingLinePublisherState = () => {};
 	const workingLine = new WorkingLineController(
 		getCurrentConfig,
 		() => activeTheme as Theme,
@@ -300,7 +304,29 @@ export default function (pi: ExtensionAPI) {
 		Math.random,
 		Date.now,
 		() => interactionMetrics.currentThought(),
+		() => invalidateWorkingLinePublisherState(),
 	);
+	let workingLineSessionReady = false;
+	const workingLineExtensions = new WorkingLineExtensionSegments(
+		pi.events,
+		() =>
+			workingLineSessionReady &&
+			sessionLifecycle.isCurrent() &&
+			currentConfig.components.workingLine.enabled &&
+			activeTuiContext !== undefined &&
+			workingLine.isAvailable(),
+		(segments) => {
+			if (activeTuiContext && sessionLifecycle.isCurrent()) {
+				const applied = workingLine.updateExtensionSegments(segments, activeTuiContext);
+				if (!applied && !workingLine.isAvailable()) {
+					workingLine.invalidateExtensionSegments();
+				}
+				return applied;
+			}
+			return false;
+		},
+	);
+	invalidateWorkingLinePublisherState = () => workingLineExtensions.invalidate();
 	const getContextSnapshot = (ctx: ExtensionContext) => resolveContextUsage(ctx, liveContext.get());
 	const getContextWindow = (ctx: ExtensionContext): number | undefined =>
 		getContextSnapshot(ctx).contextWindow;
@@ -995,7 +1021,11 @@ export default function (pi: ExtensionAPI) {
 					!options.allowStaleZentui
 				) {
 					clearEditorOwnership();
-					return;
+					return {
+						ok: false,
+						reason:
+							"another Zentui instance is currently managing the editor; reload Pi to apply this change",
+					};
 				}
 				const editorMissingOrReplaced = !editorInstalled || !isOwnedEditorFactory(currentFactory);
 				if (editorMissingOrReplaced) return installEditor(ctx);
@@ -1147,6 +1177,12 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		const lifecycleGeneration = sessionLifecycle.start();
+		// A new generation must not expose or route extension segments through the previous
+		// session while asynchronous TUI startup is still pending.
+		workingLineSessionReady = false;
+		workingLineExtensions.invalidate();
+		if (activeTuiContext) workingLine.dispose(activeTuiContext);
+		else workingLine.invalidateExtensionSegments();
 		// Reload synchronously so private ownership uses this session's disk snapshot before
 		// any await or transcript restoration.
 		currentConfig = loadConfig();
@@ -1173,6 +1209,7 @@ export default function (pi: ExtensionAPI) {
 		if (!sessionLifecycle.isCurrent(lifecycleGeneration)) return;
 		liveContext.clear();
 		interactionMetrics.shutdown();
+		workingLineExtensions.invalidate();
 		state.sessionStartEpoch = Date.now();
 		invalidateUsageTotalsCache();
 		resetAgentTimer();
@@ -1181,16 +1218,50 @@ export default function (pi: ExtensionAPI) {
 		repositoryRoots.reset();
 		installUi(ctx);
 		workingLine.startSession(ctx);
+		workingLineSessionReady = true;
 		scheduleEditorReconciliation(ctx);
 	});
 
 	registerZentuiSettingsCommand(pi, {
 		sessionLifecycle,
 		getConfig: getCurrentConfig,
-		setEditorComponent(patch: Partial<EditorComponentConfig>, ctx: ExtensionContext) {
+		applyPreset(id, ctx, options) {
+			const preset = getComponentPreset(id);
+			if (!preset) throw new Error(`Unknown Zentui preset: ${id}`);
+			const previousFooterStyle = effectiveFooterStyle();
+			currentConfig = saveComponentPreset(preset);
+			if (!isTuiContext(ctx)) return { applied: true };
+			activeTheme = ctx.ui.theme;
+			const result = options?.deferEditor ? undefined : reconcileEditor(ctx);
+			if (currentConfig.components.editor.style !== "minimalist") {
+				setMinimalistDecorationActive(false);
+			}
+			reconcileUserMessages();
+			reconcileFooter(ctx);
+			reconcileProjectRefresh(ctx, effectiveFooterStyle() !== previousFooterStyle);
+			reconcileSessionTimer();
+			reconcileAgentTimer();
+			refresh();
+			return {
+				applied: !result || result.ok,
+				reason: result && !result.ok ? result.reason : undefined,
+			};
+		},
+		reconcilePresetEditor(ctx) {
+			if (!isTuiContext(ctx) || !sessionLifecycle.isCurrent()) return { applied: true };
+			const result = reconcileEditor(ctx);
+			reconcileProjectRefresh(ctx);
+			reconcileAgentTimer();
+			refresh();
+			return {
+				applied: !result || result.ok,
+				reason: result && !result.ok ? result.reason : undefined,
+			};
+		},
+		setEditorComponent(patch: Partial<EditorComponentConfig>, ctx: ExtensionContext, options) {
 			currentConfig = saveEditorComponentPatch(patch);
 			let result: EditorChangeResult | undefined;
-			if (patch.enabled !== undefined && isTuiContext(ctx)) {
+			if (patch.enabled !== undefined && isTuiContext(ctx) && !options?.deferEditor) {
 				result = reconcileEditor(ctx);
 			}
 			if (patch.style !== undefined && patch.style !== "minimalist") {
@@ -1241,6 +1312,7 @@ export default function (pi: ExtensionAPI) {
 		},
 		setWorkingLineComponent(patch: WorkingLineComponentPatch, ctx: ExtensionContext) {
 			currentConfig = saveWorkingLineComponentPatch(patch);
+			if (patch.enabled === false) workingLineExtensions.clear();
 			return workingLine.reconcile(ctx);
 		},
 		setSelectorBordersComponent(
@@ -1326,10 +1398,12 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		workingLineSessionReady = false;
 		thinkingExperimental.shutdown();
 		liveContext.clear();
 		interactionMetrics.shutdown();
 		workingLine.dispose(ctx);
+		workingLineExtensions.invalidate();
 		cleanupUi(ctx);
 	});
 

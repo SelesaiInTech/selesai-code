@@ -216,15 +216,9 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const workflowScript = SubagentParams?.properties?.workflowScript;
 		assert.equal(workflowScript?.type, "string");
 		assert.equal(workflowScript?.minLength, 1);
-		assert.match(String(workflowScript?.description ?? ""), /runs\.run/);
-		assert.match(String(workflowScript?.description ?? ""), /runs\.lanes\(\[\{key,stages:/);
-		assert.match(String(workflowScript?.description ?? ""), /first stages run together.*later stages sequence per lane/i);
-		assert.match(String(workflowScript?.description ?? ""), /Each workflow key identifies one result lane.*new stable workflow key.*retained resume pass/i);
-		assert.match(String(workflowScript?.description ?? ""), /await runs\.all\(\[\{key, agent, task\}, \.\.\.\]\)/);
-		assert.match(String(workflowScript?.description ?? ""), /do not read \.output from unawaited runs\.run launches/i);
-		assert.match(String(workflowScript?.description ?? ""), /advanced rolling fanout/);
-		assert.match(String(workflowScript?.description ?? ""), /sequential and parallel phases dynamically/i);
-		assert.match(String(workflowScript?.description ?? ""), /worktree:true/i);
+		assert.match(String(workflowScript?.description ?? ""), /Inline JavaScript statement body/);
+		assert.match(String(workflowScript?.description ?? ""), /top-level await/);
+		assert.match(String(workflowScript?.description ?? ""), /Globals: runs, emit, console/);
 		assert.match(String(workflowScript?.description ?? ""), /no filesystem, shell, Pi tools, or host globals/i);
 		const workflowScriptPath = SubagentParams?.properties?.workflowScriptPath;
 		assert.equal(workflowScriptPath?.type, "string");
@@ -541,6 +535,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 				if (!current.value || typeof current.value !== "object") continue;
 
 				const node = current.value as JsonSchemaNode;
+				// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Inspecting JSON Schema enum representation is the portability contract under test.
+				if (Array.isArray(node.enum) && node.enum.some((value) => typeof value !== "string")) {
+					rejectedPaths.push(`${current.path}.enum`);
+				}
 				if (Array.isArray(node.type)) {
 					rejectedPaths.push(`${current.path}.type`);
 				}
@@ -612,6 +610,13 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		assert.ok(CompileSchema, "TypeBox compiler should exist");
 		const validator = CompileSchema(SubagentParams);
+		// Transport accepts both booleans; semantic boundaries still reject unsupported true.
+		for (const field of ["acceptance", "mission", "thinking"]) {
+			assert.deepEqual(anyOfBranches(SubagentParams.properties[field]).find((branch) => branch.type === "boolean"), { type: "boolean" });
+			assert.equal(validator.Check({ [field]: false }), true);
+			assert.equal(validator.Check({ [field]: true }), true);
+			assert.equal(validator.Check({ [field]: 123 }), false);
+		}
 		const validValues = [
 			{ skill: "review" },
 			{ workflowScript: "return await runs.run(\"one\", {agent: \"reviewer\", task: \"check\"})" },
@@ -632,7 +637,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ output: 123 },
 			{ timeoutMs: 0 },
 			{ maxRuntimeMs: -1 },
-			{ agent: "worker", task: "Fix", acceptance: true },
 			{ config: [] },
 			{ config: null },
 			{ agent: "worker", task: "Fix", toolBudget: { hard: 0 } },

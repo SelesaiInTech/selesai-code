@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import { buildWorkflowChatProgressRows, isSameGitRepository, resolveWorkflowChatProgress } from "../../src/workflows/chat-progress.ts";
 import { renderSubagentResult } from "../../src/tui/render.ts";
 import { bindMissionWorkflowChildAsyncLaunch, createSubagentExecutor, foregroundResultIntercomStatus, missionWorkflowChildStatus, runMissionWorkflowChild, shouldSuppressRoutineResultIntercom } from "../../src/runs/foreground/subagent-executor.ts";
+import { encodeIndexSegment } from "../../src/runs/background/index-segment.ts";
 import { readMissionBinding } from "../../src/missions/lifecycle.ts";
 import { createMission, readMission } from "../../src/missions/store.ts";
 import { DIRS, type Details, type SingleResult, type SubagentState } from "../../src/shared/types.ts";
@@ -110,12 +111,76 @@ describe("workflow chat progress policy", () => {
 });
 
 describe("workflow chat progress rendering", () => {
-	it("emits live-card updates for same-repo watched workflowScript runs", async () => {
+	for (const scenario of ["explicit off", "non-repository auto", "cross-repository auto"] as const) {
+		it(`emits foreground lifecycle updates before settlement with ${scenario}`, async () => {
+			const root = scenario === "non-repository auto"
+				? fs.mkdtempSync(path.join(os.tmpdir(), "pi-workflow-progress-headless-"))
+				: createRepo("pi-workflow-progress-off-");
+			const other = scenario === "cross-repository auto" ? createRepo("pi-workflow-progress-cross-") : undefined;
+			try {
+				const updates: Details[] = [];
+				let settled = false;
+				const result = await createExecutor().execute(
+					"wf-headless",
+					{
+						workflowScript: `return await runs.run("scout", { agent: "missing-agent", task: "scan" });`,
+						async: false,
+						chatProgress: scenario === "explicit off" ? "off" : "auto",
+						...(other ? { cwd: other } : {}),
+					},
+					new AbortController().signal,
+					(update) => {
+						assert.equal(settled, false);
+						updates.push(structuredClone(update.details));
+					},
+					ctx(root),
+				).then((result) => { settled = true; return result; });
+				assert.equal(result.isError, true);
+				assert.ok(updates.every((details) => details.chatProgress?.mode === "off"));
+				const started = updates.find((details) => details.workflowChildren?.children[0]?.state === "running");
+				assert.ok(started, "expected running child inventory before failure");
+				assert.equal(started.mode, "workflow");
+				assert.equal(started.runId, result.details.runId);
+				assert.equal(started.workflowChildren?.parentToolCallId, "wf-headless");
+				assert.equal(started.workflowChildren?.workflowRunId, result.details.runId);
+				assert.equal(started.workflowChildren?.inventoryComplete, false);
+				assert.equal(started.workflow?.trace[0]?.key, "scout");
+				assert.ok(updates.some((details) => details.workflow?.trace.some((entry) => entry.state === "failed")));
+				assert.equal(result.details.workflowChildren?.inventoryComplete, true);
+			} finally {
+				fs.rmSync(root, { recursive: true, force: true });
+				if (other) fs.rmSync(other, { recursive: true, force: true });
+			}
+		});
+	}
+
+	it("emits headless workflow values before returning final output without an update callback requirement", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-workflow-progress-emits-"));
+		try {
+			const updates: Details[] = [];
+			const params = { workflowScript: `emit({ phase: "checking" }); return "done";`, async: false, chatProgress: "off" as const };
+			const result = await createExecutor().execute("wf-emits", params, undefined, (update) => {
+				assert.equal(update.details.workflow?.value, undefined);
+				updates.push(structuredClone(update.details));
+			}, ctx(root));
+			assert.ok(updates.some((details) => details.workflow?.emits.some((value) => (value as { phase?: string }).phase === "checking")));
+			assert.equal(result.details.workflow?.value, "done");
+			assert.equal(result.isError, undefined);
+			const withoutCallback = await createExecutor().execute("wf-no-callback", params, undefined, undefined, ctx(root));
+			assert.equal(withoutCallback.details.workflow?.value, "done");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("emits live-card updates with bounded workflow ids", async () => {
 		const repo = createRepo("pi-workflow-progress-executor-");
+		const toolCallId = `wf-live-${"x".repeat(300)}`;
+		const workflowRunId = encodeIndexSegment(toolCallId);
 		try {
 			const updates: Array<{ details?: Details }> = [];
 			const result = await createExecutor().execute(
-				"wf-live",
+				toolCallId,
 				{ workflowScript: `return await runs.run("scout", { agent: "missing-agent", task: "scan", phase: "Validation", label: "Find renderer seam" });`, async: false },
 				new AbortController().signal,
 				(update) => updates.push(update),
@@ -124,16 +189,19 @@ describe("workflow chat progress rendering", () => {
 			assert.equal(result.isError, true);
 			const liveUpdate = updates.find((update) => update.details?.chatProgress?.mode === "live-card");
 			assert.ok(liveUpdate, "expected a live-card update");
+			assert.equal(liveUpdate.details?.runId, workflowRunId);
+			assert.equal(liveUpdate.details?.workflowChildren?.workflowRunId, workflowRunId);
 			assert.equal(liveUpdate.details?.workflow?.trace[0]?.key, "scout");
 			assert.equal(liveUpdate.details?.workflow?.trace[0]?.phase, "Validation");
 			assert.equal(liveUpdate.details?.workflow?.trace[0]?.label, "Find renderer seam");
 			const ledgerChild = result.details.mission?.workflowChildren[0];
 			assert.equal(ledgerChild?.key, "scout");
-			assert.equal(ledgerChild?.workflowRunId, "wf-live");
+			assert.equal(ledgerChild?.workflowRunId, workflowRunId);
 			assert.equal(ledgerChild?.agent, "missing-agent");
 			assert.equal(ledgerChild?.phase, "Validation");
 			assert.equal(ledgerChild?.status, "failed");
 			assert.equal(ledgerChild?.heartbeat?.status, "failed");
+			assert.equal(result.details.workflowChildren?.workflowRunId, workflowRunId);
 		} finally {
 			fs.rmSync(repo, { recursive: true, force: true });
 		}

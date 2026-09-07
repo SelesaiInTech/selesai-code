@@ -2,6 +2,28 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.17] - 2026-09-07
+
+### Upstream sync: Pi v0.85.1
+
+- Ported the coding-agent source from Pi v0.84.4 to v0.85.1 per file (134 upstream commits):
+  tool `ctx.cwd` handling, proxy/CONNECT tunneling, skills with Bash-only tools, session
+  import/fork/share fixes, EXIF orientation, musl fd/ripgrep downloads, model catalog updates
+  (GPT-6 Astra added, Grok Build 0.1 removed, Qwen3.8 Flash), per-turn thinking effort,
+  prompt-cache TTL, Baseten GLM-5.2 text-only, NO_PROXY matching, compaction abort, signal
+  exit codes, branch summary cap, write-tool byte counts, fullscreen transcript controls,
+  Alt-wheel scroll speed, embedded working indicator, linear transcript search, hover
+  selection, configurable save keybindings, seccomp SIGWINCH, Zed image capability, SDK
+  packaging fix.
+- Bumped `@earendil-works/pi-ai`, `pi-agent-core`, `pi-tui` to 0.85.1.
+- Upgraded bundled extensions: pi-subagents v0.64.0→v0.66.0 (child-session runner, workflow
+  resources, native supervisor/intercom), pi-intercom v0.12.1→v0.13.0 (`/alias`, Windows
+  UTF-16LE launcher), pi-zentui v0.22.3→v0.23.0 (component presets, working-line extension
+  segments, hyperlink preservation), pi-hermes-memory v0.9.7→v0.9.8 (review fallback,
+  BM25 search, retention pruning, recovery snapshots).
+- Re-applied all Selesai deltas: vision caption relay, capability gateway, tokenin catalog,
+  terminal capability settings, `.selesai`/`SELESAI_*` branding, subagents fork APIs.
+
 ## [0.13.16] - 2026-09-06
 
 ### Fixed

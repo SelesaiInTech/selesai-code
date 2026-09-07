@@ -10,15 +10,17 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
+	CustomEditor,
+	InteractiveMode,
 	initTheme,
 	ModelSelectorComponent,
 	SettingsSelectorComponent,
 	UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { Container, type EditorComponent, visibleWidth } from "@earendil-works/pi-tui";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
 	discoverAccentRailLayoutPatchTargetFromEntrypoint,
@@ -108,6 +110,8 @@ type SettingsCommandDeps = Parameters<typeof registerZentuiSettingsCommand>[1];
 const settingsCommandDefaults: SettingsCommandDeps = {
 	sessionLifecycle: inactiveSessionLifecycle,
 	getConfig: () => defaultConfig,
+	applyPreset: () => ({ applied: true }),
+	reconcilePresetEditor: () => ({ applied: true }),
 	setEditorComponent: () => ({ applied: true }),
 	setPolished() {},
 	setPolishedCopyFriendly() {},
@@ -6116,6 +6120,7 @@ describe("Pi docs compliance", () => {
 					) as { handleInput?: (data: string) => void };
 					component.handleInput?.("\x1b[B");
 					component.handleInput?.("\x1b[B");
+					component.handleInput?.("\x1b[B");
 					component.handleInput?.(" ");
 				},
 			},
@@ -6178,6 +6183,7 @@ describe("Pi docs compliance", () => {
 						handleInput?: (data: string) => void;
 					};
 					rendered = component.render?.(80).join("\n") ?? "";
+					component.handleInput?.("\x1b[B");
 					component.handleInput?.("\x1b[B");
 					component.handleInput?.("\x1b[B");
 					component.handleInput?.(" ");
@@ -7242,4 +7248,566 @@ describe("three-state Footer lifecycle", () => {
 		expect(harness.branchSubscriptions).toHaveBeenCalledTimes(2);
 		await emit(handlers, "session_shutdown", ctx);
 	});
+});
+
+describe("component preset lifecycle", () => {
+	type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>;
+	type SettingsComponent = { handleInput(data: string): void; render(width: number): string[] };
+	function presetMenuHost() {
+		initTheme(undefined, false);
+		let focused: unknown;
+		const tui = {
+			requestRender() {},
+			terminal: { rows: 40, columns: 160 },
+			setFocus(component: unknown) {
+				focused = component;
+			},
+		};
+		const native = new CustomEditor(
+			tui as never,
+			{ borderColor: (s: string) => s, selectList: {} } as never,
+			{ matches: () => false } as never,
+		);
+		const host = {
+			editor: native as EditorComponent,
+			defaultEditor: native,
+			editorComponentFactory: undefined as EditorFactory | undefined,
+			editorContainer: new Container(),
+			ui: tui,
+			keybindings: { matches: () => false },
+			disposeActiveSelector() {},
+		};
+		// Exercise Pi's actual custom-panel restoration and editor replacement contracts.
+		const methods = InteractiveMode.prototype as unknown as {
+			showExtensionCustom(this: unknown, factory: unknown): Promise<unknown>;
+			setCustomEditorComponent(this: unknown, factory: EditorFactory | undefined): void;
+		};
+		const setEditorComponent = vi.fn((factory: EditorFactory | undefined) =>
+			methods.setCustomEditorComponent.call(host, factory),
+		);
+		const notify = vi.fn();
+		const custom = vi.fn((factory: unknown) => methods.showExtensionCustom.call(host, factory));
+		let footer: ReturnType<FooterFactory> | undefined;
+		const ctx = makeContext({
+			ui: {
+				notify,
+				custom,
+				setEditorComponent,
+				getEditorComponent: () => host.editorComponentFactory,
+				getEditorText: () => host.editor.getExpandedText?.() ?? host.editor.getText(),
+				setEditorText: (text: string) => host.editor.setText(text),
+				setFooter(next: FooterFactory | undefined) {
+					footer?.dispose?.();
+					footer = next?.(tui, makeTheme(), {
+						onBranchChange: () => () => {},
+						getExtensionStatuses: () => new Map(),
+					});
+				},
+			},
+		});
+		return {
+			ctx,
+			host,
+			custom,
+			notify,
+			setEditorComponent,
+			focused: () => focused,
+			footer: () => footer,
+		};
+	}
+
+	it.each(["native", "predecessor", "owned"])(
+		"keeps the preset menu open over %s and installs only the final editor after Pi restores the draft",
+		async (initial) => {
+			const configPath = join(isolatedAgentDir.path, "zentui.json");
+			writeFileSync(
+				configPath,
+				JSON.stringify({
+					projectRefreshIntervalMs: 0,
+					components: { editor: { enabled: initial === "owned" } },
+				}),
+			);
+			const commands = new Map<string, unknown>();
+			const handlers = loadExtension({ commands });
+			const h = presetMenuHost();
+			const predecessor: EditorFactory = (tui, theme, keys) => new CustomEditor(tui, theme, keys);
+			if (initial === "predecessor") h.ctx.ui.setEditorComponent(predecessor);
+			try {
+				await emit(handlers, "session_start", h.ctx);
+				const previousFactory = h.ctx.ui.getEditorComponent();
+				const previousEditor = h.host.editor;
+				const draft = Array.from({ length: 100 }, (_, i) => `unsent draft line ${i}`).join("\n");
+				h.host.editor.handleInput?.(`\x1b[200~${draft}\x1b[201~`);
+				expect(h.host.editor.getText()).toContain("[paste #");
+				expect(h.ctx.ui.getEditorText()).toBe(draft);
+				h.setEditorComponent.mockClear();
+				const command = commands.get("zentui") as {
+					handler(args: string, ctx: unknown): Promise<void>;
+				};
+				let finished = false;
+				const pending = command.handler("", h.ctx).then(() => {
+					finished = true;
+				});
+				await Promise.resolve();
+				const menu = h.focused() as SettingsComponent;
+				const ids = ["opencode", "opencode-copy-friendly", "rail", "minimalist"];
+				for (const id of ids) {
+					menu.handleInput("\r");
+					expect(JSON.parse(readFileSync(configPath, "utf8")).components.editor.style).toBe(
+						id === "rail" ? "accent-rail" : id,
+					);
+					expect(h.focused()).toBe(menu);
+					expect(h.host.editorContainer.children).toEqual([menu]);
+					expect(finished).toBe(false);
+					expect(h.ctx.ui.getEditorComponent()).toBe(previousFactory);
+					expect(h.host.editor).toBe(previousEditor);
+					expect(h.setEditorComponent).not.toHaveBeenCalled();
+				}
+				expect(h.footer()?.render(100)).toEqual([]);
+				expect(UserMessageComponent.prototype.render).toBe(originalUserMessageRender);
+				// Continue adjusting the selected preset without leaving the same panel.
+				menu.handleInput("\t");
+				menu.handleInput("\x1b[B");
+				menu.handleInput("\r"); // Minimalist -> Opencode; final config must win.
+				menu.handleInput("\x1b[Z");
+				expect(menu.render(160).join("\n")).toContain("Custom");
+				menu.handleInput("\x1b");
+				await pending;
+				expect(h.custom).toHaveBeenCalledTimes(1);
+				expect(h.setEditorComponent).toHaveBeenCalledTimes(initial === "owned" ? 0 : 1);
+				expect(h.host.editor).toBeInstanceOf(
+					initial === "predecessor" ? WrappedPolishedEditorProduction : PolishedEditorProduction,
+				);
+				expect(h.ctx.ui.getEditorText()).toBe(draft);
+				expect(h.focused()).toBe(h.host.editor);
+				expect(h.host.editor.render(160).join("\n")).toContain("│");
+				expect(h.host.editor.render(160).join("\n")).not.toContain("╭");
+				expect(h.notify.mock.calls.every(([, severity]) => severity === "info")).toBe(true);
+				await command.handler("editor disable", h.ctx);
+				expect(h.ctx.ui.getEditorComponent()).toBe(
+					initial === "predecessor" ? predecessor : undefined,
+				);
+				expect(h.ctx.ui.getEditorText()).toBe(draft);
+			} finally {
+				await emit(handlers, "session_shutdown", h.ctx);
+			}
+		},
+	);
+
+	it.each(["transfer-failure", "shutdown", "replacement-session", "stale-owner"])(
+		"safely handles %s before a pending preset editor is installed",
+		async (failure) => {
+			const configPath = join(isolatedAgentDir.path, "zentui.json");
+			writeFileSync(
+				configPath,
+				JSON.stringify({ projectRefreshIntervalMs: 0, components: { editor: { enabled: false } } }),
+			);
+			const commands = new Map<string, unknown>();
+			const handlers = loadExtension({ commands });
+			const h = presetMenuHost();
+			try {
+				await emit(handlers, "session_start", h.ctx);
+				h.ctx.ui.setEditorText("unsent draft");
+				const command = commands.get("zentui") as {
+					handler(args: string, ctx: unknown): Promise<void>;
+				};
+				const pending = command.handler("", h.ctx);
+				await Promise.resolve();
+				const menu = h.focused() as SettingsComponent;
+				menu.handleInput("\r");
+				menu.handleInput("\r");
+				expect(h.setEditorComponent).not.toHaveBeenCalled();
+				if (failure === "transfer-failure")
+					h.ctx.ui.getEditorText = () => {
+						throw new Error("snapshot unavailable");
+					};
+				if (failure === "shutdown" || failure === "replacement-session")
+					await emit(handlers, "session_shutdown", h.ctx);
+				if (failure === "replacement-session") await emit(handlers, "session_start", h.ctx);
+				if (failure === "stale-owner") {
+					const staleFactory = Object.assign(() => h.host.defaultEditor, {
+						[Symbol.for("pi-zentui.editor-factory")]: true,
+					});
+					h.ctx.ui.setEditorComponent(staleFactory);
+				}
+				h.setEditorComponent.mockClear();
+				h.notify.mockClear();
+				menu.handleInput("\x1b");
+				await pending;
+				expect(h.setEditorComponent).not.toHaveBeenCalled();
+				expect(h.host.editor.getText()).toBe("unsent draft");
+				if (failure === "transfer-failure" || failure === "stale-owner") {
+					expect(h.notify).toHaveBeenCalledWith(
+						expect.stringMatching(/Preset saved: editor.*reload Pi/),
+						"warning",
+					);
+				} else expect(h.notify).not.toHaveBeenCalled();
+				expect(JSON.parse(readFileSync(configPath, "utf8")).components.editor.style).toBe(
+					"opencode-copy-friendly",
+				);
+			} finally {
+				await emit(handlers, "session_shutdown", h.ctx);
+			}
+		},
+	);
+	it("honors an editor disable after preset selection without briefly installing an editor", async () => {
+		const configPath = join(isolatedAgentDir.path, "zentui.json");
+		writeFileSync(
+			configPath,
+			JSON.stringify({ projectRefreshIntervalMs: 0, components: { editor: { enabled: false } } }),
+		);
+		const commands = new Map<string, unknown>();
+		const handlers = loadExtension({ commands });
+		const h = presetMenuHost();
+		try {
+			await emit(handlers, "session_start", h.ctx);
+			h.ctx.ui.setEditorText("unsent draft");
+			const command = commands.get("zentui") as {
+				handler(args: string, ctx: unknown): Promise<void>;
+			};
+			const pending = command.handler("", h.ctx);
+			await Promise.resolve();
+			const menu = h.focused() as SettingsComponent;
+			menu.handleInput("\r");
+			menu.handleInput("\t");
+			menu.handleInput("\r");
+			await pending;
+			expect(h.setEditorComponent).not.toHaveBeenCalled();
+			expect(h.ctx.ui.getEditorComponent()).toBeUndefined();
+			expect(h.ctx.ui.getEditorText()).toBe("unsent draft");
+			expect(JSON.parse(readFileSync(configPath, "utf8")).components.editor.enabled).toBe(false);
+		} finally {
+			await emit(handlers, "session_shutdown", h.ctx);
+		}
+	});
+
+	it("keeps settings usable after a failed subsequent save and installs the last successful selection on exit", async () => {
+		const configPath = join(isolatedAgentDir.path, "zentui.json");
+		writeFileSync(
+			configPath,
+			JSON.stringify({ projectRefreshIntervalMs: 0, components: { editor: { enabled: false } } }),
+		);
+		const commands = new Map<string, unknown>();
+		const handlers = loadExtension({ commands });
+		const h = presetMenuHost();
+		try {
+			await emit(handlers, "session_start", h.ctx);
+			const command = commands.get("zentui") as {
+				handler(args: string, ctx: unknown): Promise<void>;
+			};
+			const pending = command.handler("", h.ctx);
+			await Promise.resolve();
+			const menu = h.focused() as SettingsComponent;
+			menu.handleInput("\r");
+			writeFileSync(configPath, "invalid JSON");
+			menu.handleInput("\r");
+			expect(h.focused()).toBe(menu);
+			expect(h.setEditorComponent).not.toHaveBeenCalled();
+			expect(h.notify).toHaveBeenLastCalledWith(
+				expect.stringContaining("Could not update Zentui settings"),
+				"error",
+			);
+			expect(stripPromptMarks(menu.render(160).join("\n"))).toMatch(/Preset\s+Opencode\s*\n/);
+			expect(menu.render(160).join("\n")).not.toContain("Opencode (copy-friendly)");
+			menu.handleInput("\x1b");
+			await pending;
+			expect(h.setEditorComponent).toHaveBeenCalledTimes(1);
+			expect(h.host.editor).toBeInstanceOf(PolishedEditorProduction);
+			expect(readFileSync(configPath, "utf8")).toBe("invalid JSON");
+		} finally {
+			await emit(handlers, "session_shutdown", h.ctx);
+		}
+	});
+
+	it("enables an editor through a preset while preserving its predecessor and draft", async () => {
+		writeFileSync(
+			join(isolatedAgentDir.path, "zentui.json"),
+			JSON.stringify({ projectRefreshIntervalMs: 0, components: { editor: { enabled: false } } }),
+		);
+		const commands = new Map<string, unknown>();
+		const handlers = loadExtension({ commands });
+		const ctx = makeContext({ ui: { notify() {} } });
+		const predecessor = () => ({ render: () => ["predecessor"], invalidate() {} });
+		ctx.ui.setEditorComponent(predecessor);
+		ctx.ui.setEditorText("draft before enabling");
+		try {
+			await emit(handlers, "session_start", ctx);
+			expect(ctx.ui.getEditorComponent()).toBe(predecessor);
+			const command = commands.get("zentui") as {
+				handler(args: string, ctx: unknown): Promise<void>;
+			};
+			await command.handler("preset rail", ctx);
+			expect(ctx.ui.getEditorComponent()).not.toBe(predecessor);
+			expect(ctx.ui.getEditorText()).toBe("draft before enabling");
+			await command.handler("editor disable", ctx);
+			expect(ctx.ui.getEditorComponent()).toBe(predecessor);
+			expect(ctx.ui.getEditorText()).toBe("draft before enabling");
+		} finally {
+			await emit(handlers, "session_shutdown", ctx);
+		}
+	});
+
+	it("reports blocked editor transfer while persisting the entire preset and reconciling independent surfaces", async () => {
+		const configPath = join(isolatedAgentDir.path, "zentui.json");
+		writeFileSync(
+			configPath,
+			JSON.stringify({ projectRefreshIntervalMs: 0, components: { editor: { enabled: false } } }),
+		);
+		const commands = new Map<string, unknown>();
+		const handlers = loadExtension({ commands });
+		const notify = vi.fn();
+		let footer: ReturnType<FooterFactory> | undefined;
+		const ctx = makeContext({
+			ui: {
+				notify,
+				getEditorText() {
+					throw new Error("transfer blocked");
+				},
+				setFooter(next: FooterFactory | undefined) {
+					footer?.dispose?.();
+					footer = next?.({ requestRender() {} }, makeTheme(), {
+						onBranchChange: () => () => {},
+						getExtensionStatuses: () => new Map(),
+					});
+				},
+			},
+		});
+		try {
+			await emit(handlers, "session_start", ctx);
+			await (
+				commands.get("zentui") as { handler(args: string, ctx: unknown): Promise<void> }
+			).handler("preset minimalist", ctx);
+			expect(ctx.ui.getEditorComponent()).toBeUndefined();
+			expect(footer?.render(80)).toEqual([]);
+			expect(UserMessageComponent.prototype.render).toBe(originalUserMessageRender);
+			expect(JSON.parse(readFileSync(configPath, "utf8")).components).toMatchObject({
+				editor: { enabled: true, style: "minimalist" },
+				footer: { style: "hidden" },
+				userMessages: { enabled: false },
+			});
+			expect(notify).toHaveBeenCalledWith(
+				expect.stringMatching(/Preset saved: Minimalist.*reload Pi/),
+				"warning",
+			);
+		} finally {
+			await emit(handlers, "session_shutdown", ctx);
+		}
+	});
+	it("warns when a preset retains a prior-instance editor after failed startup transfer", async () => {
+		const configPath = join(isolatedAgentDir.path, "zentui.json");
+		writeFileSync(configPath, JSON.stringify({ projectRefreshIntervalMs: 0 }));
+		const firstHandlers = loadExtension();
+		const commands = new Map<string, unknown>();
+		const reloadedHandlers = loadExtension({ commands });
+		const notify = vi.fn();
+		let transferBlocked = false;
+		let editorFactory: unknown;
+		let editorText = "unsent draft";
+		let footer: ReturnType<FooterFactory> | undefined;
+		const getEditorText = vi.fn(() => {
+			if (transferBlocked) throw new Error("expanded text unavailable");
+			return editorText;
+		});
+		const setEditorText = vi.fn((text: string) => {
+			editorText = text;
+		});
+		const setEditorComponent = vi.fn((factory: unknown) => {
+			editorFactory = factory;
+		});
+		const ctx = makeContext({
+			ui: {
+				notify,
+				getEditorText,
+				setEditorText,
+				setEditorComponent,
+				getEditorComponent: () => editorFactory,
+				setFooter(next: FooterFactory | undefined) {
+					footer?.dispose?.();
+					footer = next?.({ requestRender() {} }, makeTheme(), {
+						onBranchChange: () => () => {},
+						getExtensionStatuses: () => new Map(),
+					});
+				},
+			},
+		});
+		try {
+			await emit(firstHandlers, "session_start", ctx);
+			const firstFactory = editorFactory;
+			expect(firstFactory).toBeTypeOf("function");
+			transferBlocked = true;
+			getEditorText.mockClear();
+			setEditorText.mockClear();
+			setEditorComponent.mockClear();
+			await emit(reloadedHandlers, "session_start", ctx);
+			expect(getEditorText).toHaveBeenCalled();
+			expect(editorFactory).toBe(firstFactory);
+			notify.mockClear();
+
+			await (
+				commands.get("zentui") as { handler(args: string, ctx: unknown): Promise<void> }
+			).handler("preset minimalist", ctx);
+
+			expect(editorFactory).toBe(firstFactory);
+			expect(editorText).toBe("unsent draft");
+			expect(setEditorComponent).not.toHaveBeenCalled();
+			expect(setEditorText).not.toHaveBeenCalled();
+			expect(footer?.render(80)).toEqual([]);
+			expect(UserMessageComponent.prototype.render).toBe(originalUserMessageRender);
+			expect(JSON.parse(readFileSync(configPath, "utf8")).components).toMatchObject({
+				editor: { enabled: true, style: "minimalist" },
+				footer: { style: "hidden" },
+				userMessages: { enabled: false },
+			});
+			expect(notify).toHaveBeenCalledWith(
+				expect.stringMatching(/Preset saved: Minimalist.*another Zentui instance.*reload Pi/),
+				"warning",
+			);
+		} finally {
+			transferBlocked = false;
+			await emit(reloadedHandlers, "session_shutdown", ctx);
+			await emit(firstHandlers, "session_shutdown", ctx);
+		}
+	});
+
+	it("transitions all four presets without reacquiring selectors, Working line, or Thinking", async () => {
+		initTheme(undefined, false);
+		vi.useFakeTimers();
+		const configPath = join(isolatedAgentDir.path, "zentui.json");
+		writeFileSync(
+			configPath,
+			JSON.stringify({
+				projectRefreshIntervalMs: 0,
+				components: {
+					footer: { styles: { starship: { format: "$time" } } },
+					workingLine: { enabled: true },
+				},
+			}),
+		);
+		const commands = new Map<string, unknown>();
+		const handlers = loadExtension({ commands });
+		let footer: ReturnType<FooterFactory> | undefined;
+		const branchCleanup = vi.fn();
+		const subscribe = vi.fn(() => branchCleanup);
+		const render = vi.fn();
+		const setWorkingMessage = vi.fn();
+		const setWorkingIndicator = vi.fn();
+		const ctx = makeContext({
+			ui: {
+				notify() {},
+				setWorkingMessage,
+				setWorkingIndicator,
+				setFooter(next: FooterFactory | undefined) {
+					footer?.dispose?.();
+					footer = next?.({ requestRender: render }, makeTheme(), {
+						onBranchChange: subscribe,
+						getExtensionStatuses: () => new Map(),
+					});
+				},
+			},
+		});
+		try {
+			await emit(handlers, "session_start", ctx);
+			ctx.ui.setEditorText("unsent draft");
+			const editor = ctx.ui.getEditorComponent();
+			const nativeThinking = AssistantMessageComponent.prototype.updateContent;
+			const displacedSelector = () => ["other selector"];
+			ModelSelectorComponent.prototype.render = displacedSelector;
+			const workingMessageCalls = setWorkingMessage.mock.calls.length;
+			const workingIndicatorCalls = setWorkingIndicator.mock.calls.length;
+			const command = commands.get("zentui") as {
+				handler(args: string, ctx: unknown): Promise<void>;
+			};
+			for (const id of ["opencode-copy-friendly", "rail", "minimalist", "opencode"]) {
+				await command.handler(`preset ${id}`, ctx);
+				expect(ctx.ui.getEditorComponent()).toBe(editor);
+				expect(ctx.ui.getEditorText()).toBe("unsent draft");
+				expect(ModelSelectorComponent.prototype.render).toBe(displacedSelector);
+				expect(AssistantMessageComponent.prototype.updateContent).toBe(nativeThinking);
+				expect(setWorkingMessage).toHaveBeenCalledTimes(workingMessageCalls);
+				expect(setWorkingIndicator).toHaveBeenCalledTimes(workingIndicatorCalls);
+				if (id === "minimalist") {
+					expect(footer?.render(100)).toEqual([]);
+					expect(UserMessageComponent.prototype.render).toBe(originalUserMessageRender);
+					expect(branchCleanup).toHaveBeenCalledTimes(1);
+					const before = render.mock.calls.length;
+					vi.advanceTimersByTime(1000);
+					expect(render).toHaveBeenCalledTimes(before);
+				} else {
+					expect(footer?.render(100).length).toBeGreaterThan(0);
+					expect(UserMessageComponent.prototype.render).not.toBe(originalUserMessageRender);
+				}
+			}
+			expect(subscribe).toHaveBeenCalledTimes(2);
+			const before = render.mock.calls.length;
+			vi.advanceTimersByTime(1000);
+			expect(render.mock.calls.length).toBeGreaterThan(before);
+		} finally {
+			await emit(handlers, "session_shutdown", ctx);
+			vi.useRealTimers();
+		}
+	});
+
+	it("preserves active config and all surfaces when a preset save fails", async () => {
+		const configPath = join(isolatedAgentDir.path, "zentui.json");
+		writeFileSync(configPath, JSON.stringify({ projectRefreshIntervalMs: 0 }));
+		const commands = new Map<string, unknown>();
+		const handlers = loadExtension({ commands });
+		const notify = vi.fn();
+		const setFooter = vi.fn();
+		const ctx = makeContext({ ui: { notify, setFooter } });
+		try {
+			await emit(handlers, "session_start", ctx);
+			const editor = ctx.ui.getEditorComponent();
+			const messages = UserMessageComponent.prototype.render;
+			const calls = setFooter.mock.calls.length;
+			writeFileSync(configPath, "{ corrupt");
+			await (
+				commands.get("zentui") as { handler(args: string, ctx: unknown): Promise<void> }
+			).handler("preset minimalist", ctx);
+			expect(ctx.ui.getEditorComponent()).toBe(editor);
+			expect(UserMessageComponent.prototype.render).toBe(messages);
+			expect(setFooter).toHaveBeenCalledTimes(calls);
+			expect(notify).toHaveBeenCalledWith(expect.stringContaining("Refusing to save"), "error");
+			expect(readFileSync(configPath, "utf8")).toBe("{ corrupt");
+		} finally {
+			await emit(handlers, "session_shutdown", ctx);
+		}
+	});
+
+	it.each(["rpc", "print", "json"])(
+		"persists in %s without acquiring TUI surfaces",
+		async (mode) => {
+			const commands = new Map<string, unknown>();
+			const handlers = loadExtension({ commands });
+			const setFooter = vi.fn();
+			const setEditorComponent = vi.fn();
+			const ctx = makeContext({
+				mode,
+				hasUI: mode === "rpc",
+				ui: { notify() {}, setFooter, setEditorComponent },
+			});
+			try {
+				await emit(handlers, "session_start", ctx);
+				const messages = UserMessageComponent.prototype.render;
+				const selectors = ModelSelectorComponent.prototype.render;
+				await (
+					commands.get("zentui") as { handler(args: string, ctx: unknown): Promise<void> }
+				).handler("preset minimalist", ctx);
+				expect(
+					JSON.parse(readFileSync(join(isolatedAgentDir.path, "zentui.json"), "utf8")).components,
+				).toEqual({
+					editor: { enabled: true, style: "minimalist" },
+					footer: { style: "hidden" },
+					userMessages: { enabled: false, style: "framed" },
+					workingLine: { enabled: false },
+				});
+				expect(setFooter).not.toHaveBeenCalled();
+				expect(setEditorComponent).not.toHaveBeenCalled();
+				expect(UserMessageComponent.prototype.render).toBe(messages);
+				expect(ModelSelectorComponent.prototype.render).toBe(selectors);
+			} finally {
+				await emit(handlers, "session_shutdown", ctx);
+			}
+		},
+	);
 });

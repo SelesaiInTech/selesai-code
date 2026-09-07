@@ -15,6 +15,7 @@ import {
   DEFAULT_OVERFLOW_GRACE_MS,
   DEFAULT_FAILURE_INJECTION_MAX_AGE_DAYS,
   DEFAULT_FAILURE_INJECTION_MAX_ENTRIES,
+  DEFAULT_SESSION_RETENTION_DAYS,
 } from "./constants.js";
 import { AGENT_ROOT, normalizeConfiguredMemoryDir, normalizeProjectsMemoryDir } from "./paths.js";
 
@@ -66,6 +67,8 @@ const DEFAULT_CONFIG: MemoryConfig = {
   standingInstructionsEnabled: true,
   projectsMemoryDir: DEFAULT_PROJECTS_MEMORY_DIR,
   sessionSearch: { variant: "legacy" },
+  quickCheckOnOpen: true,
+  sessionRetentionDays: DEFAULT_SESSION_RETENTION_DAYS,
 };
 
 export const DEFAULT_CONFIG_PATH = path.join(
@@ -136,6 +139,12 @@ export function loadConfig(configPath = DEFAULT_CONFIG_PATH): MemoryConfig {
       if (typeof parsed.failureInjectionMaxAgeDays === "number") config.failureInjectionMaxAgeDays = parsed.failureInjectionMaxAgeDays;
       if (typeof parsed.failureInjectionMaxEntries === "number") config.failureInjectionMaxEntries = parsed.failureInjectionMaxEntries;
       if (typeof parsed.nudgeToolCalls === "number") config.nudgeToolCalls = parsed.nudgeToolCalls;
+      // Accept any finite number >= 0 so a user can both opt in (positive value)
+      // and explicitly disable retention with 0. Invalid/negative values are
+      // ignored, keeping the current (default) semantics.
+      if (typeof parsed.sessionRetentionDays === "number" && Number.isFinite(parsed.sessionRetentionDays) && parsed.sessionRetentionDays >= 0) {
+        config.sessionRetentionDays = parsed.sessionRetentionDays;
+      }
       if (typeof parsed.standingInstructionsEnabled === "boolean") config.standingInstructionsEnabled = parsed.standingInstructionsEnabled;
       if (typeof parsed.projectCharLimit === "number") config.projectCharLimit = parsed.projectCharLimit;
       if (typeof parsed.memoryDir === "string") {
@@ -153,9 +162,32 @@ export function loadConfig(configPath = DEFAULT_CONFIG_PATH): MemoryConfig {
       ) {
         config.sessionSearch = { variant: parsed.sessionSearch.variant };
       }
+      if (typeof parsed.quickCheckOnOpen === "boolean") config.quickCheckOnOpen = parsed.quickCheckOnOpen;
       if (typeof parsed.llmModelOverride === "string") {
         const trimmed = parsed.llmModelOverride.trim();
         if (trimmed.length > 0) config.llmModelOverride = trimmed;
+      }
+      // Support array form for primary override too (e.g. llmModelOverride: ["a/b","c/d"]) — first entry is primary, rest are fallbacks
+      if (Array.isArray(parsed.llmModelOverride) && parsed.llmModelOverride.every((v: unknown) => typeof v === "string")) {
+        const cleaned = (parsed.llmModelOverride as string[]).map((s) => s.trim()).filter(Boolean);
+        if (cleaned.length > 0) {
+          config.llmModelOverride = cleaned[0];
+          const fallbacks = cleaned.slice(1);
+          if (fallbacks.length > 0) config.llmFallbackModels = fallbacks;
+        }
+      }
+      if (isStringArray(parsed.llmFallbackModels)) {
+        const cleaned = (parsed.llmFallbackModels as string[]).map((s) => s.trim()).filter(Boolean);
+        if (cleaned.length > 0) config.llmFallbackModels = [...new Set([...(config.llmFallbackModels ?? []), ...cleaned])];
+      }
+      // Backward-compat alias: llmModelFallbacks / fallbackModels
+      if (isStringArray((parsed as Record<string, unknown>).llmModelFallbacks)) {
+        const cleaned = ((parsed as Record<string, unknown>).llmModelFallbacks as string[]).map((s: string) => s.trim()).filter(Boolean);
+        if (cleaned.length > 0) config.llmFallbackModels = [...new Set([...(config.llmFallbackModels ?? []), ...cleaned])];
+      }
+      if (isStringArray((parsed as Record<string, unknown>).fallbackModels)) {
+        const cleaned = ((parsed as Record<string, unknown>).fallbackModels as string[]).map((s: string) => s.trim()).filter(Boolean);
+        if (cleaned.length > 0) config.llmFallbackModels = [...new Set([...(config.llmFallbackModels ?? []), ...cleaned])];
       }
       if (isThinkingLevel(parsed.llmThinkingOverride)) config.llmThinkingOverride = parsed.llmThinkingOverride;
       if (isStringArray(parsed.childExtensionPaths)) {

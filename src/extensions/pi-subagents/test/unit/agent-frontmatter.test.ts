@@ -9,7 +9,8 @@ import { serializeAgent } from "../../src/agents/agent-serializer.ts";
 import { parseChain, serializeChain } from "../../src/agents/chain-serializer.ts";
 import { discoverAgents, discoverAgentsAll, inspectAgentDefinitionDirectory, type AgentConfig } from "../../src/agents/agents.ts";
 import { parseFrontmatter } from "../../src/agents/frontmatter.ts";
-import { buildPiArgs } from "../../src/runs/shared/pi-args.ts";
+import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
+import { applyThinkingSuffix } from "../../src/runs/shared/child-tool-plan.ts";
 import { THINKING_LEVELS } from "../../src/shared/model-info.ts";
 
 const tempDirs: string[] = [];
@@ -381,6 +382,31 @@ body`);
 		const worker = discoverAgents(project, "both").agents.find((agent) => agent.name === "worker")!;
 		assert.deepEqual(worker.skillPath, ["./skills", "../shared-skills"]);
 		assert.match(serializeAgent(worker), /^skillPath: \.\/skills, \.\.\/shared-skills$/m);
+	}));
+});
+
+describe("agent advertise frontmatter", () => {
+	it("parses and serializes explicit prompt advertisement", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-advertised-agent-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".selesai", "agents", "worker.md"), `---
+name: worker
+description: Worker
+advertise: true
+---
+body`);
+
+		const worker = discoverAgents(project, "both").agents.find((agent) => agent.name === "worker")!;
+		assert.equal(worker.advertise, true);
+		assert.match(serializeAgent(worker), /^advertise: true$/m);
+	}));
+
+	it("rejects non-boolean advertise values", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-advertise-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".selesai", "agents", "worker.md"), "---\nname: worker\ndescription: Worker\nadvertise: yes\n---\nbody");
+
+		assert.match(discoverAgents(project, "project").agentDiagnostics?.[0]?.error ?? "", /invalid advertise frontmatter; expected true or false/);
 	}));
 });
 
@@ -1037,7 +1063,7 @@ Review nested project work.
 		assert.equal(agent.filePath, path.join(packageRoot, "agents", "reviewer.md"));
 	}));
 
-	it("keeps nearest project root discovery by default when a nested .selesai exists", () => withTempHome(() => {
+	it("keeps nearest project root discovery by default when a nested .pi exists", () => withTempHome(() => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-nearest-root-default-"));
 		tempDirs.push(dir);
 		const nested = path.join(dir, "packages", "app", "src");
@@ -1103,7 +1129,7 @@ Plan outer project work.
 		assert.equal(reviewer?.override?.path, path.join(dir, ".selesai", "settings.json"));
 	}));
 
-	it("keeps git-root discovery stable when a nested linked worktree creates incidental .selesai state", () => withTempHome(() => {
+	it("keeps git-root discovery stable when a nested linked worktree creates incidental .pi state", () => withTempHome(() => {
 		const { repo, worktree } = createNestedLinkedWorktree();
 		const { packageAgentName, packageAgentPath, settingsPath } = writeLinkedWorktreePackage(repo);
 
@@ -1514,19 +1540,19 @@ Do work
 			assert.ok(agent);
 			assert.equal(agent.thinking, false);
 
-			const { args } = buildPiArgs({
-				baseArgs: ["-p"],
-				task: "hello",
+			const { session } = buildInProcessChildLaunch({
+				host: "parent",
+				cwd: dir,
 				sessionEnabled: false,
-				model: agent.model,
-				thinking: agent.thinking,
+				model: applyThinkingSuffix(agent.model, agent.thinking),
 				inheritProjectContext: agent.inheritProjectContext,
+				inheritGlobalContext: agent.inheritGlobalContext,
 				inheritSkills: agent.inheritSkills,
+				childAgentName: agent.name,
+				childIndex: 0,
 			});
 
-			assert.ok(args.includes("--model"));
-			assert.ok(args.includes("glm-5.2-short-fast"));
-			assert.ok(!args.some((arg) => arg.includes(":false")));
+			assert.equal(session.model, "glm-5.2-short-fast");
 		}
 	});
 
@@ -1769,26 +1795,22 @@ Do work
 	});
 
 	it("adds the fast extension only for allowlisted native models", () => {
-		const allowed = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "hello",
+		const launch = {
+			host: "parent" as const,
+			cwd: process.cwd(),
 			sessionEnabled: false,
-			model: "openai-codex/gpt-5.6-luna:low",
-			fast: true,
 			inheritProjectContext: false,
+			inheritGlobalContext: false,
 			inheritSkills: false,
-		});
+			childAgentName: "worker",
+			childIndex: 0,
+			fast: true,
+		};
+		const allowed = buildInProcessChildLaunch({ ...launch, model: "openai-codex/gpt-5.6-luna:low" });
 
-		assert.ok(allowed.args.some((arg) => arg.endsWith("fast-mode-extension.ts")));
-		assert.throws(() => buildPiArgs({
-			baseArgs: ["-p"],
-			task: "hello",
-			sessionEnabled: false,
-			model: "anthropic/claude-sonnet-4",
-			fast: true,
-			inheritProjectContext: false,
-			inheritSkills: false,
-		}), /fast mode supports only/);
+		assert.ok(allowed.toolPlan.runtimeExtensions.some((extensionPath) => extensionPath.endsWith("fast-mode-extension.ts")));
+		assert.deepEqual(allowed.session.hooks.map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fast-mode"]);
+		assert.throws(() => buildInProcessChildLaunch({ ...launch, model: "anthropic/claude-sonnet-4" }), /fast mode supports only/);
 	});
 });
 
@@ -1865,7 +1887,7 @@ Do work
 		}
 	});
 
-	it("worker and delegate include the child-facing supervisor tool", () => {
+	it("bundled standard agents keep bounded tool allowlists", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-supervisor-tool-"));
 		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-supervisor-tool-home-"));
 		tempDirs.push(dir);
@@ -1877,11 +1899,28 @@ Do work
 			process.env.HOME = homeDir;
 			process.env.USERPROFILE = homeDir;
 			const agents = discoverAgentsAll(dir).builtin;
-			for (const name of ["worker", "delegate"]) {
+			const expectedTools = {
+				worker: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+				delegate: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+				reviewer: ["read", "grep", "find", "ls", "contact_supervisor"],
+				scout: ["read", "grep", "find", "ls", "bash", "write", "contact_supervisor"],
+				researcher: ["read", "write", "web_search", "fetch_content", "get_search_content", "source_check"],
+			};
+			for (const [name, tools] of Object.entries(expectedTools)) {
 				const agent = agents.find((candidate) => candidate.name === name);
 				assert.ok(agent, `${name} builtin should be discovered`);
-				assert.deepEqual(agent?.tools, ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"]);
+				assert.deepEqual(agent?.tools, tools);
 			}
+
+			const researcherPrompt = agents.find((candidate) => candidate.name === "researcher")?.systemPrompt ?? "";
+			assert.match(researcherPrompt, /search-result summaries as discovery aids, not final evidence/);
+			assert.match(researcherPrompt, /source_check.*decision-critical or disputed claims/);
+			assert.match(researcherPrompt, /direct evidence, source interpretation, and researcher inference distinctly/);
+			assert.match(researcherPrompt, /Record contradictions.*Record missing evidence/);
+			assert.match(researcherPrompt, /Never invent dates, quotations, citations, or unsupported precision/);
+			assert.match(researcherPrompt, /`source_check` must be registered by the loaded provider before launch/);
+			assert.match(researcherPrompt, /If a registered `source_check` call fails, continue/);
+			assert.match(researcherPrompt, /\*\*Support:\*\* direct evidence \| interpretation\. \*\*Confidence:\*\* high \| medium \| low/);
 		} finally {
 			if (previousHome === undefined) delete process.env.HOME;
 			else process.env.HOME = previousHome;

@@ -53,8 +53,15 @@ import {
 	type WorkingLineSpinner,
 	type WorkingLineTextAnimation,
 } from "./config";
+import { prepareEditorTextForCustomUi } from "./editor-transfer";
 import { sanitizeExtensionStatusText } from "./extension-status";
 import { isIconMode } from "./icons";
+import {
+	componentPresets,
+	getComponentPreset,
+	matchingComponentPreset,
+	type PresetId,
+} from "./presets";
 import type { SessionLifecycle } from "./session-lifecycle";
 import {
 	renderEditorSettingsPreview,
@@ -213,7 +220,17 @@ function experimentalThinkingCapability(
 type SettingsCommandDeps = {
 	sessionLifecycle: SessionLifecycle;
 	getConfig: () => PolishedTuiConfig;
-	setEditorComponent: (patch: EditorPatch, ctx: ExtensionContext) => ApplyResult;
+	applyPreset: (
+		id: PresetId,
+		ctx: ExtensionContext,
+		options?: { deferEditor?: boolean },
+	) => ApplyResult;
+	reconcilePresetEditor: (ctx: ExtensionContext) => ApplyResult;
+	setEditorComponent: (
+		patch: EditorPatch,
+		ctx: ExtensionContext,
+		options?: { deferEditor?: boolean },
+	) => ApplyResult;
 	setPolished: (patch: Partial<PolishedEditorStyleConfig>, ctx: ExtensionContext) => void;
 	setPolishedCopyFriendly: (
 		patch: Partial<PolishedCopyFriendlyEditorStyleConfig>,
@@ -310,6 +327,7 @@ const footerSegmentSettingDescriptions: Record<FooterSegmentSettingId, string> =
 };
 
 const directCommandSuggestions = [
+	...componentPresets.map(({ id }) => `preset ${id}`),
 	"editor enable",
 	"editor disable",
 	"editor toggle",
@@ -471,12 +489,20 @@ function argumentCompletions(prefix: string): AutocompleteItem[] | null {
 }
 
 function usageText(): string {
-	return "Usage: /zentui [editor|messages|statusline|viewport-indicators] [enable|disable|toggle], /zentui [messages|user-messages|working-line], or /zentui format <template>";
+	return "Usage: /zentui [editor|messages|statusline|viewport-indicators] [enable|disable|toggle], /zentui [messages|user-messages|working-line], /zentui preset <opencode|opencode-copy-friendly|rail|minimalist>, or /zentui format <template>";
 }
 
 function buildAppearanceItems(config: PolishedTuiConfig): SettingItem[] {
 	const component = config.components.selectorBorders;
 	return [
+		{
+			id: "preset",
+			label: "Preset",
+			description:
+				"Apply Editor, Footer, and User messages together once. Preserves colors and other settings; editor installation waits until this panel closes. Custom means no matching combination.",
+			currentValue: matchingComponentPreset(config)?.label ?? "Custom",
+			values: componentPresets.map(({ label }) => label),
+		},
 		{
 			id: "selectorBordersEnabled",
 			label: "Selector borders",
@@ -1133,11 +1159,38 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 		deps.setFooterComponent(patch, ctx);
 	};
 
+	const applyPreset = (id: PresetId, ctx: ExtensionContext) => {
+		try {
+			const result = deps.applyPreset(id, ctx);
+			deps.requestRender();
+			if (ctx.hasUI) {
+				const detail = result.reason?.trim();
+				ctx.ui.notify(
+					`Preset saved: ${getComponentPreset(id)?.label}${detail ? ` (${detail})` : !result.applied ? " (reload Pi to apply this change)" : ""}`,
+					!result.applied || detail ? "warning" : "info",
+				);
+			}
+		} catch (error) {
+			if (ctx.hasUI)
+				ctx.ui.notify(
+					`Could not update Zentui settings: ${error instanceof Error ? error.message : String(error)}`,
+					"error",
+				);
+		}
+	};
+
 	pi.registerCommand("zentui", {
 		description: "Configure Zentui",
 		getArgumentCompletions: argumentCompletions,
 		handler: async (_args, ctx) => {
 			const args = typeof _args === "string" ? _args : "";
+			const words = args.trim().split(/\s+/);
+			if (words[0]?.toLowerCase() === "preset") {
+				const preset = words.length === 2 ? getComponentPreset(words[1] ?? "") : undefined;
+				if (preset) applyPreset(preset.id, ctx);
+				else if (ctx.hasUI) ctx.ui.notify(usageText(), "warning");
+				return;
+			}
 			const format = parseFormatCommand(args);
 			if (format) {
 				try {
@@ -1210,8 +1263,19 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 			let requestedSection = initialSection ?? "appearance";
 			let requestedFocusId: string | undefined;
 			while (true) {
+				try {
+					prepareEditorTextForCustomUi(ctx.ui);
+				} catch (error) {
+					ctx.ui.notify(
+						`Could not open Zentui settings safely: ${error instanceof Error ? error.message : String(error)}`,
+						"error",
+					);
+					return;
+				}
 				const initialFocusId = requestedFocusId;
 				requestedFocusId = undefined;
+				const generation = deps.sessionLifecycle.currentGeneration();
+				let pendingPresetEditor = false;
 				const outcome = await ctx.ui.custom<SettingsOutcome>((tui, theme, _keybindings, done) => {
 					const listTheme = deps.settingsListTheme ?? getSettingsListTheme();
 					let activeSection = requestedSection;
@@ -1315,8 +1379,26 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 							listTheme,
 							(id, newValue) => {
 								try {
+									if (id === "preset") {
+										const preset = componentPresets.find(({ label }) => label === newValue);
+										if (!preset) return;
+										if (!deps.sessionLifecycle.isCurrent(generation)) return;
+										const result = deps.applyPreset(preset.id, ctx, { deferEditor: true });
+										pendingPresetEditor = true;
+										settingsList = makeSettingsList("preset");
+										notifyChange("Preset saved", preset.label, result);
+										return;
+									}
 									const enabled = isFeatureState(newValue) ? newValue === "enabled" : undefined;
 									if (id === "editorEnabled" && enabled !== undefined) {
+										if (pendingPresetEditor) {
+											const result = deps.setEditorComponent({ enabled }, ctx, {
+												deferEditor: true,
+											});
+											notifyChange("Editor", newValue, result);
+											finishSettings("close");
+											return;
+										}
 										finishSettings("close");
 										deps.sessionLifecycle.defer(() => {
 											try {
@@ -1838,6 +1920,25 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 						},
 					};
 				});
+				// Pi restores its saved editor text before custom() resolves. Reconcile only
+				// now, using the latest config and observed factory, never a captured factory.
+				if (pendingPresetEditor && !deps.sessionLifecycle.isCurrent(generation)) return;
+				if (pendingPresetEditor) {
+					try {
+						const result = deps.reconcilePresetEditor(ctx);
+						if (!result.applied || result.reason) {
+							ctx.ui.notify(
+								`Preset saved: editor (${result.reason ?? "reload Pi to apply this change"})`,
+								"warning",
+							);
+						}
+					} catch (error) {
+						ctx.ui.notify(
+							`Could not apply preset editor; reload Pi: ${error instanceof Error ? error.message : String(error)}`,
+							"error",
+						);
+					}
+				}
 				if (outcome === "close" || outcome === undefined) return;
 				if (
 					outcome === "edit-working-line-spinner-speed" ||

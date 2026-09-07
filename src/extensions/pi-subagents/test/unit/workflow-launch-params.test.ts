@@ -4,7 +4,7 @@ import { prepareWorkflowLaunchParams, promptAuditRedoParams, resolveRevivalContr
 import { resolveControlConfig } from "../../src/runs/shared/subagent-control.ts";
 
 describe("workflow launch params", () => {
-	it("keeps omitted workflow child async foreground", () => {
+	it("preserves omitted workflow child async defaults and awaits background resolution", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(
 				{},
@@ -15,10 +15,49 @@ describe("workflow launch params", () => {
 			{
 				agent: "worker",
 				task: "Run",
-				async: false,
+				workflowAwaitAsync: true,
 				workflowParentRunId: "workflow-run",
 				workflowKey: "run",
 			},
+		);
+	});
+
+	it("forwards workflow baseRef only to launches where it can affect allocation", () => {
+		assert.equal(
+			prepareWorkflowLaunchParams(
+				{ baseRef: "refs/heads/release" },
+				{ agent: "worker", task: "Run" },
+				"workflow-run",
+				"run",
+			).baseRef,
+			"refs/heads/release",
+		);
+		assert.equal(
+			prepareWorkflowLaunchParams(
+				{ baseRef: "refs/heads/release" },
+				{ resume: "retained-run", task: "Continue" },
+				"workflow-run",
+				"resume",
+			).baseRef,
+			undefined,
+		);
+		assert.equal(
+			prepareWorkflowLaunchParams(
+				{ baseRef: "refs/heads/release" },
+				{ resume: "retained-run", task: "Continue", baseRef: "refs/heads/topic" },
+				"workflow-run",
+				"resume-explicit",
+			).baseRef,
+			"refs/heads/topic",
+		);
+		assert.equal(
+			prepareWorkflowLaunchParams(
+				{ baseRef: "refs/heads/release" },
+				{ agent: "worker", task: "Run", baseRef: "refs/heads/topic" },
+				"workflow-run",
+				"override",
+			).baseRef,
+			"refs/heads/topic",
 		);
 	});
 
@@ -92,7 +131,8 @@ describe("workflow launch params", () => {
 			"run",
 			{ parentDeadlineAt },
 		);
-		assert.equal(params.async, false);
+		assert.equal(params.async, undefined);
+		assert.equal(params.workflowAwaitAsync, true);
 		assert.equal(params.timeoutMs, undefined);
 		assert.equal(params.workflowParentDeadlineAt, parentDeadlineAt);
 	});
@@ -199,7 +239,7 @@ describe("workflow launch params", () => {
 				agent: "worker",
 				task: "Run",
 				intercomBridge: { mode: "off" },
-				async: false,
+				workflowAwaitAsync: true,
 				workflowParentRunId: "workflow-run",
 				workflowKey: "isolated",
 			},
@@ -226,7 +266,7 @@ describe("workflow launch params", () => {
 				agent: "worker",
 				task: "Implement",
 				worktree: true,
-				async: false,
+				workflowAwaitAsync: true,
 				workflowParentRunId: "workflow-run",
 				workflowKey: "gated",
 				acceptance: { level: "verified", verify: [{ id: "gate", command: "npm test" }] },

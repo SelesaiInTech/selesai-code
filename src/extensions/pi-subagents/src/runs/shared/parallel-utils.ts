@@ -41,14 +41,13 @@ export interface RunnerSubagentStep {
 	/** The primary model is inherited from the parent session and should not be verified against the child-reported active registry model. */
 	skipPrimaryModelVerification?: boolean;
 	modelVerificationRegistry?: Array<{ provider: string; id: string; fullId: string; contextWindow?: number }>;
+	modelResponseAliases?: Record<string, string[]>;
 	tools?: string[];
 	excludeTools?: string[];
 	allowNestedSubagents?: boolean;
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	mcpDirectTools?: string[];
-	mcpConfig?: import("./mcp-direct-tool-allowlist.ts").McpConfig;
-	runtimeServerNames?: string[];
 	mutationTools?: string[];
 	completionGuard?: boolean;
 	systemPrompt?: string | null;
@@ -76,8 +75,8 @@ export interface RunnerSubagentStep {
 	launchBindingTask?: string;
 	launchContractDigest?: string;
 	extensionBindings?: import("./extension-bindings.ts").ExtensionBindings;
-	launchResolvedExtensions?: import("../../shared/types.ts").LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: import("../../shared/types.ts").RuntimeAcknowledgedChildExtensionsV1;
+	launchResolvedExtensions?: import("../../shared/types.ts").LaunchResolvedChildExtensions;
+	runtimeAcknowledgedExtensions?: import("../../shared/types.ts").RuntimeAcknowledgedChildExtensions;
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
 	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;

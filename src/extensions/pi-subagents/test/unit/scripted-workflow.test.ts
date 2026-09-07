@@ -98,6 +98,68 @@ describe("scripted workflow runtime", () => {
 		assert.deepEqual(validateWorkflowScript(`return runs.run("same", { agent: selectedAgent });`), { ok: true, errors: [] });
 	});
 
+	it("reports literal child baseRef policy errors with source locations offline", () => {
+		for (const [call, value] of [
+			["run", JSON.stringify("a".repeat(40))],
+			["run", JSON.stringify("A".repeat(64))],
+			["all", JSON.stringify("A".repeat(40))],
+			["all", "`" + "a".repeat(64) + "`"],
+			["run", '"HEAD~1"'],
+			["all", '"refs/heads/bad..ref"'],
+			["run", "null"],
+			["all", "42"],
+			["run", "false"],
+		]) {
+			const script = [
+				call === "run" ? 'return runs.run("child", {' : "return runs.all([{",
+				'  key: "child", agent: "worker", task: "Check",',
+				`  baseRef: ${value}`,
+				call === "run" ? "});" : "}]);",
+			].join("\n");
+			const result = validateWorkflowScript(script);
+			assert.equal(result.ok, false, script);
+			assert.equal(result.errors.length, 1, script);
+			assert.equal(result.errors[0]?.line, 3);
+			assert.equal(result.errors[0]?.column, 12);
+			assert.match(result.errors[0]!.message, new RegExp(`runs\\.${call}.*baseRef`));
+			assert.match(result.errors[0]!.message, /HEAD.*named ref.*40\/64-character commit IDs.*revision expressions.*unsupported/);
+		}
+	});
+
+	it("validates only the final statically known child baseRef without guessing overwrites", () => {
+		for (const fields of [
+			"",
+			'baseRef: "HEAD"',
+			'baseRef: "refs/heads/release"',
+			'baseRef: "refs/tags/v1"',
+			'baseRef: "origin/main"',
+			'baseRef: "HEAD~1", baseRef: "HEAD"',
+			'baseRef: "HEAD~1", ["baseRef"]: `HEAD`',
+			'baseRef: "HEAD~1", baseRef: selectedRef',
+			'baseRef: "HEAD~1", baseRef: "refs/heads/" + branch',
+			'baseRef: "HEAD~1", ...overrides',
+			'baseRef: "HEAD~1", [field]: "HEAD"',
+			'baseRef: "HEAD~1", get baseRef() { return "HEAD"; }',
+			'baseRef: "HEAD~1", set baseRef(value) {}',
+		]) {
+			for (const script of [
+				`return runs.run("child", { agent: "worker", task: "Check", ${fields} });`,
+				`return runs.all([{ key: "child", agent: "worker", task: "Check", ${fields} }]);`,
+			]) assert.deepEqual(validateWorkflowScript(script), { ok: true, errors: [] }, script);
+		}
+		for (const fields of [
+			'baseRef: "HEAD", baseRef: "HEAD~1"',
+			'...defaults, baseRef: "HEAD~1"',
+			'[field]: "HEAD", ["baseRef"]: "HEAD~1"',
+			'get baseRef() { return "HEAD"; }, baseRef: "HEAD~1"',
+		]) {
+			const result = validateWorkflowScript(`return runs.run("child", { agent: "worker", task: "Check", ${fields} });`);
+			assert.equal(result.ok, false, fields);
+			assert.match(result.errors[0]!.message, /baseRef/);
+		}
+		assert.equal(validateWorkflowScript('return runs.run("child", { baseRef() { return "HEAD"; } });').ok, false);
+	});
+
 	it("validates runs.host shape offline without executing it", () => {
 		assert.deepEqual(validateWorkflowScript(`return runs.host("tests", { kind: "command", command: "npm test", timeoutMs: 1000, output: "reports/tests.log", role: "ci" });`), { ok: true, errors: [] });
 		for (const script of [
@@ -768,6 +830,13 @@ describe("scripted workflow runtime", () => {
 			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 		});
 		assert.equal(launches[0]?.gate, "npm test");
+		await runWorkflowScript({
+			script: `return runs.run("gated-disabled", { agent: "worker", gate: "npm test", acceptance: false });`,
+			async launch(key, params) { launches.push(params); return { key, ok: true, output: "done", artifactPaths: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.equal(launches[1]?.gate, "npm test");
+		assert.equal(launches[1]?.acceptance, false);
 		await assert.rejects(
 			runWorkflowScript({
 				script: `return runs.run("invalid", { agent: "worker", gate: "npm test", acceptance: "checked" });`,
@@ -776,6 +845,26 @@ describe("scripted workflow runtime", () => {
 			}),
 			(error: unknown) => error instanceof WorkflowScriptError && /gate cannot be combined with acceptance/.test(error.message),
 		);
+	});
+
+	it("reuses a gated key when acceptance false is explicit", async () => {
+		const launches: string[] = [];
+		const result = await runWorkflowScript({
+			script: `
+				const first = await runs.run("g", { agent: "worker", gate: "npm test" });
+				const second = await runs.run("g", { agent: "worker", gate: "npm test", acceptance: false });
+				return { first: first.key, second: second.key };
+			`,
+			timeoutMs: 2_000,
+			async launch(key) {
+				launches.push(key);
+				return { key, ok: true, output: "ok", artifactPaths: [], results: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.deepEqual(result.value, { first: "g", second: "g" });
+		assert.deepEqual(launches, ["g"]);
 	});
 
 	it("rejects retained resume with gate", async () => {
@@ -1427,6 +1516,91 @@ describe("scripted workflow runtime", () => {
 			}),
 			(error: unknown) => error instanceof WorkflowScriptError && /resume and agent are mutually exclusive/.test(error.message),
 		);
+	});
+
+	it("passes per-child baseRef through runs.run and runs.all", async () => {
+		const launches: Array<{ key: string; baseRef: unknown }> = [];
+		await runWorkflowScript({
+			script: `
+				const one = await runs.run("one", { agent: "worker", task: "one", baseRef: "refs/heads/release" });
+				const rest = await runs.all([
+					{ key: "two", agent: "worker", task: "two", baseRef: "refs/heads/topic" },
+					{ key: "head", agent: "worker", task: "head", baseRef: "HEAD" },
+					{ key: "default", agent: "worker", task: "default" }
+				]);
+				return [one.key, ...rest.map((entry) => entry.key)];
+			`,
+			timeoutMs: 2_000,
+			async launch(key, params) {
+				launches.push({ key, baseRef: params.baseRef });
+				return { key, ok: true, output: key, artifactPaths: [], results: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(launches, [
+			{ key: "one", baseRef: "refs/heads/release" },
+			{ key: "two", baseRef: "refs/heads/topic" },
+			{ key: "head", baseRef: "HEAD" },
+			{ key: "default", baseRef: undefined },
+		]);
+	});
+
+	it("rejects unsupported literal and computed child baseRef values before dispatch", async () => {
+		const launches: string[] = [];
+		for (const [call, expression] of [
+			["run", JSON.stringify("a".repeat(40))],
+			["all", JSON.stringify("A".repeat(64))],
+			["run", '"a".repeat(64)'],
+			["all", '"A".repeat(40)'],
+			["run", '"HEAD" + "~1"'],
+			["all", '"@"'],
+			["run", "42"],
+		]) {
+			const script = call === "run"
+				? `return runs.run("invalid", { agent: "worker", task: "Check", baseRef: ${expression} });`
+				: `return runs.all([{ key: "valid", agent: "worker", task: "Check", baseRef: "HEAD" }, { key: "invalid", agent: "worker", task: "Check", baseRef: ${expression} }]);`;
+			if (expression.includes("repeat") || expression.includes(" + ")) {
+				assert.deepEqual(validateWorkflowScript(script), { ok: true, errors: [] });
+			}
+			await assert.rejects(
+				runWorkflowScript({
+					script,
+					timeoutMs: 2_000,
+					async launch(key) {
+						launches.push(key);
+						return { key, ok: true, output: key, artifactPaths: [], results: [] };
+					},
+					async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				}),
+				(error: unknown) => error instanceof WorkflowScriptError
+					&& /baseRef.*HEAD.*named ref.*40\/64-character commit IDs.*revision expressions.*unsupported/.test(error.message),
+			);
+		}
+		assert.deepEqual(launches, []);
+	});
+
+	it("leaves accessor-derived baseRef values to runtime validation", async () => {
+		for (const baseRef of ["HEAD", "HEAD~1"]) {
+			const script = `return runs.run("child", { agent: "worker", task: "Check", baseRef: "invalid..ref", get baseRef() { return ${JSON.stringify(baseRef)}; } });`;
+			assert.deepEqual(validateWorkflowScript(script), { ok: true, errors: [] });
+			const launches: unknown[] = [];
+			const result = runWorkflowScript({
+				script,
+				timeoutMs: 2_000,
+				async launch(key, params) {
+					launches.push(params.baseRef);
+					return { key, ok: true, output: key, artifactPaths: [] };
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			});
+			if (baseRef === "HEAD") {
+				await result;
+				assert.deepEqual(launches, ["HEAD"]);
+			} else {
+				await assert.rejects(result, /baseRef.*revision expressions.*unsupported/);
+				assert.deepEqual(launches, []);
+			}
+		}
 	});
 
 	it("passes per-child workflow controls through runs.run and runs.all", async () => {
@@ -2262,6 +2436,68 @@ describe("scripted workflow runtime", () => {
 			(error: unknown) => error instanceof WorkflowScriptError && /timed out after 500ms/.test(error.message),
 		);
 		assert.equal(childAborted, true);
+	});
+
+	it("flushes result assembly after abort when every child is terminal", async () => {
+		const controller = new AbortController();
+		let launchCount = 0;
+		const result = await runWorkflowScript({
+			script: `const child = await runs.run("done", { agent: "worker", task: "finish" }); return { phase: "assembled", output: child.output };`,
+			signal: controller.signal,
+			continueAfterAbortWhenChildrenSettled: (error) => error.message === "Workflow stopped because the extension session was replaced or reloaded.",
+			onTrace(trace) {
+				if (!controller.signal.aborted && trace.some((entry) => entry.operation === "run" && entry.key === "done" && entry.state === "completed")) controller.abort(new Error("Workflow stopped because the extension session was replaced or reloaded."));
+			},
+			async launch(key) {
+				launchCount += 1;
+				return { key, ok: true, output: "child output", artifactPaths: [], results: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.deepEqual(result.value, { phase: "assembled", output: "child output" });
+		assert.equal(launchCount, 1);
+	});
+
+	it("fails closed with diagnostics when graceful-abort eligibility throws", async () => {
+		const controller = new AbortController();
+		await assert.rejects(
+			runWorkflowScript({
+				script: `await runs.run("done", { agent: "worker", task: "finish" }); return { phase: "assembled" };`,
+				signal: controller.signal,
+				continueAfterAbortWhenChildrenSettled: () => { throw new Error("liveness unavailable"); },
+				onTrace(trace) {
+					if (!controller.signal.aborted && trace.some((entry) => entry.operation === "run" && entry.key === "done" && entry.state === "completed")) controller.abort(new Error("Workflow stopped because the extension session was replaced or reloaded."));
+				},
+				async launch(key) {
+					return { key, ok: true, output: "child output", artifactPaths: [], results: [] };
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /liveness unavailable/.test(error.message),
+		);
+	});
+
+	it("fails closed if assembly tries to launch after a graceful abort", async () => {
+		const controller = new AbortController();
+		let launchCount = 0;
+		await assert.rejects(
+			runWorkflowScript({
+				script: `await runs.run("done", { agent: "worker", task: "finish" }); return runs.run("late", { agent: "worker", task: "must not launch" });`,
+				signal: controller.signal,
+				continueAfterAbortWhenChildrenSettled: (error) => error.message === "Workflow stopped because the extension session was replaced or reloaded.",
+				onTrace(trace) {
+					if (!controller.signal.aborted && trace.some((entry) => entry.operation === "run" && entry.key === "done" && entry.state === "completed")) controller.abort(new Error("Workflow stopped because the extension session was replaced or reloaded."));
+				},
+				async launch(key) {
+					launchCount += 1;
+					return { key, ok: true, output: "child output", artifactPaths: [], results: [] };
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.message === "Workflow stopped because the extension session was replaced or reloaded.",
+		);
+		assert.equal(launchCount, 1);
 	});
 
 	it("ignores a queued child launch message after workflow abort", async () => {

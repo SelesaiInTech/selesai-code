@@ -41,6 +41,10 @@ describe("loadConfig", () => {
     assert.strictEqual(config.llmModelOverride, undefined);
     assert.strictEqual(config.llmThinkingOverride, undefined);
     assert.strictEqual(config.standingInstructionsEnabled, true);
+    // Retention is disabled by default so existing history is never silently
+    // deleted; a positive value opts in, 0/omitted disables.
+    assert.strictEqual(config.sessionRetentionDays, 0);
+    assert.strictEqual(config.quickCheckOnOpen, true);
   });
 
   it("honors a configured consolidationTimeoutMs, warning only when it is below the default", () => {
@@ -85,6 +89,7 @@ describe("loadConfig", () => {
       llmModelOverride: " openrouter/deepseek/deepseek-v4-flash ",
       llmThinkingOverride: "minimal",
       autoConsolidationWarnOnFailure: false,
+      quickCheckOnOpen: false,
     }));
     const config = loadConfig(TEST_CONFIG_PATH);
     assert.strictEqual(config.memoryMode, "legacy-inject");
@@ -101,9 +106,46 @@ describe("loadConfig", () => {
     assert.strictEqual(config.projectsMemoryDir, "my-memory");
     assert.strictEqual(config.llmModelOverride, "openrouter/deepseek/deepseek-v4-flash");
     assert.strictEqual(config.llmThinkingOverride, "minimal");
+    assert.strictEqual(config.quickCheckOnOpen, false);
     // Unset values use defaults
     assert.strictEqual(config.userCharLimit, 5000);
     assert.strictEqual(config.reviewEnabled, true);
+  });
+
+  it("only accepts boolean quickCheckOnOpen overrides", () => {
+    fs.mkdirSync(path.dirname(TEST_CONFIG_PATH), { recursive: true });
+    fs.writeFileSync(TEST_CONFIG_PATH, JSON.stringify({ quickCheckOnOpen: "false" }));
+    assert.strictEqual(loadConfig(TEST_CONFIG_PATH).quickCheckOnOpen, true);
+  });
+
+  it("merges array-form override tails with explicit llmFallbackModels", () => {
+    fs.mkdirSync(path.dirname(TEST_CONFIG_PATH), { recursive: true });
+    fs.writeFileSync(TEST_CONFIG_PATH, JSON.stringify({
+      llmModelOverride: ["p1/m1", "p2/m2"],
+      llmFallbackModels: ["p3/m3"],
+    }));
+    const config = loadConfig(TEST_CONFIG_PATH);
+    assert.strictEqual(config.llmModelOverride, "p1/m1");
+    assert.deepStrictEqual(config.llmFallbackModels, ["p2/m2", "p3/m3"]);
+  });
+
+
+  it("parses sessionRetentionDays as opt-in, accepting explicit 0 to disable", () => {
+    fs.mkdirSync(path.dirname(TEST_CONFIG_PATH), { recursive: true });
+
+    // Positive value opts in to retention pruning.
+    fs.writeFileSync(TEST_CONFIG_PATH, JSON.stringify({ sessionRetentionDays: 45 }));
+    assert.strictEqual(loadConfig(TEST_CONFIG_PATH).sessionRetentionDays, 45);
+
+    // Explicit 0 disables retention (even after a prior positive value).
+    fs.writeFileSync(TEST_CONFIG_PATH, JSON.stringify({ sessionRetentionDays: 0 }));
+    assert.strictEqual(loadConfig(TEST_CONFIG_PATH).sessionRetentionDays, 0);
+
+    // Negative / non-numeric values are ignored, keeping the (disabled) default.
+    fs.writeFileSync(TEST_CONFIG_PATH, JSON.stringify({ sessionRetentionDays: -5 }));
+    assert.strictEqual(loadConfig(TEST_CONFIG_PATH).sessionRetentionDays, 0);
+    fs.writeFileSync(TEST_CONFIG_PATH, JSON.stringify({ sessionRetentionDays: "30" }));
+    assert.strictEqual(loadConfig(TEST_CONFIG_PATH).sessionRetentionDays, 0);
   });
 
   it("handles partial config (missing keys use defaults)", () => {

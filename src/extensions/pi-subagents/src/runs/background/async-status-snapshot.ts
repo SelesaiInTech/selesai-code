@@ -1,8 +1,8 @@
 import type { AsyncJobState, SubagentState } from "../../shared/types.ts";
 import {
-	projectAsyncStatusSnapshot,
+	projectAsyncStatusSnapshot as buildAsyncStatusSnapshot,
 	type AsyncStatusSnapshotOptions,
-	type AsyncStatusSnapshotV1,
+	type AsyncStatusSnapshot,
 } from "../shared/async-status-projection.ts";
 
 export {
@@ -10,22 +10,20 @@ export {
 	ASYNC_STATUS_SNAPSHOT_VERSION,
 } from "../shared/async-status-projection.ts";
 export type {
-	AsyncStatusSnapshotActivityV1,
-	AsyncStatusSnapshotCapsV1,
-	AsyncStatusSnapshotHostStepV1,
+	AsyncStatusSnapshotActivity,
+	AsyncStatusSnapshotCaps,
+	AsyncStatusSnapshotHostStep,
 	AsyncStatusSnapshotKind,
-	AsyncStatusSnapshotNodeV1,
-	AsyncStatusSnapshotOmittedV1,
+	AsyncStatusSnapshotNode,
+	AsyncStatusSnapshotOmitted,
 	AsyncStatusSnapshotOptions,
 	AsyncStatusSnapshotState,
-	AsyncStatusSnapshotV1,
+	AsyncStatusSnapshot,
 } from "../shared/async-status-projection.ts";
 
 export const ASYNC_STATUS_SNAPSHOT_WIDGET_PREFIX = "SELESAI_SUBAGENT_ASYNC_JSON:";
 
-export function buildAsyncStatusSnapshot(jobs: Iterable<AsyncJobState>, options: AsyncStatusSnapshotOptions = {}): AsyncStatusSnapshotV1 {
-	return projectAsyncStatusSnapshot(jobs, options);
-}
+export { buildAsyncStatusSnapshot };
 
 export function asyncStatusSnapshotJobsForState(state: SubagentState | undefined, sessionId: string | null | undefined): AsyncJobState[] {
 	if (!state || !sessionId || state.currentSessionId !== sessionId) return [];
@@ -39,7 +37,7 @@ export function asyncStatusSnapshotJobsForState(state: SubagentState | undefined
 	return [...jobs.values()];
 }
 
-export function buildAsyncStatusSnapshotForState(state: SubagentState | undefined, sessionId: string | null | undefined, options: AsyncStatusSnapshotOptions = {}): AsyncStatusSnapshotV1 {
+export function buildAsyncStatusSnapshotForState(state: SubagentState | undefined, sessionId: string | null | undefined, options: AsyncStatusSnapshotOptions = {}): AsyncStatusSnapshot {
 	return buildAsyncStatusSnapshot(asyncStatusSnapshotJobsForState(state, sessionId), options);
 }
 

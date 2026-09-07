@@ -40,6 +40,16 @@ export const DEFAULT_OVERFLOW_GRACE_MS = 180000;
 export const DEFAULT_FAILURE_INJECTION_MAX_AGE_DAYS = 7;
 export const DEFAULT_FAILURE_INJECTION_MAX_ENTRIES = 5;
 
+// ─── Session retention defaults ───
+/**
+ * Default session retention window in days. `0` means retention pruning is
+ * DISABLED by default -- existing searchable session history is never silently
+ * deleted. Users opt in by setting `sessionRetentionDays` to a positive value
+ * in their config; setting it back to `0` (or omitting it) disables pruning
+ * (see #183).
+ */
+export const DEFAULT_SESSION_RETENTION_DAYS = 0;
+
 // ─── File names ───
 export const MEMORY_FILE = "MEMORY.md";
 export const USER_FILE = "USER.md";
@@ -66,7 +76,7 @@ Memory write targets:
 - failure: failures, corrections, insights, conventions, preferences, and tool quirks captured as categorized lessons.
 
 memory_search filters:
-- target accepts "memory", "user", or "failure".
+- target accepts "memory", "user", "failure", or "project" (project-attributed memory entries).
 - project filters project-scoped memories by project name.
 - category filters categorized failure/lesson memories only.
 
@@ -80,7 +90,7 @@ Accepted memory categories:
 
 Search guidance:
 - For user preferences, search target="user" with concrete terms from the request.
-- For project conventions or repo decisions, search with the current project filter and concrete terms from the request.
+- For project conventions or repo decisions, search with the current project filter and concrete terms from the request; when the project name is unknown, search target="project" to match project-attributed memories regardless of name.
 - For debugging, test failures, build errors, or repeated mistakes, search target="failure" and categories "failure", "correction", "insight", or "tool-quirk".
 - For general durable learnings, search target="memory" with concrete terms from the request.
 - Use category only for categorized failure/lesson searches; ordinary user, global, and project memories may not have a category.

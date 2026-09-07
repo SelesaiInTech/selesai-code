@@ -12,7 +12,7 @@ import {
 	FULL_SUBAGENT_TOOL_DESCRIPTION,
 	SUBAGENT_SAFETY_GUIDANCE,
 } from "../../src/extension/tool-description.ts";
-import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/child-runtime-config.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -23,7 +23,6 @@ function escapeRegex(value: string): string {
 function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	delete env[SUBAGENT_CHILD_ENV];
-	delete env[SUBAGENT_FANOUT_CHILD_ENV];
 	if (agentDir) env.SELESAI_CODING_AGENT_DIR = agentDir;
 	return env;
 }
@@ -37,6 +36,13 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
 		assert.equal(metadata.promptSnippet, undefined);
 		assert.equal(metadata.promptGuidelines, undefined);
+	});
+
+	it("explains managed worktree baseRef restrictions in every built-in description", () => {
+		for (const description of [FULL_SUBAGENT_TOOL_DESCRIPTION, COMPACT_SUBAGENT_TOOL_DESCRIPTION]) {
+			assert.match(description, /baseRef.*HEAD.*named ref.*40\/64-character commit IDs.*revision expressions.*unsupported/);
+			assert.match(description, /Omitted baseRef defaults to HEAD resolved at worktree allocation/);
+		}
 	});
 
 	it("keeps the full description when configured", () => {
@@ -77,6 +83,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
 		assert.match(description, /suffix wins over the agent's thinking default/i);
 		assert.match(description, /watchdog\.configure' and is ignored on dispatch/i);
+		assert.match(description, /lane infrastructure blocker.*explicit owner approval/i);
 	});
 
 	it("offers a compact mode that keeps the two-tier contract and safety guidance", () => {
@@ -108,6 +115,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /Per-run thinking is a suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
 		assert.match(description, /suffix wins over the agent's thinking default/i);
 		assert.match(description, /watchdog\.configure' and is ignored on dispatch/i);
+		assert.match(description, /lane infrastructure blocker.*explicit owner approval/i);
 		assert.ok(description.length < FULL_SUBAGENT_TOOL_DESCRIPTION.length);
 	});
 
@@ -151,6 +159,18 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
 		assert.match(description, /ordinary child subagents are not orchestrators/i);
 		assert.match(description, /status\.json/);
+	});
+
+	it("deduplicates compact placeholder safety guidance in custom descriptions", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-compact-custom-"));
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-agent-"));
+		fs.mkdirSync(path.join(cwd, ".selesai"), { recursive: true });
+		fs.writeFileSync(path.join(cwd, ".selesai", "subagent-tool-description.md"), "{{compactDescription}}", "utf-8");
+
+		const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir });
+
+		assert.equal(description.split("lane infrastructure blocker").length - 1, 1);
+		assert.ok(description.endsWith(SUBAGENT_SAFETY_GUIDANCE));
 	});
 
 	it("keeps mandatory safety guidance last when custom prose embeds it before an override", () => {
@@ -261,7 +281,7 @@ describe("registered subagent tool description", () => {
 		fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config), "utf-8");
 	}
 
-	it("registers full, compact, custom, and fallback descriptions from extension config", () => {
+	it("registers split, full, compact, custom, and fallback descriptions from extension config", () => {
 		const defaultAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-default-"));
 		writeExtensionConfig(defaultAgentDir, {});
 		const defaultTool = readRegisteredTool(defaultAgentDir);

@@ -53,7 +53,7 @@ function revivedTask(followUp: string): string {
 		"Original agent: worker",
 		"Original session file: /tmp/session.jsonl",
 		"",
-		"Use the stored session context as background. Answer the orchestrator's follow-up below. Do not assume the original child process is still alive.",
+		"Use the stored session context as background. Answer the orchestrator's follow-up below. Do not assume the original child session is still running.",
 		"",
 		"Follow-up:",
 		followUp,
@@ -241,12 +241,13 @@ test("implementation challenge reports with negated or uncertain no-better-chang
 
 });
 
-test("declared read-only builtin tools suppress implementation-word false positives", () => {
+test("source_check read-only capability suppresses an implementation completion guard", () => {
+	assert.equal(expectsImplementationMutation("worker", "Implement the approved fix"), true);
 	const result = evaluateCompletionMutationGuard({
-		agent: "architect",
-		task: "Produce a proposal that implements the approved fix",
-		messages: [assistantText("Proposal only")],
-		tools: ["read", "grep", "find", "ls"],
+		agent: "worker",
+		task: "Implement the approved fix",
+		messages: [assistantText("Source evidence only")],
+		tools: ["source_check"],
 	});
 
 	assert.deepEqual(result, {

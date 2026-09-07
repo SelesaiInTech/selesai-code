@@ -119,7 +119,7 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
-	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
+	showCacheMissNotices?: boolean; // default: false - show cache cost and provider recovery notices
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: boolean;
@@ -156,7 +156,7 @@ export interface Settings {
 	autoHandoff?: AutoHandoffSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	// Per-extension collision winner between ~/.selesai/agent/extensions and
-	// ~/.pi/agent/extensions. Key = top-level entry name (e.g. "pi-subagents",
+	// ~/.selesai/agent/extensions. Key = top-level entry name (e.g. "pi-subagents",
 	// "copy-turn.ts"). Value = "selesai" (default) or "pi". Unknown names fall
 	// back to selesai.
 	extensionHost?: Record<string, "selesai" | "pi">;

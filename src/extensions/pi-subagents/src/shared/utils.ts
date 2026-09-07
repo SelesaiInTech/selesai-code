@@ -135,6 +135,9 @@ function isNotFoundError(error: unknown): boolean {
  * Read async job status from disk (with mtime-based caching)
  */
 export function readStatus(asyncDir: string): AsyncStatus | null {
+	if (Buffer.byteLength(path.basename(asyncDir), "utf-8") > 255) {
+		return null;
+	}
 	const statusPath = path.join(asyncDir, "status.json");
 
 	let stat: fs.Stats;
@@ -413,10 +416,9 @@ export function compactForegroundDetails(details: Details): Details {
  *
  * The completed-compaction helpers above bail out while a child is still
  * `running`, so a long or deeply nested fan-out streams full, unbounded progress on
- * every tick. Pi serializes each streamed `tool_execution_update` as a single
- * child-stdout line, which the parent reads under `MAX_CHILD_PENDING_LINE_BYTES`;
- * an unbounded running snapshot can cross that cap and kill the child with
- * `protocol_output_limit`.
+ * every tick. The parent records every streamed `tool_execution_update` in its
+ * transcript and `events.jsonl`, so an unbounded running snapshot grows those
+ * artifacts and the live display state without bound.
  *
  * These bound the STREAMED snapshot only. The final returned result keeps the full
  * live progress and message transcript, and every live-display consumer already
@@ -455,8 +457,13 @@ export function hasEmptyTerminalAssistantResponse(messages: Message[]): boolean 
 	const lastAssistant = messages.findLast((message) => message.role === "assistant");
 	return lastAssistant?.role === "assistant"
 		&& Array.isArray(lastAssistant.content)
-		&& lastAssistant.content.length === 0
-		&& lastAssistant.usage.output === 0;
+		&& ((lastAssistant.content.length === 0 && lastAssistant.usage.output === 0)
+			|| (messages.at(-1) === lastAssistant
+				&& lastAssistant.stopReason === "stop"
+				&& !lastAssistant.errorMessage
+				&& lastAssistant.content.length > 0
+				// Token accounting can be nonzero even when no response text was emitted.
+				&& lastAssistant.content.every((part) => part.type === "text" && part.text === "")));
 }
 
 export function formatEmptyTerminalAssistantResponseError(messages: Message[]): string {

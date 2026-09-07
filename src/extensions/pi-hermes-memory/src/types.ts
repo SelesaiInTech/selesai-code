@@ -52,8 +52,12 @@ export interface MemoryConfig {
   projectsMemoryDir?: string;
   /** Session search configuration. Default: { variant: "legacy" } */
   sessionSearch?: SessionSearchConfig;
+  /** Run a full SQLite quick_check asynchronously after opening. Default: true */
+  quickCheckOnOpen?: boolean;
   /** Override model used for child pi -p subprocess LLM calls. Default: unset */
   llmModelOverride?: string;
+  /** Fallback model chain tried in order when the primary review model fails (rate limit, 401/403, 404, 500/503, invalid response). Default: unset */
+  llmFallbackModels?: string[];
   /** Override thinking level used for child pi -p subprocess LLM calls. Default: unset */
   llmThinkingOverride?: ThinkingLevel;
   /** Trusted Pi extension sources required by child processes, such as custom providers or auth adapters. */
@@ -88,6 +92,13 @@ export interface MemoryConfig {
   autoConsolidationWarnOnFailure: boolean;
   /** Inject pinned STANDING.md instructions into every session. Default: true */
   standingInstructionsEnabled: boolean;
+  /**
+   * Session retention window in days. A positive value opts in to pruning
+   * sessions (and their messages) older than the window on startup; `0`/omitted
+   * disables pruning so no existing searchable history is silently deleted.
+   * Default: 0 (disabled).
+   */
+  sessionRetentionDays?: number;
 }
 
 export type MemoryCategory =

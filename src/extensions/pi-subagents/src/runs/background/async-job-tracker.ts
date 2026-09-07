@@ -26,6 +26,7 @@ import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, serviceExternalJobBridgeRequests } fro
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { validHostStepNodes } from "../shared/host-step-status.ts";
+import { readProcessTerminal } from "./process-terminal.ts";
 import { withCachedUiContext } from "../../shared/extension-context.ts";
 
 interface AsyncJobTrackerOptions {
@@ -39,6 +40,8 @@ interface AsyncJobTrackerOptions {
 	watch?: typeof fs.watch;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
+	/** Resolve native supervisor requests without scanning supervisor mailboxes. */
+	supervisorRequestState?: (event: ControlEvent) => "pending" | "resolved" | "unknown";
 }
 
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
@@ -76,6 +79,9 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	let widgetRerenderTimer: ReturnType<typeof setTimeout> | undefined;
 	const runningJobIds = new Set<string>();
 	const externalJobBridgeRuns = new Set<string>();
+	// Early native failure is visible before its publisher finishes. Retain only
+	// that scoped observation, using the existing liveness sweep to renew delivery.
+	const terminalPublications = new Map<string, { instanceId: string; pending: true } | { pending: false }>();
 	const externalJobBridgeEligibility = (steps: AsyncJobState["steps"]): "required" | "not-required" | "unknown" => {
 		if (!Array.isArray(steps)) return "unknown";
 		for (const step of steps) {
@@ -293,6 +299,15 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				if ((parsed as { type?: unknown }).type !== "subagent.control") return;
 				const record = parsed as { event?: ControlEvent; channels?: string[]; childIntercomTarget?: string; noticeText?: string; intercom?: { to?: string; message?: string } };
 				if (!record.event || !Array.isArray(record.channels)) return;
+				if (record.event.type === "needs_attention" && record.event.reason === "supervisor_request" && options.supervisorRequestState) {
+					let requestState: "pending" | "resolved" | "unknown" = "unknown";
+					try {
+						requestState = options.supervisorRequestState(record.event);
+					} catch (error) {
+						console.error(`Failed to resolve supervisor request state for async control event in '${job.asyncDir}':`, error);
+					}
+					if (requestState === "resolved") return;
+				}
 				const payload = {
 					event: record.event,
 					source: "async" as const,
@@ -369,6 +384,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		refreshTimers.delete(asyncId);
 		runningJobIds.delete(asyncId);
 		externalJobBridgeRuns.delete(asyncId);
+		terminalPublications.delete(asyncId);
 	};
 
 	const refreshJob = (job: AsyncJobState): boolean => {
@@ -429,6 +445,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			if (status) {
 				const previousStatus = job.status;
 				job.status = status.state;
+				if (!terminalStatus(job.status)) terminalPublications.delete(job.asyncId);
 				if (job.status === "running") runningJobIds.add(job.asyncId);
 				else runningJobIds.delete(job.asyncId);
 				if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused" && job.status !== "stopped") cancelCleanup(job.asyncId);
@@ -486,9 +503,30 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				job.wrapUpRequested = status.wrapUpRequested ?? job.wrapUpRequested;
 				job.sessionFile = status.sessionFile ?? job.sessionFile;
 				if (terminalStatus(job.status)) {
-					if (!terminalStatus(previousStatus)) options.onJobTerminal?.();
+					let publication = terminalPublications.get(job.asyncId);
+					if (!publication && status.mode !== "workflow" && status.processTerminal?.state === "pending"
+						&& status.runId === job.asyncId && status.sessionId === state.currentSessionId
+						&& status.completionOwnerId && status.completionOwnerId === state.completionOwnerId) {
+						publication = { instanceId: status.processTerminal.runnerProcessInstanceId, pending: true };
+						terminalPublications.set(job.asyncId, publication);
+					}
+					const wasPending = publication?.pending;
+					if (publication?.pending) {
+						// Reconciliation resolves pending as well as public payloads. The
+						// watcher already discovers exact tracked run IDs without promotion.
+						const published = reconciliation.resultPath && fs.existsSync(reconciliation.resultPath);
+						const closed = !published && readProcessTerminal(job.asyncDir, {
+							runId: job.asyncId, runnerProcessInstanceId: publication.instanceId,
+						})?.state === "observed";
+						if (published || closed) {
+							publication = { pending: false };
+							terminalPublications.set(job.asyncId, publication);
+						} else cancelCleanup(job.asyncId);
+					}
+					// Scan on close too: publication may have raced the payload check.
+					if (!terminalStatus(previousStatus) || (wasPending && !publication?.pending)) options.onJobTerminal?.();
 					rememberFleetJob(state, job);
-					if (!nestedRefreshFailed && !hasLiveNestedDescendants(job.nestedChildren) && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
+					if (!publication?.pending && !nestedRefreshFailed && !hasLiveNestedDescendants(job.nestedChildren) && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
 						scheduleCleanup(job.asyncId);
 					}
 				}
@@ -515,7 +553,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			}
 			runningJobIds.delete(job.asyncId);
 			rememberFleetJob(state, job);
-			if (!hasLiveNestedDescendants(job.nestedChildren) && !state.cleanupTimers.has(job.asyncId)) scheduleCleanup(job.asyncId);
+			if (!terminalPublications.get(job.asyncId)?.pending && !hasLiveNestedDescendants(job.nestedChildren) && !state.cleanupTimers.has(job.asyncId)) scheduleCleanup(job.asyncId);
 		}
 		return widgetRenderKey(job, widgetExpanded) !== widgetStateBefore;
 	};
@@ -657,6 +695,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const sessionRoot = state.liveAsyncSessionRoots?.get(info.id);
 		state.liveAsyncSessionRoots?.delete(info.id);
 		externalJobBridgeRuns.delete(info.id);
+		terminalPublications.delete(info.id);
 		state.asyncJobs.set(info.id, {
 			asyncId: info.id,
 			asyncDir,
@@ -710,6 +749,9 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				job.asyncDir = result.asyncDir;
 				watchJob(job);
 			}
+			// Delivery can precede the first terminal status refresh. Remember its
+			// settlement even when no pending publication has been observed yet.
+			terminalPublications.set(asyncId, { pending: false });
 			try {
 				updateAsyncJobNestedProjection(job);
 			} catch (error) {
@@ -734,6 +776,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		widgetRerenderTimer = undefined;
 		runningJobIds.clear();
 		externalJobBridgeRuns.clear();
+		terminalPublications.clear();
 	};
 
 	const resetJobs = (ctx?: ExtensionContext) => {

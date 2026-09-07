@@ -2,6 +2,97 @@
 
 Public seams for other Pi extensions and host integrations: the in-process RPC, the structured delegation API, launch preflight, capability ceilings, the background-work provider contract, and the Herdr integration.
 
+## Trusted workflow resources
+
+Loaded trusted TypeScript extensions can import `registerWorkflowResource` from `pi-subagents/workflow-resources`. This subpath does not load the main extension and exposes no resolver or permit constructor. Its exported types are `RegisterWorkflowResourceInput`, `WorkflowResourceDefinition`, and `WorkflowResourceRegistration`:
+
+```typescript
+registerWorkflowResource({
+  sessionId: string,
+  definition: {
+    name: string,
+    version: number,
+    resolve(args: Readonly<Record<string, unknown>>):
+      | { script: string; hostCommands?: readonly { key: string; command: string }[] }
+      | { error: string },
+  },
+}): { dispose(): void }
+```
+
+Names are case-sensitive, at most 128 characters, and match `[A-Za-z0-9][A-Za-z0-9._-]*`; use an extension prefix. Versions are positive safe integers. Registration throws for invalid input, protected builtins (`review`, `run-ci`), or duplicate names within the same session. Different sessions may register the same name. Dispose before replacement; there is no silent overwrite.
+
+Register in `session_start` using **`ctx.sessionManager.getSessionId()`**, not the session file path or a tool argument. Dispose in `session_shutdown`. New/resumed/forked sessions and reloads need registration from the replacement runtime's `session_start`; do not retain old `pi`/`ctx` references. The extension owns cleanup, not an automatic registration lifecycle manager. Disposal is idempotent and cannot remove a newer replacement. Missing cleanup can cause a duplicate-registration failure on reload.
+
+`resolve` must do synchronous, bounded validation and string construction, without I/O, SDK calls, timers or process work. Core deep-copies plain JSON args: at most 16 KiB encoded, nesting depth 8, 16 fields per object, 64 items per array, finite numbers, and nonempty strings of at most 16 KiB. The extension must additionally reject unsupported fields and validate resource-specific semantics. Throws, promises/thenables and malformed expansions fail before authority is issued; errors are bounded to 4096 characters.
+
+Host grants bind **exact key/trimmed-command pairs**, not independent sets of keys and commands. At most 32 grants are accepted, with unique safe workflow keys and nonempty commands bounded to 16 KiB without NUL. Omitted grants give no host authority. Core snapshots the expansion and grants at resolution. Disposing stops future lookup, but already-admitted workflows retain captured grants, even after replacement. Use existing stop/deadline controls for cancellation; this does not promise survival of host shutdown or durable named scheduling. Existing child admission and capability ceilings still apply.
+
+### Mixed child and finite host example
+
+This extension owns two fixed commands; `scripts/finite-check.mjs` must be an existing trusted finite helper in the workflow cwd. It runs a reviewer first, then a check. No command or flags come from free-form public args.
+
+```typescript
+import type { ExtensionAPI } from "@selesai/code";
+import { registerWorkflowResource } from "pi-subagents/workflow-resources";
+
+export default function (pi: ExtensionAPI) {
+  let registration: { dispose(): void } | undefined;
+  pi.on("session_start", (_event, ctx) => {
+    registration?.dispose();
+    registration = registerWorkflowResource({
+      sessionId: ctx.sessionManager.getSessionId(),
+      definition: {
+        name: "acme.review-check",
+        version: 1,
+        resolve(args) {
+          if (Object.keys(args).some(k => k !== "task" && k !== "check"))
+            return { error: "Only task and check are supported." };
+          if (typeof args.task !== "string" || !args.task.trim() || args.task.length > 4000)
+            return { error: "task must contain 1–4000 characters." };
+          if (args.check !== "quick" && args.check !== "full")
+            return { error: "check must be quick or full." };
+          const command = args.check === "quick"
+            ? "node ./scripts/finite-check.mjs --mode quick"
+            : "node ./scripts/finite-check.mjs --mode full";
+          const host = { kind: "command", command, timeoutMs: 120000 };
+          return {
+            hostCommands: [{ key: "check", command }],
+            script: `
+              const review = await runs.run("review", {
+                agent: "reviewer", task: ${JSON.stringify(args.task)}
+              });
+              if (!review.ok) throw new Error("Review child failed");
+              const check = await runs.host("check", ${JSON.stringify(host)});
+              return { review: review.output, check };
+            `,
+          };
+        },
+      },
+    });
+  });
+  pi.on("session_shutdown", () => {
+    registration?.dispose();
+    registration = undefined;
+  });
+}
+```
+
+Invoke through the public `subagent` tool (use `async: false` for foreground):
+
+```json
+{
+  "workflow": "acme.review-check",
+  "args": { "task": "Review the current change; return findings only.", "check": "quick" },
+  "async": true
+}
+```
+
+The parent evaluates child findings and ordinary command logs/status/terminal receipts; child success is not approval or proof of a clean review. The timeout above bounds the host command, not the whole workflow.
+
+**Trust boundary:** this API composes already-loaded trusted code; it is neither authentication nor a sandbox. Session IDs scope lookup, not authorization between malicious extensions. Core owns opaque permits and provenance; caller-supplied issuer/trust/permit metadata cannot grant authority. Raw public scripts and script paths do not gain host authority, and registration is not an arbitrary-command entry point for public args.
+
+The existing shell runner uses workflow cwd and inherited environment. Exact matching does not pin PATH resolution, executable bytes, repository helpers, or credentials. Those remain operator/extension trust responsibilities. `JSON.stringify` embeds data in JavaScript source; **it is not shell escaping**. Keep commands fixed as above, or validate strictly bounded numeric/hex tokens before binding known positions; never concatenate arbitrary task text or flags into shell commands. No new runner, cwd confinement, CI/merge policy, or SDK lifecycle framework is provided.
+
 ## In-process event-bus RPC
 
 Other Pi extensions can use the in-process event-bus RPC instead of scraping slash output or calling internal modules. Listen for `subagents:rpc:v1:ready`, send requests on `subagents:rpc:v1:request`, and read replies from `subagents:rpc:v1:reply:<requestId>`.
@@ -99,7 +190,7 @@ If `pi-subagents` is a resolvable dependency of the consumer package, `pi-subage
 
 The installed owner applies the existing runtime-agent validation, collision checks, limits, runtime source metadata, and cleanup. If more than one owner listens, the first handler that writes `request.result` wins. Unsupported versions, malformed requests, and registration failures return `{ ok: false, error }`. No result means no compatible owner handled the event.
 
-This contract is process-local. It does not register agents in child processes or other Pi processes, and it does not change package discovery or package resolution.
+This contract is process-local. It does not register agents in child sessions or other Pi processes, and it does not change package discovery or package resolution.
 
 ## External jobs in FleetView
 
@@ -309,7 +400,9 @@ Semantics:
 - Providers share a registry through `Symbol.for("pi-subagents.background-work.v1")`, allowing independently loaded extension modules to meet in one Pi process.
 - Registration is reload-safe: a new provider with the same name replaces the old callback, and the old disposer cannot remove the replacement. Call the disposer during extension shutdown when possible.
 
-Child processes do not gain provider tools or extensions automatically. Add `bg_wait` to the child agent's `tools` allowlist (or the deprecated `subagent_wait` compatibility alias) and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting is serialized through foreground, async, resume, chain, parallel, and fanout launch paths; `SELESAI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence.
+Children do not gain provider tools or extensions automatically. Add `bg_wait` (or the deprecated `subagent_wait` compatibility alias) to the child agent's `tools` allowlist and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting reaches every child through its typed runtime config; `SELESAI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence in the parent.
+
+Foreground children never load the parent's ambient extensions: they share the parent's process, and loading them would start a second copy of every ambient extension, including this one, inside it. Agents that need MCP tools (`mcpDirectTools`, or MCP tools from an ambient adapter such as pi-mcp-adapter) or models from a provider extension must run as background children (`async: true`), which load the ambient extensions inside the detached runner process unless the agent sets `extensions` or the capability ceiling denies extensions.
 
 ## External job provider bridge
 
@@ -363,7 +456,7 @@ subagent({ action: "inspector.status", id: "<run-id>", index: 0 })
 subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
 ```
 
-The inspector is a raw dashboard pane, not the child process and not a literal attach. It reads lifecycle/status/output/mission artifacts and sends `steer` or `stop` through pi-subagents' existing control inbox. Closing it never stops the run.
+The inspector is a raw dashboard pane, not the child session and not a literal attach. It reads lifecycle/status/output/mission artifacts and sends `steer` or `stop` through pi-subagents' existing control inbox. Closing it never stops the run.
 
 Herdr remains optional. Ordinary launches stay headless, and missing/older Herdr versions affect only Herdr-specific inspector and project-pane actions. FleetView opens the selected active async child with `H`. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
 
@@ -412,6 +505,8 @@ Detached children do not stop when the session does. They are the host process's
 
 This matters because "is the parent busy?" is the wrong idle signal. A parent that launches a detached run and hands control back — which is what the async launch output tells it to do — is not prompting, streaming, compacting, or running a shell command. A host that reaps sessions on those signals alone will dispose exactly the session that was waiting to be woken.
 
+When pi-subagents runs inside a compatible pi-web host, it discovers the versioned `Symbol.for("@agegr/pi-web/session-liveness/v1")` registry and registers one provider for the current session. The provider reports live `queued`/`running` async jobs, active nested descendants (including foreground routes retained after their direct parent settles), foreground controls that still have a scheduling owner or active child, and completion notifications waiting for their batch-delivery timer. Retained terminal history, future schedules, and wait subscriptions do not make a session live by themselves. The registration is replaced on session changes and released during runtime shutdown or reload; other hosts remain unaffected.
+
 If your host reclaims idle sessions, keep a session alive while it still has live detached work:
 
 - Read run state from the status files under the async run directory rather than from event traffic. A long, quiet workflow sends almost nothing to the parent, so recent-activity heuristics conclude the wrong thing.
@@ -429,10 +524,18 @@ The main runtime files in this repository:
 | File | Purpose |
 |------|---------|
 | `src/extension/index.ts` | Extension registration, tool registration, message/render wiring. |
+| `src/integrations/pi-web-session-liveness.ts` | Optional pi-web idle-eviction liveness bridge. |
 | `src/agents/agents.ts` | Agent and chain discovery, frontmatter parsing. |
 | `src/runs/foreground/subagent-executor.ts` | Main execution routing for single, parallel, chain, management, status, interrupt, and doctor actions. |
-| `src/runs/foreground/execution.ts` | Core foreground `runSync` handling. |
-| `src/runs/background/subagent-runner.ts` | Detached async runner. |
+| `src/runs/foreground/execution.ts` | Core foreground `runSync` handling: drives one in-process child session per attempt. |
+| `src/runs/shared/child-session.ts` | In-process child session factory (`createAgentSession` behind an injectable seam) and the shared model runtime; used by both launch paths. |
+| `src/runs/shared/child-launch.ts` | Builds the tool plan, typed child runtime config, and session launch for a child in either host process. |
+| `src/runs/shared/child-tool-plan.ts` | Tool, MCP, and extension resolution for a child launch. |
+| `src/runs/shared/child-runtime-config.ts` | `ChildRuntimeConfig`: everything the child-side hooks need. |
+| `src/runs/shared/child-hooks.ts` | The inline hook extensions every child gets (prompt runtime, fast mode, fanout). |
+| `src/runs/background/subagent-runner.ts` | Detached async runner; hosts background child sessions in its own process. |
+| `src/runs/background/run-child-session.ts` | Drives one background child session and mirrors its events into the run artifacts. |
+| `src/runs/background/runner-aliases.ts` | Aliases the host peer packages to the installed pi package for the runner (`JITI_ALIAS`). |
 | `src/runs/background/async-execution.ts` | Background launch support. |
 | `src/runs/background/async-status.ts` | Status discovery and formatting for async runs. |
 | `src/workflows/scripted-workflow.ts` / `src/runs/foreground/subagent-executor.ts` | Scripted workflow orchestration and child launch routing. |
@@ -440,4 +543,4 @@ The main runtime files in this repository:
 | `src/runs/shared/worktree.ts` | Git worktree isolation. |
 | `src/intercom/intercom-bridge.ts` | Runtime intercom bridge instructions and diagnostics. |
 | `src/extension/schemas.ts` / `src/shared/types.ts` | Tool schemas, shared types, and event constants. |
-| `test/unit/` / `test/integration/` / `test/e2e/` | Unit, loader-based integration, and real-session E2E tests. |
+| `test/unit/` / `test/integration/` | Unit and loader-based integration tests. |

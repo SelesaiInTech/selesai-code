@@ -158,7 +158,7 @@ Inspect env.
 		assert.equal(fs.existsSync(path.join(agentDir, "agents", `${createdName}.md`)), true);
 	});
 
-	it("ignores nested .selesai and sync-backups agent definitions", () => {
+	it("ignores nested .pi and sync-backups agent definitions", () => {
 		const userAgentsDir = path.join(agentDir, "agents");
 		const rootAgentPath = path.join(userAgentsDir, "root-agent.md");
 		writeFile(rootAgentPath, `---
@@ -290,6 +290,32 @@ Package skill content.
 
 		writeFile(configPath, JSON.stringify({ defaultSubagentContext: "other" }));
 		assert.throws(() => updateConfig((config) => config), /config\.defaultSubagentContext must be "fresh" or "fork"/);
+	});
+
+	it("loads exact model response aliases and preserves them during config updates", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		const modelResponseAliases = {
+			"databricks-bedrock/ias-claude-opus-5": ["claude-opus-5", "exact/Response:high"],
+			"gateway/owner/model": [],
+		};
+		writeFile(configPath, JSON.stringify({ modelResponseAliases }));
+		assert.deepEqual(loadConfig().modelResponseAliases, modelResponseAliases);
+		updateConfig((config) => ({ ...config, asyncByDefault: false }));
+		assert.deepEqual(loadConfig(), { modelResponseAliases, asyncByDefault: false });
+		writeFile(configPath, JSON.stringify({ modelResponseAliases: {} }));
+		assert.deepEqual(loadConfig().modelResponseAliases, {});
+	});
+
+	it("fails config load for malformed model response aliases with useful diagnostics", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		for (const modelResponseAliases of [null, [], "alias", { "": [] }, { model: [] }, { "/model": [] }, { "provider/ ": [] }, { " /model": [] }]) {
+			writeFile(configPath, JSON.stringify({ modelResponseAliases }));
+			assert.throws(() => loadConfig(), /config\.modelResponseAliases.*(?:JSON object|provider\/model ID)/);
+		}
+		for (const aliases of [null, "response", [""], [" "], [1], ["valid", false]]) {
+			writeFile(configPath, JSON.stringify({ modelResponseAliases: { "provider/model": aliases } }));
+			assert.throws(() => loadConfig(), /config\.modelResponseAliases\["provider\/model"\].*array of non-empty response ID strings/);
+		}
 	});
 
 	it("loads and applies model exclusion TTL config", () => {

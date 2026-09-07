@@ -15,7 +15,7 @@ import { getModelSelectorSearchText } from "../model-search.ts";
 import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
-import { keyHint } from "./keybinding-hints.ts";
+import { keyDisplayText, keyHint } from "./keybinding-hints.ts";
 
 interface ModelItem {
 	provider: string;
@@ -137,6 +137,19 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.addChild(this.listContainer);
 
 		this.addChild(new Spacer(1));
+
+		if (this.options.persistSelection !== false) {
+			this.addChild(
+				new Text(
+					theme.fg(
+						"dim",
+						`  ${keyDisplayText("tui.select.confirm")} to select · ${keyDisplayText("app.models.save")} to set as default · ${keyDisplayText("tui.select.cancel")} to cancel`,
+					),
+					0,
+					0,
+				),
+			);
+		}
 
 		// Add bottom border
 		this.addChild(new DynamicBorder());
@@ -281,20 +294,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 			const isSelected = i === this.selectedIndex;
 			const isCurrent = modelsAreEqual(this.currentModel, item.model);
-
-			let line = "";
-			if (isSelected) {
-				const prefix = theme.fg("accent", "→ ");
-				const modelText = `${item.id}`;
-				const providerBadge = theme.fg("muted", `[${item.provider}]`);
-				const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
-				line = `${prefix + theme.fg("accent", modelText)} ${providerBadge}${checkmark}`;
-			} else {
-				const modelText = `  ${item.id}`;
-				const providerBadge = theme.fg("muted", `[${item.provider}]`);
-				const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
-				line = `${modelText} ${providerBadge}${checkmark}`;
-			}
+			const isDefault =
+				item.provider === this.settingsManager.getDefaultProvider() && item.id === this.settingsManager.getDefaultModel();
+			const defaultBadge = isDefault ? theme.fg("muted", " · default") : "";
+			const cursor = isSelected ? theme.fg("accent", "→ ") : "  ";
+			const currentMarker = isCurrent ? theme.fg("accent", "✓ ") : "  ";
+			const modelText = isSelected ? theme.fg("accent", item.id) : item.id;
+			const providerBadge = item.provider ? theme.fg("muted", `[${item.provider}]`) : "";
+			const line = `${cursor}${currentMarker}${modelText}${providerBadge ? ` ${providerBadge}` : ""}${defaultBadge}`;
 
 			this.listContainer.addChild(new Text(line, 0, 0));
 		}
@@ -363,6 +370,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.close();
 			this.onCancelCallback();
 		}
+		// Select and save as default. Vision-only selectors opt out via persistSelection.
+		else if (kb.matches(keyData, "app.models.save") && this.options.persistSelection !== false) {
+			const selectedModel = this.filteredModels[this.selectedIndex];
+			if (selectedModel && selectedModel.model.id !== "off") {
+				this.settingsManager.setDefaultModelAndProvider(selectedModel.model.provider, selectedModel.model.id);
+				this.handleSelect(selectedModel.model);
+			}
+		}
 		// Pass everything else to search input
 		else {
 			this.searchInput.handleInput(keyData);
@@ -372,7 +387,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	private handleSelect(model: Model<any>): void {
 		this.close();
-		if (model.id !== "off" && this.options.persistSelection !== false) this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 		this.onSelectCallback(model.id === "off" ? undefined : model);
 	}
 

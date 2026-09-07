@@ -1,6 +1,6 @@
 {
   "name": "pi-subagents",
-  "version": "0.64.0",
+  "version": "0.66.0",
   "description": "Selesai extension for single-agent delegation and scripted multi-agent workflows",
   "author": "Nico Bailon",
   "license": "MIT",
@@ -13,10 +13,11 @@
     "./agents": "./src/api/agents.ts",
     "./delegation": "./src/api/delegation.ts",
     "./capability-ceiling": "./src/api/capability-ceiling.ts",
+    "./workflow-resources": "./src/api/workflow-resources.ts",
     "./preflight": "./src/api/preflight.ts",
     "./control-channel": "./src/api/control-channel.ts",
     "./intercom-bridge": "./src/api/intercom-bridge.ts",
-    "./pi-args": "./src/api/pi-args.ts",
+    "./child-tool-plan": "./src/api/child-tool-plan.ts",
     "./shared-types": "./src/api/shared-types.ts",
     "./project-panes": "./src/api/project-panes.ts"
   },
@@ -56,8 +57,7 @@
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/*.test.ts",
     "test:integration": "node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
-    "test:e2e": "node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/e2e/*.test.ts",
-    "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e"
+    "test:all": "npm run test:unit && npm run test:integration"
   },
   "pi": {
     "extensions": [
@@ -91,9 +91,11 @@
     }
   },
   "dependencies": {
+    "@earendil-works/pi-server": "0.85.0",
     "acorn": "8.18.0",
     "jiti": "2.7.0",
     "typebox": "1.1.38",
+    "undici": "8.10.0",
     "yaml": "2.8.3"
   },
   "devDependencies": {

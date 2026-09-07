@@ -1,6 +1,6 @@
 {
 	"name": "pi-zentui",
-	"version": "0.21.0",
+	"version": "0.23.0",
 	"description": "A Starship-inspired statusline and Opencode-style TUI for Pi.",
 	"type": "module",
 	"license": "MIT",
@@ -20,18 +20,21 @@
 		"tui"
 	],
 	"files": [
-		"extensions"
+		"extensions",
+		"docs/configuration.md"
 	],
 	"scripts": {
 		"lint": "biome check .",
 		"typecheck": "tsc --noEmit",
-		"test": "vitest run",
+		"test": "vitest run --testTimeout=30000",
+		"test:thinking-experimental-tui": "node test/thinking-experimental-tui.mjs",
+		"test:thinking-experimental-diagnostics": "node test/thinking-experimental-loader-diagnostics.mjs",
 		"pi:dev": "${PI_BIN:-/opt/homebrew/bin/pi} --no-extensions -e ./extensions/zentui/index.ts",
 		"pi:install-local": "${PI_BIN:-/opt/homebrew/bin/pi} install ./ -l",
 		"fmt": "biome format --write .",
 		"fmt:check": "biome format .",
 		"verify": "npm run lint && npm run typecheck && npm run test",
-		"pack:check": "npm pack --dry-run",
+		"pack:check": "node test/package-contents.mjs",
 		"prepublishOnly": "npm run verify && npm run pack:check"
 	},
 	"peerDependencies": {

@@ -21,6 +21,7 @@ convention.
 ## Upgrade history
 
 - **v0.60.0 → v0.61.0** (2026-08-31): first documented port; process below written from it.
+- **v0.64.0 → v0.66.0** (2026-09-07): third port, same 3-way merge process (scope `pi-v0.85.1-sync`, see `.unlazy/pi-v0.85.1-sync/`). Anchored: base `pi-subagents/v0.64.0` (`57fda3f9c66e961ae0bba26496ce6459226f886e`) → target `v0.66.0` (`0fc0eebb9604970c506708b7508d6aa38921fde2`). Upstream 0.66.0 highlights: in-process child-session runner, runner aliases/preload, workflow resources, native supervisor/intercom, `pi-args`→`child-tool-plan` rename, delivery reliability.
 - **v0.61.0 → v0.64.0** (2026-09-02): second port, same 3-way merge process (unlazy scope
   `subagents-upgrade`, see `.unlazy/subagents-upgrade/` for gates, check scripts, and frozen merge
   references). Anchored delta: 155 files (69 src, 68 test, 7 docs, 3 skills, 5 root, 9 new);

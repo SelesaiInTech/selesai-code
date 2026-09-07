@@ -1,8 +1,6 @@
 import type { ResolvedToolBudget, ToolBudgetConfig, ToolBudgetState } from "../../shared/types.ts";
 
 export const DEFAULT_TOOL_BUDGET_BLOCK = ["read", "grep", "find", "ls"] as const;
-export const TOOL_BUDGET_ENV = "SELESAI_SUBAGENT_TOOL_BUDGET";
-export const TOOL_BUDGET_ZERO_AUTH_ENV = "SELESAI_SUBAGENT_TOOL_BUDGET_ZERO_AUTH";
 
 export function normalizeToolBudgetBlock(block: ToolBudgetConfig["block"] | undefined): "*" | string[] {
 	if (block === "*") return "*";
@@ -65,16 +63,4 @@ export function toolBudgetSoftNudge(budget: ResolvedToolBudget, toolCount: numbe
 
 export function toolBudgetBlockedMessage(budget: ResolvedToolBudget, toolName: string, toolCount: number): string {
 	return `Tool budget hard limit reached after ${toolCount} tool call${toolCount === 1 ? "" : "s"} (hard ${budget.hard}). The '${toolName}' tool is blocked so you can finalize from the context you already have.`;
-}
-
-export function encodeToolBudgetEnv(budget: ResolvedToolBudget | undefined): string | undefined {
-	return budget ? JSON.stringify(budget) : undefined;
-}
-
-export function decodeToolBudgetEnv(value: string | undefined, options: { allowZero?: boolean } = {}): ResolvedToolBudget | undefined {
-	if (!value?.trim()) return undefined;
-	const parsed = JSON.parse(value) as unknown;
-	const normalized = validateToolBudgetConfig(parsed, TOOL_BUDGET_ENV, options.allowZero ? { minimumHard: 0 } : undefined);
-	if (normalized.error) throw new Error(normalized.error);
-	return normalized.budget;
 }

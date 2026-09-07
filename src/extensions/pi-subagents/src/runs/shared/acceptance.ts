@@ -24,7 +24,7 @@ import type {
 	ChildWatchdogProgress,
 } from "../../shared/types.ts";
 import { unresolvedChildWatchdogBlockers } from "../../watchdog/child-status.ts";
-import { isAgentContractV1 } from "./agent-contract.ts";
+import { isAgentContract } from "./agent-contract.ts";
 import { classifyTaskMutationIntent, stripSeverityCompounds, taskMayMutate } from "./task-intent.ts";
 
 const LEVEL_RANK: Record<Exclude<AcceptanceLevel, "auto">, number> = {
@@ -202,8 +202,21 @@ export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInp
 		return normalized.error ? { ok: false, error: normalized.error } : { ok: true, acceptance: normalized.value as AcceptanceInput };
 	}
 	if (typeof gate !== "string" || !gate.trim()) return { ok: false, error: "gate must be a non-empty command string." };
-	if (acceptance !== undefined) return { ok: false, error: "gate cannot be combined with acceptance; use one gate command or acceptance.verify." };
+	if (acceptance !== undefined && acceptance !== false) return { ok: false, error: "gate cannot be combined with acceptance; use one gate command or acceptance.verify." + describeGateAcceptanceConflict(gate, acceptance) };
 	return { ok: true, acceptance: { level: "verified", verify: [{ id: "gate", command: gate.trim() }] } };
+}
+
+export function describeGateAcceptanceConflict(gate: unknown, acceptance: unknown): string {
+	const render = (value: unknown): string => {
+		let encoded: string;
+		try {
+			encoded = JSON.stringify(value) ?? String(value);
+		} catch {
+			encoded = String(value);
+		}
+		return encoded.length > 120 ? `${encoded.slice(0, 120)}...` : encoded;
+	};
+	return ` Both fields were present: gate=${render(gate)} acceptance=${render(acceptance)}.`;
 }
 
 function explicitAcceptanceCanDisable(explicit: AcceptanceConfig): boolean {
@@ -422,7 +435,7 @@ export function resolveEffectiveAcceptance(input: {
 }): ResolvedAcceptanceConfig {
 	const explicit = normalizeAcceptanceInput(input.explicit);
 	const explicitLevel = normalizeLevel(explicit.level);
-	if (isAgentContractV1(input.agentContract)) {
+	if (isAgentContract(input.agentContract)) {
 		const level = explicitAcceptanceCanDisable(explicit) || explicitLevel === "auto"
 			? "none"
 			: explicitLevel;

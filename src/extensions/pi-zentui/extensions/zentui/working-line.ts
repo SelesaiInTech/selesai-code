@@ -494,6 +494,7 @@ export type WorkingLineRuntimeSegments = {
 	elapsedMs?: number;
 	thought?: { durationMs: number; active: boolean };
 	tokens?: { input: number; output: number; outputApproximate?: boolean };
+	extensions?: readonly string[];
 };
 
 export type WorkingLineFrameState = {
@@ -573,6 +574,26 @@ function truncateWithEllipsis(value: string, capacity: number): string {
 	return prefix ? `${prefix}…` : "";
 }
 
+function fitWorkingLineExtensionSegments(
+	values: readonly string[],
+	budget: number,
+	delimiter: string,
+): string[] {
+	const fitted: string[] = [];
+	let used = 0;
+	for (const value of values) {
+		const normalized = normalizeWorkingLineMessage(value);
+		const remaining = budget - used - visibleWidth(delimiter);
+		if (!normalized || remaining <= 0) continue;
+		const text = truncateWithEllipsis(normalized, remaining);
+		if (!text) continue;
+		fitted.push(text);
+		used += visibleWidth(delimiter) + visibleWidth(text);
+		if (text !== normalized) break;
+	}
+	return fitted;
+}
+
 export type ComposedWorkingLine = { message: string; row: string };
 
 /** Validate and measure the fixed visible width shared by every frame in a preset. */
@@ -596,7 +617,17 @@ export function composeWorkingLineRow(
 		MAX_WORKING_LINE_FRAME_CELLS - workingLineSpinnerWidth(config.spinner) - visibleWidth(" ");
 	const delimiter = " · ";
 	const tokens = config.segments.tokens ? formatWorkingLineTokens(runtime.tokens) : undefined;
-	const mandatoryWidth = tokens ? visibleWidth(delimiter) + visibleWidth(tokens) : 0;
+	const tokenWidth = tokens ? visibleWidth(delimiter) + visibleWidth(tokens) : 0;
+	const extensions = fitWorkingLineExtensionSegments(
+		runtime.extensions ?? [],
+		Math.max(0, maximumRowCells - tokenWidth - 1),
+		delimiter,
+	);
+	const extensionWidth = extensions.reduce(
+		(width, value) => width + visibleWidth(delimiter) + visibleWidth(value),
+		0,
+	);
+	const mandatoryWidth = tokenWidth + extensionWidth;
 	const messageCapacity = maximumRowCells - mandatoryWidth;
 	const fittedMessage = truncateWithEllipsis(normalized, messageCapacity);
 	const segments: string[] = [fittedMessage];
@@ -630,6 +661,7 @@ export function composeWorkingLineRow(
 	if (accepted.has("elapsed") && elapsed) segments.push(elapsed);
 	if (accepted.has("thought") && thought) segments.push(thought);
 	if (tokens) segments.push(tokens);
+	segments.push(...extensions);
 	return { message: normalized, row: segments.filter(Boolean).join(delimiter) };
 }
 
@@ -1027,6 +1059,8 @@ export class WorkingLineController {
 	private installedIndicatorOptions: WorkingIndicatorOptions | undefined;
 	private tokens: WorkingLineRuntimeSegments["tokens"];
 	private thought: WorkingLineRuntimeSegments["thought"];
+	private extensionSegments: readonly string[] = [];
+	private extensionSegmentsDirty = false;
 	private readonly activeTools = new Map<string, string>();
 	private elapsedUpdatesActive = false;
 	private elapsedUpdatesContext: WorkingLineContext | undefined;
@@ -1040,6 +1074,7 @@ export class WorkingLineController {
 		private readonly random: () => number = Math.random,
 		private readonly now: () => number = Date.now,
 		private readonly getThought: () => WorkingLineRuntimeSegments["thought"] = () => this.thought,
+		private readonly onUnavailable: () => void = () => {},
 	) {}
 
 	startSession(ctx: WorkingLineContext): WorkingLineReconcileResult {
@@ -1085,6 +1120,24 @@ export class WorkingLineController {
 
 	updateTokens(tokens: WorkingLineRuntimeSegments["tokens"], ctx: WorkingLineContext): void {
 		this.updateMetrics(tokens, this.getThought(), ctx);
+	}
+
+	updateExtensionSegments(segments: readonly string[], ctx: WorkingLineContext): boolean {
+		const unchanged =
+			this.extensionSegments.length === segments.length &&
+			this.extensionSegments.every((value, index) => value === segments[index]);
+		if (unchanged && !this.extensionSegmentsDirty) return true;
+		if (!unchanged) {
+			this.extensionSegments = [...segments];
+			this.extensionSegmentsDirty = true;
+		}
+		return this.updateIndicator(ctx);
+	}
+
+	/** Drops extension state that is no longer valid for the current owned Working row. */
+	invalidateExtensionSegments(): void {
+		this.extensionSegments = [];
+		this.extensionSegmentsDirty = false;
 	}
 
 	startTool(toolCallId: string, toolName: string, ctx: WorkingLineContext): void {
@@ -1141,6 +1194,16 @@ export class WorkingLineController {
 		return this.selectedMessage;
 	}
 
+	/** Whether this controller currently claims both required public Working-row surfaces. */
+	isAvailable(): boolean {
+		return (
+			this.getConfig().components.workingLine.enabled &&
+			this.installed &&
+			this.ownsIndicator &&
+			this.ownsMessage
+		);
+	}
+
 	private install(
 		ctx: WorkingLineContext,
 		forceIndicator = false,
@@ -1151,6 +1214,7 @@ export class WorkingLineController {
 		if (!ui) {
 			this.installed = false;
 			this.deactivateElapsedUpdates();
+			this.invalidateUnavailableExtensionSegments();
 			return { applied: false, reason: "Working line requires a newer Pi TUI" };
 		}
 		const rootConfig = this.getConfig();
@@ -1206,6 +1270,7 @@ export class WorkingLineController {
 			elapsedMs: this.agentActive ? this.durationClock.elapsedMs() : undefined,
 			thought,
 			tokens: this.tokens,
+			extensions: this.extensionSegments,
 		};
 	}
 
@@ -1217,7 +1282,10 @@ export class WorkingLineController {
 		rebase = false,
 	): void {
 		const key = this.makeFrameKey(rootConfig, selectedMessage);
-		if (!force && this.installed && this.frameKey === key) return;
+		if (!force && this.installed && this.frameKey === key) {
+			this.extensionSegmentsDirty = false;
+			return;
+		}
 		const config = rootConfig.components.workingLine;
 		const sampledAtMs = this.now();
 		let spinnerTick = 0;
@@ -1289,19 +1357,22 @@ export class WorkingLineController {
 		this.installed = true;
 		this.frameKey = key;
 		this.installedIndicatorOptions = indicatorOptions;
+		this.extensionSegmentsDirty = false;
 	}
 
-	private updateIndicator(ctx: WorkingLineContext): void {
+	private updateIndicator(ctx: WorkingLineContext): boolean {
 		const rootConfig = this.getConfig();
-		if (!rootConfig.components.workingLine.enabled || !this.installed) return;
+		if (!rootConfig.components.workingLine.enabled || !this.installed) return false;
 		const ui = workingLineUi(ctx);
-		if (!ui) return;
+		if (!ui) return false;
 		const snapshot = this.installationSnapshot();
 		try {
 			this.applyIndicator(ui, rootConfig);
+			return !this.extensionSegmentsDirty;
 		} catch {
 			// A transient last-writer/public-API failure must not break the agent turn.
 			this.recoverOrReleaseAfterFailure(ui, snapshot);
+			return false;
 		}
 	}
 
@@ -1378,6 +1449,15 @@ export class WorkingLineController {
 		}
 	}
 
+	private invalidateUnavailableExtensionSegments(): void {
+		this.invalidateExtensionSegments();
+		try {
+			this.onUnavailable();
+		} catch {
+			// Availability cleanup is fail-open like the public Working-row release.
+		}
+	}
+
 	private releaseAfterFailure(ui: WorkingLineUi): void {
 		this.deactivateElapsedUpdates();
 		if (this.ownsIndicator) {
@@ -1400,6 +1480,7 @@ export class WorkingLineController {
 		this.frameKey = undefined;
 		this.installedPhase = undefined;
 		this.installedIndicatorOptions = undefined;
+		this.invalidateUnavailableExtensionSegments();
 	}
 
 	private reset(ctx: WorkingLineContext): void {
@@ -1434,5 +1515,6 @@ export class WorkingLineController {
 		this.activeTools.clear();
 		this.tokens = undefined;
 		this.thought = undefined;
+		this.invalidateExtensionSegments();
 	}
 }

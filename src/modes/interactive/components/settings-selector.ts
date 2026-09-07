@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Transport } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels, type Model, type Transport } from "@earendil-works/pi-ai";
 import {
 	type Component,
 	Container,
@@ -25,6 +25,9 @@ import {
 import { DynamicBorder } from "./dynamic-border.ts";
 import type { ModelSelectorComponent } from "./model-selector.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
+import { SteppedSubmenu, type SteppedSubmenuStep } from "./settings-submenu.ts";
+
+const MODEL_PICKER_LAYOUT: SelectListLayoutOptions = { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 46 };
 
 const SETTINGS_SUBMENU_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 	minPrimaryColumnWidth: 12,
@@ -77,6 +80,10 @@ export interface SettingsConfig {
 	httpIdleTimeoutMs: number;
 	thinkingLevel: ThinkingLevel;
 	availableThinkingLevels: ThinkingLevel[];
+	defaultModel: string;
+	currentModel?: Model<any>;
+	availableDefaultModels: readonly Model<any>[];
+	modelThinkingLevels: Record<string, ThinkingLevel>;
 	currentTheme: string;
 	terminalTheme: TerminalTheme;
 	availableThemes: string[];
@@ -116,6 +123,8 @@ export interface SettingsCallbacks {
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
 	onTransportChange: (transport: Transport) => void;
 	onHttpIdleTimeoutMsChange: (timeoutMs: number) => void;
+	onModelThinkingLevelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
+	onModelThinkingLevelRemove: (provider: string, modelId: string) => void;
 	onThinkingLevelChange: (level: ThinkingLevel) => void;
 	onThemeChange: (theme: string) => void;
 	onThemePreview?: (theme: string) => void;
@@ -309,20 +318,23 @@ class SelectSubmenu extends Container {
 	}
 }
 
-function themeItems(availableThemes: string[]): SelectItem[] {
-	return availableThemes.map((name) => ({ value: name, label: name }));
+function themeItems(availableThemes: string[], currentTheme: string): SelectItem[] {
+	return availableThemes.map((name) => ({
+		value: name,
+		label: `${name === currentTheme ? "✓ " : "  "}${name}`,
+	}));
 }
 
 const AUTOMATIC_THEME_VALUE = "/";
 
-function singleModeThemeItems(availableThemes: string[]): SelectItem[] {
+function singleModeThemeItems(availableThemes: string[], currentTheme: string): SelectItem[] {
 	return [
 		{
 			value: AUTOMATIC_THEME_VALUE,
-			label: "Automatic",
+			label: "  Automatic",
 			description: "Use separate themes for light and dark terminal appearance",
 		},
-		...themeItems(availableThemes),
+		...themeItems(availableThemes, currentTheme),
 	];
 }
 
@@ -403,7 +415,7 @@ class ThemeSubmenu extends Container {
 		const menu = new SelectSubmenu(
 			"Theme",
 			"Select a theme, or choose Automatic to follow terminal appearance.",
-			singleModeThemeItems(this.availableThemes),
+			singleModeThemeItems(this.availableThemes, this.singleTheme),
 			this.singleTheme,
 			(value) => {
 				if (value === AUTOMATIC_THEME_VALUE) {
@@ -519,7 +531,7 @@ class ThemeSubmenu extends Container {
 		return new SelectSubmenu(
 			title,
 			description,
-			themeItems(this.availableThemes),
+			themeItems(this.availableThemes, currentValue),
 			currentValue,
 			onSelect,
 			() => {
@@ -552,6 +564,26 @@ class ThemeSubmenu extends Container {
 	}
 }
 
+const CLEAR_OVERRIDE_VALUE = "__clear__";
+
+function modelSettingKey(model: Model<any>): string {
+	return `${model.provider}/${model.id}`;
+}
+
+function modelDisplayLabel(model: Model<any>): string {
+	return `${model.id} [${model.provider}]`;
+}
+
+function modelThinkingOverridesSummary(overrides: Record<string, ThinkingLevel>): string {
+	const count = Object.keys(overrides).length;
+	if (count === 0) return "none";
+	return `${count} configured`;
+}
+
+function modelItemLabel(model: Model<any>): string {
+	return `${model.id} ${theme.fg("muted", `[${model.provider}]`)}`;
+}
+
 /**
  * Main settings selector component.
  */
@@ -563,7 +595,14 @@ export class SettingsSelectorComponent extends Container {
 
 		const supportsImages = getCapabilities().images;
 		const followUpKey = keyDisplayText("app.message.followUp");
+		const cycleThinkingKey = keyDisplayText("app.thinking.cycle");
 		let currentWarnings = { ...config.warnings };
+		const currentModelThinkingLevels = { ...config.modelThinkingLevels };
+		const defaultModelByValue = new Map(
+			config.availableDefaultModels.map((model) => [modelSettingKey(model), model]),
+		);
+		const currentDefaultModelKey = defaultModelByValue.has(config.defaultModel) ? config.defaultModel : undefined;
+		const currentModelKey = config.currentModel ? modelSettingKey(config.currentModel) : undefined;
 		let skillsChanged = false;
 
 		const items: SettingItem[] = [
@@ -628,7 +667,7 @@ export class SettingsSelectorComponent extends Container {
 			{
 				id: "cache-miss-notices",
 				label: "Cache miss notices",
-				description: "Show transcript notices for significant prompt-cache misses",
+				description: "Show transcript notices for cache costs and provider recovery diagnostics",
 				currentValue: config.showCacheMissNotices ? "true" : "false",
 				values: ["true", "false"],
 			},
@@ -705,26 +744,105 @@ export class SettingsSelectorComponent extends Container {
 					),
 			},
 			{
-				id: "thinking",
-				label: "Thinking level",
-				description: "Reasoning depth for thinking-capable models",
-				currentValue: config.thinkingLevel,
-				submenu: (currentValue, done) =>
-					new SelectSubmenu(
-						"Thinking Level",
-						"Select reasoning depth for thinking-capable models",
-						config.availableThinkingLevels.map((level) => ({
-							value: level,
-							label: level,
-							description: THINKING_DESCRIPTIONS[level],
-						})),
-						currentValue,
-						(value) => {
-							callbacks.onThinkingLevelChange(value as ThinkingLevel);
-							done(value);
+				id: "model-thinking",
+				label: "Default thinking level per model",
+				description: `Override the default thinking level for specific models. ${cycleThinkingKey} cycles in-session.`,
+				currentValue: modelThinkingOverridesSummary(currentModelThinkingLevels),
+				submenu: (_currentValue, done) => {
+					const steps: SteppedSubmenuStep[] = [
+						{
+							key: "model",
+							title: "Per-Model Thinking Level",
+							description: "Select a model to configure",
+							options: () => {
+								const sorted = [...config.availableDefaultModels].sort((a, b) => {
+									const aKey = modelSettingKey(a);
+									const bKey = modelSettingKey(b);
+									if (aKey === currentModelKey) return -1;
+									if (bKey === currentModelKey) return 1;
+									if (aKey === currentDefaultModelKey) return -1;
+									if (bKey === currentDefaultModelKey) return 1;
+									return a.provider.localeCompare(b.provider);
+								});
+								const items: SelectItem[] = sorted.map((model) => {
+									const key = modelSettingKey(model);
+									const override = currentModelThinkingLevels[key];
+									return {
+										value: key,
+										label: modelItemLabel(model),
+										description: override ?? undefined,
+									};
+								});
+								if (items.length === 0) {
+									items.push({
+										value: "__none__",
+										label: "No models available",
+										description: "Log in to a provider or configure an API key first",
+									});
+								}
+								return items;
+							},
+							preselect: () => currentModelKey ?? currentDefaultModelKey,
+							searchable: true,
+							layout: MODEL_PICKER_LAYOUT,
 						},
-						() => done(),
-					),
+						{
+							key: "level",
+							title: (ctx) => {
+								const m = defaultModelByValue.get(ctx.model);
+								return `Thinking Level for ${m ? modelDisplayLabel(m) : ctx.model}`;
+							},
+							description: "Select default thinking level for this model",
+							options: (ctx) => {
+								const model = defaultModelByValue.get(ctx.model);
+								if (!model) return [];
+								const levels = (
+									model.reasoning ? getSupportedThinkingLevels(model) : ["off"]
+								) as ThinkingLevel[];
+								const activeLevel = currentModelThinkingLevels[ctx.model];
+								const items: SelectItem[] = levels.map((level) => ({
+									value: level,
+									label: `${level === activeLevel ? "✓ " : "  "}${level}`,
+									description: THINKING_DESCRIPTIONS[level],
+								}));
+								if (currentModelThinkingLevels[ctx.model] !== undefined) {
+									items.push({
+										value: CLEAR_OVERRIDE_VALUE,
+										label: "  (clear override)",
+										description: `Revert to global default (${config.thinkingLevel})`,
+									});
+								}
+								return items;
+							},
+							preselect: (ctx) => currentModelThinkingLevels[ctx.model],
+						},
+					];
+
+					const summary = () => modelThinkingOverridesSummary(currentModelThinkingLevels);
+
+					return new SteppedSubmenu(
+						steps,
+						(selections) => {
+							const model = defaultModelByValue.get(selections.model);
+							if (!model) return;
+							if (selections.level === CLEAR_OVERRIDE_VALUE) {
+								callbacks.onModelThinkingLevelRemove(model.provider, model.id);
+								delete currentModelThinkingLevels[selections.model];
+							} else {
+								callbacks.onModelThinkingLevelChange(
+									model.provider,
+									model.id,
+									selections.level as ThinkingLevel,
+								);
+								currentModelThinkingLevels[selections.model] = selections.level as ThinkingLevel;
+							}
+						},
+						() => {
+							done(summary());
+						},
+						{ loop: true },
+					);
+				},
 			},
 			{
 				id: "tui-mode",

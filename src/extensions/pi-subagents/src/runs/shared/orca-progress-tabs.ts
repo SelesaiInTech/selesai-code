@@ -53,10 +53,13 @@ const ORCA_CLEANUP_WATCHDOG_SCRIPT = [
 ].join("");
 
 export interface OrcaProgressTab {
+	/** Resolves when the terminal-create watchdog closes, after its final manifest/queue writes (success or failure). Not viewer completion. */
+	readonly creationSettled: Promise<void>;
 	append(text: string): void;
 	section(input: { agent: string; index: number; count: number }): void;
 	event(event: { type?: string; message?: Message; toolName?: string; args?: unknown }): void;
-	finish(status: "completed" | "failed" | "stopped", sessionFile?: string): void;
+	/** Resolves once the mirrored log and its done marker are on disk, so a host may exit afterwards. */
+	finish(status: "completed" | "failed" | "stopped", sessionFile?: string): Promise<void>;
 }
 
 function executableFile(candidate: string): boolean {
@@ -401,6 +404,8 @@ export function createOrcaProgressTab(input: {
 		}
 	};
 	let createSettled = false;
+	let resolveCreationSettled!: () => void;
+	const creationSettled = new Promise<void>((resolve) => { resolveCreationSettled = resolve; });
 	let cleanupPaths: string[] | undefined;
 	const scheduleDeferredCleanup = () => {
 		if (!createSettled || cleanupPaths === undefined) return;
@@ -433,6 +438,7 @@ export function createOrcaProgressTab(input: {
 			createSettled = true;
 			if (code !== 0) failObserver();
 			scheduleDeferredCleanup();
+			resolveCreationSettled();
 		});
 		watchdog.once("error", () => {
 			markCreateReady();
@@ -449,6 +455,7 @@ export function createOrcaProgressTab(input: {
 
 	let finished = false;
 	return {
+		creationSettled,
 		append(text) {
 			if (finished) return;
 			writeProgress(text);
@@ -475,7 +482,7 @@ export function createOrcaProgressTab(input: {
 			}
 		},
 		finish(status, sessionFile) {
-			if (!available || finished) return;
+			if (!available || finished) return Promise.resolve();
 			finished = true;
 			const sessionId = status === "completed" ? resolvePiSessionId(sessionFile) : undefined;
 			let verifiedSessionFile: string | undefined;
@@ -488,11 +495,15 @@ export function createOrcaProgressTab(input: {
 			const truncation = truncated ? `\n[progress mirror truncated at ${MAX_MIRROR_BYTES} bytes]\n` : "";
 			let footer = `${truncation}\n${"─".repeat(48)}\n${terminalMessage}\n`;
 			if (scheduledBytes + Buffer.byteLength(footer) > MAX_MIRROR_BYTES) footer = `\n${status}\n`;
-			logStream.end(footer, () => {
-				if (!available) return;
-				try { fs.writeFileSync(donePath, `${status}\n`, { encoding: "utf-8", mode: 0o600 }); } catch { /* best effort */ }
-				cleanupPaths = [logPath, donePath];
-				scheduleDeferredCleanup();
+			return new Promise<void>((resolve) => {
+				logStream.end(footer, () => {
+					if (available) {
+						try { fs.writeFileSync(donePath, `${status}\n`, { encoding: "utf-8", mode: 0o600 }); } catch { /* best effort */ }
+						cleanupPaths = [logPath, donePath];
+						scheduleDeferredCleanup();
+					}
+					resolve();
+				});
 			});
 		},
 	};

@@ -13,7 +13,9 @@ import type {
 	ParallelHandoffGroup,
 	ParallelHandoffManifest,
 } from "../../shared/types.ts";
+import { getAgentDir } from "../../shared/utils.ts";
 import { isTerminalParallelHandoffChildStatus } from "./parallel-handoff.ts";
+import { MACHINE_DIFF_OPTIONS, validateWorktreePatchRepresentsCurrentWorktree } from "./worktree.ts";
 
 export const WORKTREE_CLEANUP_PLAN_VERSION = 1 as const;
 export const WORKTREE_CLEANUP_PLAN_TTL_MS = 30 * 60 * 1000;
@@ -244,11 +246,24 @@ function resolveRepoRoot(repo: string): string {
 }
 
 function resolveCleanupBaseDir(repoRoot: string, configuredBaseDir: string | undefined): string {
-	const raw = configuredBaseDir ?? process.env.SELESAI_SUBAGENTS_WORKTREE_DIR ?? os.tmpdir();
-	const trimmed = raw.trim();
-	if (!trimmed) throw new Error("worktree base directory cannot be empty");
-	const expanded = trimmed.startsWith("~/") ? path.join(os.homedir(), trimmed.slice(2)) : trimmed;
-	return path.resolve(path.isAbsolute(expanded) ? expanded : path.resolve(repoRoot, expanded));
+	const raw = configuredBaseDir ?? process.env.SELESAI_SUBAGENTS_WORKTREE_DIR;
+	let dedicatedRoot: string;
+	if (raw === undefined || (configuredBaseDir === undefined && !raw.trim())) {
+		dedicatedRoot = path.join(path.dirname(repoRoot), "worktrees");
+	} else {
+		const trimmed = raw.trim();
+		if (!trimmed) throw new Error("worktree base directory cannot be empty");
+		const expanded = trimmed.startsWith("~/") ? path.join(os.homedir(), trimmed.slice(2)) : trimmed;
+		dedicatedRoot = path.isAbsolute(expanded) ? expanded : path.resolve(repoRoot, expanded);
+	}
+	return path.resolve(path.join(dedicatedRoot, path.basename(repoRoot)));
+}
+
+function cleanupContainmentInvalid(repoRoot: string, projectDir: string): boolean {
+	const extensionsDir = path.join(getAgentDir(), "extensions");
+	return samePath(projectDir, repoRoot)
+		|| pathInside(repoRoot, projectDir, true)
+		|| pathInside(extensionsDir, projectDir);
 }
 
 export function parseGitWorktreeList(raw: string): GitWorktreeRecord[] {
@@ -558,7 +573,7 @@ function resolveBranchTip(repoRoot: string, branch: string): { value?: string; e
 	return { value: result.stdout.trim() };
 }
 
-function isPatchCaptured(record: ManifestMetadataRecord, worktreePath: string): { path?: string; error?: string } {
+function isPatchCaptured(record: ManifestMetadataRecord, worktreePath: string, baseCommit: string): { path?: string; error?: string } {
 	const patchPath = metadataPatchPath(record);
 	if (!patchPath || record.child.patch?.error !== undefined || record.child.patch?.changed !== true) return {};
 	const inspection = inspectPath(patchPath);
@@ -573,12 +588,15 @@ function isPatchCaptured(record: ManifestMetadataRecord, worktreePath: string): 
 	if (!patchStat.isFile()) return { error: "captured handoff patch is not a file" };
 	if (pathInside(worktreePath, inspection.realpath)) return { error: "durable handoff patch lives inside the worktree" };
 	if (patchStat.size <= 0) return { error: "captured handoff patch is empty" };
+	const validationError = validateWorktreePatchRepresentsCurrentWorktree(worktreePath, baseCommit, patchPath);
+	if (validationError) return { error: `captured handoff patch failed validation: ${validationError}` };
 	return { path: patchPath };
 }
 
 function buildManagedEntry(input: {
 	repoRoot: string;
 	baseDir: string;
+	containmentInvalid: boolean;
 	targetHead: string;
 	rootPath: string;
 	git: GitWorktreeRecord;
@@ -605,7 +623,9 @@ function buildManagedEntry(input: {
 	if (pathInspection.missing) return blockedEntry(entry, "stale", "unknown", "worktree path is missing from disk");
 	if (pathInspection.symlink) return blockedEntry(entry, "unknown", "unknown", "worktree path is a symlink; cleanup requires a real directory");
 	if (!pathInspection.directory || !pathInspection.realpath) return blockedEntry(entry, "unknown", "unknown", "worktree path is not a directory");
-	if (!pathInside(baseDir, pathInspection.realpath, true)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is outside configured base directory '${baseDir}'`);
+	const extensionsDir = path.join(getAgentDir(), "extensions");
+	if (pathInside(extensionsDir, pathInspection.realpath)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is inside Pi extensions directory '${extensionsDir}'`);
+	if (input.containmentInvalid || !pathInside(baseDir, pathInspection.realpath, true)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is outside configured base directory '${baseDir}'`);
 
 	if (rootPath === comparablePath(pathInspection.realpath)) return blockedEntry(entry, "ineligible", "keep", "worktree is the repository root");
 	if (!git.branch) return blockedEntry(entry, "unknown", "unknown", "detached worktrees have no metadata-recorded branch");
@@ -648,14 +668,14 @@ function buildManagedEntry(input: {
 	entry.preconditions.statusDigest = status.digest;
 	if (status.output && status.output.trim()) return blockedEntry(entry, "dirty", "keep", "worktree has uncommitted or untracked changes");
 
-	const diff = runGit(worktreePath, ["diff", "--quiet", resolvedBase.value, "--"]);
+	const diff = runGit(worktreePath, ["diff", "--quiet", ...MACHINE_DIFF_OPTIONS, resolvedBase.value, "--"]);
 	if (diff.status !== 0 && diff.status !== 1) return blockedEntry(entry, "unknown", "unknown", `git diff safety check failed: ${gitFailure(diff, "git diff")}`);
 	const ancestor = runGit(repoRoot, ["merge-base", "--is-ancestor", git.head, targetHead]);
 	if (ancestor.status !== 0 && ancestor.status !== 1) return blockedEntry(entry, "unknown", "unknown", `local merge safety check failed: ${gitFailure(ancestor, "git merge-base --is-ancestor")}`);
 	const branchTipIsAncestor = ancestor.status === 0;
 	let divergenceSafe = diff.status === 0;
 	if (!divergenceSafe) {
-		const captured = isPatchCaptured(record, worktreePath);
+		const captured = isPatchCaptured(record, worktreePath, resolvedBase.value);
 		if (captured.error) return blockedEntry(entry, "ineligible", "keep", captured.error);
 		if (captured.path) {
 			entry.patchPath = captured.path;
@@ -725,6 +745,7 @@ export function buildWorktreeCleanupPlan(input: BuildWorktreeCleanupPlanInput): 
 	const now = input.now ?? Date.now();
 	if (!Number.isFinite(now)) throw new Error("worktree cleanup plan timestamp must be finite");
 	const baseDir = resolveCleanupBaseDir(repoRoot, input.worktreeBaseDir);
+	const containmentInvalid = cleanupContainmentInvalid(repoRoot, baseDir);
 	const gitRecords = listGitWorktrees(repoRoot);
 	const targetHead = runGitChecked(repoRoot, ["rev-parse", "HEAD"]);
 	const rootPath = comparablePath(repoRoot);
@@ -749,6 +770,7 @@ export function buildWorktreeCleanupPlan(input: BuildWorktreeCleanupPlanInput): 
 		else entries.push(buildManagedEntry({
 			repoRoot,
 			baseDir,
+			containmentInvalid,
 			targetHead,
 			rootPath,
 			git,

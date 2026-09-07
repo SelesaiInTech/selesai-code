@@ -8,7 +8,7 @@ Zentui reads optional user configuration from `~/.pi/agent/zentui.json`. Missing
 
 The interactive `/zentui` menu is split into nine component-oriented sections. Use `Tab` and `Shift+Tab` to switch sections:
 
-1. **Appearance** — selector-border enablement, style, and colors; icon mode.
+1. **Appearance** — component Preset; selector-border enablement, style, and colors; icon mode.
 2. **Editor** — enablement, style, colors, model label, border behavior, viewport indicators, settings for the selected editor style, and a static synthetic preview.
 3. **User messages** — enablement, style, colors, and a static synthetic Markdown preview.
 4. **Thinking (Experimental)** — private Rail, Tree, or Streaming rendering; active Streaming can switch live to Rail or Tree, Rail and Tree can switch live between each other, and the private renderer may break after Pi updates.
@@ -44,6 +44,44 @@ Useful slash-command shortcuts:
 ```
 
 `footer`, `statusline`, `status`, and `status line` are aliases. Enable selects Starship, disable selects Native, and toggle selects Native only from Starship; Native or Hidden toggle to Starship.
+
+### Component presets
+
+Use the first **Appearance → Preset** row, or one of these exact commands:
+
+```text
+/zentui preset opencode
+/zentui preset opencode-copy-friendly
+/zentui preset rail
+/zentui preset minimalist
+```
+
+| Preset ID | `components.editor` | `components.footer.style` | `components.userMessages` |
+| --- | --- | --- | --- |
+| `opencode` | `enabled: true`, `style: "opencode"` | `"starship"` | `enabled: true`, `style: "framed"` |
+| `opencode-copy-friendly` | `enabled: true`, `style: "opencode-copy-friendly"` | `"starship"` | `enabled: true`, `style: "framed-copy-friendly"` |
+| `rail` | `enabled: true`, `style: "accent-rail"` | `"starship"` | `enabled: true`, `style: "compact"` |
+| `minimalist` | `enabled: true`, `style: "minimalist"` | `"hidden"` | `enabled: false` (style preserved) |
+
+These are one-time, atomic selection patches, not ongoing profiles. Only the listed leaves are written, with the existing obsolete copy-friendly/Footer-enabled migration flags removed when their styles are explicitly selected. Colors and color sources, per-style options, icons, Footer segments/templates/path settings, all other components, and unknown fields remain untouched. Unsupported future style IDs are preserved unless the preset explicitly replaces that style; Minimalist even preserves an unsupported dormant message style. Existing legacy option resolution continues to work.
+
+**Custom** is a derived display state, not a selectable preset or a saved key. Matching checks only the listed selection leaves, not colors/options or current runtime ownership; Minimalist ignores dormant message style. Unsupported active selected styles do not match. Hand-editing or individually changing a selection can show Custom; returning to a matching combination restores the preset label. No `preset` config key is used, and nothing is automatically reapplied on startup. New-install defaults remain unchanged and match Opencode.
+
+The existing Minimalist editor stays enabled with its saved metadata/options. Disabled User messages releases only Zentui styling, leaving native or predecessor rendering intact. Hidden installs an owned zero-row Footer, whereas Native releases Zentui's Footer to Pi or a predecessor; `/zentui statusline disable` still selects Native, not Hidden.
+
+Selecting presets keeps the settings panel open and preserves its focus. Config, Footer, and User messages update immediately; editor installation waits until the panel closes and Pi restores the draft. Only the latest editor settings are reconciled on exit, and shutdown cancels pending installation. With public editor-text APIs available, opening settings expands nonempty drafts before Pi snapshots them, preserving collapsed paste contents; this can move the cursor to the end and add an undo step. Empty drafts are untouched. Older hosts without these APIs retain Pi's existing draft-restoration behavior. Saves fail without changing active settings or overwriting corrupt/unreadable JSON. Live application reconciles only Editor, User messages, Footer, and dependent timers. Editor ownership restrictions are reported as saved-but-not-applied/reload-required; Footer host failures retain existing fail-open behavior. Direct preset commands also save in non-TUI modes without installing TUI components. Unknown IDs, missing IDs, and extra arguments do not change settings.
+
+### Extension-status hyperlinks
+
+An extension's **Original** color mode preserves SGR styling and HTTP/HTTPS
+OSC 8 hyperlinks supplied by that extension. For example, set
+`components.footer.styles.starship.extensionStatuses.colorModes.github-pr` to
+`"original"` to retain a PR link from a GitHub status extension. Open it with
+your terminal's link-opening gesture. Other URL schemes and unrelated terminal
+controls (including clipboard, title, and cursor commands) are removed.
+
+Zentui color mode continues to show plain status text. Zentui does not infer a
+URL when an extension supplies only a label.
 
 ## Complete default configuration
 
@@ -428,7 +466,38 @@ Classic and KITT move color across message and segments. **Animate spinner color
 
 Both speeds accept `30..1000` ms. Classic/KITT combine both cadences through one Pi Loader interval; exact cycles are used within 1024-frame/512-KiB limits. Pathological custom pairs use a bounded evenly distributed schedule with at most half a spinner-cycle and half a text-step rounding. Legacy `intervalMs` is accepted only as migration input for `spinnerIntervalMs` when the canonical field is absent.
 
-Content reserves the complete Tokens label first, then Message, Thought, Elapsed, and Tool allocation, while preserving visual order **Message · Tool · Elapsed · Thought · Tokens** within the 80-column Loader-row contract. Active thought starts as `thinking 0s`; completed positive thought becomes `thought for Ns`. Rebuilds preserve spinner and visible color phase. Pi's working-row APIs are global and unkeyed, so another extension may win by writing last.
+Content reserves the complete Tokens label and active extension segments first, then Message, Thought, Elapsed, and Tool allocation, while preserving visual order **Message · Tool · Elapsed · Thought · Tokens · Extensions** within the 80-column Loader-row contract. Active thought starts as `thinking 0s`; completed positive thought becomes `thought for Ns`. Rebuilds preserve spinner and visible color phase. Pi's working-row APIs are global and unkeyed, so another extension may win by writing last.
+
+### Working-line extension integration
+
+Third-party extensions can add dynamic text to Zentui's owned Working line through Pi's shared event bus. Protocol version 1 uses keyed segments that are sanitized, ordered by key, width-bounded, and included in the same Classic/KITT animation frames as Zentui's built-in content.
+
+Probe the capability when an interaction starts so an extension can fall back to Pi's public `setWorkingMessage()` slot when Zentui's Working line is unavailable:
+
+```typescript
+const capability = { supported: false, active: false };
+pi.events.emit("zentui:working-line-segment-capability", capability);
+
+if (capability.active) {
+  pi.events.emit("zentui:working-line-segment", {
+    key: "@scope/my-extension:throughput",
+    text: "24.3 tok/s · TTFT 820ms",
+  });
+}
+```
+
+Update a segment by emitting the same key with new text. Remove it when the interaction settles or the publishing extension shuts down:
+
+```typescript
+pi.events.emit("zentui:working-line-segment", {
+  key: "@scope/my-extension:throughput",
+  text: undefined,
+});
+```
+
+All publishers share one global key namespace. Collisions are last-update-wins, and removal by either publisher removes the value for that key. Publishers must therefore use stable, package-qualified keys such as `@scope/package:segment`; each publisher owns removal and lifecycle cleanup for its keys. `text: ""` also removes a segment. Published state is scoped to the current session and Working-row ownership: Zentui discards it on a new session, disable, shutdown, or ownership release. Positive updates while capability is inactive are ignored rather than retained, so publishers must probe again and republish their current value after capability becomes active.
+
+Zentui accepts at most 16 unique keys, keys up to 64 code units, and values up to 256 code units. Extra segments are omitted or truncated when the complete row reaches its fixed width. `supported` reports whether this Zentui version understands the protocol. Zentui also adds `version: 1` to the mutable capability response; probes that initialize only `supported` and `active`, as above, remain compatible. `active` additionally requires an enabled Working line in an active TUI session where Zentui successfully installed and still claims both required Pi working-row surfaces. Pi's unkeyed, last-writer-wins APIs provide no way to prove that another extension has not overwritten a surface after installation, so publishers should probe at each interaction and retain their normal fallback.
 
 ## Git status icons
 

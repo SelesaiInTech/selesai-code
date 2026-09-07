@@ -127,12 +127,12 @@ describe("sqlite-native loader", () => {
   it("formats actionable ABI recovery text", () => {
     const message = formatBetterSqlite3AbiError({
       originalError: new Error("NODE_MODULE_VERSION 115"),
-      packageRoot: "/Users/me/.pi/agent/npm/node_modules/better-sqlite3",
+      packageRoot: "/Users/me/.selesai/agent/npm/node_modules/better-sqlite3",
       rebuildAttempted: true,
       rebuildDetail: "exit 1",
     });
     assert.match(message, /NODE_MODULE_VERSION/);
-    assert.match(message, /\/Users\/me\/\.pi\/agent\/npm\/node_modules\/better-sqlite3/);
+    assert.match(message, /\/Users\/me\/\.selesai\/agent\/npm\/node_modules\/better-sqlite3/);
     assert.match(message, /npm rebuild better-sqlite3/);
     assert.match(message, /Homebrew/);
   });

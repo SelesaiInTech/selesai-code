@@ -9,7 +9,7 @@ code compiles at each step.
 - Confirm `tsx` is available (it's used by `npm run dev`).
 
 ## 0a. Current upstream base
-This port is synced to upstream `v0.84.4` (commit `b79e4cc834970cca69daebffab7df1da7d1e52c4`, 2026-08-28).
+This port is synced to upstream `v0.85.1` (commit `d981de1229ef899957bbe968bc8dcda02a21f477`, 2026-09-05).
 When re-applying the vision feature after a future upstream release, preserve these already-applied 0.84.4
 deltas in the overlapping files:
 - `src/core/agent-session.ts`: custom-message ordering (`_pendingCustomMessages`), `_compactBeforeNextAssistantResponse` + `_installAgentNextTurnRefresh`, `_addPersistedDefaultToNonEmptyScope`.

@@ -113,7 +113,7 @@ describe("builtin agent overrides", () => {
 
 		const builtins = discoverAgentsAll(tempProject).builtin;
 		assert.equal(builtins.find((agent) => agent.name === "researcher")?.tools, undefined);
-		assert.deepEqual(builtins.find((agent) => agent.name === "reviewer")?.tools, ["read", "grep", "find", "ls"]);
+		assert.deepEqual(builtins.find((agent) => agent.name === "reviewer")?.tools, ["read", "grep", "find", "ls", "contact_supervisor"]);
 	});
 
 	it("keeps explicit empty builtin tool allowlists distinct from inherited tools", () => {
@@ -719,7 +719,6 @@ describe("builtin agent overrides", () => {
 	it("agentOverrides replace frontmatter for a shadowing project agent", () => {
 		fs.mkdirSync(path.join(tempProject, ".selesai"), { recursive: true });
 		writeJson(path.join(tempProject, ".selesai", "settings.json"), {
-
 			subagents: { agentOverrides: { reviewer: { model: "openai/gpt-5.4" } } },
 		});
 		writeProjectAgent(tempProject, "reviewer", `---\nname: reviewer\ndescription: Project reviewer\nmodel: google/gemini-3-pro\n---\n\nUse the project reviewer.\n`);
@@ -734,7 +733,6 @@ describe("builtin agent overrides", () => {
 	it("applies project agentOverrides to a custom project agent", () => {
 		fs.mkdirSync(path.join(tempProject, ".selesai"), { recursive: true });
 		writeJson(path.join(tempProject, ".selesai", "settings.json"), {
-
 			subagents: {
 				agentOverrides: {
 					implementer: {
@@ -786,7 +784,6 @@ describe("builtin agent overrides", () => {
 
 	it("applies user agentOverrides to a custom user agent", () => {
 		writeJson(path.join(tempHome, ".selesai", "agent", "settings.json"), {
-
 			subagents: { agentOverrides: { implementer: { model: "anthropic/claude-sonnet-4-6" } } },
 		});
 		writeUserAgent(tempHome, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
@@ -832,7 +829,6 @@ describe("builtin agent overrides", () => {
 	it("agentOverrides replace explicit custom frontmatter fields", () => {
 		fs.mkdirSync(path.join(tempProject, ".selesai"), { recursive: true });
 		writeJson(path.join(tempProject, ".selesai", "settings.json"), {
-
 			subagents: {
 				agentOverrides: {
 					implementer: {
@@ -877,7 +873,6 @@ describe("builtin agent overrides", () => {
 	it("lets false overrides clear explicit output and defaultReads frontmatter", () => {
 		fs.mkdirSync(path.join(tempProject, ".selesai"), { recursive: true });
 		writeJson(path.join(tempProject, ".selesai", "settings.json"), {
-
 			subagents: { agentOverrides: { implementer: { output: false, defaultReads: false } } },
 		});
 		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\noutput: explicit.md\ndefaultReads: explicit.md\n---\n\nDrive the failing test first.\n`);
@@ -1058,7 +1053,6 @@ describe("builtin agent overrides", () => {
 		writeJson(path.join(packageRoot, "package.json"), { "pi-subagents": { agents: ["agents"] } });
 		fs.writeFileSync(path.join(packageRoot, "agents", "package-scout.md"), `---\nname: package-scout\ndescription: Package scout\noutput: package-frontmatter.md\ndefaultReads: PACKAGE-FRONTMATTER.md\n---\n\nScout the package.\n`, "utf-8");
 		writeJson(path.join(tempProject, ".selesai", "settings.json"), {
-
 			packages: [packageRoot],
 			subagents: { agentOverrides: { "package-scout": { output: "package.md", defaultReads: ["PACKAGE.md"] } } },
 		});

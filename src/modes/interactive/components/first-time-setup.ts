@@ -71,7 +71,7 @@ export class FirstTimeSetupComponent extends Container {
 				new Text(
 					theme.fg(
 						"muted",
-						"  • Extensions in ~/.pi/agent/extensions load automatically.\n" +
+						"  • Extensions in ~/.selesai/agent/extensions load automatically.\n" +
 							"  • If the same extension exists in ~/.selesai/agent/extensions,\n" +
 							"    the selesai copy wins (set extensionHost in settings.json to change).\n\n" +
 							"  Selesai is tuned to match or outperform leading agent harnesses\n" +

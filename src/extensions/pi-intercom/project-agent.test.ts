@@ -90,7 +90,7 @@ test("openProjectPane opens a Herdr pane and runs pi in the project", async () =
     assert.equal(launched.paneId, "pane-1");
     assert.equal(launched.herdrVersion, "herdr 0.7.5");
     assert.deepEqual(calls[1], ["pane", "split", "--current", "--direction", "right", "--cwd", launched.projectRoot]);
-    assert.deepEqual(calls[2], ["pane", "run", "pane-1", "'pi'"]);
+    assert.deepEqual(calls[2], ["pane", "run", "pane-1", "'selesai'"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

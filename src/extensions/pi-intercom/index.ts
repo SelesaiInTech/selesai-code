@@ -761,7 +761,7 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
     if (!liveContext) return;
     if (!liveContext.hasUI) {
       // Command handlers return void and print mode supplies a no-op UI. Keep
-      // alias guidance visible without injecting a synthetic Pi message.
+      // alias guidance visible without injecting a synthetic Selesai message.
       console.error(message);
       return;
     }

@@ -7,6 +7,8 @@ node_modules/
 tmp/
 
 # Fallback ignores for local ad-hoc agent and lane reports.
+/memory.md
+/todo.md
 /reports/
 /*-report*.json
 /issue-*-council-*.json

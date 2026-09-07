@@ -11,30 +11,16 @@ import {
 	registerNativeSupervisorClient,
 	resolveSupervisorChannelDir,
 } from "../../src/intercom/native-supervisor-channel.ts";
-import {
-	SUBAGENT_CHILD_AGENT_ENV,
-	SUBAGENT_CHILD_INDEX_ENV,
-	SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
-	SUBAGENT_ORCHESTRATOR_TARGET_ENV,
-	SUBAGENT_RUN_ID_ENV,
-	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
-} from "../../src/runs/shared/pi-args.ts";
+import { SUPERVISOR_REPLY_ENTRY_TYPE, SUPERVISOR_REQUEST_MESSAGE_TYPE } from "../../src/intercom/supervisor-ui.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, type SubagentState } from "../../src/shared/types.ts";
 
 const createdChannels: string[] = [];
-const savedEnv = {
-	[SUBAGENT_CHILD_AGENT_ENV]: process.env[SUBAGENT_CHILD_AGENT_ENV],
-	[SUBAGENT_CHILD_INDEX_ENV]: process.env[SUBAGENT_CHILD_INDEX_ENV],
-	[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV]: process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV],
-	[SUBAGENT_ORCHESTRATOR_TARGET_ENV]: process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV],
-	[SUBAGENT_RUN_ID_ENV]: process.env[SUBAGENT_RUN_ID_ENV],
-	[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV]: process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV],
-};
 
 function makeState(sessionId: string | null, ctx: unknown): SubagentState {
 	return {
 		baseCwd: process.cwd(),
 		currentSessionId: sessionId,
+		supervisorOwnerSessionId: (ctx as SubagentState["lastUiContext"])?.sessionManager.getSessionId() ?? null,
 		asyncJobs: new Map(),
 		foregroundControls: new Map(),
 		lastForegroundControlId: null,
@@ -48,7 +34,7 @@ function makeState(sessionId: string | null, ctx: unknown): SubagentState {
 	};
 }
 
-function writeRequest(input: { sessionId: string; runId: string; agent?: string; index?: number; message?: string; createdAt?: number; expiresAt?: number }): string {
+function writeRequest(input: { sessionId: string; runId: string; agent?: string; index?: number; message?: string; reason?: "need_decision" | "interview_request" | "progress_update"; childTarget?: string; interview?: unknown; createdAt?: number; expiresAt?: number }): string {
 	const agent = input.agent ?? "worker";
 	const index = input.index ?? 0;
 	const channelDir = resolveSupervisorChannelDir(input.runId, agent, index);
@@ -60,14 +46,16 @@ function writeRequest(input: { sessionId: string; runId: string; agent?: string;
 		id: requestId,
 		createdAt: input.createdAt ?? Date.now(),
 		...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
-		reason: "need_decision",
+		reason: input.reason ?? "need_decision",
 		message: input.message ?? "Need a decision",
-		expectsReply: true,
+		expectsReply: input.reason !== "progress_update",
 		orchestratorSessionId: input.sessionId,
 		orchestratorTarget: "shared-name",
 		runId: input.runId,
 		agent,
 		childIndex: index,
+		...(input.childTarget ? { childTarget: input.childTarget } : {}),
+		...(input.interview !== undefined ? { interview: input.interview } : {}),
 	}, null, "\t"));
 	return requestId;
 }
@@ -102,15 +90,7 @@ async function waitForCondition(condition: () => boolean, description: string): 
 	}
 }
 
-function restoreEnv(): void {
-	for (const [key, value] of Object.entries(savedEnv)) {
-		if (value === undefined) delete process.env[key];
-		else process.env[key] = value;
-	}
-}
-
 afterEach(() => {
-	restoreEnv();
 	delete process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
 	for (const channel of createdChannels.splice(0)) fs.rmSync(channel, { recursive: true, force: true });
 });
@@ -125,7 +105,7 @@ describe("native supervisor channel", () => {
 			message: { content?: string; details?: { id?: string } };
 			options?: { triggerTurn?: boolean };
 		}> = [];
-		const registeredTools: string[] = [];
+		const registeredTools: Array<{ name: string; parameters: { properties: { action: unknown } } }> = [];
 		const ctx = {
 			cwd: process.cwd(),
 			hasUI: false,
@@ -137,7 +117,7 @@ describe("native supervisor channel", () => {
 		};
 		const pi = {
 			getAllTools: () => [],
-			registerTool: (tool: { name: string }) => { registeredTools.push(tool.name); },
+			registerTool: (tool: typeof registeredTools[number]) => { registeredTools.push(tool); },
 			sendMessage: (
 				message: { content?: string; details?: { id?: string } },
 				options?: { triggerTurn?: boolean },
@@ -150,7 +130,8 @@ describe("native supervisor channel", () => {
 		channel.start();
 		channel.dispose();
 
-		assert.deepEqual(registeredTools, [NATIVE_SUPERVISOR_TOOL_NAME]);
+		assert.deepEqual(registeredTools.map((tool) => tool.name), [NATIVE_SUPERVISOR_TOOL_NAME]);
+		assert.deepEqual(registeredTools[0]?.parameters.properties.action, { type: "string", enum: ["list", "pending", "status", "reply"] });
 		assert.deepEqual(sent.map(({ message }) => message.details?.id), [matchingId]);
 		assert.deepEqual(sent[0]?.options, { triggerTurn: true });
 		assert.equal(channel.pending.has(matchingId), false, "disposed channel clears pending requests");
@@ -671,6 +652,130 @@ describe("native supervisor channel", () => {
 		}
 	});
 
+	it("includes supervisor request metadata and journals a successful reply", async () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const requestId = writeRequest({
+			sessionId: currentSessionId,
+			runId,
+			agent: "worker",
+			index: 2,
+			message: "Should this change be applied?",
+			reason: "interview_request",
+			childTarget: "child-worker",
+			interview: { approved: "boolean", rationale: "string" },
+		});
+		const sent: Array<{ customType?: string; content?: string; details?: Record<string, unknown> }> = [];
+		const entries: Array<{ customType: string; data?: Record<string, unknown> }> = [];
+		const journalState = { replyExistsAtAppend: false, requestExistsAtAppend: true };
+		const registeredTools = new Map<string, { execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }>();
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
+			registerTool: (tool: { name: string; execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }) => {
+				registeredTools.set(tool.name, tool);
+			},
+			sendMessage: (message: { customType?: string; content?: string; details?: Record<string, unknown> }) => { sent.push(message); },
+			appendEntry: (customType: string, data?: Record<string, unknown>) => {
+				journalState.replyExistsAtAppend = fs.existsSync(replyFile(runId, requestId, "worker", 2));
+				journalState.requestExistsAtAppend = fs.existsSync(requestFile(runId, requestId, "worker", 2));
+				entries.push({ customType, data });
+			},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+
+		try {
+			channel.start();
+			assert.equal(sent.length, 1);
+			assert.equal(sent[0]?.customType, SUPERVISOR_REQUEST_MESSAGE_TYPE);
+			assert.match(sent[0]?.content ?? "", /Subagent requests a structured supervisor interview\./);
+			assert.match(sent[0]?.content ?? "", /Should this change be applied\?/);
+			assert.ok(sent[0]?.content?.includes(`Reply with: subagent_supervisor({ action: "reply", replyTo: "${requestId}", message: "..." })`));
+			assert.ok(sent[0]?.content?.includes(`Live guidance: subagent({ action: "steer", id: "${runId}", index: 2, message: "..." }) (Reply to the pending request first.)`));
+			assert.doesNotMatch(sent[0]?.content ?? "", /Child intercom target:|child-worker/);
+			assert.deepEqual(sent[0]?.details, {
+				id: requestId,
+				requestId,
+				reason: "interview_request",
+				expectsReply: true,
+				runId,
+				agent: "worker",
+				childIndex: 2,
+				childTarget: "child-worker",
+				interview: { approved: "boolean", rationale: "string" },
+				requestBody: "Should this change be applied?",
+				replyHint: `subagent_supervisor({ action: "reply", replyTo: "${requestId}", message: "..." })`,
+			});
+
+			await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", {
+				action: "reply",
+				replyTo: requestId,
+				message: "Approved with rationale",
+			});
+
+			assert.equal(entries.length, 1);
+			assert.equal(entries[0]?.customType, SUPERVISOR_REPLY_ENTRY_TYPE);
+			assert.deepEqual(journalState, { replyExistsAtAppend: true, requestExistsAtAppend: false });
+			assert.deepEqual({ ...entries[0]?.data, createdAt: undefined }, {
+				requestId,
+				reason: "interview_request",
+				runId,
+				agent: "worker",
+				childIndex: 2,
+				childTarget: "child-worker",
+				message: "Approved with rationale",
+				createdAt: undefined,
+			});
+			assert.equal(typeof entries[0]?.data?.createdAt, "number");
+			const reply = JSON.parse(fs.readFileSync(replyFile(runId, requestId, "worker", 2), "utf-8")) as { message?: string };
+			assert.equal(reply.message, "Approved with rationale");
+			assert.equal(fs.existsSync(requestFile(runId, requestId, "worker", 2)), false);
+		} finally {
+			channel.dispose();
+		}
+	});
+
+	it("keeps message-less interview metadata visible to the parent model", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const requestId = writeRequest({ sessionId: currentSessionId, runId, reason: "interview_request", message: "", interview: { approved: "boolean" } });
+		const sent: Array<{ content?: string; details?: Record<string, unknown> }> = [];
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: (message: { content?: string; details?: Record<string, unknown> }) => { sent.push(message); },
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+
+		channel.start();
+		channel.dispose();
+
+		assert.equal(sent.length, 1);
+		assert.match(sent[0]?.content ?? "", /Structured response requested/);
+		assert.match(sent[0]?.content ?? "", /"approved": "boolean"/);
+		assert.match(sent[0]?.content ?? "", new RegExp(`replyTo: "${requestId}"`));
+		assert.equal(sent[0]?.details?.requestBody, "");
+	});
+
 	it("suppresses resolved, expired, and inactive requests before displaying them", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const resolvedRunId = `run-${randomUUID()}`;
@@ -765,16 +870,47 @@ describe("native supervisor channel", () => {
 		}
 	});
 
+	it("stores only the child-authored supervisor message in the request body", async () => {
+		const runId = `run-${randomUUID()}`;
+		const channelDir = resolveSupervisorChannelDir(runId, "worker", 3);
+		createdChannels.push(channelDir);
+		const registeredTools = new Map<string, { execute: (_id: string, params: { reason: string; message?: string }) => Promise<unknown> | unknown }>();
+		const pi = {
+			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
+			registerTool: (tool: { name: string; execute: (_id: string, params: { reason: string; message?: string }) => Promise<unknown> | unknown }) => {
+				registeredTools.set(tool.name, tool);
+			},
+		};
+		registerNativeSupervisorClient(pi as never, {
+			channelDir,
+			runId,
+			agent: "worker",
+			childIndex: 3,
+			orchestratorTarget: "shared-name",
+			orchestratorSessionId: "session-parent",
+		});
+
+		await assert.rejects(
+			() => registeredTools.get("contact_supervisor")!.execute("blank-progress", { reason: "progress_update" }),
+			/message is required for supervisor decisions and progress updates/,
+		);
+		await registeredTools.get("contact_supervisor")!.execute("contact", {
+			reason: "progress_update",
+			message: "  Finished the first review pass.  ",
+		});
+
+		const [file] = fs.readdirSync(path.join(channelDir, "requests"));
+		const request = JSON.parse(fs.readFileSync(path.join(channelDir, "requests", file!), "utf-8")) as { message?: string; runId?: string; agent?: string; childIndex?: number };
+		assert.equal(request.message, "Finished the first review pass.");
+		assert.equal(request.runId, runId);
+		assert.equal(request.agent, "worker");
+		assert.equal(request.childIndex, 3);
+	});
+
 	it("removes the request file when a child supervisor ask is cancelled", async () => {
 		const runId = `run-${randomUUID()}`;
 		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
 		createdChannels.push(channelDir);
-		process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
-		process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
-		process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
-		process.env[SUBAGENT_RUN_ID_ENV] = runId;
-		process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
-		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
 		const registeredTools = new Map<string, { execute: (_id: string, params: { reason: string; message?: string }, signal?: AbortSignal) => Promise<unknown> | unknown }>();
 		const pi = {
 			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
@@ -782,7 +918,14 @@ describe("native supervisor channel", () => {
 				registeredTools.set(tool.name, tool);
 			},
 		};
-		registerNativeSupervisorClient(pi as never);
+		registerNativeSupervisorClient(pi as never, {
+			channelDir,
+			runId,
+			agent: "worker",
+			childIndex: 0,
+			orchestratorTarget: "shared-name",
+			orchestratorSessionId: "session-parent",
+		});
 		const controller = new AbortController();
 		controller.abort();
 

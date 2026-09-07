@@ -77,7 +77,7 @@ describe("async runner execution", () => {
 				agents: [{ ...agent("worker"), model: "mock/denied" }],
 				ctx: { ...ctx, cwd: repo },
 				cwd: repo,
-				asyncDir: path.join(repo, ".selesai", "subagents", "async-step-rules"),
+				asyncDir: path.join(repo, ".pi-subagents", "async-step-rules"),
 				maxSubagentDepth: 1,
 			});
 

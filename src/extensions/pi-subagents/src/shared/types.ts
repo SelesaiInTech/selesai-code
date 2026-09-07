@@ -47,14 +47,14 @@ export type HostStepMonitorKind = "command" | "ci" | "gate";
 export type HostStepState = "pending" | "running" | "done" | "cancelled" | "error";
 export type HostStepVerdict = "pass" | "fail" | "inconclusive";
 
-export interface HostStepFreshnessV1 {
+export interface HostStepFreshness {
 	expectedRef: string;
 	observedRef?: string;
 	stale?: boolean;
 }
 
 /** Bounded, provider-agnostic status for a host-owned workflow monitor. */
-export interface HostStepNodeV1 {
+export interface HostStepNode {
 	version: 1;
 	kind: "host-step";
 	/** Explicit monitor category; never inferred from labels or commands. */
@@ -68,7 +68,7 @@ export interface HostStepNodeV1 {
 	reasonCode?: string;
 	detail?: string;
 	target?: string;
-	freshness?: HostStepFreshnessV1;
+	freshness?: HostStepFreshness;
 	reportPath?: string;
 	exitCode?: number | null;
 	updatedAt: number;
@@ -97,7 +97,7 @@ export interface WorkflowGraphNode {
 	structured?: boolean;
 	acceptanceStatus?: AcceptanceLedgerStatus;
 	error?: string;
-	hostStep?: HostStepNodeV1;
+	hostStep?: HostStepNode;
 }
 
 export interface WorkflowGraphSnapshot {
@@ -112,7 +112,7 @@ export type WorkflowPreflightCoverage = "complete" | "partial";
 export type WorkflowPreflightMode = "mutation" | "review" | "scout" | "gate";
 
 /** Bounded, display-only lane hints supplied alongside a workflowScript launch. */
-export interface WorkflowPreflightLaneV1 {
+export interface WorkflowPreflightLane {
 	key: string;
 	mode?: WorkflowPreflightMode;
 	decision?: string;
@@ -122,10 +122,10 @@ export interface WorkflowPreflightLaneV1 {
 }
 
 /** Versioned, display-only workflow launch plan; it never grants launch authority. */
-export interface WorkflowPreflightV1 {
+export interface WorkflowPreflight {
 	version: 1;
 	coverage: WorkflowPreflightCoverage;
-	lanes: WorkflowPreflightLaneV1[];
+	lanes: WorkflowPreflightLane[];
 }
 
 export type WorkflowReceiptState = "complete" | "failed" | "paused" | "stopped";
@@ -149,7 +149,7 @@ export interface WorkflowRecoveryAction {
  * Permission/policy extensions can use it to distinguish resolved content from
  * raw workflow scripts. This audit projection never grants execution authority.
  */
-export interface WorkflowResourceProvenanceV1 {
+export interface WorkflowResourceProvenance {
 	kind: "workflow";
 	name: string;
 	version: number;
@@ -174,7 +174,20 @@ export interface WorkflowLaneMetadata {
 	outputPaths?: string[];
 }
 
-export interface WorkflowChildSummaryV1 {
+/** Bounded foreground activity; excludes tool arguments and transcript content. */
+export interface WorkflowChildActivity {
+	currentTool?: string;
+	currentToolStartedAt?: number;
+	lastActivityAt?: number;
+	durationMs?: number;
+	toolCount?: number;
+	turnCount?: number;
+	tokens?: number;
+	inputTokens?: number;
+	outputTokens?: number;
+}
+
+export interface WorkflowChildSummary {
 	version: 1;
 	parentToolCallId: string;
 	workflowRunId: string;
@@ -188,6 +201,8 @@ export interface WorkflowChildSummaryV1 {
 		sessionName?: string;
 		model?: string;
 		thinking?: string;
+		/** Present only while a synchronous foreground child is running. */
+		activity?: WorkflowChildActivity;
 		state: "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "rejected" | "detached";
 	}>;
 }
@@ -215,9 +230,9 @@ export interface WorkflowReceipt {
 	state: WorkflowReceiptState;
 	createdAt: number;
 	entries: Record<string, WorkflowReceiptEntry>;
-	resource?: WorkflowResourceProvenanceV1;
-	hostSteps?: HostStepNodeV1[];
-	workflowChildren?: WorkflowChildSummaryV1;
+	resource?: WorkflowResourceProvenance;
+	hostSteps?: HostStepNode[];
+	workflowChildren?: WorkflowChildSummary;
 	workflowResolution?: WorkflowTerminalResolution;
 	terminalOutcome?: WorkflowTerminalOutcome;
 	recovery?: WorkflowRecoveryAction[];
@@ -369,6 +384,7 @@ export interface ControlEvent {
 	tokens?: number;
 	toolCount?: number;
 	currentTool?: string;
+	toolCallId?: string;
 	currentToolDurationMs?: number;
 	currentPath?: string;
 	elapsedMs?: number;
@@ -624,7 +640,7 @@ export type ProcessTerminalReason =
 	| "proof-write-failed"
 	| "stale-repair";
 
-export interface RunnerProcessInstanceExitV1 {
+export interface RunnerProcessInstanceExit {
 	processInstanceId: string;
 	kind: "runner";
 	closeObservedAt: number;
@@ -632,7 +648,7 @@ export interface RunnerProcessInstanceExitV1 {
 	signal: string | null;
 }
 
-export type ProcessTreeTerminalV1 =
+export type ProcessTreeTerminal =
 	| {
 		state: "observed";
 		mechanism: "posix-process-group";
@@ -645,26 +661,26 @@ export type ProcessTreeTerminalV1 =
 		diagnostic?: string;
 	};
 
-export interface PiWriterProcessInstanceExitV1 {
+export interface PiWriterProcessInstanceExit {
 	processInstanceId: string;
 	kind: "pi-writer";
 	attempt: number;
 	closeObservedAt: number;
 	exitCode: number | null;
 	signal: string | null;
-	processTree: ProcessTreeTerminalV1;
+	processTree: ProcessTreeTerminal;
 }
 
-export type ProcessInstanceExitV1 = RunnerProcessInstanceExitV1 | PiWriterProcessInstanceExitV1;
+export type ProcessInstanceExit = RunnerProcessInstanceExit | PiWriterProcessInstanceExit;
 
-export interface CanonicalSessionTerminalV1 {
+export interface CanonicalSessionTerminal {
 	canonicalSessionId: string;
 	leaseDisposition: "released" | "not-held";
 	freeAtObservation: true;
 	canonicalSessionLeaseReleased?: true;
 }
 
-interface ProcessTerminalBaseV1 {
+interface ProcessTerminalBase {
 	version: 1;
 	runId: string;
 	childIndex?: number;
@@ -674,15 +690,15 @@ interface ProcessTerminalBaseV1 {
 	resumeDisposition?: "resumable" | "non-resumable" | "unavailable";
 }
 
-export type ProcessTerminalV1 =
-	| (ProcessTerminalBaseV1 & { state: "pending" | "not-started" })
-	| (ProcessTerminalBaseV1 & {
+export type ProcessTerminal =
+	| (ProcessTerminalBase & { state: "pending" | "not-started" })
+	| (ProcessTerminalBase & {
 		state: "observed";
 		observedAt: number;
-		instances: ProcessInstanceExitV1[];
-		canonicalSession?: CanonicalSessionTerminalV1;
+		instances: ProcessInstanceExit[];
+		canonicalSession?: CanonicalSessionTerminal;
 	})
-	| (ProcessTerminalBaseV1 & {
+	| (ProcessTerminalBase & {
 		state: "unknown";
 		reason: ProcessTerminalReason;
 		diagnostic?: string;
@@ -778,6 +794,8 @@ export interface RunFanoutRejection extends RunFanoutBudgetSnapshot {
 }
 
 export interface SteeringRecoveryDescriptor {
+	/** Captured response identity authority; absence means no declared aliases on revival. */
+	modelResponseAliases?: Record<string, string[]>;
 	version: 1;
 	launchContractDigest?: string;
 	extensionBindings?: ExtensionBindings;
@@ -786,6 +804,8 @@ export interface SteeringRecoveryDescriptor {
 	agentContract?: AgentContract;
 	agent: string;
 	sessionFile?: string;
+	/** Git ref used to allocate managed worktrees for this run. */
+	baseRef?: string;
 	cwd: string;
 	model?: string;
 	modelProvider?: string;
@@ -827,7 +847,7 @@ export interface SteeringRecoveryDescriptor {
 	maxSubagentDepth: number;
 	maxOutput?: MaxOutputConfig;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
-	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
+	launchResolvedExtensions?: LaunchResolvedChildExtensions;
 	share: boolean;
 	sessionDir?: string;
 	artifactsDir?: string;
@@ -1159,16 +1179,7 @@ export interface AcceptanceLedger {
 	};
 }
 
-export interface ProtocolOutputLimit {
-	code: "protocol_output_limit";
-	stream: "stdout" | "stderr";
-	limitBytes: number;
-	observedBytes: number;
-	diagnosticPrefix: string;
-	diagnosticTail: string;
-}
-
-export interface LaunchResolvedChildExtensionsV1 {
+export interface LaunchResolvedChildExtensions {
 	version: 1;
 	/** This is parent-resolved launch intent, not child-runtime acknowledgement that extensions loaded. */
 	source: "launch-resolved";
@@ -1183,7 +1194,7 @@ export interface LaunchResolvedChildExtensionsV1 {
 	};
 }
 
-export interface RuntimeAcknowledgedChildExtensionsV1 {
+export interface RuntimeAcknowledgedChildExtensions {
 	version: 1;
 	/** Best-effort child-runtime registration acknowledgement, not extension health. */
 	source: "child-runtime";
@@ -1262,7 +1273,6 @@ export interface SingleResult {
 	 * a signal to reduce input size or re-decompose the task.
 	 */
 	contextOverflow?: boolean;
-	protocolError?: ProtocolOutputLimit;
 	sessionFile?: string;
 	skills?: string[];
 	skillsWarning?: string;
@@ -1287,8 +1297,8 @@ export interface SingleResult {
 	acceptance?: AcceptanceLedger;
 	agentContract?: AgentContract;
 	launchContractDigest?: string;
-	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
+	launchResolvedExtensions?: LaunchResolvedChildExtensions;
+	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	execution?: ExecutionProjection;
 	review?: ReviewProjection;
 	effects?: EffectsProjection;
@@ -1346,6 +1356,7 @@ export interface WaitCompletionChild {
  */
 export interface WaitCompletion {
 	runId: string;
+	workflowReceiptPath?: string;
 	agent?: string;
 	mode?: string;
 	state?: string;
@@ -1353,7 +1364,7 @@ export interface WaitCompletion {
 	/** Versioned bounded output archive retained with the durable completion replay. */
 	archivePath?: string;
 	results?: WaitCompletionChild[];
-	workflowChildren?: WorkflowChildSummaryV1;
+	workflowChildren?: WorkflowChildSummary;
 }
 
 export interface AgentCapabilitiesSnapshot {
@@ -1369,7 +1380,7 @@ export interface AgentCapabilityRow {
 	executable: boolean;
 	restrictionSources?: string[];
 	aliases?: string[];
-	runner: { type: "pi" } | { type: "external-cli"; adapter?: string; capabilities: ExternalCliCapabilities } | { type: "external-job"; provider: string; available?: boolean; capabilities: ExternalJobRunnerStatus["capabilities"] };
+	runner: { type: "pi" } | { type: "external-cli"; adapter?: string; command: string; available: boolean; unavailableReason?: string; capabilities: ExternalCliCapabilities } | { type: "external-job"; provider: string; available?: boolean; capabilities: ExternalJobRunnerStatus["capabilities"] };
 	tools: { ambient: boolean; names: string[]; excludeTools?: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
 	model?: { value?: string; fallbackModels?: string[]; thinking?: string | false };
 	execution?: { defaultAsync?: boolean; timeoutMs?: number };
@@ -1379,13 +1390,14 @@ export interface AgentCapabilityRow {
 
 export interface Details {
 	mode: SubagentResultMode | "management";
+	workflowReceiptPath?: string;
 	runId?: string;
 	/** Host tool-call id retained when it differs from the internal run id. */
 	toolCallId?: string;
 	/** Run-level context summary. "mixed" when children resolved to different modes. */
 	context?: "fresh" | "fork" | "mixed";
 	results: SingleResult[];
-	workflowChildren?: WorkflowChildSummaryV1;
+	workflowChildren?: WorkflowChildSummary;
 	/**
 	 * Terminal completion payloads for runs this bg_wait call observed
 	 * finishing. Async completions travel as result files that are consumed and
@@ -1428,7 +1440,7 @@ export interface Details {
 	currentStepIndex?: number;   // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
 	/** Validated, display-only fanout plan supplied with a workflow launch. */
-	preflight?: WorkflowPreflightV1;
+	preflight?: WorkflowPreflight;
 	preflightWarnings?: string[];
 	outputs?: ChainOutputMap;
 	// Aggregated child usage across all agents in the run
@@ -1444,11 +1456,11 @@ export interface Details {
 	agentCapabilities?: AgentCapabilitiesSnapshot;
 	parallelHandoff?: ParallelHandoffReference;
 	lifecycleStatus?: {
-		processTerminal?: ProcessTerminalV1;
+		processTerminal?: ProcessTerminal;
 	};
 	launchContractDigest?: string;
-	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
+	launchResolvedExtensions?: LaunchResolvedChildExtensions;
+	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	/** Original launch contract whose persisted session is being revived. */
 	sourceLaunchContractDigest?: string;
 	/** Durable mission attached to this run, when mission mode was explicitly used. */
@@ -1459,7 +1471,7 @@ export interface Details {
 	mission?: MissionRecord;
 	workflow?: {
 		value?: unknown;
-		resource?: WorkflowResourceProvenanceV1;
+		resource?: WorkflowResourceProvenance;
 		preflightWarnings?: string[];
 		trace: Array<{
 			operation: "run" | "status" | "steer" | "host";
@@ -1572,9 +1584,9 @@ export interface NestedStepSummary {
 	wrapUpRequested?: boolean;
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
-	processTerminal?: ProcessTerminalV1;
-	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
+	processTerminal?: ProcessTerminal;
+	launchResolvedExtensions?: LaunchResolvedChildExtensions;
+	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
 	children?: NestedRunSummary[];
@@ -1592,9 +1604,9 @@ export interface NestedRunSummary extends NestedRunAddress {
 	controlInbox?: string;
 	capabilityToken?: string;
 	mode?: SubagentRunMode;
-	processTerminal?: ProcessTerminalV1;
-	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
+	processTerminal?: ProcessTerminal;
+	launchResolvedExtensions?: LaunchResolvedChildExtensions;
+	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
 	state: NestedRunState;
@@ -1662,10 +1674,10 @@ export interface AsyncStartedEvent {
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
-	preflight?: WorkflowPreflightV1;
+	preflight?: WorkflowPreflight;
 	launchContractDigest?: string;
-	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
+	launchResolvedExtensions?: LaunchResolvedChildExtensions;
+	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	usageBudget?: UsageBudgetState;
 	timeoutMs?: number;
 	deadlineAt?: number;
@@ -1786,6 +1798,8 @@ export interface ExternalProcessStatus {
 }
 
 export interface AsyncStatus {
+	/** Exact reference returned by successful current workflow receipt publication. */
+	workflowReceiptPath?: string;
 	lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
 	runId: string;
 	/** Parent Pi process/window that owns local completion delivery. */
@@ -1830,17 +1844,17 @@ export interface AsyncStatus {
 	pendingAppends?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
-	preflight?: WorkflowPreflightV1;
-	processTerminal?: ProcessTerminalV1;
+	preflight?: WorkflowPreflight;
+	processTerminal?: ProcessTerminal;
 	runFanoutBudget?: RunFanoutBudgetSnapshot;
 	runFanoutBudgetDescriptor?: RunFanoutBudgetDescriptor;
 	launchContractDigest?: string;
-	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
+	launchResolvedExtensions?: LaunchResolvedChildExtensions;
+	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
 	workflow?: Details["workflow"];
-	workflowChildren?: WorkflowChildSummaryV1;
+	workflowChildren?: WorkflowChildSummary;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
 	lane?: WorkflowLaneMetadata;
@@ -1926,13 +1940,13 @@ export interface AsyncStatus {
 		acceptance?: AcceptanceLedger;
 		agentContract?: AgentContract;
 		launchContractDigest?: string;
-		launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
-		runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
+		launchResolvedExtensions?: LaunchResolvedChildExtensions;
+		runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 		execution?: ExecutionProjection;
 		review?: ReviewProjection;
 		effects?: EffectsProjection;
 		watchdog?: ChildWatchdogProgress;
-		processTerminal?: ProcessTerminalV1;
+		processTerminal?: ProcessTerminal;
 		capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 		capabilityAudit?: SubagentCapabilityAudit;
 	}>;
@@ -1982,11 +1996,11 @@ export interface AsyncJobState {
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	/** Bounded host-owned CI/gate nodes loaded from the workflow status graph. */
-	hostSteps?: HostStepNodeV1[];
+	hostSteps?: HostStepNode[];
 	/** Full bounded workflow plan, including not-yet-materialized stages. */
 	workflowGraph?: WorkflowGraphSnapshot;
 	steps?: AsyncJobStep[];
-	preflight?: WorkflowPreflightV1;
+	preflight?: WorkflowPreflight;
 	stepsTotal?: number;
 	runningSteps?: number;
 	completedSteps?: number;
@@ -2015,7 +2029,7 @@ export interface AsyncJobState {
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
 	workflow?: Details["workflow"];
-	workflowChildren?: WorkflowChildSummaryV1;
+	workflowChildren?: WorkflowChildSummary;
 	lane?: WorkflowLaneMetadata;
 }
 
@@ -2054,6 +2068,7 @@ export interface ForegroundResumeChild {
 	agentContract?: AgentContract;
 	/** Private bounded launch fields needed to preserve the child contract on resume. */
 	resumeContract?: {
+		modelResponseAliases?: Record<string, string[]>;
 		outputSchema?: JsonSchemaObject;
 		agentContract?: AgentContract;
 		acceptance?: AcceptanceInput;
@@ -2063,8 +2078,8 @@ export interface ForegroundResumeChild {
 	launchContractDigest?: string;
 	/** Private retained launch authority. Never project into status or result output. */
 	extensionBindings?: ExtensionBindings;
-	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
+	launchResolvedExtensions?: LaunchResolvedChildExtensions;
+	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	execution?: ExecutionProjection;
 	review?: ReviewProjection;
 	effects?: EffectsProjection;
@@ -2107,6 +2122,18 @@ export interface ForegroundChildControl {
 	toolCount?: number;
 	interrupt?: () => boolean;
 	detach?: () => boolean;
+	/** Steer the live in-process child session; undefined until the session exists. */
+	steer?: (input: ForegroundSteerInput) => Promise<ForegroundSteerOutcome>;
+}
+
+export interface ForegroundSteerInput {
+	message: string;
+	mode?: "steer" | "follow_up" | "auto";
+}
+
+export interface ForegroundSteerOutcome {
+	state: "delivered" | "queued" | "failed";
+	reason?: string;
 }
 
 export interface ForegroundRunControl {
@@ -2115,8 +2142,6 @@ export interface ForegroundRunControl {
 	parentWorkflowRunId?: string;
 	/** Stable workflow lane key for this live foreground child. */
 	workflowKey?: string;
-	/** Private control root used to steer a live workflow-owned child. */
-	workflowSteeringDir?: string;
 	/** Originating parent session; required for public fleet projection. */
 	sessionId?: string;
 	mode: SubagentRunMode;
@@ -2158,6 +2183,7 @@ export interface ForegroundRunControl {
 	nestedChildren?: NestedRunSummary[];
 	interrupt?: () => boolean;
 	detach?: () => boolean;
+	steer?: ForegroundChildControl["steer"];
 }
 
 export interface WaitSubscriptionRecord {
@@ -2180,6 +2206,8 @@ export interface ActiveAsyncCapacitySnapshot {
 export interface SubagentState {
 	baseCwd: string;
 	currentSessionId: string | null;
+	/** Exact SDK runtime session ID for supervisor ownership; never a session file path. */
+	supervisorOwnerSessionId?: string | null;
 	/** Session for which active status projections were restored successfully. */
 	statusProjectionSessionId?: string | null;
 	/** Reload-stable identity for this parent Pi process/window. */
@@ -2197,6 +2225,8 @@ export interface SubagentState {
 	trustedSessionFileRoot?: string;
 	/** Live async session roots created by this parent executor, keyed by run id. */
 	liveAsyncSessionRoots?: Map<string, string>;
+	/** Foreground nested routes retained after their direct parent settles, keyed by root run id. */
+	retainedForegroundNestedRoutes?: Map<string, NestedRouteInfo>;
 	/** Last valid parent session model observed for this session; used when continuation contexts omit ctx.model. */
 	lastParentModel?: { provider: string; id: string };
 	subagentInProgress?: boolean;
@@ -2318,17 +2348,25 @@ export interface SubagentChildStatusEvent {
 // Execution Options
 // ============================================================================
 
+/** Live controls for one in-process foreground child session. */
+export interface ForegroundChildSessionControls {
+	steer: (text: string) => Promise<void>;
+	followUp: (text: string) => Promise<void>;
+}
+
 export interface RunSyncOptions {
 	/** Exact discovery provenance for an unknown-agent error; omission uses defensive fallback discovery. */
 	unknownAgentDiagnosticContext?: import("../agents/agents.ts").UnknownAgentDiagnosticContext;
+	/** Session factory for the in-process child; defaults to the process-wide factory. */
+	childSessionFactory?: import("../runs/shared/child-session.ts").ChildSessionFactory;
+	/** The launching executor's own child runtime when it is itself an in-process child. */
+	childRuntime?: import("../runs/shared/child-runtime-config.ts").ChildRuntimeConfig;
+	/** Fires once the child session exists and can be steered. */
+	onChildSession?: (controls: ForegroundChildSessionControls) => void;
 	/** Opt-in global permission rules; missing tools remain allowed. */
 	permissions?: import("../runs/shared/permissions.ts").PermissionConfig;
 	/** Session id of the direct parent session for permission-system ask forwarding. */
 	parentSessionId?: string;
-	/** Private prompt-runtime steering transport for workflow-owned foreground children. */
-	steerInboxDir?: string;
-	steerCapabilityPath?: string;
-	steerAckDir?: string;
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	cwd?: string;
@@ -2356,7 +2394,7 @@ export interface RunSyncOptions {
 	/** Internal foreground receipt proposal; returns true only when the outer waiter accepted it. */
 	onDetachReceipt?: (result: SingleResult) => boolean;
 	/** Authoritative terminal result, emitted only after the full detached run finalizes. */
-	onDetachedExit?: (result: SingleResult) => void;
+	onDetachedExit?: (result: SingleResult) => void | Promise<void>;
 	controlConfig?: ResolvedControlConfig;
 	intercomSessionName?: string;
 	orchestratorIntercomTarget?: string;
@@ -2397,6 +2435,7 @@ export interface RunSyncOptions {
 	workflowChildPermitLaunch?: WorkflowChildPermitContext;
 	/** Registry models available for heuristic bare-model resolution */
 	availableModels?: Array<{ provider: string; id: string; fullId: string; contextWindow?: number }>;
+	modelResponseAliases?: Record<string, string[]>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */
 	preferredModelProvider?: string;
 	/** Parent Pi event host used to snapshot runtime-registered MCP servers before child launch. */
@@ -2410,6 +2449,7 @@ export interface RunSyncOptions {
 		schemaPath: string;
 		outputPath: string;
 		acceptanceReportPath?: string;
+		acceptanceReportRequired?: boolean;
 	};
 	agentContract?: AgentContract;
 	acceptance?: AcceptanceInput;
@@ -2531,7 +2571,9 @@ export interface ExtensionConfig {
 	asyncWidget?: boolean;
 	/** Configure the process-wide TTL policy for persisted model exclusions. */
 	modelExclusions?: ModelExclusionsConfig;
-	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
+	/** Exact provider/model candidates mapped to operator-declared equivalent response IDs. Empty arrays add no accepted IDs. */
+	modelResponseAliases?: Record<string, string[]>;
+		/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
 	toolDescriptionMode?: ToolDescriptionMode;
 	/** Inline chat rendering for the subagent tool. Defaults to rich. */
 	inlineToolDisplay?: InlineToolDisplay;
@@ -2765,8 +2807,17 @@ export function normalizeMaxSubagentDepth(value: unknown): number | undefined {
 	return normalizeNonNegativeInteger(value);
 }
 
-export function resolveCurrentMaxSubagentDepth(configMaxDepth?: number): number {
-	return normalizeMaxSubagentDepth(process.env.SELESAI_SUBAGENT_MAX_DEPTH)
+/** Depth context of the executor's own child runtime, when it runs as an in-process child. */
+export interface SubagentDepthContext {
+	depth: number;
+	maxDepth?: number;
+}
+
+/** Operator override for the top-level parent; children inherit their limit through their runtime config. */
+export const SUBAGENT_MAX_DEPTH_ENV = "SELESAI_SUBAGENT_MAX_DEPTH";
+
+export function resolveCurrentMaxSubagentDepth(configMaxDepth?: number, runtime?: SubagentDepthContext): number {
+	return normalizeMaxSubagentDepth(runtime ? runtime.maxDepth : process.env[SUBAGENT_MAX_DEPTH_ENV])
 		?? normalizeMaxSubagentDepth(configMaxDepth)
 		?? DEFAULT_SUBAGENT_MAX_DEPTH;
 }
@@ -2777,19 +2828,24 @@ export function resolveChildMaxSubagentDepth(parentMaxDepth: number, agentMaxDep
 	return normalizedAgent === undefined ? normalizedParent : Math.min(normalizedParent, normalizedAgent);
 }
 
-export function checkSubagentDepth(configMaxDepth?: number): { blocked: boolean; depth: number; maxDepth: number } {
-	const depth = Number(process.env.SELESAI_SUBAGENT_DEPTH ?? "0");
-	const maxDepth = resolveCurrentMaxSubagentDepth(configMaxDepth);
-	const blocked = Number.isFinite(depth) && depth >= maxDepth;
+/** Depth of the executor itself: 0 for a top-level parent, its own child depth otherwise. */
+export function resolveCurrentSubagentDepth(runtime?: SubagentDepthContext): number {
+	const depth = runtime ? runtime.depth : 0;
+	return Number.isFinite(depth) ? depth : 0;
+}
+
+export function checkSubagentDepth(configMaxDepth?: number, runtime?: SubagentDepthContext): { blocked: boolean; depth: number; maxDepth: number } {
+	const depth = resolveCurrentSubagentDepth(runtime);
+	const maxDepth = resolveCurrentMaxSubagentDepth(configMaxDepth, runtime);
+	const blocked = depth >= maxDepth;
 	return { blocked, depth, maxDepth };
 }
 
-export function getSubagentDepthEnv(maxDepth?: number): Record<string, string> {
-	const parentDepth = Number(process.env.SELESAI_SUBAGENT_DEPTH ?? "0");
-	const nextDepth = Number.isFinite(parentDepth) ? parentDepth + 1 : 1;
+/** Depth context handed to a child launched by an executor at `runtime` (undefined for a top-level parent). */
+export function resolveChildDepth(maxDepth?: number, runtime?: SubagentDepthContext): Required<SubagentDepthContext> {
 	return {
-		SELESAI_SUBAGENT_DEPTH: String(nextDepth),
-		SELESAI_SUBAGENT_MAX_DEPTH: String(normalizeMaxSubagentDepth(maxDepth) ?? resolveCurrentMaxSubagentDepth()),
+		depth: resolveCurrentSubagentDepth(runtime) + 1,
+		maxDepth: normalizeMaxSubagentDepth(maxDepth) ?? resolveCurrentMaxSubagentDepth(undefined, runtime),
 	};
 }
 

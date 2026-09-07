@@ -40,6 +40,7 @@ import { canonicalMarkdownIdentity, withMarkdownMutationLock } from "./markdown-
 
 const MAX_EXTERNAL_WRITE_RETRIES = 2;
 const RECOVERY_ACTIVE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+const RECOVERY_SNAPSHOT_MIN_INTERVAL_MS = 60 * 60 * 1000;
 const RECOVERY_MAX_COUNT = 32;
 const RECOVERY_MAX_BYTES = 64 * 1024 * 1024;
 const RETIRED_RECOVERY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -119,6 +120,9 @@ export class MemoryStore {
     if (target === "failure") return this.config.memoryCharLimit * 2; // Failures get more space
     return target === "user" ? this.config.userCharLimit : this.config.memoryCharLimit;
   }
+  private get capEnforced(): boolean {
+    return this.config.memoryMode !== "policy-only";
+  }
 
   private charCount(target: "memory" | "user" | "failure"): number {
     const entries = this.entriesFor(target);
@@ -190,10 +194,11 @@ export class MemoryStore {
     toolState?: string;
     correctedTo?: string;
     project?: string;
+    signal?: AbortSignal;
   }): Promise<MemoryResult> {
     const failureText = this.buildFailureMemoryText(content, options);
     return this.addWithConsolidation(
-      "failure", failureText, undefined, 1, "Failure memory saved: " + options.category, options.project,
+      "failure", failureText, options.signal, 1, "Failure memory saved: " + options.category, options.project,
     );
   }
 
@@ -244,7 +249,7 @@ export class MemoryStore {
     const encoded = this.encodeEntry(content, today, today, project);
 
     const newTotal = [...entries, encoded].join(ENTRY_DELIMITER).length;
-    if (newTotal > limit) {
+    if (this.capEnforced && newTotal > limit) {
       this.overflowSince[target] ??= Date.now();
       const strategy = this.memoryOverflowStrategy();
 
@@ -276,6 +281,7 @@ export class MemoryStore {
     const result = await this.runTargetMutation(
       target,
       (markMutation) => this._add(target, content, signal, addedMessage, project, markMutation),
+      signal,
     );
     if (
       result.success
@@ -374,7 +380,7 @@ export class MemoryStore {
   async applyMutationPlan(
     target: "memory" | "user" | "failure",
     operations: MemoryMutationOperation[],
-    options: { requireShrink?: boolean } = {},
+    options: { requireShrink?: boolean; signal?: AbortSignal } = {},
   ): Promise<MemoryResult> {
     return this.runTargetMutation(target, async (markMutation) => {
       await this.syncTargetFromDiskIfChanged(target);
@@ -440,7 +446,7 @@ export class MemoryStore {
 
       const originalTotal = originalEntries.join(ENTRY_DELIMITER).length;
       const plannedTotal = plannedEntries.join(ENTRY_DELIMITER).length;
-      if (plannedTotal > this.charLimit(target)) {
+      if (this.capEnforced && plannedTotal > this.charLimit(target)) {
         return {
           success: false,
           error: `Memory mutation plan would put memory at ${plannedTotal}/${this.charLimit(target)} chars.`,
@@ -457,13 +463,14 @@ export class MemoryStore {
       await this.saveToDisk(target);
       markMutation();
       return this.successResponse(target, `Applied ${operations.length} memory operations atomically.`);
-    });
+    }, options.signal);
   }
 
-  async replace(target: "memory" | "user" | "failure", oldText: string, newContent: string): Promise<MemoryResult> {
+  async replace(target: "memory" | "user" | "failure", oldText: string, newContent: string, signal?: AbortSignal): Promise<MemoryResult> {
     return this.runTargetMutation(
       target,
       (markMutation) => this.replaceUnlocked(target, oldText, newContent, markMutation),
+      signal,
     );
   }
 
@@ -506,7 +513,7 @@ export class MemoryStore {
 
     const newTotal = testEntries.join(ENTRY_DELIMITER).length;
 
-    if (newTotal > this.charLimit(target)) {
+    if (this.capEnforced && newTotal > this.charLimit(target)) {
       return {
         success: false,
         error: `Replacement would put memory at ${newTotal}/${this.charLimit(target)} chars. Shorten or remove other entries first.`,
@@ -520,10 +527,11 @@ export class MemoryStore {
     return this.successResponse(target, "Entry replaced.");
   }
 
-  async remove(target: "memory" | "user" | "failure", oldText: string): Promise<MemoryResult> {
+  async remove(target: "memory" | "user" | "failure", oldText: string, signal?: AbortSignal): Promise<MemoryResult> {
     return this.runTargetMutation(
       target,
       (markMutation) => this.removeUnlocked(target, oldText, markMutation),
+      signal,
     );
   }
 
@@ -839,10 +847,14 @@ export class MemoryStore {
   private async runTargetMutation(
     target: "memory" | "user" | "failure",
     mutation: (markMutation: () => void) => Promise<MemoryResult>,
+    signal?: AbortSignal,
   ): Promise<MemoryResult> {
     const storagePath = await this.resolveStoragePath(target);
     return withMarkdownMutationLock(storagePath, async () => {
       for (let attempt = 0; ; attempt++) {
+        if (signal?.aborted) {
+          return { success: false, error: "Memory mutation cancelled." };
+        }
         let mutated = false;
         try {
           const result = await mutation(() => {
@@ -910,6 +922,15 @@ export class MemoryStore {
           await fs.link(tmpPath, filePath);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+            throw new ExternalMemoryWriteConflict();
+          }
+          throw error;
+        }
+      } else if (await this.shouldReuseRecoverySnapshot(filePath)) {
+        try {
+          await fs.rename(tmpPath, filePath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
             throw new ExternalMemoryWriteConflict();
           }
           throw error;
@@ -1046,6 +1067,37 @@ export class MemoryStore {
       path.dirname(filePath),
       `.${path.basename(filePath)}.recovery-${Date.now()}-${randomUUID()}`,
     );
+  }
+
+  private async shouldReuseRecoverySnapshot(filePath: string): Promise<boolean> {
+    const directory = path.dirname(filePath);
+    const escapedName = path.basename(filePath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+    const recoveryPattern = new RegExp(`^\\.${escapedName}\\.recovery-\\d+-${uuidPattern}$`, "i");
+    try {
+      const names = await fs.readdir(directory);
+      const mtimes = await Promise.all(
+        names
+          .filter((name) => recoveryPattern.test(name))
+          .map(async (name) => {
+            try {
+              const state = await fs.lstat(path.join(directory, name));
+              return state.isFile() ? state.mtimeMs : null;
+            } catch {
+              return null;
+            }
+          }),
+      );
+      let newestMtimeMs: number | null = null;
+      for (const mtimeMs of mtimes) {
+        if (mtimeMs !== null && (newestMtimeMs === null || mtimeMs > newestMtimeMs)) {
+          newestMtimeMs = mtimeMs;
+        }
+      }
+      return newestMtimeMs !== null && Date.now() - newestMtimeMs < RECOVERY_SNAPSHOT_MIN_INTERVAL_MS;
+    } catch {
+      return false;
+    }
   }
 
   private retiredRecoveryPathFor(filePath: string): string {
