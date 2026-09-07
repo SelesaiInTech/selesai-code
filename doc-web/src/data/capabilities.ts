@@ -56,21 +56,6 @@ export const capabilities: Capability[] = [
     runtimeSurface: "mixed",
   },
   {
-    slug: "workflow",
-    category: "delegation-and-workflows",
-    en: { displayName: "Adaptive implementation workflow", benefit: "A bundled skill chooses the smallest safe pi-subagents flow: one writer, only the needed reconnaissance or research, and focused review and fixes." },
-    id: { displayName: "Workflow implementasi adaptif", benefit: "Skill bawaan memilih alur pi-subagents aman yang paling kecil: satu writer, hanya rekonesans atau research yang diperlukan, serta review dan perbaikan terfokus." },
-    sourcePaths: ["src/skills/workflow/", "README.md"],
-    sourceLinks: [
-      links("Workflow skill", "src/skills/workflow/"),
-      links("README mention", "README.md"),
-    ],
-    guideRoute: "capabilities/delegation/workflow",
-    piComparison: "core-differentiator",
-    distribution: "core",
-    runtimeSurface: "skill-backed",
-  },
-  {
     slug: "pi-web-agent",
     category: "research-and-interaction",
     en: { displayName: "Web research", benefit: "Single `web_explore` research tool with bounded search, fetch, source ranking, and headless-browser escalation." },

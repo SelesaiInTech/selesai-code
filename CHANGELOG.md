@@ -2,6 +2,14 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.18] - 2026-09-07
+
+### Removed
+- **Unused bundled skills.** Removed `imagegen-frontend-mobile`, `imagegen-frontend-web`, `implanger`, `output`, `planger`, and `workflow`.
+
+### Fixed
+- **Herdr pane launch command.** Pass the Selesai binary directly to `herdr pane run` instead of adding shell quotes that become part of the command.
+
 ## [0.13.17] - 2026-09-07
 
 ### Upstream sync: Pi v0.85.1

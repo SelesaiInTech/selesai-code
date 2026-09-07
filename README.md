@@ -13,13 +13,13 @@
 
 </div>
 
-Selesai is a terminal-first **AI coding agent** that takes software tasks from prompt to verified result. It is a maintained, extension-first fork of the [Pi coding agent](https://github.com/earendil-works/pi), with subagents, adaptive workflows, live research, recovery tools, a richer TUI, and **32 built-in skills** shipped together in one install.
+Selesai is a terminal-first **AI coding agent** that takes software tasks from prompt to verified result. It is a maintained, extension-first fork of the [Pi coding agent](https://github.com/earendil-works/pi), with subagents, adaptive workflows, live research, recovery tools, a richer TUI, and **28 built-in skills** shipped together in one install.
 
 Use your preferred model provider, connect a local or OpenAI-compatible endpoint, or get a ready-to-use token from **[token.in](https://token.selesai.in)**. Selesai keeps Pi's small, hackable core while reducing the setup and extension work needed before an agent can be productive.
 
 | | |
 | --- | --- |
-| **Ready out of the box** | One package bundles coordinated extensions, tools, themes, and 32 skills across 9 meaningful categories. |
+| **Ready out of the box** | One package bundles coordinated extensions, tools, themes, and 28 skills across 9 meaningful categories. |
 | **Delegates and parallelizes** | Focused subagents can research, review, build, or run independent workstreams with foreground, background, parallel, and chained execution. |
 | **Adapts to the task** | The workflow chooses the smallest useful path—from a direct edit to reconnaissance, implementation, review, fixes, and validation. |
 | **Researches with current sources** | Built-in web research, public GitHub code search, and interactive questions help the agent resolve uncertainty before it acts. |
@@ -109,15 +109,10 @@ Skills ship inside `@selesai/code` and are discovered when Selesai starts. Invok
 ### 🖼️ Image generation & visual direction
 
 - `brandkit` — brand identity boards, logo systems, and visual worlds.
-- `imagegen-frontend-web` — section-by-section website reference images.
-- `imagegen-frontend-mobile` — mobile app screen concepts.
 - `image-to-code` — generate a design direction and implement it as code.
 
 ### 📋 Planning & orchestration
 
-- `planger` — decompose work into subagent-ready plans.
-- `implanger` — execute planger-style plans.
-- `workflow` — adaptive multi-stage implementation orchestration.
 - `pi-subagents` — delegation patterns for parallel, asynchronous, and chained work.
 
 ### 🧹 Code simplicity — the ponytail family
@@ -136,7 +131,6 @@ Skills ship inside `@selesai/code` and are discovered when Selesai starts. Invok
 ### ✅ Completion & output discipline
 
 - `unlazy` — acceptance gates, depth trees, and finish-the-job enforcement.
-- `full-output-enforcement` — prevent truncation and placeholder output in generated code.
 
 ### 📤 Handoff & context transfer
 
@@ -167,12 +161,6 @@ Ask the architect to challenge this plan before we implement it.
 Run parallel commentator agents for correctness, tests, and unnecessary complexity.
 Have the builder implement this plan, then review the result.
 ```
-
-### Adaptive implementation workflow
-
-The bundled `workflow` skill is a task-sensitive implementation policy, not a rigid slash-command pipeline. A small change can stay direct. A riskier change can add reconnaissance, research, a single writer, targeted review, fixes, and validation without turning every task into a ceremony.
-
-Invoke it with `$workflow`, or ask Selesai to orchestrate the implementation in plain language.
 
 ### Research and interactive decisions
 

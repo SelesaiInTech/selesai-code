@@ -159,11 +159,14 @@ describe("agent dir bootstrap", () => {
 	it("installs new bundled skills while leaving user-only skills untouched", () => {
 		mkdirSync(join(bundled, "skills", "pi-subagents"), { recursive: true });
 		mkdirSync(join(dir, "skills", "user-custom"), { recursive: true });
+		mkdirSync(join(dir, "skills", "workflow"), { recursive: true });
 		writeFileSync(join(bundled, "skills", "pi-subagents", "SKILL.md"), "---\ndescription: Delegate\n---\n");
 		writeFileSync(join(dir, "skills", "user-custom", "SKILL.md"), "---\ndescription: Custom\n---\n");
+		writeFileSync(join(dir, "skills", "workflow", "SKILL.md"), "---\ndescription: Retired\n---\n");
 
 		const written = seedDefaultSkills(dir, join(bundled, "skills"));
 		expect(written).toEqual([join(dir, "skills", "pi-subagents", "SKILL.md")]);
+		expect(existsSync(join(dir, "skills", "workflow"))).toBe(false);
 		expect(readFileSync(join(dir, "skills", "user-custom", "SKILL.md"), "utf-8")).toBe(
 			"---\ndescription: Custom\n---\n",
 		);

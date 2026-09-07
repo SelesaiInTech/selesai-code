@@ -3,6 +3,11 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.18 — Pembersihan skill dan perbaikan peluncuran pane Herdr
+
+- **Skill bawaan yang tidak digunakan dihapus.** Menghapus `imagegen-frontend-mobile`, `imagegen-frontend-web`, `implanger`, `output`, `planger`, dan `workflow`.
+- **Perintah peluncuran pane Herdr diperbaiki.** Binary Selesai diteruskan langsung ke `herdr pane run` tanpa tanda kutip shell literal.
+
 ## 0.13.17 — Sinkronisasi Pi v0.85.1 dan upgrade ekstensi vendor
 
 - **Sinkronisasi upstream Pi v0.85.1.** Mem-port sumber coding-agent dari v0.84.4 ke v0.85.1 per file: penanganan `ctx.cwd` tool, tunneling proxy/CONNECT, skill dengan tool Bash-only, perbaikan import/fork/share sesi, orientasi EXIF, unduhan musl fd/ripgrep, pembaruan katalog model, thinking effort per-turn, TTL prompt-cache, abort kompaksi, kode keluar sinyal, kontrol transkrip layar penuh, dan lainnya.

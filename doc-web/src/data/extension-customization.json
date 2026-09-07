@@ -1661,42 +1661,6 @@
    "noConfig": true
   },
   {
-   "slug": "workflow",
-   "distribution": "core",
-   "overview": {
-    "en": "A bundled parent-only skill that chooses the smallest safe pi-subagents implementation flow.",
-    "id": "Skill bawaan khusus parent yang memilih alur implementasi pi-subagents aman yang paling kecil."
-   },
-   "sourcePaths": [
-    "src/skills/workflow/SKILL.md"
-   ],
-   "scopes": [
-    {
-     "label": {
-      "en": "Skill policy",
-      "id": "Kebijakan skill"
-     },
-     "path": "src/skills/workflow/SKILL.md (source-defined)",
-     "precedence": {
-      "en": "The parent adapts stages to the task; no user configuration file controls the flow.",
-      "id": "Parent menyesuaikan tahap dengan tugas; tidak ada file konfigurasi user yang mengontrol alur."
-     }
-    }
-   ],
-   "settings": [],
-   "envVars": [],
-   "controls": [
-    {
-     "name": "$workflow",
-     "description": {
-      "en": "Apply adaptive implementation orchestration guidance.",
-      "id": "Terapkan panduan orkestrasi implementasi adaptif."
-     }
-    }
-   ],
-   "noConfig": true
-  },
-  {
    "slug": "capability-gateway",
    "distribution": "bundled",
    "overview": {

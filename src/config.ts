@@ -8,6 +8,7 @@ import {
 	readdirSync,
 	readFileSync,
 	realpathSync,
+	rmSync,
 	unlinkSync,
 	writeFileSync,
 } from "fs";
@@ -896,15 +897,19 @@ export function seedDefaultExtensions(
 /**
  * Seed bundled built-in skills into the user's agent dir/skills.
  * The bundled copy is authoritative: existing user copies are overwritten so a
- * stale installed copy never shadows the shipped skill. User-only skills (not
- * present in the bundled tree) are left untouched. Returns the list of
+ * stale installed copy never shadows the shipped skill. Retired bundled skills
+ * are removed; other user-only skills are left untouched. Returns the list of
  * destination paths that were written.
  */
 export function seedDefaultSkills(
 	agentDir: string,
 	bundledSkillsDir: string = getBundledSkillsDir(),
 ): string[] {
-	return seedBundledDir(join(agentDir, "skills"), bundledSkillsDir);
+	const skillsDir = join(agentDir, "skills");
+	for (const name of ["imagegen-frontend-mobile", "imagegen-frontend-web", "implanger", "output", "planger", "workflow"]) {
+		rmSync(join(skillsDir, name), { recursive: true, force: true });
+	}
+	return seedBundledDir(skillsDir, bundledSkillsDir);
 }
 
 /**

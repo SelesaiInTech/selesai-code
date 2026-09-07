@@ -171,11 +171,6 @@ function extractPaneId(value: unknown): string | undefined {
   return undefined;
 }
 
-function shellQuote(value: string): string {
-  if (process.platform === "win32") return `"${value.replaceAll('"', '\\"')}"`;
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 function resolveProjectRoot(cwd: string): string {
   const resolved = resolve(cwd);
   const stat = statSync(resolved);
@@ -242,7 +237,7 @@ export async function openProjectPane(input: {
   const paneId = extractPaneId(split.data);
   if (!paneId) throw new Error("Herdr project pane error (PANE_GONE): pane split returned no pane id.");
 
-  const command = shellQuote(process.env.SELESAI_INTERCOM_BINARY?.trim() || process.env.SELESAI_BIN?.trim() || "selesai");
+  const command = process.env.SELESAI_INTERCOM_BINARY?.trim() || process.env.SELESAI_BIN?.trim() || "selesai";
   const started = await client.run(["pane", "run", paneId, command], { timeoutMs: 15_000, signal: input.signal });
   if (started.ok === false) {
     await client.run(["pane", "close", paneId], { timeoutMs: 5_000 });
