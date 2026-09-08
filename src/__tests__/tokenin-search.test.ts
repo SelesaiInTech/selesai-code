@@ -1,9 +1,11 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createEventBus } from "../core/event-bus.ts";
+import { loadExtensions } from "../core/extensions/loader.ts";
 import { createBackendSet } from "../extensions/pi-web-agent/src/backends/factory.ts";
-import { DEFAULT_BACKEND_CONFIG, usableSearchProviders } from "../extensions/pi-web-agent/src/backends/config.ts";
+import { getDefaultBackendConfig, usableSearchProviders } from "../extensions/pi-web-agent/src/backends/config.ts";
 import { hasActiveTokenInAccount } from "../extensions/pi-web-agent/src/backends/settings-reader.ts";
 import {
 	createTokenInSearchTool,
@@ -153,6 +155,23 @@ describe("createTokenInSearchTool", () => {
 		expect(result.error?.message).toContain("401");
 	});
 
+	it("times out a stalled request", async () => {
+		const search = createTokenInSearchTool({
+			readAccount: () => ({ id: "sk-a", label: "A", apiKey: "sk-a" }),
+			timeoutMs: 5,
+			fetchImpl: ((_: string, init?: RequestInit) =>
+				new Promise<Response>((_, reject) => {
+					const signal = init?.signal as AbortSignal;
+					signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+				})) as typeof fetch,
+		});
+
+		const result = await search({ query: "q" });
+		expect(result.status).toBe("error");
+		expect(result.error?.code).toBe("FETCH_FAILED");
+		expect(result.error?.message).toContain("timed out after 5ms");
+	});
+
 	it("errors on empty query", async () => {
 		const search = createTokenInSearchTool({ readAccount: () => ({ id: "sk-a", label: "A", apiKey: "sk-a" }) });
 		const result = await search({ query: "   " });
@@ -161,14 +180,37 @@ describe("createTokenInSearchTool", () => {
 	});
 });
 
-describe("default backend wiring", () => {
+describe("bundled web-agent integration", () => {
+	it("loads and registers web_explore through the extension loader", async () => {
+		const loaded = await loadExtensions(
+			[resolve(process.cwd(), "src/extensions/pi-web-agent/src/extension.ts")],
+			process.cwd(),
+			createEventBus(),
+		);
+
+		expect(loaded.errors).toEqual([]);
+		expect(loaded.extensions).toHaveLength(1);
+		expect(loaded.extensions[0].tools.has("web_explore")).toBe(true);
+	});
+
+	describe("default backend wiring", () => {
 	it("computes usable providers without crashing", () => {
 		expect(usableSearchProviders({ provider: "tokenin", fallback: "duckduckgo" }, {})).toContain("duckduckgo");
 	});
 
-	it("defaults to the tokenin provider with duckduckgo fallback", () => {
-		expect(DEFAULT_BACKEND_CONFIG.search.provider).toBe("tokenin");
-		expect(DEFAULT_BACKEND_CONFIG.search.fallback).toBe("duckduckgo");
+	it("selects TokenIn only when an account is active", async () => {
+		expect(getDefaultBackendConfig(() => false).search).toEqual({ provider: "duckduckgo" });
+		expect(getDefaultBackendConfig(() => true).search).toEqual({ provider: "tokenin", fallback: "duckduckgo" });
+		const backends = createBackendSet(getDefaultBackendConfig(() => false), {
+			createDuckDuckGoSearch: () =>
+				(async () => ({
+					status: "ok",
+					results: [{ title: "DDG", url: "https://ddg.example", snippet: "s" }],
+					metadata: { backend: "duckduckgo", cacheHit: false },
+				})) as never,
+		});
+
+		expect((await backends.search({ query: "hello" })).metadata.backend).toBe("duckduckgo");
 	});
 
 	it("falls back to duckduckgo when the tokenin provider errors (no account)", async () => {
@@ -199,4 +241,38 @@ describe("default backend wiring", () => {
 		expect(result.metadata.fallbackFrom).toBe("tokenin");
 		expect(result.metadata.backend).toBe("duckduckgo");
 	});
+
+	it("falls back to duckduckgo when Token-In times out", async () => {
+		const stalledSearch = createTokenInSearchTool({
+			readAccount: () => ({ id: "sk-a", label: "A", apiKey: "sk-a" }),
+			timeoutMs: 5,
+			fetchImpl: ((_: string, init?: RequestInit) =>
+				new Promise<Response>((_, reject) => {
+					const signal = init?.signal as AbortSignal;
+					signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+				})) as typeof fetch,
+		});
+		const backends = createBackendSet(
+			{
+				search: { provider: "tokenin", fallback: "duckduckgo" },
+				fetch: { provider: "http" },
+				headless: { provider: "local-browser" },
+			},
+			{
+				createTokenInSearch: () => stalledSearch,
+				createDuckDuckGoSearch: () =>
+					(async () => ({
+						status: "ok",
+						results: [{ title: "DDG", url: "https://ddg.example", snippet: "s" }],
+						metadata: { backend: "duckduckgo", cacheHit: false },
+					})) as never,
+			},
+		);
+
+		const result = await backends.search({ query: "hello" });
+		expect(result.status).toBe("ok");
+		expect(result.metadata.fallbackFrom).toBe("tokenin");
+		expect(result.metadata.backend).toBe("duckduckgo");
+	});
+});
 });

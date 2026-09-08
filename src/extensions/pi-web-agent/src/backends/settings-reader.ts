@@ -1,8 +1,7 @@
-// ponytail: selesai stores the Brave API key in settings.json (webAgent.braveApiKey),
-// set by the bundled web-agent-onboarding extension. Upstream pi-web-agent reads the
-// key only from PI_WEB_AGENT_BRAVE_API_KEY env var. This helper bridges that gap with a
-// minimal settings.json read. Ceiling: if selesai moves web search config elsewhere, this
-// helper needs updating; upgrade path = upstream pi-web-agent adopting a settings hook.
+// ponytail: preserve existing manually configured Brave keys in settings.json
+// (webAgent.braveApiKey). Upstream pi-web-agent reads only PI_WEB_AGENT_BRAVE_API_KEY.
+// Ceiling: if selesai moves web search config elsewhere, update this helper; upgrade path =
+// upstream pi-web-agent adopting a settings hook.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAgentDir, getSettingsPath } from '@selesai/code';

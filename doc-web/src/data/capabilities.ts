@@ -324,23 +324,6 @@ export const capabilities: Capability[] = [
     runtimeSurface: "mixed",
   },
   {
-    slug: "web-agent-onboarding",
-    category: "terminal-workspace",
-    en: { displayName: "Web agent onboarding", benefit: "First-run Brave Search onboarding for the web agent, with DuckDuckGo fallback." },
-    id: { displayName: "Onboarding web agent", benefit: "Onboarding Brave Search pertama kali untuk web agent, dengan fallback DuckDuckGo." },
-    sourcePaths: ["src/extensions/web-agent-onboarding.ts", "src/extensions/pi-web-agent/", "README.md"],
-    sourceLinks: [
-      links("Onboarding source", "src/extensions/web-agent-onboarding.ts"),
-      links("Web agent source", "src/extensions/pi-web-agent/"),
-      links("README mention", "README.md"),
-    ],
-    guideRoute: "capabilities/workspace/web-agent-onboarding",
-    piComparison: "bundled",
-    distribution: "bundled",
-    manifestEntry: "./web-agent-onboarding.ts",
-    runtimeSurface: "command",
-  },
-  {
     slug: "tokenin-onboarding",
     category: "terminal-workspace",
     en: { displayName: "Token onboarding", benefit: "First-run onboarding path for provider credentials and API tokens." },

@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.19 — Default pencarian web kondisional dan penghapusan onboarding Brave
+
+- **Default pencarian web kondisional.** Dengan akun TokenIn aktif, pencarian default menggunakan TokenIn dengan fallback DuckDuckGo; tanpa akun, menggunakan DuckDuckGo tanpa kunci. Permintaan pencarian TokenIn kini timeout setelah 10 detik dan fallback alih-alih menggantung.
+- **Onboarding web agent Brave dihapus.** Ekstensi `web-agent-onboarding`, alur `/setup-web-search`, dan dokumennya dihapus; kunci Brave yang dikonfigurasi manual di `settings.json` tetap dihormati.
+- **Panduan web agent diperbarui.** Panduan riset kini mendokumentasikan default kondisional TokenIn/DuckDuckGo dan backend berbasis kunci lainnya.
+
 ## 0.13.18 — Pembersihan skill dan perbaikan peluncuran pane Herdr
 
 - **Skill bawaan yang tidak digunakan dihapus.** Menghapus `imagegen-frontend-mobile`, `imagegen-frontend-web`, `implanger`, `output`, `planger`, dan `workflow`.

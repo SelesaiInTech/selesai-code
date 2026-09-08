@@ -275,7 +275,7 @@ describe("tokenin-auth.json helpers", () => {
 		});
 
 		it("appends days/hours until reset when parseable", () => {
-			const future = new Date(Date.now() + 3 * 86_400_000 + 5 * 3_600_000).toISOString();
+			const future = new Date(Date.now() + 3 * 86_400_000 + 5 * 3_600_000 + 30 * 60_000).toISOString();
 			const text = formatTokenInUsage({ spend: 1, maxBudget: 5, budgetResetAt: future });
 			expect(text).toContain("resets in 3d 5h");
 		});

@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { CONFIG_DIR_NAME, getAgentDir } from '@selesai/code';
 import {
-  DEFAULT_BACKEND_CONFIG,
+  getDefaultBackendConfig,
   extractBackendConfigOverride,
   mergeBackendConfigLayers,
   type BackendConfig,
@@ -162,7 +162,7 @@ export async function loadPresentationConfigLayers(
       project.rawConfig
     ),
     effectiveBackends: mergeBackendConfigLayers(
-      DEFAULT_BACKEND_CONFIG,
+      getDefaultBackendConfig(),
       global.rawBackends,
       project.rawBackends
     )

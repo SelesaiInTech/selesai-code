@@ -6,6 +6,7 @@ import type { SearchResult, WebSearchResponse } from '../types.js';
 
 export const TOKENIN_SEARCH_TOOL_NAME = 'firecrawl';
 export const TOKENIN_DEFAULT_BASE_URL = 'https://lite.andlet.me/v1';
+const TOKENIN_SEARCH_TIMEOUT_MS = 10_000;
 
 type TokenInAccount = { id: string; label: string; apiKey: string; baseUrl?: string };
 type TokenInAuth = { accounts: TokenInAccount[]; activeId: string | null };
@@ -54,10 +55,12 @@ function normalizeResults(response: LiteLLMSearchResponse): SearchResult[] {
 
 export function createTokenInSearchTool({
   readAccount = readActiveTokenInAccount,
-  fetchImpl = fetch
+  fetchImpl = fetch,
+  timeoutMs = TOKENIN_SEARCH_TIMEOUT_MS
 }: {
   readAccount?: () => TokenInAccount | undefined;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 } = {}) {
   return async function tokenInSearch({ query }: { query: string }): Promise<WebSearchResponse> {
     const normalizedQuery = query.trim();
@@ -89,6 +92,9 @@ export function createTokenInSearchTool({
       .replace(/\/v1$/, '');
     const url = `${rootUrl}/v1/search/${TOKENIN_SEARCH_TOOL_NAME}`;
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
       const response = await fetchImpl(url, {
         method: 'POST',
@@ -97,7 +103,8 @@ export function createTokenInSearchTool({
           'Content-Type': 'application/json',
           Authorization: `Bearer ${account.apiKey}`
         },
-        body: JSON.stringify({ query: normalizedQuery, max_results: 10 })
+        body: JSON.stringify({ query: normalizedQuery, max_results: 10 }),
+        signal: controller.signal
       });
 
       if (!response.ok) {
@@ -122,13 +129,17 @@ export function createTokenInSearchTool({
         metadata: { backend: 'tokenin', cacheHit: false }
       });
     } catch (error) {
-      const rawMessage = error instanceof Error ? error.message : String(error);
+      const rawMessage = controller.signal.aborted
+        ? `Token-In search timed out after ${timeoutMs}ms.`
+        : error instanceof Error ? error.message : String(error);
       return resultWithPresentation({
         status: 'error',
         results: [],
         metadata: { backend: 'tokenin', cacheHit: false },
         error: { code: 'FETCH_FAILED', message: `Token-In search request failed: ${rawMessage}` }
       });
+    } finally {
+      clearTimeout(timeout);
     }
   };
 }

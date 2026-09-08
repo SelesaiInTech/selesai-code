@@ -12,8 +12,7 @@
  * - With no UI (headless/CI), fall back to a console warning with the install
  *   command, mirroring the rtk extension's fail-open behavior.
  *
- * Mirrors src/extensions/rtk.ts (probe, opt-out env var, fail-open warning)
- * and src/extensions/web-agent-onboarding.ts (confirm -> act -> marker).
+ * Mirrors src/extensions/rtk.ts (probe, opt-out env var, fail-open warning).
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";

@@ -1,5 +1,5 @@
 import {
-  DEFAULT_BACKEND_CONFIG,
+  getDefaultBackendConfig,
   mergeBackendConfigLayers,
   validateBackendConfig,
   usableSearchProviders,
@@ -150,7 +150,7 @@ function formatFetchOptions(config: BackendConfig['fetch']) {
   ].filter(Boolean).join(' ');
 }
 
-function formatBackendSummary(config: BackendConfig = DEFAULT_BACKEND_CONFIG) {
+function formatBackendSummary(config: BackendConfig = getDefaultBackendConfig()) {
   const searchSuffix = formatSearchOptions(config.search);
   const fetchSuffix = formatFetchOptions(config.fetch);
   const searchBase = config.search.baseUrl
@@ -394,10 +394,10 @@ export function getInheritedBackendsForScope(
   scope: PresentationScope
 ): BackendConfig {
   if (scope === 'global') {
-    return DEFAULT_BACKEND_CONFIG;
+    return getDefaultBackendConfig();
   }
 
-  return mergeBackendConfigLayers(DEFAULT_BACKEND_CONFIG, loaded.global.rawBackends);
+  return mergeBackendConfigLayers(getDefaultBackendConfig(), loaded.global.rawBackends);
 }
 
 export function getScopeDisplayBackends(
@@ -405,11 +405,11 @@ export function getScopeDisplayBackends(
   scope: PresentationScope
 ): BackendConfig {
   if (scope === 'global') {
-    return mergeBackendConfigLayers(DEFAULT_BACKEND_CONFIG, loaded.global.rawBackends);
+    return mergeBackendConfigLayers(getDefaultBackendConfig(), loaded.global.rawBackends);
   }
 
   return mergeBackendConfigLayers(
-    DEFAULT_BACKEND_CONFIG,
+    getDefaultBackendConfig(),
     loaded.global.rawBackends,
     loaded.project.rawBackends
   );
@@ -942,7 +942,7 @@ export function registerWebAgentConfigCommands(pi: ExtensionAPI, deps: CommandDe
 
       if (action === 'doctor') {
         const [typeboxOk, browser, loaded] = await Promise.all([checkTypebox(), resolveBrowser(), load()]);
-        const backendConfig = loaded.effectiveBackends ?? DEFAULT_BACKEND_CONFIG;
+        const backendConfig = loaded.effectiveBackends ?? getDefaultBackendConfig();
         const backendIssues = validateBackendConfig(backendConfig);
         const backendHealth = await checkBackends(backendConfig);
         const lines = [
@@ -971,7 +971,7 @@ export function registerWebAgentConfigCommands(pi: ExtensionAPI, deps: CommandDe
         ctx.ui.notify(
           [
             formatConfigSummary(loaded.effectiveConfig),
-            formatBackendSummary(loaded.effectiveBackends ?? DEFAULT_BACKEND_CONFIG),
+            formatBackendSummary(loaded.effectiveBackends ?? getDefaultBackendConfig()),
             `global: ${loaded.global.path}${loaded.global.exists ? '' : ' (missing)'}`,
             `project: ${loaded.project.path}${loaded.project.exists ? '' : ' (missing)'}`
           ].join('\n'),

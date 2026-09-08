@@ -2,6 +2,17 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.19] - 2026-09-09
+
+### Changed
+- **Conditional web-search default.** pi-web-agent now defaults search to TokenIn when an active TokenIn account exists, and to keyless DuckDuckGo otherwise — no more TokenIn requests without an account.
+
+### Added
+- **TokenIn search timeout.** TokenIn search requests abort after 10s and fall back to DuckDuckGo instead of hanging.
+
+### Removed
+- **Brave web-agent onboarding.** The `web-agent-onboarding` extension, its `/setup-web-search` flow, and its docs are removed; existing manually configured Brave keys in `settings.json` are still honored.
+
 ## [0.13.18] - 2026-09-07
 
 ### Removed

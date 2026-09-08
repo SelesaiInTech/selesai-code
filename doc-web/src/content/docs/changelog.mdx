@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.19 — Conditional web-search default and Brave onboarding removal
+
+- **Conditional web-search default.** With an active TokenIn account, default search uses TokenIn with DuckDuckGo fallback; without one, it uses keyless DuckDuckGo. TokenIn search requests now time out after 10 seconds and fall back instead of hanging.
+- **Brave web-agent onboarding removed.** The `web-agent-onboarding` extension, its `/setup-web-search` flow, and its docs are gone; existing manually configured Brave keys in `settings.json` are still honored.
+- **Web agent guide updated.** The research guide now documents the conditional TokenIn/DuckDuckGo default and the remaining key-based backends.
+
 ## 0.13.18 — Skill cleanup and Herdr pane launch fix
 
 - **Unused bundled skills removed.** Removed `imagegen-frontend-mobile`, `imagegen-frontend-web`, `implanger`, `output`, `planger`, and `workflow`.

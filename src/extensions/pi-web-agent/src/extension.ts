@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from '@selesai/code';
-import { DEFAULT_BACKEND_CONFIG, type BackendConfig } from './backends/config.js';
+import { getDefaultBackendConfig, type BackendConfig } from './backends/config.js';
 import { Type } from 'typebox';
 import { registerWebAgentConfigCommands } from './commands/web-agent-config.js';
 import { DEFAULT_PRESENTATION_CONFIG, resolvePresentationMode } from './presentation/config.js';
@@ -60,9 +60,9 @@ async function getEffectivePresentationConfig(pi: ExtensionAPI): Promise<Present
 async function getEffectiveBackendConfig(pi: ExtensionAPI): Promise<BackendConfig> {
   try {
     const loaded = await loadWebAgentConfig(pi);
-    return loaded.effectiveBackends ?? DEFAULT_BACKEND_CONFIG;
+    return loaded.effectiveBackends ?? getDefaultBackendConfig();
   } catch {
-    return DEFAULT_BACKEND_CONFIG;
+    return getDefaultBackendConfig();
   }
 }
 

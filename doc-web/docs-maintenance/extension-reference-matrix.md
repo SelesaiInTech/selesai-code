@@ -20,7 +20,6 @@ extension documentation accurate. It is not published as user-facing content.
 | undo | bundled | `./undo.ts` | command | continuity/undo.mdx | id/continuity/undo.mdx | undo.ts |
 | pi-subagents | bundled | `./pi-subagents` | mixed | delegation/pi-subagents.mdx | id/delegation/pi-subagents.mdx | README, slash-commands, config |
 | pi-web-agent | bundled | `./pi-web-agent` | mixed | research/web-agent.mdx | id/research/web-agent.mdx | extension.ts, commands, backends |
-| web-agent-onboarding | bundled | `./web-agent-onboarding.ts` | command | workspace/web-agent-onboarding.mdx | id/workspace/web-agent-onboarding.mdx | web-agent-onboarding.ts |
 | pi-powerline-footer | bundled | `./pi-powerline-footer` | mixed | workspace/powerline-footer.mdx | id/workspace/powerline-footer.mdx | README, index, config, tests |
 | pi-rewind-hook | optional | (not in manifest) | automatic | continuity/rewind.mdx | id/continuity/rewind.mdx | README + source |
 
@@ -155,16 +154,6 @@ extension documentation accurate. It is not published as user-facing content.
 - **Persistence scope**: Config files only; searches are not persisted.
 - **Test / source evidence**: `src/extensions/pi-web-agent/extension.ts`, commands, backends (`factory.ts`, `settings-reader.ts`).
 - **Limits / failure behavior**: Output depends on third-party sources; headless escalation fails without a supported browser; SearXNG/Firecrawl need valid endpoints.
-
-### web-agent-onboarding
-
-- **Startup behavior**: Loaded automatically at boot via `./web-agent-onboarding.ts`; first-run Brave setup.
-- **Prerequisites**: Bundled; interactive first session.
-- **Config / settings / env**: Writes `webAgent.braveApiKey` to `~/.selesai/agent/settings.json`; writes Brave backend config to `~/.selesai/agent/extensions/pi-web-agent/config.json` with DuckDuckGo fallback.
-- **Commands / tools / shortcuts**: First-run prompt; onboarding marker `.webAgentOnboardingComplete`.
-- **Persistence scope**: User-level settings and global config.
-- **Test / source evidence**: `src/extensions/web-agent-onboarding.ts`.
-- **Limits / failure behavior**: Skippable; falls back to DuckDuckGo if Brave is declined.
 
 ### pi-powerline-footer
 

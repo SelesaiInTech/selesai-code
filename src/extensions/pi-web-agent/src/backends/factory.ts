@@ -13,7 +13,7 @@ import { createWebFetchTool } from '../tools/web-fetch.js';
 import { createWebSearchTool } from '../tools/web-search.js';
 import { readBraveKeyFromSettings } from './settings-reader.js';
 import type { SearchProviderName, WebFetchHeadlessResponse, WebFetchResponse, WebSearchResponse } from '../types.js';
-import { DEFAULT_BACKEND_CONFIG, type BackendConfig, usableSearchProviders } from './config.js';
+import { getDefaultBackendConfig, type BackendConfig, usableSearchProviders } from './config.js';
 import { createSpecialContentResolver } from '../readers/resolver.js';
 import { createGithubReader } from '../readers/github-reader.js';
 import { createPdfReader } from '../readers/pdf-reader.js';
@@ -117,7 +117,7 @@ function withFetchFallback(
 }
 
 export function createBackendSet(
-  config: BackendConfig = DEFAULT_BACKEND_CONFIG,
+  config: BackendConfig = getDefaultBackendConfig(),
   deps: BackendFactoryDeps = {}
 ): BackendSet {
   const createDuckDuckGoSearch = deps.createDuckDuckGoSearch ?? createWebSearchTool;

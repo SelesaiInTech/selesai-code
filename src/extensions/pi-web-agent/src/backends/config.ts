@@ -54,11 +54,17 @@ export type BackendConfigFile = {
   };
 };
 
-export const DEFAULT_BACKEND_CONFIG: BackendConfig = {
-  search: { provider: 'tokenin', fallback: 'duckduckgo' },
-  fetch: { provider: 'http' },
-  headless: { provider: 'local-browser' }
-};
+export function getDefaultBackendConfig(
+  hasActiveAccount: () => boolean = hasActiveTokenInAccount
+): BackendConfig {
+  return {
+    search: hasActiveAccount()
+      ? { provider: 'tokenin', fallback: 'duckduckgo' }
+      : { provider: 'duckduckgo' },
+    fetch: { provider: 'http' },
+    headless: { provider: 'local-browser' }
+  };
+}
 
 function extractStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -260,6 +266,6 @@ export function mergeBackendConfigLayers(
       fetch: mergeFetchConfig(merged.fetch, layer?.fetch),
       headless: { ...merged.headless, ...layer?.headless }
     }),
-    DEFAULT_BACKEND_CONFIG
+    getDefaultBackendConfig()
   );
 }

@@ -16,18 +16,18 @@ One public tool, `web_explore`, that does bounded web research for Pi: search, f
 
 - **One tool.** `web_explore` handles direct links, discovery, HTTP reads, targeted headless rendering, source ranking, source-quality checks, and caveats internally.
 - **Reads the real content behind links.** Paste a GitHub, PDF, or YouTube URL and it pulls the actual thing (GitHub files/issues/PRs from the API, PDF text, YouTube transcripts), keyless. So "summarize this PDF" or "what does this repo do" works off the source, not the page shell.
-- **Six search backends.** DuckDuckGo (keyless default), SearXNG, Brave, You.com, Exa, Tavily.
+- **Seven search backends.** TokenIn (default with an active account), DuckDuckGo (keyless otherwise), SearXNG, Brave, You.com, Exa, Tavily.
 - **Optional search fanout.** Query several backends at once, dedupe, and rank pages that more than one provider agreed on to the top. Off by default; flip it to `on` or `auto`.
 - **Honest by default.** Weak, narrow, blocked, or cautionary evidence gets flagged instead of dressed up as confidence.
 - **Bounded output.** `compact` / `preview` / `verbose` transcript modes.
-- **Zero-config to start.** Runs keyless out of the box (DuckDuckGo search, local browser, the built-in readers). Opt into hosted backends, fallback, search fanout, and per-tool output modes through config when you want more control.
+- **Zero-config to start.** Without an active TokenIn account, runs keyless out of the box (DuckDuckGo search, local browser, the built-in readers). Opt into hosted backends, fallback, search fanout, and per-tool output modes through config when you want more control.
 
 ## Why pi-web-agent
 
 Compared to other web tooling for agents:
 
 - **Hands-off.** No curator, no browser windows to approve, no step that pops you out of your session. Ask `web_explore` once and the answer comes back with caveats. Nothing to babysit.
-- **Keyless by default.** Search, page reads, and the GitHub/PDF/YouTube readers all work with no API keys. Add hosted providers only when you want them.
+- **Keyless without TokenIn.** Search, page reads, and the GitHub/PDF/YouTube readers all work with no API keys when TokenIn is not configured. Add hosted providers only when you want them.
 - **Bounded and honest.** Compact output by default, and it says when a read was not good enough instead of returning fake confidence.
 
 ## Install
@@ -63,11 +63,12 @@ If a pass comes back thin, call `web_explore` again with a narrower query.
 
 ## Backends
 
-Defaults are DuckDuckGo search, plain HTTP fetch, and local-browser headless. Switch providers from `/web-agent settings → Backends`. API keys stay in environment variables, never in config files.
+Defaults are TokenIn search when an active TokenIn account exists, otherwise DuckDuckGo search; fetch remains plain HTTP and headless remains local-browser. Switch providers from `/web-agent settings → Backends`. API keys stay in environment variables, never in config files.
 
 | Backend | Role | Enable with |
 | --- | --- | --- |
-| DuckDuckGo | search (default) | nothing, keyless |
+| TokenIn | search (default with an active account) | `/tokenin add` |
+| DuckDuckGo | search (default without TokenIn) | nothing, keyless |
 | SearXNG | search (self-hosted) | base URL |
 | Brave | search (hosted) | `PI_WEB_AGENT_BRAVE_API_KEY` |
 | You.com | search (hosted) | `YDC_API_KEY` |
