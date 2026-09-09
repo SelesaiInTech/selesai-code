@@ -106,15 +106,34 @@
             }
         },
         {
+          "id": "deepseek-v4.1-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 512000,
+          "maxTokens": 128000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+          },
+          "compat": {
+            "requiresReasoningContentOnAssistantMessages": true
+            }
+        },
+        {
           "id": "deepseek-v4-pro",
           "name": "DeepSeek V4 pro",
           "reasoning": true,
-          "input": ["text"],
+          "input": ["text", "image"],
           "contextWindow": 512000,
-          "maxTokens": 64000,
+          "maxTokens": 128000,
           "thinkingLevelMap": {
             "minimal": null,
-            "low": "low",
+            "low": null,
             "medium": null,
             "high": "high",
             "xhigh": null,

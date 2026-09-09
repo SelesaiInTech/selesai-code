@@ -2,6 +2,13 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.20] - 2026-09-10
+
+### Added
+- **DeepSeek V4.1 Flash in default catalog.** Added `deepseek-v4.1-flash` (text+image, 512K context, 128K max tokens, deepseek thinking format).
+- **Vision for DeepSeek V4 Pro.** `deepseek-v4-pro` now accepts text+image input with 128K max tokens.
+- **Typo-tolerant capability routing.** The capability gateway now scores one-character-off name/alias matches as exact, so a misspelled tool name (e.g. `inercom` → `intercom`) auto-activates when uniquely identifiable.
+
 ## [0.13.19] - 2026-09-09
 
 ### Changed

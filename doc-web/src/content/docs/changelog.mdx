@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.20 — DeepSeek V4.1 Flash and typo-tolerant capability routing
+
+- **DeepSeek V4.1 Flash added to the default catalog.** The new `deepseek-v4.1-flash` model accepts text and image input with a 512K context window and 128K max tokens, using the deepseek thinking format.
+- **DeepSeek V4 Pro now supports vision.** `deepseek-v4-pro` accepts text and image input and its max tokens are raised to 128K.
+- **Typo-tolerant capability routing.** A tool or skill name one character off from the catalog (e.g. `inercom` → `intercom`) now scores as an exact match, so a uniquely identifiable typo auto-activates the tool instead of returning a hint.
+
 ## 0.13.19 — Conditional web-search default and Brave onboarding removal
 
 - **Conditional web-search default.** With an active TokenIn account, default search uses TokenIn with DuckDuckGo fallback; without one, it uses keyless DuckDuckGo. TokenIn search requests now time out after 10 seconds and fall back instead of hanging.

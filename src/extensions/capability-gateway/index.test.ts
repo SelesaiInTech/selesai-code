@@ -102,6 +102,15 @@ describe("deterministic routing", () => {
 		expect(result.entry?.name).toBe("grep_app_search");
 	});
 
+	it("auto-activates a uniquely identifiable one-character tool typo", () => {
+		const result = route("activate inercom", [
+			...catalog,
+			{ name: "intercom", kind: "tool", summary: "Coordinate with other local sessions", aliases: [], category: "coordination" },
+		]);
+		expect(result.action).toBe("activate");
+		expect(result.entry?.name).toBe("intercom");
+	});
+
 	it("recommends a unique high-confidence skill without auto-loading", () => {
 		const result = route("do research on this topic", catalog);
 		expect(result.action).toBe("recommend");

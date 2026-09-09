@@ -86,6 +86,29 @@ export function tokenize(text: string): string[] {
 	return normalizeQuery(text).split(/\s+/).filter(Boolean);
 }
 
+/** True when two words differ by at most one insertion, deletion, or substitution. */
+function differsByOne(left: string, right: string): boolean {
+	if (Math.abs(left.length - right.length) > 1) return false;
+	let leftIndex = 0;
+	let rightIndex = 0;
+	let differences = 0;
+	while (leftIndex < left.length && rightIndex < right.length) {
+		if (left[leftIndex] === right[rightIndex]) {
+			leftIndex++;
+			rightIndex++;
+			continue;
+		}
+		if (++differences > 1) return false;
+		if (left.length > right.length) leftIndex++;
+		else if (right.length > left.length) rightIndex++;
+		else {
+			leftIndex++;
+			rightIndex++;
+		}
+	}
+	return true;
+}
+
 /** Words that carry no routing signal. */
 const STOPWORDS = new Set([
 	"the", "a", "an", "to", "of", "for", "with", "and", "or", "use", "using", "me", "my", "i",
@@ -103,8 +126,8 @@ export interface RouteResult {
 /**
  * Deterministic routing over the compact catalog.
  *
- * - Exact name/alias match scores 3; prefix match scores 2; each content token
- *   shared with the name/alias or summary adds 1.
+ * - Exact or one-character-off name/alias matches score 3; prefix matches score 2;
+ *   each content token shared with the name/alias or summary adds 1.
  * - A unique tool with score >= 3 is auto-activated.
  * - A unique skill with score >= 3 is recommended (never auto-loaded).
  * - Score 2 or a tie at the top produces a catalog-discovery hint.
@@ -127,6 +150,7 @@ export function route(query: string, catalog: CatalogEntry[]): RouteResult {
 		}
 		for (const token of contentTokens) {
 			if (nameTokens.has(token)) score += 3;
+			else if (token.length >= 5 && [...nameTokens].some((nameToken) => nameToken.length >= 5 && differsByOne(token, nameToken))) score += 3;
 			else if (token.length >= 3 && [...nameTokens].some((nameToken) => nameToken.startsWith(token))) score += 2;
 			if (summaryTokens.has(token)) score += 1;
 		}

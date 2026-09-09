@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.20 — DeepSeek V4.1 Flash dan routing kapabilitas toleran salah ketik
+
+- **DeepSeek V4.1 Flash ditambahkan ke katalog bawaan.** Model baru `deepseek-v4.1-flash` menerima input teks dan gambar dengan jendela konteks 512K dan maksimum token 128K, menggunakan format thinking deepseek.
+- **DeepSeek V4 Pro kini mendukung vision.** `deepseek-v4-pro` menerima input teks dan gambar dan batas tokennya dinaikkan ke 128K.
+- **Routing kapabilitas toleran salah ketik.** Nama tool atau skill yang berbeda satu karakter dari katalog (mis. `inercom` → `intercom`) kini dihitung sebagai kecocokan persis, sehingga salah ketik yang unik mengaktifkan tool secara otomatis alih-alih mengembalikan petunjuk.
+
 ## 0.13.19 — Default pencarian web kondisional dan penghapusan onboarding Brave
 
 - **Default pencarian web kondisional.** Dengan akun TokenIn aktif, pencarian default menggunakan TokenIn dengan fallback DuckDuckGo; tanpa akun, menggunakan DuckDuckGo tanpa kunci. Permintaan pencarian TokenIn kini timeout setelah 10 detik dan fallback alih-alih menggantung.

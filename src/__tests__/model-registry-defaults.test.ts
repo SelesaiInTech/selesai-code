@@ -37,9 +37,22 @@ describe("model registry bundled defaults", () => {
 		const registry = new ModelRegistry(
 			await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: join(dir, "models.json") }),
 		);
-		for (const id of ["celestial-pro", "celestial-max", "celestial-ultra", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"]) {
+		for (const id of ["celestial-pro", "celestial-max", "celestial-ultra", "deepseek-v4-flash", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"]) {
 			const model = registry.find("tokenin", id);
 			expect(model?.compat?.requiresReasoningContentOnAssistantMessages, id).toBe(true);
+		}
+	});
+
+	it("configures DeepSeek V4.1 Flash and its V4 Pro alias with vision", async () => {
+		const registry = new ModelRegistry(
+			await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: join(dir, "models.json") }),
+		);
+		for (const id of ["deepseek-v4.1-flash", "deepseek-v4-pro"]) {
+			expect(registry.find("tokenin", id)).toMatchObject({
+				input: ["text", "image"],
+				contextWindow: 512000,
+				maxTokens: 128000,
+			});
 		}
 	});
 
