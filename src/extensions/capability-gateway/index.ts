@@ -158,16 +158,18 @@ export default function capabilityGatewayExtension(pi: ExtensionAPI): void {
 			const shown =
 				params.query && matched.candidates
 					? matched.candidates
-					: params.query
-						? filtered.filter((entry) => {
-								const q = params.query!.toLowerCase();
-								return (
-									entry.name.toLowerCase().includes(q) ||
-									entry.summary.toLowerCase().includes(q) ||
-									entry.aliases.some((alias) => alias.toLowerCase().includes(q))
-								);
-							})
-						: filtered;
+					: params.query && matched.entry
+						? [matched.entry]
+						: params.query
+							? filtered.filter((entry) => {
+									const q = params.query!.toLowerCase();
+									return (
+										entry.name.toLowerCase().includes(q) ||
+										entry.summary.toLowerCase().includes(q) ||
+										entry.aliases.some((alias) => alias.toLowerCase().includes(q))
+									);
+								})
+							: filtered;
 			const text = formatCatalog(shown);
 			emitTelemetry(pi, "catalog", { query: params.query ?? "", kind: params.kind ?? "", results: shown.length });
 			return {

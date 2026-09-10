@@ -157,6 +157,24 @@ describe("capability gateway integration", () => {
 		expect(block).toContain("capability-gateway");
 	});
 
+	it("returns a uniquely routed natural-language catalog match", async () => {
+		const h = await createGatewaySession({ enabled: true, extensions: [GATEWAY_DIR, GREP_APP_DIR] });
+		harnesses.push(h);
+		const catalog = h.session.getToolDefinition("capability_catalog");
+		expect(catalog).toBeDefined();
+
+		const result = await catalog!.execute(
+			"call-1",
+			{ query: "search GitHub code with grep_app_search" },
+			undefined,
+			undefined,
+			{} as never,
+		);
+		expect(result.content[0]!.type).toBe("text");
+		expect(String(result.content[0]!.text)).toContain("grep_app_search");
+		expect(result.details).toMatchObject({ count: 1 });
+	});
+
 	it("activates a discovered tool for the run and resets after agent_settled", async () => {
 		const h = await createGatewaySession({ enabled: true });
 		harnesses.push(h);

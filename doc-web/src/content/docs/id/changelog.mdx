@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.21 — Perbaikan kecocokan unik katalog kapabilitas
+
+- **Hasil katalog bahasa alami diperbaiki.** `capability_catalog` kini langsung mengembalikan kecocokan tool atau skill hasil routing yang unik, alih-alih keliru melaporkan tidak ada kapabilitas yang cocok setelah fallback kueri penuh literal.
+
 ## 0.13.20 — DeepSeek V4.1 Flash dan routing kapabilitas toleran salah ketik
 
 - **DeepSeek V4.1 Flash ditambahkan ke katalog bawaan.** Model baru `deepseek-v4.1-flash` menerima input teks dan gambar dengan jendela konteks 512K dan maksimum token 128K, menggunakan format thinking deepseek.

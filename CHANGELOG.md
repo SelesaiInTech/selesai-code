@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.21] - 2026-09-11
+
+### Fixed
+- **Capability catalog unique-match results.** `capability_catalog` now returns a uniquely routed natural-language tool or skill match instead of falling back to a literal full-query search and incorrectly reporting no matching capabilities.
+
 ## [0.13.20] - 2026-09-10
 
 ### Added
