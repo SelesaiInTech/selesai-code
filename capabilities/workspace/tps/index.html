@@ -100,7 +100,7 @@
 <p>No slash commands or shortcuts are registered. The extension only writes the <code dir="auto">tps</code> status slot.</p>
 <h2 id="limits-and-safety">Limits and safety</h2>
 <ul>
-<li>Live numbers are estimates by design; the final main-model figure is the only reliability-gated value.</li>
+<li>Live numbers are estimates by design and need a minimum sample window; readings above the plausible maximum are dropped, while the final main-model figure passes the full reliability gates.</li>
 <li>Rates are capped at a plausible maximum and dropped when stream quality does not meet the gates.</li>
 <li>The extension never reads prompt or message content — only timing and usage counters.</li>
 </ul>
