@@ -10,6 +10,7 @@
 	"peerDependencies": {
 		"@selesai/code": "*",
 		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-tui": "*",
 		"typebox": "*"
 	}
 }

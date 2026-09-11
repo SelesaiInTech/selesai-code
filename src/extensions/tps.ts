@@ -75,6 +75,12 @@ export function calculateReliableTps(outputTokens: number, timing: TpsTiming): R
 	return { tps, effectiveMs, isPrimary };
 }
 
+export function calculateLiveTps(tokens: number, elapsedMs: number): number | null {
+	if (tokens <= 0 || elapsedMs < MIN_GENERATION_MS) return null;
+	const tps = Math.round(tokens / (elapsedMs / 1000));
+	return tps <= MAX_PLAUSIBLE_TPS ? tps : null;
+}
+
 export default function tpsExtension(pi: ExtensionAPI): void {
 	setupTpsTracker(pi);
 }
@@ -223,11 +229,11 @@ export function setupTpsTracker(pi: ExtensionAPI): void {
 
 		streamStart ??= now;
 		estimatedStreamedTokens += Math.max(0, streamEvent.delta.length / 4);
-		const elapsed = (now - streamStart) / 1000;
 		const officialTokens = generatedTokensFromUsage(asRecord(event.message.usage));
 		const currentTokens = officialTokens > 0 ? officialTokens : estimatedStreamedTokens;
-		if (elapsed > 0 && currentTokens > 0) {
-			ctx.ui.setStatus("tps", ctx.ui.theme.fg("accent", `${Math.round(currentTokens / elapsed)} tok/s`));
+		const tps = calculateLiveTps(currentTokens, now - streamStart);
+		if (tps !== null) {
+			ctx.ui.setStatus("tps", ctx.ui.theme.fg("accent", `${tps} tok/s`));
 		}
 	});
 

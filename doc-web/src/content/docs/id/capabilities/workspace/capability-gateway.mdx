@@ -51,6 +51,6 @@ Gateway mendaftarkan `capability_catalog`, `capability_discover`, dan `capabilit
 - Hanya tool yang tercantum di katalog yang dapat diaktifkan; nama tepat divalidasi sebelum aktivasi.
 - Skill tidak pernah dimuat otomatis oleh routing; instruksinya memerlukan operasi show eksplisit.
 - Skill yang sudah di-expand inline melalui referensi `$skill` dikecualikan dari routing prompt, sehingga tidak direkomendasikan ulang melalui `capability_skill_show`.
-- Routing bersifat deterministik dan lokal; kecocokan ambigu menghasilkan petunjuk alih-alih mengaktifkan kapabilitas.
+- Routing bersifat deterministik dan lokal; hanya tool dengan kecocokan unik yang diaktifkan, dan kecocokan skill atau ambigu tidak menaruh apa pun ke context model — cari melalui katalog sebagai gantinya.
 
 <SourceEvidence slug="capability-gateway" />

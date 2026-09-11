@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.22 — Live TPS gate and quieter capability routing
+
+- **Live TPS readings are gated.** The live tokens-per-second status now waits for a usable sample window and drops implausible rates, instead of showing a burst of early tokens divided by almost no elapsed time.
+- **Capability gateway hint noise removed.** The gateway no longer injects fuzzy skill recommendations or ambiguous-match catalog hints into the model context. A uniquely matched tool is still activated automatically, and optional capabilities remain discoverable through `capability_catalog`.
+- **Capability catalog tool rows.** `capability_catalog` calls now show the search query and optional kind in the TUI.
+
 ## 0.13.21 — Capability catalog unique-match fix
 
 - **Natural-language catalog results fixed.** `capability_catalog` now returns a uniquely routed tool or skill match directly instead of incorrectly reporting no matching capabilities after a literal full-query fallback.

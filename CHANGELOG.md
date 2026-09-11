@@ -2,6 +2,15 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.22] - 2026-09-12
+
+### Fixed
+- **Live TPS gate.** The live tokens-per-second status no longer reports implausible rates: a live reading now needs at least a 200 ms sample window and is dropped when the rate exceeds the plausible maximum, matching the gates the final measurement already applied.
+- **Capability gateway hint noise.** The gateway no longer injects fuzzy skill recommendations or ambiguous-match catalog hints into the model context. A uniquely matched tool is still auto-activated, and optional capabilities remain discoverable through `capability_catalog`.
+
+### Changed
+- **Capability catalog tool rows.** `capability_catalog` calls now render the search query and optional kind in the TUI instead of the bare tool name.
+
 ## [0.13.21] - 2026-09-11
 
 ### Fixed

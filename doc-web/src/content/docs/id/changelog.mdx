@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.22 — Gate TPS langsung dan routing kapabilitas yang lebih tenang
+
+- **Pembacaan TPS langsung diberi gate.** Status token-per-detik langsung kini menunggu jendela sampel yang layak dan mengabaikan laju yang tidak masuk akal, alih-alih menampilkan ledakan token awal dibagi waktu berjalan yang hampir nol.
+- **Kebisingan petunjuk gateway kapabilitas dihapus.** Gateway tidak lagi menyuntikkan rekomendasi skill hasil pencocokan fuzzy atau petunjuk katalog untuk kecocokan ambigu ke context model. Tool dengan kecocokan unik tetap diaktifkan otomatis, dan kapabilitas opsional tetap dapat ditemukan melalui `capability_catalog`.
+- **Baris tool katalog kapabilitas.** Panggilan `capability_catalog` kini menampilkan kueri pencarian dan kind di TUI.
+
 ## 0.13.21 — Perbaikan kecocokan unik katalog kapabilitas
 
 - **Hasil katalog bahasa alami diperbaiki.** `capability_catalog` kini langsung mengembalikan kecocokan tool atau skill hasil routing yang unik, alih-alih keliru melaporkan tidak ada kapabilitas yang cocok setelah fallback kueri penuh literal.

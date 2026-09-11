@@ -175,6 +175,19 @@ describe("capability gateway integration", () => {
 		expect(result.details).toMatchObject({ count: 1 });
 	});
 
+	it("renders the query and kind in the tool call line", async () => {
+		const h = await createGatewaySession({ enabled: true });
+		harnesses.push(h);
+		const catalog = h.session.getToolDefinition("capability_catalog");
+		const theme = { fg: (_name: string, text: string) => text, bold: (text: string) => text } as never;
+		const draw = (args: unknown) =>
+			(catalog!.renderCall!(args as never, theme, {} as never) as { render(width: number): string[] }).render(120).join("\n");
+
+		expect(draw({ query: "ponytail-debt", kind: "skill" })).toContain('"ponytail-debt"');
+		expect(draw({ query: "ponytail-debt", kind: "skill" })).toContain("skill");
+		expect(draw({})).toContain("(all)");
+	});
+
 	it("activates a discovered tool for the run and resets after agent_settled", async () => {
 		const h = await createGatewaySession({ enabled: true });
 		harnesses.push(h);
@@ -212,24 +225,33 @@ describe("capability gateway integration", () => {
 		expect(h.session.getActiveToolNames()).toContain("grep_app_search");
 	});
 
-	it("does not auto-load skills from fuzzy matching", async () => {
+	it("does not inject fuzzy skill recommendations", async () => {
 		const h = await createGatewaySession({
 			enabled: true,
 			withSkill: true,
 			extensions: [GATEWAY_DIR, GREP_APP_DIR],
 		});
 		harnesses.push(h);
-		const runner = h.session.extensionRunner;
-		const result = await runner.emitBeforeAgentStart(
+		const result = await h.session.extensionRunner.emitBeforeAgentStart(
 			"do research on this topic",
 			undefined,
 			h.session.systemPrompt,
 			{ cwd: process.cwd() } as never,
 		);
-		// A recommendation message is injected, but the skill body is not loaded
-		// into the prompt and the skill is not auto-activated.
-		expect(result?.messages?.[0]?.content).toContain("research");
+		expect(result).toBeUndefined();
 		expect(h.session.systemPrompt).not.toContain("Research instructions body.");
+	});
+
+	it("does not inject catalog hints for ambiguous tool matches", async () => {
+		const h = await createGatewaySession({ enabled: true, extensions: [GATEWAY_DIR, GREP_APP_DIR] });
+		harnesses.push(h);
+		const result = await h.session.extensionRunner.emitBeforeAgentStart(
+			"grep app",
+			undefined,
+			h.session.systemPrompt,
+			{ cwd: process.cwd() } as never,
+		);
+		expect(result).toBeUndefined();
 	});
 
 	it("does not recommend capability_skill_show for an inline-loaded $skill", async () => {

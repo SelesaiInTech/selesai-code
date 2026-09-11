@@ -13,10 +13,9 @@
  * - capability_discover validates one catalogued tool and activates its native
  *   definition for the current agent run; capability_skill_show loads exactly
  *   the selected skill instructions.
- * - A deterministic router inspects each user prompt and, for a unique
- *   high-confidence tool match, activates it before the run; for a unique
- *   high-confidence skill match it adds a concise recommendation; ambiguous
- *   matches add a catalog hint; unrelated prompts are untouched.
+ * - A deterministic router activates a uniquely matched tool before the run.
+ *   Skills and ambiguous matches remain discoverable through the catalog
+ *   without injecting fuzzy hints into the model context.
  * - Temporary activations reset at agent_settled, restoring the baseline
  *   active-tool set.
  * - The system-prompt skill index is replaced by a compact capability
@@ -28,6 +27,7 @@ import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { stripFrontmatter, type ExtensionAPI, type ToolInfo } from "@selesai/code";
 import { StringEnum } from "@earendil-works/pi-ai";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	buildSkillCatalog,
@@ -177,6 +177,13 @@ export default function capabilityGatewayExtension(pi: ExtensionAPI): void {
 				details: { count: shown.length, total: filtered.length },
 			};
 		},
+		renderCall(args, theme) {
+			const query = typeof args.query === "string" && args.query.length > 0 ? args.query : "(all)";
+			let text = theme.fg("toolTitle", theme.bold("capability_catalog "));
+			text += theme.fg("accent", `"${query}"`);
+			if (args.kind) text += " " + theme.fg("muted", args.kind);
+			return new Text(text, 0, 0);
+		},
 	});
 
 	pi.registerTool({
@@ -276,27 +283,8 @@ export default function capabilityGatewayExtension(pi: ExtensionAPI): void {
 			emitTelemetry(pi, "route_activate", { tool: result.entry.name });
 			return undefined;
 		}
-		if (result.action === "recommend" && result.entry) {
-			emitTelemetry(pi, "route_recommend", { skill: result.entry.name });
-			return {
-				message: {
-					customType: "capability-gateway-hint",
-					content: `The request matches the optional skill "${result.entry.name}". Load it with capability_skill_show before applying it.`,
-					display: false,
-				},
-			};
-		}
-		if (result.action === "hint" && result.candidates) {
-			const names = result.candidates.map((c) => c.name).join(", ");
-			emitTelemetry(pi, "route_hint", { candidates: result.candidates.map((c) => c.name) });
-			return {
-				message: {
-					customType: "capability-gateway-hint",
-					content: `The request may match optional capabilities: ${names}. Search capability_catalog to confirm before selecting.`,
-					display: false,
-				},
-			};
-		}
+		// Do not inject fuzzy recommendations or catalog hints into the model
+		// context. It can discover capabilities when it actually needs one.
 		return undefined;
 	});
 

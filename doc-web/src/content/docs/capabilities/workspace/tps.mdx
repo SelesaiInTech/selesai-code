@@ -46,7 +46,7 @@ No slash commands or shortcuts are registered. The extension only writes the `tp
 
 ## Limits and safety
 
-- Live numbers are estimates by design; the final main-model figure is the only reliability-gated value.
+- Live numbers are estimates by design and need a minimum sample window; readings above the plausible maximum are dropped, while the final main-model figure passes the full reliability gates.
 - Rates are capped at a plausible maximum and dropped when stream quality does not meet the gates.
 - The extension never reads prompt or message content — only timing and usage counters.
 

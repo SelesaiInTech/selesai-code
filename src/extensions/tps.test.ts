@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateReliableTps, type TpsTiming } from "./tps.ts";
+import { calculateLiveTps, calculateReliableTps, type TpsTiming } from "./tps.ts";
 
 function timing(overrides: Partial<TpsTiming> = {}): TpsTiming {
 	return {
@@ -14,6 +14,14 @@ function timing(overrides: Partial<TpsTiming> = {}): TpsTiming {
 		...overrides,
 	};
 }
+
+describe("calculateLiveTps", () => {
+	it("waits for a usable sample and rejects implausible rates", () => {
+		expect(calculateLiveTps(60, 0.2)).toBeNull();
+		expect(calculateLiveTps(100, 200)).toBe(500);
+		expect(calculateLiveTps(10_001, 1_000)).toBeNull();
+	});
+});
 
 describe("calculateReliableTps", () => {
 	it("uses active stream time for sufficiently sampled output", () => {
