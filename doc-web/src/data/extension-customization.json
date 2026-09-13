@@ -1589,8 +1589,8 @@
    "slug": "pi-graft",
    "distribution": "bundled",
    "overview": {
-    "en": "Graft builds a regenerable local code graph for bounded pre-turn context and precise read-only code retrieval. Structural builds are offline; deep builds use Graft's separately configured provider.",
-    "id": "Graft membangun graph kode lokal yang dapat dibuat ulang untuk context sebelum turn yang dibatasi dan retrieval kode read-only presisi. Build struktural bersifat offline; build deep memakai provider Graft yang dikonfigurasi terpisah."
+    "en": "Graft builds a regenerable local code graph for bounded pre-turn context and precise read-only code retrieval. Selesai builds the graph for the active repository on first use, structural unless a compatible active model provides the deep tier.",
+    "id": "Graft membangun graph kode lokal yang dapat dibuat ulang untuk context sebelum turn yang dibatasi dan retrieval kode read-only presisi. Selesai membangun graph untuk repository aktif saat pertama dipakai, struktural kecuali model aktif yang kompatibel menyediakan tier deep."
    },
    "sourcePaths": [
     "src/extensions/pi-graft/",
@@ -1615,7 +1615,7 @@
    ],
    "settings": [
     { "key": "graft.enabled", "type": "boolean", "default": "true", "description": { "en": "Disable all Graft session work and tools when false.", "id": "Nonaktifkan semua kerja dan tool sesi Graft saat false." }, "persistence": "settings.json" },
-    { "key": "graft.mode", "type": "string", "default": "push", "allowedValues": "pull, push, hybrid", "description": { "en": "Default retrieval strategy before a session branch chooses one.", "id": "Strategi retrieval default sebelum branch sesi memilihnya." }, "persistence": "settings.json" },
+    { "key": "graft.mode", "type": "string", "default": "hybrid", "allowedValues": "pull, push, hybrid", "description": { "en": "Default retrieval strategy before a session branch chooses one.", "id": "Strategi retrieval default sebelum branch sesi memilihnya." }, "persistence": "settings.json" },
     { "key": "graft.telemetry", "type": "string", "default": "opt-out", "allowedValues": "opt-out, inherit", "description": { "en": "Set inherit to leave the existing DO_NOT_TRACK environment choice unchanged.", "id": "Atur inherit untuk membiarkan pilihan lingkungan DO_NOT_TRACK yang ada tetap tidak berubah." }, "persistence": "settings.json" },
     { "key": "graft.minCoverage", "type": "number", "default": "0.25", "description": { "en": "Minimum Graft coverage share required before a push or hybrid pack is injected.", "id": "Bagian coverage Graft minimum sebelum paket push atau hybrid disuntikkan." }, "persistence": "settings.json" },
     { "key": "graft.maxInjectionBytes", "type": "number", "default": "12288", "description": { "en": "Maximum bytes in a pushed context pack.", "id": "Byte maksimum dalam paket context yang disuntikkan." }, "persistence": "settings.json" },
@@ -1625,10 +1625,10 @@
    ],
    "envVars": [
     { "key": "DO_NOT_TRACK", "description": { "en": "When already set, Selesai preserves it; otherwise Graft child processes default to 1 for the session.", "id": "Saat sudah diatur, Selesai mempertahankannya; jika tidak, proses child Graft default ke 1 untuk sesi." } },
-    { "key": "GRAFT_PROVIDER / GRAFT_MODEL / GRAFT_BASE_URL / GRAFT_API_KEY", "description": { "en": "Graft's own provider configuration for deep builds; values are never read or shown by Selesai.", "id": "Konfigurasi provider Graft sendiri untuk build deep; nilainya tidak pernah dibaca atau ditampilkan Selesai." }, "sensitive": true }
+    { "key": "GRAFT_PROVIDER / GRAFT_MODEL / GRAFT_BASE_URL / GRAFT_API_KEY", "description": { "en": "Graft's own provider configuration for manual `graft` runs. Deep builds from Selesai instead pass the active model's credential to the Graft child process only; Selesai never reads or shows these values.", "id": "Konfigurasi provider milik Graft untuk menjalankan `graft` secara manual. Build deep dari Selesai justru meneruskan kredensial model aktif hanya ke proses child Graft; Selesai tidak pernah membaca atau menampilkan nilai-nilai ini." }, "sensitive": true }
    ],
    "controls": [
-    { "name": "/graft status | doctor | setup | build | deep | refresh | mode", "description": { "en": "Inspect, provision, build, refresh, and choose retrieval mode; graph mutations require confirmation.", "id": "Periksa, sediakan, build, refresh, dan pilih mode retrieval; mutasi graph memerlukan konfirmasi." } },
+    { "name": "/graft status | doctor | setup | build | deep | refresh | mode", "description": { "en": "Inspect, provision, build, refresh, and choose retrieval mode. The first graph builds automatically; explicit graph mutations require confirmation.", "id": "Periksa, sediakan, build, refresh, dan pilih mode retrieval. Graph pertama dibangun otomatis; mutasi graph eksplisit memerlukan konfirmasi." } },
     { "name": "graft_find_code / graft_file_api / graft_trace_calls / graft_find_all / graft_repo_map / graft_check_freshness", "description": { "en": "Six read-only semantic retrieval and freshness tools.", "id": "Enam tool read-only untuk retrieval semantik dan freshness." } }
    ],
    "noConfig": false

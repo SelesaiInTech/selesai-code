@@ -11,8 +11,8 @@
  *   paths, regexes, symbols, and question text cannot become shell injection.
  * - Graft's upstream agent-wiring command (`init`) is never invoked. A missing
  *   compatible CLI is installed once through npm; incompatible CLIs are left alone.
- * - Semantic tools are read-only. Graph builds are command operations gated
- *   behind explicit consent; CLI provisioning is automatic.
+ * - Semantic tools are read-only. Automatic builds use the active compatible
+ *   Selesai model for deep enrichment, otherwise stay structural and local.
  * - Extension-spawned commands default to telemetry opt-out (`DO_NOT_TRACK=1`).
  *
  * Verified against @nanonets/graft 0.18.0 (see {@link MIN_GRAFT_VERSION}).
@@ -144,8 +144,8 @@ export async function probeGraft(exec: ExecLike, cwd: string, signal?: AbortSign
 // ---------------------------------------------------------------------------
 
 /**
- * The read-only operations this adapter exposes, plus the two consent-gated
- * build operations. Every other Graft subcommand (including `init`, `viz`, and
+ * The read-only operations this adapter exposes, plus structural and deep
+ * builds. Every other Graft subcommand (including `init`, `viz`, and
  * `uninstall`) is deliberately unreachable from tool calls.
  */
 export type GraftOp =
@@ -286,7 +286,7 @@ export async function runGraft(
 	exec: ExecLike,
 	repoRoot: string,
 	op: GraftOp,
-	options: { signal?: AbortSignal; timeout?: number } = {},
+	options: { signal?: AbortSignal; timeout?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<GraftRun> {
 	const args = graftArgs(op);
 	const { command, args: argv } = graftCommand(args);
@@ -297,6 +297,7 @@ export async function runGraft(
 			cwd: repoRoot,
 			timeout: options.timeout ?? timeoutFor(op),
 			signal: options.signal,
+			env: options.env,
 		});
 	} catch (error) {
 		return {

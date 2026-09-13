@@ -1,10 +1,9 @@
 /**
  * The `/graft` command surface: setup, build, deep, refresh, status, doctor, mode.
  *
- * Command handlers own two things the tools never touch: consent, and honest
- * reporting. A command that can write to the repository says exactly which
- * files it may create or change and asks first; with no dialog UI it refuses
- * and prints the exact manual command instead.
+ * Command handlers own reporting and the explicit deep-build confirmation.
+ * They say exactly which repository files may change; with no dialog UI a
+ * manual deep build refuses and prints the exact command instead.
  *
  * Nothing here ever invokes Graft's upstream agent-wiring command. Selesai's
  * setup installs a missing CLI automatically, explains local effects, and builds
@@ -61,7 +60,7 @@ export interface GraftCommandRuntime {
 	graphPresence(): GraphPresence;
 	/** Install the compatible CLI when probing found none. */
 	installCli(ctx: ExtensionContext): Promise<GraftInstallRun>;
-	/** Structural or deep build. Call only after consent. */
+	/** Structural or deep build. Deep calls only after consent. */
 	runBuild(deep: boolean, ctx: ExtensionContext): Promise<GraftRun>;
 	/** Proactive refresh of an existing graph; undefined when there is nothing to refresh. */
 	runRefresh(ctx: ExtensionContext): Promise<GraftRun | undefined>;
@@ -75,8 +74,8 @@ export const DOCTOR_USAGE = `/graft <command>
 
   status          current availability, graph state, and retrieval mode
   doctor          full health report with a recovery step for each problem
-  setup           install the CLI if needed, then explain build effects and ask for consent
-  build           build graft/ for this repository (structural; no model, no key)
+  setup           install the CLI if needed, then build the deep graph with the active model
+  build [--structural]   build graft/ (deep by default; structural stays local)
   deep            provider-backed build: adds summaries and per-symbol crux
   refresh         re-index an existing graph after edits
   mode [pull|push|hybrid]   show or set the retrieval strategy
@@ -145,8 +144,8 @@ export function formatDoctor(input: DoctorInput): string {
 	row(
 		"provider env",
 		input.providerEnv.length > 0
-			? `${input.providerEnv.join(", ")} set (values never read or copied) — deep builds use Graft's own provider configuration`
-			: `none of ${PROVIDER_ENV_NAMES.join(", ")} set — deep builds would need Graft's own provider configuration`,
+			? `${input.providerEnv.join(", ")} set (values never shown) — manual Graft CLI configuration is available`
+			: `none of ${PROVIDER_ENV_NAMES.join(", ")} set — automatic deep builds use Selesai's active compatible model`,
 	);
 
 	const recovery = recoveryFor(input.state);
@@ -185,7 +184,7 @@ export function buildEffects(deep: boolean): string {
 	];
 	if (deep) {
 		effects.push(
-			"  • sends source-derived file summaries and symbol cruxes through the LLM provider configured in Graft's own environment (GRAFT_PROVIDER / GRAFT_MODEL / GRAFT_BASE_URL / GRAFT_API_KEY)",
+			"  • sends source-derived file summaries and symbol cruxes through Selesai's active compatible model; credentials are passed only to the Graft child process",
 			"  • caches those summaries under graft/ so later deep builds are incremental",
 		);
 	}
@@ -259,9 +258,10 @@ export function registerGraftCommands(pi: ExtensionAPI, runtime: GraftCommandRun
 			const items: ArgumentCompletion[] = [
 				{ value: "status", label: "status", description: "availability, graph state, retrieval mode" },
 				{ value: "doctor", label: "doctor", description: "full health report and recovery steps" },
-				{ value: "setup", label: "setup", description: "install CLI if needed, then build graft/" },
-				{ value: "build", label: "build", description: "build graft/ (structural; no model, no key)" },
-				{ value: "deep", label: "deep", description: "provider-backed build (needs Graft provider config)" },
+				{ value: "setup", label: "setup", description: "install CLI if needed, then build the deep graph" },
+				{ value: "build", label: "build", description: "build graft/ with the active model (default deep)" },
+				{ value: "build --structural", label: "build --structural", description: "build graft/ locally without model enrichment" },
+				{ value: "deep", label: "deep", description: "provider-backed build with the active model" },
 				{ value: "refresh", label: "refresh", description: "re-index an existing graph after edits" },
 				{ value: "mode", label: "mode", description: "show or set pull | push | hybrid" },
 				{ value: "help", label: "help", description: "usage" },
@@ -317,7 +317,7 @@ export function registerGraftCommands(pi: ExtensionAPI, runtime: GraftCommandRun
 				case "setup":
 				case "build":
 				case "deep": {
-					const deep = subcommand === "deep" || rest.includes("--deep");
+					const deep = subcommand === "deep" || !rest.includes("--structural");
 					await runtime.recheck(ctx);
 					if (!(await ensureCli(ctx, runtime))) return;
 					const repo = runtime.repoRoot() ?? "this repository";
@@ -330,7 +330,7 @@ export function registerGraftCommands(pi: ExtensionAPI, runtime: GraftCommandRun
 								? "Set up Graft for this repository?"
 								: "Build the Graft graph?",
 						deep
-							? `This runs \`graft build --deep\` in ${repo}.\n\nThe structural graph stays local and deterministic. The deep pass is different: Graft summarizes each changed file and extracts per-symbol cruxes using the LLM provider configured in Graft's own environment, so source-derived content leaves this machine.\n\nSelesai does not read, copy, or forward its own provider credentials to Graft.\n\nFiles it can write:\n${buildEffects(true)}`
+							? `This runs \`graft build --deep\` in ${repo}.\n\nThe structural graph stays local and deterministic. The deep pass summarizes each changed file and extracts per-symbol cruxes using Selesai's active compatible model, so source-derived content leaves this machine. Its credential is passed only to this Graft child process.\n\nFiles it can write:\n${buildEffects(true)}`
 							: `This runs \`graft build\` in ${repo} and can write:\n\n${buildEffects(false)}`,
 						manualCommand,
 					);
@@ -388,5 +388,5 @@ async function runAndReport(
 
 /** Where the deep-build guidance points a user whose provider is not configured. */
 export const DEEP_PROVIDER_HINT =
-	`Set GRAFT_PROVIDER, GRAFT_MODEL, and GRAFT_API_KEY in your own environment (or a repo .env), then re-run /graft deep. ` +
-	`${GRAFT_PACKAGE} reads them itself; this extension never forwards Selesai credentials.`;
+	`Select a compatible active Selesai model (TokenIn, LiteLLM, OpenAI, Anthropic, or OrcaRouter), then re-run /graft deep. ` +
+	`${GRAFT_PACKAGE} receives its credential only in that child process.`;

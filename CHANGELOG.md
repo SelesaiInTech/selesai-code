@@ -2,6 +2,17 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.24] - 2026-09-13
+
+### Added
+- **Self-building Graft graph.** Graft now creates the initial graph itself instead of waiting for a manual build: the first session start, the first read-only tool call, and a completed CLI install each trigger one build for the repository. A compatible active Selesai model (TokenIn, LiteLLM, OpenAI, Anthropic, or OrcaRouter) adds the deep tier; otherwise the build stays local and structural.
+- **Active-model deep builds.** Deep enrichment now runs on the active Selesai model instead of Graft's own provider configuration. The credential is resolved per build and passed only to the Graft child process, which never inherits it through the host environment.
+
+### Changed
+- **Graft's default retrieval mode is `hybrid`.** Eligible coding turns start from a smaller orientation pack while precise Graft tools stay available; set `graft.mode: "push"` for the previous full-pack behavior.
+- **Deep is the default build.** `/graft build` and `/graft setup` now run the provider-backed deep build, with the new `/graft build --structural` as the explicit local, offline escape hatch.
+- **Graft doctor and recovery hints.** Provider reporting now describes active-model deep builds and the child-process credential boundary instead of asking for Graft's own provider environment variables.
+
 ## [0.13.23] - 2026-09-13
 
 ### Added

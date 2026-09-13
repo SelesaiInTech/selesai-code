@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { execCommand } from "../../core/exec.ts";
 import {
 	applyTelemetryDefault,
 	askReferences,
@@ -31,6 +32,19 @@ import { FAILED, makePi, OK, type StubExecResult } from "./test-support.ts";
 function execReturning(result: StubExecResult) {
 	return { ...result };
 }
+
+describe("execCommand environment", () => {
+	it("passes a supplied credential only to its child process", async () => {
+		const result = await execCommand(
+			process.execPath,
+			["-e", "process.stdout.write(process.env.GRAFT_TEST_TOKEN ?? '')"],
+			process.cwd(),
+			{ env: { ...process.env, GRAFT_TEST_TOKEN: "child-only" } },
+		);
+		expect(result).toMatchObject({ code: 0, stdout: "child-only" });
+		expect(process.env.GRAFT_TEST_TOKEN).toBeUndefined();
+	});
+});
 
 describe("graftCommand", () => {
 	it("invokes the executable directly off Windows", () => {
@@ -150,6 +164,15 @@ describe("probeGraft", () => {
 		const probe = await probeGraft(pi.exec as never, "/repo");
 		expect(probe.kind).toBe("incompatible");
 		if (probe.kind === "incompatible") expect(probe.version).toBeUndefined();
+	});
+});
+
+describe("runGraft", () => {
+	it("forwards a private provider environment only to the Graft child", async () => {
+		const { pi } = makePi(async () => execReturning(OK));
+		const env = { ...process.env, GRAFT_PROVIDER: "litellm", GRAFT_MODEL: "deepseek-v4-flash", GRAFT_API_KEY: "secret" };
+		await runGraft(pi.exec as never, "/repo", { kind: "build", deep: true }, { env });
+		expect(pi.exec.mock.calls[0]![2]).toMatchObject({ env });
 	});
 });
 

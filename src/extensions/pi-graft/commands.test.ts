@@ -139,14 +139,14 @@ describe("formatDoctor", () => {
 		expect(text).toContain("fresh-structural");
 		expect(text).toContain("nothing is injected");
 		expect(text).toContain("DO_NOT_TRACK=1 set by this extension");
-		expect(text).toContain("deep builds would need Graft's own provider configuration");
+		expect(text).toContain("automatic deep builds use Selesai's active compatible model");
 		expect(text).toContain("graft deep adds provider-backed summaries");
 	});
 
 	it("shows only which provider variables are set, never their values", () => {
 		const text = formatDoctor({ ...base, providerEnv: ["GRAFT_PROVIDER", "GRAFT_MODEL"] });
 		expect(text).toContain("GRAFT_PROVIDER, GRAFT_MODEL set");
-		expect(text).toContain("values never read or copied");
+		expect(text).toContain("values never shown");
 	});
 
 	it("reports whether this session actually applied the telemetry default", () => {
@@ -205,8 +205,8 @@ describe("buildEffects", () => {
 
 	it("states the provider boundary and the cache for a deep build", () => {
 		const text = buildEffects(true);
-		expect(text).toContain("GRAFT_PROVIDER");
-		expect(text).toContain("Graft's own environment");
+		expect(text).toContain("Selesai's active compatible model");
+		expect(text).toContain("Graft child process");
 		expect(text).toContain("caches those summaries under graft/");
 	});
 });
@@ -289,7 +289,7 @@ describe("mutation-capable commands", () => {
 		}
 	});
 
-	it("installs a missing CLI, rechecks it, then asks only before building", async () => {
+	it("installs a missing CLI, rechecks it, then asks before the default deep build", async () => {
 		const harness = makeRuntime({ state: { name: "unavailable", detail: "ENOENT" }, built: false });
 		const ctx = makeCtx();
 		await invoke(harness.runtime, "setup", ctx);
@@ -297,8 +297,8 @@ describe("mutation-capable commands", () => {
 		expect(harness.installCli).toHaveBeenCalledWith(ctx);
 		expect(harness.recheck).toHaveBeenCalledTimes(3);
 		expect(ctx.ui.confirm).toHaveBeenCalledTimes(1);
-		expect(ctx.ui.confirm.mock.calls[0]![0]).toBe("Set up Graft for this repository?");
-		expect(harness.runBuild).toHaveBeenCalledWith(false, ctx);
+		expect(ctx.ui.confirm.mock.calls[0]![0]).toBe("Run the provider-backed deep build?");
+		expect(harness.runBuild).toHaveBeenCalledWith(true, ctx);
 	});
 
 	it("does not build when installing the missing CLI fails", async () => {
@@ -345,14 +345,16 @@ describe("mutation-capable commands", () => {
 		expect(message).toContain(".gitignore");
 		expect(message).toContain("init");
 		expect(message).toContain("never run");
-		expect(harness.runBuild).toHaveBeenCalledWith(false, ctx);
+		expect(harness.runBuild).toHaveBeenCalledWith(true, ctx);
 		expect(notified(ctx)).toContain("Done.");
 	});
 
-	it("does not run a deep build when the structural build was confirmed", async () => {
+	it("defaults build to deep, with an explicit structural escape hatch", async () => {
 		const harness = makeRuntime();
 		await invoke(harness.runtime, "build", makeCtx());
-		expect(harness.runBuild).toHaveBeenCalledWith(false, expect.anything());
+		expect(harness.runBuild).toHaveBeenCalledWith(true, expect.anything());
+		await invoke(harness.runtime, "build --structural", makeCtx());
+		expect(harness.runBuild).toHaveBeenLastCalledWith(false, expect.anything());
 	});
 
 	it("gives `build --deep` the same provider consent as `/graft deep`", async () => {
@@ -371,10 +373,10 @@ describe("mutation-capable commands", () => {
 		expect(harness.runBuild).toHaveBeenNthCalledWith(2, true, viaDeep);
 	});
 
-	it("treats setup as the structural build", async () => {
+	it("treats setup as the default deep build", async () => {
 		const harness = makeRuntime();
 		await invoke(harness.runtime, "setup", makeCtx());
-		expect(harness.runBuild).toHaveBeenCalledWith(false, expect.anything());
+		expect(harness.runBuild).toHaveBeenCalledWith(true, expect.anything());
 	});
 
 	it("shows the provider boundary before a deep build and only sends source off-machine after consent", async () => {
@@ -385,7 +387,7 @@ describe("mutation-capable commands", () => {
 		const [title, message] = ctx.ui.confirm.mock.calls[0] as [string, string];
 		expect(title).toContain("provider-backed");
 		expect(message).toContain("leaves this machine");
-		expect(message).toContain("does not read, copy, or forward");
+		expect(message).toContain("credential is passed only to this Graft child process");
 		expect(harness.runBuild).toHaveBeenCalledWith(true, ctx);
 	});
 
@@ -472,7 +474,7 @@ describe("runtime contract", () => {
 		const ctx = makeCtx();
 		await invoke(harness.runtime, "status", ctx);
 		expect(PROVIDER_ENV_NAMES).toContain("GRAFT_API_KEY");
-		expect(DEEP_PROVIDER_HINT).toContain("never forwards Selesai credentials");
+		expect(DEEP_PROVIDER_HINT).toContain("active Selesai model");
 		expect(DOCTOR_USAGE).toContain("mode [pull|push|hybrid]");
 	});
 });

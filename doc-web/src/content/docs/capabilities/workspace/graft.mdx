@@ -7,7 +7,7 @@ import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
 import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
 import SourceEvidence from "../../../../components/SourceEvidence.astro";
 
-Graft gives Selesai a local semantic graph of the current Git working tree. Eligible coding turns receive bounded source-backed context by default, while precise read-only tools remain available for follow-up.
+Graft gives Selesai a local semantic graph of the current Git working tree. Selesai builds that graph for the active repository on first use—deep when the active model is compatible, local and structural otherwise—and eligible coding turns receive bounded source-backed context by default, while precise read-only tools remain available for follow-up.
 
 <ExtensionStatus
   distribution="bundled"
@@ -20,14 +20,16 @@ Graft gives Selesai a local semantic graph of the current Git working tree. Elig
 
 - Bundled with Selesai and loaded automatically in Git working trees.
 - The compatible `@nanonets/graft` CLI (`>=0.18.0 <1.0.0`) is installed automatically when missing; an incompatible user installation is never overwritten.
-- Run `/graft build` once to create the local structural graph. It requires confirmation and uses no model or API key.
-- `/graft deep` is optional. It asks for separate confirmation because it sends source-derived summaries through Graft's configured provider.
+- The first graph is created for you: session start, the first Graft tool call, and a completed CLI install each build the repository once.
+- That automatic build is deep when the active model is compatible (TokenIn, LiteLLM, OpenAI, Anthropic, or OrcaRouter) and local and structural otherwise.
+- `/graft build` and `/graft setup` build on demand. A deep build asks for confirmation because it sends source-derived summaries through the active Selesai model; `/graft build --structural` stays offline with no model and no API key.
 
 ## What it sets up
 
 - Keeps the regenerable `graft/` graph out of Git and re-admits it to local search only.
 - Defaults Graft child processes to `DO_NOT_TRACK=1` without changing Graft's own configuration.
-- Injects one bounded source-backed pack before eligible coding turns in `push` mode; use `pull` for tools-only retrieval or `hybrid` for a smaller orientation pack.
+- Injects one bounded orientation pack before eligible coding turns in `hybrid` mode, the default; `push` spends more on a source-backed pack, and `pull` leaves retrieval to the tools.
+- Passes the active model's credential only to the Graft child process of that build, and never sets it in the host environment.
 - Marks the graph changed after Selesai edits and refreshes an existing graph at the next idle boundary.
 - Adds Graft's six read-only tools to the `scout`, `reviewer`, `worker`, `delegate`, and `oracle` builtin subagents. Explicit user tool or child-extension overrides take precedence.
 
@@ -38,7 +40,7 @@ Graft gives Selesai a local semantic graph of the current Git working tree. Elig
 ## What you can do
 
 - Run `/graft setup` for a guided install-and-build flow, or `/graft doctor` to inspect the repository, CLI, graph, mode, telemetry, and provider readiness.
-- Run `/graft build` for an offline structural graph; run `/graft deep` only when you accept provider-backed summaries.
+- Rely on the automatic first build, or run `/graft build` (deep) or `/graft build --structural` (offline) yourself.
 - Switch retrieval with `/graft mode pull`, `/graft mode push`, or `/graft mode hybrid`.
 - Use `graft_find_code` to locate relevant code, then verify referenced files before editing.
 - Use `graft_trace_calls` before changing shared behavior, and `graft_check_freshness` when prior Graft context might predate an edit.
@@ -48,7 +50,8 @@ Graft gives Selesai a local semantic graph of the current Git working tree. Elig
 | Surface | Description |
 | --- | --- |
 | `/graft status` / `/graft doctor` | Show concise status or the full diagnostic report. |
-| `/graft setup` / `build` / `deep` / `refresh` | Install if needed, then consent-gated graph operations. |
+| `/graft setup` / `build` / `deep` / `refresh` | Install if needed, then build (deep by default) or re-index. |
+| `/graft build --structural` | Build locally with no model and no API key. |
 | `/graft mode [pull\|push\|hybrid]` | Show or set this session branch's retrieval strategy. |
 | `graft_find_code({ question, limit?, in? })` | Ranked source-backed code retrieval. |
 | `graft_file_api({ path })` | Signatures without implementation bodies. |
@@ -59,10 +62,10 @@ Graft gives Selesai a local semantic graph of the current Git working tree. Elig
 
 ## Limits and safety
 
-- Graft tools are read-only. Only `/graft` build commands can create or update the graph, and they require explicit confirmation.
+- Graft tools are read-only. `/graft` build commands require explicit confirmation; the first automatic build runs without a prompt because a compatible active model is already the session's provider choice.
 - The extension never runs Graft's `init` command and never writes another coding agent's configuration.
 - The graph is derived context, not source of truth: inspect referenced files before changing them.
-- A structural graph is local and offline. Deep builds send source-derived material only to the provider configured for Graft; provider values are never read or displayed by Selesai.
-- Automatic refresh never creates a missing graph. Use `/graft build` to opt in initially.
+- A structural graph is local and offline. Deep builds send source-derived material only to the active Selesai model, and its credential is passed only to that Graft child process.
+- Set `graft.enabled: false` in settings to keep automatic builds, refresh, and tools out of a session entirely.
 
 <SourceEvidence slug="pi-graft" />

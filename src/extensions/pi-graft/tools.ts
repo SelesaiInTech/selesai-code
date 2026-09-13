@@ -12,8 +12,9 @@
  *   graft_check_freshness → graft check --json
  *
  * Every one of them is read-only under Selesai's capability model. Nothing here
- * can build, mutate, install, or configure anything — the build operations live
- * behind the consent-gated commands in `commands.ts`.
+ * can build, mutate, install, or configure anything — the extension builds the
+ * graph during session setup, using the active compatible Selesai model for the
+ * optional deep tier.
  */
 
 import { StringEnum } from "@earendil-works/pi-ai";

@@ -3,6 +3,13 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.24 — Graft builds itself and deep builds use the active model
+
+- **Graft builds its own graph.** A fresh repository now gets its initial graph automatically—at session start, on the first read-only tool call, and after a CLI install—instead of waiting for a manual build. A compatible active Selesai model (TokenIn, LiteLLM, OpenAI, Anthropic, or OrcaRouter) adds the deep tier; otherwise the build stays local and structural.
+- **Deep builds use the active Selesai model.** Deep enrichment no longer needs Graft's own provider configuration: the active model's credential is passed only to the Graft child process for that build, never through the host environment.
+- **Default retrieval mode is now `hybrid`.** Eligible coding turns start from a smaller orientation pack while precise Graft tools stay available; `graft.mode: "push"` restores the previous full-pack behavior.
+- **Deep is the default build.** `/graft build` and `/graft setup` run the provider-backed deep build, and `/graft build --structural` stays local and offline.
+
 ## 0.13.23 — Bundled Graft code context
 
 - **Native Graft integration.** Selesai now bundles `@nanonets/graft` code context: it installs a compatible CLI when missing, builds a consent-gated local graph, injects bounded source-backed context for eligible coding turns, and exposes six read-only semantic retrieval tools plus `/graft` lifecycle commands. Structural builds stay local and offline; deep provider-backed builds require separate confirmation.

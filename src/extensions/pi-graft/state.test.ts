@@ -170,8 +170,8 @@ describe("retrieval mode", () => {
 		expect(isRetrievalMode(undefined)).toBe(false);
 	});
 
-	it("defaults to push, the source-backed context mode", () => {
-		expect(DEFAULT_RETRIEVAL_MODE).toBe("push");
+	it("defaults to hybrid, the relevance-gated context mode", () => {
+		expect(DEFAULT_RETRIEVAL_MODE).toBe("hybrid");
 	});
 
 	it("restores the newest mode chosen on this branch, ignoring other custom entries", () => {

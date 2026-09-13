@@ -30,7 +30,7 @@ import { INSTALL_COMMAND } from "./cli.ts";
 export type RetrievalMode = "pull" | "push" | "hybrid";
 
 export const RETRIEVAL_MODES: readonly RetrievalMode[] = ["pull", "push", "hybrid"];
-export const DEFAULT_RETRIEVAL_MODE: RetrievalMode = "push";
+export const DEFAULT_RETRIEVAL_MODE: RetrievalMode = "hybrid";
 
 export function isRetrievalMode(value: unknown): value is RetrievalMode {
 	return typeof value === "string" && (RETRIEVAL_MODES as readonly string[]).includes(value);

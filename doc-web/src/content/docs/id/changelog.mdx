@@ -3,6 +3,13 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.24 — Graft membangun graph-nya sendiri dan build deep memakai model aktif
+
+- **Graft membangun graph-nya sendiri.** Repository baru kini otomatis mendapat graph awalnya—saat sesi dimulai, pada panggilan tool read-only pertama, dan setelah instalasi CLI—alih-alih menunggu build manual. Model Selesai aktif yang kompatibel (TokenIn, LiteLLM, OpenAI, Anthropic, atau OrcaRouter) menambahkan tier deep; jika tidak, build tetap lokal dan struktural.
+- **Build deep memakai model Selesai aktif.** Pengayaan deep tidak lagi memerlukan konfigurasi provider milik Graft: kredensial model aktif diteruskan hanya ke proses child Graft untuk build tersebut, tidak pernah melalui environment host.
+- **Mode retrieval default kini `hybrid`.** Turn coding yang memenuhi syarat dimulai dari paket orientasi yang lebih kecil sementara tool Graft presisi tetap tersedia; `graft.mode: "push"` mengembalikan perilaku paket penuh sebelumnya.
+- **Deep adalah build default.** `/graft build` dan `/graft setup` menjalankan build deep berbasis provider, dan `/graft build --structural` tetap lokal dan offline.
+
 ## 0.13.23 — Konteks kode Graft bundled
 
 - **Integrasi Graft native.** Selesai kini membundel konteks kode `@nanonets/graft`: memasang CLI kompatibel saat belum ada, membangun graph lokal dengan persetujuan, menyuntikkan context berbasis source yang dibatasi untuk turn coding yang memenuhi syarat, serta mengekspos enam tool retrieval semantik read-only dan command lifecycle `/graft`. Build struktural tetap lokal dan offline; build deep berbasis provider memerlukan konfirmasi terpisah.

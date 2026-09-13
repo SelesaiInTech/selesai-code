@@ -263,7 +263,7 @@ describe("proactive refresh", () => {
 		await session.reset();
 	});
 
-	it("never creates a graph that does not exist", async () => {
+	it("automatically creates the initial local structural graph", async () => {
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		const bare = join(root, "bare-repo");
 		mkdirSync(join(bare, ".selesai"), { recursive: true });
@@ -271,6 +271,10 @@ describe("proactive refresh", () => {
 		const harness = makePi(async (command: string, args: string[]) => {
 			if (command === "git") return { ...OK, stdout: `${bare}\n` };
 			if (args.includes("--version")) return { ...OK, stdout: "0.18.0\n" };
+			if (args.includes("build")) {
+				mkdirSync(join(bare, "graft", ".graph"), { recursive: true });
+				writeFileSync(join(bare, "graft", ".graph", "wiring.json"), "{}", "utf-8");
+			}
 			return { ...OK, stdout: ASK_JSON };
 		});
 		graftExtension(harness.pi as never);
@@ -279,10 +283,41 @@ describe("proactive refresh", () => {
 			{ type: "session_start", reason: "startup" },
 			ctx,
 		);
-		expect(ctx.statuses.get("graft")).toBe("graft: ○ unbuilt v0.18.0");
-		const before = harness.exec.mock.calls.length;
-		await (handlerFor(harness, "agent_end") as (e: unknown, c: unknown) => Promise<void>)({}, ctx);
-		expect(harness.exec.mock.calls.length).toBe(before);
+		await vi.waitFor(() => expect(ctx.statuses.get("graft")).toBe("graft: ● structural v0.18.0"));
+		expect(harness.commandsRun()).toContain("graft build");
+	});
+
+	it("uses the active TokenIn model for the default deep build", async () => {
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		const bare = join(root, "deep-repo");
+		mkdirSync(join(bare, ".selesai"), { recursive: true });
+		writeFileSync(join(bare, ".selesai", "settings.json"), JSON.stringify({ graft: {} }), "utf-8");
+		const harness = makePi(async (command: string, args: string[]) => {
+			if (command === "git") return { ...OK, stdout: `${bare}\n` };
+			if (args.includes("--version")) return { ...OK, stdout: "0.18.0\n" };
+			if (args.includes("build")) {
+				mkdirSync(join(bare, "graft", ".graph"), { recursive: true });
+				writeFileSync(join(bare, "graft", ".graph", "wiring.json"), "{}", "utf-8");
+				writeFileSync(join(bare, "graft", "concept.md"), "# Concept", "utf-8");
+			}
+			return { ...OK, stdout: ASK_JSON };
+		});
+		graftExtension(harness.pi as never);
+		const ctx = makeCtx({ cwd: bare });
+		Object.assign(ctx, {
+			model: { provider: "tokenin", id: "deepseek-v4-flash" },
+			modelRegistry: {
+				getProviderAuth: vi.fn(async () => ({ auth: { apiKey: "test-token", baseUrl: "https://lite.andlet.me/v1" } })),
+			},
+		});
+		await (handlerFor(harness, "session_start") as (e: unknown, c: unknown) => Promise<void>)(
+			{ type: "session_start", reason: "startup" },
+			ctx,
+		);
+		await vi.waitFor(() => expect(ctx.statuses.get("graft")).toBe("graft: ● deep v0.18.0"));
+		const build = harness.exec.mock.calls.find((call) => (call[1] as string[]).includes("build"))!;
+		expect(build[1]).toEqual(["build", "--deep"]);
+		expect(build[2]).toMatchObject({ env: { GRAFT_PROVIDER: "litellm", GRAFT_MODEL: "deepseek-v4-flash" } });
 	});
 
 	it("re-indexes after edits, shows the sync phase, and returns to fresh", async () => {
@@ -352,7 +387,7 @@ describe("retrieval strategy", () => {
 			session.ctx,
 		);
 
-	it("injects a source-backed pack in push mode, which is the default", async () => {
+	it("injects a source-backed orientation pack in the default hybrid mode", async () => {
 		const session = await bootSession();
 		const result = await beforeAgentStart(session, "Fix the login crash");
 		expect(result).toBeDefined();
@@ -450,7 +485,7 @@ describe("retrieval strategy", () => {
 		expect(notified(ctx)).toContain("Graft context unavailable");
 	});
 
-	it("injects nothing when the graph has never been built, and says how to fix it", async () => {
+	it("waits for the initial structural build before injecting context", async () => {
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		const bare = join(root, "unbuilt-repo");
 		mkdirSync(join(bare, ".selesai"), { recursive: true });
@@ -458,6 +493,10 @@ describe("retrieval strategy", () => {
 		const harness = makePi(async (command: string, args: string[]) => {
 			if (command === "git") return { ...OK, stdout: `${bare}\n` };
 			if (args.includes("--version")) return { ...OK, stdout: "0.18.0\n" };
+			if (args.includes("build")) {
+				mkdirSync(join(bare, "graft", ".graph"), { recursive: true });
+				writeFileSync(join(bare, "graft", ".graph", "wiring.json"), "{}", "utf-8");
+			}
 			return { ...OK, stdout: ASK_JSON };
 		});
 		graftExtension(harness.pi as never);
@@ -471,7 +510,7 @@ describe("retrieval strategy", () => {
 				{ type: "before_agent_start", prompt: "Fix the login crash" },
 				ctx,
 			),
-		).toBeUndefined();
+		).toMatchObject({ message: { customType: "graft-context" } });
 	});
 });
 
@@ -523,7 +562,7 @@ describe("tool readiness", () => {
 		).rejects.toThrow(/Run \/graft doctor/);
 	});
 
-	it("tells the user to build before answering from a graph that is not there", async () => {
+	it("builds before answering from a graph that is not there", async () => {
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		const bare = join(root, "unbuilt-tools");
 		mkdirSync(join(bare, ".selesai"), { recursive: true });
@@ -531,6 +570,10 @@ describe("tool readiness", () => {
 		const harness = makePi(async (command: string, args: string[]) => {
 			if (command === "git") return { ...OK, stdout: `${bare}\n` };
 			if (args.includes("--version")) return { ...OK, stdout: "0.18.0\n" };
+			if (args.includes("build")) {
+				mkdirSync(join(bare, "graft", ".graph"), { recursive: true });
+				writeFileSync(join(bare, "graft", ".graph", "wiring.json"), "{}", "utf-8");
+			}
 			return { ...OK, stdout: ASK_JSON };
 		});
 		graftExtension(harness.pi as never);
@@ -542,7 +585,8 @@ describe("tool readiness", () => {
 		const tool = toolFor(harness, "graft_find_code");
 		await expect(
 			(tool.execute as (...args: unknown[]) => Promise<unknown>)("c", { question: "x" }, undefined, undefined, ctx),
-		).rejects.toThrow(/graft build/);
+		).resolves.toBeDefined();
+		expect(harness.commandsRun()).toContain("graft build");
 	});
 
 	it("re-resolves lazily when an earlier attempt found no repository", async () => {
