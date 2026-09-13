@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.23 — Bundled Graft code context
+
+- **Native Graft integration.** Selesai now bundles `@nanonets/graft` code context: it installs a compatible CLI when missing, builds a consent-gated local graph, injects bounded source-backed context for eligible coding turns, and exposes six read-only semantic retrieval tools plus `/graft` lifecycle commands. Structural builds stay local and offline; deep provider-backed builds require separate confirmation.
+- **Graft-aware builtin subagents.** `scout`, `reviewer`, `worker`, `delegate`, and `oracle` automatically receive Graft's read-only code-context tools and child-only extension when Graft is loaded. Explicit user tool or extension overrides retain precedence.
+- **Gateway keeps Graft active.** The progressive capability gateway leaves Graft's code-context tools active so pre-turn retrieval and precise follow-ups continue to work.
+
 ## 0.13.22 — Live TPS gate and quieter capability routing
 
 - **Live TPS readings are gated.** The live tokens-per-second status now waits for a usable sample window and drops implausible rates, instead of showing a burst of early tokens divided by almost no elapsed time.

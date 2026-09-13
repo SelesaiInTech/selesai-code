@@ -1,0 +1,68 @@
+---
+draft: false
+title: Konteks kode Graft
+---
+
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+Graft memberi Selesai graph semantik lokal dari Git working tree saat ini. Turn coding yang memenuhi syarat secara default menerima context berbasis source yang dibatasi, sementara tool read-only presisi tetap tersedia untuk tindak lanjut.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./pi-graft"
+  runtimeSurface="mixed"
+  locale="id"
+/>
+
+## Penyiapan dan prasyarat
+
+- Dibundel bersama Selesai dan dimuat otomatis di Git working tree.
+- CLI `@nanonets/graft` yang kompatibel (`>=0.18.0 <1.0.0`) dipasang otomatis saat belum ada; instalasi user yang tidak kompatibel tidak pernah ditimpa.
+- Jalankan `/graft build` sekali untuk membuat graph struktural lokal. Perlu konfirmasi dan tidak memakai model atau API key.
+- `/graft deep` bersifat opsional. Meminta konfirmasi terpisah karena mengirim ringkasan turunan source melalui provider yang dikonfigurasi Graft.
+
+## Yang disiapkan
+
+- Menjaga graph `graft/` yang dapat dibuat ulang di luar Git dan memasukkannya kembali hanya untuk pencarian lokal.
+- Menetapkan default `DO_NOT_TRACK=1` untuk proses child Graft tanpa mengubah konfigurasi Graft sendiri.
+- Menyuntikkan satu paket berbasis source yang dibatasi sebelum turn coding yang memenuhi syarat dalam mode `push`; gunakan `pull` untuk retrieval khusus tool atau `hybrid` untuk paket orientasi yang lebih kecil.
+- Menandai graph berubah setelah edit Selesai dan me-refresh graph yang sudah ada pada batas idle berikutnya.
+- Menambahkan enam tool read-only Graft ke builtin subagent `scout`, `reviewer`, `worker`, `delegate`, dan `oracle`. Override tool atau child-extension eksplisit dari user tetap diprioritaskan.
+
+## Yang dapat dikonfigurasi
+
+<ExtensionCustomization slug="pi-graft" locale="id" />
+
+## Yang dapat dilakukan
+
+- Jalankan `/graft setup` untuk alur instal-dan-build terpandu, atau `/graft doctor` untuk memeriksa repository, CLI, graph, mode, telemetri, dan kesiapan provider.
+- Jalankan `/graft build` untuk graph struktural offline; jalankan `/graft deep` hanya jika Anda menerima ringkasan berbasis provider.
+- Ganti retrieval dengan `/graft mode pull`, `/graft mode push`, atau `/graft mode hybrid`.
+- Gunakan `graft_find_code` untuk menemukan kode relevan, lalu verifikasi file yang dirujuk sebelum mengedit.
+- Gunakan `graft_trace_calls` sebelum mengubah perilaku bersama, dan `graft_check_freshness` ketika context Graft sebelumnya mungkin mendahului edit.
+
+## Perintah, tool, dan shortcut
+
+| Permukaan | Deskripsi |
+| --- | --- |
+| `/graft status` / `/graft doctor` | Tampilkan status ringkas atau laporan diagnostik lengkap. |
+| `/graft setup` / `build` / `deep` / `refresh` | Instal jika diperlukan, lalu operasi graph yang perlu persetujuan. |
+| `/graft mode [pull\|push\|hybrid]` | Tampilkan atau atur strategi retrieval untuk branch sesi ini. |
+| `graft_find_code({ question, limit?, in? })` | Retrieval kode berbasis source dengan peringkat. |
+| `graft_file_api({ path })` | Signature tanpa body implementasi. |
+| `graft_trace_calls({ symbol, direction?, depth? })` | Caller/dependent atau dependensi keluar. |
+| `graft_find_all({ pattern, ignore_case?, fixed?, in? })` | Pencarian regex terindeks menyeluruh yang dikelompokkan per simbol. |
+| `graft_repo_map({ max_dirs? })` | Cluster direktori dan hotspot repository. |
+| `graft_check_freshness()` | Laporkan drift graph tanpa rebuild. |
+
+## Batasan dan keamanan
+
+- Tool Graft bersifat read-only. Hanya command build `/graft` yang dapat membuat atau memperbarui graph, dan semuanya memerlukan konfirmasi eksplisit.
+- Ekstensi tidak pernah menjalankan command `init` Graft dan tidak pernah menulis konfigurasi coding agent lain.
+- Graph adalah context turunan, bukan source of truth: periksa file yang dirujuk sebelum mengubahnya.
+- Graph struktural bersifat lokal dan offline. Build deep mengirim material turunan source hanya ke provider yang dikonfigurasi untuk Graft; nilai provider tidak pernah dibaca atau ditampilkan Selesai.
+- Refresh otomatis tidak pernah membuat graph yang belum ada. Gunakan `/graft build` untuk opt-in awal.
+
+<SourceEvidence slug="pi-graft" />

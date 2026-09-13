@@ -262,6 +262,22 @@ export const capabilities: Capability[] = [
     runtimeSurface: "automatic",
   },
   {
+    slug: "pi-graft",
+    category: "terminal-workspace",
+    en: { displayName: "Graft code context", benefit: "Build a local semantic graph, inject bounded source-backed context for coding turns, and query it with precise read-only tools." },
+    id: { displayName: "Konteks kode Graft", benefit: "Bangun graph semantik lokal, suntikkan context berbasis source yang dibatasi untuk turn coding, dan kueri dengan tool read-only presisi." },
+    sourcePaths: ["src/extensions/pi-graft/", "src/extensions/pi-subagents/src/agents/builtin-agent-augmentations.ts"],
+    sourceLinks: [
+      links("Graft extension source", "src/extensions/pi-graft/"),
+      links("Subagent augmentation source", "src/extensions/pi-subagents/src/agents/builtin-agent-augmentations.ts"),
+    ],
+    guideRoute: "capabilities/workspace/graft",
+    piComparison: "core-differentiator",
+    distribution: "bundled",
+    manifestEntry: "./pi-graft",
+    runtimeSurface: "mixed",
+  },
+  {
     slug: "capability-gateway",
     category: "terminal-workspace",
     en: { displayName: "Progressive capability gateway", benefit: "Keep optional extension tools and skills out of the default model context while making them discoverable and activatable on demand." },

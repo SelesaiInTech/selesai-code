@@ -29,6 +29,7 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 - Registers a family of slash commands: `/run`, `/chain`, `/parallel`, `/run-chain`, `/subagents`, `/subagent-cost`, `/subagents-doctor`, `/subagents-stop`, `/subagents-models`, `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile`, plus prompt-workflow shortcuts such as `/parallel-review`.
 - Registers inline agent invocation: `#agent-name` anywhere in a message (start, middle, or end) runs that agent directly, and typing `#` in the editor autocompletes installed agents.
 - Creates lifecycle artifacts for async runs under the Selesai subagent results directory; run artifacts default to the session directory instead of the project checkout (`.pi-subagents/`).
+- When bundled Graft is loaded, gives the code-facing builtin agents (`scout`, `reviewer`, `worker`, `delegate`, `oracle`) its read-only context tools and child-only provider automatically; explicit user overrides still win.
 - Sets `SELESAI_SUBAGENT_PARENT_SESSION` in child processes for permission-system forwarding.
 
 ## What you can configure

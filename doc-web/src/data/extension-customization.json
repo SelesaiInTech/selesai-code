@@ -1586,6 +1586,54 @@
    "noConfig": true
   },
   {
+   "slug": "pi-graft",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Graft builds a regenerable local code graph for bounded pre-turn context and precise read-only code retrieval. Structural builds are offline; deep builds use Graft's separately configured provider.",
+    "id": "Graft membangun graph kode lokal yang dapat dibuat ulang untuk context sebelum turn yang dibatasi dan retrieval kode read-only presisi. Build struktural bersifat offline; build deep memakai provider Graft yang dikonfigurasi terpisah."
+   },
+   "sourcePaths": [
+    "src/extensions/pi-graft/",
+    "src/extensions/pi-subagents/src/agents/builtin-agent-augmentations.ts"
+   ],
+   "scopes": [
+    {
+     "label": { "en": "User settings", "id": "Pengaturan user" },
+     "path": "~/.selesai/agent/settings.json",
+     "precedence": { "en": "Used everywhere; project settings override it only after project trust is established.", "id": "Digunakan di mana saja; pengaturan proyek menimpanya hanya setelah project trust ditetapkan." }
+    },
+    {
+     "label": { "en": "Trusted project settings", "id": "Pengaturan proyek tepercaya" },
+     "path": ".selesai/settings.json",
+     "precedence": { "en": "Highest persistent Graft settings layer for this trusted project.", "id": "Lapisan pengaturan Graft persisten tertinggi untuk proyek tepercaya ini." }
+    },
+    {
+     "label": { "en": "Session branch", "id": "Branch sesi" },
+     "path": "/graft mode pull|push|hybrid",
+     "precedence": { "en": "The most recently selected mode on this session branch overrides settings for that branch.", "id": "Mode terakhir yang dipilih pada branch sesi ini menimpa pengaturan untuk branch tersebut." }
+    }
+   ],
+   "settings": [
+    { "key": "graft.enabled", "type": "boolean", "default": "true", "description": { "en": "Disable all Graft session work and tools when false.", "id": "Nonaktifkan semua kerja dan tool sesi Graft saat false." }, "persistence": "settings.json" },
+    { "key": "graft.mode", "type": "string", "default": "push", "allowedValues": "pull, push, hybrid", "description": { "en": "Default retrieval strategy before a session branch chooses one.", "id": "Strategi retrieval default sebelum branch sesi memilihnya." }, "persistence": "settings.json" },
+    { "key": "graft.telemetry", "type": "string", "default": "opt-out", "allowedValues": "opt-out, inherit", "description": { "en": "Set inherit to leave the existing DO_NOT_TRACK environment choice unchanged.", "id": "Atur inherit untuk membiarkan pilihan lingkungan DO_NOT_TRACK yang ada tetap tidak berubah." }, "persistence": "settings.json" },
+    { "key": "graft.minCoverage", "type": "number", "default": "0.25", "description": { "en": "Minimum Graft coverage share required before a push or hybrid pack is injected.", "id": "Bagian coverage Graft minimum sebelum paket push atau hybrid disuntikkan." }, "persistence": "settings.json" },
+    { "key": "graft.maxInjectionBytes", "type": "number", "default": "12288", "description": { "en": "Maximum bytes in a pushed context pack.", "id": "Byte maksimum dalam paket context yang disuntikkan." }, "persistence": "settings.json" },
+    { "key": "graft.maxResultBytes", "type": "number", "default": "32768", "description": { "en": "Maximum bytes in one Graft tool result.", "id": "Byte maksimum dalam satu hasil tool Graft." }, "persistence": "settings.json" },
+    { "key": "graft.in", "type": "string", "default": "(unset)", "description": { "en": "Repository-relative prefix applied to Graft queries unless a tool call names one.", "id": "Prefix relatif repository yang diterapkan pada kueri Graft kecuali pemanggilan tool menyebutkannya." }, "persistence": "settings.json" },
+    { "key": "graft.refreshDebounceSeconds", "type": "number", "default": "20", "description": { "en": "Idle delay before refreshing an existing graph after a detected mutation.", "id": "Jeda idle sebelum me-refresh graph yang ada setelah mutasi terdeteksi." }, "persistence": "settings.json" }
+   ],
+   "envVars": [
+    { "key": "DO_NOT_TRACK", "description": { "en": "When already set, Selesai preserves it; otherwise Graft child processes default to 1 for the session.", "id": "Saat sudah diatur, Selesai mempertahankannya; jika tidak, proses child Graft default ke 1 untuk sesi." } },
+    { "key": "GRAFT_PROVIDER / GRAFT_MODEL / GRAFT_BASE_URL / GRAFT_API_KEY", "description": { "en": "Graft's own provider configuration for deep builds; values are never read or shown by Selesai.", "id": "Konfigurasi provider Graft sendiri untuk build deep; nilainya tidak pernah dibaca atau ditampilkan Selesai." }, "sensitive": true }
+   ],
+   "controls": [
+    { "name": "/graft status | doctor | setup | build | deep | refresh | mode", "description": { "en": "Inspect, provision, build, refresh, and choose retrieval mode; graph mutations require confirmation.", "id": "Periksa, sediakan, build, refresh, dan pilih mode retrieval; mutasi graph memerlukan konfirmasi." } },
+    { "name": "graft_find_code / graft_file_api / graft_trace_calls / graft_find_all / graft_repo_map / graft_check_freshness", "description": { "en": "Six read-only semantic retrieval and freshness tools.", "id": "Enam tool read-only untuk retrieval semantik dan freshness." } }
+   ],
+   "noConfig": false
+  },
+  {
    "slug": "capability-gateway",
    "distribution": "bundled",
    "overview": {

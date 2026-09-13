@@ -16,6 +16,7 @@ import {
 const EXTENSIONS_DIR = fileURLToPath(new URL("../../", import.meta.url));
 const GATEWAY_DIR = fileURLToPath(new URL(".", import.meta.url));
 const GREP_APP_DIR = fileURLToPath(new URL("../grep-app", import.meta.url));
+const GRAFT_DIR = fileURLToPath(new URL("../pi-graft", import.meta.url));
 const INLINE_SKILLS_FILE = fileURLToPath(new URL("../inline-skills.ts", import.meta.url));
 
 interface Harness {
@@ -132,6 +133,20 @@ describe("capability gateway integration", () => {
 		expect(active).not.toContain("subagent");
 		// Gateway's own tools stay active so the agent can discover.
 		expect(active).toContain("capability_catalog");
+	});
+
+	it("keeps all Graft tools active for hybrid context and precise follow-ups", async () => {
+		const h = await createGatewaySession({ enabled: true, extensions: [GATEWAY_DIR, GRAFT_DIR] });
+		harnesses.push(h);
+		const active = h.session.getActiveToolNames();
+		for (const name of [
+			"graft_check_freshness",
+			"graft_file_api",
+			"graft_find_all",
+			"graft_find_code",
+			"graft_repo_map",
+			"graft_trace_calls",
+		]) expect(active).toContain(name);
 	});
 
 	it("keeps all-visible behavior when disabled (compatibility mode)", async () => {

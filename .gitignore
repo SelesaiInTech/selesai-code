@@ -29,3 +29,6 @@ coverage-*/
 
 # Unlazy completion ledgers (local planning artifacts)
 .unlazy/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

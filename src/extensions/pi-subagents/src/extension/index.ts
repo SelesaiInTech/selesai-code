@@ -20,6 +20,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@selesai/code";
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { clearAgentDiscoveryCache, discoverAgentSnapshot, discoverAgents, type AgentConfig, type AgentScope } from "../agents/agents.ts";
+import { applyBuiltinAgentAugmentations, requestBuiltinAgentAugmentations } from "../agents/builtin-agent-augmentations.ts";
 import { appendAdvertisedAgentPrompt, buildAdvertisedAgentPrompt } from "../agents/advertised-agent-prompt.ts";
 import { clearRuntimeAgentsForPi, listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
 import { registerRuntimeAgentEventListener } from "../agents/runtime-agent-events.ts";
@@ -420,6 +421,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		return;
 	}
 	const runtimeRegistry = getRuntimeRegistry();
+	const builtinAgentAugmentations = requestBuiltinAgentAugmentations(pi);
 
 	DIRS.results = ensureAccessibleDir(DIRS.results);
 	DIRS.async = ensureAccessibleDir(DIRS.async);
@@ -540,7 +542,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		advertisedAgents = [];
 		if (!advertisedContext) return;
 		clearAgentDiscoveryCache();
-		advertisedAgents = discoverAgents(advertisedContext.cwd, "both", advertisedContext.model?.provider).agents
+		advertisedAgents = discoverAgentsForRuntime(advertisedContext.cwd, "both", advertisedContext.model?.provider).agents
 			.filter((agent) => agent.advertise === true);
 	};
 	const hasResultDeliveryDemand = () => {
@@ -550,9 +552,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		return missionObserverResultCandidateFiles(DIRS.results).length > 0;
 	};
 	const discoverAgentsForRuntime = (cwd: string, scope: AgentScope, preferredModelProvider?: string) => {
-		if (listRuntimeAgentConfigs(pi).length === 0) return discoverAgents(cwd, scope, preferredModelProvider);
+		const augment = <T extends ReturnType<typeof discoverAgents>>(discovered: T): T => ({
+			...discovered,
+			agents: applyBuiltinAgentAugmentations(discovered.agents, builtinAgentAugmentations),
+		});
+		if (listRuntimeAgentConfigs(pi).length === 0) return augment(discoverAgents(cwd, scope, preferredModelProvider));
 		const snapshot = discoverAgentSnapshot(cwd, scope, preferredModelProvider, { includeChains: false });
-		const discovered = snapshot.effective;
+		const discovered = augment(snapshot.effective);
 		const all = snapshot.all;
 		const configuredAgents: AgentConfig[] = [
 			...all.builtin,

@@ -1,0 +1,16 @@
+{
+	"extends": "../../../tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"declaration": false,
+		"declarationMap": false,
+		"sourceMap": false,
+		"inlineSources": false,
+		"baseUrl": "../../..",
+		"paths": {
+			"@selesai/code": ["./dist/index.d.ts"],
+			"@earendil-works/pi-coding-agent": ["./dist/index.d.ts"]
+		}
+	},
+	"include": ["./**/*.ts"]
+}

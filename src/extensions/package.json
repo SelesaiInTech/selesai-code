@@ -2,6 +2,7 @@
 	"name": "@selesai/bundled-extensions",
 	"version": "0.0.0",
 	"private": true,
+	"type": "module",
 	"description": "Built-in extensions shipped with @selesai/code, loaded via additionalExtensionPaths at boot.",
 	"pi": {
 		"extensions": [
@@ -19,6 +20,7 @@
 			"./inline-skills.ts",
 			"./rtk.ts",
 			"./tokenin-onboarding.ts",
+			"./pi-graft",
 			"./undo.ts",
 			"./pi-subagents",
 			"./pi-tool-display",

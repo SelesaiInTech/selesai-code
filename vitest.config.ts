@@ -21,6 +21,9 @@ export default defineConfig({
 			provider: "v8",
 			include: ["src/extensions/**"],
 			exclude: [
+				// Large multi-module extensions ship their own focused suites instead of
+				// being held to this suite's 100% coverage bar.
+				"src/extensions/pi-graft/**",
 				"src/extensions/pi-intercom/**",
 				"src/extensions/pi-powerline-footer/**",
 				"src/extensions/pi-rewind-hook/**",

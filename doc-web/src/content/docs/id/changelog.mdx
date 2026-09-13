@@ -3,6 +3,12 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.23 — Konteks kode Graft bundled
+
+- **Integrasi Graft native.** Selesai kini membundel konteks kode `@nanonets/graft`: memasang CLI kompatibel saat belum ada, membangun graph lokal dengan persetujuan, menyuntikkan context berbasis source yang dibatasi untuk turn coding yang memenuhi syarat, serta mengekspos enam tool retrieval semantik read-only dan command lifecycle `/graft`. Build struktural tetap lokal dan offline; build deep berbasis provider memerlukan konfirmasi terpisah.
+- **Builtin subagent sadar Graft.** `scout`, `reviewer`, `worker`, `delegate`, dan `oracle` otomatis menerima tool konteks kode read-only serta ekstensi child-only Graft saat Graft dimuat. Override tool atau ekstensi user eksplisit tetap diprioritaskan.
+- **Gateway menjaga Graft tetap aktif.** Gateway kapabilitas progresif membiarkan tool konteks kode Graft tetap aktif agar retrieval sebelum turn dan tindak lanjut presisi terus bekerja.
+
 ## 0.13.22 — Gate TPS langsung dan routing kapabilitas yang lebih tenang
 
 - **Pembacaan TPS langsung diberi gate.** Status token-per-detik langsung kini menunggu jendela sampel yang layak dan mengabaikan laju yang tidak masuk akal, alih-alih menampilkan ledakan token awal dibagi waktu berjalan yang hampir nol.

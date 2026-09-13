@@ -42,6 +42,7 @@ const BUNDLED_EXTENSION_GUIDES = {
   "./rtk.ts": "skills/rtk",
   "./agent-browser.ts": "skills/agent-browser",
   "./tokenin-onboarding.ts": "workspace/tokenin-onboarding",
+  "./pi-graft": "workspace/graft",
   "./undo.ts": "continuity/undo",
   "./pi-subagents": "delegation/pi-subagents",
   "./pi-web-agent": "research/web-agent",

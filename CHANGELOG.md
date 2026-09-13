@@ -2,6 +2,15 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.23] - 2026-09-13
+
+### Added
+- **Bundled Graft code context.** Selesai now ships native integration for `@nanonets/graft`: it installs a compatible CLI when missing, builds a consent-gated local graph, injects bounded source-backed context for eligible coding turns, and exposes six read-only semantic retrieval tools plus `/graft` lifecycle commands. Structural builds stay local and offline; deep provider-backed builds require separate confirmation.
+- **Graft-aware builtin subagents.** The `scout`, `reviewer`, `worker`, `delegate`, and `oracle` builtins automatically receive Graft's read-only code-context tools and child-only extension when Graft is loaded. Explicit user tool or extension overrides retain precedence.
+
+### Changed
+- **Capability gateway Graft exemption.** Graft's code-context tools remain active rather than becoming dormant, preserving its pre-turn retrieval and precise follow-ups.
+
 ## [0.13.22] - 2026-09-12
 
 ### Fixed

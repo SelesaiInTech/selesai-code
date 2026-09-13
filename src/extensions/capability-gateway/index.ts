@@ -6,9 +6,9 @@
  *
  * Behavior:
  * - On by default; disable via SELESAI_CAPABILITY_GATEWAY=0.
- * - At session start, extension tools (except the gateway's own tools) become
- *   dormant: they stay registered but are removed from the active tool set.
- *   Built-in tools are never touched.
+ * - At session start, extension tools become dormant except the gateway's own
+ *   tools and Graft's code-context tools: they stay registered but are removed
+ *   from the active tool set. Built-in tools are never touched.
  * - A compact catalog tool lists eligible tools/skills with one-line summaries.
  * - capability_discover validates one catalogued tool and activates its native
  *   definition for the current agent run; capability_skill_show loads exactly
@@ -40,6 +40,17 @@ import {
 export const GATEWAY_ENV = "SELESAI_CAPABILITY_GATEWAY";
 export const GATEWAY_TOOLS = new Set(["capability_catalog", "capability_discover", "capability_skill_show"]);
 
+// Graft supplies pre-turn hybrid context and must remain callable for precise
+// follow-ups; making it dormant defeats both paths.
+const ALWAYS_ACTIVE_EXTENSION_TOOLS = new Set([
+	"graft_check_freshness",
+	"graft_file_api",
+	"graft_find_all",
+	"graft_find_code",
+	"graft_repo_map",
+	"graft_trace_calls",
+]);
+
 export const CAPABILITY_INSTRUCTION = `Optional capabilities (extension tools and skills) are not listed here by default. To use one:
 - Search the compact catalog with capability_catalog (kind: "tool" or "skill", natural-language query) when no active tool fits or a specialized integration/workflow is requested.
 - Activate a catalogued tool with capability_discover, then call it normally on the next turn.
@@ -53,7 +64,7 @@ function isEnabled(): boolean {
 function eligibleTools(pi: ExtensionAPI): ToolInfo[] {
 	return pi
 		.getAllTools()
-		.filter((tool) => !GATEWAY_TOOLS.has(tool.name) && !BUILTIN_TOOL_NAMES.has(tool.name));
+		.filter((tool) => !GATEWAY_TOOLS.has(tool.name) && !ALWAYS_ACTIVE_EXTENSION_TOOLS.has(tool.name) && !BUILTIN_TOOL_NAMES.has(tool.name));
 }
 
 function catalogEntries(pi: ExtensionAPI): CatalogEntry[] {
