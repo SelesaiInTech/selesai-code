@@ -21,7 +21,7 @@ Graft gives Selesai a local semantic graph of the current Git working tree. Sele
 - Bundled with Selesai and loaded automatically in Git working trees.
 - The compatible `@nanonets/graft` CLI (`>=0.18.0 <1.0.0`) is installed automatically when missing; an incompatible user installation is never overwritten.
 - The first graph is created for you: session start, the first Graft tool call, and a completed CLI install each build the repository once.
-- That automatic build is deep when the active model is compatible (TokenIn, LiteLLM, OpenAI, Anthropic, or OrcaRouter) and local and structural otherwise.
+- That automatic build is deep when the active model is compatible (TokenIn, LiteLLM, OpenAI, Anthropic, or OrcaRouter) and local and structural otherwise. If that model cannot produce Graft-parsable summaries, the deep pass retries another model you scoped on the same provider before reporting failure.
 - `/graft build` and `/graft setup` build on demand. A deep build asks for confirmation because it sends source-derived summaries through the active Selesai model; `/graft build --structural` stays offline with no model and no API key.
 
 ## What it sets up
@@ -67,5 +67,6 @@ Graft gives Selesai a local semantic graph of the current Git working tree. Sele
 - The graph is derived context, not source of truth: inspect referenced files before changing them.
 - A structural graph is local and offline. Deep builds send source-derived material only to the active Selesai model, and its credential is passed only to that Graft child process.
 - Set `graft.enabled: false` in settings to keep automatic builds, refresh, and tools out of a session entirely.
+- Deep builds normally need no configuration: the active model is used, and other models you scoped on the same provider are tried when it cannot produce Graft-parsable summaries. Pin one explicitly with `graft.deepModel` (for example `"glm-5.3-flash"`) to skip the others.
 
 <SourceEvidence slug="pi-graft" />

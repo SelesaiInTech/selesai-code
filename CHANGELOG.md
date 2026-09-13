@@ -2,6 +2,14 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.25] - 2026-09-14
+
+### Added
+- **Graft deep-build model override.** Set `graft.deepModel` to pin a model on the active provider for Graft deep builds.
+
+### Changed
+- **Graft deep-build fallback.** When the active model returns no usable Graft summaries, the deep build retries up to two other models scoped to that provider before reporting the deep-build failure.
+
 ## [0.13.24] - 2026-09-13
 
 ### Added

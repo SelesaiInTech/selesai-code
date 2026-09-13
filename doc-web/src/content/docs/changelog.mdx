@@ -3,6 +3,11 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.25 — Graft deep-build fallback
+
+- **Graft retries usable scoped models.** When the active model cannot produce Graft-parsable summaries, the deep build tries up to two other models scoped to that provider before reporting the failure.
+- **Pin the deep-build model when needed.** Set `graft.deepModel` to use one active-provider model and skip fallback candidates.
+
 ## 0.13.24 — Graft builds itself and deep builds use the active model
 
 - **Graft builds its own graph.** A fresh repository now gets its initial graph automatically—at session start, on the first read-only tool call, and after a CLI install—instead of waiting for a manual build. A compatible active Selesai model (TokenIn, LiteLLM, OpenAI, Anthropic, or OrcaRouter) adds the deep tier; otherwise the build stays local and structural.

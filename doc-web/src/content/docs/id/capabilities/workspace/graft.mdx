@@ -21,7 +21,7 @@ Graft memberi Selesai graph semantik lokal dari Git working tree saat ini. Seles
 - Dibundel bersama Selesai dan dimuat otomatis di Git working tree.
 - CLI `@nanonets/graft` yang kompatibel (`>=0.18.0 <1.0.0`) dipasang otomatis saat belum ada; instalasi user yang tidak kompatibel tidak pernah ditimpa.
 - Graph pertama dibuat otomatis: awal sesi, panggilan tool Graft pertama, dan instalasi CLI yang selesai masing-masing membangun repository satu kali.
-- Build otomatis itu bersifat deep bila model aktif kompatibel (TokenIn, LiteLLM, OpenAI, Anthropic, atau OrcaRouter), dan lokal serta struktural bila tidak.
+- Build otomatis itu bersifat deep bila model aktif kompatibel (TokenIn, LiteLLM, OpenAI, Anthropic, atau OrcaRouter), dan lokal serta struktural bila tidak. Bila model itu tidak bisa menghasilkan ringkasan yang bisa dibaca Graft, build deep mencoba model lain yang Anda scoped pada provider yang sama sebelum melaporkan kegagalan.
 - `/graft build` dan `/graft setup` membangun sesuai permintaan. Build deep meminta konfirmasi karena mengirim ringkasan turunan source melalui model Selesai aktif; `/graft build --structural` tetap offline tanpa model dan tanpa API key.
 
 ## Yang disiapkan
@@ -67,5 +67,6 @@ Graft memberi Selesai graph semantik lokal dari Git working tree saat ini. Seles
 - Graph adalah context turunan, bukan source of truth: periksa file yang dirujuk sebelum mengubahnya.
 - Graph struktural bersifat lokal dan offline. Build deep mengirim material turunan source hanya ke model Selesai aktif, dan kredensialnya diteruskan hanya ke proses child Graft tersebut.
 - Atur `graft.enabled: false` di pengaturan untuk menyingkirkan build otomatis, refresh, dan tool dari sesi sepenuhnya.
+- Build deep biasanya tidak butuh konfigurasi: model aktif dipakai lebih dulu, lalu model lain yang Anda scoped pada provider yang sama dicoba bila model itu tidak bisa menghasilkan ringkasan yang bisa dibaca Graft. Pin satu model secara eksplisit dengan `graft.deepModel` (misalnya `"glm-5.3-flash"`).
 
 <SourceEvidence slug="pi-graft" />

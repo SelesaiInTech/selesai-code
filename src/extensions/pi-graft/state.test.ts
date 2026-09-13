@@ -240,10 +240,16 @@ describe("readGraftSettings", () => {
 				maxInjectionBytes: -1,
 				maxResultBytes: 0,
 				refreshDebounceSeconds: "60",
+				deepModel: "  ",
 				in: "   ",
 			},
 		});
 		expect(read(false)).toEqual({});
+	});
+
+	it("keeps a deep-build model override for the active provider", () => {
+		write(join(agentDir, "settings.json"), { graft: { deepModel: " glm-5.3-flash " } });
+		expect(read(false)).toEqual({ deepModel: "glm-5.3-flash" });
 	});
 
 	it("keeps a valid enabled flag and telemetry preference", () => {

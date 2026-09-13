@@ -57,6 +57,11 @@ export interface GraftSettings {
 	in?: string;
 	/** Seconds a mutation stays "changed" before a proactive refresh is attempted. */
 	refreshDebounceSeconds?: number;
+	/**
+	 * Model id for deep builds, on the active provider. Defaults to the active
+	 * model; set it when that model cannot produce Graft-parsable summaries.
+	 */
+	deepModel?: string;
 }
 
 export const SETTINGS_KEY = "graft";
@@ -97,6 +102,7 @@ function normalizeSettings(raw: unknown): GraftSettings {
 		if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) settings[key] = candidate;
 	}
 	if (typeof value.in === "string" && value.in.trim()) settings.in = value.in.trim();
+	if (typeof value.deepModel === "string" && value.deepModel.trim()) settings.deepModel = value.deepModel.trim();
 	return settings;
 }
 

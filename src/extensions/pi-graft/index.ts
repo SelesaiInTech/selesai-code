@@ -183,30 +183,92 @@ const GRAFT_PROVIDER_FOR_SELESAI_PROVIDER: Record<string, "openai" | "anthropic"
 	tokenin: "litellm",
 };
 
-/** Resolve the active Selesai model into the isolated environment Graft needs. */
-async function activeModelGraftEnvironment(ctx: ExtensionContext): Promise<NodeJS.ProcessEnv | undefined> {
+/**
+ * The deep tier either has a plan, or a human-readable reason it does not.
+ * Automatic builds fall back to the structural tier on `ok: false`; the
+ * explicit `/graft deep` command reports the reason instead.
+ */
+type DeepBuildPlan =
+	| { ok: true; env: NodeJS.ProcessEnv | undefined; models: readonly string[] }
+	| { ok: false; reason: string };
+
+/** Graft's per-symbol summary pass is model-sensitive; this is its failure signature. */
+const UNUSABLE_SUMMARIES = /no usable symbol summaries|empty-parsed/i;
+
+/**
+ * Deep-build candidates in order: an explicit `graft.deepModel` pin, the active
+ * model, then the models this session scoped on the same provider. No new
+ * setting is needed — models the user already chose are tried before giving up
+ * on the deep tier.
+ */
+function deepBuildModels(ctx: ExtensionContext, settings: { deepModel?: string }): readonly string[] {
+	const active = ctx.model;
+	const scoped = (ctx.scopedModels ?? [])
+		.map((entry) => entry.model)
+		.filter((candidate) => candidate.provider === active?.provider)
+		.map((candidate) => candidate.id);
+	const ordered = [settings.deepModel, active?.id, ...scoped].filter((id): id is string => Boolean(id));
+	return [...new Set(ordered)].slice(0, 3);
+}
+
+/**
+ * Resolve the active Selesai model into the isolated environment Graft needs.
+ *
+ * Credentials are read from Selesai's own auth storage — TokenIn keys live in
+ * `~/.selesai/agent`, not in the shell environment — and passed only to the
+ * Graft child process.
+ */
+async function resolveDeepBuildPlan(
+	ctx: ExtensionContext,
+	settings: { deepModel?: string } = {},
+): Promise<DeepBuildPlan> {
+	const models = deepBuildModels(ctx, settings);
+	// A user who already configured Graft's own provider environment outranks us.
+	if (process.env.GRAFT_PROVIDER && process.env.GRAFT_API_KEY) return { ok: true, env: undefined, models };
+
 	const model = ctx.model;
-	const provider = model ? GRAFT_PROVIDER_FOR_SELESAI_PROVIDER[model.provider] : undefined;
-	if (!provider) return undefined;
-
-	let auth: Awaited<ReturnType<typeof ctx.modelRegistry.getProviderAuth>>;
-	try {
-		auth = await ctx.modelRegistry.getProviderAuth(model.provider);
-	} catch {
-		return undefined;
+	if (!model) return { ok: false, reason: "no active model is selected" };
+	const provider = GRAFT_PROVIDER_FOR_SELESAI_PROVIDER[model.provider];
+	if (!provider) {
+		return {
+			ok: false,
+			reason: `provider "${model.provider}" has no Graft wire format (use TokenIn, LiteLLM, OpenAI, Anthropic, or OrcaRouter)`,
+		};
 	}
-	const apiKey = auth?.auth.apiKey;
-	const baseUrl = auth?.auth.baseUrl;
-	if (!apiKey || (provider === "litellm" && !baseUrl)) return undefined;
 
-	const { GRAFT_PROVIDER: _provider, GRAFT_MODEL: _model, GRAFT_API_KEY: _apiKey, GRAFT_BASE_URL: _baseUrl, ...env } = process.env;
+	let apiKey: string | undefined;
+	let authBaseUrl: string | undefined;
+	try {
+		const auth = await ctx.modelRegistry.getProviderAuth(model.provider);
+		apiKey = auth?.auth.apiKey;
+		authBaseUrl = auth?.auth.baseUrl;
+	} catch {
+		// Fall through to the missing-credential reason below.
+	}
+	if (!apiKey) return { ok: false, reason: `no credential is stored for "${model.provider}"` };
+
+	// The composed model carries the endpoint; auth only sometimes does.
+	const baseUrl = authBaseUrl || model.baseUrl || ctx.modelRegistry.getProvider(model.provider)?.baseUrl;
+	if (provider === "litellm" && !baseUrl) {
+		return { ok: false, reason: `"${model.provider}" has no base URL to send Graft to` };
+	}
+
+	const { GRAFT_PROVIDER: _p, GRAFT_MODEL: _m, GRAFT_API_KEY: _k, GRAFT_BASE_URL: _u, ...env } = process.env;
 	return {
-		...env,
-		GRAFT_PROVIDER: provider,
-		GRAFT_MODEL: model.id,
-		GRAFT_API_KEY: apiKey,
-		...(baseUrl ? { GRAFT_BASE_URL: baseUrl } : {}),
+		ok: true,
+		models,
+		env: {
+			...env,
+			GRAFT_PROVIDER: provider,
+			GRAFT_API_KEY: apiKey,
+			...(baseUrl ? { GRAFT_BASE_URL: baseUrl } : {}),
+		},
 	};
+}
+
+/** Graft's environment for one candidate model; undefined keeps the user's own GRAFT_* setup. */
+function deepEnvFor(plan: Extract<DeepBuildPlan, { ok: true }>, modelId: string): NodeJS.ProcessEnv | undefined {
+	return plan.env ? { ...plan.env, GRAFT_MODEL: modelId } : undefined;
 }
 
 export default function graftExtension(pi: ExtensionAPI): void {
@@ -278,6 +340,48 @@ export default function graftExtension(pi: ExtensionAPI): void {
 	};
 
 	/**
+	 * Build the graph: deep with a compatible active model, structural otherwise.
+	 *
+	 * A model that cannot produce Graft-parsable summaries is not fatal — the
+	 * next candidate the session already offers is tried before downgrading.
+	 */
+	const buildGraph = async (
+		ctx: ExtensionContext,
+		activeSession: GraftSession,
+		phase: "build" | "refresh" = "build",
+	): Promise<GraftRun> => {
+		const repoRoot = activeSession.repoRoot!;
+		// A refresh has already announced its own "syncing" phase at the caller.
+		const started = (deep: boolean): void => {
+			if (phase === "refresh") return;
+			if (session === activeSession && !activeSession.disposed) applyEvent(ctx, { type: "build-started", deep });
+		};
+		const structural = async (): Promise<GraftRun> => {
+			started(false);
+			return runGraft(exec, repoRoot, { kind: "build", deep: false });
+		};
+
+		const plan = await resolveDeepBuildPlan(ctx, activeSession.settings);
+		if (!plan.ok) return structural();
+
+		// The user's own GRAFT_* environment names the model; never second-guess it.
+		const candidates = plan.env ? plan.models : plan.models.slice(0, 1);
+		let failed: GraftRun | undefined;
+		for (const [index, model] of candidates.entries()) {
+			started(true);
+			const run = await runGraft(exec, repoRoot, { kind: "build", deep: true }, { env: deepEnvFor(plan, model) });
+			if (run.code === 0 || !UNUSABLE_SUMMARIES.test(`${run.stderr}\n${run.stdout}`)) return run;
+			failed = run;
+			if (index === 0 && candidates.length > 1 && ctx.hasUI) {
+				ctx.ui.notify(`Graft cannot summarize with ${model}; retrying the deep pass with another scoped model.`, "info");
+			}
+		}
+		// Nothing left to try: report the last run rather than pretending the
+		// structural tier explained the failure.
+		return failed ?? (await structural());
+	};
+
+	/**
 	 * Start the graph once. Compatible active Selesai models add the deep tier;
 	 * otherwise the free local structural tier remains usable.
 	 */
@@ -290,11 +394,7 @@ export default function graftExtension(pi: ExtensionAPI): void {
 			activeSession.state.name === "failed"
 		) return undefined;
 
-		const pending = activeModelGraftEnvironment(ctx).then(async (env) => {
-			const deep = env !== undefined;
-			if (session === activeSession && !activeSession.disposed) applyEvent(ctx, { type: "build-started", deep });
-			return runGraft(exec, activeSession.repoRoot!, { kind: "build", deep }, { env });
-		});
+		const pending = buildGraph(ctx, activeSession);
 		structuralBuildPromise = pending;
 		structuralBuildSession = activeSession;
 		void pending.then(
@@ -544,11 +644,9 @@ export default function graftExtension(pi: ExtensionAPI): void {
 
 		void (async () => {
 			try {
-				const env = await activeModelGraftEnvironment(ctx);
-				const deep = env !== undefined;
-				const run = await runGraft(exec, session.repoRoot!, { kind: "build", deep }, { env });
+				const run = await buildGraph(ctx, session, "refresh");
 				if (session.disposed) return;
-				recordBuild(ctx, run, deep);
+				recordBuild(ctx, run, run.op.kind === "build" && run.op.deep);
 			} catch (error) {
 				if (session.disposed) return;
 				applyEvent(ctx, {
@@ -584,24 +682,27 @@ export default function graftExtension(pi: ExtensionAPI): void {
 			if (!deep) {
 				const pending = autoBuild(ctx, session);
 				if (pending) return pending;
+				applyEvent(ctx, { type: "build-started", deep: false });
+				const structural = await runGraft(exec, session.repoRoot!, { kind: "build", deep: false });
+				recordBuild(ctx, structural, false);
+				return structural;
 			}
-			const env = deep ? await activeModelGraftEnvironment(ctx) : undefined;
-			if (deep && !env) {
+			const plan = await resolveDeepBuildPlan(ctx, session.settings);
+			if (!plan.ok) {
 				return {
-					op: { kind: "build", deep },
+					op: { kind: "build", deep: true },
 					argv: ["graft", "build", "--deep"],
 					cwd: session.repoRoot!,
 					code: 1,
 					stdout: "",
-					stderr: "The active Selesai model cannot be used for Graft deep builds.",
+					stderr: `No deep build is possible for the active model: ${plan.reason}.`,
 					killed: false,
 					cancelled: false,
 					timedOut: false,
 				};
 			}
-			applyEvent(ctx, { type: "build-started", deep });
-			const run = await runGraft(exec, session.repoRoot!, { kind: "build", deep }, { env });
-			recordBuild(ctx, run, deep);
+			const run = await buildGraph(ctx, session);
+			recordBuild(ctx, run, run.op.kind === "build" && run.op.deep);
 			return run;
 		},
 		runRefresh: async (ctx) => {
@@ -609,10 +710,8 @@ export default function graftExtension(pi: ExtensionAPI): void {
 			await ensureReady(ctx, { kind: "build", deep: false });
 			session.lastRefreshAt = Date.now();
 			applyEvent(ctx, { type: "refresh-started" });
-			const env = await activeModelGraftEnvironment(ctx);
-			const deep = env !== undefined;
-			const run = await runGraft(exec, session.repoRoot!, { kind: "build", deep }, { env });
-			recordBuild(ctx, run, deep);
+			const run = await buildGraph(ctx, session, "refresh");
+			recordBuild(ctx, run, run.op.kind === "build" && run.op.deep);
 			return run;
 		},
 		providerEnvNames: () => PROVIDER_ENV_NAMES.filter((name) => Boolean(process.env[name])),

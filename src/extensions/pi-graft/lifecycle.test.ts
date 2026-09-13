@@ -304,11 +304,11 @@ describe("proactive refresh", () => {
 		});
 		graftExtension(harness.pi as never);
 		const ctx = makeCtx({ cwd: bare });
+		// Mirrors the real TokenIn shape: the key lives in ~/.selesai auth storage and
+		// the endpoint comes from the composed model, not from the auth resolution.
 		Object.assign(ctx, {
-			model: { provider: "tokenin", id: "deepseek-v4-flash" },
-			modelRegistry: {
-				getProviderAuth: vi.fn(async () => ({ auth: { apiKey: "test-token", baseUrl: "https://lite.andlet.me/v1" } })),
-			},
+			model: { provider: "tokenin", id: "deepseek-v4.1-flash", baseUrl: "https://lite.andlet.me/v1" },
+			modelRegistry: { getProviderAuth: vi.fn(async () => ({ auth: { apiKey: "test-token" } })) },
 		});
 		await (handlerFor(harness, "session_start") as (e: unknown, c: unknown) => Promise<void>)(
 			{ type: "session_start", reason: "startup" },
@@ -317,7 +317,80 @@ describe("proactive refresh", () => {
 		await vi.waitFor(() => expect(ctx.statuses.get("graft")).toBe("graft: ● deep v0.18.0"));
 		const build = harness.exec.mock.calls.find((call) => (call[1] as string[]).includes("build"))!;
 		expect(build[1]).toEqual(["build", "--deep"]);
-		expect(build[2]).toMatchObject({ env: { GRAFT_PROVIDER: "litellm", GRAFT_MODEL: "deepseek-v4-flash" } });
+		expect(build[2]).toMatchObject({
+			env: {
+				GRAFT_PROVIDER: "litellm",
+				GRAFT_MODEL: "deepseek-v4.1-flash",
+				GRAFT_API_KEY: "test-token",
+				GRAFT_BASE_URL: "https://lite.andlet.me/v1",
+			},
+		});
+	});
+
+	it("retries the deep pass with another scoped model when the active one cannot summarize", async () => {
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		const bare = join(root, "retry-repo");
+		mkdirSync(join(bare, ".selesai"), { recursive: true });
+		writeFileSync(join(bare, ".selesai", "settings.json"), JSON.stringify({ graft: {} }), "utf-8");
+		const models: string[] = [];
+		const harness = makePi(async (command: string, args: string[], options?: unknown) => {
+			if (command === "git") return { ...OK, stdout: `${bare}\n` };
+			if (args.includes("--version")) return { ...OK, stdout: "0.18.0\n" };
+			if (args.includes("build")) {
+				const model = (options as { env?: Record<string, string> }).env?.GRAFT_MODEL ?? "";
+				models.push(model);
+				if (model === "deepseek-v4.1-flash") {
+					return { ...OK, code: 1, stderr: "calc.ts: model returned no usable symbol summaries [empty-parsed]" };
+				}
+				mkdirSync(join(bare, "graft", ".graph"), { recursive: true });
+				writeFileSync(join(bare, "graft", ".graph", "wiring.json"), "{}", "utf-8");
+				writeFileSync(join(bare, "graft", "concept.md"), "# Concept", "utf-8");
+			}
+			return { ...OK, stdout: ASK_JSON };
+		});
+		graftExtension(harness.pi as never);
+		const ctx = makeCtx({ cwd: bare });
+		Object.assign(ctx, {
+			model: { provider: "tokenin", id: "deepseek-v4.1-flash", baseUrl: "https://lite.andlet.me/v1" },
+			modelRegistry: { getProviderAuth: vi.fn(async () => ({ auth: { apiKey: "test-token" } })) },
+			scopedModels: [{ model: { provider: "tokenin", id: "glm-5.3-flash" } }],
+		});
+		await (handlerFor(harness, "session_start") as (e: unknown, c: unknown) => Promise<void>)(
+			{ type: "session_start", reason: "startup" },
+			ctx,
+		);
+		await vi.waitFor(() => expect(ctx.statuses.get("graft")).toBe("graft: ● deep v0.18.0"));
+		expect(models).toEqual(["deepseek-v4.1-flash", "glm-5.3-flash"]);
+		expect(notified(ctx)).toContain("retrying the deep pass");
+	});
+
+	it("falls back to the structural build when the active model cannot go deep", async () => {
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		const bare = join(root, "fallback-repo");
+		mkdirSync(join(bare, ".selesai"), { recursive: true });
+		writeFileSync(join(bare, ".selesai", "settings.json"), JSON.stringify({ graft: {} }), "utf-8");
+		const harness = makePi(async (command: string, args: string[]) => {
+			if (command === "git") return { ...OK, stdout: `${bare}\n` };
+			if (args.includes("--version")) return { ...OK, stdout: "0.18.0\n" };
+			if (args.includes("build")) {
+				mkdirSync(join(bare, "graft", ".graph"), { recursive: true });
+				writeFileSync(join(bare, "graft", ".graph", "wiring.json"), "{}", "utf-8");
+			}
+			return { ...OK, stdout: ASK_JSON };
+		});
+		graftExtension(harness.pi as never);
+		const ctx = makeCtx({ cwd: bare });
+		Object.assign(ctx, {
+			model: { provider: "google", id: "gemini-3-pro" },
+			modelRegistry: { getProviderAuth: vi.fn(async () => ({ auth: { apiKey: "test-key" } })) },
+		});
+		await (handlerFor(harness, "session_start") as (e: unknown, c: unknown) => Promise<void>)(
+			{ type: "session_start", reason: "startup" },
+			ctx,
+		);
+		await vi.waitFor(() => expect(ctx.statuses.get("graft")).toBe("graft: ● structural v0.18.0"));
+		const build = harness.exec.mock.calls.find((call) => (call[1] as string[]).includes("build"))!;
+		expect(build[1]).toEqual(["build"]);
 	});
 
 	it("re-indexes after edits, shows the sync phase, and returns to fresh", async () => {

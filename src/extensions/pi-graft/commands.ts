@@ -330,7 +330,7 @@ export function registerGraftCommands(pi: ExtensionAPI, runtime: GraftCommandRun
 								? "Set up Graft for this repository?"
 								: "Build the Graft graph?",
 						deep
-							? `This runs \`graft build --deep\` in ${repo}.\n\nThe structural graph stays local and deterministic. The deep pass summarizes each changed file and extracts per-symbol cruxes using Selesai's active compatible model, so source-derived content leaves this machine. Its credential is passed only to this Graft child process.\n\nFiles it can write:\n${buildEffects(true)}`
+							? `This runs \`graft build --deep\` in ${repo}.\n\nThe structural graph stays local and deterministic. The deep pass summarizes each changed file and extracts per-symbol cruxes using Selesai's active compatible model, falling back to another model you scoped on the same provider when that model cannot produce Graft summaries. Source-derived content leaves this machine either way. Credentials are passed only to this Graft child process.\n\nFiles it can write:\n${buildEffects(true)}`
 							: `This runs \`graft build\` in ${repo} and can write:\n\n${buildEffects(false)}`,
 						manualCommand,
 					);

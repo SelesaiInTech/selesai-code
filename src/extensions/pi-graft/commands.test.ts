@@ -387,7 +387,7 @@ describe("mutation-capable commands", () => {
 		const [title, message] = ctx.ui.confirm.mock.calls[0] as [string, string];
 		expect(title).toContain("provider-backed");
 		expect(message).toContain("leaves this machine");
-		expect(message).toContain("credential is passed only to this Graft child process");
+		expect(message).toContain("Credentials are passed only to this Graft child process");
 		expect(harness.runBuild).toHaveBeenCalledWith(true, ctx);
 	});
 

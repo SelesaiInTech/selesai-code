@@ -3,6 +3,11 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.25 — Fallback build deep Graft
+
+- **Graft mencoba ulang model scoped yang dapat digunakan.** Saat model aktif tidak dapat menghasilkan ringkasan yang bisa dibaca Graft, build deep mencoba hingga dua model lain yang di-scope pada provider tersebut sebelum melaporkan kegagalan.
+- **Kunci model build deep bila perlu.** Atur `graft.deepModel` untuk memakai satu model pada provider aktif dan melewati kandidat fallback.
+
 ## 0.13.24 — Graft membangun graph-nya sendiri dan build deep memakai model aktif
 
 - **Graft membangun graph-nya sendiri.** Repository baru kini otomatis mendapat graph awalnya—saat sesi dimulai, pada panggilan tool read-only pertama, dan setelah instalasi CLI—alih-alih menunggu build manual. Model Selesai aktif yang kompatibel (TokenIn, LiteLLM, OpenAI, Anthropic, atau OrcaRouter) menambahkan tier deep; jika tidak, build tetap lokal dan struktural.
