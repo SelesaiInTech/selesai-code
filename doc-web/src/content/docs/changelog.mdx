@@ -3,6 +3,13 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.26 — Goal-preserving auto handoff and refreshed model catalog
+
+- **Automatic handoff keeps the big picture.** Auto-handoff now runs with the same goal text as `/handoff-new`, so the continuation prompt carries the overall objective, success criteria, key decisions, reference files, completed and remaining work, and the next concrete action.
+- **Failed handoffs report the real error.** A failed or empty handoff generation now shows the underlying error instead of "Cancelled" and rejects the command; the automatic handoff retries on the next settled turn while the session stays above the threshold.
+- **RPC handoff keeps the session name.** `handoff_new` now carries the current session name into the replacement session, matching `/handoff-new`.
+- **Default model catalog refreshed.** Added `glm-5.3` (1M context), `kimi-k3` (512K), and `gemini-3.7-flash`; `celestial-pro` accepts images; `deepseek-v4.1-flash` uses 64K max output tokens. `deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`, `kimi-k2.7-code`, and `glm-5.2` are retired from the bundled catalog (`glm-5.3` supersedes `glm-5.2`).
+
 ## 0.13.25 — Graft deep-build fallback
 
 - **Graft retries usable scoped models.** When the active model cannot produce Graft-parsable summaries, the deep build tries up to two other models scoped to that provider before reporting the failure.

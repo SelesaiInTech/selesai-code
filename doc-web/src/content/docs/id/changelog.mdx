@@ -3,6 +3,13 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.26 — Handoff otomatis yang menjaga tujuan dan katalog model yang diperbarui
+
+- **Handoff otomatis menjaga gambaran besar.** Handoff otomatis kini memakai teks goal yang sama dengan `/handoff-new`, sehingga prompt kelanjutan membawa tujuan utama, kriteria sukses, keputusan penting, file referensi, pekerjaan yang selesai dan tersisa, serta aksi konkret berikutnya.
+- **Handoff yang gagal melaporkan error sebenarnya.** Pembuatan handoff yang gagal atau kosong kini menampilkan error aslinya alih-alih "Cancelled" dan menolak perintah; handoff otomatis mencoba lagi pada turn settled berikutnya selama sesi masih di atas threshold.
+- **Handoff RPC mempertahankan nama sesi.** `handoff_new` kini membawa nama sesi saat ini ke sesi pengganti, sama seperti `/handoff-new`.
+- **Katalog model default diperbarui.** Menambahkan `glm-5.3` (konteks 1M), `kimi-k3` (512K), dan `gemini-3.7-flash`; `celestial-pro` menerima gambar; `deepseek-v4.1-flash` memakai maksimum 64K token output. `deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`, `kimi-k2.7-code`, dan `glm-5.2` dipensiunkan dari katalog bawaan (`glm-5.3` menggantikan `glm-5.2`).
+
 ## 0.13.25 — Fallback build deep Graft
 
 - **Graft mencoba ulang model scoped yang dapat digunakan.** Saat model aktif tidak dapat menghasilkan ringkasan yang bisa dibaca Graft, build deep mencoba hingga dua model lain yang di-scope pada provider tersebut sebelum melaporkan kegagalan.

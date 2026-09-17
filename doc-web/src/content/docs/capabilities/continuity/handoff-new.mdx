@@ -30,6 +30,7 @@ The `handoff-new` extension creates a fresh continuation prompt from the current
 - Calls the configured model with a system prompt that asks for a handoff document and preserves branch structure around compaction summaries.
 - Starts a new session whose parent is the current session file, seeded with the generated handoff text. The current session's name is carried over as the new session's starting name.
 - Emits a `handoff-new` custom entry in the current session as a breadcrumb.
+- Runs automatically when configured: with `autoHandoff.enabled` and the context above `autoHandoff.thresholdTokens`, the TUI triggers the same command at the end of a turn (once per threshold crossing, retrying on the next settled turn if generation fails).
 
 ## What you can configure
 
@@ -53,7 +54,7 @@ The `handoff-new` extension creates a fresh continuation prompt from the current
 ## Limits and safety
 
 - The model prompt explicitly asks it to redact sensitive information such as API keys, passwords, or PII, but you should still inspect the generated handoff before it is submitted.
-- Handoff generation requires a working model and API key. If generation fails, no new session is created.
+- Handoff generation requires a working model and API key. If generation fails or returns no text, the error is reported, the command rejects, and no new session is created.
 - The original session remains intact and can still be resumed or navigated via `/tree`.
 - The `selesai-handoff` skill is a companion resource; it is not a separate bundled extension entrypoint.
 

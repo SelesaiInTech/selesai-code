@@ -226,11 +226,11 @@ describe("handoff-new extension", () => {
 		expect(calls.newSession).not.toBeNull();
 	});
 
-	it("non-tui mode generation error notifies and opens no session", async () => {
+	it("non-tui mode generation error notifies, rejects, and opens no session", async () => {
 		(complete as any).mockRejectedValueOnce(new Error("api down"));
 		const { commands } = createPiHarness();
 		const { ctx, calls } = createCtx({ mode: "rpc" });
-		await commands.get("handoff-new")!.handler("goal", ctx);
+		await expect(commands.get("handoff-new")!.handler("goal", ctx)).rejects.toThrow("api down");
 		expect(calls.newSession).toBeNull();
 		expect(calls.notify.some((n) => /api down/.test(n.msg))).toBe(true);
 	});
@@ -259,10 +259,10 @@ describe("handoff-new extension", () => {
 		expect(calls.notify.some((n) => /Cancelled/.test(n.msg))).toBe(true);
 	});
 
-	it("empty generated handoff does not open a blank session", async () => {
+	it("empty generated handoff notifies, rejects, and opens no blank session", async () => {
 		const { commands } = createPiHarness();
 		const { ctx, calls } = createCtx({ customResult: "  " });
-		await commands.get("handoff-new")!.handler("goal", ctx);
+		await expect(commands.get("handoff-new")!.handler("goal", ctx)).rejects.toThrow("returned no text");
 		expect(calls.newSession).toBeNull();
 		expect(calls.notify.some((n) => /returned no text/.test(n.msg))).toBe(true);
 	});
@@ -358,29 +358,29 @@ describe("handoff-new extension", () => {
 		expect(calls.notify.some((n) => /Cancelled/.test(n.msg))).toBe(true);
 	});
 
-	it("factory: missing API key throws and notifies Cancelled", async () => {
+	it("factory: missing API key notifies and rejects", async () => {
 		const { commands } = createPiHarness();
 		const { ctx, calls } = createFactoryCtx({ auth: { ok: true, error: "no key" } });
-		await commands.get("handoff-new")!.handler("goal", ctx);
+		await expect(commands.get("handoff-new")!.handler("goal", ctx)).rejects.toThrow("No API key");
 		expect(calls.newSession).toBeNull();
-		expect(calls.notify.some((n) => /Cancelled/.test(n.msg))).toBe(true);
+		expect(calls.notify.some((n) => /No API key/.test(n.msg))).toBe(true);
 	});
 
-	it("factory: auth error throws and notifies Cancelled", async () => {
+	it("factory: auth error notifies and rejects", async () => {
 		const { commands } = createPiHarness();
 		const { ctx, calls } = createFactoryCtx({ auth: { ok: false, error: "auth failed" } });
-		await commands.get("handoff-new")!.handler("goal", ctx);
+		await expect(commands.get("handoff-new")!.handler("goal", ctx)).rejects.toThrow("auth failed");
 		expect(calls.newSession).toBeNull();
-		expect(calls.notify.some((n) => /Cancelled/.test(n.msg))).toBe(true);
+		expect(calls.notify.some((n) => /auth failed/.test(n.msg))).toBe(true);
 	});
 
-	it("factory: complete rejection is caught and notifies Cancelled", async () => {
+	it("factory: complete rejection notifies and rejects", async () => {
 		(complete as any).mockRejectedValueOnce(new Error("network down"));
 		const { commands } = createPiHarness();
 		const { ctx, calls } = createFactoryCtx({});
-		await commands.get("handoff-new")!.handler("goal", ctx);
+		await expect(commands.get("handoff-new")!.handler("goal", ctx)).rejects.toThrow("network down");
 		expect(calls.newSession).toBeNull();
-		expect(calls.notify.some((n) => /Cancelled/.test(n.msg))).toBe(true);
+		expect(calls.notify.some((n) => /network down/.test(n.msg))).toBe(true);
 	});
 
 	it("factory: loader onAbort resolves null", async () => {

@@ -14,7 +14,7 @@
           "id": "celestial-pro",
           "name": "Celestial Pro",
           "reasoning": true,
-          "input": ["text"],
+          "input": ["text", "image"],
           "contextWindow": 393216,
           "maxTokens": 64000,
           "thinkingLevelMap": {
@@ -68,50 +68,12 @@
             }
         },
         {
-          "id": "deepseek-v4-flash",
-          "name": "DeepSeek V4 Flash",
-          "reasoning": true,
-          "input": ["text"],
-          "contextWindow": 512000,
-          "maxTokens": 64000,
-          "thinkingLevelMap": {
-            "minimal": null,
-            "low": null,
-            "medium": null,
-            "high": "high",
-            "xhigh": null,
-            "max": "max"
-          },
-          "compat": {
-            "requiresReasoningContentOnAssistantMessages": true
-            }
-        },
-        {
-          "id": "deepseek-v4-flash-vision-exp",
-          "name": "DeepSeek V4 Flash Vision Exp",
-          "reasoning": true,
-          "input": ["text", "image"],
-          "contextWindow": 512000,
-          "maxTokens": 128000,
-          "thinkingLevelMap": {
-            "minimal": null,
-            "low": null,
-            "medium": null,
-            "high": "high",
-            "xhigh": null,
-            "max": "max"
-          },
-          "compat": {
-            "requiresReasoningContentOnAssistantMessages": true
-            }
-        },
-        {
           "id": "deepseek-v4.1-flash",
           "name": "DeepSeek V4.1 Flash",
           "reasoning": true,
           "input": ["text", "image"],
           "contextWindow": 512000,
-          "maxTokens": 128000,
+          "maxTokens": 64000,
           "thinkingLevelMap": {
             "minimal": null,
             "low": null,
@@ -205,38 +167,6 @@
             "high": "high",
             "xhigh": null,
             "max": "max"
-          }
-        },
-        {
-          "id": "kimi-k2.7-code",
-          "name": "Kimi K2.7 Code",
-          "reasoning": true,
-          "input": ["text", "image"],
-          "contextWindow": 262128,
-          "maxTokens": 64000,
-          "thinkingLevelMap": {
-            "minimal": null,
-            "low": "low",
-            "medium": null,
-            "high": "high",
-            "xhigh": null,
-            "max": "max"
-          }
-        },
-        {
-          "id": "glm-5.2",
-          "name": "GLM-5.2",
-          "reasoning": true,
-          "input": ["text"],
-          "contextWindow": 1000000,
-          "maxTokens": 64000,
-          "thinkingLevelMap": {
-            "minimal": null,
-            "low": "low",
-            "medium": null,
-            "high": "high",
-            "xhigh": null,
-            "max": null
           }
         },
         {

@@ -30,6 +30,7 @@ Extension `handoff-new` membuat prompt kelanjutan segar dari percakapan saat ini
 - Memanggil model yang dikonfigurasi dengan system prompt yang meminta dokumen handoff dan mempertahankan struktur branch di sekitar ringkasan kompaksi.
 - Memulai sesi baru yang parent-nya adalah file sesi saat ini, diisi dengan teks handoff yang dibuat. Nama sesi saat ini dibawa sebagai nama awal sesi baru.
 - Memancarkan entri kustom `handoff-new` di sesi saat ini sebagai jejak.
+- Berjalan otomatis bila dikonfigurasi: dengan `autoHandoff.enabled` dan konteks di atas `autoHandoff.thresholdTokens`, TUI memicu perintah yang sama di akhir turn (sekali per pelanggaran threshold, mencoba lagi pada turn settled berikutnya jika pembuatan gagal).
 
 ## Yang dapat dikonfigurasi
 
@@ -53,7 +54,7 @@ Extension `handoff-new` membuat prompt kelanjutan segar dari percakapan saat ini
 ## Batasan dan keamanan
 
 - Prompt model secara eksplisit meminta redaksi informasi sensitif seperti API key, password, atau PII, tetapi Anda tetap harus memeriksa handoff yang dibuat sebelum dikirim.
-- Pembuatan handoff memerlukan model dan API key yang berfungsi. Jika pembuatan gagal, tidak ada sesi baru yang dibuat.
+- Pembuatan handoff memerlukan model dan API key yang berfungsi. Jika pembuatan gagal atau tidak menghasilkan teks, error dilaporkan, perintah ditolak, dan tidak ada sesi baru yang dibuat.
 - Sesi asli tetap utuh dan masih dapat dilanjutkan atau dinavigasi via `/tree`.
 - Skill `selesai-handoff` adalah resource pendamping; bukan entrypoint extension bundled yang terpisah.
 

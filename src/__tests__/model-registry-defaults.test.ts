@@ -21,9 +21,9 @@ describe("model registry bundled defaults", () => {
 		const registry = new ModelRegistry(
 			await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: join(dir, "models.json") }),
 		);
-		const model = registry.find("tokenin", "glm-5.2");
+		const model = registry.find("tokenin", "glm-5.3");
 
-		expect(model?.name).toBe("GLM-5.2");
+		expect(model?.name).toBe("GLM-5.3");
 		expect(model?.baseUrl).toBe("https://lite.andlet.me/v1");
 		expect(registry.hasConfiguredAuth(model!)).toBe(false);
 
@@ -37,7 +37,7 @@ describe("model registry bundled defaults", () => {
 		const registry = new ModelRegistry(
 			await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: join(dir, "models.json") }),
 		);
-		for (const id of ["celestial-pro", "celestial-max", "celestial-ultra", "deepseek-v4-flash", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"]) {
+		for (const id of ["celestial-pro", "celestial-max", "celestial-ultra", "deepseek-v4.1-flash", "deepseek-v4-pro"]) {
 			const model = registry.find("tokenin", id);
 			expect(model?.compat?.requiresReasoningContentOnAssistantMessages, id).toBe(true);
 		}
@@ -51,7 +51,6 @@ describe("model registry bundled defaults", () => {
 			expect(registry.find("tokenin", id)).toMatchObject({
 				input: ["text", "image"],
 				contextWindow: 512000,
-				maxTokens: 128000,
 			});
 		}
 	});
@@ -62,9 +61,9 @@ describe("model registry bundled defaults", () => {
 		const registry = new ModelRegistry(
 			await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: join(dir, "models.json") }),
 		);
-		const model = registry.find("tokenin", "glm-5.2");
+		const model = registry.find("tokenin", "glm-5.3");
 
-		expect(model?.name).toBe("GLM-5.2");
+		expect(model?.name).toBe("GLM-5.3");
 		expect(registry.hasConfiguredAuth(model!)).toBe(true);
 	});
 
@@ -90,6 +89,6 @@ describe("model registry bundled defaults", () => {
 
 		expect(registry.find("custom", "first")).toBeUndefined();
 		expect(registry.find("custom", "second")?.id).toBe("second");
-		expect(registry.find("tokenin", "glm-5.2")?.id).toBe("glm-5.2");
+		expect(registry.find("tokenin", "glm-5.3")?.id).toBe("glm-5.3");
 	});
 });

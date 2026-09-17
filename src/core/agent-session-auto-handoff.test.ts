@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Type } from "typebox";
 import { AgentSession } from "./agent-session.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
+import { AUTO_HANDOFF_GOAL } from "./handoff.ts";
 import type { ResolvedCommand, ToolDefinition } from "./extensions/types.ts";
 import { SettingsManager } from "./settings-manager.ts";
 
@@ -110,6 +111,12 @@ describe("AgentSession tools", () => {
 });
 
 describe("AgentSession auto handoff", () => {
+	it("uses a goal that preserves the overall objective and continuation details", () => {
+		expect(AUTO_HANDOFF_GOAL).toMatch(/overall objective/i);
+		expect(AUTO_HANDOFF_GOAL).toMatch(/next concrete action/i);
+		expect(AUTO_HANDOFF_GOAL).toMatch(/reference files/i);
+	});
+
 	it("invokes handoff-new once when enabled and threshold reached in tui mode", async () => {
 		const command = { handler: vi.fn() } as unknown as ResolvedCommand;
 		const { session, getCommand, createCommandContext, emitError } = createMockSession({
@@ -124,7 +131,7 @@ describe("AgentSession auto handoff", () => {
 		expect(getCommand).toHaveBeenCalledWith("handoff-new");
 		expect(createCommandContext).toHaveBeenCalled();
 		expect(command.handler).toHaveBeenCalledTimes(1);
-		expect(command.handler).toHaveBeenCalledWith("", expect.anything());
+		expect(command.handler).toHaveBeenCalledWith(AUTO_HANDOFF_GOAL, expect.anything());
 		expect(emitError).not.toHaveBeenCalled();
 	});
 
@@ -210,15 +217,18 @@ describe("AgentSession auto handoff", () => {
 		expect(getCommand).toHaveBeenCalledWith("handoff-new");
 	});
 
-	it("emits error when handoff-new throws but does not rethrow", async () => {
+	it("emits an error and retries on the next check when handoff-new fails", async () => {
 		const command = {
 			handler: vi.fn(() => Promise.reject(new Error("boom"))),
 		} as unknown as ResolvedCommand;
 		const { session, emitError } = createMockSession({ enabled: true, tokens: 200_000, command });
 
 		await expect((session as any)._checkAutoHandoff()).resolves.toBeUndefined();
+		await expect((session as any)._checkAutoHandoff()).resolves.toBeUndefined();
 
-		expect(emitError).toHaveBeenCalledWith({
+		expect(command.handler).toHaveBeenCalledTimes(2);
+		expect(emitError).toHaveBeenCalledTimes(2);
+		expect(emitError).toHaveBeenLastCalledWith({
 			extensionPath: "command:handoff-new",
 			event: "auto-handoff",
 			error: "boom",

@@ -598,8 +598,12 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				if (!session.model) return error(id, "handoff_new", "No model selected");
 				try {
 					const handoff = await generateHandoff(session.model, session.modelRuntime, session.sessionManager.getBranch(), command.goal);
+					const sessionName = session.sessionManager.getSessionName();
 					const result = await runtimeHost.newSession({
 						parentSession: session.sessionManager.getSessionFile(),
+						setup: async (replacementManager) => {
+							if (sessionName) replacementManager.appendSessionInfo(sessionName);
+						},
 						withSession: async (replacementSession) => replacementSession.sendUserMessage(handoff),
 					});
 					if (!result.cancelled) await rebindSession();

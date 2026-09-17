@@ -2,6 +2,17 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.26] - 2026-09-18
+
+### Added
+- **Goal-preserving automatic handoff.** The automatic handoff now runs with the same goal text as an explicit `/handoff-new`, so the continuation prompt keeps the overarching objective, success criteria, key decisions, reference files, and the next concrete action. `AUTO_HANDOFF_GOAL` is exported from the core handoff module.
+
+### Changed
+- **Failed handoffs retry instead of silently stopping.** A failed or empty handoff generation now surfaces the underlying error (previously reported as "Cancelled") and rejects the command, and the automatic handoff retries on the next settled turn while the session stays above the threshold.
+- **RPC handoff keeps the session name.** `handoff_new` carries the current session name into the replacement session, matching `/handoff-new`.
+- **Default model catalog refreshed.** Added `glm-5.3` (1M context, text+image), `kimi-k3` (512K), and `gemini-3.7-flash`; `celestial-pro` now accepts images; `deepseek-v4.1-flash` uses 64K max output tokens.
+- **Retired default models.** `deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`, `kimi-k2.7-code`, and `glm-5.2` are no longer in the bundled Token-In catalog (`glm-5.3` supersedes `glm-5.2`). User-level `models.json` entries are unaffected.
+
 ## [0.13.25] - 2026-09-14
 
 ### Added

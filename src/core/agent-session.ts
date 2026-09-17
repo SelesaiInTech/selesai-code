@@ -67,6 +67,7 @@ import {
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import { AUTO_HANDOFF_GOAL } from "./handoff.ts";
 import {
 	type ContextUsage,
 	type ExtensionCommandContextActions,
@@ -678,7 +679,6 @@ export class AgentSession {
 		}
 
 		if (this._autoHandoffTriggered) return;
-		this._autoHandoffTriggered = true;
 
 		// Auto-handoff is TUI-only: it runs at agent_settled, and headless/print
 		// modes should not churn sessions on their own. The handoff-new command
@@ -688,10 +688,13 @@ export class AgentSession {
 		const command = this._extensionRunner.getCommand("handoff-new");
 		if (!command) return;
 
+		this._autoHandoffTriggered = true;
 		const ctx = this._extensionRunner.createCommandContext();
 		try {
-			await command.handler("", ctx);
+			await command.handler(AUTO_HANDOFF_GOAL, ctx);
 		} catch (err) {
+			// Retry on the next settled turn while the session remains above the threshold.
+			this._autoHandoffTriggered = false;
 			this._extensionRunner.emitError({
 				extensionPath: "command:handoff-new",
 				event: "auto-handoff",

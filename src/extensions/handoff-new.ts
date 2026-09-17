@@ -74,15 +74,20 @@ async function handoffNew(args: string, ctx: ExtensionCommandContext) {
 	const aiContext = buildAiContext(conversationText, goal);
 
 	let result: string | null;
+	let generationError: unknown;
 	if (ctx.mode === "tui") {
+		let cancelled = false;
 		result = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
 			const loader = new BorderedLoader(tui, theme, `Generating handoff prompt...`);
-			loader.onAbort = () => done(null);
+			loader.onAbort = () => {
+				cancelled = true;
+				done(null);
+			};
 
 			generateHandoffText(ctx, aiContext, loader.signal)
 				.then(done)
 				.catch((err) => {
-					console.error("handoff-new generation failed:", err);
+					if (!cancelled) generationError = err;
 					done(null);
 				});
 
@@ -94,18 +99,24 @@ async function handoffNew(args: string, ctx: ExtensionCommandContext) {
 		try {
 			result = await generateHandoffText(ctx, aiContext, ctx.signal);
 		} catch (err) {
-			ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
-			return;
+			generationError = err;
+			result = null;
 		}
 	}
 
+	if (generationError !== undefined) {
+		const error = generationError instanceof Error ? generationError : new Error(String(generationError));
+		ctx.ui.notify(error.message, "error");
+		throw error;
+	}
 	if (result === null) {
 		ctx.ui.notify("Cancelled", "info");
 		return;
 	}
 	if (!result.trim()) {
-		ctx.ui.notify("Handoff generation returned no text", "error");
-		return;
+		const error = new Error("Handoff generation returned no text");
+		ctx.ui.notify(error.message, "error");
+		throw error;
 	}
 
 	// Read the name before newSession: the original ctx is invalidated once

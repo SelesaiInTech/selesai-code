@@ -6,6 +6,7 @@ import { serializeConversation } from "./compaction/utils.ts";
 import { convertToLlm } from "./messages.ts";
 
 export const DEFAULT_HANDOFF_GOAL = "Continue the previous session from this handoff.";
+export const AUTO_HANDOFF_GOAL = `Continue the previous session without losing its direction. Preserve the big picture: the overall objective, why the work matters, the intended outcome and success criteria, the current approach and key decisions, relevant constraints, exact reference files or artifacts, completed and remaining work, known failures or test results, and the next concrete action. Make clear how the immediate next step contributes to the overall goal.`;
 
 const SYSTEM_PROMPT = `Write a handoff document for a fresh agent to continue the current conversation. Return only the handoff document text; do not save a file or describe saving one. No question, no fluff, just write the handoff. Do not reproduce, quote, or reformat the conversation history or its tool calls — distill it into what matters; never emit transcript-style markup or raw tool-call text.
 
