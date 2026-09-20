@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AgentSession } from "./agent-session.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
+import { SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
 
 function createMockSession() {
@@ -50,7 +51,7 @@ function createMockSession() {
 
 	const session = new AgentSession({
 		agent: agent as unknown as never,
-		sessionManager: { getBranch: () => [], appendMessage: vi.fn() } as unknown as never,
+		sessionManager: SessionManager.inMemory(),
 		settingsManager: settings,
 		cwd: "/tmp",
 		resourceLoader: resourceLoader as unknown as never,
