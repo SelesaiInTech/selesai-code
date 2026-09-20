@@ -52,7 +52,8 @@ export function createWebExploreTool({
     const synthesized = synthesizeAnswer({
       evidence: result.evidence,
       partial: result.decision.action !== 'answer',
-      caveatReasons: result.metadata?.caveatReasons as EvidenceCaveatReason[] | undefined
+      caveatReasons: result.metadata?.caveatReasons as EvidenceCaveatReason[] | undefined,
+      failureReason: result.metadata?.failureReason
     });
 
     const shaped: WebExploreResponse = {

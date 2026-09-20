@@ -34,7 +34,7 @@ export function buildExplorePresentation(result: WebExploreResponse): Presentati
   const hasEvidence = result.findings.length > 0 || result.sources.length > 0;
   const evidenceLines = hasEvidence
     ? result.findings.map((finding, index) => `- [${internalReaderLabel(result.sources[index]?.method)}] ${finding}`)
-    : ['No usable evidence found.'];
+    : [result.metadata?.failureReason ? `No usable evidence: ${result.metadata.failureReason}` : 'No usable evidence found.'];
   const preview = [
     ...evidenceLines,
     internalSummary ? `\n${internalSummary}` : undefined
@@ -55,7 +55,9 @@ export function buildExplorePresentation(result: WebExploreResponse): Presentati
 
   const compact = hasEvidence
     ? `Reviewed ${result.sources.length} sources · synthesized answer with ${result.findings.length} findings`
-    : 'No usable evidence found';
+    : result.metadata?.failureReason
+      ? `No usable evidence: ${result.metadata.failureReason}`
+      : 'No usable evidence found';
 
   return {
     mode: 'compact',

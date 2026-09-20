@@ -28,23 +28,27 @@ function joinReasons(reasons: string[]) {
   return `${reasons.slice(0, -1).join(', ')}, and ${reasons.at(-1)}`;
 }
 
-function caveatText(partial: boolean, caveatReasons: EvidenceCaveatReason[] = []) {
+function caveatText(partial: boolean, caveatReasons: EvidenceCaveatReason[] = [], failureReason?: string) {
   if (!partial) return undefined;
   const specificReasons = caveatReasons.map(sentenceForReason);
   if (specificReasons.length > 0) {
     return `Evidence is partial: ${joinReasons(specificReasons)}.`;
   }
+  // With nothing to show, the budget line is a cover-up: say what actually failed.
+  if (failureReason) return `No usable evidence: ${failureReason}`;
   return 'Evidence is partial, so this answer is based on the strongest source found within the bounded research budget.';
 }
 
 export function synthesizeAnswer({
   evidence,
   partial,
-  caveatReasons = []
+  caveatReasons = [],
+  failureReason
 }: {
   evidence: ResearchEvidence[];
   partial: boolean;
   caveatReasons?: EvidenceCaveatReason[];
+  failureReason?: string;
 }) {
   const findings = evidence.slice(0, 5).map((item) => {
     const summary = normalizeSummary(item.summary);
@@ -55,6 +59,6 @@ export function synthesizeAnswer({
 
   return {
     findings,
-    caveat: caveatText(partial, caveatReasons)
+    caveat: caveatText(partial, caveatReasons, failureReason)
   };
 }

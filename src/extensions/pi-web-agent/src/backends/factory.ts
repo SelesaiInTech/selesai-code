@@ -213,13 +213,21 @@ export function createBackendSet(
     });
   }
 
-  // Keep the keyless Tavily safety net for the no-key DuckDuckGo default, even under fanout —
-  // it wraps whatever search ended up being (plain DDG or the fanout set) so a total failure
-  // still has somewhere to go. Opt out with PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK=1.
+  // The keyless Tavily safety net, kept even under fanout — it wraps whatever search ended up
+  // being so a total failure still has somewhere to go. It used to arm only for the bare
+  // no-account DuckDuckGo default, which skipped every hosted provider configured with
+  // `fallback: duckduckgo`: when that fallback then hit a DNS-blocked or bot-walled DuckDuckGo
+  // the whole search died even though keyless Tavily was sitting right there. Arm it whenever
+  // DuckDuckGo is reachable in the chain. Opt out with PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK=1.
   const keylessFallbackDisabled = process.env.PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK === '1';
-  const usingDuckDuckGoDefault =
-    config.search.provider === 'duckduckgo' || !config.search.provider;
-  if (usingDuckDuckGoDefault && !keylessFallbackDisabled) {
+  // Fanout with no explicit provider list means "all usable", which always includes DuckDuckGo.
+  const fanoutActive = config.search.fanout?.mode !== undefined && config.search.fanout.mode !== 'off';
+  const duckDuckGoInChain =
+    !config.search.provider ||
+    config.search.provider === 'duckduckgo' ||
+    config.search.fallback === 'duckduckgo' ||
+    (fanoutActive && (config.search.fanout?.providers?.includes('duckduckgo') ?? true));
+  if (duckDuckGoInChain && !keylessFallbackDisabled) {
     search = withSearchFallback(search, createTavilySearch({ keyless: true }), 'duckduckgo');
   }
 

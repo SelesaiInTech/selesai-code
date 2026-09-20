@@ -48,6 +48,8 @@ export type ResearchRunMetadata = {
   fetchedPages: number;
   headlessAttempts: number;
   exhaustedBudget: boolean;
+  caveatReasons?: string[];
+  failureReason?: string;
   fanoutProviders?: SearchProviderName[];
   fanoutSkipped?: SearchProviderName[];
 };

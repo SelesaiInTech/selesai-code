@@ -136,6 +136,9 @@ function buildMetadata({
     headlessAttempts,
     exhaustedBudget,
     caveatReasons,
+    // The first gap is why the run came up dry; it was collected and then thrown away, which
+    // is how a DNS-blocked DuckDuckGo surfaced as a contentless "No usable evidence found".
+    failureReason: allEvidence.length === 0 ? allGaps[0]?.message : undefined,
     fanoutProviders,
     fanoutSkipped
   };

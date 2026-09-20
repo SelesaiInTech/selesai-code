@@ -6,7 +6,10 @@ import type { SearchResult, WebSearchResponse } from '../types.js';
 
 export const TOKENIN_SEARCH_TOOL_NAME = 'firecrawl';
 export const TOKENIN_DEFAULT_BASE_URL = 'https://lite.andlet.me/v1';
-const TOKENIN_SEARCH_TIMEOUT_MS = 10_000;
+// ponytail: measured 20-36s per query through the LiteLLM proxy, so the old 10s ceiling
+// aborted every search and quietly punted to the fallback chain. Ceiling: a dead proxy now
+// costs 45s before falling back. Lower it if your proxy is local; raise it if still timing out.
+const TOKENIN_SEARCH_TIMEOUT_MS = 45_000;
 
 type TokenInAccount = { id: string; label: string; apiKey: string; baseUrl?: string };
 type TokenInAuth = { accounts: TokenInAccount[]; activeId: string | null };

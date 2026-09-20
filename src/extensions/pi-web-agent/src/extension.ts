@@ -23,7 +23,9 @@ function serializeForModel(result: WebExploreResponse): string {
     return `Research failed: ${result.error?.message ?? 'Unknown research failure.'}`;
   }
   if (result.findings.length === 0 && result.sources.length === 0) {
-    return 'No usable evidence found.';
+    return result.metadata?.failureReason
+      ? `No usable evidence found: ${result.metadata.failureReason}`
+      : 'No usable evidence found.';
   }
   return [
     result.findings.join('\n\n'),

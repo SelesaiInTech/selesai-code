@@ -95,6 +95,10 @@ export type WebExploreResponse = {
     headlessAttempts: number;
     exhaustedBudget: boolean;
     caveatReasons?: string[];
+    // Why nothing came back, when nothing came back. Carried from the research pass's first
+    // gap so the empty result reads as "DuckDuckGo search request failed: fetch failed"
+    // instead of a bare "No usable evidence found".
+    failureReason?: string;
     fanoutProviders?: SearchProviderName[];
     fanoutSkipped?: SearchProviderName[];
   };
