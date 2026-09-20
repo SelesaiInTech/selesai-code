@@ -28,6 +28,7 @@ export {
 	type SessionStats,
 } from "./core/agent-session.ts";
 export { readStoredCredential } from "./core/auth-storage.ts";
+export type { CacheWarmingDecision, CacheWarmingStatus } from "./core/cache-warmer.ts";
 export { ensureTool, getToolPath, type ManagedTool } from "./utils/tools-manager.ts";
 // Compaction
 export {
@@ -56,6 +57,7 @@ export {
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
 // Extension system
 export type {
+	AfterProviderResponseEvent,
 	AgentEndEvent,
 	AgentSettledEvent,
 	AgentStartEvent,
@@ -70,8 +72,11 @@ export type {
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
 	BuildSystemPromptOptions,
+	CacheWarmingDecisionEvent,
+	CacheWarmingDecisionEventResult,
 	CompactOptions,
 	ContextEvent,
+	ContextEventResult,
 	ContextUsage,
 	CustomToolCallEvent,
 	EditToolCallEvent,
@@ -106,10 +111,14 @@ export type {
 	LoadExtensionsResult,
 	LsToolCallEvent,
 	MessageEndEvent,
+	MessageEndEventResult,
 	MessageRenderer,
 	MessageRenderOptions,
 	MessageStartEvent,
 	MessageUpdateEvent,
+	ModelSelectEvent,
+	ModelSelectSource,
+	NormalizedBuildSystemPromptOptions,
 	ProjectTrustContext,
 	ProjectTrustEvent,
 	ProjectTrustEventDecision,
@@ -122,11 +131,18 @@ export type {
 	RegisteredTool,
 	ResolvedCommand,
 	ResolvedSkillInfo,
+	ResourcesDiscoverEvent,
+	ResourcesDiscoverResult,
 	SessionBeforeCompactEvent,
+	SessionBeforeCompactResult,
 	SessionBeforeForkEvent,
+	SessionBeforeForkResult,
 	SessionBeforeSwitchEvent,
+	SessionBeforeSwitchResult,
 	SessionBeforeTreeEvent,
+	SessionBeforeTreeResult,
 	SessionCompactEvent,
+	SessionCompactFailedEvent,
 	SessionInfoChangedEvent,
 	SessionShutdownEvent,
 	SessionStartEvent,
@@ -135,6 +151,7 @@ export type {
 	SlashCommandSource,
 	SourceInfo,
 	TerminalInputHandler,
+	ThinkingLevelSelectEvent,
 	ToolCallEvent,
 	ToolCallEventResult,
 	ToolDefinition,
@@ -145,6 +162,7 @@ export type {
 	ToolInfo,
 	ToolRenderResultOptions,
 	ToolResultEvent,
+	ToolResultEventResult,
 	TurnEndEvent,
 	TurnStartEvent,
 	UIPromptEndEvent,
@@ -256,6 +274,8 @@ export {
 } from "./core/session-manager.ts";
 export {
 	type AutoHandoffSettings,
+	type CacheWarmingMode,
+	type CompactionModelOverride,
 	type CompactionSettings,
 	type DefaultProjectTrust,
 	type FullscreenExitOutput,

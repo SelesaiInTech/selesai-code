@@ -103,7 +103,7 @@ export const KEYBINDINGS = {
 	},
 	"app.message.copy": {
 		defaultKeys: "ctrl+x",
-		description: "Copy message to clipboard",
+		description: "Copy selection or last assistant message",
 	},
 	"app.message.followUp": {
 		defaultKeys: "alt+enter",

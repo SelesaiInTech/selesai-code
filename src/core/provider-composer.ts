@@ -18,7 +18,9 @@ import {
 	type RefreshModelsContext,
 	type SimpleStreamOptions,
 	type StreamOptions,
+	type TranscriptContext,
 } from "@earendil-works/pi-ai";
+import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
 import {
@@ -46,7 +48,16 @@ export interface ProviderConfigInput {
 	baseUrl?: string;
 	apiKey?: string;
 	api?: Api;
-	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
+	/**
+	 * Declarative custom-provider streaming handler. The context is a normalized transcript:
+	 * read the prompt and tools from its system messages. Invoke `options.onPayload` before
+	 * sending and `options.onResponse` after receiving the response.
+	 */
+	streamSimple?: (
+		model: Model<Api>,
+		context: TranscriptContext,
+		options?: SimpleStreamOptions,
+	) => AssistantMessageEventStream;
 	headers?: Record<string, string>;
 	authHeader?: boolean;
 	oauth?: ExtensionOAuthConfig;
@@ -474,19 +485,23 @@ export function composeModelProvider(
 		simple: boolean,
 	): AssistantMessageEventStream =>
 		lazyStream(model, async () => {
+			// Provider boundary: the platform's streaming entry points hand providers a
+			// branded TranscriptContext. Lift the ordinary request context here, where the
+			// fork forwards into a platform adapter.
+			const transcript = normalizeContext(context);
 			if (extension?.streamSimple && model.api === extension.api) {
-				return extension.streamSimple(model, context, options as SimpleStreamOptions);
+				return extension.streamSimple(model, transcript, options as SimpleStreamOptions);
 			}
 			if (base && supportsBaseApi(model)) {
 				return simple
-					? base.streamSimple(model, context, options as SimpleStreamOptions)
-					: base.stream(model, context, options);
+					? base.streamSimple(model, transcript, options as SimpleStreamOptions)
+					: base.stream(model, transcript, options);
 			}
 			const api = getApiProvider(model.api);
 			if (!api) throw new Error(`No API provider registered for api: ${model.api}`);
 			return simple
-				? api.streamSimple(model, context, options as SimpleStreamOptions)
-				: api.stream(model, context, options);
+				? api.streamSimple(model, transcript, options as SimpleStreamOptions)
+				: api.stream(model, transcript, options);
 		});
 
 	return {

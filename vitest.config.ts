@@ -11,7 +11,7 @@ export default defineConfig({
 		unstubEnvs: true,
 		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 		silent: "passed-only",
-		exclude: ["dist/**", "**/node_modules/**"],
+		exclude: ["dist/**", "**/node_modules/**", ".kilo/worktrees/**"],
 		server: {
 			deps: {
 				external: [/@silvia-odwyer\/photon-node/],
