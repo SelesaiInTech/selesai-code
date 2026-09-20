@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEventBus } from "../core/event-bus.ts";
 import { loadExtensions } from "../core/extensions/loader.ts";
 import { createBackendSet } from "../extensions/pi-web-agent/src/backends/factory.ts";
@@ -13,6 +13,8 @@ import {
 	TOKENIN_DEFAULT_BASE_URL,
 	TOKENIN_SEARCH_TOOL_NAME,
 } from "../extensions/pi-web-agent/src/search/tokenin.ts";
+import { synthesizeAnswer } from "../extensions/pi-web-agent/src/orchestration/answer-synthesizer.ts";
+import { buildExplorePresentation } from "../extensions/pi-web-agent/src/presentation/explore-presentation.ts";
 
 const tmpDirs: string[] = [];
 
@@ -273,6 +275,76 @@ describe("bundled web-agent integration", () => {
 		expect(result.status).toBe("ok");
 		expect(result.metadata.fallbackFrom).toBe("tokenin");
 		expect(result.metadata.backend).toBe("duckduckgo");
+	});
+
+	// Regression: a hosted primary configured with `fallback: duckduckgo` used to skip the keyless
+	// Tavily net entirely, so when that DuckDuckGo fallback was DNS-blocked or bot-walled the whole
+	// search died with "no usable evidence" even though Tavily was one call away.
+	it("arms the keyless Tavily net when a hosted primary falls back to duckduckgo", async () => {
+		vi.stubEnv("PI_WEB_AGENT_DISABLE_KEYLESS_FALLBACK", "");
+		const failed = (backend: string) =>
+			(async () => ({
+				status: "error",
+				results: [],
+				metadata: { backend, cacheHit: false },
+				error: { code: "FETCH_FAILED", message: `${backend} failed` },
+			})) as never;
+		let tavilyCalls = 0;
+
+		const backends = createBackendSet(
+			{
+				search: { provider: "tokenin", fallback: "duckduckgo" },
+				fetch: { provider: "http" },
+				headless: { provider: "local-browser" },
+			},
+			{
+				createTokenInSearch: () => failed("tokenin"),
+				createDuckDuckGoSearch: () => failed("duckduckgo"),
+				createTavilySearch: () =>
+					(async () => {
+						tavilyCalls++;
+						return {
+							status: "ok",
+							results: [{ title: "T", url: "https://t.example", snippet: "s" }],
+							metadata: { backend: "tavily", cacheHit: false },
+						};
+					}) as never,
+			},
+		);
+
+		const result = await backends.search({ query: "hello" });
+		expect(tavilyCalls).toBe(1);
+		expect(result.status).toBe("ok");
+		expect(result.metadata.backend).toBe("tavily");
+		expect(result.metadata.fallbackFrom).toBe("duckduckgo");
+	});
+
+	// Regression: the research pass collected why it came up empty and then dropped it, so a
+	// blocked search rendered as a bare "No usable evidence found".
+	it("names the failure when nothing could be read", () => {
+		const failureReason = "DuckDuckGo search request failed: fetch failed";
+		const synthesized = synthesizeAnswer({ evidence: [], partial: true, failureReason });
+		expect(synthesized.caveat).toContain(failureReason);
+
+		const presented = buildExplorePresentation({
+			status: "ok",
+			findings: [],
+			sources: [],
+			caveat: synthesized.caveat,
+			metadata: {
+				searchPasses: 4,
+				fetchedPages: 0,
+				headlessAttempts: 0,
+				exhaustedBudget: true,
+				failureReason,
+			},
+		});
+		expect(presented.views?.compact).toContain(failureReason);
+	});
+
+	it("keeps the generic empty result when no failure was recorded", () => {
+		const synthesized = synthesizeAnswer({ evidence: [], partial: true });
+		expect(synthesized.caveat).toContain("bounded research budget");
 	});
 });
 });
