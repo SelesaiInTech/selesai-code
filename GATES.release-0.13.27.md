@@ -81,6 +81,16 @@ session-entry union, so splitting them would have produced a commit that does no
 - **Paste smoke** — PRD 5's ported clipboard suites pass in L1 (`test/clipboard*.test.ts`). A live paste into a real terminal was not reproduced headlessly; the failure-surfacing path it would exercise is pinned by `test/clipboard-image-native-errors.test.ts` (whose one deliberate alteration is recorded above).
 - **Model-access usage command** — not exercised here; it needs live TokenIn credentials and was out of scope for a sync release.
 
+- [x] L13: the published package is live on the registry and verifies from a clean registry install
+  CHECK: npm view @selesai/code version | grep -qx '0.13.27' && node scripts/verify-clean-install.mjs /tmp/regverify/node_modules/@selesai/code | grep -q CLEAN_INSTALL_OK && echo REGISTRY_VERIFIED
+  EXPECT: REGISTRY_VERIFIED
+  EVIDENCE: exit=0; publish returned `PUT https://registry.npmjs.org/@selesai%2fcode 202`; `dist-tags.latest` is `0.13.27` and the version list ends `0.13.25, 0.13.26, 0.13.27`. Installed from the registry (not the local tarball) into /tmp/regverify: CLI reports `0.13.27`, all 22 bundled extensions load with 0 diagnostics, and a turn answers `REGISTRY_OK`. Note the registry needed several minutes to serve the new version after the 202 — an immediate `npm view` still reported 0.13.26, which is propagation lag, not a failed publish.
+
+- [x] L14: the release is tagged and pushed
+  CHECK: git ls-remote --tags origin v0.13.27 | grep -q 'refs/tags/v0.13.27' && echo TAG_PUSHED
+  EXPECT: TAG_PUSHED
+  EVIDENCE: exit=0; annotated tag `v0.13.27` pushed; `main` pushed f70bc4172..78f1c5df0
+
 ## Rollback position
 
 - **Revert to tag `v0.13.26`** (`f69901414ff384330f2fff83af4bdfe574027560`), or to branch
