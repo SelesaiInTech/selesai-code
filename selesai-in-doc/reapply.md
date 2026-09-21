@@ -9,15 +9,103 @@ code compiles at each step.
 - Confirm `tsx` is available (it's used by `npm run dev`).
 
 ## 0a. Current upstream base
-This port is synced to upstream `v0.85.1` (commit `d981de1229ef899957bbe968bc8dcda02a21f477`, 2026-09-05).
-When re-applying the vision feature after a future upstream release, preserve these already-applied 0.84.4
-deltas in the overlapping files:
+
+This port is synced to upstream **`v0.86.1`** (released 2026-09-21; previous base `v0.85.1`,
+`d981de1229ef899957bbe968bc8dcda02a21f477`). Runtime packages `@earendil-works/pi-ai`,
+`pi-agent-core` and `pi-tui` are pinned to `0.86.1`, and the package declares `engines.node >= 22.19.0`.
+
+The gate for that sync is `GATES.pi-0861-sync.md` at the repository root; the per-phase plan is
+`.selesai/docs/prds/00-index.md`.
+
+### How to sync (the method, not a merge)
+
+There is **no shared commit with upstream** — Selesai is a *flatten* of upstream
+`packages/coding-agent`, so local repo root ↔ upstream `packages/coding-agent/`. `git merge` is
+unusable; every sync is a per-file three-way reconciliation. `scripts/upstream.sh` documents the
+relationship. The loop that produced this sync:
+
+1. Fetch both upstream tags; diff them to get the changed `src/` paths.
+2. Classify each changed file: *never-touched* (take upstream verbatim), *clean-merge* (fork didn't
+touch the changed region), or *conflict*.
+3. Resolve each conflict deliberately:
+   `git merge-file -p --diff3 <local> <upstream-old> <upstream-new>`, then resolve every hunk by hand.
+4. **Typecheck after every clean-merge file too.** A clean merge means two edits did not overlap
+   *textually*, not that they are semantically compatible — upstream's merged code may reference
+   types from a later phase.
+5. Run `bash scripts/verify-deltas.sh` and `node scripts/verify-agent-dir.mjs` (below) before claiming
+the sync is done.
+
+### The delta inventory — run this, do not re-derive it
+
+The fork's behaviour is re-plantable **mechanically** now. Run:
+
+```bash
+bash scripts/verify-deltas.sh        # 37 checks: one token per fork-owned behaviour
+node scripts/verify-agent-dir.mjs    # no upstream path/env prefix may leak
+```
+
+`scripts/verify-deltas.sh` is the source of truth for *what the fork owns*. It covers prompt content
+(fork identity, docs pointers, delegation routing, skill/agent sections, shell-aware guidance),
+session runtime (auto handoff, bounded length continuation, vision caption relay and its context
+tail, compaction-failure event, skill-block parsing, thinking-tag normalization), settings
+(auto-handoff, caption model and budget, capability overrides, TUI default), the extension surface
+(capability gateway, `getResolvedSkills`, tool `discovery` metadata, `multiselect`, extension host
+precedence), module resolution (`@selesai/code` in both the extracted virtual-module map and jiti
+aliases), provider/model (TokenIn, llama.cpp, bundled catalogue), terminal (startup box, fork
+banner, captioning indicator, skill toggle) and rpc/sdk additions.
+
+`scripts/verify-agent-dir.mjs` is the config-directory audit, promoted out of the untracked
+`.unlazy/` workspace so it survives the next sync. It carries its 13 intentional candidates in
+`intentional()`. It already earned its place: the 0.86.1 sync adopted an upstream doc comment naming
+`~/.pi/agent/sessions`.
+
+### Decisions that must not be re-litigated
+
+- **Provider boundary.** The platform lifts an ordinary `Context` into its branded
+  `TranscriptContext` internally, so local code calls `normalizeContext` from
+  `@earendil-works/pi-ai/utils/transcript` at the forwarding sites. No casts, no type weakening.
+- **Mermaid is deliberately not adopted.** Ported settings/selector code must not reference
+  `MermaidRenderingMode`.
+- **Clipboard is replaced, not merged.** `utils/clipboard.ts` and `clipboard-image.ts` are upstream
+  wholesale; `clipboard-native.ts` is deleted and `@mariozechner/clipboard` is gone from
+  `optionalDependencies`. Native path is `getNativeClipboard` from `@earendil-works/pi-tui`. Do not
+  touch vendored extensions that declare their own clipboard dependency.
+- **Module resolution** is upstream's extracted `core/extensions/virtual-modules.ts`, with exactly
+  one added `@selesai/code` entry. The loader's duplicate map was deleted, not merged.
+- **Length continuation is fork-owned** and overrides upstream's stop-at-limit behaviour. Where an
+  upstream assertion conflicts, adapt the assertion and record it — do not delete the feature.
+- **`.pi` references are intentional** in `src/core/package-manager.ts` (cross-host extension
+  loading) and `src/migrations.ts` (legacy session migration). Do not "fix" them.
+
+### Vendored extensions: already current at this base, no version work pending
+
+pi-zentui `0.23.0`, pi-subagents `v0.66.0`, pi-intercom `v0.13.0`, pi-hermes-memory `v0.9.8` — the
+immutable refs recorded by the v0.85.1 sync are still the newest upstream tags. Exercise, do not bump.
+
+**pi-zentui is red at baseline and stays red.** Its source tree is byte-identical across this sync
+(same git tree hash). Run against a 0.85.1 host it fails 197 tests; against this fork's 0.86.1 host,
+155 — zero files worse. The 37 `thinking-experimental` + 7 `working-line` failures are identical on
+both hosts. Do not chase these; they are host skew caused by the extension's own gitignored
+`node_modules`, and the suite is deliberately not wired into `npm test`.
+
+### Open questions deferred by this sync
+
+Recorded rather than dropped, so the next sync resolves them instead of rediscovering them:
+
+1. Whether the fork adopts Mermaid rendering and its optional dependency.
+2. Whether the newly added usage entries are surfaced anywhere in the terminal.
+3. Whether the platform's prompt-section model should be exposed to skill and prompt-template
+authors as a documented extension point.
+
+### Vision-feature deltas that must survive any future upstream release
+
+Preserve these already-applied deltas in the overlapping files:
 - `src/core/agent-session.ts`: custom-message ordering (`_pendingCustomMessages`), `_compactBeforeNextAssistantResponse` + `_installAgentNextTurnRefresh`, `_addPersistedDefaultToNonEmptyScope`.
 - `src/core/settings-manager.ts`: `TerminalSettings.hyperlinks/images/trueColor`, `getTerminalCapabilityOverrides()`, `fullscreenCopyOnSelect` getter/setter.
 - `src/modes/interactive/interactive-mode.ts`: `setCapabilityOverrides`, `copyOnSelect`, `handleCopyCommand(preferSelection)`, `updateThinkingBlockVisibility`, working-indicator restructure, theme order.
 - `src/modes/interactive/components/settings-selector.ts`: `fullscreen-copy-on-select` item + callback.
 The vision caption relay itself (`_captionImagesForCurrentModel`, `image_captioning_*` events, 60s per-attempt timeout with backoff) is
-unchanged by the 0.84.4 port.
+re-planted unchanged onto the 0.86.1 session runtime.
 
 ## 1. Copy/keep the two new files (should survive merge, but verify)
 - `src/core/vision-caption.ts`

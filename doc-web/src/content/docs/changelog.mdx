@@ -3,6 +3,37 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.27 — Pi v0.86.1 sync
+
+Ported the coding-agent source from Pi v0.85.1 to v0.86.1, and bumped `pi-ai`, `pi-agent-core` and `pi-tui` to 0.86.1. The package now requires Node 22.19.0 or newer.
+
+**Adopted from upstream**
+
+- **Custom-provider request contract.** Stream handlers now receive a normalized transcript, and must call the outgoing-payload hook before sending and the response hook before consuming the body. Selesai's providers never read the request context, so this landed at the forwarding boundary — your `models.json` configuration and extension-registered providers are unaffected.
+- **Sectioned system prompt.** A session records the prompt and tool changes it ran under, so resuming a session or visiting an earlier branch restores the instructions that were actually in effect, and your prompt cache stays warm.
+- **Whole-prompt replacement.** An extension can replace the instruction for a turn instead of only appending to it, so presets and personas work.
+- **Per-model compaction budgets.** Reserved and kept-recent budgets can be set per model.
+- **Session runtime rebase.** Cancelling a compaction while credentials are still resolving is no longer ignored; a prompt arriving mid-stream is queued instead of raced; provider request settings apply uniformly to main turns, compaction and extension model calls; and the retry-backoff cap is configurable.
+- **Strict JSON-schema sampling by default**, with an opt-out for tools whose schema cannot be expressed strictly.
+- **Wider default tool set** including the search and listing tools, each still individually disableable.
+- **Extension authoring.** Event subscriptions return an unsubscribe handle; tool-call arguments and results are restricted to JSON-compatible values; shell hooks fail loudly instead of silently; and the embedded-module map now branches on runtime kind.
+- **Interactive workspace.** Deferred extension-catalogue refresh, new settings surfaces, and the crash notice and bug report.
+
+**Fork fixes**
+
+- **Clipboard failures are surfaced** instead of swallowed.
+- **Overflow recovery keeps its guard**, so a response stopped at the output limit does not re-arm recovery into a loop.
+- **A doc comment naming `~/.pi/agent/sessions`** now names `.selesai/agent/sessions`.
+
+**Dependency removed**
+
+- **`@mariozechner/clipboard` retired.** Clipboard now uses the helpers bundled with `pi-tui`, so installs are smaller with one fewer native dependency. Paste and copy-on-select are unchanged.
+
+**Not adopted**
+
+- **Mermaid rendering** is not adopted; no rendering dependency or setting was added.
+- **Fork behaviour is unchanged:** automatic handoff, bounded length continuation, the vision caption relay, the compaction-failure event and the capability gateway are all re-planted on the new upstream shapes.
+
 ## 0.13.26 — Goal-preserving auto handoff and refreshed model catalog
 
 - **Automatic handoff keeps the big picture.** Auto-handoff now runs with the same goal text as `/handoff-new`, so the continuation prompt carries the overall objective, success criteria, key decisions, reference files, completed and remaining work, and the next concrete action.

@@ -2,6 +2,80 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.27] - 2026-09-21
+
+### Upstream sync: Pi v0.86.1
+
+Ported the coding-agent source from Pi v0.85.1 to v0.86.1 per file, and bumped
+`@earendil-works/pi-ai`, `pi-agent-core` and `pi-tui` to 0.86.1. The package now declares
+`engines.node >= 22.19.0`, matching upstream's floor.
+
+**Adopted from upstream**
+
+- **Custom-provider request contract.** Stream handlers now receive a normalized transcript:
+  the prompt and tool declarations live in its system messages and are read with the platform's
+  accessors, and handlers invoke the outgoing-payload hook before sending and the response hook
+  before consuming the body. Selesai's own providers never read the request context, so this
+  landed as a signature-and-type change at the forwarding boundary rather than a rewrite — your
+  `models.json` configuration and extension-registered providers are unaffected.
+- **Sectioned system prompt with a transcript-backed record.** A session now records the prompt
+  and tool changes it ran under, so resuming a session or navigating to an earlier branch
+  restores the instructions and tools that were actually in effect instead of applying today's.
+  Your prompt cache stays warm across resume and branch navigation.
+- **Whole-prompt replacement for one turn.** An extension can now replace the instruction for a
+  turn rather than only appending to it, so a preset or persona can take effect.
+- **Per-model compaction budgets.** The reserved and kept-recent token budgets can be set per
+  model, so a large-context model is no longer compacted with a small model's budget.
+- **Session runtime rebase.** Prompt and tool loadout are prepared as an explicit step with the
+  resulting state retained for the run; one shared abort controller per operation expresses
+  cancellation by throwing, so a cancellation arriving while compaction is still obtaining
+  credentials is no longer ignored; provider request settings (timeouts, retries, headers) come
+  from one builder and apply uniformly to a main turn, a compaction request and an extension's
+  model call; and the agent-level retry-backoff cap is configurable, so a transient provider
+  outage cannot hold you for minutes.
+- **Strict JSON-schema sampling by default.** Built-in tools prefer strict sampling without you
+  setting an environment variable, and a tool whose schema cannot be expressed strictly can opt out.
+- **Wider default tool set.** The default active set includes the search and listing tools, so a
+  fresh session can explore a repository without enabling tools by hand; each is still
+  individually disableable.
+- **Extension authoring.** Event subscriptions now return an unsubscribe handle, so a reload or
+  session replacement cannot leave a stale handler behind; tool-call arguments and tool-result
+  details are restricted to JSON-compatible values so they survive session persistence; shell
+  hooks now fail loudly instead of silently when a handler throws or returns something malformed;
+  and the embedded-module map moved into its own module that branches on runtime kind (compiled
+  binary, TypeScript source, unbundled Node).
+- **Interactive workspace.** Deferred extension-catalogue refresh, the new settings surfaces, and
+  the crash notice and bug report.
+
+**Fork fixes carried in this release**
+
+- **Clipboard failures are now surfaced.** A failed paste reports a warning instead of being
+  swallowed.
+- **Overflow recovery no longer loses its guard.** A response that stopped at the output-token
+  limit no longer clears the overflow-recovery attempt flag, so recovery is not re-armed into a
+  loop.
+- **Upstream path leak in a doc comment.** The session-manager documentation named
+  `~/.pi/agent/sessions`; runtime resolution was already correct, and the comment now names
+  `.selesai/agent/sessions`.
+
+**Dependency removed**
+
+- **`@mariozechner/clipboard` is gone.** The optional native clipboard dependency was retired in
+  favour of the clipboard helpers bundled with `@earendil-works/pi-tui`, so an install is smaller
+  and has one fewer native supply-chain boundary. Paste, copy-on-select and image paste are
+  unchanged.
+
+**Deliberately not adopted**
+
+- **Mermaid rendering.** Upstream's optional Mermaid path is not adopted, so no rendering
+  dependency or settings item was added.
+- **Fork behaviour kept.** Automatic handoff, the bounded length-continuation of an
+  output-limit-truncated response, the vision caption relay, the compaction-failure event and the
+  capability gateway all still behave as before, re-planted on the new upstream shapes.
+
+**Verification.** 53 test files / 1008 tests pass, the tree typechecks against Pi 0.86.1, the build
+succeeds, and a 37-row delta inventory proves each Selesai-owned behaviour survived the port.
+
 ## [0.13.26] - 2026-09-18
 
 ### Added

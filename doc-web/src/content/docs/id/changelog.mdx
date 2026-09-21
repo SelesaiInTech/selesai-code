@@ -3,6 +3,37 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.27 — Sinkronisasi Pi v0.86.1
+
+Mem-port sumber coding-agent dari Pi v0.85.1 ke v0.86.1, dan menaikkan `pi-ai`, `pi-agent-core` dan `pi-tui` ke 0.86.1. Package ini sekarang memerlukan Node 22.19.0 atau lebih baru.
+
+**Diadopsi dari upstream**
+
+- **Kontrak request custom-provider.** Stream handler sekarang menerima transkrip yang dinormalisasi, dan harus memanggil hook outgoing-payload sebelum mengirim serta hook response sebelum mengonsumsi body. Provider Selesai tidak pernah membaca request context, jadi perubahan ini hanya di batas penerusan — konfigurasi `models.json` dan provider yang didaftarkan sebagai ekstensi tidak terpengaruh.
+- **System prompt berseksi.** Sesi mencatat perubahan prompt dan tool yang berlangsung di dalamnya, sehingga melanjutkan sesi atau membuka branch sebelumnya memulihkan instruksi yang benar-benar berlaku, dan prompt cache Anda tetap hangat.
+- **Penggantian prompt utuh.** Ekstensi dapat mengganti instruksi untuk satu turn, bukan hanya menambahkan teks, sehingga preset dan persona berfungsi.
+- **Budget kompaksi per-model.** Budget reserved dan kept-recent dapat diatur per model.
+- **Rebase session runtime.** Membatalkan kompaksi saat kredensial masih diresolusi tidak lagi diabaikan; prompt yang datang di tengah stream diantrikan alih-alih di-race; pengaturan request provider berlaku seragam untuk turn utama, kompaksi, dan pemanggilan model oleh ekstensi; dan batas retry-backoff dapat dikonfigurasi.
+- **Sampling JSON-schema ketat secara default**, dengan opsi keluar untuk tool yang skemanya tidak dapat dinyatakan secara ketat.
+- **Set tool default lebih luas** termasuk tool pencarian dan listing, masing-masing tetap dapat dinonaktifkan sendiri.
+- **Penulisan ekstensi.** Langganan event mengembalikan handle unsubscribe; argumen pemanggilan tool dan hasilnya dibatasi ke nilai yang kompatibel JSON; shell hook gagal secara nyaring alih-alih diam; dan peta embedded-module kini bercabang menurut jenis runtime.
+- **Ruang kerja interaktif.** Refresh katalog ekstensi yang ditunda, permukaan pengaturan baru, serta pemberitahuan crash dan laporan bug.
+
+**Perbaikan fork**
+
+- **Kegagalan clipboard ditampilkan** alih-alih ditelan.
+- **Pemulihan overflow menjaga guard-nya**, sehingga respons yang berhenti di batas output tidak mengaktifkan ulang pemulihan menjadi loop.
+- **Komentar dokumentasi yang menyebut `~/.pi/agent/sessions`** kini menyebut `.selesai/agent/sessions`.
+
+**Dependensi dihapus**
+
+- **`@mariozechner/clipboard` dihentikan.** Clipboard kini memakai helper yang dibundel bersama `pi-tui`, sehingga instalasi lebih kecil dengan satu dependensi native lebih sedikit. Paste dan copy-on-select tidak berubah.
+
+**Tidak diadopsi**
+
+- **Rendering Mermaid** tidak diadopsi; tidak ada dependensi rendering atau pengaturan yang ditambahkan.
+- **Perilaku fork tidak berubah:** handoff otomatis, kelanjutan panjang yang dibatasi, relay caption vision, event kegagalan kompaksi, dan capability gateway semuanya diterapkan ulang pada bentuk upstream yang baru.
+
 ## 0.13.26 — Handoff otomatis yang menjaga tujuan dan katalog model yang diperbarui
 
 - **Handoff otomatis menjaga gambaran besar.** Handoff otomatis kini memakai teks goal yang sama dengan `/handoff-new`, sehingga prompt kelanjutan membawa tujuan utama, kriteria sukses, keputusan penting, file referensi, pekerjaan yang selesai dan tersisa, serta aksi konkret berikutnya.
