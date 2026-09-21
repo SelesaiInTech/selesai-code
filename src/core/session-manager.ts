@@ -1726,7 +1726,7 @@ export class SessionManager {
 	 * Find an exact session ID without loading transcript bodies.
 	 * @param cwd Working directory (used to compute default session directory)
 	 * @param id Exact session ID
-	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
+	 * @param sessionDir Optional session directory. If omitted, uses default (~/.selesai/agent/sessions/<encoded-cwd>/).
 	 */
 	static findById(cwd: string, id: string, sessionDir?: string): string | undefined {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
