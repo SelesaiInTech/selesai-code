@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.29] - 2026-09-22
+
+### Changed
+- **Token-In catalog gains MiMo V2.6.** The bundled `models.json` now lists `mimo-v2.6-pro` and `mimo-v2.6-flash`: 1M context, 128K max output, text and image input, reasoning, and the reasoning-content compat the catalog's other reasoning models use. A user-level `models.json` entry is unaffected.
+
 ## [0.13.28] - 2026-09-22
 
 ### Automatic model routing

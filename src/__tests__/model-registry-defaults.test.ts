@@ -55,6 +55,21 @@ describe("model registry bundled defaults", () => {
 		}
 	});
 
+	it("bundles the MiMo V2.6 models with vision and reasoning-content compat", async () => {
+		const registry = new ModelRegistry(
+			await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: join(dir, "models.json") }),
+		);
+		for (const id of ["mimo-v2.6-pro", "mimo-v2.6-flash"]) {
+			expect(registry.find("tokenin", id), id).toMatchObject({
+				reasoning: true,
+				input: ["text", "image"],
+				contextWindow: 1048576,
+				maxTokens: 131072,
+				compat: { requiresReasoningContentOnAssistantMessages: true },
+			});
+		}
+	});
+
 	it("keeps bundled model list when user models.json only stores apiKey", async () => {
 		writeFileSync(join(dir, "models.json"), JSON.stringify({ providers: { tokenin: { apiKey: "sk-user" } } }));
 

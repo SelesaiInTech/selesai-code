@@ -202,6 +202,44 @@
           }
         },
         {
+          "id": "mimo-v2.6-pro",
+          "name": "MiMo V2.6 Pro",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 1048576,
+          "maxTokens": 131072,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+          },
+          "compat": {
+            "requiresReasoningContentOnAssistantMessages": true
+            }
+        },
+        {
+          "id": "mimo-v2.6-flash",
+          "name": "MiMo V2.6 Flash",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 1048576,
+          "maxTokens": 131072,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+          },
+          "compat": {
+            "requiresReasoningContentOnAssistantMessages": true
+            }
+        },
+        {
           "id": "qwen3.8-27b",
           "name": "Qwen3.8 27B",
           "reasoning": true,
