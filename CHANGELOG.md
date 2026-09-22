@@ -2,6 +2,35 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.28] - 2026-09-22
+
+### Automatic model routing
+
+A new bundled `auto-model` extension routes each idle, top-level prompt to one of four configured
+tiers — `simple`, `medium`, `complex`, and `reasoning` — by asking the Jev decisions model
+(`jev-1.13`) through the Token-In gateway which tier fits the request.
+
+- **Four-tier routing.** `settings.json` gains an `autoModel` block: a classifier (`provider` and
+  `model`, default `tokenin` / `jev-1.13`) plus one model per tier. The extension builds Jev's
+  `{state, questions}` decisions payload from the current ask, a bounded window of prior user turns,
+  and the active system prompt, reads the answered tier back, and calls `pi.setModel()` on the
+  matching model before the turn starts. Disabled by default.
+- **Tier model syntax.** Each tier value is `provider/modelId` with an optional `:thinkingLevel`
+  suffix (`tokenin/celestial-max:max`) applied through `pi.setThinkingLevel()`.
+- **Safe scope.** Only idle, top-level prompts are routed. Queued steering/follow-up input and
+  extension-injected messages are skipped because `pi.setModel()` is session-global, and `/`
+  commands are left untouched. A manual `/model` choice suspends routing for the rest of the session.
+- **Graceful failures.** A classifier timeout, error, malformed or low-confidence answer, missing or
+  out-of-scope model, or unavailable credentials keeps the current model or falls back to
+  `autoModel.fallbackTier` (default `medium`).
+
+### Graft
+
+- **Deep-build model default for existing installs.** `bootstrapAgentDir` now seeds `graft.deepModel`
+  (`deepseek-v4.1-flash`) into an existing user `settings.json` when the key is absent. It merges
+  into a present `graft` object, keeps the original formatting when it inserts a new section, and
+  never overwrites a user-chosen model.
+
 ## [0.13.27] - 2026-09-21
 
 ### Upstream sync: Pi v0.86.1

@@ -17,6 +17,43 @@ Halaman ini mencakup pengaturan yang paling sering disentuh orang. Referensi len
 | `defaultThinkingLevel` | string | — | Seberapa banyak agent berpikir sebelum menjawab: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, atau `"xhigh"`. |
 | `enabledModels` | string[] | — | Pola model untuk perpindahan Ctrl+P, mis. `["claude-*"]`. |
 
+## Perutean model otomatis
+
+Ekstensi bundel `auto-model` mengklasifikasikan setiap prompt idle top-level sebagai `simple`, `medium`, `complex`, atau `reasoning` dengan model keputusan Jev, lalu beralih ke model yang Anda konfigurasi untuk tier tersebut. Fitur ini tetap nonaktif sampai `autoModel.enabled` bernilai `true`.
+
+| Pengaturan | Tipe | Default | Fungsinya |
+| --- | --- | --- | --- |
+| `autoModel.enabled` | boolean | `false` | Mengaktifkan perutean otomatis per prompt. |
+| `autoModel.classifier.provider` | string | `"tokenin"` | Provider yang melayani deployment keputusan Jev. |
+| `autoModel.classifier.model` | string | `"jev-1.13"` | Model keputusan yang dipanggil classifier. |
+| `autoModel.classifier.baseUrl` | string | diwarisi | Override base URL; default-nya model terdaftar mana pun dari `classifier.provider`. |
+| `autoModel.classifier.timeoutMs` | number | `10000` | Timeout permintaan classifier dalam milidetik. |
+| `autoModel.classifier.minConfidence` | number | `0.5` | Di bawah keyakinan Jev ini, tier fallback dipakai. |
+| `autoModel.classifier.contextTurns` | number | `4` | Giliran user sebelumnya yang dikirim sebagai konteks classifier. |
+| `autoModel.classifier.contextChars` | number | `4000` | Batas karakter untuk konteks tersebut. |
+| `autoModel.tiers.simple` | string | `"tokenin/deepseek-v4.1-flash"` | Model untuk sapaan, pencarian, dan transformasi kecil. |
+| `autoModel.tiers.medium` | string | `"tokenin/celestial-pro"` | Model untuk coding rutin dan penjelasan (fallback default). |
+| `autoModel.tiers.complex` | string | `"tokenin/celestial-max"` | Model untuk engineering non-trivial dan debugging akar masalah. |
+| `autoModel.tiers.reasoning` | string | `"tokenin/celestial-ultra"` | Model untuk penalaran terbuka dan tradeoff. |
+| `autoModel.fallbackTier` | string | `"medium"` | Tier yang dipakai saat classifier tidak tersedia. |
+
+Setiap nilai tier adalah `provider/modelId`, dengan akhiran `:thinkingLevel` opsional (misalnya `tokenin/celestial-max:max`). Hanya prompt top-level idle yang dirutekan: pesan steering dan follow-up yang diantre, pesan dari ekstensi, dan perintah `/` tidak disentuh, karena model sesi bersifat global. Memilih model dengan `/model` menangguhkan perutean sampai akhir sesi. Timeout classifier, error, jawaban rusak atau ragu, model hilang atau di luar scope, atau kredensial tidak tersedia akan mempertahankan model saat ini atau beralih ke `fallbackTier`.
+
+```json
+{
+  "autoModel": {
+    "enabled": true,
+    "classifier": { "provider": "tokenin", "model": "jev-1.13" },
+    "tiers": {
+      "simple": "tokenin/deepseek-v4.1-flash",
+      "medium": "tokenin/celestial-pro",
+      "complex": "tokenin/celestial-max",
+      "reasoning": "tokenin/celestial-ultra"
+    }
+  }
+}
+```
+
 ## Tool
 
 | Pengaturan | Tipe | Default | Fungsinya |

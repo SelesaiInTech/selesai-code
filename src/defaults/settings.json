@@ -1,4 +1,17 @@
 {
+  "autoModel": {
+    "enabled": false,
+    "classifier": {
+      "provider": "tokenin",
+      "model": "jev-1.13"
+    },
+    "tiers": {
+      "simple": "tokenin/deepseek-v4.1-flash",
+      "medium": "tokenin/celestial-pro",
+      "complex": "tokenin/celestial-max",
+      "reasoning": "tokenin/celestial-ultra"
+    }
+  },
   "autoHandoff": {
     "enabled": true,
     "thresholdTokens": 256000
@@ -17,6 +30,9 @@
   "outputPad": 0,
   "showCacheMissNotices": false,
   "followUpMode": "one-at-a-time",
+  "graft": {
+    "deepModel": "deepseek-v4.1-flash"
+  },
   "hideThinkingBlock": false,
   "images": {
     "autoResize": true,

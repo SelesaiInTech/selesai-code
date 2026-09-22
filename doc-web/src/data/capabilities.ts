@@ -262,6 +262,22 @@ export const capabilities: Capability[] = [
     runtimeSurface: "automatic",
   },
   {
+    slug: "auto-model",
+    category: "terminal-workspace",
+    en: { displayName: "Automatic model routing", benefit: "Classify each idle prompt with the Jev decisions model and switch to the model configured for the simple, medium, complex, or reasoning tier." },
+    id: { displayName: "Perutean model otomatis", benefit: "Klasifikasikan setiap prompt idle dengan model keputusan Jev dan beralih ke model yang dikonfigurasi untuk tier simple, medium, complex, atau reasoning." },
+    sourcePaths: ["src/extensions/auto-model.ts", "docs/settings.md"],
+    sourceLinks: [
+      links("Auto-model extension source", "src/extensions/auto-model.ts"),
+      links("Settings reference", "docs/settings.md"),
+    ],
+    guideRoute: "capabilities/workspace/auto-model",
+    piComparison: "core-differentiator",
+    distribution: "bundled",
+    manifestEntry: "./auto-model.ts",
+    runtimeSurface: "automatic",
+  },
+  {
     slug: "pi-graft",
     category: "terminal-workspace",
     en: { displayName: "Graft code context", benefit: "Build a local semantic graph, inject bounded source-backed context for coding turns, and query it with precise read-only tools." },

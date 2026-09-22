@@ -1837,6 +1837,62 @@
    "noConfig": true
   },
   {
+   "slug": "auto-model",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Automatic model routing classifies each idle, top-level prompt with the Jev decisions model through the Token-In gateway and switches to the model configured for the chosen tier before the turn starts.",
+    "id": "Perutean model otomatis mengklasifikasikan setiap prompt idle top-level dengan model keputusan Jev melalui gateway Token-In dan beralih ke model yang dikonfigurasi untuk tier terpilih sebelum turn dimulai."
+   },
+   "sourcePaths": [
+    "src/extensions/auto-model.ts"
+   ],
+   "scopes": [
+    {
+     "label": {
+      "en": "Global and project settings",
+      "id": "Pengaturan global dan proyek"
+     },
+     "path": "~/.selesai/agent/settings.json, .selesai/settings.json",
+     "precedence": {
+      "en": "Read on every prompt; project values override global ones.",
+      "id": "Dibaca pada setiap prompt; nilai proyek menimpa nilai global."
+     }
+    }
+   ],
+   "settings": [
+    {
+     "key": "autoModel",
+     "type": "object",
+     "default": "disabled",
+     "description": {
+      "en": "Enables routing and maps each of the four tiers to a provider/model, with an optional classifier block (provider, model, baseUrl, timeoutMs, minConfidence, contextTurns, contextChars) and a fallbackTier (default medium).",
+      "id": "Mengaktifkan perutean dan memetakan keempat tier ke provider/model, dengan blok classifier opsional (provider, model, baseUrl, timeoutMs, minConfidence, contextTurns, contextChars) dan fallbackTier (default medium)."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "autoModel.tiers.*",
+     "type": "string",
+     "description": {
+      "en": "One model per tier as provider/modelId with an optional :thinkingLevel suffix applied through pi.setThinkingLevel().",
+      "id": "Satu model per tier sebagai provider/modelId dengan akhiran :thinkingLevel opsional yang diterapkan lewat pi.setThinkingLevel()."
+     },
+     "persistence": "settings.json"
+    }
+   ],
+   "envVars": [],
+   "controls": [
+    {
+     "name": "/model",
+     "description": {
+      "en": "Choosing a model manually suspends automatic routing for the rest of the session.",
+      "id": "Memilih model secara manual menangguhkan perutean otomatis sampai akhir sesi."
+     }
+    }
+   ],
+   "noConfig": false
+  },
+  {
    "slug": "auto-session-name",
    "distribution": "bundled",
    "overview": {

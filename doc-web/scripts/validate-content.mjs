@@ -41,6 +41,7 @@ const BUNDLED_EXTENSION_GUIDES = {
   "./inline-skills.ts": "skills/inline-skills",
   "./rtk.ts": "skills/rtk",
   "./agent-browser.ts": "skills/agent-browser",
+  "./auto-model.ts": "workspace/auto-model",
   "./tokenin-onboarding.ts": "workspace/tokenin-onboarding",
   "./pi-graft": "workspace/graft",
   "./undo.ts": "continuity/undo",

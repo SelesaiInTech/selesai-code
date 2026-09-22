@@ -17,6 +17,43 @@ This page covers the settings most people actually touch. The exhaustive referen
 | `defaultThinkingLevel` | string | — | How much the agent thinks before answering: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, or `"xhigh"`. |
 | `enabledModels` | string[] | — | Model patterns for Ctrl+P cycling, e.g. `["claude-*"]`. |
 
+## Automatic model routing
+
+The bundled `auto-model` extension classifies each idle, top-level prompt as `simple`, `medium`, `complex`, or `reasoning` with the Jev decisions model, then switches to the model you configured for that tier. It stays off until `autoModel.enabled` is `true`.
+
+| Setting | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `autoModel.enabled` | boolean | `false` | Turn automatic per-prompt routing on. |
+| `autoModel.classifier.provider` | string | `"tokenin"` | Provider serving the Jev decisions deployment. |
+| `autoModel.classifier.model` | string | `"jev-1.13"` | Decisions model the classifier calls. |
+| `autoModel.classifier.baseUrl` | string | inherited | Base URL override; defaults to any registered model of `classifier.provider`. |
+| `autoModel.classifier.timeoutMs` | number | `10000` | Classifier request timeout in milliseconds. |
+| `autoModel.classifier.minConfidence` | number | `0.5` | Below this Jev confidence the fallback tier is used. |
+| `autoModel.classifier.contextTurns` | number | `4` | Prior user turns sent as classifier context. |
+| `autoModel.classifier.contextChars` | number | `4000` | Character budget for that context. |
+| `autoModel.tiers.simple` | string | `"tokenin/deepseek-v4.1-flash"` | Model for greetings, lookups, and tiny transformations. |
+| `autoModel.tiers.medium` | string | `"tokenin/celestial-pro"` | Model for routine coding and explanations (the default fallback). |
+| `autoModel.tiers.complex` | string | `"tokenin/celestial-max"` | Model for non-trivial engineering and root-cause debugging. |
+| `autoModel.tiers.reasoning` | string | `"tokenin/celestial-ultra"` | Model for open-ended reasoning and tradeoffs. |
+| `autoModel.fallbackTier` | string | `"medium"` | Tier used when the classifier is unavailable. |
+
+Each tier value is `provider/modelId`, with an optional `:thinkingLevel` suffix (for example `tokenin/celestial-max:max`). Only idle, top-level prompts are routed: queued steering and follow-up messages, extension-injected messages, and `/` commands are left alone, because the session model is global. Choosing a model with `/model` suspends routing for the rest of the session. A classifier timeout, error, malformed or unsure answer, missing or out-of-scope model, or unavailable credentials keeps the current model or falls back to `fallbackTier`.
+
+```json
+{
+  "autoModel": {
+    "enabled": true,
+    "classifier": { "provider": "tokenin", "model": "jev-1.13" },
+    "tiers": {
+      "simple": "tokenin/deepseek-v4.1-flash",
+      "medium": "tokenin/celestial-pro",
+      "complex": "tokenin/celestial-max",
+      "reasoning": "tokenin/celestial-ultra"
+    }
+  }
+}
+```
+
 ## Tools
 
 | Setting | Type | Default | What it does |

@@ -3,6 +3,19 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.28 — Perutean model otomatis
+
+Setiap prompt idle sekarang dapat memilih modelnya sendiri. Ekstensi bundel baru `auto-model` menanyakan ke model keputusan Jev (`jev-1.13`, melalui gateway Token-In) seberapa sulit permintaannya, lalu beralih ke model yang Anda konfigurasi untuk tier tersebut.
+
+- **Empat tier, model Anda.** `settings.json` mendapat blok `autoModel` dengan classifier dan satu model masing-masing untuk `simple`, `medium`, `complex`, dan `reasoning`. Nonaktif secara default.
+- **Nilai tier adalah `provider/model`.** Tambahkan akhiran `:thinkingLevel` opsional (`tokenin/celestial-max:max`) dan ekstensi juga mengatur level thinking.
+- **Hanya prompt top-level idle yang mengganti model.** Pesan steering dan follow-up yang diantre, pesan dari ekstensi, dan perintah `/` tidak disentuh, karena model bersifat global per sesi. Memilih model dengan `/model` menangguhkan perutean otomatis sampai akhir sesi.
+- **Kegagalan tetap membuat Anda berjalan.** Timeout classifier, jawaban rusak atau ragu, model hilang atau di luar scope, atau kredensial tidak tersedia akan mempertahankan model saat ini atau beralih ke `autoModel.fallbackTier` (default `medium`).
+
+**Graft**
+
+- **Default model build deep untuk instalasi lama.** Saat mulai, `graft.deepModel` (`deepseek-v4.1-flash`) kini diisi ke file settings yang ada bila belum ada, tanpa menimpa model pilihan Anda.
+
 ## 0.13.27 — Sinkronisasi Pi v0.86.1
 
 Mem-port sumber coding-agent dari Pi v0.85.1 ke v0.86.1, dan menaikkan `pi-ai`, `pi-agent-core` dan `pi-tui` ke 0.86.1. Package ini sekarang memerlukan Node 22.19.0 atau lebih baru.

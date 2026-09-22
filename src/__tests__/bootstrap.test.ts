@@ -11,6 +11,7 @@ import {
 	seedDefaultExtensions,
 	seedDefaultThemes,
 	seedMissingSubagentSettings,
+	seedMissingGraftSettings,
 	seedDefaultSkills,
 } from "../config.js";
 
@@ -98,6 +99,41 @@ describe("agent dir bootstrap", () => {
 
 		expect(seedMissingSubagentSettings(dest, bundled)).toBe(false);
 		expect(readFileSync(dest, "utf-8")).toBe(brokenRaw);
+	});
+
+	it("adds the bundled graft deep model to user settings without reformatting them", () => {
+		writeFileSync(join(bundled, "settings.json"), JSON.stringify({ graft: { deepModel: "deepseek-v4.1-flash" } }));
+		const dest = join(dir, "settings.json");
+		const userRaw = '{\n  "theme": "user",\n  "customPlugin": { "enabled": true }\n}';
+		writeFileSync(dest, userRaw);
+
+		expect(seedMissingGraftSettings(dest, bundled)).toBe(true);
+		expect(JSON.parse(readFileSync(dest, "utf-8"))).toEqual({
+			theme: "user",
+			customPlugin: { enabled: true },
+			graft: { deepModel: "deepseek-v4.1-flash" },
+		});
+		expect(readFileSync(dest, "utf-8")).toContain('"theme": "user"');
+	});
+
+	it("merges the deep model into an existing graft section", () => {
+		writeFileSync(join(bundled, "settings.json"), JSON.stringify({ graft: { deepModel: "deepseek-v4.1-flash" } }));
+		const dest = join(dir, "settings.json");
+		writeFileSync(dest, JSON.stringify({ graft: { mode: "push" } }));
+
+		expect(seedMissingGraftSettings(dest, bundled)).toBe(true);
+		expect(JSON.parse(readFileSync(dest, "utf-8"))).toEqual({
+			graft: { mode: "push", deepModel: "deepseek-v4.1-flash" },
+		});
+	});
+
+	it("preserves a user-chosen graft deep model", () => {
+		writeFileSync(join(bundled, "settings.json"), JSON.stringify({ graft: { deepModel: "deepseek-v4.1-flash" } }));
+		const dest = join(dir, "settings.json");
+		writeFileSync(dest, JSON.stringify({ graft: { deepModel: "glm-5.3-flash" } }));
+
+		expect(seedMissingGraftSettings(dest, bundled)).toBe(false);
+		expect(JSON.parse(readFileSync(dest, "utf-8"))).toEqual({ graft: { deepModel: "glm-5.3-flash" } });
 	});
 
 	it("bootstrapAgentDir is a safe no-op when bundled dirs are empty", () => {

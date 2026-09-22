@@ -7,6 +7,7 @@
 	"pi": {
 		"extensions": [
 			"./agent-browser.ts",
+		"./auto-model.ts",
 		"./auto-session-name.ts",
 			"./copy-turn.ts",
 			"./context-compaction-reminder.ts",

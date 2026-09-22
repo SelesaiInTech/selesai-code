@@ -3,6 +3,19 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.28 — Automatic model routing
+
+Every idle prompt can now pick its own model. The new bundled `auto-model` extension asks the Jev decisions model (`jev-1.13`, through the Token-In gateway) how hard the request is, then switches to the model you configured for that tier.
+
+- **Four tiers, your models.** `settings.json` gains an `autoModel` block with a classifier and one model each for `simple`, `medium`, `complex`, and `reasoning`. Disabled by default.
+- **Tier values are `provider/model`.** Add an optional `:thinkingLevel` suffix (`tokenin/celestial-max:max`) and the extension also sets the thinking level.
+- **Only idle top-level prompts change model.** Queued steering and follow-up messages, extension-injected messages, and `/` commands are left alone, because the model is session-global. Choosing a model with `/model` suspends auto routing for the rest of the session.
+- **Failures keep you running.** A classifier timeout, a malformed or unsure answer, a missing or out-of-scope model, or unavailable credentials keeps the current model or falls back to `autoModel.fallbackTier` (default `medium`).
+
+**Graft**
+
+- **Deep-build model default for existing installs.** Startup now seeds `graft.deepModel` (`deepseek-v4.1-flash`) into an existing settings file when it is absent, without overwriting a model you chose.
+
 ## 0.13.27 — Pi v0.86.1 sync
 
 Ported the coding-agent source from Pi v0.85.1 to v0.86.1, and bumped `pi-ai`, `pi-agent-core` and `pi-tui` to 0.86.1. The package now requires Node 22.19.0 or newer.

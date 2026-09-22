@@ -46,6 +46,49 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 }
 ```
 
+### Automatic Model Routing
+
+The bundled `auto-model` extension can classify each idle, top-level prompt as `simple`, `medium`,
+`complex`, or `reasoning` and switch to the model configured for that tier before the turn starts.
+Classification uses the Jev decisions model through the Token-In gateway. Routing stays off until
+`autoModel.enabled` is `true`.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `autoModel.enabled` | boolean | `false` | Enable automatic per-prompt routing |
+| `autoModel.classifier.provider` | string | `"tokenin"` | Provider serving the Jev decisions deployment |
+| `autoModel.classifier.model` | string | `"jev-1.13"` | Decisions model the classifier calls |
+| `autoModel.classifier.baseUrl` | string | inherited | Base URL override; defaults to any registered model of `classifier.provider` |
+| `autoModel.classifier.timeoutMs` | number | `10000` | Classifier request timeout (ms) |
+| `autoModel.classifier.minConfidence` | number | `0.5` | Below this Jev confidence the fallback tier is used |
+| `autoModel.classifier.contextTurns` | number | `4` | Prior user turns sent as classifier context |
+| `autoModel.classifier.contextChars` | number | `4000` | Character budget for that context |
+| `autoModel.tiers.simple` | string | `"tokenin/deepseek-v4.1-flash"` | Model for greetings, lookups, and tiny transformations |
+| `autoModel.tiers.medium` | string | `"tokenin/celestial-pro"` | Model for routine coding, edits, and explanations (the default fallback) |
+| `autoModel.tiers.complex` | string | `"tokenin/celestial-max"` | Model for non-trivial engineering and root-cause debugging |
+| `autoModel.tiers.reasoning` | string | `"tokenin/celestial-ultra"` | Model for open-ended reasoning and tradeoffs |
+| `autoModel.fallbackTier` | string | `"medium"` | Tier used when the classifier is unavailable |
+
+Each tier value is `provider/modelId`, with an optional `:thinkingLevel` suffix (for example
+`tokenin/celestial-max:max`). Only idle, top-level prompts are routed: queued steering/follow-up
+messages, extension-injected messages, and slash commands are left alone, because the session model
+is global. Selecting a model with `/model` suspends routing for the rest of the session.
+
+```json
+{
+  "autoModel": {
+    "enabled": true,
+    "classifier": { "provider": "tokenin", "model": "jev-1.13" },
+    "tiers": {
+      "simple": "tokenin/deepseek-v4.1-flash",
+      "medium": "tokenin/celestial-pro",
+      "complex": "tokenin/celestial-max",
+      "reasoning": "tokenin/celestial-ultra"
+    }
+  }
+}
+```
+
 ### UI & Display
 
 | Setting | Type | Default | Description |

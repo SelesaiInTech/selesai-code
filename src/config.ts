@@ -819,6 +819,52 @@ export function seedMissingSubagentSettings(
 }
 
 /**
+ * Add the bundled `graft.deepModel` default to an existing user settings file.
+ *
+ * The `graft` namespace may already exist without that leaf (graft is configured
+ * field-by-field), so a present `graft` object is merged rather than skipped. A
+ * user-provided `deepModel` is never overwritten. Returns true when the file was
+ * rewritten.
+ */
+export function seedMissingGraftSettings(
+	destPath: string,
+	bundledDefaultsDir: string = getBundledDefaultsDir(),
+): boolean {
+	if (!existsSync(destPath)) return false;
+
+	try {
+		const raw = readFileSync(destPath, "utf-8");
+		const settings = JSON.parse(raw) as unknown;
+		const defaults = JSON.parse(readFileSync(join(bundledDefaultsDir, "settings.json"), "utf-8")) as unknown;
+		if (typeof settings !== "object" || settings === null || Array.isArray(settings)) return false;
+		if (typeof defaults !== "object" || defaults === null || Array.isArray(defaults)) return false;
+
+		const defaultGraft = (defaults as Record<string, unknown>).graft;
+		const deepModel =
+			typeof defaultGraft === "object" && defaultGraft !== null && !Array.isArray(defaultGraft)
+				? (defaultGraft as Record<string, unknown>).deepModel
+				: undefined;
+		if (typeof deepModel !== "string") return false;
+
+		const graft = (settings as Record<string, unknown>).graft;
+		if (graft === undefined) {
+			const injected = injectRootObjectKey(raw, "graft", defaultGraft);
+			if (injected === undefined) return false;
+			writeFileSync(destPath, injected);
+			return true;
+		}
+		if (typeof graft !== "object" || graft === null || Array.isArray(graft)) return false;
+		if (Object.hasOwn(graft, "deepModel")) return false;
+
+		(graft as Record<string, unknown>).deepModel = deepModel;
+		writeFileSync(destPath, `${JSON.stringify(settings, null, 2)}\n`);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Recursively copy a bundled directory tree into the user's agent dir,
  * overwriting any existing file so the bundled copy stays authoritative.
  * Used to seed/sync bundled skills and themes. User-only files (not present in
@@ -938,6 +984,7 @@ export function bootstrapAgentDir(agentDir: string = getAgentDir()): void {
 	const settingsPath = join(agentDir, "settings.json");
 	seedDefaultConfigFile(settingsPath, "settings.json");
 	seedMissingSubagentSettings(settingsPath);
+	seedMissingGraftSettings(settingsPath);
 	seedDefaultExtensions(agentDir);
 	seedDefaultSkills(agentDir);
 	seedDefaultThemes(agentDir);
