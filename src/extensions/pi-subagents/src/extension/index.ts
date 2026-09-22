@@ -757,6 +757,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		label: "Subagent",
 		description: buildSubagentToolDescription(config),
 		...buildSubagentToolPromptMetadata(config),
+		...{ discovery: {
+			summary: "Delegate a task to one or more child agents, or run a workflow script",
+			aliases: ["delegate task", "child agent", "parallel agents"],
+			category: "agents",
+		} },
 		parameters,
 
 		async execute(id, params, signal, onUpdate, ctx) {

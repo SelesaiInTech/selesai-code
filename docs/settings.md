@@ -46,48 +46,85 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 }
 ```
 
-### Automatic Model Routing
+### Jev Advisory Routing
 
-The bundled `auto-model` extension can classify each idle, top-level prompt as `simple`, `medium`,
-`complex`, or `reasoning` and switch to the model configured for that tier before the turn starts.
-Classification uses the Jev decisions model through the Token-In gateway. Routing stays off until
-`autoModel.enabled` is `true`.
+The bundled `jev-advisory-routing` extension uses the Jev decisions model for bounded opt-in
+routing. Every route stays off until it is enabled in `jevAdvisory`; the two routes share one
+Jev provider/model pair:
+
+- `memory` — only after an explicit durable-memory cue (for example “the convention we
+  decided” or “don't repeat the past failure”), Jev chooses one read-only local
+  `memory_search` target. Jev never sees memory contents, and no memory is written.
+- `recommendations` — one discovered skill or prompt workflow that fits, or a proportionate
+  verification level. Nothing is loaded, started, or executed: the recommendation is context for the
+  agent, and required project/workflow gates are unchanged.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `autoModel.enabled` | boolean | `false` | Enable automatic per-prompt routing |
-| `autoModel.classifier.provider` | string | `"tokenin"` | Provider serving the Jev decisions deployment |
-| `autoModel.classifier.model` | string | `"jev-1.13"` | Decisions model the classifier calls |
-| `autoModel.classifier.baseUrl` | string | inherited | Base URL override; defaults to any registered model of `classifier.provider` |
-| `autoModel.classifier.timeoutMs` | number | `10000` | Classifier request timeout (ms) |
-| `autoModel.classifier.minConfidence` | number | `0.5` | Below this Jev confidence the fallback tier is used |
-| `autoModel.classifier.contextTurns` | number | `4` | Prior user turns sent as classifier context |
-| `autoModel.classifier.contextChars` | number | `4000` | Character budget for that context |
-| `autoModel.tiers.simple` | string | `"tokenin/deepseek-v4.1-flash"` | Model for greetings, lookups, and tiny transformations |
-| `autoModel.tiers.medium` | string | `"tokenin/celestial-pro"` | Model for routine coding, edits, and explanations (the default fallback) |
-| `autoModel.tiers.complex` | string | `"tokenin/celestial-max"` | Model for non-trivial engineering and root-cause debugging |
-| `autoModel.tiers.reasoning` | string | `"tokenin/celestial-ultra"` | Model for open-ended reasoning and tradeoffs |
-| `autoModel.fallbackTier` | string | `"medium"` | Tier used when the classifier is unavailable |
+| `jevAdvisory.provider` | string | `"tokenin"` | Provider serving the Jev decisions deployment |
+| `jevAdvisory.model` | string | `"jev-1.13"` | Decisions model every route calls |
+| `jevAdvisory.baseUrl` | string | inherited | Base URL override; defaults to any registered model of `provider` |
+| `jevAdvisory.routes.memory.enabled` | boolean | `false` | Enable the memory-lookup route |
+| `jevAdvisory.routes.recommendations.enabled` | boolean | `false` | Enable skill/workflow and verification recommendations |
+| `<route>.timeoutMs` | number | `8000` | Route request timeout (ms); memory is capped at 750ms |
+| `<route>.minConfidence` | number | `0.6` | Below this Jev confidence the route abstains |
+| `<route>.contextTurns` | number | `4` | Prior user turns sent as recommendation context; memory sends only the current bounded prompt |
+| `<route>.contextChars` | number | `4000` | Character budget for recommendation context |
+| `<route>.payloadBytes` | number | `8192` | Hard cap on the serialized decision request |
 
-Each tier value is `provider/modelId`, with an optional `:thinkingLevel` suffix (for example
-`tokenin/celestial-max:max`). Only idle, top-level prompts are routed: queued steering/follow-up
-messages, extension-injected messages, and slash commands are left alone, because the session model
-is global. Selecting a model with `/model` suspends routing for the rest of the session.
+Only idle, top-level, interactive prompts are routed: queued steering/follow-up input, slash
+commands, and extension-injected turns are skipped, and each turn is routed at most once. The memory
+route sends no history to Jev; on an accepted target it runs one local, read-only lookup (at most five
+results, bounded before injection). A missing Token-In subscription, a timeout, a malformed or
+low-confidence answer, an unknown candidate, unavailable/empty local memory, or an oversized payload
+is an ordinary abstention that leaves the existing memory policy and verification requirements in force.
 
 ```json
 {
-  "autoModel": {
-    "enabled": true,
-    "classifier": { "provider": "tokenin", "model": "jev-1.13" },
-    "tiers": {
-      "simple": "tokenin/deepseek-v4.1-flash",
-      "medium": "tokenin/celestial-pro",
-      "complex": "tokenin/celestial-max",
-      "reasoning": "tokenin/celestial-ultra"
+  "jevAdvisory": {
+    "provider": "tokenin",
+    "model": "jev-1.13",
+    "routes": {
+      "memory": { "enabled": true },
+      "recommendations": { "enabled": true }
     }
   }
 }
 ```
+
+### Capability Gateway (experimental)
+
+The bundled `capability-gateway` extension keeps optional extension tools dormant until they are
+needed: a compact `capability_catalog` lists them, `capability_discover` activates one for the
+current run, and `capability_skill_show` loads one skill's full instructions. Set
+`SELESAI_CAPABILITY_GATEWAY=0` to disable the gateway and keep every tool visible.
+
+Routing has two rungs:
+
+1. A deterministic router activates a tool when the prompt uniquely matches its name, alias, or
+   discovery summary. Skills are never auto-loaded or auto-selected.
+2. Opt-in Jev tie-breaking: when the deterministic router returns an ambiguous lexical hint among
+   optional tools, the Jev decisions model is asked which of two or three hinted tools (or `none`)
+   should be exposed. Jev sees only the bounded current prompt and each hinted tool's compact
+   discovery line — never conversation history, tool schemas, or the full catalog. A prompt with no
+   lexical signal, a unique activation, and a skill-only match never reach Jev.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `capabilityGateway.routing.jev.enabled` | boolean | `false` | Enable Jev tie-breaking for ambiguous tool hints |
+| `capabilityGateway.routing.jev.provider` | string | `"tokenin"` | Provider serving the Jev decisions deployment |
+| `capabilityGateway.routing.jev.model` | string | `"jev-1.13"` | Decisions model the tie-breaker calls |
+| `capabilityGateway.routing.jev.baseUrl` | string | inherited | Base URL override; defaults to any registered model of `provider` |
+| `capabilityGateway.routing.jev.timeoutMs` | number | `1000` | Pre-turn request timeout (ms); hard-capped at `2000` |
+| `capabilityGateway.routing.jev.minConfidence` | number | `0.6` | Below this Jev confidence the tie-breaker abstains |
+| `capabilityGateway.routing.jev.payloadBytes` | number | `8192` | Hard cap on the serialized decision request |
+
+This area is independent of `jevAdvisory`: gateway routing reads only
+`capabilityGateway.routing.jev` and shares just the Jev provider/model deployment identity. A
+failure, timeout, invalid answer, low confidence, or `none` is an ordinary abstention that leaves
+the deterministic behavior in place. Temporary activations reset when the run settles, and
+content-free telemetry on the `capability-gateway` event channel records the route outcome and
+whether an activated tool was actually invoked.
 
 ### UI & Display
 

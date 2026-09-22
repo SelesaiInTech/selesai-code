@@ -259,6 +259,11 @@ export function registerNativeSupervisorClient(pi: ExtensionAPI, metadata: Child
 		name: "contact_supervisor",
 		label: "Contact Supervisor",
 		description: "Contact the parent/supervisor session for a blocking decision, structured interview, or progress update.",
+		...{ discovery: {
+			summary: "Contact the parent/supervisor session for decisions, interviews, or progress updates",
+			aliases: ["contact supervisor", "ask supervisor"],
+			category: "coordination",
+		} },
 		parameters: ContactSupervisorParamsSchema,
 		execute(id, params, signal) {
 			return sendSupervisorRequest(params as ContactSupervisorParams, metadata, signal, id);
@@ -578,6 +583,11 @@ function buildParentSupervisorTool(pi: ExtensionAPI, pending: Map<string, Pendin
 		name: NATIVE_SUPERVISOR_TOOL_NAME,
 		label: "Subagent Supervisor",
 		description: "Native pi-subagents supervisor channel. Use reply/pending/status to answer child subagent requests without overriding pi-intercom.",
+		...{ discovery: {
+			summary: "Answer child subagent requests: reply, pending, or status",
+			aliases: ["supervisor channel", "reply to subagent"],
+			category: "coordination",
+		} },
 		parameters: IntercomParamsSchema,
 		async execute(_id, params) {
 			// Discover new request files even when demand-gated polling is idle.

@@ -1819,6 +1819,11 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
       label: "Contact Supervisor",
       description: "Subagent-only tool for contacting the supervisor agent that delegated this task. Use need_decision when blocked, uncertain, needing approval, or facing a product/API/scope decision before continuing; this waits for the supervisor's reply. Use interview_request when multiple structured questions need supervisor answers; this also waits for a reply. Use progress_update only for meaningful progress or unexpected discoveries that change the plan; this does not wait for a reply. Do not use for routine completion handoffs.",
       promptSnippet: "Subagent-only: contact the supervisor for decisions, structured interviews, or meaningful plan-changing updates. Do not use for routine completion handoffs.",
+      discovery: {
+        summary: "Subagent-only channel to ask the supervisor for decisions or send plan-changing updates",
+        aliases: ["contact supervisor", "ask supervisor"],
+        category: "coordination",
+      },
       promptGuidelines: [
         "Use contact_supervisor with reason='need_decision' when a subagent is blocked, uncertain, needs approval, or faces a product/API/scope decision before continuing.",
         "Use contact_supervisor with reason='interview_request' when the child needs multiple structured answers from the supervisor in one blocking exchange.",
@@ -2088,6 +2093,11 @@ export default function piIntercomExtension(pi: ExtensionAPI) {
   pi.registerTool(defineTool({
     name: "intercom",
     label: "Intercom",
+    discovery: {
+      summary: "Send messages and coordinate with other local Selesai sessions",
+      aliases: ["contact session", "session message", "peer session"],
+      category: "coordination",
+    },
     description: `Send a message to another Selesai session running on this machine.
 Use this to communicate findings, request help, or coordinate work with other sessions.
 

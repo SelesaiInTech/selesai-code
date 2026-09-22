@@ -181,6 +181,11 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 			"Allowed management/control actions: list, get, status, lane.status, interrupt, resume, steer, doctor.",
 			"Mutating management actions (create, update, delete, eject, disable, enable, reset, grant-spawn-budget, lane.recordMerge, lane.recordSupersession) are blocked in this mode.",
 		].join("\n"),
+		...{ discovery: {
+			summary: "Delegate to subagents from child-safe fanout mode",
+			aliases: ["delegate task", "child agent", "parallel agents"],
+			category: "agents",
+		} },
 		parameters: params,
 		async execute(id, params, signal, onUpdate, ctx) {
 			return finalizeToolResult(await executor.executePublic(id, params as SubagentParamsLike, signal ?? new AbortController().signal, onUpdate, ctx));

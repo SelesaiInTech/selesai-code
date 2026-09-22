@@ -1,0 +1,54 @@
+---
+draft: false
+title: Jev advisory routing
+---
+
+import ExtensionStatus from "../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../components/SourceEvidence.astro";
+
+The bundled `jev-advisory-routing` extension makes bounded, opt-in Jev decisions before an eligible prompt. It can retrieve relevant durable memory or suggest a skill, workflow, or verification level; it never performs those actions itself.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./jev-advisory-routing.ts"
+  runtimeSurface="automatic"
+  locale="en"
+/>
+
+## Setup and prerequisites
+
+- Bundled and loaded automatically; no installation is required.
+- Both routes are disabled by default. Enable them under `jevAdvisory.routes` in settings.
+- Jev needs a provider serving its decisions deployment (`tokenin` / `jev-1.13` by default).
+
+## What it sets up
+
+- The **memory** route recognizes explicit durable-memory cues, asks Jev for one allowlisted memory target, then makes at most one bounded, read-only local lookup.
+- The **recommendations** route can suggest one discovered skill or workflow and a proportionate verification level.
+- Content-free decision and adoption telemetry is emitted on the Jev routing event channel.
+
+## What you can configure
+
+<ExtensionCustomization slug="jev-advisory-routing" locale="en" />
+
+`timeoutMs`, `minConfidence`, `contextTurns`, `contextChars`, and `payloadBytes` can be set per route. The memory request is capped at 750 ms regardless of its configured timeout.
+
+## What you can do
+
+- Enable a local lookup for requests such as “use the convention we decided” or “don't repeat the past failure.”
+- Receive a suggested discovered skill or prompt workflow without automatically loading it.
+- Receive a verification suggestion without changing a project or workflow's required checks.
+
+## Commands, tools, and shortcuts
+
+No commands or tools are registered. This extension reacts to eligible interactive input before the agent starts.
+
+## Limits and safety
+
+- Only idle, top-level, interactive prompts run routes; slash commands, queued steering/follow-up input, and extension-injected turns are skipped.
+- Jev never receives memory contents. An accepted memory target performs one local, read-only search with at most five bounded results; no memory is written.
+- Jev answers are allowlisted and confidence-checked. A missing subscription, timeout, malformed or low-confidence answer, unavailable/empty local store, unknown candidate, or oversized payload is an abstention.
+- Recommendations are context only: they do not load a skill, start a workflow, run a command, or weaken mandatory verification.
+
+<SourceEvidence slug="jev-advisory-routing" />

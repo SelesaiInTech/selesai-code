@@ -16,8 +16,19 @@
  * - A deterministic router activates a uniquely matched tool before the run.
  *   Skills and ambiguous matches remain discoverable through the catalog
  *   without injecting fuzzy hints into the model context.
+ * - Opt-in Jev-assisted routing (capabilityGateway.routing.jev in settings.json)
+ *   is only a bounded tie-breaker: when the deterministic router returns an
+ *   ambiguous lexical hint among optional tools, the gateway offers just those
+ *   hinted tools (two or three) and the current prompt to the Jev decisions
+ *   model as one constrained choice question. Jev may answer `none` or one
+ *   hinted canonical tool name; the gateway revalidates the choice against the
+ *   live catalog and activates it for the current run only. No hint, a unique
+ *   activation, a skill match, or an already-activated tool never reaches Jev.
+ *   Every Jev failure is an ordinary abstention that leaves the deterministic
+ *   behavior in place, so a missing Token-In subscription is invisible.
  * - Temporary activations reset at agent_settled, restoring the baseline
- *   active-tool set.
+ *   active-tool set; a tool_execution_start for one of them records whether the
+ *   activation was actually used (content-free tool name + source only).
  * - The system-prompt skill index is replaced by a compact capability
  *   instruction; full skill instructions load only on explicit show/invoke.
  * - Telemetry events are emitted on the shared event bus.
@@ -36,6 +47,14 @@ import {
 	route,
 	type CatalogEntry,
 } from "./catalog.ts";
+import {
+	hintedToolCandidates,
+	MIN_GATEWAY_JEV_CANDIDATES,
+	readGatewayJevConfig,
+	routeToJevTool,
+	JEV_UNAVAILABLE_REASONS,
+} from "./routing.ts";
+import { confidenceBucket } from "../jev/decisions.ts";
 
 export const GATEWAY_ENV = "SELESAI_CAPABILITY_GATEWAY";
 export const GATEWAY_TOOLS = new Set(["capability_catalog", "capability_discover", "capability_skill_show"]);
@@ -118,8 +137,24 @@ function emitTelemetry(pi: ExtensionAPI, event: string, data: Record<string, unk
 	}
 }
 
+/** Where a run-local tool activation came from; recorded so use telemetry can attribute it. */
+type ActivationSource = "deterministic" | "jev" | "discover";
+
 export default function capabilityGatewayExtension(pi: ExtensionAPI): void {
 	if (!isEnabled()) return;
+
+	// Tools this gateway activated for the current run, and whether they were invoked.
+	// Cleared at agent_settled with the activations themselves.
+	const activations = new Map<string, { source: ActivationSource; used: boolean }>();
+
+	/** Activate one tool for the current run, keeping the rest of the loadout untouched. */
+	function activateTool(name: string, source: ActivationSource): void {
+		const active = pi.getActiveTools();
+		if (!active.includes(name)) {
+			pi.setActiveTools([...active, name]);
+		}
+		activations.set(name, { source, used: false });
+	}
 
 	// ------------------------------------------------------------------
 	// Session start: snapshot baseline, make extension tools dormant, and
@@ -182,7 +217,8 @@ export default function capabilityGatewayExtension(pi: ExtensionAPI): void {
 								})
 							: filtered;
 			const text = formatCatalog(shown);
-			emitTelemetry(pi, "catalog", { query: params.query ?? "", kind: params.kind ?? "", results: shown.length });
+			// Content-free: catalog query and filter arguments never travel.
+			emitTelemetry(pi, "catalog", { results: shown.length });
 			return {
 				content: [{ type: "text", text }],
 				details: { count: shown.length, total: filtered.length },
@@ -220,10 +256,7 @@ export default function capabilityGatewayExtension(pi: ExtensionAPI): void {
 					details: { activated: false },
 				};
 			}
-			const active = pi.getActiveTools();
-			if (!active.includes(entry.name)) {
-				pi.setActiveTools([...active, entry.name]);
-			}
+			activateTool(entry.name, "discover");
 			emitTelemetry(pi, "discover", { tool: entry.name });
 			return {
 				content: [
@@ -280,32 +313,84 @@ export default function capabilityGatewayExtension(pi: ExtensionAPI): void {
 	});
 
 	// ------------------------------------------------------------------
-	// Deterministic routing: high-confidence activation/recommendation,
-	// ambiguity hints, or nothing for unrelated prompts.
+	// Routing: the deterministic catalog router first; opt-in Jev routing is
+	// only a bounded tie-breaker for its ambiguous/hint result.
 	// ------------------------------------------------------------------
-	pi.on("before_agent_start", (event) => {
-		const result = routePrompt(event.prompt, catalogEntries(pi));
-		if (result.action === "none") return undefined;
+	pi.on("before_agent_start", async (event, ctx) => {
+		const entries = catalogEntries(pi);
+		const result = routePrompt(event.prompt, entries);
 		if (result.action === "activate" && result.entry) {
-			const active = pi.getActiveTools();
-			if (!active.includes(result.entry.name)) {
-				pi.setActiveTools([...active, result.entry.name]);
-			}
-			emitTelemetry(pi, "route_activate", { tool: result.entry.name });
+			activateTool(result.entry.name, "deterministic");
+			emitTelemetry(pi, "route", {
+				source: "deterministic",
+				outcome: "activated",
+				tool: result.entry.name,
+				candidates: 0,
+				durationMs: 0,
+			});
 			return undefined;
 		}
 		// Do not inject fuzzy recommendations or catalog hints into the model
 		// context. It can discover capabilities when it actually needs one.
+		// Jev is a tie-breaker, never a classifier: only the ambiguous/hint
+		// result counts. No lexical signal or unique skill recommendation
+		// reaches it, and skills are never offered as candidates.
+		if (result.action !== "hint") return undefined;
+		const config = readGatewayJevConfig();
+		if (!config.enabled) return undefined;
+		const candidates = hintedToolCandidates(result.candidates);
+		if (candidates.length < MIN_GATEWAY_JEV_CANDIDATES) return undefined;
+
+		emitTelemetry(pi, "route", { source: "jev", outcome: "attempt", candidates: candidates.length });
+		const jevRoute = await routeToJevTool(candidates, event.prompt, ctx, config);
+		if (!jevRoute.selected) {
+			emitTelemetry(pi, "route", {
+				source: "jev",
+				outcome: JEV_UNAVAILABLE_REASONS.has(jevRoute.reason) ? "unavailable" : "abstained",
+				reason: jevRoute.reason,
+				candidates: jevRoute.candidates,
+				durationMs: jevRoute.elapsedMs,
+			});
+			return undefined;
+		}
+
+		// Revalidate the accepted choice against the live catalog immediately
+		// before activation: a stale or no-longer-eligible name activates nothing.
+		const live = eligibleTools(pi).find((tool) => tool.name === jevRoute.tool);
+		if (live) activateTool(live.name, "jev");
+		emitTelemetry(pi, "route", {
+			source: "jev",
+			outcome: live ? "activated" : "abstained",
+			...(live ? { tool: live.name } : { tool: jevRoute.tool }),
+			confidence: confidenceBucket(jevRoute.confidence),
+			candidates: jevRoute.candidates,
+			durationMs: jevRoute.elapsedMs,
+		});
 		return undefined;
 	});
 
 	// ------------------------------------------------------------------
-	// Reset: restore the baseline active-tool set after the run settles.
+	// Selected -> used: a run-local activation is "used" when its tool is
+	// actually executed before the run settles. Content-free: name + source.
+	// ------------------------------------------------------------------
+	pi.on("tool_execution_start", (event) => {
+		const activation = activations.get(event.toolName);
+		if (!activation || activation.used) return;
+		activation.used = true;
+		emitTelemetry(pi, "use", { tool: event.toolName, source: activation.source });
+	});
+
+	// ------------------------------------------------------------------
+	// Reset: restore the baseline active-tool set after the run settles and
+	// report how many run-local activations were actually used.
 	// ------------------------------------------------------------------
 	pi.on("agent_settled", () => {
 		const baseline = pi.getActiveTools().filter((name) => !eligibleTools(pi).some((tool) => tool.name === name));
 		pi.setActiveTools(baseline);
-		emitTelemetry(pi, "reset", { activeCount: baseline.length });
+		let used = 0;
+		for (const activation of activations.values()) if (activation.used) used += 1;
+		emitTelemetry(pi, "reset", { activeCount: baseline.length, activated: activations.size, used });
+		activations.clear();
 	});
 
 	// ------------------------------------------------------------------

@@ -7,6 +7,7 @@ import { DatabaseManager } from '../../src/store/db.js';
 import { addMemory } from '../../src/store/sqlite-memory-store.js';
 import { normalizeMemoryLookupText } from '../../src/store/memory-lookup.js';
 import { registerMemorySearchTool } from '../../src/tools/memory-search-tool.js';
+import { MEMORY_SEARCH_REQUEST_EVENT } from '../../src/memory-search-bridge.js';
 
 let ROOT_DIR = '';
 
@@ -101,6 +102,30 @@ describe('registerMemorySearchTool', () => {
     assert.match(firstResultLine, /scope=project:foo%5D%20bar \[target=project\]/);
     assert.equal(normalizeMemoryLookupText(firstResultLine), 'literal project entry');
 
+    dbManager.close();
+  });
+
+  it('serves one local read-only lookup through the extension bridge', () => {
+    const dbManager = makeDbManager();
+    addMemory(dbManager, 'project deployment convention', 'memory', 'project-a');
+
+    let handler: ((request: unknown) => void) | undefined;
+    registerMemorySearchTool({
+      registerTool: () => {},
+      events: { on: (channel: string, listener: (request: unknown) => void) => {
+        if (channel === MEMORY_SEARCH_REQUEST_EVENT) handler = listener;
+      } },
+    } as any, dbManager);
+
+    let response: any;
+    handler!({
+      input: { query: 'deployment', target: 'project', project: 'project-a', limit: 5 },
+      respond: (result: unknown) => { response = result; },
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(response.count, 1);
+    assert.match(response.output, /project deployment convention/);
     dbManager.close();
   });
 });

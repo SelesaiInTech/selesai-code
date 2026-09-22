@@ -70,5 +70,6 @@ The `pi-hermes-memory` extension gives Selesai durable memory: facts, preference
 - Secrets are blocked from being saved by content scanning.
 - Session search is bounded per startup for the incremental backfill; bulk imports are available manually.
 - Memory and skills live under the Selesai agent directory; project memories are stored per project under `~/.selesai/agent/projects-memory/<project>/`.
+- The optional Jev advisory memory route can request one bounded, read-only local `memory_search` after an explicit durable-memory cue; it never receives memory contents or writes memory.
 
 <SourceEvidence slug="pi-hermes-memory" />

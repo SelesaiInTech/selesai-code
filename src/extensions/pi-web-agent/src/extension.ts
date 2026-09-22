@@ -114,6 +114,11 @@ export default function extension(pi: ExtensionAPI) {
     label: 'Web Explore',
     description:
       'Research a web question using bounded search/fetch passes, source ranking, and targeted headless escalation. Use this for web research, current docs/discussion lookups, and recommendation summaries.',
+    discovery: {
+      summary: 'Research a web question with bounded search, fetch, and source ranking',
+      aliases: ['web research', 'web search', 'current docs lookup'],
+      category: 'web'
+    },
     parameters: Type.Object({
       query: Type.String({ description: 'Web research question to explore.' })
     }),

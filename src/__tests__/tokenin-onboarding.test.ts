@@ -1286,6 +1286,223 @@ describe("Token-In auto-failover and key rotation", () => {
 		}
 	});
 
+	describe("decisions models (Jev)", () => {
+		const decisions: Model<any> = {
+			id: "jev-1.13",
+			name: "Jev 1.13",
+			api: "openai-completions",
+			provider: "tokenin",
+			baseUrl: "https://lite.andlet.me/v1",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 2000, output: 4000, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 32_000,
+			maxTokens: 4000,
+		};
+
+		const decisionContext: Context = { messages: [{ role: "user", content: "hello" }] };
+
+		function jsonResponse(body: unknown, status = 200): Response {
+			return new Response(JSON.stringify(body), {
+				status,
+				headers: { "content-type": "application/json" },
+			});
+		}
+
+		function decisionBody(content: string, usage: Record<string, number> = {}): unknown {
+			return {
+				choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
+				usage: { prompt_tokens: 100, completion_tokens: 40, total_tokens: 140, ...usage },
+			};
+		}
+
+		function savedAccounts(keys: string[]): { dir: string; authPath: string } {
+			const dir = mkdtempSync(join(tmpdir(), "tokenin-decisions-"));
+			const authPath = join(dir, "tokenin-auth.json");
+			writeTokenInAuth({ accounts: [], activeId: null }, authPath);
+			keys.forEach((key, index) => saveTokenInAccount(key, index === 0 ? { setActive: true } : {}, authPath));
+			return { dir, authPath };
+		}
+
+		async function collect(stream: AsyncIterable<AssistantMessageEvent>): Promise<AssistantMessageEvent[]> {
+			const events: AssistantMessageEvent[] = [];
+			for await (const event of stream) events.push(event);
+			return events;
+		}
+
+		it("sends one non-streaming request and emits one text block with usage and cost", async () => {
+			const { dir, authPath } = savedAccounts(["sk-decisions"]);
+			const calls: Array<{ url: string; init: RequestInit }> = [];
+			const fetchImpl = vi.fn(async (url: unknown, init?: RequestInit) => {
+				calls.push({ url: String(url), init: init ?? {} });
+				return jsonResponse(decisionBody('{"answers":{"complexity":{"choice":"SIMPLE"}}}'));
+			});
+			try {
+				const base = vi.fn();
+				const streamSimple = createTokenInStreamSimple({ authPath, streamSimple: base as never });
+				const events = await collect(streamSimple(decisions, decisionContext, { fetch: fetchImpl as never }));
+
+				expect(events.map((event) => event.type)).toEqual([
+					"start",
+					"text_start",
+					"text_delta",
+					"text_end",
+					"done",
+				]);
+				expect(calls).toHaveLength(1);
+				expect(calls[0]!.url).toBe("https://lite.andlet.me/v1/chat/completions");
+				expect(calls[0]!.init.headers).toMatchObject({
+					"Content-Type": "application/json",
+					Authorization: "Bearer sk-decisions",
+				});
+				const body = JSON.parse(String(calls[0]!.init.body)) as Record<string, unknown>;
+				expect(body).toEqual({ model: "jev-1.13", messages: [{ role: "user", content: "hello" }] });
+				// The one thing that must never be sent: a streaming request.
+				expect(body.stream).toBeUndefined();
+				expect(base).not.toHaveBeenCalled();
+
+				const done = events[4] as { type: "done"; message: { content: unknown; usage: any; stopReason: string } };
+				expect(done.message.content).toEqual([
+					{ type: "text", text: '{"answers":{"complexity":{"choice":"SIMPLE"}}}' },
+				]);
+				expect(done.message.stopReason).toBe("stop");
+				expect(done.message.usage).toMatchObject({ input: 100, output: 40, totalTokens: 140 });
+				expect(done.message.usage.cost.input).toBeCloseTo(0.2);
+				expect(done.message.usage.cost.output).toBeCloseTo(0.16);
+				expect(done.message.usage.cost.total).toBeCloseTo(0.36);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+
+		it("flattens the transcript to text turns, dropping images and thinking", async () => {
+			const { dir, authPath } = savedAccounts(["sk-decisions"]);
+			const calls: string[] = [];
+			const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+				calls.push(String(init?.body ?? ""));
+				return jsonResponse(decisionBody("{}"));
+			});
+			const rich: Context = {
+				messages: [
+					{ role: "system", content: "system rules" },
+					{
+						role: "user",
+						content: [
+							{ type: "text", text: "ask" },
+							{ type: "image", data: "aW1n", mimeType: "image/png" },
+						],
+					},
+					{ role: "assistant", content: [{ type: "thinking", thinking: "hmm" }, { type: "text", text: "said" }] },
+					{ role: "toolResult", toolCallId: "t1", content: [{ type: "text", text: "result" }] },
+				],
+			};
+			try {
+				const streamSimple = createTokenInStreamSimple({ authPath, streamSimple: vi.fn() as never });
+				await collect(streamSimple(decisions, rich, { fetch: fetchImpl as never }));
+				expect(JSON.parse(calls[0]!).messages).toEqual([
+					{ role: "system", content: "system rules" },
+					{ role: "user", content: "ask" },
+					{ role: "assistant", content: "said" },
+					{ role: "user", content: "result" },
+				]);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+
+		it("rotates to a healthy account on a rotateable failure", async () => {
+			const { dir, authPath } = savedAccounts(["sk-bad", "sk-good"]);
+			const seen: string[] = [];
+			const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+				const authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? "";
+				seen.push(authorization);
+				if (authorization.includes("sk-bad")) {
+					return jsonResponse({ error: { message: "429 rate_limit_exceeded" } }, 429);
+				}
+				return jsonResponse(decisionBody("recovered"));
+			});
+			try {
+				const rotations: Array<{ from: string; to: string }> = [];
+				const streamSimple = createTokenInStreamSimple({
+					authPath,
+					streamSimple: vi.fn() as never,
+					onRotate: (from, to) => rotations.push({ from: from.apiKey, to: to.apiKey }),
+				});
+				const events = await collect(streamSimple(decisions, decisionContext, { fetch: fetchImpl as never }));
+
+				expect(seen).toEqual(["Bearer sk-bad", "Bearer sk-good"]);
+				expect(rotations).toEqual([{ from: "sk-bad", to: "sk-good" }]);
+				expect(isTokenInOnCooldown("sk-bad")).toBe(true);
+				expect(events.some((event) => event.type === "text_delta" && event.delta === "recovered")).toBe(true);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+
+		it("reports a terminal error instead of hanging when the request fails", async () => {
+			const { dir, authPath } = savedAccounts(["sk-only"]);
+			const fetchImpl = vi.fn(async () => jsonResponse({ error: { message: "upstream exploded" } }, 500));
+			try {
+				const streamSimple = createTokenInStreamSimple({ authPath, streamSimple: vi.fn() as never });
+				const events = await collect(streamSimple(decisions, decisionContext, { fetch: fetchImpl as never }));
+
+				expect(events).toHaveLength(1);
+				const error = events[0] as { type: "error"; reason: string; error: { stopReason: string; errorMessage: string } };
+				expect(error.type).toBe("error");
+				expect(error.reason).toBe("error");
+				expect(error.error.stopReason).toBe("error");
+				expect(error.error.errorMessage).toContain("HTTP 500");
+				expect(error.error.errorMessage).toContain("upstream exploded");
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+
+		it("reports an aborted deadline as aborted rather than as a provider error", async () => {
+			const { dir, authPath } = savedAccounts(["sk-only"]);
+			const controller = new AbortController();
+			controller.abort();
+			const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+				if (init?.signal?.aborted) throw new Error("This operation was aborted");
+				return jsonResponse(decisionBody("{}"));
+			});
+			try {
+				const streamSimple = createTokenInStreamSimple({ authPath, streamSimple: vi.fn() as never });
+				const events = await collect(
+					streamSimple(decisions, decisionContext, { fetch: fetchImpl as never, signal: controller.signal }),
+				);
+				const error = events[0] as { type: "error"; reason: string };
+				expect(error.type).toBe("error");
+				expect(error.reason).toBe("aborted");
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+
+		it("keeps the streaming path for every other tokenin model", async () => {
+			const { dir, authPath } = savedAccounts(["sk-chat"]);
+			const fetchImpl = vi.fn(async () => jsonResponse(decisionBody("should not be used")));
+			const streamed = vi.fn(() => {
+				const stream = createAssistantMessageEventStream();
+				setTimeout(() => {
+					stream.push({ type: "text_delta", contentIndex: 0, delta: "streamed", partial: fauxAssistantMessage({ stopReason: "pending" }) });
+					stream.push({ type: "done", reason: "stop", message: fauxAssistantMessage({ content: [{ type: "text", text: "streamed" }] }) });
+					stream.end();
+				}, 1);
+				return stream;
+			});
+			try {
+				const streamSimple = createTokenInStreamSimple({ authPath, streamSimple: streamed as never });
+				const events = await collect(streamSimple(model, context, { fetch: fetchImpl as never }));
+				expect(streamed).toHaveBeenCalled();
+				expect(fetchImpl).not.toHaveBeenCalled();
+				expect(events.some((event) => event.type === "text_delta" && event.delta === "streamed")).toBe(true);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+	});
+
 	it("tokenInOnboardingExtension registers tokenin provider with streamSimple", () => {
 		const registeredProviders = new Map<string, any>();
 		const pi = {

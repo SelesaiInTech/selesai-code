@@ -29,13 +29,13 @@ export function firstSentence(text: string): string {
 	return (end === -1 ? trimmed : trimmed.slice(0, end + 1)).trim();
 }
 
-/** Compact summary for a tool: explicit discovery metadata wins, then first sentence, then snippet. */
+/** Compact summary for a tool: explicit discovery metadata wins, then the description's first sentence. */
 export function toolSummary(tool: ToolInfo): string {
 	const explicit = tool.discovery?.summary?.trim();
 	if (explicit) return explicit;
 	const sentence = firstSentence(tool.description);
 	if (sentence) return sentence;
-	return tool.promptSnippet?.trim() || tool.name;
+	return tool.name;
 }
 
 export function buildToolCatalog(tools: ToolInfo[], gatewayToolNames: Set<string>): CatalogEntry[] {

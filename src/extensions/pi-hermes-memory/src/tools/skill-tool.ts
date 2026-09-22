@@ -95,6 +95,11 @@ export function registerSkillTool(pi: ExtensionAPI, store: SkillStore): void {
     label: "Skill Manager",
     description: SKILL_TOOL_DESCRIPTION,
     promptSnippet: "Create, inspect, and update reusable procedures and patterns",
+    ...{ discovery: {
+      summary: "Create, inspect, or update reusable procedure skills",
+      aliases: ["manage skills", "save procedure", "create skill"],
+      category: "capability",
+    } },
     promptGuidelines: [
       "Use the skill_manage tool after completing complex tasks that required trial and error or multiple tool calls.",
       "Use 'create' to save a new reusable procedure, 'patch' to update a section of an existing skill by skill_id, and 'update' for a full rewrite.",

@@ -1635,6 +1635,44 @@
    "noConfig": false
   },
   {
+   "slug": "jev-advisory-routing",
+   "distribution": "bundled",
+   "overview": {
+    "en": "Opt-in Jev decisions can request one bounded read-only local memory lookup or suggest a discovered skill, workflow, or verification level.",
+    "id": "Keputusan Jev opt-in dapat meminta satu pencarian memori lokal read-only yang dibatasi atau menyarankan skill, workflow, atau level verifikasi yang ditemukan."
+   },
+   "sourcePaths": [
+    "src/extensions/jev-advisory-routing.ts",
+    "src/extensions/jev/decisions.ts"
+   ],
+   "scopes": [
+    {
+     "label": { "en": "Global and project settings", "id": "Pengaturan global dan proyek" },
+     "path": "~/.selesai/agent/settings.json, .selesai/settings.json",
+     "precedence": { "en": "Read for every eligible prompt; project values override global ones.", "id": "Dibaca untuk setiap prompt yang memenuhi syarat; nilai proyek menimpa nilai global." }
+    }
+   ],
+   "settings": [
+    {
+     "key": "jevAdvisory.routes.memory.enabled",
+     "type": "boolean",
+     "default": "false",
+     "description": { "en": "Enable a cue-gated, bounded, read-only local memory lookup.", "id": "Aktifkan pencarian memori lokal read-only yang dibatasi dan bergantung pada cue." },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "jevAdvisory.routes.recommendations.enabled",
+     "type": "boolean",
+     "default": "false",
+     "description": { "en": "Enable skill/workflow and verification recommendations; nothing is loaded, started, or executed.", "id": "Aktifkan rekomendasi skill/workflow dan verifikasi; tidak ada yang dimuat, dimulai, atau dijalankan." },
+     "persistence": "settings.json"
+    }
+   ],
+   "envVars": [],
+   "controls": [],
+   "noConfig": false
+  },
+  {
    "slug": "capability-gateway",
    "distribution": "bundled",
    "overview": {
@@ -1645,7 +1683,28 @@
     "src/extensions/capability-gateway/"
    ],
    "scopes": [],
-   "settings": [],
+   "settings": [
+    {
+     "key": "capabilityGateway.routing.jev.enabled",
+     "type": "boolean",
+     "default": "false",
+     "description": {
+      "en": "Opt-in Jev tie-breaking for ambiguous hints between two or three optional tools; deterministic routing remains the default.",
+      "id": "Tie-break Jev opt-in untuk hint ambigu di antara dua atau tiga tool opsional; routing deterministik tetap default."
+     },
+     "persistence": "settings.json"
+    },
+    {
+     "key": "capabilityGateway.routing.jev.timeoutMs",
+     "type": "number",
+     "default": "1000 (max 2000)",
+     "description": {
+      "en": "Bounded pre-turn Jev request timeout. Provider, model, baseUrl, minConfidence, and payloadBytes can be configured alongside it.",
+      "id": "Timeout permintaan Jev sebelum turn yang dibatasi. Provider, model, baseUrl, minConfidence, dan payloadBytes dapat dikonfigurasi bersamanya."
+     },
+     "persistence": "settings.json"
+    }
+   ],
    "envVars": [
     {
      "key": "SELESAI_CAPABILITY_GATEWAY",
@@ -1835,62 +1894,6 @@
    "envVars": [],
    "controls": [],
    "noConfig": true
-  },
-  {
-   "slug": "auto-model",
-   "distribution": "bundled",
-   "overview": {
-    "en": "Automatic model routing classifies each idle, top-level prompt with the Jev decisions model through the Token-In gateway and switches to the model configured for the chosen tier before the turn starts.",
-    "id": "Perutean model otomatis mengklasifikasikan setiap prompt idle top-level dengan model keputusan Jev melalui gateway Token-In dan beralih ke model yang dikonfigurasi untuk tier terpilih sebelum turn dimulai."
-   },
-   "sourcePaths": [
-    "src/extensions/auto-model.ts"
-   ],
-   "scopes": [
-    {
-     "label": {
-      "en": "Global and project settings",
-      "id": "Pengaturan global dan proyek"
-     },
-     "path": "~/.selesai/agent/settings.json, .selesai/settings.json",
-     "precedence": {
-      "en": "Read on every prompt; project values override global ones.",
-      "id": "Dibaca pada setiap prompt; nilai proyek menimpa nilai global."
-     }
-    }
-   ],
-   "settings": [
-    {
-     "key": "autoModel",
-     "type": "object",
-     "default": "disabled",
-     "description": {
-      "en": "Enables routing and maps each of the four tiers to a provider/model, with an optional classifier block (provider, model, baseUrl, timeoutMs, minConfidence, contextTurns, contextChars) and a fallbackTier (default medium).",
-      "id": "Mengaktifkan perutean dan memetakan keempat tier ke provider/model, dengan blok classifier opsional (provider, model, baseUrl, timeoutMs, minConfidence, contextTurns, contextChars) dan fallbackTier (default medium)."
-     },
-     "persistence": "settings.json"
-    },
-    {
-     "key": "autoModel.tiers.*",
-     "type": "string",
-     "description": {
-      "en": "One model per tier as provider/modelId with an optional :thinkingLevel suffix applied through pi.setThinkingLevel().",
-      "id": "Satu model per tier sebagai provider/modelId dengan akhiran :thinkingLevel opsional yang diterapkan lewat pi.setThinkingLevel()."
-     },
-     "persistence": "settings.json"
-    }
-   ],
-   "envVars": [],
-   "controls": [
-    {
-     "name": "/model",
-     "description": {
-      "en": "Choosing a model manually suspends automatic routing for the rest of the session.",
-      "id": "Memilih model secara manual menangguhkan perutean otomatis sampai akhir sesi."
-     }
-    }
-   ],
-   "noConfig": false
   },
   {
    "slug": "auto-session-name",

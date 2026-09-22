@@ -7,8 +7,7 @@
 	"pi": {
 		"extensions": [
 			"./agent-browser.ts",
-		"./auto-model.ts",
-		"./auto-session-name.ts",
+			"./auto-session-name.ts",
 			"./copy-turn.ts",
 			"./context-compaction-reminder.ts",
 			"./cost-reconcile.ts",
@@ -19,6 +18,7 @@
 			"./handoff-new.ts",
 			"./herdr-agent-state.ts",
 			"./inline-skills.ts",
+			"./jev-advisory-routing.ts",
 			"./rtk.ts",
 			"./tokenin-onboarding.ts",
 			"./pi-graft",

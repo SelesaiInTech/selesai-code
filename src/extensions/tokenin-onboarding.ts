@@ -14,13 +14,18 @@ import { dirname, join } from "node:path";
 import { getAgentDir, getModelsPath } from "@selesai/code";
 import type { AuthStorage, ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionStartEvent } from "@selesai/code";
 import {
+	calculateCost,
+	contentText,
 	createAssistantMessageEventStream,
+	getSystemMessageText,
 	lazyStream,
+	type AssistantMessage,
 	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
 	type Context,
 	type Model,
 	type SimpleStreamOptions,
+	type TextContent,
 } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 
@@ -336,6 +341,171 @@ function persistActiveTokenInAccount(account: TokenInAccount, authPath: string =
 }
 
 /**
+ * The decisions deployments Token-In serves (Jev).
+ *
+ * These answer exactly one non-streaming JSON completion, and the gateway's
+ * Jev deployment rejects the SSE path outright, so the normal OpenAI-compatible
+ * streaming adapter can only turn a working decision into an HTTP 500. Every
+ * other tokenin model keeps the untouched streaming path below.
+ */
+export const TOKEN_IN_DECISIONS_MODEL_PATTERN = /^jev-/;
+
+export function isTokenInDecisionsModel(model: { id: string }): boolean {
+	return TOKEN_IN_DECISIONS_MODEL_PATTERN.test(model.id);
+}
+
+function emptyUsage(): AssistantMessage["usage"] {
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+}
+
+/**
+ * The plain-text chat messages a decisions request carries: the transcript's
+ * text, and nothing else. Decisions deployments take no tools, no images, and
+ * no thinking blocks, so anything richer is dropped rather than mis-sent.
+ */
+export function tokenInDecisionMessages(context: Context): Array<{ role: "system" | "user" | "assistant"; content: string }> {
+	const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
+	for (const message of context.messages) {
+		if (message.role === "system") {
+			const content = getSystemMessageText(message).trim();
+			if (content) messages.push({ role: "system", content });
+			continue;
+		}
+		if (message.role === "assistant") {
+			const content = contentText(message.content).trim();
+			if (content) messages.push({ role: "assistant", content });
+			continue;
+		}
+		// User and tool-result text both travel as user turns: a decisions model has
+		// no tool protocol to answer through.
+		const content = contentText(message.content).trim();
+		if (content) messages.push({ role: "user", content });
+	}
+	return messages;
+}
+
+/** The decisions completion's text, when the body is OpenAI-shaped. */
+function decisionCompletion(body: unknown): { text: string; finishReason: unknown; usage: Record<string, unknown> } | undefined {
+	if (typeof body !== "object" || body === null) return undefined;
+	const choices = (body as { choices?: unknown }).choices;
+	if (!Array.isArray(choices) || choices.length === 0) return undefined;
+	const choice = choices[0] as { message?: { content?: unknown }; finish_reason?: unknown };
+	const content = choice?.message?.content;
+	const text =
+		typeof content === "string"
+			? content
+			: Array.isArray(content)
+				? contentText(content as readonly { type: "text"; text: string }[])
+				: undefined;
+	if (text === undefined) return undefined;
+	const usage = (body as { usage?: unknown }).usage;
+	return {
+		text,
+		finishReason: choice?.finish_reason,
+		usage: typeof usage === "object" && usage !== null ? (usage as Record<string, unknown>) : {},
+	};
+}
+
+function usageNumber(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * One non-streaming decisions call, rendered into the normal event protocol so
+ * every pi consumer (and cost accounting) sees an ordinary assistant message.
+ * The returned `errorMessage` feeds the caller's account-rotation decision.
+ */
+async function requestTokenInDecision(
+	model: Model<any>,
+	context: Context,
+	options: SimpleStreamOptions,
+): Promise<{ stream: AssistantMessageEventStream; errorMessage?: string }> {
+	const stream = createAssistantMessageEventStream();
+	const message: AssistantMessage = {
+		role: "assistant",
+		content: [],
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: emptyUsage(),
+		stopReason: "pending",
+		timestamp: Date.now(),
+	};
+	const fail = (text: string): { stream: AssistantMessageEventStream; errorMessage: string } => {
+		const aborted = options.signal?.aborted === true;
+		message.stopReason = aborted ? "aborted" : "error";
+		message.errorMessage = text;
+		stream.push({ type: "error", reason: message.stopReason, error: message });
+		stream.end(message);
+		return { stream, errorMessage: text };
+	};
+
+	const requested: Record<string, unknown> = {
+		model: model.id,
+		messages: tokenInDecisionMessages(context),
+	};
+	if (options.maxTokens !== undefined) requested.max_tokens = options.maxTokens;
+	const payload = (await options.onPayload?.(requested, model)) ?? requested;
+
+	let response: Response;
+	try {
+		response = await (options.fetch ?? fetch)(`${model.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
+			body: JSON.stringify(payload),
+			...(options.signal ? { signal: options.signal } : {}),
+		});
+	} catch (error) {
+		return fail(error instanceof Error ? error.message : String(error));
+	}
+	await options.onResponse?.(
+		{ status: response.status, headers: Object.fromEntries(response.headers.entries()) },
+		model,
+	);
+
+	const raw = await response.text();
+	if (!response.ok) return fail(`HTTP ${response.status}: ${raw.slice(0, 400)}`);
+
+	let body: unknown;
+	try {
+		body = JSON.parse(raw);
+	} catch {
+		return fail(`Malformed decisions response: ${raw.slice(0, 200)}`);
+	}
+	const completion = decisionCompletion(body);
+	if (!completion) return fail(`Unexpected decisions response: ${raw.slice(0, 200)}`);
+
+	const input = usageNumber(completion.usage.prompt_tokens ?? completion.usage.input_tokens);
+	const output = usageNumber(completion.usage.completion_tokens ?? completion.usage.output_tokens);
+	message.usage = {
+		...emptyUsage(),
+		input,
+		output,
+		totalTokens: usageNumber(completion.usage.total_tokens) || input + output,
+	};
+	calculateCost(model, message.usage);
+	message.stopReason = completion.finishReason === "length" ? "length" : "stop";
+
+	stream.push({ type: "start", partial: { ...message } });
+	const block: TextContent = { type: "text", text: "" };
+	message.content = [block];
+	stream.push({ type: "text_start", contentIndex: 0, partial: { ...message } });
+	block.text = completion.text;
+	stream.push({ type: "text_delta", contentIndex: 0, delta: completion.text, partial: { ...message } });
+	stream.push({ type: "text_end", contentIndex: 0, content: completion.text, partial: { ...message } });
+	stream.push({ type: "done", reason: message.stopReason === "length" ? "length" : "stop", message });
+	stream.end(message);
+	return { stream };
+}
+
+/**
  * Custom streamSimple implementation for tokenin provider that wraps OpenAI completions
  * and automatically rotates to alternative saved keys on 401/429/budget exceeded errors.
  */
@@ -406,6 +576,21 @@ export function createTokenInStreamSimple(options?: {
 				const currentAccount = candidateAccounts[i]!;
 
 				const requestOptions = withAccountAuthorization(streamOptions, currentAccount);
+
+				// Decisions deployments never stream: one POST, one text block, and only
+				// a rotateable failure moves on to the next account.
+				if (isTokenInDecisionsModel(model)) {
+					const decided = await requestTokenInDecision(model, context, requestOptions);
+					if (decided.errorMessage === undefined) return decided.stream;
+					if (isRotateableTokenInError(decided.errorMessage) && i + 1 < candidateAccounts.length) {
+						setTokenInCooldown(currentAccount.id);
+						const nextAccount = candidateAccounts[i + 1]!;
+						activate(nextAccount);
+						options?.onRotate?.(currentAccount, nextAccount, decided.errorMessage);
+						continue;
+					}
+					return decided.stream;
+				}
 
 				let underlyingStream: AssistantMessageEventStream;
 				try {

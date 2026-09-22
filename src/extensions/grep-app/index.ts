@@ -141,6 +141,11 @@ export default function grepAppExtension(pi: ExtensionAPI): void {
 		label: "grep.app Search",
 		description: "Search public GitHub code through grep.app. Returns one page (up to 10 files); use page to continue.",
 		promptSnippet: "Search public GitHub code through grep.app",
+		discovery: {
+			summary: "Search public GitHub code through grep.app",
+			aliases: ["github code search", "public code search", "grep.app"],
+			category: "web",
+		},
 		promptGuidelines: ["Use grep_app_search to find real public-code implementations and usage examples across GitHub."],
 		parameters: Type.Object({
 			query: Type.String({ minLength: 1, description: "Code or pattern to search for." }),
@@ -183,6 +188,11 @@ export default function grepAppExtension(pi: ExtensionAPI): void {
 		label: "GitHub File",
 		description: "Fetch a public GitHub file found via grep.app. Supports line ranges; output is truncated to 50KB or 2000 lines.",
 		promptSnippet: "Fetch a public GitHub file found via grep.app",
+		discovery: {
+			summary: "Fetch a public GitHub file found through grep.app",
+			aliases: ["github file", "fetch github file"],
+			category: "web",
+		},
 		promptGuidelines: ["Use grep_app_fetch after grep_app_search when the full source context is needed."],
 		parameters: Type.Object({
 			repo: Type.String({ pattern: "^[^/\\s]+/[^/\\s]+$", description: "owner/repository." }),

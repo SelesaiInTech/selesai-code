@@ -2,6 +2,15 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.30-beta.0] - 2026-09-23
+
+### Added
+- **Jev advisory routing (opt-in beta).** The new bundled `jev-advisory-routing` extension can make a bounded, read-only durable-memory lookup after an explicit memory cue, and suggest one discovered skill/workflow or a proportionate verification level. Both routes are disabled by default; neither writes memory, loads a skill, starts a workflow, runs a command, or weakens required checks.
+- **Jev capability tie-breaking (opt-in beta).** The capability gateway can use Jev only to break an ambiguous lexical hint between two or three optional tools. It never receives the full catalog, tool schemas, or conversation history; unavailable, malformed, low-confidence, and `none` decisions preserve deterministic behavior.
+
+### Changed
+- **One Jev transport for every consumer.** Advisory routing and capability tie-breaking share bounded request validation and the Token-In decisions-model path. `jev-*` calls use Token-In's non-streaming endpoint and retain its rotateable-account failover.
+
 ## [0.13.29] - 2026-09-22
 
 ### Changed

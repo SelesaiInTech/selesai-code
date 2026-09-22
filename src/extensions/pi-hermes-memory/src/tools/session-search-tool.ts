@@ -87,6 +87,11 @@ any:
 exclude:
 - delta`,
     promptSnippet: 'Search past session JSONL files for compact source anchors',
+    ...{ discovery: {
+      summary: 'Search past Selesai sessions for compact source anchors',
+      aliases: ['past sessions', 'session history anchors'],
+      category: 'memory',
+    } },
     promptGuidelines: [
       'Use session_search with markdown only when the session search anchor mode is configured.',
       'Request source anchors, not summaries or previews.',
@@ -156,6 +161,11 @@ Examples:
 
 Returns bounded conversation snippets with session dates and project context. Large messages are truncated with their original character count.`,
     promptSnippet: 'Search past conversations for relevant context',
+    ...{ discovery: {
+      summary: 'Search past Selesai sessions for relevant conversation context',
+      aliases: ['past sessions', 'conversation history', 'session history'],
+      category: 'memory',
+    } },
     promptGuidelines: [
       'Use session_search when the user asks about previous discussions or past work.',
       'Use session_search when you need context from earlier sessions.',

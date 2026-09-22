@@ -413,12 +413,14 @@ This action-specific tool accepts only the parameters listed in its schema.`;
     label: string,
     description: string,
     parameters: TSchema,
+    discovery: { summary: string; aliases: string[]; category: string },
   ) => {
     pi.registerTool({
       name,
       label,
       description,
       promptSnippet: `${label}: persistent memory that survives across sessions`,
+      ...{ discovery },
       promptGuidelines: [
         "Use this tool proactively when the user corrects you, shares a preference, or reveals durable environment or project facts.",
         "Do not use memory tools for temporary task state, TODO items, or session progress.",
@@ -454,6 +456,11 @@ Add one durable entry. The target and content fields are required.`,
       category: Type.Optional(category),
       failure_reason: Type.Optional(Type.String({ description: "Why a failure occurred." })),
     }),
+    {
+      summary: "Save durable information to persistent memory",
+      aliases: ["remember this", "save memory", "store memory"],
+      category: "memory",
+    },
   );
   registerActionTool(
     "replace",
@@ -467,6 +474,11 @@ Replace one existing entry. The target, old_text, and content fields are require
       old_text: Type.String({ description: "Substring identifying the entry to replace." }),
       content: Type.String({ description: "Replacement entry content." }),
     }),
+    {
+      summary: "Replace an existing durable memory entry in place",
+      aliases: ["update memory", "edit memory"],
+      category: "memory",
+    },
   );
   registerActionTool(
     "remove",
@@ -479,6 +491,11 @@ Remove one existing entry. The target and old_text fields are required.`,
       target,
       old_text: Type.String({ description: "Substring identifying the entry to remove." }),
     }),
+    {
+      summary: "Remove a durable memory entry",
+      aliases: ["forget memory", "delete memory", "remove memory"],
+      category: "memory",
+    },
   );
   return configureProjectStore;
 }

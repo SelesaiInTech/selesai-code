@@ -616,6 +616,11 @@ export default function questionExtension(pi: ExtensionAPI) {
 		description:
 			"Ask one or more typed questions in a terminal wizard. Supports select, multiselect, text, stable option values, Other answers, and partial atomic submission.",
 		promptSnippet: "Ask the user one or more typed questions when a decision is required.",
+		discovery: {
+			summary: "Ask the user one or more typed questions in a terminal wizard",
+			aliases: ["ask user", "user decision", "clarifying questions"],
+			category: "interaction",
+		},
 		promptGuidelines: [
 			"Use question only for decisions the user must make; inspect facts yourself.",
 			"Send one questions array containing independent decisions that can be answered together.",

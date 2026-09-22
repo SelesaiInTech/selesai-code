@@ -37,6 +37,11 @@ Non-blocking subscriptions are visible in subagent status and differ from disabl
 		name: "bg_wait",
 		label: "Background Wait",
 		description,
+		...{ discovery: {
+			summary: "Wait for background or detached subagent work to finish",
+			aliases: ["wait for background work", "background wait"],
+			category: "agents",
+		} },
 		parameters: SubagentWaitParams,
 		execute,
 	};
@@ -46,6 +51,11 @@ Non-blocking subscriptions are visible in subagent status and differ from disabl
 		name: "subagent_wait",
 		label: "Subagent Wait (deprecated)",
 		description: "Deprecated compatibility alias for `bg_wait`. Use `bg_wait` for background, provider, or detached work without a native completion notification. It has the same parameters and behavior.",
+		...{ discovery: {
+			summary: "Deprecated compatibility alias for bg_wait",
+			aliases: ["wait for subagent"],
+			category: "agents",
+		} },
 	});
 }
 

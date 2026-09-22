@@ -1,0 +1,54 @@
+---
+draft: false
+title: Perutean advisory Jev
+---
+
+import ExtensionStatus from "../../../../../components/ExtensionStatus.astro";
+import ExtensionCustomization from "../../../../../components/ExtensionCustomization.astro";
+import SourceEvidence from "../../../../../components/SourceEvidence.astro";
+
+Ekstensi bundel `jev-advisory-routing` membuat keputusan Jev opt-in yang dibatasi sebelum prompt yang memenuhi syarat. Ekstensi ini dapat mengambil memori tahan lama yang relevan atau menyarankan skill, workflow, atau level verifikasi; ekstensi ini sendiri tidak pernah menjalankan tindakan tersebut.
+
+<ExtensionStatus
+  distribution="bundled"
+  manifestEntry="./jev-advisory-routing.ts"
+  runtimeSurface="automatic"
+  locale="id"
+/>
+
+## Penyiapan dan prasyarat
+
+- Dibundel dan dimuat otomatis; tidak perlu instalasi.
+- Kedua rute nonaktif secara default. Aktifkan di bawah `jevAdvisory.routes` dalam settings.
+- Jev memerlukan provider yang melayani deployment keputusannya (default `tokenin` / `jev-1.13`).
+
+## Yang disiapkan
+
+- Rute **memory** mengenali cue memori tahan lama eksplisit, meminta satu target memori yang diizinkan kepada Jev, lalu menjalankan paling banyak satu pencarian lokal read-only yang dibatasi.
+- Rute **recommendations** dapat menyarankan satu skill atau workflow yang ditemukan dan level verifikasi yang proporsional.
+- Telemetri keputusan serta adopsi tanpa isi dikirim pada channel event perutean Jev.
+
+## Yang dapat dikonfigurasi
+
+<ExtensionCustomization slug="jev-advisory-routing" locale="id" />
+
+`timeoutMs`, `minConfidence`, `contextTurns`, `contextChars`, dan `payloadBytes` dapat disetel per rute. Request memori dibatasi hingga 750 ms terlepas dari timeout yang dikonfigurasi.
+
+## Yang dapat dilakukan
+
+- Aktifkan pencarian lokal untuk permintaan seperti “gunakan konvensi yang kita putuskan” atau “jangan ulangi kegagalan sebelumnya.”
+- Terima saran skill atau prompt workflow yang ditemukan tanpa memuatnya secara otomatis.
+- Terima saran verifikasi tanpa mengubah pemeriksaan wajib proyek atau workflow.
+
+## Perintah, tool, dan shortcut
+
+Tidak ada perintah atau tool yang didaftarkan. Ekstensi ini bereaksi pada input interaktif yang memenuhi syarat sebelum agent dimulai.
+
+## Batasan dan keamanan
+
+- Hanya prompt interaktif top-level idle yang menjalankan rute; perintah slash, input steering/follow-up yang diantre, dan turn yang disuntikkan ekstensi dilewati.
+- Jev tidak pernah menerima isi memori. Target memori yang diterima menjalankan satu pencarian lokal read-only dengan paling banyak lima hasil yang dibatasi; tidak ada memori yang ditulis.
+- Jawaban Jev diperiksa terhadap allowlist dan keyakinan. Langganan tidak ada, timeout, jawaban rusak atau berkeyakinan rendah, store lokal tidak tersedia/kosong, kandidat tidak dikenal, atau payload terlalu besar berarti abstain.
+- Rekomendasi hanya konteks: tidak memuat skill, memulai workflow, menjalankan perintah, atau melemahkan verifikasi wajib.
+
+<SourceEvidence slug="jev-advisory-routing" />
