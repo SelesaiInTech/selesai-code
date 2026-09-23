@@ -54,7 +54,8 @@ Detailed acceptance, verification, file ceilings and dependencies: [`tasks/todo.
 - [ ] 3. Slice 1: upstream deletions, renames and relocations (D3), split into ≤5-file commits.
 - [ ] Checkpoint A: typecheck after each deletion/rename substep; no dangling imports.
 - [x] 4a. Slice 2a: require child-supervisor reply tooling to have effective fanout authorization (focused tool-plan test).
-- [ ] 4b. Slice 2b: finish final v0.71 child-tool-plan/runtime behavior and add launched-child wrapped-core + Graft provider regression.
+- [x] 4b. Slice 2b: add launched-child regression that preserves wrapped `read`/`grep` names and the Graft provider path/required tool.
+- [ ] 4c. Finish the remaining final v0.71 child-tool-plan/runtime changes and directly exercise the loaded Graft tool in the child harness.
 - [ ] 5. Slice 3: preserve eager tool registration and full-by-default description (D1).
 - [x] 6a. Slice 4a (D2): packaged worker defaults to fresh context and declares `acceptanceRole: writer`.
 - [ ] 6b. Slice 4b: reconcile agent selection, builtin names and Graft augmentation; skip incompatible evidence auditor.
