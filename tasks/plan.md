@@ -69,7 +69,7 @@ Detailed acceptance, verification, file ceilings and dependencies: [`tasks/todo.
 - [x] 8c. Share workflow-child process evidence with async capacity release; helper and proof cases pass.
 - [x] 8d. Expose the same `workflowTerminalProof` in status output and verify projection.
 - [x] 8e. Extract `/subagent-cost` collection/formatting into one shared module without changing its output.
-- [ ] 8f. Expose that report through versioned RPC `cost` data and test its advertisement/shape.
+- [x] 8f. Expose that report through versioned RPC `cost` data and test its advertisement/shape.
 - [ ] Checkpoint C: launch/background regressions verified.
 - [ ] 9. Slice 7: slash/API surface and manifest remainder.
 - [ ] 10. Slice 8: docs, skills, manifest and lockfile; update the fork-delta record.
