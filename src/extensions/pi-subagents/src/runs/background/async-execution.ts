@@ -83,6 +83,7 @@ import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeili
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
 import { resolvePermissionRules, type PermissionConfig } from "../shared/permissions.ts";
 import { normalizeExtensionBindings, omitExtensionBindingsEnv, type ExtensionBindings } from "../shared/extension-bindings.ts";
+import { omitGitRoutingEnv } from "../shared/git-environment.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
 
 const require = createRequire(import.meta.url);
@@ -595,7 +596,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			...backgroundProcessOptions(),
 			stdio: ["ignore", stdoutFd ?? "ignore", stderrFd ?? "ignore"],
 			env: {
-				...omitExtensionBindingsEnv(process.env),
+				...omitGitRoutingEnv(omitExtensionBindingsEnv(process.env)),
 				[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV]: piPackageRoot,
 				[JITI_ALIAS_ENV]: JSON.stringify(hostPeerAliases.aliases),
 			},
