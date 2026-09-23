@@ -19,6 +19,7 @@ import { allowNetwork } from "../../../test/test-network-env.ts";
 const EXTENSIONS_DIR = fileURLToPath(new URL("../../", import.meta.url));
 const GATEWAY_DIR = fileURLToPath(new URL(".", import.meta.url));
 const GREP_APP_DIR = fileURLToPath(new URL("../grep-app", import.meta.url));
+const WEB_AGENT_DIR = fileURLToPath(new URL("../pi-web-agent", import.meta.url));
 const GRAFT_DIR = fileURLToPath(new URL("../pi-graft", import.meta.url));
 const INLINE_SKILLS_FILE = fileURLToPath(new URL("../inline-skills.ts", import.meta.url));
 
@@ -337,9 +338,9 @@ describe("capability gateway integration", () => {
 // ---------------------------------------------------------------------------
 
 describe("capability gateway Jev routing", () => {
-	// "...github..." only weakly suggests both grep-app tools: the deterministic router returns a
-	// two-candidate hint, which is the only Jev trigger.
-	const HINT_PROMPT = "look at this github repo";
+	// "search fetch" weakly suggests both grep-app tools: the deterministic router returns a
+	// two-candidate hint, which is the only Jev trigger. GitHub/open-source mentions route directly.
+	const HINT_PROMPT = "search fetch";
 	// No tool name, alias, or summary token matches: the router has no lexical signal and Jev
 	// must never be consulted.
 	const NO_SIGNAL_PROMPT = "continue where we left off last time";
@@ -392,6 +393,35 @@ describe("capability gateway Jev routing", () => {
 	function routeEvents(h: Harness): Array<Record<string, unknown>> {
 		return h.telemetry.filter((event) => event.event === "route");
 	}
+
+	it("routes only GitHub/open-source mentions to grep.app; other web searches stay on web_explore", async () => {
+		allowNetwork();
+		const { fetchMock } = stubJev("none", 1);
+		const h = await createGatewaySession({
+			enabled: true,
+			extensions: [GATEWAY_DIR, GREP_APP_DIR, WEB_AGENT_DIR],
+			jev: jevSettings(),
+		});
+		harnesses.push(h);
+
+		for (const prompt of [
+			"search GitHub code",
+			"find open-source implementations",
+			"find open source implementations",
+			"find opensource examples",
+		]) {
+			await route(h, prompt);
+			expect(h.session.getActiveToolNames()).toContain("grep_app_search");
+			expect(h.session.getActiveToolNames()).not.toContain("web_explore");
+			expect(fetchMock).not.toHaveBeenCalled();
+			await h.session.extensionRunner.emit({ type: "agent_settled" });
+		}
+
+		await route(h, "web search for release notes");
+		expect(h.session.getActiveToolNames()).toContain("web_explore");
+		expect(h.session.getActiveToolNames()).not.toContain("grep_app_search");
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
 
 	// Telemetry may carry route metadata and canonical tool names, never prompt
 	// text, conversation turns, credentials, raw Jev output, or tool arguments.

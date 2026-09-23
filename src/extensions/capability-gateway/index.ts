@@ -94,14 +94,19 @@ function catalogEntries(pi: ExtensionAPI): CatalogEntry[] {
 }
 
 const EMBEDDED_SKILL_BLOCK = /<skill\s+name="([^"]+)"[^>]*>[\s\S]*?<\/skill>/gi;
+const GITHUB_OR_OPEN_SOURCE_QUERY = /\b(?:github|open[\s-]*source)\b/i;
 
 function routePrompt(prompt: string, entries: CatalogEntry[]): ReturnType<typeof route> {
 	const loadedSkills = new Set([...prompt.matchAll(EMBEDDED_SKILL_BLOCK)].map((match) => match[1]!.toLowerCase()));
 	const query = prompt.replace(EMBEDDED_SKILL_BLOCK, " ");
-	return route(
-		query,
-		entries.filter((entry) => entry.kind !== "skill" || !loadedSkills.has(entry.name.toLowerCase())),
-	);
+	const candidates = entries.filter((entry) => entry.kind !== "skill" || !loadedSkills.has(entry.name.toLowerCase()));
+	if (GITHUB_OR_OPEN_SOURCE_QUERY.test(query)) {
+		const grepAppSearch = candidates.find(
+			(entry) => entry.kind === "tool" && entry.eligible && entry.name === "grep_app_search",
+		);
+		if (grepAppSearch) return { action: "activate", entry: grepAppSearch };
+	}
+	return route(query, candidates);
 }
 
 function formatCatalog(entries: CatalogEntry[]): string {
