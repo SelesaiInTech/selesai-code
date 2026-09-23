@@ -65,7 +65,7 @@ Detailed acceptance, verification, file ceilings and dependencies: [`tasks/todo.
 - [ ] 7c. Finish launch/supervisor contract (launch contract v3, `SELESAI_SUBAGENT_*` symmetry).
 - [ ] 8. Slice 6: async runner/recovery, status proof, wait aliases and the cost RPC.
 - [x] 8a. Foreground structured-output rejection details are sanitized and retained in the run result.
-- [ ] 8b. Propagate the same structured-output rejection evidence through background results/status.
+- [x] 8b. Propagate sanitized structured-output rejection evidence through background results and status.
 - [ ] Checkpoint C: launch/background regressions verified.
 - [ ] 9. Slice 7: slash/API surface and manifest remainder.
 - [ ] 10. Slice 8: docs, skills, manifest and lockfile; update the fork-delta record.
