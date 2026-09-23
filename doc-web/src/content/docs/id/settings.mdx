@@ -29,7 +29,7 @@ Ekstensi bundel `jev-advisory-routing` nonaktif sampai sebuah rute diaktifkan. R
 
 ## Tie-break capability gateway (beta)
 
-`capabilityGateway.routing.jev.enabled` bernilai `false` secara default. Saat diaktifkan, Jev dapat memilih di antara dua atau tiga hint tool opsional yang ambigu; Jev hanya menerima prompt saat ini yang dibatasi dan baris kandidat ringkas. Timeout, jawaban tidak valid atau berkeyakinan rendah, atau `none` mempertahankan routing deterministik lokal.
+`capabilityGateway.routing.jev.enabled` bernilai `true` secara default dan dapat diubah melalui `/settings`. Jev dapat memilih di antara dua atau tiga hint tool opsional yang ambigu; Jev hanya menerima prompt saat ini yang dibatasi dan baris kandidat ringkas. Kredensial Token-In diperlukan. Tanpanya, tidak ada permintaan Jev yang dikirim dan Selesai meminta Anda menambahkan akun dengan `/tokenin add`; kegagalan dan `none` mempertahankan routing deterministik.
 
 ## Tool
 

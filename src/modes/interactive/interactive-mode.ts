@@ -4576,6 +4576,7 @@ export class InteractiveMode {
 					autoCompact: this.session.autoCompactionEnabled,
 					autoHandoffEnabled: this.settingsManager.getAutoHandoffEnabled(),
 					autoHandoffThresholdTokens: this.settingsManager.getAutoHandoffThresholdTokens(),
+					capabilityGatewayJevEnabled: this.settingsManager.getCapabilityGatewayJevEnabled(),
 					defaultModel: (() => {
 						const defaultProvider = this.settingsManager.getDefaultProvider();
 						const defaultModelId = this.settingsManager.getDefaultModel();
@@ -4652,6 +4653,25 @@ export class InteractiveMode {
 					},
 					onAutoHandoffThresholdTokensChange: (tokens) => {
 						this.settingsManager.setAutoHandoffThresholdTokens(tokens);
+					},
+					onCapabilityGatewayJevChange: (enabled) => {
+						if (enabled && !this.session.modelRuntime.getProviderAuthStatus("tokenin").configured) {
+							this.showStatus("Token-In is required for Jev routing; starting /tokenin add");
+							done();
+							void this.session
+								.prompt("/tokenin add")
+								.then(() => {
+									if (this.session.modelRuntime.getProviderAuthStatus("tokenin").configured) {
+										this.settingsManager.setCapabilityGatewayJevEnabled(true);
+									}
+								})
+								.catch((error: unknown) =>
+									this.showError(`Could not start Token-In setup: ${String(error)}`),
+								);
+							return false;
+						}
+						this.settingsManager.setCapabilityGatewayJevEnabled(enabled);
+						return true;
 					},
 					onShowImagesChange: (enabled) => {
 						this.settingsManager.setShowImages(enabled);

@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.31] - 2026-09-23
+
+### Changed
+- **Jev capability tie-breaking is now on by default.** Toggle ambiguous-tool tie-breaking in `/settings`. It requires Token-In credentials; without them, Jev is not called and Selesai prompts you to run `/tokenin add`. Deterministic routing remains the fallback.
+
 ## [0.13.30] - 2026-09-23
 
 ### Added

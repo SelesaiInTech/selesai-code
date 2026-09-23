@@ -52,7 +52,7 @@ The gateway registers `capability_catalog`, `capability_discover`, and `capabili
 - Only catalogued tools can be activated; exact names are validated before activation.
 - Skills are never auto-loaded by routing; their instructions require an explicit show operation.
 - Skills already expanded inline via `$skill` references are excluded from prompt routing, so they are not re-recommended through `capability_skill_show`.
-- Routing is deterministic and local by default; only a uniquely matched tool is activated, and skills are never auto-loaded.
-- Opt-in `capabilityGateway.routing.jev` can break an ambiguous lexical hint between two or three optional tools. Jev sees only the bounded current prompt and compact candidate lines — never schemas, history, or the full catalog — and an unavailable, invalid, low-confidence, or `none` decision changes nothing.
+- Deterministic routing remains the first rung; Jev tie-breaking is on by default only for an ambiguous lexical hint between two or three optional tools. Toggle it in `/settings`.
+- Jev sees only the bounded current prompt and compact candidate lines — never schemas, history, or the full catalog. Token-In credentials are required; without them no Jev request is sent, and Selesai prompts you to add an account with `/tokenin add`. Unavailable, invalid, low-confidence, or `none` decisions leave deterministic behavior unchanged.
 
 <SourceEvidence slug="capability-gateway" />

@@ -73,6 +73,7 @@ export interface SettingsConfig {
 	autoCompact: boolean;
 	autoHandoffEnabled: boolean;
 	autoHandoffThresholdTokens: number;
+	capabilityGatewayJevEnabled: boolean;
 	showImages: boolean;
 	imageWidthCells: number;
 	autoResizeImages: boolean;
@@ -121,6 +122,7 @@ export interface SettingsCallbacks {
 	onAutoCompactChange: (enabled: boolean) => void;
 	onAutoHandoffEnabledChange: (enabled: boolean) => void;
 	onAutoHandoffThresholdTokensChange: (tokens: number) => void;
+	onCapabilityGatewayJevChange: (enabled: boolean) => boolean;
 	onShowImagesChange: (enabled: boolean) => void;
 	onImageWidthCellsChange: (width: number) => void;
 	onAutoResizeImagesChange: (enabled: boolean) => void;
@@ -637,6 +639,14 @@ export class SettingsSelectorComponent extends Container {
 				values: ["64000", "96000", "128000", "160000", "192000", "256000", "512000"],
 			},
 			{
+				id: "capability-gateway-jev",
+				label: "Jev tool tie-breaking",
+				description:
+					"Use Token-In Jev only for ambiguous optional-tool matches. Requires Token-In credentials; add one with /tokenin add.",
+				currentValue: config.capabilityGatewayJevEnabled ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
 				id: "steering-mode",
 				label: "Steering mode",
 				description:
@@ -1040,6 +1050,11 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "auto-handoff-threshold":
 						callbacks.onAutoHandoffThresholdTokensChange(parseInt(newValue, 10));
+						break;
+					case "capability-gateway-jev":
+						if (!callbacks.onCapabilityGatewayJevChange(newValue === "true")) {
+							this.settingsList.updateValue(id, config.capabilityGatewayJevEnabled ? "true" : "false");
+						}
 						break;
 					case "show-images":
 						callbacks.onShowImagesChange(newValue === "true");

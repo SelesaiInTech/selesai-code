@@ -333,7 +333,7 @@ describe("capability gateway integration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Jev-assisted routing (opt-in): capabilityGateway.routing.jev.
+// Default-on Jev-assisted routing: capabilityGateway.routing.jev.
 // ---------------------------------------------------------------------------
 
 describe("capability gateway Jev routing", () => {
@@ -518,10 +518,33 @@ describe("capability gateway Jev routing", () => {
 		);
 	});
 
-	it("leaves routing deterministic when the Jev route is not configured", async () => {
+	it("tries Jev by default but abstains safely without Token-In", async () => {
 		allowNetwork();
-		const disabled = stubJev("grep_app_search");
+		const unavailable = stubJev("grep_app_search");
 		const h = await createGatewaySession({ enabled: true, extensions: [GATEWAY_DIR, GREP_APP_DIR] });
+		harnesses.push(h);
+
+		await route(h, HINT_PROMPT);
+
+		expect(unavailable.fetchMock).not.toHaveBeenCalled();
+		expect(h.session.getActiveToolNames()).not.toContain("grep_app_search");
+		expect(routeEvents(h)).toContainEqual(expect.objectContaining({ source: "jev", outcome: "attempt" }));
+		expect(routeEvents(h)).toContainEqual(
+			expect.objectContaining({
+				source: "jev",
+				outcome: "unavailable",
+				reason: expect.stringMatching(/^no-(template|credential)$/),
+			}),
+		);
+	});
+
+	it("does not attempt Jev when explicitly disabled", async () => {
+		const disabled = stubJev("grep_app_search");
+		const h = await createGatewaySession({
+			enabled: true,
+			extensions: [GATEWAY_DIR, GREP_APP_DIR],
+			jev: { enabled: false },
+		});
 		harnesses.push(h);
 
 		await route(h, HINT_PROMPT);

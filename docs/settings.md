@@ -103,15 +103,16 @@ Routing has two rungs:
 
 1. A deterministic router activates a tool when the prompt uniquely matches its name, alias, or
    discovery summary. Skills are never auto-loaded or auto-selected.
-2. Opt-in Jev tie-breaking: when the deterministic router returns an ambiguous lexical hint among
-   optional tools, the Jev decisions model is asked which of two or three hinted tools (or `none`)
-   should be exposed. Jev sees only the bounded current prompt and each hinted tool's compact
+2. Default-on Jev tie-breaking: when the deterministic router returns an ambiguous lexical hint
+   among optional tools, the Jev decisions model is asked which of two or three hinted tools (or
+   `none`) should be exposed. Jev sees only the bounded current prompt and each hinted tool's compact
    discovery line — never conversation history, tool schemas, or the full catalog. A prompt with no
-   lexical signal, a unique activation, and a skill-only match never reach Jev.
+   lexical signal, a unique activation, and a skill-only match never reach Jev. Token-In credentials
+   are required; without them, no Jev request is sent and Selesai prompts you to run `/tokenin add`.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `capabilityGateway.routing.jev.enabled` | boolean | `false` | Enable Jev tie-breaking for ambiguous tool hints |
+| `capabilityGateway.routing.jev.enabled` | boolean | `true` | Enable Jev tie-breaking for ambiguous tool hints; toggle it in `/settings` (requires Token-In credentials) |
 | `capabilityGateway.routing.jev.provider` | string | `"tokenin"` | Provider serving the Jev decisions deployment |
 | `capabilityGateway.routing.jev.model` | string | `"jev-1.13"` | Decisions model the tie-breaker calls |
 | `capabilityGateway.routing.jev.baseUrl` | string | inherited | Base URL override; defaults to any registered model of `provider` |
@@ -121,8 +122,8 @@ Routing has two rungs:
 
 This area is independent of `jevAdvisory`: gateway routing reads only
 `capabilityGateway.routing.jev` and shares just the Jev provider/model deployment identity. A
-failure, timeout, invalid answer, low confidence, or `none` is an ordinary abstention that leaves
-the deterministic behavior in place. Temporary activations reset when the run settles, and
+failure, timeout, invalid answer, low confidence, missing Token-In credentials, or `none` is an
+ordinary abstention that leaves deterministic behavior in place. Temporary activations reset when the run settles, and
 content-free telemetry on the `capability-gateway` event channel records the route outcome and
 whether an activated tool was actually invoked.
 

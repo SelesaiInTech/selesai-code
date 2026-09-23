@@ -11,6 +11,11 @@
       "recommendations": { "enabled": false }
     }
   },
+  "capabilityGateway": {
+    "routing": {
+      "jev": { "enabled": true }
+    }
+  },
   "collapseChangelog": true,
   "compaction": {
     "enabled": true,

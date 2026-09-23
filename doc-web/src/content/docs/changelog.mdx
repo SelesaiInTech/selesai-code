@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.31 — Default-on Jev capability tie-breaking
+
+- **Jev routing is on by default.** The capability gateway asks Jev only to break ambiguous hints between two or three optional tools; toggle it in `/settings`. Token-In credentials are required. Without them, no Jev request is sent and Selesai prompts you to run `/tokenin add`; deterministic routing remains the fallback.
+
 ## 0.13.30 — Jev advisory routing and bundled engineering skills
 
 - **Opt-in advisory routes.** The bundled `jev-advisory-routing` extension can make one bounded, read-only local memory lookup after an explicit durable-memory cue, and suggest one discovered skill/workflow or a proportionate verification level. Both routes are off by default; they never write memory, load a skill, start a workflow, run a command, or weaken required checks.

@@ -52,7 +52,7 @@ Gateway mendaftarkan `capability_catalog`, `capability_discover`, dan `capabilit
 - Hanya tool yang tercantum di katalog yang dapat diaktifkan; nama tepat divalidasi sebelum aktivasi.
 - Skill tidak pernah dimuat otomatis oleh routing; instruksinya memerlukan operasi show eksplisit.
 - Skill yang sudah di-expand inline melalui referensi `$skill` dikecualikan dari routing prompt, sehingga tidak direkomendasikan ulang melalui `capability_skill_show`.
-- Routing secara default bersifat deterministik dan lokal; hanya tool dengan kecocokan unik yang diaktifkan, dan skill tidak pernah dimuat otomatis.
-- `capabilityGateway.routing.jev` yang opt-in dapat memecahkan hint leksikal ambigu di antara dua atau tiga tool opsional. Jev hanya melihat prompt saat ini yang dibatasi dan baris kandidat ringkas — tidak pernah skema, riwayat, atau katalog lengkap — dan keputusan tidak tersedia, tidak valid, berkeyakinan rendah, atau `none` tidak mengubah apa pun.
+- Routing deterministik tetap menjadi tahap pertama; tie-break Jev aktif secara default hanya untuk hint leksikal ambigu di antara dua atau tiga tool opsional. Ubah pengaturannya melalui `/settings`.
+- Jev hanya melihat prompt saat ini yang dibatasi dan baris kandidat ringkas — tidak pernah skema, riwayat, atau katalog lengkap. Kredensial Token-In diperlukan; tanpanya tidak ada permintaan Jev yang dikirim dan Selesai meminta Anda menambahkan akun dengan `/tokenin add`. Keputusan tidak tersedia, tidak valid, berkeyakinan rendah, atau `none` mempertahankan perilaku deterministik.
 
 <SourceEvidence slug="capability-gateway" />

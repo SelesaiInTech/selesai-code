@@ -1687,10 +1687,10 @@
     {
      "key": "capabilityGateway.routing.jev.enabled",
      "type": "boolean",
-     "default": "false",
+     "default": "true",
      "description": {
-      "en": "Opt-in Jev tie-breaking for ambiguous hints between two or three optional tools; deterministic routing remains the default.",
-      "id": "Tie-break Jev opt-in untuk hint ambigu di antara dua atau tiga tool opsional; routing deterministik tetap default."
+      "en": "Default-on Jev tie-breaking for ambiguous hints between two or three optional tools. Requires Token-In credentials; toggle in /settings.",
+      "id": "Tie-break Jev aktif secara default untuk hint ambigu di antara dua atau tiga tool opsional. Memerlukan kredensial Token-In; ubah melalui /settings."
      },
      "persistence": "settings.json"
     },

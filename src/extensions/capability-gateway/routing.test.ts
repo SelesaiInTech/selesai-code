@@ -115,10 +115,10 @@ describe("gateway Jev configuration", () => {
 		return path;
 	}
 
-	it("stays disabled with its own short pre-turn defaults when settings are missing or malformed", () => {
+	it("defaults Jev routing on with short pre-turn settings when settings are missing or malformed", () => {
 		expect(readGatewayJevConfig(join(settingsDir, "absent.json"))).toEqual(DEFAULT_GATEWAY_JEV_CONFIG);
 		expect(DEFAULT_GATEWAY_JEV_CONFIG).toMatchObject({
-			enabled: false,
+			enabled: true,
 			provider: "tokenin",
 			model: "jev-1.13",
 			timeoutMs: DEFAULT_GATEWAY_JEV_TIMEOUT_MS,
@@ -133,7 +133,7 @@ describe("gateway Jev configuration", () => {
 		);
 	});
 
-	it("reads the opt-in route settings over the gateway defaults", () => {
+	it("reads explicit route settings over the default-on gateway config", () => {
 		const path = write({
 			capabilityGateway: {
 				routing: {
@@ -174,7 +174,7 @@ describe("gateway Jev configuration", () => {
 		expect(read).not.toHaveProperty("contextChars");
 	});
 
-	it("rejects wrong types and never enables the route implicitly", () => {
+	it("rejects wrong types while allowing an omitted enabled flag to inherit true", () => {
 		const path = write({
 			capabilityGateway: {
 				routing: {
@@ -190,7 +190,13 @@ describe("gateway Jev configuration", () => {
 				},
 			},
 		});
-		expect(readGatewayJevConfig(path)).toEqual(DEFAULT_GATEWAY_JEV_CONFIG);
+		expect(readGatewayJevConfig(path)).toEqual({ ...DEFAULT_GATEWAY_JEV_CONFIG, enabled: false });
+
+		const omittedEnabled = write({ capabilityGateway: { routing: { jev: { timeoutMs: 500 } } } });
+		expect(readGatewayJevConfig(omittedEnabled).enabled).toBe(true);
+
+		const disabled = write({ capabilityGateway: { routing: { jev: { enabled: false } } } });
+		expect(readGatewayJevConfig(disabled).enabled).toBe(false);
 	});
 
 	it("derives the shared connection settings and hard-caps the pre-turn timeout", () => {

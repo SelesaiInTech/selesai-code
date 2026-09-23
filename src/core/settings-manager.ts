@@ -96,6 +96,12 @@ export interface AutoHandoffSettings {
 	thresholdTokens?: number; // default: 128_000
 }
 
+export interface CapabilityGatewaySettings {
+	routing?: {
+		jev?: { enabled?: boolean };
+	};
+}
+
 const DEFAULT_AUTO_HANDOFF_SETTINGS: Required<AutoHandoffSettings> = {
 	enabled: false,
 	thresholdTokens: 128_000,
@@ -172,6 +178,7 @@ export interface Settings {
 	markdown?: MarkdownSettings;
 	warnings?: WarningSettings;
 	autoHandoff?: AutoHandoffSettings;
+	capabilityGateway?: CapabilityGatewaySettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	// Per-extension collision winner between ~/.selesai/agent/extensions and
 	// ~/.selesai/agent/extensions. Key = top-level entry name (e.g. "pi-subagents",
@@ -1495,6 +1502,14 @@ export class SettingsManager {
 
 	getAutoHandoffEnabled(): boolean {
 		return this.settings.autoHandoff?.enabled ?? DEFAULT_AUTO_HANDOFF_SETTINGS.enabled;
+	}
+
+	getCapabilityGatewayJevEnabled(): boolean {
+		return this.settings.capabilityGateway?.routing?.jev?.enabled ?? true;
+	}
+
+	setCapabilityGatewayJevEnabled(enabled: boolean): void {
+		this.setGlobalSettings({ capabilityGateway: { routing: { jev: { enabled } } } });
 	}
 
 	setAutoHandoffEnabled(enabled: boolean): void {

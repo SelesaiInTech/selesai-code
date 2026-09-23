@@ -12,9 +12,9 @@
  * an abstention that leaves the deterministic behavior in place. The transport and validation half
  * lives in the shared `../jev/decisions.ts` client.
  *
- * Configuration (opt-in, disabled by default). The gateway reads its own settings area — it does
- * not inherit `jevAdvisory` route policy; only the Jev provider/model identity is shared so every
- * Jev consumer defaults to the same deployment:
+ * Configuration (enabled by default, but requires Token-In credentials). The gateway reads its
+ * own settings area — it does not inherit `jevAdvisory` route policy; only the Jev provider/model
+ * identity is shared so every Jev consumer defaults to the same deployment:
  *
  *   "capabilityGateway": {
  *     "routing": { "jev": { "enabled": true, "timeoutMs": 1000, "minConfidence": 0.6 } }
@@ -68,7 +68,7 @@ export interface GatewayJevConfig {
 }
 
 export const DEFAULT_GATEWAY_JEV_CONFIG: GatewayJevConfig = {
-	enabled: false,
+	enabled: true,
 	// The Jev deployment identity, shared with every other Jev consumer.
 	provider: DEFAULT_JEV_ADVISORY_CONFIG.provider,
 	model: DEFAULT_JEV_ADVISORY_CONFIG.model,
@@ -99,13 +99,13 @@ export function readGatewayJevConfig(settingsPath: string = getSettingsPath()): 
 			if (isRecord(jev)) raw = jev;
 		}
 	} catch {
-		// Missing or malformed settings: the feature stays disabled.
+		// Missing or malformed settings: use the default-on route preference.
 	}
 	if (!raw) return DEFAULT_GATEWAY_JEV_CONFIG;
 
 	const baseUrl = raw.baseUrl;
 	return {
-		enabled: raw.enabled === true,
+		enabled: raw.enabled === undefined ? DEFAULT_GATEWAY_JEV_CONFIG.enabled : raw.enabled === true,
 		provider: stringOr(raw.provider, DEFAULT_GATEWAY_JEV_CONFIG.provider),
 		model: stringOr(raw.model, DEFAULT_GATEWAY_JEV_CONFIG.model),
 		baseUrl: typeof baseUrl === "string" && baseUrl.trim() !== "" ? baseUrl : undefined,

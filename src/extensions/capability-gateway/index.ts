@@ -16,7 +16,7 @@
  * - A deterministic router activates a uniquely matched tool before the run.
  *   Skills and ambiguous matches remain discoverable through the catalog
  *   without injecting fuzzy hints into the model context.
- * - Opt-in Jev-assisted routing (capabilityGateway.routing.jev in settings.json)
+ * - Default-on Jev-assisted routing (capabilityGateway.routing.jev in settings.json)
  *   is only a bounded tie-breaker: when the deterministic router returns an
  *   ambiguous lexical hint among optional tools, the gateway offers just those
  *   hinted tools (two or three) and the current prompt to the Jev decisions
@@ -24,8 +24,9 @@
  *   hinted canonical tool name; the gateway revalidates the choice against the
  *   live catalog and activates it for the current run only. No hint, a unique
  *   activation, a skill match, or an already-activated tool never reaches Jev.
- *   Every Jev failure is an ordinary abstention that leaves the deterministic
- *   behavior in place, so a missing Token-In subscription is invisible.
+ *   Every Jev failure is an ordinary abstention that leaves deterministic
+ *   behavior in place. Without Token-In credentials, no Jev request is sent and
+ *   the user is prompted to add an account with `/tokenin add`.
  * - Temporary activations reset at agent_settled, restoring the baseline
  *   active-tool set; a tool_execution_start for one of them records whether the
  *   activation was actually used (content-free tool name + source only).
@@ -146,6 +147,7 @@ export default function capabilityGatewayExtension(pi: ExtensionAPI): void {
 	// Tools this gateway activated for the current run, and whether they were invoked.
 	// Cleared at agent_settled with the activations themselves.
 	const activations = new Map<string, { source: ActivationSource; used: boolean }>();
+	let tokenInSetupPrompted = false;
 
 	/** Activate one tool for the current run, keeping the rest of the loadout untouched. */
 	function activateTool(name: string, source: ActivationSource): void {
@@ -313,7 +315,7 @@ export default function capabilityGatewayExtension(pi: ExtensionAPI): void {
 	});
 
 	// ------------------------------------------------------------------
-	// Routing: the deterministic catalog router first; opt-in Jev routing is
+	// Routing: the deterministic catalog router first; default-on Jev routing is
 	// only a bounded tie-breaker for its ambiguous/hint result.
 	// ------------------------------------------------------------------
 	pi.on("before_agent_start", async (event, ctx) => {
@@ -344,6 +346,17 @@ export default function capabilityGatewayExtension(pi: ExtensionAPI): void {
 		emitTelemetry(pi, "route", { source: "jev", outcome: "attempt", candidates: candidates.length });
 		const jevRoute = await routeToJevTool(candidates, event.prompt, ctx, config);
 		if (!jevRoute.selected) {
+			if (
+				!tokenInSetupPrompted &&
+				config.provider === "tokenin" &&
+				(jevRoute.reason === "no-credential" || jevRoute.reason === "no-template")
+			) {
+				tokenInSetupPrompted = true;
+				ctx.ui.notify(
+					"Jev tool tie-breaking needs a Token-In account. Add one with /tokenin add; deterministic routing will keep working meanwhile.",
+					"warning",
+				);
+			}
 			emitTelemetry(pi, "route", {
 				source: "jev",
 				outcome: JEV_UNAVAILABLE_REASONS.has(jevRoute.reason) ? "unavailable" : "abstained",

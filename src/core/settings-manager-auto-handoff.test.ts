@@ -47,4 +47,18 @@ describe("auto handoff settings", () => {
 		await manager.flush();
 		expect(manager.getAutoHandoffThresholdTokens()).toBe(128_500);
 	});
+
+	it("defaults Jev capability routing on and persists the /settings toggle", async () => {
+		const manager = SettingsManager.inMemory();
+		expect(manager.getCapabilityGatewayJevEnabled()).toBe(true);
+
+		manager.setCapabilityGatewayJevEnabled(false);
+		await manager.flush();
+		expect(manager.getCapabilityGatewayJevEnabled()).toBe(false);
+		expect(manager.getGlobalSettings().capabilityGateway?.routing?.jev?.enabled).toBe(false);
+
+		manager.setCapabilityGatewayJevEnabled(true);
+		await manager.flush();
+		expect(manager.getCapabilityGatewayJevEnabled()).toBe(true);
+	});
 });
