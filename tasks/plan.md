@@ -1,7 +1,7 @@
 # Implementation Plan: pi-subagents v0.66.0 → upstream v0.71.0
 
 ## Overview
-Upgrade the vendored `src/extensions/pi-subagents/` without losing Selesai-specific behavior or breaking its integrations. Local package reports 0.66.0. The evidence gate is closed and the user said “continue”; implementation is proceeding with the documented defaults in [`tasks/inventory-v0.71.md`](inventory-v0.71.md). First port slice now strips inherited Git routing variables from detached children.
+Upgrade the vendored `src/extensions/pi-subagents/` without losing Selesai-specific behavior or breaking its integrations. Local package reports 0.66.0. The evidence gate is closed and the user said “continue”; implementation is proceeding with the documented defaults in [`tasks/inventory-v0.71.md`](inventory-v0.71.md). The first Git-environment substeps now filter detached background runners and default external-CLI environments; explicit external allowlists remain untouched.
 
 ## Upstream mapping (verified)
 
@@ -58,7 +58,7 @@ Detailed acceptance, verification, file ceilings and dependencies: [`tasks/todo.
 - [ ] 6. Slice 4: agent selection, builtin names and Graft augmentation; skip incompatible evidence auditor.
 - [ ] Checkpoint B: tool plan, Graft source profiles and agent selection verified.
 - [x] 7a. Slice 5a: filter Git routing env for detached background runners (helper + spawn-boundary regression).
-- [ ] 7b. Slice 5b: filter inherited env for default external-CLI runs; preserve explicit allowlists.
+- [x] 7b. Slice 5b: filter inherited env for default external-CLI runs; preserve explicit allowlists.
 - [ ] 7c. Finish launch/supervisor contract (launch contract v3, `SELESAI_SUBAGENT_*` symmetry).
 - [ ] 8. Slice 6: async runner/recovery, status proof, wait aliases and the cost RPC.
 - [ ] Checkpoint C: launch/background regressions verified.

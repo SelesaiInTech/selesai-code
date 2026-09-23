@@ -43,6 +43,31 @@ describe("external CLI runner", () => {
 		}
 	});
 
+	it("strips inherited Git routing vars but honors an explicit environment allowlist", async () => {
+		const dir = tempDir();
+		const inherited = { GIT_DIR: "/outer/repo/.git", GIT_AUTHOR_NAME: "Kept Author" };
+		const previous = Object.fromEntries(Object.keys(inherited).map((key) => [key, process.env[key]]));
+		Object.assign(process.env, inherited);
+		const script = "process.stdout.write(JSON.stringify({gitDir:process.env.GIT_DIR??null,author:process.env.GIT_AUTHOR_NAME??null}))";
+		try {
+			const defaultEnv = await runExternalCli({ command: process.execPath, args: ["-e", script], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 1 });
+			assert.equal(defaultEnv.exitCode, 0);
+			assert.deepEqual(JSON.parse(defaultEnv.output), { gitDir: null, author: "Kept Author" });
+
+			const explicitEnv = await runExternalCli({
+				command: process.execPath, args: ["-e", script], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 2,
+				environment: { allowlist: ["GIT_DIR"] },
+			});
+			assert.equal(explicitEnv.exitCode, 0);
+			assert.deepEqual(JSON.parse(explicitEnv.output), { gitDir: "/outer/repo/.git", author: null });
+		} finally {
+			for (const [key, value] of Object.entries(previous)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	});
+
 	it("delivers the combined prompt only through stdin and preserves argv", async () => {
 		const dir = tempDir();
 		const prompt = buildExternalCliPrompt("Follow exactly.", "Review $HOME; echo nope");
