@@ -3,11 +3,12 @@ draft: false
 title: Changelog
 ---
 
-## 0.13.30-beta.0 — Perutean advisory Jev
+## 0.13.30 — Perutean advisory Jev dan skill engineering bawaan
 
 - **Rute advisory opt-in.** Ekstensi bundel `jev-advisory-routing` dapat menjalankan satu pencarian memori lokal read-only yang dibatasi setelah cue memori tahan lama eksplisit, lalu menyarankan satu skill/workflow yang ditemukan atau level verifikasi yang proporsional. Kedua rute nonaktif secara default; keduanya tidak pernah menulis memori, memuat skill, memulai workflow, menjalankan perintah, atau melemahkan pemeriksaan wajib.
 - **Tie-break kapabilitas opt-in.** Untuk hint leksikal ambigu di antara dua atau tiga tool opsional, capability gateway dapat menanyakan tool mana yang perlu diekspos kepada Jev. Jev hanya melihat prompt saat ini yang dibatasi dan baris kandidat ringkas — bukan katalog lengkap, skema, atau riwayat — dan jawaban tidak tersedia, tidak valid, berkeyakinan rendah, atau `none` mempertahankan routing deterministik.
 - **Keputusan Jev andal.** Perutean advisory dan tie-break kapabilitas berbagi transport keputusan Token-In. Panggilan `jev-*` memakai endpoint non-streaming dan failover akun yang dapat dirotasi.
+- **Empat skill engineering bawaan.** `planning-and-task-breakdown`, `incremental-implementation`, `code-review-and-quality`, dan `code-simplification` kini dibundel dan di-seed ke direktori agent. Materi referensi bersama dan lisensi MIT upstream ikut dikirimkan.
 
 ## 0.13.29 — MiMo V2.6 di katalog Token-In
 

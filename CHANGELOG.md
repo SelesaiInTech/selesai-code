@@ -2,9 +2,10 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
-## [0.13.30-beta.0] - 2026-09-23
+## [0.13.30] - 2026-09-23
 
 ### Added
+- **Four default skills from `addyosmani/agent-skills`.** `planning-and-task-breakdown`, `incremental-implementation`, `code-review-and-quality`, and `code-simplification` now ship as bundled skills and seed into the agent directory like the rest. Their shared reference files (`definition-of-done.md`, `security-checklist.md`, `performance-checklist.md`) ship in `src/skills/references/` with the upstream MIT license, and the links in the skills that cite them were rebased to that location.
 - **Jev advisory routing (opt-in beta).** The new bundled `jev-advisory-routing` extension can make a bounded, read-only durable-memory lookup after an explicit memory cue, and suggest one discovered skill/workflow or a proportionate verification level. Both routes are disabled by default; neither writes memory, loads a skill, starts a workflow, runs a command, or weakens required checks.
 - **Jev capability tie-breaking (opt-in beta).** The capability gateway can use Jev only to break an ambiguous lexical hint between two or three optional tools. It never receives the full catalog, tool schemas, or conversation history; unavailable, malformed, low-confidence, and `none` decisions preserve deterministic behavior.
 

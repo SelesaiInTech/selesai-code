@@ -3,11 +3,12 @@ draft: false
 title: Changelog
 ---
 
-## 0.13.30-beta.0 — Jev advisory routing
+## 0.13.30 — Jev advisory routing and bundled engineering skills
 
 - **Opt-in advisory routes.** The bundled `jev-advisory-routing` extension can make one bounded, read-only local memory lookup after an explicit durable-memory cue, and suggest one discovered skill/workflow or a proportionate verification level. Both routes are off by default; they never write memory, load a skill, start a workflow, run a command, or weaken required checks.
 - **Opt-in capability tie-breaking.** For an ambiguous lexical hint between two or three optional tools, the capability gateway can ask Jev which one to expose. Jev sees only the bounded current prompt and compact candidate lines — not the full catalog, schemas, or history — and every unavailable, invalid, low-confidence, or `none` answer leaves deterministic routing unchanged.
 - **Reliable Jev decisions.** Advisory routing and capability tie-breaking share the Token-In decisions transport. `jev-*` calls use its non-streaming endpoint and rotateable-account failover.
+- **Four engineering skills bundled by default.** `planning-and-task-breakdown`, `incremental-implementation`, `code-review-and-quality`, and `code-simplification` now ship and seed into the agent directory. Their shared reference material and upstream MIT license ship with them.
 
 ## 0.13.29 — MiMo V2.6 in the Token-In catalog
 
