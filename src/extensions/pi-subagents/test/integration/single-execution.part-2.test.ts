@@ -1623,6 +1623,31 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		if (child?.artifactPaths?.outputPath) assert.match(fs.readFileSync(child.artifactPaths.outputPath, "utf-8"), /"note": "captured"/);
 	});
 
+	it("reports bounded structured_output rejection evidence without leaking the submitted value", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const secret = "PRIVATE_STRUCTURED_OUTPUT_VALUE";
+		mockPi.onCall({
+			stdoutRaw: [
+				{ type: "tool_execution_start", toolCallId: "structured-rejected", toolName: "structured_output", args: { value: { secret } } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolCallId: "structured-rejected", toolName: "structured_output", isError: true, content: [{ type: "text", text: `Structured output validation failed: value.secret: expected boolean; received value: ${secret}` }] } },
+				{ type: "tool_execution_end", toolCallId: "structured-rejected", toolName: "structured_output", isError: true },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+		});
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.execute(
+			"single-schema-rejected",
+			{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const child = result.details?.results?.[0];
+		assert.equal(result.isError, true);
+		assert.equal(child?.structuredOutputFailed, true);
+		assert.match(child?.error ?? "", /Structured output validation failed: value.secret/);
+		assert.doesNotMatch(child?.error ?? "", new RegExp(secret));
+	});
+
 	it("routes retained workflow follow-ups to distinct outputs without overwriting the writer report", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		for (const relative of [false, true]) {
 			const writerPath = path.join(tempDir, `writer-${relative}.md`);
