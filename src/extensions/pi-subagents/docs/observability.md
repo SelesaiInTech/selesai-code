@@ -27,6 +27,8 @@ subagent({ action: "status", id: "..." })      // one run
 
 Or ask naturally: "Show me the current async runs."
 
+Use `/subagent-cost` for combined parent-plus-child usage. Other extensions can request the same versioned data through the in-process RPC `cost` method instead of scraping slash-command text; it is read-only and should be called at a turn boundary, not polled. `unresolvedAsyncChildren` counts children whose usage metadata could not be read, so a non-zero count means the child total is a lower bound. See [extension-api.md](extension-api.md#in-process-event-bus-rpc).
+
 The under-editor async widget gives a short view while work runs. Its expand key follows your Pi keybinding:
 
 ```text
