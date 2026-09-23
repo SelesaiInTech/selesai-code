@@ -74,6 +74,8 @@ Detailed acceptance, verification, file ceilings and dependencies: [`tasks/todo.
 
 From `src/extensions/pi-subagents/`: `npm run typecheck`, `npm run test:unit`, `npm run test:integration`; baseline counts and isolated flakes are recorded in the inventory. Use targeted regressions for `stale-run-reconciler.test.ts`, async-status isolation and `test/unit/builtin-agent-augmentations.test.ts`, plus v0.71 tests (for example `test/unit/tool-activation.test.ts`, `test/unit/workflow-terminal-proof.test.ts`, `test/smoke/tool-activation.test.ts`). The `.unlazy/*` gate references in the original draft were not available and are not treated as evidence. Preserve ignored `test/fixtures/pi-coding-agent-shim/dist/` before cleanup. The runner preload no longer resolves bundled `@earendil-works/pi-server`; it must resolve the host's own copy.
 
+**Current checkpoint after `44de65556`:** `npm run typecheck` passes; full `npm run test:unit` passes (2,922 passed, 12 skipped, 0 failed); focused `test/integration/in-process-child.test.ts` passes (22 tests). Full integration has not been rerun after these slices; compare against the pre-port baseline in the inventory and run it at Checkpoint C.
+
 From root after `npm run build`: `npm test`, `npx vitest run src/extensions/pi-graft`, `node scripts/verify-graft-integration.mjs loader`, `node --experimental-strip-types scripts/verify-graft-integration.mjs profiles`, and `npx vitest run src/extensions/pi-intercom/intercom.integration.test.ts` (confirm actual test runner path at execution). Inspect `dist/extensions/pi-subagents/package.json`, packaged tool discovery and bridge. Record baseline-vs-target results and any pre-existing flakes separately; do not label a red suite green. Roll back to the pre-port commit/tag in an isolated branch/worktree; do not replace a dirty checkout or live run artifacts.
 
 ## Risks and mitigations
@@ -81,8 +83,8 @@ From root after `npm run build`: `npm test`, `npx vitest run src/extensions/pi-g
 | Risk | Mitigation |
 | --- | --- |
 | Product-contract changes land silently inside a version bump (`worker` fresh context, guard/fallback removals) | D1–D5 defaults are recorded in the inventory and were authorized by “continue”; each adopted change is noted in the fork-delta record. |
-| Wholesale re-vendoring drops fork deltas or brings deleted CLI adapters back | Per-file 3-way inventory (86 substantive deltas / 67 conflicts) and deliberate keep/adopt/drop decisions, backed by fork tests. |
-| Strict child tool allowlists silently remove wrapper/extension tools | Port the *final v0.71* child-plan behavior (the intermediate v0.67 host intersection was reverted); add a launched-child regression for wrapped builtins + a loaded extension-tool provider alongside source/packaged Graft profile checks. |
+| Wholesale re-vendoring drops fork deltas or brings deleted CLI adapters back | Per-file 3-way inventory (86 substantive modified paths + 2 fork-added / 68 conflicts) and deliberate keep/adopt/drop decisions, backed by fork tests. |
+| Strict child tool allowlists silently remove wrapper/extension tools | The intermediate v0.67 parent-host pruning was reverted upstream. A foreground-child regression now verifies `read`/`grep` names, required tools, and the Graft provider path survive launch; direct tool execution through that loaded child provider remains a Checkpoint B verification item. |
 | Full suites show load-sensitive timeouts | Baseline is recorded with failures and isolated passes; rerun affected cases in isolation and report red full-suite results honestly. |
 | 0.87-only APIs in ported code | Keep the `@selesai/code` shim and the 0.86.1 dev pins; escalate instead of shimming. |
 | Async or supervisor failure hides active children | Test isolation, ENOTDIR fallback, completion delivery, `workflowTerminalProof` and intercom ownership. |
