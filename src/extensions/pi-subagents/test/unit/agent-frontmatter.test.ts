@@ -638,16 +638,16 @@ Do work
 		assert.equal(worker?.defaultContext, "fork");
 	});
 
-	it("loads packaged worker and oracle with fork defaultContext and advisor alias", () => {
+	it("loads packaged worker with fresh writer defaults and keeps oracle fork context", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-default-context-"));
 		tempDirs.push(dir);
 		const agents = discoverAgentsAll(dir).builtin;
 
-		for (const name of ["worker", "oracle"]) {
-			const agent = agents.find((candidate) => candidate.name === name);
-			assert.equal(agent?.defaultContext, "fork", `${name} should default to fork context`);
-		}
+		const worker = agents.find((candidate) => candidate.name === "worker");
+		assert.equal(worker?.defaultContext, "fresh");
+		assert.equal(worker?.acceptanceRole, "writer");
 		const oracle = agents.find((candidate) => candidate.name === "oracle");
+		assert.equal(oracle?.defaultContext, "fork");
 		assert.deepEqual(oracle?.aliases, ["advisor"]);
 		assert.doesNotMatch(oracle?.tools?.join(",") ?? "", /contact_supervisor/);
 		for (const name of ["scout", "researcher", "oracle", "reviewer"]) {

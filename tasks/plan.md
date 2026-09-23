@@ -55,7 +55,8 @@ Detailed acceptance, verification, file ceilings and dependencies: [`tasks/todo.
 - [ ] Checkpoint A: typecheck after each deletion/rename substep; no dangling imports.
 - [ ] 4. Slice 2: clean-merge adoption in ≤5-file increments, starting with final child-tool-plan behavior.
 - [ ] 5. Slice 3: preserve eager tool registration and full-by-default description (D1).
-- [ ] 6. Slice 4: agent selection, builtin names and Graft augmentation; skip incompatible evidence auditor.
+- [x] 6a. Slice 4a (D2): packaged worker defaults to fresh context and declares `acceptanceRole: writer`.
+- [ ] 6b. Slice 4b: reconcile agent selection, builtin names and Graft augmentation; skip incompatible evidence auditor.
 - [ ] Checkpoint B: tool plan, Graft source profiles and agent selection verified.
 - [x] 7a. Slice 5a: filter Git routing env for detached background runners (helper + spawn-boundary regression).
 - [x] 7b. Slice 5b: filter inherited env for default external-CLI runs; preserve explicit allowlists.
