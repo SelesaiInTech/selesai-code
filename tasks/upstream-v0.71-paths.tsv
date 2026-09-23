@@ -1,0 +1,444 @@
+# Upstream v0.66.0 → v0.71.0 path disposition inventory
+# Base: 0fc0eebb9604970c506708b7508d6aa38921fde2; target: 4af5e85a427b9f87334585ae8d0eb365d4dd2a1e
+# Generated from git diff --name-status --find-renames. Disposition categories are explained in tasks/inventory-v0.71.md.
+STATUS	FROM	TO	DISPOSITION
+M	.github/workflows/release.yml		take upstream edit, then review Selesai branding/config paths
+M	.github/workflows/test.yml		take upstream edit, then review Selesai branding/config paths
+M	.gitignore		take upstream edit, then review Selesai branding/config paths
+M	CHANGELOG.md		3-way conflict; resolve fork delta by inventory decision
+M	README.md		take upstream edit, then review Selesai branding/config paths
+M	VISION.md		take upstream edit, then review Selesai branding/config paths
+M	agents/claude-code-writer.md		take upstream edit, then review Selesai branding/config paths
+M	agents/codex-exec-writer.md		take upstream edit, then review Selesai branding/config paths
+M	agents/cursor-agent-writer.md		take upstream edit, then review Selesai branding/config paths
+A	agents/evidence-auditor.md		skip: upstream tool contract is unavailable in Selesai; see the fork-specific exclusion in the inventory
+M	agents/reviewer.md		take upstream edit, then review Selesai branding/config paths
+M	agents/worker.md		3-way conflict; resolve fork delta by inventory decision
+M	docs/agents.md		3-way conflict; resolve fork delta by inventory decision
+M	docs/configuration.md		3-way conflict; resolve fork delta by inventory decision
+M	docs/extension-api.md		3-way conflict; resolve fork delta by inventory decision
+M	docs/missions.md		3-way conflict; resolve fork delta by inventory decision
+M	docs/models.md		3-way conflict; resolve fork delta by inventory decision
+M	docs/observability.md		3-way conflict; resolve fork delta by inventory decision
+A	docs/standalone-background.md		adopt upstream addition; apply documented fork and packaging exclusions
+M	docs/tool-reference.md		take upstream edit, then review Selesai branding/config paths
+M	docs/watchdog.md		3-way conflict; resolve fork delta by inventory decision
+M	docs/workflows.md		take upstream edit, then review Selesai branding/config paths
+A	examples/typed-gate/.gitignore		adopt upstream addition; apply documented fork and packaging exclusions
+A	examples/typed-gate/.pi/agents/classifier.md		adopt upstream addition; apply documented fork and packaging exclusions
+A	examples/typed-gate/README.md		adopt upstream addition; apply documented fork and packaging exclusions
+A	examples/typed-gate/classify		adopt upstream addition; apply documented fork and packaging exclusions
+A	examples/typed-gate/workflow.js		adopt upstream addition; apply documented fork and packaging exclusions
+M	index.ts		take upstream edit, then review Selesai branding/config paths
+M	inspector-runner.mjs		take upstream edit, then review Selesai branding/config paths
+M	package-lock.json		3-way conflict; resolve fork delta by inventory decision
+M	package.json		take upstream edit, then review Selesai branding/config paths
+M	prompts/parallel-review.md		take upstream edit, then review Selesai branding/config paths
+A	runner-peer-loader.mjs		adopt upstream addition; apply documented fork and packaging exclusions
+A	runner-peer-preload.mjs		adopt upstream addition; apply documented fork and packaging exclusions
+D	runner-server-preload.mjs		replace with runner-peer-loader.mjs + runner-peer-preload.mjs
+A	scripts/build-package.mjs		skip: root scripts/copy-extensions.mjs owns package build (D5)
+M	skills/pi-subagents/SKILL.md		take upstream edit, then review Selesai branding/config paths
+M	skills/pi-subagents/references/constraints-and-recipes.md		take upstream edit, then review Selesai branding/config paths
+M	skills/pi-subagents/references/execution-controls.md		3-way conflict; resolve fork delta by inventory decision
+M	skills/pi-subagents/references/management-authoring-rpc.md		take upstream edit, then review Selesai branding/config paths
+M	skills/pi-subagents/references/multi-lane-orchestration.md		take upstream edit, then review Selesai branding/config paths
+M	skills/pi-subagents/references/prompting-and-roles.md		take upstream edit, then review Selesai branding/config paths
+M	skills/pi-subagents/references/review-and-validation.md		take upstream edit, then review Selesai branding/config paths
+M	src/agents/advertised-agent-prompt.ts		take upstream edit, then review Selesai branding/config paths
+M	src/agents/agent-management.ts		3-way conflict; resolve fork delta by inventory decision
+M	src/agents/agent-memory.ts		take upstream edit, then review Selesai branding/config paths
+M	src/agents/agent-serializer.ts		take upstream edit, then review Selesai branding/config paths
+M	src/agents/agents.ts		take upstream edit, then review Selesai branding/config paths
+M	src/agents/builtin-names.ts		3-way conflict; resolve fork delta by inventory decision
+M	src/agents/chain-serializer.ts		take upstream edit, then review Selesai branding/config paths
+M	src/agents/proactive-skills.ts		take upstream edit, then review Selesai branding/config paths
+M	src/agents/runtime-agent-registry.ts		take upstream edit, then review Selesai branding/config paths
+M	src/agents/skills.ts		take upstream edit, then review Selesai branding/config paths
+M	src/api/delegation.ts		take upstream edit, then review Selesai branding/config paths
+M	src/api/preflight.ts		take upstream edit, then review Selesai branding/config paths
+A	src/api/required-child-extensions.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/api/shared-types.ts		take upstream edit, then review Selesai branding/config paths
+M	src/extension/config.ts		take upstream edit, then review Selesai branding/config paths
+M	src/extension/doctor.ts		take upstream edit, then review Selesai branding/config paths
+M	src/extension/fanout-child.ts		3-way conflict; resolve fork delta by inventory decision
+A	src/extension/herdr-pi-bridge.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/extension/index.ts		3-way conflict; resolve fork delta by inventory decision
+M	src/extension/public-execution.ts		take upstream edit, then review Selesai branding/config paths
+M	src/extension/rpc.ts		take upstream edit, then review Selesai branding/config paths
+M	src/extension/schemas.ts		take upstream edit, then review Selesai branding/config paths
+A	src/extension/tool-activation.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/extension/tool-description.ts		3-way conflict; resolve fork delta by inventory decision
+A	src/inspectors/actions.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	src/inspectors/ghostty/actions.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	src/inspectors/ghostty/plugin.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/inspectors/herdr/actions.ts		take upstream edit, then review Selesai branding/config paths
+A	src/inspectors/herdr/plugin.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/inspectors/herdr/project-panes.ts		take upstream edit, then review Selesai branding/config paths
+R090	src/inspectors/herdr/inspector-runner.ts	src/inspectors/inspector-runner.ts	adopt rename; run branding/path review
+A	src/inspectors/plugins.ts		adopt upstream addition; apply documented fork and packaging exclusions
+R067	src/inspectors/herdr/session-roots-codec.ts	src/inspectors/session-roots-codec.ts	adopt rename; run branding/path review
+R100	src/inspectors/herdr/shell-command.ts	src/inspectors/shell-command.ts	adopt rename; run branding/path review
+A	src/inspectors/types.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/intercom/intercom-bridge.ts		take upstream edit, then review Selesai branding/config paths
+M	src/intercom/native-supervisor-channel.ts		3-way conflict; resolve fork delta by inventory decision
+M	src/intercom/result-intercom.ts		take upstream edit, then review Selesai branding/config paths
+M	src/policy/authority.ts		take upstream edit, then review Selesai branding/config paths
+M	src/profiles/profiles.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/active-async-capacity.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/active-run-index.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/async-execution.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/async-job-tracker.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/async-resume.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/async-status.ts		3-way conflict; resolve fork delta by inventory decision
+M	src/runs/background/auto-drain.ts		take upstream edit, then review Selesai branding/config paths
+A	src/runs/background/binary-bootstrap.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/runs/background/chain-append.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/chain-root-attachment.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/fleet-view.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/notify.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/owned-process-tree.ts		take upstream edit, then review Selesai branding/config paths
+A	src/runs/background/process-terminal-candidate.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/runs/background/process-terminal.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/result-files.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/result-watcher.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/retained-children.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/run-child-session.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/run-id-resolver.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/run-status.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/runner-aliases.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/runner-child-launch.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/runner-child-sessions.ts		take upstream edit, then review Selesai branding/config paths
+A	src/runs/background/runner-http-dispatcher.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	src/runs/background/runner-startup-failure.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/runs/background/scheduled-runs.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/stale-run-reconciler.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/steering.ts		take upstream edit, then review Selesai branding/config paths
+A	src/runs/background/subagent-runner-bootstrap.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/runs/background/subagent-runner.ts		3-way conflict; resolve fork delta by inventory decision
+M	src/runs/background/subagent-wait.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/wait-completions.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/wait-subscriptions.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/background/wait-tool.ts		3-way conflict; resolve fork delta by inventory decision
+A	src/runs/background/workflow-terminal-proof.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/runs/foreground/async-steering-action.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/foreground/async-stop-action.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/foreground/execution.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/foreground/foreground-history.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/foreground/prompt-audit.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/foreground/subagent-executor.ts		3-way conflict; resolve fork delta by inventory decision
+M	src/runs/foreground/workflow-detach-reconcile.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/foreground/workflow-foreground-steering.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/acceptance.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/async-status-projection.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/capability-ceiling.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/child-hooks.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/child-launch-plan.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/child-launch.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/child-lifecycle.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/child-runtime-config.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/child-session.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/child-tool-plan.ts		take upstream edit, then review Selesai branding/config paths
+D	src/runs/shared/completion-evidence.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+D	src/runs/shared/completion-guard.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+M	src/runs/shared/dynamic-fanout.ts		take upstream edit, then review Selesai branding/config paths
+A	src/runs/shared/effective-system-prompt.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/runs/shared/external-cli-contract.ts		3-way conflict; resolve fork delta by inventory decision
+M	src/runs/shared/external-cli-preflight.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/external-cli-runner.ts		take upstream edit, then review Selesai branding/config paths
+A	src/runs/shared/git-environment.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	src/runs/shared/herdr-connection.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	src/runs/shared/herdr-external-adapters.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	src/runs/shared/herdr-machine.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	src/runs/shared/herdr-pi-protocol.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	src/runs/shared/herdr-placed-run.ts		adopt upstream addition; apply documented fork and packaging exclusions
+D	src/runs/shared/llm-intent-arbiter.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+M	src/runs/shared/mcp-config-sources.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/mcp-direct-tool-allowlist.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/mcp-direct-tool-grant.ts		take upstream edit, then review Selesai branding/config paths
+D	src/runs/shared/model-exclusions.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+A	src/runs/shared/model-resolution-diagnostic.ts		adopt upstream addition; apply documented fork and packaging exclusions
+R062	src/runs/shared/model-fallback.ts	src/runs/shared/model-resolution.ts	3-way rename conflict; preserve fork delta and reconcile per inventory
+M	src/runs/shared/model-scope.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/nested-events.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/orca-progress-tabs.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/parallel-utils.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/pi-spawn.ts		3-way conflict; resolve fork delta by inventory decision
+D	src/runs/shared/readonly-model-continuation.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+D	src/runs/shared/readonly-session-evidence.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+M	src/runs/shared/single-output.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/structured-output.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/subagent-control.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/subagent-prompt-runtime.ts		take upstream edit, then review Selesai branding/config paths
+D	src/runs/shared/task-intent.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+M	src/runs/shared/tool-availability.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/tool-budget.ts		take upstream edit, then review Selesai branding/config paths
+A	src/runs/shared/usage-reconciliation.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	src/runs/shared/workflow-async-child-guidance.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/runs/shared/worktree-setup-command.ts		take upstream edit, then review Selesai branding/config paths
+M	src/runs/shared/worktree.ts		take upstream edit, then review Selesai branding/config paths
+A	src/shared/child-cache-retention.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/shared/child-session-name.ts		take upstream edit, then review Selesai branding/config paths
+M	src/shared/fork-context.ts		take upstream edit, then review Selesai branding/config paths
+M	src/shared/launch-contract.ts		take upstream edit, then review Selesai branding/config paths
+A	src/shared/opencode-session-headers.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/shared/pruned-fork.ts		take upstream edit, then review Selesai branding/config paths
+A	src/shared/required-child-extensions.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/shared/settings.ts		take upstream edit, then review Selesai branding/config paths
+M	src/shared/shortcuts.ts		take upstream edit, then review Selesai branding/config paths
+M	src/shared/types.ts		3-way conflict; resolve fork delta by inventory decision
+M	src/slash/delegation-adapters.ts		take upstream edit, then review Selesai branding/config paths
+M	src/slash/delegation-request.ts		take upstream edit, then review Selesai branding/config paths
+M	src/slash/prompt-template-bridge.ts		take upstream edit, then review Selesai branding/config paths
+M	src/slash/prompt-workflows.ts		take upstream edit, then review Selesai branding/config paths
+M	src/slash/slash-commands.ts		3-way conflict; resolve fork delta by inventory decision
+A	src/slash/subagent-cost.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	src/slash/subagents-admin.ts		take upstream edit, then review Selesai branding/config paths
+M	src/tui/fleet-status.ts		take upstream edit, then review Selesai branding/config paths
+M	src/tui/fleet.ts		take upstream edit, then review Selesai branding/config paths
+M	src/tui/render.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/child-status.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/diff-tool.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/lsp-diagnostics.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/model-selection.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/permission-arbiter.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/register-child.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/register-main.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/render.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/review.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/rules.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/runtime.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/scope.ts		3-way conflict; resolve fork delta by inventory decision
+M	src/watchdog/settings.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/tool-actions.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/turn-delta.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/types.ts		take upstream edit, then review Selesai branding/config paths
+M	src/watchdog/warning-format.ts		take upstream edit, then review Selesai branding/config paths
+M	src/workflows/scripted-workflow.ts		take upstream edit, then review Selesai branding/config paths
+M	src/workflows/workflow-checklist.ts		take upstream edit, then review Selesai branding/config paths
+M	src/workflows/workflow-child-summary.ts		take upstream edit, then review Selesai branding/config paths
+M	src/workflows/workflow-receipt.ts		3-way conflict; resolve fork delta by inventory decision
+M	src/workflows/workflow-resources.ts		take upstream edit, then review Selesai branding/config paths
+M	src/workflows/workflow-settlement.ts		take upstream edit, then review Selesai branding/config paths
+A	test/fixtures/cwd-workflow-child.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/fixtures/herdr-allocation-lock-child.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/fixtures/herdr-provision-child.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/fixtures/native-nested-wait-provider.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/fixtures/pi-coding-agent-shim/dist/core/model-registry.d.ts		take upstream edit, then review Selesai branding/config paths
+D	test/fixtures/pi-coding-agent-shim/node_modules/@earendil-works/pi-server/dist/index.js		already absent from fork tree; do not restore
+D	test/fixtures/pi-coding-agent-shim/node_modules/@earendil-works/pi-server/dist/unix.js		already absent from fork tree; do not restore
+D	test/fixtures/pi-coding-agent-shim/node_modules/@earendil-works/pi-server/package.json		already absent from fork tree; do not restore
+A	test/fixtures/runner-bootstrap-harness.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/fixtures/workflow-cwd-access-failure.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/integration/acceptance-file-report.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/integration/async-execution.part-1.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/integration/async-execution.part-2.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/integration/async-execution.part-3.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/integration/async-execution.part-4.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/integration/async-job-tracker.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/integration/async-status.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/integration/deadline-checkpoint.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/integration/external-cli-runner.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/integration/foreign-workflow-steering.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/integration/fork-context-execution.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/integration/in-process-child.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/integration/inline-workflow-visibility.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/integration/intercom-result-delivery.test.ts		3-way conflict; resolve fork delta by inventory decision
+A	test/integration/model-resolution-diagnostic.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/integration/nested-async-wait.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/integration/orca-progress-tabs.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/integration/recovered-assistant-error.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/integration/render-fork-badge.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/integration/render-widget-mouse.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/integration/render-widget.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/integration/result-publication.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/integration/result-watcher.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/integration/single-execution.part-1.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/integration/single-execution.part-2.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/integration/slash-commands.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/integration/workflow-result-publication.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/integration/workflow-steer-inbox.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/integration/workflow-worktree-admission.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/clean-install.mjs		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/npm-background.mjs		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/packed-runner-selection.mjs		adopt upstream addition; apply documented fork and packaging exclusions
+D	test/smoke/pi085-child.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+D	test/smoke/pi085-clean-install.mjs		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+A	test/smoke/runner-loader-capability.mjs		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/sdk-child.ts		adopt upstream addition; apply documented fork and packaging exclusions
+R082	test/smoke/pi085-extension.ts	test/smoke/sdk-extension.ts	adopt rename; run branding/path review
+A	test/smoke/standalone-background.mjs		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/standalone-fault.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/standalone-matrix.mjs		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/standalone-observer.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/standalone-parent.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/standalone-provider.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/standalone-release.json		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/standalone-revival.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/standalone-shared.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/smoke/tool-activation.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/support/async-execution-fixture.ts		3-way conflict; resolve fork delta by inventory decision
+A	test/support/async-result-timeout-evidence.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/support/fake-child-session.ts		take upstream edit, then review Selesai branding/config paths
+M	test/support/foreign-workflow-steer-host.mjs		take upstream edit, then review Selesai branding/config paths
+M	test/support/helpers.ts		take upstream edit, then review Selesai branding/config paths
+M	test/support/isolated-temp-root.mjs		take upstream edit, then review Selesai branding/config paths
+A	test/support/native-peer-loader.mjs		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/support/single-execution-fixture.ts		3-way conflict; resolve fork delta by inventory decision
+A	test/support/watchdog-stable-host-loader.mjs		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/acceptance-compaction.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/acceptance.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/advertised-agent-prompt.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/advertised-agent-refresh.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/agent-disabled.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/agent-eject-disable.test.ts		3-way conflict; resolve fork delta by inventory decision
+A	test/unit/agent-exclude-dirs.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/agent-frontmatter.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/agent-management.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/agent-memory.test.ts		3-way conflict; resolve fork delta by inventory decision
+A	test/unit/agent-name-resolution.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/agent-overrides.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/async-execution.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/async-interrupt-action.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/async-permission-session.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/async-recovery-descriptor.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/async-result-timeout-evidence.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/async-resume.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/async-spawn-package-dir.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/async-spawn-preload.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/async-status-projection.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/authority-policy.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/auto-drain.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/binary-async-spawn.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/binary-pi-spawn.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/capability-ceiling-agent-allowlist.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/chain-root-attachment.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/changelog-format.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/child-cache-retention.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/child-launch-plan.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/child-lifecycle.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/child-runtime-config.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/child-session-host-sdk.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/child-session-parent-providers.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/child-session-queued.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/child-tool-plan.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/compaction-resume.test.ts		take upstream edit, then review Selesai branding/config paths
+D	test/unit/completion-evidence.test.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+D	test/unit/completion-guard.test.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+M	test/unit/completion-replay.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/default-extensions.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/delegation-api.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/doctor.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/dynamic-fanout.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/extension-maintenance-lifecycle.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/external-cli-runner.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/fleet-status.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/fleet.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/fork-context.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/ghostty-inspector.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/git-environment.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/herdr-connection.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/herdr-external-adapters.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/herdr-inspector-bootstrap.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/herdr-inspector.test.ts		3-way conflict; resolve fork delta by inventory decision
+A	test/unit/herdr-machine.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/herdr-native-placement.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/herdr-session-roots-codec.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/herdr-shell-command.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/host-peer-runtime-imports.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/index-child-registration.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/inspect-rpc.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/inspector-authority-policy.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/intercom-bridge.test.ts		take upstream edit, then review Selesai branding/config paths
+D	test/unit/llm-intent-arbiter.test.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+M	test/unit/mcp-direct-tool-grant.test.ts		take upstream edit, then review Selesai branding/config paths
+D	test/unit/model-exclusions.test.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+D	test/unit/model-fallback.test.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+A	test/unit/model-resolution-diagnostic.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/model-resolution.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/mutation-evidence.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/native-supervisor-channel.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/nested-control-fanout.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/nested-control.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/notify-diagnostics.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/notify.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/opencode-session-headers.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/orca-progress-tabs.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/owned-process-tree.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/package-manifest.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/pi-coding-agent-dir.test.ts		3-way conflict; resolve fork delta by inventory decision
+A	test/unit/pi-spawn-host-root.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/pi-subagents-policy-guidance.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/preflight.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/proactive-skills.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/process-terminal.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/profiles.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/prompt-audit-optional-peers.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/prompt-workflows.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/pruned-fork.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/public-execution.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/readonly-drain-observation.test.ts		take upstream edit, then review Selesai branding/config paths
+D	test/unit/readonly-model-continuation.test.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+D	test/unit/readonly-session-evidence.test.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+M	test/unit/render-helpers.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/required-child-extensions.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/result-intercom.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/retained-children.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/rpc.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/run-child-session.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/run-id-resolver.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/run-status.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/runner-bootstrap.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/runner-http-dispatcher.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/runner-peer-loader.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/runner-peer-symlinks.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/runtime-agent-registration.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/scheduled-runs.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/schemas.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/scripted-workflow.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/single-output.test.ts		3-way conflict; resolve fork delta by inventory decision
+A	test/unit/skills-disable-model-invocation.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/skills-fallback.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/stale-run-reconciler.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/steering-action.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/steering.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/structured-output-rejection.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/structured-output-validation.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/subagent-control.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/subagent-prompt-runtime.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/subagent-wait.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/supervisor-ask-registration.test.ts		take upstream edit, then review Selesai branding/config paths
+D	test/unit/task-intent.test.ts		adopt upstream removal; fork-owned behavior/docs/tests reconciled separately
+M	test/unit/temp-paths.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/tool-activation.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/tool-budget.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/tool-description.test.ts		3-way conflict; resolve fork delta by inventory decision
+A	test/unit/typed-gate-output.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/usage-reconciliation-owners.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/usage-reconciliation.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/wait-completions.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/wait-subscriptions.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/watchdog-child-status.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/watchdog-compaction-scope.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/watchdog-diff-tool.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/watchdog-native-scheduling.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/watchdog-permission-arbiter.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/watchdog-register-child.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/watchdog-render.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/watchdog-review.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/watchdog-rules.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/watchdog-runtime.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/watchdog-scope.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/watchdog-settings.test.ts		3-way conflict; resolve fork delta by inventory decision
+A	test/unit/watchdog-stable-host-layout.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/watchdog-tool-actions.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/watchdog-turn-delta.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/workflow-chat-progress.test.ts		3-way conflict; resolve fork delta by inventory decision
+M	test/unit/workflow-child-summary.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/workflow-detach-reconcile.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/workflow-launch-params.test.ts		take upstream edit, then review Selesai branding/config paths
+M	test/unit/workflow-receipt.test.ts		take upstream edit, then review Selesai branding/config paths
+A	test/unit/workflow-terminal-proof.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+A	test/unit/workflow-worktree-admission.test.ts		adopt upstream addition; apply documented fork and packaging exclusions
+M	test/unit/worktree.test.ts		3-way conflict; resolve fork delta by inventory decision
+A	tsconfig.build.json		skip: root scripts/copy-extensions.mjs owns package build (D5)

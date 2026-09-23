@@ -1,19 +1,27 @@
 # Implementation Plan: pi-subagents v0.66.0 → upstream v0.71.0
 
 ## Overview
-Upgrade the vendored `src/extensions/pi-subagents/` without losing Selesai-specific behavior or breaking its integrations. **Planning only; no vendored code has been changed.** Local package and dist report 0.66.0. The immutable upstream baseline is `vendor/pi-subagents/v0.66.0`; the v0.71.0 tag is not present locally. The source checkout was clean when planning started and `cd src/extensions/pi-subagents && npm run typecheck` passed. The last recorded upgrade gate (not a fresh test run) was 2916 passing unit / 986 passing integration tests (`.unlazy/pi-v0.85.1-sync/gates/leaf-1.2.md`).
+Upgrade the vendored `src/extensions/pi-subagents/` without losing Selesai-specific behavior or breaking its integrations. Local package reports 0.66.0. The evidence gate is closed and the user said “continue”; implementation is proceeding with the documented defaults in [`tasks/inventory-v0.71.md`](inventory-v0.71.md). No vendored production code has changed yet.
 
-## Upstream mapping and evidence boundary
+## Upstream mapping (verified)
 
-| Release | Evidence available now | Required before implementation |
+The namespaced refs `refs/pisub/v0.66.0 … v0.71.0` are anchored by explicit fetch. Detail per release — including two plan corrections — is in [`tasks/inventory-v0.71.md`](inventory-v0.71.md).
+
+| Release | SHA | Verified substance |
 | --- | --- | --- |
-| v0.67.0 | [Release](https://github.com/nicobailon/pi-subagents/releases/tag/v0.67.0) not independently read; [#2160](https://github.com/nicobailon/pi-subagents/issues/2160) appears to report child-tool-plan wrapper/extension-tool pruning; the issue text and affected versions are **not independently verified** here, nor is a fix-on-main claim evidence it is in 0.71. | Read tagged notes and test the exact v0.71 implementation, especially `read`/`grep` wrappers and extension-provided `graft_*` tools. |
-| v0.68.0 | [Release](https://github.com/nicobailon/pi-subagents/releases/tag/v0.68.0) not independently read. | Record features, changed/removed files, migrations, tests and host requirements from tag. |
-| v0.69.0 | [Release](https://github.com/nicobailon/pi-subagents/releases/tag/v0.69.0) not independently read. | Same. |
-| v0.70.0 | [Release](https://github.com/nicobailon/pi-subagents/releases/tag/v0.70.0) not independently read. | Same. |
-| v0.71.0 | User-provided [release](https://github.com/nicobailon/pi-subagents/releases/tag/v0.71.0); release body/tagged source unavailable in this research pass. | Read [tagged changelog](https://github.com/nicobailon/pi-subagents/blob/v0.71.0/CHANGELOG.md), tag contents, manifest/peer dependencies and cumulative diff. |
+| v0.66.0 (base) | `0fc0eebb` | identical to local tag `vendor/pi-subagents/v0.66.0` |
+| v0.67.0 | `aa75b335` | watchdog fallback models, `evidence-auditor`, Intercom bridge overrides, **launch contracts v3 / projections v2 (digests change)**, child-tool-plan fixes #2132–#2140 |
+| v0.68.0 | `f3ccf47d` | workflow args, required child extensions, Herdr `machine`, agent `outputSchema`; **removes `fallbackModels`, same-launch model switching, `modelExclusions` and the bundled `@earendil-works/pi-server`**; npm ships compiled JS |
+| v0.69.0 | `f4918e80` | typed gates (JSON verdict → `structuredOutput`); Ghostty detection fix |
+| v0.70.0 | `b72714de` | `defaultSubagentOnlyExtensions`, `allowedAgents`, workflow/reviewer/worktree correctness fixes, compiled-package publishing |
+| v0.70.1 | `1ac7b5e2` | **`completionGuard` and `PI_SUBAGENTS_LLM_INTENT_ARBITER` removed**; runtime-registered agent defaults; Pi 0.86.1 summaries |
+| v0.71.0 (target) | `4af5e85a` | RPC `cost`, workflow lifecycle events, `workflowTerminalProof`, **`worker` fresh-context default**, **`subagents_enable` dynamic tool activation**, Git local-env stripping, **pi-ai peer floor `>=0.86.1`** |
 
-**Why the gap:** the web research tool returned unrelated/main README material rather than verifiable release bodies; a `researcher` child failed with `Agent 'researcher' requested unavailable child tools: web_search, fetch_content, get_search_content, source_check` (run `facaf8bc-7d4c-4ae6-b9c2-624902d6543f`). No exact per-release claims are inferred from that output. Phase 1 is a blocking evidence gate, not a formality. Never mistake bare Pi `v0.71.0` tags for pi-subagents tags.
+Two corrections to the earlier plan: **`v0.70.1` exists and was missing** (it removes a user-facing feature, so it is not a drop-in patch), and the baseline is a *tag* whose tree is the upstream repository root, not a `vendor/` directory.
+
+Delta counts: upstream 440 paths (115 A / 299 M / 21 D / 5 R); fork-vs-base 720 paths, of which 183 are gitignored shim artifacts rather than real deletions. After normalizing the fork's mechanical branding, **86 substantive modified paths + 2 fork-added paths** remain; **68 are true conflicts** (16 direct overlaps + 1 rename conflict; 17 production paths) and 18 are safe carries. 397 residuals are ≤4 lines and are branding-pass noise.
+
+**Compatibility verdict:** the new `@earendil-works/pi-ai >=0.86.1` peer floor matches Selesai's pinned Pi 0.86.1, and v0.71.0 explicitly fixes watchdog/permission behavior *for* the 0.86.1 package layout. The real drift is the dev-dependency/shim story (upstream moves dev deps to 0.87.0 and replaces the shim dev dependency with the real package) — keep the fork's `@selesai/code` shim and treat any 0.87-only API need as an escalation, not a shim. The vendored pi-intercom lacks `intercom:session-identity`, and upstream degrades to previous child naming in that case, so no intercom upgrade is required.
 
 ## Fork-to-upstream conflict map (confirmed locally)
 
@@ -21,7 +29,7 @@ Upgrade the vendored `src/extensions/pi-subagents/` without losing Selesai-speci
 | --- | --- | --- |
 | Paths, branding and manifests: `src/shared/utils.ts`, `src/shared/artifacts.ts`, `package.json`, `src/agents/agents.ts` | `~/.selesai`, `SELESAI_*`, `@selesai/code`, distinct `.pi-subagents` project artifacts; prune **both** `.pi` and `.selesai`; never rewrite TS property `.pi`. | Config discovery, dependency floors, new asset paths and installer. |
 | Builtins/selection: `src/agents/builtin-names.ts`, `src/agents/builtin-agent-augmentations.ts`, `src/extension/index.ts`, `src/extensions/pi-graft/index.ts` | Seven builtins (including `advisor`); post-0.66 additive Graft tools/provider only on selected builtins, user/project/explicit overrides win. | New builtin agents and changed agent discovery or allowlist contracts. |
-| Child tools/launch: `src/extension/fanout-child.ts`, `src/runs/shared/child-tool-plan.ts`, `src/runs/shared/child-runtime-config.ts` | Host wrappers and extension tools remain usable by intended children, without widening permissions; Graft child provider is loaded, not merely allowlisted. | 0.67 tool intersection bug and subsequent fixes; host Pi 0.86.1 compatibility. |
+| Child tools/launch: `src/extension/fanout-child.ts`, `src/runs/shared/child-tool-plan.ts`, `src/runs/shared/child-runtime-config.ts` | Host wrappers and extension tools remain usable by intended children, without widening permissions; Graft child provider is loaded, not merely allowlisted. | Final v0.71 tool-plan contract; do not reintroduce the intermediate v0.67 parent-host builtin pruning that v0.71 later removed. |
 | Parent/child bridge: `src/intercom/native-supervisor-channel.ts`, `src/extensions/pi-intercom/index.ts` | `SELESAI_SUBAGENT_ORCHESTRATOR_*` and other `SELESAI_SUBAGENT_*` metadata must match at both ends; contact_supervisor routes to owning run. | Upstream supervisor/transport and background runner changes. |
 | Resilience and compatible entry points: `src/runs/background/async-status.ts`, `src/runs/background/wait-tool.ts`, `src/slash/slash-commands.ts`, `src/extension/tool-description.ts` | ENOTDIR reconcile-write fallback to `readStatus` without swallowing genuine isolation errors; retained `subagent_wait` alias, exported `launchSlashSubagent`, fork full-by-default tool description. | Async status, registration and prompt schema churn. |
 | Packaging and exclusions: `agents/`, `test/`, `src/skills/pi-subagents/`, `scripts/copy-extensions.mjs` | Keep deliberately removed bundled external-CLI adapters/agents removed; keep worker's four aliases and Selesai docs/skills; maintain source + packaged behavior. | New upstream files/tests and version/dependency bumps. |
@@ -30,10 +38,10 @@ Source of fork policy: `selesai-in-doc/pi-subagents-upgrade.md` plus post-baseli
 
 ## Architecture decisions and dependency graph
 
-1. Anchor upstream old/new immutable refs and list each upstream-added/changed/deleted path; calculate three-way inventory with `base=vendor/pi-subagents/v0.66.0`, `ours=current vendored file`, `theirs=upstream v0.71.0`. Reconcile per file, never wholesale copy or blind `merge-file --theirs`. Do not use already-versioned merge scripts as assertions.
-2. Organize implementation into **at most five-file slices**, each containing the production change and its focused test; if the anchored inventory exceeds a task's listed paths, split it and update `tasks/todo.md` before implementing. Preserve new upstream work where not in conflict with a deliberate fork choice.
+1. Three-way refs are anchored (`base=vendor/pi-subagents/v0.66.0`, `ours=src/extensions/pi-subagents/`, `theirs=refs/pisub/v0.71.0`) and the inventory is recorded in [`tasks/inventory-v0.71.md`](inventory-v0.71.md). Reconcile per file, never wholesale copy or blind `merge-file --theirs`. Do not use already-versioned merge scripts as assertions.
+2. Organize implementation into **at most five-file slices**, each containing the production change and its focused test. The inventory's slices are a dependency map, not permission to edit every listed file at once: split them further before coding if a substep exceeds five tracked paths. Use v0.71 final code, not intermediate v0.67 commits later reverted upstream. Old Tasks 2–6 survive as verification intent, not as file lists.
 3. Validate source contracts first (agent discovery, tool plans), then launch/supervision, then background/workflow/status; docs/manifest and packaged integrations last. Every 2–3 tasks has a stop/go checkpoint. One writer per checkout/worktree.
-4. Do not independently upgrade core Pi or intercom just to make v0.71 compile. Compare new peer floors to Selesai's pinned Pi 0.86.1; if incompatible, stop for owner decision rather than hiding incompatibility in shims. Owner approval is required before implementing broad launch/API/persistence changes or deciding to remove explicit fork compatibility (`subagent_wait`).
+4. Do not independently upgrade core Pi or intercom just to make v0.71 compile. Compare APIs (not only peer floors) to pinned Pi 0.86.1; if incompatible, stop rather than hiding incompatibility in shims. The user authorized continuing with the recorded recommendations; do not expand those decisions (especially the explicit `subagent_wait`/worker aliases) without asking.
 
 Dependency graph: tagged release audit → inventory/contract decisions → tools/selection → launch/bridge → async/workflows/visibility → docs/package → full source + packaged + host gates → human review.
 
@@ -41,22 +49,25 @@ Dependency graph: tagged release audit → inventory/contract decisions → tool
 
 Detailed acceptance, verification, file ceilings and dependencies: [`tasks/todo.md`](todo.md).
 
-- [ ] 1. Anchor v0.71 tag, exact release delta and clean baseline; revise tasks by inventory.
-- [ ] 2. Reconcile builtins, child tool allowlists and Graft augmentation.
-- [ ] Checkpoint A: tool plan and Graft source profiles verified.
-- [ ] 3. Reconcile child launch and intercom supervisor contract.
-- [ ] 4. Reconcile async runner/recovery and wait aliases.
-- [ ] Checkpoint B: launch/background regressions verified.
-- [ ] 5. Reconcile scripted workflows, schemas and public APIs.
-- [ ] 6. Reconcile status, visibility and delivery changes.
-- [ ] Checkpoint C: focused workflow/status suites verified.
-- [ ] 7. Reconcile docs, skills, assets, manifest and lockfile.
-- [ ] 8. Run whole extension and packaged host gates; review, record results and rollback ref.
+- [x] 1. Anchor v0.71 tag, release delta, compatibility and baseline; revise tasks by inventory. → [`tasks/inventory-v0.71.md`](inventory-v0.71.md). User said “continue”; recorded defaults are in effect.
+- [x] 2. Slice 0: make the working checkout verifiable and re-record the live baseline (unit/integration results include isolated flakes).
+- [ ] 3. Slice 1: upstream deletions, renames and relocations (D3), split into ≤5-file commits.
+- [ ] Checkpoint A: typecheck after each deletion/rename substep; no dangling imports.
+- [ ] 4. Slice 2: clean-merge adoption in ≤5-file increments, starting with final child-tool-plan behavior.
+- [ ] 5. Slice 3: preserve eager tool registration and full-by-default description (D1).
+- [ ] 6. Slice 4: agent selection, builtin names and Graft augmentation; skip incompatible evidence auditor.
+- [ ] Checkpoint B: tool plan, Graft source profiles and agent selection verified.
+- [ ] 7. Slice 5: launch, supervisor contract and child env (launch contract v3, git local-env stripping).
+- [ ] 8. Slice 6: async runner/recovery, status proof, wait aliases and the cost RPC.
+- [ ] Checkpoint C: launch/background regressions verified.
+- [ ] 9. Slice 7: slash/API surface and manifest remainder.
+- [ ] 10. Slice 8: docs, skills, manifest and lockfile; update the fork-delta record.
+- [ ] 11. Slice 9: whole extension and packaged host gates; review, record results and rollback ref.
 - [ ] Final checkpoint: human approval before merge/release.
 
 ## Validation and rollback
 
-From `src/extensions/pi-subagents/`: `npm run typecheck`, `npm run test:unit`, `npm run test:integration`; targeted regression commands from `.unlazy/pi-v0.85.1-sync/gates/leaf-1.2.md` for `stale-run-reconciler.test.ts` and async-status isolation, plus `test/unit/builtin-agent-augmentations.test.ts` and tagged upstream new tests. Reinstall/verify the extension-local dependencies if the tagged lockfile changes (the runner's `@earendil-works/pi-server` preload must resolve); preserve ignored `test/fixtures/pi-coding-agent-shim/dist/` before any cleanup.
+From `src/extensions/pi-subagents/`: `npm run typecheck`, `npm run test:unit`, `npm run test:integration`; baseline counts and isolated flakes are recorded in the inventory. Use targeted regressions for `stale-run-reconciler.test.ts`, async-status isolation and `test/unit/builtin-agent-augmentations.test.ts`, plus v0.71 tests (for example `test/unit/tool-activation.test.ts`, `test/unit/workflow-terminal-proof.test.ts`, `test/smoke/tool-activation.test.ts`). The `.unlazy/*` gate references in the original draft were not available and are not treated as evidence. Preserve ignored `test/fixtures/pi-coding-agent-shim/dist/` before cleanup. The runner preload no longer resolves bundled `@earendil-works/pi-server`; it must resolve the host's own copy.
 
 From root after `npm run build`: `npm test`, `npx vitest run src/extensions/pi-graft`, `node scripts/verify-graft-integration.mjs loader`, `node --experimental-strip-types scripts/verify-graft-integration.mjs profiles`, and `npx vitest run src/extensions/pi-intercom/intercom.integration.test.ts` (confirm actual test runner path at execution). Inspect `dist/extensions/pi-subagents/package.json`, packaged tool discovery and bridge. Record baseline-vs-target results and any pre-existing flakes separately; do not label a red suite green. Roll back to the pre-port commit/tag in an isolated branch/worktree; do not replace a dirty checkout or live run artifacts.
 
@@ -64,16 +75,23 @@ From root after `npm run build`: `npm test`, `npx vitest run src/extensions/pi-g
 
 | Risk | Mitigation |
 | --- | --- |
-| v0.71 tag/release details unverified | Task 1 is a hard blocker. Confirm actual upstream tag SHA, notes, file list and peer floors; amend this plan before approving implementation. |
-| Wholesale re-vendoring drops fork deltas or brings deleted CLI adapters back | Per-file 3-way inventory and deliberate keep/adopt/drop decision, backed by fork tests. |
-| Strict child tool allowlists silently remove wrapper/Graft tools | Add a real launched-child regression for wrapped builtins + loaded extension-tool provider, alongside source/packaged Graft profile checks. |
-| Async or supervisor failure hides active children | Test isolation, ENOTDIR fallback, completion delivery and intercom ownership. |
+| Product-contract changes land silently inside a version bump (`worker` fresh context, guard/fallback removals) | D1–D5 defaults are recorded in the inventory and were authorized by “continue”; each adopted change is noted in the fork-delta record. |
+| Wholesale re-vendoring drops fork deltas or brings deleted CLI adapters back | Per-file 3-way inventory (86 substantive deltas / 67 conflicts) and deliberate keep/adopt/drop decisions, backed by fork tests. |
+| Strict child tool allowlists silently remove wrapper/extension tools | Port the *final v0.71* child-plan behavior (the intermediate v0.67 host intersection was reverted); add a launched-child regression for wrapped builtins + a loaded extension-tool provider alongside source/packaged Graft profile checks. |
+| Full suites show load-sensitive timeouts | Baseline is recorded with failures and isolated passes; rerun affected cases in isolation and report red full-suite results honestly. |
+| 0.87-only APIs in ported code | Keep the `@selesai/code` shim and the 0.86.1 dev pins; escalate instead of shimming. |
+| Async or supervisor failure hides active children | Test isolation, ENOTDIR fallback, completion delivery, `workflowTerminalProof` and intercom ownership. |
 | Prompt/default/API drift breaks operators | Preserve full default description, alias/export contracts unless owner approves cutover; check schemas and built artifacts. |
-| New dependency assumes incompatible Pi host | Compare peer ranges to pinned Pi 0.86.1 and run actual host gates; escalate incompatibility. |
 
-## Open questions / approvals
+## Decisions in effect
 
-- Confirm after Task 1 whether to adopt every new v0.67–v0.71 feature or only upstream correctness/security fixes where it changes the product contract.
-- Keep the fork-requested deprecated `subagent_wait` alias and four worker aliases? Proposed default: **yes**, until the owner explicitly approves a cutover.
-- Is any new upstream peer floor higher than pinned Pi 0.86.1? Stop and coordinate a separate host upgrade if so.
-- **Human review of amended, tag-anchored plan is required before implementation.**
+User said “continue”; apply these narrow defaults unless corrected:
+
+- **D1 — dynamic tool activation:** keep the `subagent` tool eagerly visible and preserve the full description; skip the `subagents_enable` loader for now. It adds an activation turn and contradicts the fork's full-by-default contract. Revisit if prompt-footprint measurements justify that user-visible cost.
+- **D2 — `worker` fresh-context default:** adopt upstream; update the agent definition and fork-maintenance record.
+- **D3 — completion/fallback removals:** adopt upstream's removal of `completionGuard`, the intent arbiter, `fallbackModels`, same-launch model switching and persistent exclusions. `src/skills/pi-subagents/references/{management-authoring-rpc,prompting-and-roles}.md` currently teaches `fallbackModels`; update it, the root README and `doc-web/src/data/extension-customization.json` in the docs slice. Hermes Memory's separate `llmFallbackModels` is unrelated and stays.
+- **D4 — launch-contract digest change:** accept v3 / projections v2; update pinned fixtures deliberately.
+- **D5 — packaging:** adopt `private: true` only; skip `build:pkg`/`dist-pkg` because root `scripts/copy-extensions.mjs` owns `dist/`.
+- Keep `subagent_wait` and the four worker aliases; no compatibility cutover authorized.
+- Peer floor `@earendil-works/pi-ai >=0.86.1` matches Selesai's pinned Pi 0.86.1. Escalate if source uses a 0.87-only host API rather than adding a shim.
+- **Do not add upstream `agents/evidence-auditor.md` verbatim:** it requires `web_search`, `fetch_content`, `get_search_content`, and `source_check`; Selesai's bundled web provider exposes a different tool contract. Revisit only with a tested adapter.
