@@ -16,6 +16,7 @@ import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts
 import { normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { readProcessTerminal, sanitizeProcessTerminal } from "./process-terminal.ts";
+import { readWorkflowTerminalProof } from "./workflow-terminal-proof.ts";
 import { formatWaitSubscriptions } from "./wait-subscriptions.ts";
 import { resolveAsyncRunLocation } from "./async-resume.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
@@ -704,7 +705,10 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 
 			const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
 			if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error("workflowChildren.workflowRunId does not match async status runId.");
-			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(status.workflowReceiptPath ? { workflowReceiptPath: status.workflowReceiptPath } : {}), ...(status.preflight ? { preflight: status.preflight } : {}), ...(status.workflow?.preflightWarnings?.length ? { preflightWarnings: status.workflow.preflightWarnings } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(runFanoutBudget ? { runFanoutBudget } : {}), ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
+			const workflowTerminalProof = workflowChildren
+				? readWorkflowTerminalProof(asyncDir, status.steps, workflowChildren, validHostStepNodes(status.workflowGraph).length, status.endedAt ?? status.lastUpdate ?? status.startedAt)
+				: undefined;
+			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(status.workflowReceiptPath ? { workflowReceiptPath: status.workflowReceiptPath } : {}), ...(status.preflight ? { preflight: status.preflight } : {}), ...(status.workflow?.preflightWarnings?.length ? { preflightWarnings: status.workflow.preflightWarnings } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(workflowTerminalProof ? { workflowTerminalProof } : {}), ...(runFanoutBudget ? { runFanoutBudget } : {}), ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
 		}
 	}
 

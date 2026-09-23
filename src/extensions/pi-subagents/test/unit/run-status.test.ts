@@ -1630,4 +1630,40 @@ describe("async run status inspection", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
+
+	it("returns a workflow terminal proof after every async child exits", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-terminal-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "workflow-parent");
+			const childDir = path.join(asyncRoot, "child-run");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.mkdirSync(childDir);
+			const childProof = {
+				version: 1, state: "observed", runId: "child-run", runnerProcessInstanceId: "runner-1", observedAt: 300,
+				instances: [{ kind: "runner", processInstanceId: "runner-1", closeObservedAt: 300, exitCode: 0, signal: null }],
+			};
+			fs.writeFileSync(path.join(childDir, "process-terminal.json"), JSON.stringify(childProof));
+			fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({
+				runId: "child-run", mode: "single", state: "complete", startedAt: 100, lastUpdate: 300,
+				processTerminal: { version: 1, state: "pending", runId: "child-run", runnerProcessInstanceId: "runner-1" },
+			}));
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "workflow-parent", mode: "workflow", state: "complete", startedAt: 100, lastUpdate: 200, endedAt: 250,
+				steps: [{ agent: "worker", workflowKey: "main", runId: "child-run", async: true, status: "completed" }],
+				workflowChildren: {
+					version: 1, parentToolCallId: "tool-call", workflowRunId: "workflow-parent", inventoryComplete: true,
+					workflowState: "completed", children: [{ childId: "main", runId: "child-run", state: "completed" }],
+				},
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "workflow-parent" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			assert.deepEqual(result.details.workflowTerminalProof, {
+				version: 1, kind: "workflow", runId: "workflow-parent", state: "observed", dispatchClosed: true,
+				observedAt: 300, children: [childProof],
+			});
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
 });

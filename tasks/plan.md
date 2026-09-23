@@ -67,7 +67,7 @@ Detailed acceptance, verification, file ceilings and dependencies: [`tasks/todo.
 - [x] 8a. Foreground structured-output rejection details are sanitized and retained in the run result.
 - [x] 8b. Propagate sanitized structured-output rejection evidence through background results and status.
 - [x] 8c. Share workflow-child process evidence with async capacity release; helper and proof cases pass.
-- [ ] 8d. Expose the same `workflowTerminalProof` in status output and verify projection.
+- [x] 8d. Expose the same `workflowTerminalProof` in status output and verify projection.
 - [ ] Checkpoint C: launch/background regressions verified.
 - [ ] 9. Slice 7: slash/API surface and manifest remainder.
 - [ ] 10. Slice 8: docs, skills, manifest and lockfile; update the fork-delta record.

@@ -1417,6 +1417,7 @@ export interface Details {
 	context?: "fresh" | "fork" | "mixed";
 	results: SingleResult[];
 	workflowChildren?: WorkflowChildSummary;
+	workflowTerminalProof?: WorkflowTerminalProof;
 	/**
 	 * Terminal completion payloads for runs this bg_wait call observed
 	 * finishing. Async completions travel as result files that are consumed and
