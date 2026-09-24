@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.32 — Cached provider model catalogs stay available
+
+- **Cached model catalogs survive incomplete refresh metadata.** When a provider catalog response has no usable `Last-Modified` value, Selesai now uses the completed cache-check time instead of discarding newer cached models. OpenAI Codex models such as `gpt-6-sol` and `gpt-6-luna` therefore remain available in `/model` and `--list-models` after refresh.
+
 ## 0.13.31 — Default-on Jev capability tie-breaking
 
 - **Jev routing is on by default.** The capability gateway asks Jev only to break ambiguous hints between two or three optional tools; toggle it in `/settings`. Token-In credentials are required. Without them, no Jev request is sent and Selesai prompts you to run `/tokenin add`; deterministic routing remains the fallback.

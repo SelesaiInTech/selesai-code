@@ -17,6 +17,10 @@ This page covers the settings most people actually touch. The exhaustive referen
 | `defaultThinkingLevel` | string | — | How much the agent thinks before answering: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, or `"xhigh"`. |
 | `enabledModels` | string[] | — | Model patterns for Ctrl+P cycling, e.g. `["claude-*"]`. |
 
+### Model availability
+
+Built-in provider metadata can be supplemented by a persisted remote catalog. Selesai restores the cached catalog first and refreshes it in the background; missing `Last-Modified` metadata no longer discards a newer cached catalog. `/model` and `--list-models` still require provider authentication and respect provider account availability. `enabledModels` further limits the models used for cycling and scoped selection.
+
 ## Jev advisory routing (beta)
 
 The bundled `jev-advisory-routing` extension is off until a route is enabled. The memory route asks Jev only after an explicit durable-memory cue, then performs at most one bounded, read-only local lookup; Jev never receives memory contents. The recommendations route can suggest one discovered skill/workflow or a verification level, but never loads, starts, runs, or permits anything.

@@ -3,6 +3,10 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.32 — Katalog model provider yang di-cache tetap tersedia
+
+- **Katalog model yang di-cache tetap tersedia meski metadata refresh tidak lengkap.** Saat respons katalog provider tidak memiliki nilai `Last-Modified` yang dapat digunakan, Selesai kini memakai waktu pemeriksaan cache selesai alih-alih membuang model cache yang lebih baru. Model OpenAI Codex seperti `gpt-6-sol` dan `gpt-6-luna` tetap tersedia di `/model` dan `--list-models` setelah refresh.
+
 ## 0.13.31 — Tie-break kapabilitas Jev aktif secara default
 
 - **Routing Jev aktif secara default.** Capability gateway hanya menanyakan Jev untuk memecahkan hint ambigu di antara dua atau tiga tool opsional; ubah pengaturannya melalui `/settings`. Kredensial Token-In diperlukan. Tanpanya, tidak ada permintaan Jev yang dikirim dan Selesai meminta Anda menjalankan `/tokenin add`; routing deterministik tetap menjadi fallback.

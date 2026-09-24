@@ -34,7 +34,11 @@ function remoteModels(
 	localGeneratedAt: number | undefined,
 ): readonly Model<Api>[] {
 	if (!entry) return [];
-	if (localGeneratedAt !== undefined && (entry.lastModified === undefined || entry.lastModified <= localGeneratedAt)) {
+	// Some catalog responses (and the 404/501 fallback) have no usable
+	// Last-Modified value. Use the completed check time instead so a cached
+	// catalog is not discarded merely because that header was absent.
+	const remoteGeneratedAt = entry.lastModified && entry.lastModified > 0 ? entry.lastModified : entry.checkedAt;
+	if (localGeneratedAt !== undefined && (remoteGeneratedAt === undefined || remoteGeneratedAt <= localGeneratedAt)) {
 		return [];
 	}
 	return entry.models;

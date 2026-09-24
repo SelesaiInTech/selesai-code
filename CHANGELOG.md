@@ -2,6 +2,11 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.32] - 2026-09-24
+
+### Fixed
+- **Cached provider model catalogs are no longer discarded when `Last-Modified` is missing.** Models such as `openai-codex/gpt-6-sol` and `openai-codex/gpt-6-luna` remain available after a catalog refresh when the cached catalog is newer than the bundled metadata.
+
 ## [0.13.31] - 2026-09-23
 
 ### Changed

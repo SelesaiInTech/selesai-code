@@ -17,6 +17,10 @@ Halaman ini mencakup pengaturan yang paling sering disentuh orang. Referensi len
 | `defaultThinkingLevel` | string | — | Seberapa banyak agent berpikir sebelum menjawab: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, atau `"xhigh"`. |
 | `enabledModels` | string[] | — | Pola model untuk perpindahan Ctrl+P, mis. `["claude-*"]`. |
 
+### Ketersediaan model
+
+Metadata provider bawaan dapat dilengkapi oleh katalog remote yang disimpan. Selesai memulihkan katalog cache terlebih dahulu lalu me-refresh-nya di latar belakang; metadata `Last-Modified` yang hilang tidak lagi membuang katalog cache yang lebih baru. `/model` dan `--list-models` tetap memerlukan autentikasi provider dan mengikuti ketersediaan akun provider. `enabledModels` selanjutnya membatasi model yang digunakan untuk perpindahan dan pemilihan scoped.
+
 ## Perutean advisory Jev (beta)
 
 Ekstensi bundel `jev-advisory-routing` nonaktif sampai sebuah rute diaktifkan. Rute memori hanya menanyakan Jev setelah cue memori tahan lama eksplisit, lalu menjalankan paling banyak satu pencarian lokal read-only yang dibatasi; Jev tidak pernah menerima isi memori. Rute rekomendasi dapat menyarankan satu skill/workflow yang ditemukan atau level verifikasi, tetapi tidak pernah memuat, memulai, menjalankan, atau mengizinkan apa pun.
