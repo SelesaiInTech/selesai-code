@@ -30,6 +30,17 @@ import {
 } from "./capability-ceiling.ts";
 
 const MAX_LAUNCH_RESOLVED_EXTENSION_IDS = 32;
+export const CAPABILITY_GATEWAY_EXTENSION_PATH = path.join(
+	path.dirname(fileURLToPath(import.meta.url)),
+	"..",
+	"..",
+	"..",
+	"..",
+	"capability-gateway",
+	"index.ts",
+);
+const CAPABILITY_GATEWAY_TOOL_NAMES = ["capability_catalog", "capability_discover", "capability_skill_show"] as const;
+const CAPABILITY_GATEWAY_ENABLED_ENV = "SELESAI_CAPABILITY_GATEWAY";
 const PROMPT_RUNTIME_EXTENSION_PATH = path.join(
 	path.dirname(fileURLToPath(import.meta.url)),
 	"subagent-prompt-runtime.ts",
@@ -172,6 +183,8 @@ export interface PiLaunchToolPlan {
 	extensionArgs: string[];
 	disableAmbientExtensions: boolean;
 	capabilityAudit?: SubagentCapabilityAudit;
+	/** Whether the capability gateway is loaded for this child's permitted extension/tool policy. */
+	capabilityGatewayEnabled: boolean;
 	/** Non-fatal launch warnings; they do not change behavior. */
 	warnings: string[];
 }
@@ -193,6 +206,14 @@ function boundedExtensionIdentifiers(values: string[]): {
 
 function hasPermissionRules(rules: PermissionRules | undefined): boolean {
 	return rules !== undefined && Object.keys(rules).length > 0;
+}
+
+function isCapabilityGatewayExtensionPath(value: string, cwd?: string): boolean {
+	const resolved = path.normalize(path.resolve(cwd ?? process.cwd(), value));
+	return (
+		resolved === path.normalize(CAPABILITY_GATEWAY_EXTENSION_PATH) ||
+		resolved === path.normalize(path.dirname(CAPABILITY_GATEWAY_EXTENSION_PATH))
+	);
 }
 
 /**
@@ -366,11 +387,39 @@ export function resolvePiLaunchToolPlan(
 		(input.mcpDirectTools?.length ?? 0) > 0 ||
 		allowedToolSet !== undefined;
 	const internalTools = (input.structuredOutput ? ["structured_output"] : []).filter((tool) => !excludedToolSet.has(tool));
-	const effectiveToolAllowlist = [
+	const baseEffectiveToolAllowlist = [
 		...new Set([
 			...effectiveDeclaredBuiltinTools,
 			...effectiveMcpTools,
 			...internalTools,
+		]),
+	];
+	const explicitlyNoTools =
+		explicitToolAllowlist &&
+		effectiveDeclaredBuiltinTools.length === 0 &&
+		effectiveMcpTools.length === 0;
+	const gatewayExplicitlyConfigured = [
+		...toolExtensionPaths,
+		...(input.extensions ?? []),
+		...(input.subagentOnlyExtensions ?? []),
+	].some((extensionPath) => isCapabilityGatewayExtensionPath(extensionPath, input.cwd));
+	const gatewayExtensionPolicyAllows =
+		capabilityCeiling?.denyExtensions !== true &&
+		fs.existsSync(CAPABILITY_GATEWAY_EXTENSION_PATH) &&
+		(input.extensions === undefined || gatewayExplicitlyConfigured);
+	const permittedGatewayTools = CAPABILITY_GATEWAY_TOOL_NAMES.filter(
+		(name) => (!allowedToolSet || allowedToolSet.has(name)) && !excludedToolSet.has(name),
+	);
+	const capabilityGatewayEnabled =
+		gatewayExtensionPolicyAllows &&
+		!explicitlyNoTools &&
+		permittedGatewayTools.length > 0 &&
+		process.env[CAPABILITY_GATEWAY_ENABLED_ENV] !== "0";
+	const gatewayTools = capabilityGatewayEnabled ? permittedGatewayTools : [];
+	const effectiveToolAllowlist = [
+		...new Set([
+			...baseEffectiveToolAllowlist,
+			...(explicitToolAllowlist ? gatewayTools : []),
 		]),
 	];
 	// Supervisor-coordination names stay in the --tools allowlist but are never
@@ -386,6 +435,7 @@ export function resolvePiLaunchToolPlan(
 					...(input.tools !== undefined ? effectiveDeclaredBuiltinTools : []),
 					...(input.mcpDirectTools?.length ? effectiveMcpTools : []),
 					...internalTools,
+					...gatewayTools,
 				].filter((tool) => tool !== "contact_supervisor" && (!legacySupervisorPairing || tool !== "intercom"))),
 			]
 		: [];
@@ -398,6 +448,9 @@ export function resolvePiLaunchToolPlan(
 	const fastModeExtensions = resolveFastModeExtension({ fast: input.fast, model: input.model, modelCandidates: input.modelCandidates, agentName: input.agentName });
 	const runtimeExtensions = [
 		PROMPT_RUNTIME_EXTENSION_PATH,
+		...(capabilityGatewayEnabled && !gatewayExplicitlyConfigured
+			? [CAPABILITY_GATEWAY_EXTENSION_PATH]
+			: []),
 		...fastModeExtensions,
 		...(fanoutAuthorized ? [FANOUT_CHILD_EXTENSION_PATH] : []),
 		...(permSystemExt ? [permSystemExt] : []),
@@ -415,20 +468,25 @@ export function resolvePiLaunchToolPlan(
 				+ "List the extensions this child actually needs instead of an empty array.",
 		);
 	}
+	const gatewayFilteredExtensions = (extensions: string[]) =>
+		extensions.filter(
+			(extensionPath) =>
+				!isCapabilityGatewayExtensionPath(extensionPath, input.cwd) || capabilityGatewayEnabled,
+		);
 	const configuredExtensions = capabilityCeiling?.denyExtensions
 		? []
-		: [
+		: gatewayFilteredExtensions([
 				...toolExtensionPaths,
 				...(input.extensions ?? []),
 				...(input.subagentOnlyExtensions ?? []),
-			];
+			]);
 	const extensionArgs = disableAmbientExtensions
 		? [...new Set([...runtimeExtensions, ...configuredExtensions])]
 		: [
 				...new Set([
 					...runtimeExtensions,
-					...toolExtensionPaths,
-					...(input.subagentOnlyExtensions ?? []),
+					...gatewayFilteredExtensions(toolExtensionPaths),
+					...gatewayFilteredExtensions(input.subagentOnlyExtensions ?? []),
 				]),
 			];
 	const requestedToolNames =
@@ -497,6 +555,7 @@ export function resolvePiLaunchToolPlan(
 		configuredExtensions,
 		extensionArgs,
 		disableAmbientExtensions,
+		capabilityGatewayEnabled,
 		warnings,
 		...(capabilityAudit ? { capabilityAudit } : {}),
 	};

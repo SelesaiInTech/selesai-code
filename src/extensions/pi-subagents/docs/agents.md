@@ -198,6 +198,8 @@ fallbackModels:
 
 Field notes:
 
+Native children expose the capability gateway only when extension policy permits it. The gateway catalogs and activates only tools visible in that child's effective registry; it does not install or provide a missing tool provider.
+
 | Field | Notes |
 |-------|-------|
 | `package` | Optional package identifier. A file with `name: scout` and `package: code-analysis` registers as `code-analysis.scout`; serialization keeps `name` and `package` separate. |

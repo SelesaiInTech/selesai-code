@@ -37,6 +37,8 @@ interface HarnessOptions {
 	jev?: Record<string, unknown>;
 	/** Make the gateway's telemetry channel throw on every emit. */
 	telemetryDown?: boolean;
+	/** SDK-level child tool allowlist. */
+	tools?: string[];
 }
 
 /** A bus that fails only on the gateway's own telemetry channel. */
@@ -129,6 +131,7 @@ async function createGatewaySession(options: HarnessOptions): Promise<Harness> {
 		resourceLoader: loader,
 		sessionManager: SessionManager.create(cwd, join(home, "sessions")),
 		settingsManager,
+		...(options.tools !== undefined ? { tools: options.tools } : {}),
 	});
 	const session = created.session;
 	await session.bindExtensions({});
@@ -241,6 +244,39 @@ describe("capability gateway integration", () => {
 		expect(draw({ query: "ponytail-debt", kind: "skill" })).toContain('"ponytail-debt"');
 		expect(draw({ query: "ponytail-debt", kind: "skill" })).toContain("skill");
 		expect(draw({})).toContain("(all)");
+	});
+
+	it("limits child discovery and activation to the SDK-filtered tool registry", async () => {
+		const h = await createGatewaySession({
+			enabled: true,
+			extensions: [GATEWAY_DIR, GREP_APP_DIR],
+			tools: ["capability_catalog", "capability_discover", "grep_app_search"],
+		});
+		harnesses.push(h);
+		const registeredNames = h.session.getAllTools().map((tool) => tool.name);
+		expect(registeredNames).toContain("grep_app_search");
+		expect(registeredNames).not.toContain("grep_app_fetch");
+
+		const catalog = h.session.getToolDefinition("capability_catalog");
+		const catalogResult = await catalog!.execute("call-catalog", { query: "grep_app" }, undefined, undefined, {} as never);
+		expect(String(catalogResult.content[0]!.text)).toContain("grep_app_search");
+		expect(String(catalogResult.content[0]!.text)).not.toContain("grep_app_fetch");
+
+		const discover = h.session.getToolDefinition("capability_discover");
+		const allowed = await discover!.execute("call-allowed", { name: "grep_app_search" }, undefined, undefined, {} as never);
+		expect(String(allowed.content[0]!.text)).toContain("Activated");
+		expect(h.session.getActiveToolNames()).toContain("grep_app_search");
+
+		const denied = await discover!.execute("call-denied", { name: "grep_app_fetch" }, undefined, undefined, {} as never);
+		expect(String(denied.content[0]!.text)).not.toContain("Activated");
+		expect(h.session.getActiveToolNames()).not.toContain("grep_app_fetch");
+	});
+
+	it("exposes no gateway controls to an explicitly empty child tool allowlist", async () => {
+		const h = await createGatewaySession({ enabled: true, extensions: [GATEWAY_DIR], tools: [] });
+		harnesses.push(h);
+		expect(h.session.getAllTools().map((tool) => tool.name)).not.toContain("capability_catalog");
+		expect(h.session.getActiveToolNames()).not.toContain("capability_discover");
 	});
 
 	it("activates a discovered tool for the run and resets after agent_settled", async () => {
