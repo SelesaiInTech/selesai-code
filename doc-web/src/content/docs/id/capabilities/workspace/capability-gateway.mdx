@@ -28,6 +28,7 @@ Gateway kapabilitas progresif menjaga tool dan skill ekstensi opsional di luar c
 - Menjaga tool ekstensi opsional tetap dormant sampai diperlukan.
 - Mengganti indeks skill lengkap dengan panduan kapabilitas ringkas.
 - Menyediakan pencarian katalog, aktivasi tool native, dan pemuatan skill eksplisit.
+- Mengekspos ketiga tool yang sama ke child subagent native bila policy extension mengizinkan, ter-scope ke registry tool efektif child tersebut.
 - Mereset aktivasi tool sementara saat run agent selesai.
 
 ## Yang dapat dikonfigurasi
@@ -50,6 +51,7 @@ Gateway mendaftarkan `capability_catalog`, `capability_discover`, dan `capabilit
 ## Batasan dan keamanan
 
 - Hanya tool yang tercantum di katalog yang dapat diaktifkan; nama tepat divalidasi sebelum aktivasi.
+- Di child subagent native, gateway hanya men-catalog dan mengaktifkan tool yang terlihat di registry efektif child tersebut. Gateway tidak pernah memasang atau menyediakan provider tool yang tidak ada, dan `SELESAI_CAPABILITY_GATEWAY=0` juga menonaktifkannya di child.
 - Skill tidak pernah dimuat otomatis oleh routing; instruksinya memerlukan operasi show eksplisit.
 - Skill yang sudah di-expand inline melalui referensi `$skill` dikecualikan dari routing prompt, sehingga tidak direkomendasikan ulang melalui `capability_skill_show`.
 - Routing deterministik tetap menjadi tahap pertama; tie-break Jev aktif secara default hanya untuk hint leksikal ambigu di antara dua atau tiga tool opsional. Ubah pengaturannya melalui `/settings`.

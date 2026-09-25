@@ -28,6 +28,7 @@ The progressive capability gateway keeps optional extension tools and skills out
 - Keeps optional extension tools dormant until they are needed.
 - Replaces the full skill index with compact capability guidance.
 - Provides catalog search, native tool activation, and explicit skill loading.
+- Exposes the same three tools to native subagent children when extension policy permits it, scoped to that child's own effective tool registry.
 - Resets temporary tool activations when an agent run settles.
 
 ## What you can configure
@@ -50,6 +51,7 @@ The gateway registers `capability_catalog`, `capability_discover`, and `capabili
 ## Limits and safety
 
 - Only catalogued tools can be activated; exact names are validated before activation.
+- In a native subagent child, the gateway catalogs and activates only tools visible in that child's effective registry. It never installs or provides a missing tool provider, and `SELESAI_CAPABILITY_GATEWAY=0` disables it in children too.
 - Skills are never auto-loaded by routing; their instructions require an explicit show operation.
 - Skills already expanded inline via `$skill` references are excluded from prompt routing, so they are not re-recommended through `capability_skill_show`.
 - Deterministic routing remains the first rung; Jev tie-breaking is on by default only for an ambiguous lexical hint between two or three optional tools. Toggle it in `/settings`.

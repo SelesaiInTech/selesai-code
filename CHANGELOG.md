@@ -2,6 +2,22 @@
 
 All notable changes to `@selesai/code` will be documented in this file.
 
+## [0.13.33] - 2026-09-26
+
+### Added
+- **Subagent cost is exposed through extension RPC.** `cost` joins the versioned `subagents:rpc:v1` method list and returns the same parent-plus-child accounting `/subagent-cost` renders; `ping` advertises the report version. It is read-only, but it walks the current session branch and existing run artifacts, so callers should request it on turn boundaries rather than on a timer.
+- **Async workflow status reports terminal proof.** `subagent({ action: "status" })` details now include `workflowTerminalProof`, the shared child-exit evidence for workflow runs.
+- **Native children can use the scoped capability gateway.** A child launch loads the gateway when extension policy permits it, exposing `capability_catalog`, `capability_discover`, and `capability_skill_show` for tools in that child's effective registry. The gateway never installs or provides a missing tool provider, and `SELESAI_CAPABILITY_GATEWAY=0` still disables it.
+
+### Changed
+- **The packaged `worker` agent starts from fresh context.** `worker` now declares `defaultContext: fresh` and `acceptanceRole: writer`; an explicit `context: "fork"` still wins.
+
+### Fixed
+- **Capability gateway controls no longer count as mutation capability.** A read-only child that receives `capability_catalog`, `capability_discover`, and `capability_skill_show` is still rejected for an implementation task with no mutation-capable tools, so the gateway does not disarm the implementation guard.
+- **Structured output rejections keep their evidence.** Foreground and background runs now report the bounded rejection diagnostic — schema and validator failures summarized, submitted values redacted — instead of a generic missing-call error, and background results mark `structuredOutputFailed`.
+- **`subagent_supervisor` requires fanout authorization.** A child that declares the supervisor reply tool without `subagent` in its effective tools allowlist (or `allowNestedSubagents`) now fails the launch instead of silently receiving the tool.
+- **Git routing environment is stripped from child processes.** Background runners and external CLI default launches no longer inherit `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, and Git's other local environment variables, so a child's Git commands stay in its own working directory.
+
 ## [0.13.32] - 2026-09-24
 
 ### Fixed

@@ -31,6 +31,7 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 - Membuat artifact lifecycle untuk run async di bawah direktori hasil subagent Selesai; artifact run default-nya di direktori sesi, bukan di checkout proyek (`.pi-subagents/`).
 - Saat Graft bundled dimuat, otomatis memberi builtin agent yang berfokus pada kode (`scout`, `reviewer`, `worker`, `delegate`, `oracle`) tool context read-only dan provider child-only-nya; override user eksplisit tetap menang.
 - Menyetel `SELESAI_SUBAGENT_PARENT_SESSION` di proses child untuk forwarding permission-system.
+- Memberi child native gateway kapabilitas yang ter-scope bila policy extension mengizinkan, sehingga child dapat mencari, mengaktifkan, dan memuat kapabilitas opsional dari registry tool efektifnya sendiri.
 
 ## Yang dapat dikonfigurasi
 
@@ -92,12 +93,13 @@ Extension `pi-subagents` memberikan Selesai child agent yang fokus dan berjalan 
 | `researcher` | Riset web/docs dengan sumber. |
 | `reviewer` | Mereview kode, rencana, dan diff; menangkap drift dan merekomendasikan perbaikan. |
 | `scout` | Rekognisi codebase lokal yang cepat. |
-| `worker` | Mengimplementasikan pekerjaan yang disetujui dan memvalidasi hasil. |
+| `worker` | Mengimplementasikan pekerjaan yang disetujui dan memvalidasi hasil; default-nya konteks baru (`defaultContext: fresh`). |
 
 ## Batasan dan keamanan
 
 - Child agent berjalan di environment host yang sama dengan parent; batas kepercayaan sama.
-- Child yang di-spawn tidak menerima skill `pi-subagents` secara default, dan visibilitas tool-nya dikontrol oleh frontmatter `tools` agen. Child hanya mendapat tool `subagent` yang aman untuk child jika `tools` yang resolved-nya mencakup `subagent`.
+- Child yang di-spawn tidak menerima skill `pi-subagents` secara default, dan visibilitas tool-nya dikontrol oleh frontmatter `tools` agen. Child hanya mendapat tool `subagent` yang aman untuk child jika `tools` yang resolved-nya mencakup `subagent`; tool balasan supervisor `subagent_supervisor` juga memerlukan otorisasi fanout efektif (`subagent` di allowlist tool atau `allowNestedSubagents`).
+- Gateway kapabilitas milik child ter-scope ke registry efektif child tersebut: hanya men-catalog dan mengaktifkan tool yang sudah dapat dilihat child, tidak pernah memasang atau menyediakan provider tool yang tidak ada, serta mengikuti `SELESAI_CAPABILITY_GATEWAY=0`.
 - Child forked mendapat konteks yang difilter sehingga menghapus artifact subagent khusus parent.
 - Budget model, tool, penggunaan, dan spawn; ceiling agent yang diizinkan; limit kedalaman; checkpoint; serta pengaturan watchdog diberlakukan oleh runtime.
 - Hasil delegasi normal bersifat reference-first: penyelesaian mengembalikan referensi output tersimpan plus status/informasi lifecycle; periksa output penuh melalui path output tersimpan, status/transkrip async, atau `resume`. `outputMode: "inline"` memulihkan pengiriman inline lama, dan `output: false` menonaktifkan persistensi output tahan lama.

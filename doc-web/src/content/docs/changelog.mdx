@@ -3,6 +3,17 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.33 — Subagent cost RPC, terminal proof, and safer children
+
+- **Subagent cost is available as data.** The versioned subagent RPC surface gains a `cost` method that returns the same parent-plus-child accounting `/subagent-cost` prints, and `ping` advertises the report version. It reads the current session branch and existing run artifacts, so callers should ask on turn boundaries rather than on a timer.
+- **Async workflow status carries terminal proof.** `subagent({ action: "status" })` details include `workflowTerminalProof`, the shared child-exit evidence for workflow runs, so a caller can assert how a workflow actually ended.
+- **Native children can use the scoped capability gateway.** When extension policy permits, a child launch exposes `capability_catalog`, `capability_discover`, and `capability_skill_show` — limited to tools visible in that child's effective registry. The gateway never installs or provides a missing tool provider, and `SELESAI_CAPABILITY_GATEWAY=0` still disables it everywhere.
+- **Packaged `worker` starts fresh.** The builtin `worker` agent now defaults to fresh context (`acceptanceRole: writer`) instead of a forked session; an explicit `context: "fork"` still wins.
+- **Gateway controls do not disarm the implementation guard.** A read-only child that also receives `capability_catalog`, `capability_discover`, and `capability_skill_show` is still refused an implementation task with no mutation-capable tools; the gateway only searches, activates, or loads capabilities inside the child's existing tool policy.
+- **Failed structured output keeps its evidence.** Foreground and background runs report the bounded rejection diagnostic — schema and validator failures summarized, submitted values redacted — instead of a generic missing-call error, and background results carry `structuredOutputFailed`.
+- **`subagent_supervisor` requires fanout authorization.** A child that declares the supervisor reply tool without `subagent` in its effective tools (or `allowNestedSubagents`) now fails preflight instead of silently getting the tool.
+- **Child processes no longer inherit Git routing variables.** Background runners and external CLI default launches drop `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, and Git's other local environment, so a child's Git commands stay in its own working directory.
+
 ## 0.13.32 — Cached provider model catalogs stay available
 
 - **Cached model catalogs survive incomplete refresh metadata.** When a provider catalog response has no usable `Last-Modified` value, Selesai now uses the completed cache-check time instead of discarding newer cached models. OpenAI Codex models such as `gpt-6-sol` and `gpt-6-luna` therefore remain available in `/model` and `--list-models` after refresh.

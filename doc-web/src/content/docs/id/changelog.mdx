@@ -3,6 +3,17 @@ draft: false
 title: Changelog
 ---
 
+## 0.13.33 — RPC biaya subagent, terminal proof, dan child yang lebih aman
+
+- **Biaya subagent tersedia sebagai data.** Permukaan RPC subagent ber-version mendapat metode `cost` yang mengembalikan akuntansi parent-plus-child yang sama dengan keluaran `/subagent-cost`, dan `ping` mengumumkan versi laporannya. Laporan ini membaca cabang sesi saat ini dan artifact run yang ada, jadi pemanggil sebaiknya memintanya di batas turn, bukan dengan timer.
+- **Status workflow async membawa terminal proof.** Detail `subagent({ action: "status" })` menyertakan `workflowTerminalProof`, bukti exit child bersama untuk run workflow, sehingga pemanggil dapat memastikan bagaimana sebuah workflow benar-benar berakhir.
+- **Child native dapat memakai gateway kapabilitas yang ter-scope.** Bila policy extension mengizinkan, launch child mengekspos `capability_catalog`, `capability_discover`, dan `capability_skill_show` — terbatas pada tool yang terlihat di registry efektif child tersebut. Gateway tidak pernah memasang atau menyediakan provider tool yang tidak ada, dan `SELESAI_CAPABILITY_GATEWAY=0` tetap menonaktifkannya di mana pun.
+- **`worker` bawaan mulai dari konteks baru.** Builtin `worker` kini default-nya fresh context (`acceptanceRole: writer`), bukan sesi hasil fork; `context: "fork"` eksplisit tetap menang.
+- **Kontrol gateway tidak melumpuhkan guard implementasi.** Child read-only yang juga menerima `capability_catalog`, `capability_discover`, dan `capability_skill_show` tetap ditolak untuk tugas implementasi tanpa tool yang mampu memutasi; gateway hanya mencari, mengaktifkan, atau memuat kapabilitas di dalam policy tool child yang sudah ada.
+- **Structured output yang gagal menyimpan buktinya.** Run foreground dan background melaporkan diagnostik penolakan yang dibatasi — kegagalan skema dan validator diringkas, nilai yang dikirim diredaksi — alih-alih error missing-call generik, dan hasil background membawa `structuredOutputFailed`.
+- **`subagent_supervisor` memerlukan otorisasi fanout.** Child yang mendeklarasikan tool balasan supervisor tanpa `subagent` di tool efektifnya (atau `allowNestedSubagents`) kini gagal di preflight alih-alih diam-diam mendapatkan tool tersebut.
+- **Proses child tidak lagi mewarisi variabel routing Git.** Background runner dan launch default CLI eksternal membuang `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, dan environment lokal Git lainnya, sehingga perintah Git child tetap berada di direktori kerjanya sendiri.
+
 ## 0.13.32 — Katalog model provider yang di-cache tetap tersedia
 
 - **Katalog model yang di-cache tetap tersedia meski metadata refresh tidak lengkap.** Saat respons katalog provider tidak memiliki nilai `Last-Modified` yang dapat digunakan, Selesai kini memakai waktu pemeriksaan cache selesai alih-alih membuang model cache yang lebih baru. Model OpenAI Codex seperti `gpt-6-sol` dan `gpt-6-luna` tetap tersedia di `/model` dan `--list-models` setelah refresh.

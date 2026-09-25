@@ -31,6 +31,7 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 - Creates lifecycle artifacts for async runs under the Selesai subagent results directory; run artifacts default to the session directory instead of the project checkout (`.pi-subagents/`).
 - When bundled Graft is loaded, gives the code-facing builtin agents (`scout`, `reviewer`, `worker`, `delegate`, `oracle`) its read-only context tools and child-only provider automatically; explicit user overrides still win.
 - Sets `SELESAI_SUBAGENT_PARENT_SESSION` in child processes for permission-system forwarding.
+- Gives native children the scoped capability gateway when extension policy permits it, so a child can search, activate, and load optional capabilities from its own effective tool registry.
 
 ## What you can configure
 
@@ -92,12 +93,13 @@ The `pi-subagents` extension gives Selesai focused child agents that run in the 
 | `researcher` | Web/docs research with sources. |
 | `reviewer` | Review code, plans, and diffs; catch drift and recommend fixes. |
 | `scout` | Fast local codebase reconnaissance. |
-| `worker` | Implement approved work and validate results. |
+| `worker` | Implement approved work and validate results; defaults to fresh context (`defaultContext: fresh`). |
 
 ## Limits and safety
 
 - Child agents run in the same host environment as the parent; trust boundaries are the same.
-- Spawned children do not receive the bundled `pi-subagents` skill by default, and their tool visibility is controlled by the agent's `tools` frontmatter. A child only gets a child-safe `subagent` tool if its resolved `tools` includes `subagent`.
+- Spawned children do not receive the bundled `pi-subagents` skill by default, and their tool visibility is controlled by the agent's `tools` frontmatter. A child only gets a child-safe `subagent` tool if its resolved `tools` includes `subagent`; the supervisor reply tool `subagent_supervisor` additionally requires effective fanout authorization (`subagent` in the tools allowlist or `allowNestedSubagents`).
+- A child's capability gateway is scoped to that child's effective registry: it catalogs and activates only tools the child can already see, never installs or provides a missing tool provider, and respects `SELESAI_CAPABILITY_GATEWAY=0`.
 - Forked children get filtered context that removes parent-only subagent artifacts.
 - Model, tool, usage, and spawn budgets; allowed-agent ceilings; depth limits; checkpoints; and watchdog settings are enforced by the runtime.
 - Normal delegated results are reference-first: completion returns saved-output references plus status/lifecycle information; inspect full output through the saved output path, async status/transcript, or `resume`. `outputMode: "inline"` restores legacy inline delivery, and `output: false` disables durable output persistence.
