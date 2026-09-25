@@ -87,6 +87,7 @@
 <li>Keeps optional extension tools dormant until they are needed.</li>
 <li>Replaces the full skill index with compact capability guidance.</li>
 <li>Provides catalog search, native tool activation, and explicit skill loading.</li>
+<li>Exposes the same three tools to native subagent children when extension policy permits it, scoped to that child’s own effective tool registry.</li>
 <li>Resets temporary tool activations when an agent run settles.</li>
 </ul>
 <h2 id="what-you-can-configure">What you can configure</h2>
@@ -104,6 +105,7 @@
 <h2 id="limits-and-safety">Limits and safety</h2>
 <ul>
 <li>Only catalogued tools can be activated; exact names are validated before activation.</li>
+<li>In a native subagent child, the gateway catalogs and activates only tools visible in that child’s effective registry. It never installs or provides a missing tool provider, and <code dir="auto">SELESAI_CAPABILITY_GATEWAY=0</code> disables it in children too.</li>
 <li>Skills are never auto-loaded by routing; their instructions require an explicit show operation.</li>
 <li>Skills already expanded inline via <code dir="auto">$skill</code> references are excluded from prompt routing, so they are not re-recommended through <code dir="auto">capability_skill_show</code>.</li>
 <li>Deterministic routing remains the first rung; Jev tie-breaking is on by default only for an ambiguous lexical hint between two or three optional tools. Toggle it in <code dir="auto">/settings</code>.</li>

@@ -87,6 +87,7 @@
 <li>Menjaga tool ekstensi opsional tetap dormant sampai diperlukan.</li>
 <li>Mengganti indeks skill lengkap dengan panduan kapabilitas ringkas.</li>
 <li>Menyediakan pencarian katalog, aktivasi tool native, dan pemuatan skill eksplisit.</li>
+<li>Mengekspos ketiga tool yang sama ke child subagent native bila policy extension mengizinkan, ter-scope ke registry tool efektif child tersebut.</li>
 <li>Mereset aktivasi tool sementara saat run agent selesai.</li>
 </ul>
 <h2 id="yang-dapat-dikonfigurasi">Yang dapat dikonfigurasi</h2>
@@ -104,6 +105,7 @@
 <h2 id="batasan-dan-keamanan">Batasan dan keamanan</h2>
 <ul>
 <li>Hanya tool yang tercantum di katalog yang dapat diaktifkan; nama tepat divalidasi sebelum aktivasi.</li>
+<li>Di child subagent native, gateway hanya men-catalog dan mengaktifkan tool yang terlihat di registry efektif child tersebut. Gateway tidak pernah memasang atau menyediakan provider tool yang tidak ada, dan <code dir="auto">SELESAI_CAPABILITY_GATEWAY=0</code> juga menonaktifkannya di child.</li>
 <li>Skill tidak pernah dimuat otomatis oleh routing; instruksinya memerlukan operasi show eksplisit.</li>
 <li>Skill yang sudah di-expand inline melalui referensi <code dir="auto">$skill</code> dikecualikan dari routing prompt, sehingga tidak direkomendasikan ulang melalui <code dir="auto">capability_skill_show</code>.</li>
 <li>Routing deterministik tetap menjadi tahap pertama; tie-break Jev aktif secara default hanya untuk hint leksikal ambigu di antara dua atau tiga tool opsional. Ubah pengaturannya melalui <code dir="auto">/settings</code>.</li>
