@@ -105,7 +105,7 @@ import { SUBAGENT_CHILD_ENV } from "../shared/child-runtime-config.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { alignForkedSessionCwd } from "../../shared/fork-session-cwd.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
-import { clearStructuredOutputCaptures, createStructuredOutputFileCapture, createStructuredOutputRuntime, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
+import { clearStructuredOutputCaptures, createStructuredOutputFileCapture, createStructuredOutputRuntime, formatStructuredOutputRejectionError, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
 import { formatMidToolExitError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { formatChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
@@ -285,6 +285,7 @@ interface StepResult {
 	review?: import("../../shared/types.ts").ReviewProjection;
 	effects?: import("../../shared/types.ts").EffectsProjection;
 	structuredOutput?: unknown;
+	structuredOutputFailed?: boolean;
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
@@ -1221,7 +1222,8 @@ export async function runSingleStepInner(
 					schemaPath: effectiveStructuredOutput.schemaPath,
 					outputPath: effectiveStructuredOutput.outputPath,
 				});
-				if (structured.error) structuredError = structured.error;
+				if (structured.error === MISSING_STRUCTURED_OUTPUT_CALL_ERROR) structuredError = formatStructuredOutputRejectionError(run.messages);
+				else if (structured.error) structuredError = structured.error;
 				else {
 					structuredOutput = structured.value;
 					const acceptanceReport = readStructuredOutputAcceptanceReport(effectiveStructuredOutput);
@@ -1343,7 +1345,7 @@ export async function runSingleStepInner(
 			afterCompactionSettlement: run.afterCompactionSettlement === true,
 		});
 		const fileMutationEffect = completionEvidence.fileMutation ?? (missingRequiredOutputAfterMutation ? { status: "observed" as const, expected: completionEvidence.mutationExpected, attempted: true, evidence: mutationEvidence } : undefined);
-		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect || settlementDiagnostic ? { effects: { ...(fileMutationEffect ? { fileMutation: fileMutationEffect } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunChildSessionResult;
+		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, structuredOutputFailed: structuredError ? true : undefined, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect || settlementDiagnostic ? { effects: { ...(fileMutationEffect ? { fileMutation: fileMutationEffect } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunChildSessionResult;
 		const abortRecovery = !attempt.success ? planAbortRecovery({
 			messages: run.messages,
 			error,
@@ -1603,6 +1605,7 @@ export async function runSingleStepInner(
 		completionGuardTriggered: completionGuardTriggeredFinal,
 		...((finalResult as (RunChildSessionResult & { effects?: import("../../shared/types.ts").EffectsProjection }) | undefined)?.effects ? { effects: (finalResult as RunChildSessionResult & { effects?: import("../../shared/types.ts").EffectsProjection }).effects } : {}),
 		structuredOutput: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : (finalResult as (RunChildSessionResult & { structuredOutput?: unknown }) | undefined)?.structuredOutput,
+		structuredOutputFailed: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : finalResult?.structuredOutputFailed,
 		structuredOutputPath: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : effectiveStructuredOutput?.outputPath,
 		structuredOutputSchemaPath: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : effectiveStructuredOutput?.schemaPath,
 		acceptance: effectiveAcceptance,
@@ -3788,6 +3791,7 @@ export async function runSubagent(
 					review: pr.review,
 					timeoutRecovery: pr.timeoutRecovery,
 					structuredOutput: pr.structuredOutput,
+					structuredOutputFailed: pr.structuredOutputFailed,
 					structuredOutputPath: pr.structuredOutputPath,
 					structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
 					acceptance: pr.acceptance,
@@ -4245,6 +4249,7 @@ export async function runSubagent(
 							review: pr.review,
 							timeoutRecovery: pr.timeoutRecovery,
 							structuredOutput: pr.structuredOutput,
+							structuredOutputFailed: pr.structuredOutputFailed,
 						structuredOutputPath: pr.structuredOutputPath,
 						structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
 						acceptance: pr.acceptance,
@@ -4539,6 +4544,7 @@ export async function runSubagent(
 				review: singleResult.review,
 				timeoutRecovery: singleResult.timeoutRecovery,
 				structuredOutput: singleResult.structuredOutput,
+				structuredOutputFailed: singleResult.structuredOutputFailed,
 				structuredOutputPath: singleResult.structuredOutputPath,
 				structuredOutputSchemaPath: singleResult.structuredOutputSchemaPath,
 				acceptance: singleResult.acceptance,
@@ -4923,6 +4929,7 @@ export async function runSubagent(
 				review: r.review,
 				effects: r.effects,
 				structuredOutput: r.structuredOutput,
+				structuredOutputFailed: r.structuredOutputFailed,
 				structuredOutputPath: r.structuredOutputPath,
 				structuredOutputSchemaPath: r.structuredOutputSchemaPath,
 				acceptance: r.acceptance,

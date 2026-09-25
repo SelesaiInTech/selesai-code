@@ -37,7 +37,19 @@ test("executeAsyncSingle preloads supplemental server aliases before jiti, but n
 		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: pkg, version: "0.85.0", exports }));
 	}
 	const originalArgv1 = process.argv[1];
+	const inheritedGitEnv = {
+		GIT_DIR: "/outer/repo/.git",
+		GIT_WORK_TREE: "/outer/repo",
+		GIT_INDEX_FILE: "/outer/repo/.git/index",
+		GIT_CONFIG_COUNT: "1",
+		GIT_CONFIG_KEY_0: "core.hooksPath",
+		GIT_CONFIG_VALUE_0: "/outer/hooks",
+		GIT_AUTHOR_NAME: "Kept Author",
+		GIT_ENV_SENTINEL_KEEP: "kept",
+	};
+	const previousGitEnv = Object.fromEntries(Object.keys(inheritedGitEnv).map((key) => [key, process.env[key]]));
 	try {
+		Object.assign(process.env, inheritedGitEnv);
 		for (const pkg of Object.keys(hostExports)) {
 			if (pkg !== server) writeHostPackage(pkg);
 		}
@@ -79,6 +91,11 @@ test("executeAsyncSingle preloads supplemental server aliases before jiti, but n
 			assert.equal(spawn.mock.callCount(), scenario === "supplemental" ? 1 : scenario === "complete" ? 2 : 3);
 			const [command, args, options] = spawn.mock.calls.at(-1)!.arguments;
 			assert.ok(path.isAbsolute(command));
+			for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"]) {
+				assert.equal(options.env[key], undefined, key);
+			}
+			assert.equal(options.env.GIT_AUTHOR_NAME, "Kept Author");
+			assert.equal(options.env.GIT_ENV_SENTINEL_KEEP, "kept");
 			assert.equal(options.env[SELESAI_CODING_AGENT_PACKAGE_ROOT_ENV], host);
 			const actualAliases = JSON.parse(options.env.JITI_ALIAS) as Record<string, string>;
 			assert.deepEqual(Object.fromEntries(Object.entries(actualAliases).map(([key, target]) => [key, fs.realpathSync(target)])), expectedAliases);
@@ -96,6 +113,10 @@ test("executeAsyncSingle preloads supplemental server aliases before jiti, but n
 	} finally {
 		t.mock.restoreAll();
 		syncBuiltinESMExports();
+		for (const [key, value] of Object.entries(previousGitEnv)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
 		if (originalArgv1 === undefined) delete process.argv[1];
 		else process.argv[1] = originalArgv1;
 		fs.rmSync(root, { recursive: true, force: true });

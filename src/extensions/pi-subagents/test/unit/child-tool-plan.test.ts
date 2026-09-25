@@ -19,6 +19,17 @@ function runtimeSnapshotHost(serverName: string): McpRuntimeSnapshotHost {
 }
 
 describe("child tool plan", () => {
+	it("requires fanout authorization for the child supervisor reply tool", () => {
+		assert.throws(() => resolvePiLaunchToolPlan({ tools: ["read", "subagent_supervisor"] }), /subagent_supervisor.*requires fanout authorization/);
+		assert.throws(() => resolvePiLaunchToolPlan({ tools: ["read", "subagent", "subagent_supervisor"], excludeTools: ["subagent"] }), /subagent_supervisor.*requires fanout authorization/);
+		assert.throws(() => resolvePiLaunchToolPlan({
+			tools: ["read", "subagent", "subagent_supervisor"],
+			capabilityCeiling: { version: 1, allowedTools: ["read", "subagent_supervisor"], sources: ["test"] },
+		}), /subagent_supervisor.*requires fanout authorization/);
+		assert.equal(resolvePiLaunchToolPlan({ tools: ["read", "subagent", "subagent_supervisor"] }).fanoutAuthorized, true);
+		assert.equal(resolvePiLaunchToolPlan({ tools: ["read", "subagent_supervisor"], allowNestedSubagents: true }).fanoutAuthorized, true);
+	});
+
 	it("fails a launch that selects MCP tools from the adapter's runtime snapshot", () => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-runtime-mcp-"));
 		try {

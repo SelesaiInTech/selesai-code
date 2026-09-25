@@ -114,7 +114,7 @@ pi.events.emit("subagents:rpc:v1:request", {
 });
 ```
 
-The RPC methods are `ping`, `status`, `manage`, `spawn`, `steer`, `interrupt`, `stop`, and `resume`. `status`, `manage`, `steer`, `interrupt`, and `resume` reuse normal package-owned actions.
+The RPC methods are `ping`, `status`, `manage`, `spawn`, `steer`, `interrupt`, `stop`, `resume`, and `cost`. `status`, `manage`, `steer`, `interrupt`, and `resume` reuse normal package-owned actions.
 
 Method notes:
 
@@ -124,6 +124,7 @@ Method notes:
 - `resume` requires a run target and non-empty `message`. It delegates to the existing revival path, which validates current-session ownership, persisted session/recovery metadata, stopped/live state, capability ceilings, and the exclusive session lease before returning the new async run details. Callers may request a `file-only` output path for the revived result without overriding its model, tools, or budgets. `ping.capabilities.resume` advertises this seam.
 - `stop` targets current-session top-level async runs through the stop control channel and records a `stopped` lifecycle instead of reporting a timeout.
 - `status` keeps targeted and rich requests on the executor-backed path. A request with no `id`, `runId`, `dir`, `index`, `view`, or `lines` may use the restored in-memory projections and a short summary; when the live state is missing, stale, session-mismatched, or not restored, it falls back to normal executor status. Status `view`, `lines`, and `index` are forwarded for targeted transcript/fleet requests. Successful replies retain `text`, `details`, `fleet`, and `asyncSnapshot`; the short summary intentionally omits canonical filesystem details, wait subscriptions, and budget annotations.
+- `cost` returns the same parent-plus-child accounting `/subagent-cost` renders, as `{ version: 1, parent, children, childTotal, total, unresolvedAsyncChildren }`. Usage objects contain `input`, `output`, `cacheRead`, `cacheWrite`, `cost`, and `turns`; child rows add `label` plus `agent`, `runId`, or `sessionFile` when known. It is read-only and walks the current session branch and existing artifacts, so request it at a turn boundary rather than on a timer. A non-zero `unresolvedAsyncChildren` means `childTotal` is a lower bound. `ping.capabilities.cost` advertises `{ version: 1 }`.
 
 Capability advertisements on `ping`:
 
@@ -136,6 +137,7 @@ Capability advertisements on `ping`:
 - `resume` — the revival seam described above.
 - `statusProjection: { version: 1, untargeted: "in-memory-when-ready", targeted: "executor" }` — untargeted status may use restored bounded projections; targeted or rich status remains executor-backed.
 - `fleetStatus: { version: 1 }` — successful `status` replies additionally include `data.fleet`.
+- `cost: { version: 1 }` — the `cost` method is available with the report shape described above.
 
 Structured delegation progress updates carry `runId` as soon as foreground execution allocates it, so a caller can retain the package-owned revival target even if its own tool turn is interrupted before the terminal response. Foreground `details.results[]` rows also include a numeric `index` that is unique within the run and stable across partial progress snapshots and the final result; use `(runId, index)` instead of row position to correlate single, counted parallel, and chain children.
 

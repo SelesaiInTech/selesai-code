@@ -9,6 +9,7 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { MockPi } from "../support/helpers.ts";
 import { createMockPi, createTempDir, makeAgent, makeAgentConfigs, removeTempDir } from "../support/helpers.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
@@ -69,6 +70,29 @@ describe("in-process foreground child", () => {
 		} finally {
 			delete process.env.SELESAI_SUBAGENT_CHILD_AGENT;
 		}
+	});
+
+	it("passes wrapped core tools and the Graft provider to a launched foreground child", async () => {
+		const wrapperPath = path.join(tempDir, "wrapped-core-tools.ts");
+		const graftExtensionPath = fileURLToPath(new URL("../../../pi-graft/index.ts", import.meta.url));
+		const tools = ["read", "grep", "graft_find_code"];
+		fs.writeFileSync(wrapperPath, [
+			"export default function register(pi) {",
+			"  const available = new Map(pi.getAllTools().map((tool) => [tool.name, tool]));",
+			"  for (const name of ['read', 'grep']) {",
+			"    const tool = available.get(name);",
+			"    if (tool) pi.registerTool({ ...tool, description: 'wrapped ' + name + ': ' + tool.description });",
+			"  }",
+			"}",
+		].join("\n"));
+		mockPi.onCall({ output: "read, grep, and Graft tools were available" });
+		const result = await runSync(tempDir, [makeAgent("worker", { tools, subagentOnlyExtensions: [wrapperPath, graftExtensionPath] })], "worker", "Inspect with read, grep, and Graft", { runId: "wrapped-graft-child" });
+		assert.equal(result.exitCode, 0, result.error);
+		const launch = mockPi.sessions[0]?.launch;
+		assert.deepEqual(launch?.tools, tools);
+		assert.deepEqual(launch?.runtime.requiredTools, tools);
+		assert.ok(launch?.extensionPaths.includes(wrapperPath));
+		assert.ok(launch?.extensionPaths.includes(graftExtensionPath));
 	});
 
 	it("adds the fanout hook and nested route only for fanout-authorized children", async () => {

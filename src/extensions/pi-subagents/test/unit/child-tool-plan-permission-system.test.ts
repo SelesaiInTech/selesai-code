@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { buildInProcessChildLaunch, type BuildInProcessChildLaunchInput } from "../../src/runs/shared/child-launch.ts";
 import {
+	CAPABILITY_GATEWAY_EXTENSION_PATH,
 	resolvePermissionSystemExtension,
 	resolvePiLaunchToolPlan,
 } from "../../src/runs/shared/child-tool-plan.ts";
@@ -19,6 +20,7 @@ const originalEnv = {
 	HOME: process.env.HOME,
 	USERPROFILE: process.env.USERPROFILE,
 	SELESAI_CODING_AGENT_DIR: process.env.SELESAI_CODING_AGENT_DIR,
+	SELESAI_CAPABILITY_GATEWAY: process.env.SELESAI_CAPABILITY_GATEWAY,
 };
 const tempRoots: string[] = [];
 
@@ -33,6 +35,7 @@ function createFixture() {
 	process.env.HOME = home;
 	process.env.USERPROFILE = home;
 	process.env.SELESAI_CODING_AGENT_DIR = agentDir;
+	delete process.env.SELESAI_CAPABILITY_GATEWAY;
 	process.chdir(projectDir);
 	return { root, agentDir, projectDir };
 }
@@ -396,4 +399,99 @@ describe("child launch <active_agent> tag injection", () => {
 			"prompt runtime extension should always be included",
 		);
 	});
+});
+
+describe("capability gateway child runtime policy", () => {
+	const gatewayTools = ["capability_catalog", "capability_discover", "capability_skill_show"];
+
+	for (const host of ["parent", "runner"] as const) {
+		it(`adds only gateway controls for extension-permitted ${host} children`, () => {
+			const { agentDir } = createFixture();
+			process.env.SELESAI_CODING_AGENT_DIR = agentDir;
+
+			const launch = buildInProcessChildLaunch(childLaunch({ host, tools: ["read", "web_explore"] }));
+			assert.equal(launch.toolPlan.capabilityGatewayEnabled, true);
+			assert.ok(launch.session.extensionPaths.includes(CAPABILITY_GATEWAY_EXTENSION_PATH));
+			assert.deepEqual(launch.session.tools, ["read", "web_explore", ...gatewayTools]);
+			assert.ok(gatewayTools.every((tool) => launch.toolPlan.requiredChildTools.includes(tool)));
+			if (host === "runner") {
+				assert.equal(launch.session.ambientExtensions, true);
+				assert.ok(launch.session.extensionPaths.includes(CAPABILITY_GATEWAY_EXTENSION_PATH));
+			} else {
+				assert.equal(launch.session.ambientExtensions, false);
+				assert.equal(launch.session.processEnv, undefined);
+			}
+		});
+	}
+
+	it("keeps omitted tools unrestricted without synthesizing an explicit allowlist", () => {
+		const { agentDir } = createFixture();
+		process.env.SELESAI_CODING_AGENT_DIR = agentDir;
+		const launch = buildInProcessChildLaunch(childLaunch({ host: "runner" }));
+		assert.equal(launch.toolPlan.capabilityGatewayEnabled, true);
+		assert.equal(launch.session.tools, undefined);
+		assert.ok(launch.session.extensionPaths.includes(CAPABILITY_GATEWAY_EXTENSION_PATH));
+	});
+
+	for (const host of ["parent", "runner"] as const) {
+		it(`skips gateway for ${host} children with an explicit empty tool set`, () => {
+			const { agentDir } = createFixture();
+			process.env.SELESAI_CODING_AGENT_DIR = agentDir;
+
+			const launch = buildInProcessChildLaunch(childLaunch({ host, tools: [] }));
+			assert.equal(launch.toolPlan.capabilityGatewayEnabled, false);
+			assert.deepEqual(launch.session.tools, []);
+			assert.ok(!launch.toolPlan.extensionArgs.includes(CAPABILITY_GATEWAY_EXTENSION_PATH));
+			assert.ok(!launch.session.extensionPaths.includes(CAPABILITY_GATEWAY_EXTENSION_PATH));
+		});
+	}
+
+	it("does not widen a capability ceiling and honors explicit extension policy", () => {
+		const { agentDir, projectDir } = createFixture();
+		process.env.SELESAI_CODING_AGENT_DIR = agentDir;
+		const limited = resolvePiLaunchToolPlan({
+			tools: ["read", "web_explore"],
+			capabilityCeiling: { version: 1, allowedTools: ["read", "web_explore"], denyExtensions: false, sources: ["test"] },
+		});
+		assert.equal(limited.capabilityGatewayEnabled, false);
+		assert.deepEqual(limited.effectiveToolAllowlist, ["read", "web_explore"]);
+		assert.ok(!limited.extensionArgs.includes(CAPABILITY_GATEWAY_EXTENSION_PATH));
+
+		const explicitBlock = resolvePiLaunchToolPlan({
+			tools: ["read"],
+			extensions: [path.join(projectDir, "other-extension.ts")],
+		});
+		assert.equal(explicitBlock.capabilityGatewayEnabled, false);
+		assert.ok(!explicitBlock.extensionArgs.includes(CAPABILITY_GATEWAY_EXTENSION_PATH));
+
+		const explicitOptIn = resolvePiLaunchToolPlan({
+			tools: ["read"],
+			extensions: [],
+			subagentOnlyExtensions: [path.dirname(CAPABILITY_GATEWAY_EXTENSION_PATH)],
+		});
+		assert.equal(explicitOptIn.capabilityGatewayEnabled, true);
+		assert.ok(explicitOptIn.extensionArgs.includes(path.dirname(CAPABILITY_GATEWAY_EXTENSION_PATH)));
+		assert.ok(explicitOptIn.effectiveToolAllowlist.includes("capability_discover"));
+	});
+
+	for (const host of ["parent", "runner"] as const) {
+		it(`does not load or authorize the gateway for ${host} children with denyExtensions`, () => {
+			const { agentDir } = createFixture();
+			process.env.SELESAI_CODING_AGENT_DIR = agentDir;
+
+			const launch = buildInProcessChildLaunch(childLaunch({
+				host,
+				tools: ["read"],
+				subagentOnlyExtensions: [CAPABILITY_GATEWAY_EXTENSION_PATH],
+				capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["test"] },
+			}));
+			assert.equal(launch.toolPlan.capabilityGatewayEnabled, false);
+			assert.deepEqual(launch.session.tools, ["read"]);
+			assert.ok(!launch.session.extensionPaths.includes(CAPABILITY_GATEWAY_EXTENSION_PATH));
+			assert.ok(!launch.toolPlan.requiredChildTools.some((tool) => tool.startsWith("capability_")));
+			if (host === "runner") {
+				assert.equal(launch.session.ambientExtensions, false);
+			}
+		});
+	}
 });

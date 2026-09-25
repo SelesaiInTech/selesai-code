@@ -10,7 +10,7 @@ Use orchestration as parent-agent guidance, not as a runtime workflow mode. For 
 clarify → scout → worker → fresh reviewers → worker
 ```
 
-Packaged `worker`, `oracle`, and `advisor` default to forked context when a launch omits `context`. If the parent has no persisted session file or current leaf yet, that implicit default falls back to `fresh`. Pass `context: "fresh"` when you intentionally want a fresh child run, or `context: "fork"` when fork must remain strict.
+Packaged `worker` defaults to fresh context; `oracle` and `advisor` default to forked context when a launch omits `context`. An implicit fork preference falls back to `fresh` when the parent has no persisted session file or current leaf. Pass `context: "fork"` when you intentionally want a worker to reuse the parent thread, or when fork must remain strict.
 
 Child-safety boundaries are enforced at runtime:
 

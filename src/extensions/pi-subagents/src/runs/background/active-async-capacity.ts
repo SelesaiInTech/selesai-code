@@ -6,6 +6,7 @@ import { TEMP_ROOT_DIR, type ActiveAsyncCapacitySnapshot, type AsyncStatus } fro
 import { readStatus } from "../../shared/utils.ts";
 import { checkPidLiveness, type PidLiveness } from "./stale-run-reconciler.ts";
 import { readProcessTerminal } from "./process-terminal.ts";
+import { isTerminalAsyncState as terminalState, readWorkflowChildProcessEvidence } from "./workflow-terminal-proof.ts";
 
 export const ACTIVE_ASYNC_CAPACITY_DIR = path.join(TEMP_ROOT_DIR, "session-active-async-capacity");
 export const DEFAULT_ABANDONED_SLOT_RELEASE_AFTER_MS = 20 * 60 * 1000;
@@ -209,10 +210,6 @@ function appendAbandonedReleaseEvent(asyncDir: string, owner: ActiveAsyncCapacit
 	}
 }
 
-function terminalState(state: AsyncStatus["state"]): boolean {
-	return state !== "queued" && state !== "running" && state !== "paused";
-}
-
 function runnerReleaseVerdict(owner: ActiveAsyncCapacityOwner, status: AsyncStatus | null, options: CapacityOptions): ActiveAsyncCapacityReleaseVerdict {
 	if (!status) return { state: "retained", reason: "status file is missing or unreadable" };
 	if (!owner.runnerProcessInstanceId) return { state: "retained", reason: "runner process identity has not been recorded" };
@@ -269,23 +266,8 @@ function workflowReleaseVerdict(owner: ActiveAsyncCapacityOwner, status: AsyncSt
 	if (status.mode !== "workflow") return { state: "retained", reason: `status mode is ${status.mode}, not workflow` };
 	if (!terminalState(status.state)) return { state: "retained", reason: `workflow is still ${status.state}` };
 	if (liveWorkflowRunIds.has(owner.runId)) return { state: "retained", reason: "workflow controller is still live" };
-	for (const step of status.steps ?? []) {
-		const label = step.workflowKey ?? step.agent;
-		if (typeof step.async !== "boolean") return { state: "retained", reason: `workflow child ${label} is missing async classification` };
-		if (!step.async) continue;
-		if (!step.runId) return { state: "retained", reason: `async workflow child ${label} is missing run id` };
-		const childDir = path.join(path.dirname(owner.asyncDir), step.runId);
-		if (!fs.existsSync(childDir)) return { state: "retained", reason: `async workflow child ${label} directory is missing` };
-		const childStatus = readStatus(childDir);
-		if (!childStatus) return { state: "retained", reason: `async workflow child ${label} status is missing or unreadable` };
-		if (!terminalState(childStatus.state)) return { state: "retained", reason: `async workflow child ${label} is still ${childStatus.state}` };
-		if (!childStatus.processTerminal?.runnerProcessInstanceId) return { state: "retained", reason: `async workflow child ${label} has no runner process identity` };
-		const proof = readProcessTerminal(childDir, {
-			runId: step.runId,
-			runnerProcessInstanceId: childStatus.processTerminal.runnerProcessInstanceId,
-		});
-		if (proof?.state !== "observed" || proof.runId !== step.runId) return { state: "retained", reason: `async workflow child ${label} process-terminal proof is ${proof?.state ?? "missing"}` };
-	}
+	const evidence = readWorkflowChildProcessEvidence(owner.asyncDir, status.steps);
+	if (evidence.state !== "observed") return { state: "retained", reason: evidence.reason };
 	return { state: "releasable", reason: "workflow is terminal, controller is gone, and async children have observed proof" };
 }
 
