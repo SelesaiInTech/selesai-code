@@ -23,6 +23,9 @@ import {
 	tryImport,
 } from "../support/helpers.ts";
 
+/** Children with an explicit tool surface also receive the scoped capability gateway controls. */
+const CHILD_CAPABILITY_GATEWAY_TOOLS = "capability_catalog,capability_discover,capability_skill_show";
+
 interface ExecutorResult {
 	content: Array<{ text?: string }>;
 	isError?: boolean;
@@ -308,8 +311,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 		const isolatedArgs = await readMockCallArgs(0);
 		const normalArgs = await readMockCallArgs(1);
-		assert.equal(isolatedArgs[isolatedArgs.indexOf("--tools") + 1], "read");
-		assert.equal(normalArgs[normalArgs.indexOf("--tools") + 1], "read,contact_supervisor");
+		assert.equal(isolatedArgs[isolatedArgs.indexOf("--tools") + 1], `read,${CHILD_CAPABILITY_GATEWAY_TOOLS}`);
+		assert.equal(normalArgs[normalArgs.indexOf("--tools") + 1], `read,contact_supervisor,${CHILD_CAPABILITY_GATEWAY_TOOLS}`);
 		assert.equal(events.emitted.filter((entry) => entry.channel === "subagent:result-intercom").length, 1);
 		assert.deepEqual(result.details?.workflow?.value, { isolated: "Isolated child output", normal: "Normal child output" });
 	});
@@ -1106,7 +1109,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			const args = await readMockCallArgs(0);
 			assert.equal(args[args.indexOf("--session") + 1], sessionFile);
 			assert.equal(args[args.indexOf("--model") + 1], "anthropic/claude-sonnet-4:high");
-			assert.equal(args[args.indexOf("--tools") + 1], "read");
+			assert.equal(args[args.indexOf("--tools") + 1], `read,${CHILD_CAPABILITY_GATEWAY_TOOLS}`);
 			assert.equal(args.includes("--system-prompt"), true);
 			assert.equal(args.includes("--append-system-prompt"), false);
 			await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`));

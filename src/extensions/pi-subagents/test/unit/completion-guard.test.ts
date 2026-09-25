@@ -7,6 +7,7 @@ import {
 	evaluateCompletionMutationGuard,
 	expectsImplementationMutation,
 	hasMutationToolCall,
+	hasMutationToolCapability,
 	validateImplementationToolContract,
 } from "../../src/runs/shared/completion-guard.ts";
 import { isMutatingTool } from "../../src/runs/shared/long-running-guard.ts";
@@ -498,6 +499,17 @@ test("worker edit intent covers common docs, config, and source tasks", () => {
 test("edit and write tool calls count as mutation attempts", () => {
 	assert.equal(hasMutationToolCall([assistantToolCall("edit", { path: "a.ts" })]), true);
 	assert.equal(hasMutationToolCall([assistantToolCall("write", { path: "a.ts" })]), true);
+});
+
+test("capability gateway controls never count as mutation capability", () => {
+	const gatewayTools = ["capability_catalog", "capability_discover", "capability_skill_show"];
+	assert.equal(hasMutationToolCapability(["read", "grep", ...gatewayTools], undefined), false);
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Implement the requested source fix.",
+		tools: ["read", "grep", "find", "ls", "contact_supervisor", ...gatewayTools],
+	}), "Agent 'worker' was given an implementation task, but its tool allowlist has no mutation-capable tools. Add bash, edit, write, or another mutation-capable tool to the agent, or use a read-only task/agent.");
+	assert.equal(hasMutationToolCapability(["read", "web_explore"], undefined), true);
 });
 
 test("declared extension mutation tools count without weakening unknown tools", () => {

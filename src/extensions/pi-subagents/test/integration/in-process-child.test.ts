@@ -18,6 +18,9 @@ import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
 import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-output.ts";
 import type { ForegroundChildSessionControls, SingleResult } from "../../src/shared/types.ts";
 
+/** Explicit child tool surfaces also receive the scoped capability gateway controls. */
+const CHILD_CAPABILITY_GATEWAY_TOOLS = ["capability_catalog", "capability_discover", "capability_skill_show"];
+
 async function waitFor(read: () => boolean, timeoutMs = 5_000): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (!read()) {
@@ -89,8 +92,9 @@ describe("in-process foreground child", () => {
 		const result = await runSync(tempDir, [makeAgent("worker", { tools, subagentOnlyExtensions: [wrapperPath, graftExtensionPath] })], "worker", "Inspect with read, grep, and Graft", { runId: "wrapped-graft-child" });
 		assert.equal(result.exitCode, 0, result.error);
 		const launch = mockPi.sessions[0]?.launch;
-		assert.deepEqual(launch?.tools, tools);
-		assert.deepEqual(launch?.runtime.requiredTools, tools);
+		const expectedTools = [...tools, ...CHILD_CAPABILITY_GATEWAY_TOOLS];
+		assert.deepEqual(launch?.tools, expectedTools);
+		assert.deepEqual(launch?.runtime.requiredTools, expectedTools);
 		assert.ok(launch?.extensionPaths.includes(wrapperPath));
 		assert.ok(launch?.extensionPaths.includes(graftExtensionPath));
 	});
@@ -108,7 +112,7 @@ describe("in-process foreground child", () => {
 			assert.equal(session?.launch.runtime.fanoutChild, true);
 			assert.deepEqual(session?.launch.runtime.nestedRoute, route);
 			assert.deepEqual(session?.launch.runtime.nestedParent, { parentRunId: "hooks-fanout", parentChildIndex: 0, depth: 1, path: [{ runId: "hooks-fanout", stepIndex: 0, agent: "delegator" }] });
-			assert.deepEqual(session?.launch.tools, ["read", "subagent"]);
+			assert.deepEqual(session?.launch.tools, ["read", "subagent", ...CHILD_CAPABILITY_GATEWAY_TOOLS]);
 		} finally {
 			fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
 		}

@@ -17,6 +17,12 @@ const READ_ONLY_BUILTIN_TOOLS = new Set([
 	"intercom",
 	"contact_supervisor",
 	"structured_output",
+	// Gateway controls only search, activate, or load capabilities; activation stays
+	// filtered by the child's own tool policy, so they are not mutation-capable.
+	// Kept literal: child-tool-plan transitively imports this module (via single-output).
+	"capability_catalog",
+	"capability_discover",
+	"capability_skill_show",
 ]);
 
 // Cursor native edit/write often land as thinking traces (inactive_trace /

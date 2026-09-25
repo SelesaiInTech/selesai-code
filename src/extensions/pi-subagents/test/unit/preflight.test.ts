@@ -857,7 +857,9 @@ Project prompt.
 		assert.equal(result.ok, true);
 		if (!result.ok) return;
 		assert.deepEqual(result.contract.tools.excludeTools, ["write", "unknown_tool"]);
-		assert.deepEqual(result.contract.tools.effectiveAllowlist, ["read"]);
+		// An explicit tool surface also gets the scoped capability gateway tools, which
+		// this launch does not exclude (see the capability-gateway child policy tests).
+		assert.deepEqual(result.contract.tools.effectiveAllowlist, ["read", "capability_catalog", "capability_discover", "capability_skill_show"]);
 		assert.match(result.contract.launchContractDigest, /^[a-f0-9]{64}$/);
 	});
 
